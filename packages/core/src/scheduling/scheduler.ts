@@ -340,6 +340,49 @@ ${task.prompt}`;
   }
 
   /**
+   * Immediately trigger a task by its ID.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   * This method allows external triggers (e.g., file watchers) to
+   * immediately execute a task without waiting for the next cron tick.
+   *
+   * Respects the same execution guards as cron-triggered execution:
+   * - Cooldown period check
+   * - Blocking mechanism (skip if already running)
+   * - Task must be currently active (scheduled)
+   *
+   * @param taskId - The ID of the task to trigger
+   * @returns true if the task was triggered, false if skipped (not found, disabled, blocked, or in cooldown)
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.debug({ taskId }, 'Cannot trigger task: not found in active jobs');
+      return false;
+    }
+
+    if (!entry.task.enabled) {
+      logger.debug({ taskId }, 'Cannot trigger task: disabled');
+      return false;
+    }
+
+    await this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
+   * Get a task by ID from the active jobs.
+   *
+   * Issue #1953: Used by EventTrigger to retrieve task data for a task ID.
+   *
+   * @param taskId - Task ID to look up
+   * @returns The task, or undefined if not found
+   */
+  getTask(taskId: string): ScheduledTask | undefined {
+    return this.activeJobs.get(taskId)?.task;
+  }
+
+  /**
    * Check if scheduler is running.
    */
   isRunning(): boolean {

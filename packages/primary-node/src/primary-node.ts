@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1953: Event-driven schedule triggering
+  EventTrigger,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -157,6 +159,9 @@ export class PrimaryNode extends EventEmitter {
 
   // Temp chat data store (Issue #1703)
   protected chatStore: ChatStore;
+
+  // Event-driven trigger (Issue #1953)
+  protected eventTrigger?: EventTrigger;
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -486,14 +491,26 @@ export class PrimaryNode extends EventEmitter {
       onFileAdded: (task: ScheduledTask) => {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file added, adding to scheduler');
         this.scheduler?.addTask(task);
+        // Issue #1953: Register task for event-driven triggering if it has watch config
+        if (task.watch) {
+          this.eventTrigger?.registerTask(task);
+        }
       },
       onFileChanged: (task: ScheduledTask) => {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file changed, updating scheduler');
         this.scheduler?.addTask(task);
+        // Issue #1953: Re-register task (unregister old, register new watch config)
+        if (task.watch) {
+          this.eventTrigger?.registerTask(task);
+        } else {
+          this.eventTrigger?.unregisterTask(task.id);
+        }
       },
       onFileRemoved: (taskId: string) => {
         logger.info({ taskId }, 'Schedule file removed, removing from scheduler');
         this.scheduler?.removeTask(taskId);
+        // Issue #1953: Unregister from event-driven triggering
+        this.eventTrigger?.unregisterTask(taskId);
       },
     });
 
@@ -501,8 +518,28 @@ export class PrimaryNode extends EventEmitter {
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
 
+    // Issue #1953: Initialize event-driven trigger for tasks with watch config
+    this.eventTrigger = new EventTrigger({
+      onTrigger: async (taskId: string) => {
+        await this.scheduler?.triggerTask(taskId);
+      },
+    });
+
+    // Register existing tasks that have watch configuration
+    const enabledTasks = await this.scheduleManager.listEnabled();
+    for (const task of enabledTasks) {
+      if (task.watch) {
+        this.eventTrigger.registerTask(task);
+      }
+    }
+
+    await this.eventTrigger.start();
+
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    if (this.eventTrigger.getRegisteredTaskCount() > 0) {
+      console.log(`✓ Event trigger started (${this.eventTrigger.getRegisteredTaskCount()} tasks)`);
+    }
     logger.info('Scheduler initialized');
   }
 
@@ -510,6 +547,7 @@ export class PrimaryNode extends EventEmitter {
    * Stop the scheduler.
    */
   protected stopScheduler(): void {
+    this.eventTrigger?.stop();
     this.scheduleFileWatcher?.stop();
     this.scheduler?.stop();
     logger.info('Scheduler stopped');

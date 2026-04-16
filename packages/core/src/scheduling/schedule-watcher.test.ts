@@ -555,6 +555,191 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  describe('parseFile - watch configuration (Issue #1953)', () => {
+    it('should parse watch configuration with list paths', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  paths:',
+        '    - "workspace/chats"',
+        '    - "workspace/other"',
+        '  events: ["create", "change"]',
+        '  debounce: 5000',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/chats', 'workspace/other']);
+      expect(task!.watch!.events).toEqual(['create', 'change']);
+      expect(task!.watch!.debounce).toBe(5000);
+    });
+
+    it('should parse watch with single path', async () => {
+      const content = [
+        '---',
+        'name: "Single Path Watch"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  paths: "workspace/chats"',
+        '---',
+        '',
+        'Watch single path.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/single-path.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/chats']);
+    });
+
+    it('should parse watch with inline array paths', async () => {
+      const content = [
+        '---',
+        'name: "Inline Array"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  paths: ["workspace/chats", "workspace/events"]',
+        '---',
+        '',
+        'Inline array paths.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/inline-array.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/chats', 'workspace/events']);
+    });
+
+    it('should return undefined watch when paths list is empty', async () => {
+      const content = [
+        '---',
+        'name: "Empty Watch"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  paths:',
+        '---',
+        '',
+        'Empty watch paths.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/empty-watch.md`);
+      expect(task).not.toBeNull();
+      // Empty paths list should result in undefined watch
+      expect(task!.watch).toBeUndefined();
+    });
+
+    it('should default watch to undefined when not present', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeUndefined();
+    });
+
+    it('should parse watch with only create event', async () => {
+      const content = [
+        '---',
+        'name: "Create Only"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  paths:',
+        '    - "workspace/chats"',
+        '  events: ["create"]',
+        '---',
+        '',
+        'Only watch for create events.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/create-only.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch!.events).toEqual(['create']);
+    });
+  });
+
+  describe('writeTask - watch configuration (Issue #1953)', () => {
+    it('should write watch configuration', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-watched',
+        name: 'Watched Task',
+        cron: '0 * * * * *',
+        prompt: 'Watched task prompt',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01T00:00:00Z',
+        watch: {
+          paths: ['workspace/chats', 'workspace/events'],
+          events: ['create', 'change'],
+          debounce: 5000,
+        },
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('watch:');
+      expect(writtenContent).toContain('  - "workspace/chats"');
+      expect(writtenContent).toContain('  - "workspace/events"');
+      expect(writtenContent).toContain('  events: ["create", "change"]');
+      expect(writtenContent).toContain('  debounce: 5000');
+    });
+
+    it('should not write watch section when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-watch',
+        name: 'No Watch Task',
+        cron: '0 * * * *',
+        prompt: 'No watch task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01T00:00:00Z',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('watch:');
+    });
+
+    it('should not write watch section when paths is empty', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-empty-watch',
+        name: 'Empty Watch Task',
+        cron: '0 * * * *',
+        prompt: 'Empty watch task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01T00:00:00Z',
+        watch: { paths: [] },
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('watch:');
+    });
+  });
 });
 
 // ============================================================================

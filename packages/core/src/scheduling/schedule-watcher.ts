@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, WatchConfig } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -70,6 +70,8 @@ function stripQuotes(value: string): string {
 
 /**
  * Parse YAML frontmatter from schedule content.
+ *
+ * Issue #1953: Extended to support nested `watch:` block for event-driven triggers.
  */
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
@@ -86,7 +88,34 @@ function parseScheduleFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
 
   const lines = frontmatterText.split('\n');
+  let inWatchBlock = false;
+  const watchLines: string[] = [];
+
   for (const line of lines) {
+    // Detect start of watch block
+    if (/^watch\s*:/.test(line)) {
+      inWatchBlock = true;
+      const inlineValue = line.replace(/^watch\s*:\s*/, '').trim();
+      // Handle inline watch config (e.g., `watch: { paths: [...] }`)
+      if (inlineValue) {
+        watchLines.push(inlineValue);
+      }
+      continue;
+    }
+
+    // If in watch block, collect indented lines
+    if (inWatchBlock) {
+      if (line.startsWith('  ') || line.startsWith('\t') || line === '') {
+        watchLines.push(line);
+        continue;
+      } else {
+        // End of watch block — parse collected lines
+        inWatchBlock = false;
+        frontmatter['watch'] = parseWatchBlock(watchLines);
+      }
+    }
+
+    // Regular key-value parsing
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) { continue; }
 
@@ -113,7 +142,112 @@ function parseScheduleFrontmatter(content: string): {
     }
   }
 
+  // Handle watch block at end of frontmatter
+  if (inWatchBlock && watchLines.length > 0) {
+    frontmatter['watch'] = parseWatchBlock(watchLines);
+  }
+
   return { frontmatter, contentStart: match[0].length };
+}
+
+/**
+ * Parse the collected watch block lines into a WatchConfig object.
+ *
+ * Supported formats:
+ * ```yaml
+ * watch:
+ *   paths:
+ *     - "workspace/chats"
+ *     - "workspace/other"
+ *   events: ["create", "change"]
+ *   debounce: 5000
+ * ```
+ *
+ * Also supports compact single-path format:
+ * ```yaml
+ * watch:
+ *   paths: "workspace/chats"
+ * ```
+ */
+function parseWatchBlock(lines: string[]): WatchConfig | undefined {
+  const config: WatchConfig = { paths: [] };
+  let inPathsList = false;
+  const paths: string[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {continue;}
+
+    // Parse paths list items
+    if (inPathsList && line.startsWith('- ')) {
+      const pathValue = stripQuotes(line.slice(2).trim());
+      if (pathValue) {
+        paths.push(pathValue);
+      }
+      continue;
+    }
+
+    // Detect paths key
+    if (line.startsWith('paths')) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex === -1) {continue;}
+      const value = line.slice(colonIndex + 1).trim();
+      if (value.startsWith('[')) {
+        // Inline array: paths: ["a", "b"]
+        const items = value.slice(1, -1).split(',').map(s => stripQuotes(s.trim())).filter(Boolean);
+        config.paths = items;
+      } else if (value === '' || value === '|' || value === '>') {
+        // Multi-line list format
+        inPathsList = true;
+      } else {
+        // Single path value
+        config.paths = [stripQuotes(value)];
+      }
+      continue;
+    }
+
+    // Detect events key
+    if (line.startsWith('events')) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex === -1) {continue;}
+      const value = line.slice(colonIndex + 1).trim();
+      if (value.startsWith('[')) {
+        // Inline array: events: ["create", "change"]
+        const items = value.slice(1, -1).split(',').map(s => stripQuotes(s.trim())).filter(Boolean) as ('create' | 'change' | 'delete')[];
+        config.events = items;
+      }
+      inPathsList = false;
+      continue;
+    }
+
+    // Detect debounce key
+    if (line.startsWith('debounce')) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex === -1) {continue;}
+      const value = line.slice(colonIndex + 1).trim();
+      const parsed = parseInt(value, 10);
+      if (!isNaN(parsed)) {
+        config.debounce = parsed;
+      }
+      inPathsList = false;
+      continue;
+    }
+
+    // Unknown key — stop paths list
+    inPathsList = false;
+  }
+
+  // Merge collected list paths
+  if (paths.length > 0) {
+    config.paths = paths;
+  }
+
+  // Only return valid config (at least one path)
+  if (config.paths.length === 0) {
+    return undefined;
+  }
+
+  return config;
 }
 
 /**
@@ -216,6 +350,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watch: frontmatter['watch'] as WatchConfig | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +402,20 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+
+    // Issue #1953: Write watch configuration
+    if (task.watch && task.watch.paths.length > 0) {
+      frontmatter.push('watch:');
+      for (const p of task.watch.paths) {
+        frontmatter.push(`  - "${p}"`);
+      }
+      if (task.watch.events && task.watch.events.length > 0) {
+        frontmatter.push(`  events: [${task.watch.events.map(e => `"${e}"`).join(', ')}]`);
+      }
+      if (task.watch.debounce !== undefined) {
+        frontmatter.push(`  debounce: ${task.watch.debounce}`);
+      }
     }
 
     frontmatter.push('---', '');
