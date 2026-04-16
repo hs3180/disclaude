@@ -40,6 +40,7 @@ const TEST_IDS = [
   'test-reg-trigger',
   'test-reg-mention',
   'test-reg-context',
+  'test-reg-focus',
 ];
 
 async function cleanupTestFiles() {
@@ -230,5 +231,23 @@ describe('start-discussion register', () => {
     // Should be very close (same second)
     expect(Math.abs(new Date(data.createdAt).getTime() - new Date(data.activatedAt).getTime()))
       .toBeLessThan(2000);
+  });
+
+  it('should store discussion focus context for #1228', async () => {
+    const result = await runScript('skills/start-discussion/register.ts', {
+      ...baseEnv,
+      CHAT_ID: 'test-reg-focus',
+      CHAT_CONTEXT: JSON.stringify({
+        topic: 'code formatting',
+        initialMessage: 'Should we use Prettier?',
+        discussionFocus: true,
+      }),
+    });
+
+    expect(result.code).toBe(0);
+    const content = await readFile(resolve(CHAT_DIR, 'test-reg-focus.json'), 'utf-8');
+    const data = JSON.parse(content);
+    expect(data.context.discussionFocus).toBe(true);
+    expect(data.context.topic).toBe('code formatting');
   });
 });

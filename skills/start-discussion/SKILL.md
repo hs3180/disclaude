@@ -83,7 +83,7 @@ CHAT_FEISHU_ID="{oc_xxxxx from step 2}" \
 CHAT_EXPIRES_AT="{ISO 8601 UTC Z-suffix, e.g. 2026-04-18T10:00:00Z}" \
 CHAT_GROUP_NAME="{discussion topic}" \
 CHAT_MEMBERS='["ou_xxxxx"]' \
-CHAT_CONTEXT='{"initialMessage": "...", "topic": "..."}' \
+CHAT_CONTEXT='{"initialMessage": "...", "topic": "...", "discussionFocus": true}' \
 CHAT_TRIGGER_MODE="always" \
 npx tsx skills/start-discussion/register.ts
 ```
@@ -146,21 +146,40 @@ The discussion result will be available later via the `chat` skill's query mecha
 
 ---
 
-## Chat Agent Behavior
+## Chat Agent Behavior — Discussion Focus Retention
 
-When the user responds in the discussion group, the system's ChatAgent handles the conversation naturally. The initial context you send in Step 4 becomes the ChatAgent's starting point for the discussion.
+When the user responds in the discussion group, the system's ChatAgent handles the conversation. To ensure the discussion stays focused on the original topic, include **discussion focus instructions** in the initial context message.
+
+### Focus Behavior Integration (Issue #1228)
+
+The discussion focus personality is defined in [DISCUSSION_FOCUS.md](DISCUSSION_FOCUS.md). To activate it:
+
+1. **Include focus instructions in the initial message** — Add a focus behavior section to the discussion context template (see updated template below)
+2. **The ChatAgent reads the initial message** from conversation history via session restore
+3. **The ChatAgent naturally follows** the focus guidelines embedded in the conversation context
+
+This approach replaces the originally planned SOUL.md system (which was abandoned per #1315 in favor of CLAUDE.md), using conversation-level context injection instead.
+
+### Why Conversation-Level Injection
+
+| Approach | Status | Reason |
+|----------|--------|--------|
+| SOUL.md system | ❌ Abandoned | #1315 closed — CLAUDE.md is sufficient for general use |
+| CLAUDE.md per-group | ❌ Not feasible | CLAUDE.md is project-level, not per-chat |
+| Conversation context | ✅ Adopted | Initial message stays in chat history, ChatAgent reads it via session restore |
 
 **Tips for effective context**:
 - Be specific about what decision or input is needed
 - Include relevant constraints or preferences
 - Frame open-ended questions when possible
 - Avoid yes/no questions — encourage discussion
+- **Include focus behavior instructions** to keep the discussion on track
 
 ---
 
 ## Discussion Context Template
 
-Use this template for the initial message:
+Use this template for the initial message. The **Discussion Focus** section is critical — it instructs the ChatAgent to stay on topic throughout the conversation.
 
 ```markdown
 ## 📋 讨论邀请
@@ -179,8 +198,18 @@ Use this template for the initial message:
 {What kind of input is needed: decision, preference, feedback, etc.}
 
 ---
-💬 请分享你的想法，ChatAgent 会引导讨论。
+
+> 🧭 **Discussion Focus**: This discussion centers on "{topic}".
+> - Stay anchored to the original question — gently redirect if the conversation drifts
+> - Depth over breadth — explore aspects thoroughly rather than skimming surfaces
+> - Periodically summarize progress to keep the discussion on track
+> - Be genuinely helpful, not performatively helpful
+
+---
+💬 请分享你的想法，ChatAgent 会引导讨论并保持话题聚焦。
 ```
+
+**Why the focus section matters**: When the ChatAgent processes messages in this group, it reads the initial context from the conversation history. The focus instructions in the initial message guide the ChatAgent to maintain topic focus throughout the discussion, preventing drift as described in #1228.
 
 ---
 
