@@ -35,6 +35,8 @@
 import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
+import { writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -115,6 +117,73 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   getChatId(): string {
     return this.boundChatId;
+  }
+
+  /**
+   * Write stdio MCP server configs to {workspace}/.mcp.json.
+   *
+   * Issue #2463: ACP v0.23.1+ no longer supports stdio MCP servers via
+   * session/new. Instead, we write the config to .mcp.json so that
+   * Claude Code loads them natively from the working directory.
+   *
+   * The .mcp.json format matches Claude Code's specification:
+   * { "mcpServers": { "name": { "command": "...", "args": [...], "env": {...} } } }
+   */
+  private writeMcpJson(): void {
+    const configuredMcpServers = Config.getMcpServersConfig();
+    if (!configuredMcpServers || Object.keys(configuredMcpServers).length === 0) {
+      return;
+    }
+
+    const workspaceDir = this.getWorkspaceDir();
+    const mcpJsonPath = join(workspaceDir, '.mcp.json');
+
+    // Build .mcp.json content — only include stdio-relevant fields
+    const mcpJsonContent: Record<string, unknown> = { mcpServers: {} };
+    for (const [name, config] of Object.entries(configuredMcpServers)) {
+      const serverEntry: Record<string, unknown> = {
+        command: config.command,
+        ...(config.args && { args: config.args }),
+        ...(config.env && { env: config.env }),
+      };
+      (mcpJsonContent.mcpServers as Record<string, unknown>)[name] = serverEntry;
+    }
+
+    try {
+      writeFileSync(mcpJsonPath, JSON.stringify(mcpJsonContent, null, 2), 'utf-8');
+      this.logger.info(
+        { path: mcpJsonPath, servers: Object.keys(configuredMcpServers) },
+        'Wrote .mcp.json for Claude Code MCP server loading',
+      );
+    } catch (err) {
+      this.logger.error(
+        { err, path: mcpJsonPath },
+        'Failed to write .mcp.json, MCP servers may not be available',
+      );
+    }
+  }
+
+  /**
+   * Remove .mcp.json from workspace directory.
+   *
+   * Issue #2463: Cleanup to avoid residual config affecting other scenarios.
+   * Failures are logged but not thrown to avoid disrupting session lifecycle.
+   */
+  private cleanupMcpJson(): void {
+    const workspaceDir = this.getWorkspaceDir();
+    const mcpJsonPath = join(workspaceDir, '.mcp.json');
+
+    try {
+      if (existsSync(mcpJsonPath)) {
+        unlinkSync(mcpJsonPath);
+        this.logger.info({ path: mcpJsonPath }, 'Cleaned up .mcp.json');
+      }
+    } catch (err) {
+      this.logger.warn(
+        { err, path: mcpJsonPath },
+        'Failed to clean up .mcp.json',
+      );
+    }
   }
 
   /**
@@ -442,6 +511,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
     }
 
+    // Issue #2463: Write stdio MCP servers to .mcp.json for Claude Code
+    // to load natively. ACP v0.23.1+ no longer accepts stdio via session/new.
+    this.writeMcpJson();
+
     // Build SDK options using BaseAgent's createSdkOptions
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
@@ -685,6 +758,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
     }
 
+    // Issue #2463: Write stdio MCP servers to .mcp.json for Claude Code
+    // to load natively. ACP v0.23.1+ no longer accepts stdio via session/new.
+    this.writeMcpJson();
+
     // Build SDK options using BaseAgent's createSdkOptions
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
@@ -900,6 +977,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.firstMessageHistoryContext = undefined;
     this.firstMessageHistoryLoaded = false;
 
+    // Issue #2463: Clean up .mcp.json on session reset
+    this.cleanupMcpJson();
+
     // Issue #1213: Reload history only if explicitly requested via keepContext
     if (keepContext) {
       this.logger.info({ chatId: this.boundChatId }, 'Reloading history context after reset');
@@ -1006,6 +1086,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Clear restart states
     this.restartManager.clearAll();
+
+    // Issue #2463: Clean up .mcp.json on shutdown
+    this.cleanupMcpJson();
 
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent shutdown complete');
   }

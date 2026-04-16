@@ -26,6 +26,7 @@ vi.mock('@disclaude/core', () => ({
       yield { parsed: { type: 'result', content: 'done' } };
     })());
     this.dispose = vi.fn();
+    this.getWorkspaceDir = vi.fn(() => '/tmp/test-workspace');
     this.logger = {
       info: vi.fn(),
       warn: vi.fn(),
