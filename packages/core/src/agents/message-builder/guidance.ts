@@ -218,3 +218,51 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, so in-memory singletons
+ * from the main process are inaccessible. A file-based `.runtime-env` mechanism
+ * provides cross-process state sharing. This guidance tells the agent about
+ * available runtime environment variables and how to use them.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You run in a subprocess that shares state with the main process via a \`.runtime-env\` file. Key variables are **already loaded into your environment** — you can access them directly.
+
+### Common Variables
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| \`GH_TOKEN\` | GitHub Installation Access Token (1-hour lifetime) | \`ghs_xxxx...\` |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiry time (ISO 8601) | \`2026-04-16T12:00:00Z\` |
+
+### How to Check Available Variables
+
+\`\`\`bash
+# Read the runtime-env file directly
+cat .runtime-env
+\`\`\`
+
+### How to Write New Variables
+
+Use the Write tool to append or update entries in \`.runtime-env\`:
+
+\`\`\`
+MY_KEY=my_value
+\`\`\`
+
+### Important Notes
+
+- Variables written to \`.runtime-env\` are available to **other agents and skills** in subsequent sessions
+- Sensitive tokens have limited lifetimes — always check expiry before use
+- Do NOT expose token values in chat responses`;
+}
