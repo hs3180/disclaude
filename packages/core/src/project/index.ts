@@ -30,3 +30,15 @@ export type {
 } from './template-discovery.js';
 
 export { ProjectManager } from './project-manager.js';
+
+// Taste system (Issue #2335)
+export type {
+  TasteCategory,
+  TasteEntry,
+  TasteManagerOptions,
+  TastePersistData,
+  TasteSource,
+  ITasteManager,
+} from './taste-types.js';
+
+export { TasteManager } from './taste-manager.js';
