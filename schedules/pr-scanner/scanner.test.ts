@@ -99,7 +99,7 @@ describe('parseStateFile', () => {
     expect(parseStateFile(invalid)).toBeNull();
   });
 
-  it('should reject non-null disbandRequested', () => {
+  it('should reject non-string/non-null disbandRequested', () => {
     const invalid = JSON.stringify({
       prNumber: 1,
       chatId: 'oc_x',
@@ -107,9 +107,23 @@ describe('parseStateFile', () => {
       createdAt: '2026-04-07T10:00:00Z',
       updatedAt: '2026-04-07T10:00:00Z',
       expiresAt: '2026-04-09T10:00:00Z',
-      disbandRequested: 'something',
+      disbandRequested: 123,
     });
     expect(parseStateFile(invalid)).toBeNull();
+  });
+
+  it('should accept string disbandRequested (ISO timestamp)', () => {
+    const valid = JSON.stringify({
+      prNumber: 1,
+      chatId: 'oc_x',
+      state: 'reviewing',
+      createdAt: '2026-04-07T10:00:00Z',
+      updatedAt: '2026-04-07T10:00:00Z',
+      expiresAt: '2026-04-09T10:00:00Z',
+      disbandRequested: '2026-04-08T12:00:00Z',
+    });
+    expect(parseStateFile(valid)).not.toBeNull();
+    expect(parseStateFile(valid)!.disbandRequested).toBe('2026-04-08T12:00:00Z');
   });
 
   it('should accept all valid states', () => {

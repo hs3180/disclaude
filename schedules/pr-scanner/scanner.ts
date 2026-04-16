@@ -44,7 +44,8 @@ export interface PRStateFile {
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
-  disbandRequested: null;
+  /** ISO timestamp when disband was last requested, or null if never requested */
+  disbandRequested: string | null;
 }
 
 /** Result of check-capacity action */
@@ -92,7 +93,7 @@ export function parseStateFile(content: string): PRStateFile | null {
       typeof data.createdAt !== 'string' ||
       typeof data.updatedAt !== 'string' ||
       typeof data.expiresAt !== 'string' ||
-      data.disbandRequested !== null
+      data.disbandRequested !== null && typeof data.disbandRequested !== 'string'
     ) {
       return null;
     }
