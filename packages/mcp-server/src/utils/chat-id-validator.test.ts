@@ -59,31 +59,13 @@ describe('isValidChatId', () => {
     });
   });
 
-  describe('Integration test IDs (test-)', () => {
-    it('should accept a valid test- ID', () => {
-      expect(isValidChatId('test-use-case-2-files-12345')).toBe(true);
-    });
-
-    it('should accept a minimal test- ID (10 chars)', () => {
-      expect(isValidChatId('test-abcde')).toBe(true);
-    });
-
-    it('should reject a test- ID that is too short', () => {
-      expect(isValidChatId('test-abcd')).toBe(false);
-    });
-
-    it('should reject a bare test- prefix', () => {
-      expect(isValidChatId('test-')).toBe(false);
-    });
-
-    it('should accept test-multimodal-* IDs (Issue #2300)', () => {
-      // Previously used multimodal-test-* which was rejected;
-      // renamed to test-multimodal-* to match the test- prefix pattern.
-      expect(isValidChatId('test-multimodal-12345')).toBe(true);
-    });
-  });
-
   describe('invalid formats', () => {
+    it('should reject test- prefix (Issue #2389: test patterns removed from production)', () => {
+      expect(isValidChatId('test-use-case-2-files-12345')).toBe(false);
+      expect(isValidChatId('test-abcde')).toBe(false);
+      expect(isValidChatId('test-multimodal-12345')).toBe(false);
+    });
+
     it('should reject an empty string', () => {
       expect(isValidChatId('')).toBe(false);
     });
@@ -117,10 +99,6 @@ describe('getChatIdValidationError', () => {
     expect(getChatIdValidationError('cli-session-42')).toBeNull();
   });
 
-  it('should return null for a valid test- ID', () => {
-    expect(getChatIdValidationError('test-mcp-send-text-12345')).toBeNull();
-  });
-
   it('should return an error for an empty string', () => {
     const error = getChatIdValidationError('');
     expect(error).not.toBeNull();
@@ -133,7 +111,6 @@ describe('getChatIdValidationError', () => {
     expect(error).toContain('oc_');
     expect(error).toContain('ou_');
     expect(error).toContain('cli-');
-    expect(error).toContain('test-');
   });
 
   it('should truncate long chatIds in error messages', () => {
