@@ -27,9 +27,6 @@ export default [
       'dedupe-records/**',
       'logs/**',
       'long-tasks/**',
-      // voice-pipeline is not yet integrated into the monorepo tsconfig setup
-      // TODO: remove this ignore once voice-pipeline has its own tsconfig.json
-      'packages/voice-pipeline/**',
     ],
   },
   {
@@ -41,10 +38,7 @@ export default [
       parserOptions: {
         project: [
           './tsconfig.json',
-          './packages/core/tsconfig.json',
-          './packages/primary-node/tsconfig.json',
-          './packages/mcp-server/tsconfig.json',
-          './packages/worker-node/tsconfig.json',
+          './packages/*/tsconfig.json',
         ],
         tsconfigRootDir: import.meta.dirname,
       },
