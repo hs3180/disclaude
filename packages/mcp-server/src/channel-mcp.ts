@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  create_group,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { create_group } from './tools/create-group.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,55 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2351: Context Offloading — side group creation
+  {
+    name: 'create_group',
+    description: `Create a new Feishu group chat for content delivery (Context Offloading).
+
+Use this when you need to create a side group for long-form content delivery, keeping the main conversation clean. After creating the group, use send_text/send_card to deliver content and register_temp_chat for auto-expiry.
+
+## Use Cases
+- **Voice Mode Offloading**: Auto-route long-form content to side groups when in voice mode
+- **Code Generation**: Send generated configs/scripts to a dedicated group for review
+- **Report Generation**: Send research reports/analysis to a separate channel
+- **Multi-file Delivery**: Deliver multiple files with structured documentation
+
+## Parameters
+- **name**: Group name (1-100 chars, letters/numbers/spaces/common punctuation)
+- **memberIds**: Array of Feishu open_ids to invite (ou_xxxxx format)
+- **description**: Optional group description
+
+## Example
+\`\`\`json
+{
+  "name": "LiteLLM 配置方案 - 04/16",
+  "memberIds": ["ou_user1", "ou_user2"],
+  "description": "LiteLLM configuration files and architecture docs"
+}
+\`\`\`
+
+## After Creation
+1. Use \`send_text\` or \`send_card\` to deliver content to the new group
+2. Use \`register_temp_chat\` to set up auto-expiry (e.g., 24h)
+3. Reply in the original chat with a brief summary + group link`,
+    parameters: z.object({
+      name: z.string().describe('Group name (1-100 chars)'),
+      memberIds: z.array(z.string()).describe('Array of Feishu open_ids to invite (ou_xxxxx format)'),
+      description: z.string().optional().describe('Optional group description'),
+    }),
+    handler: async ({ name, memberIds, description }: {
+      name: string;
+      memberIds: string[];
+      description?: string;
+    }) => {
+      try {
+        const result = await create_group({ name, memberIds, description });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Group creation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
