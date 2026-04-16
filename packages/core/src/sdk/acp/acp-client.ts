@@ -197,14 +197,19 @@ export class AcpClient {
   /**
    * 创建新的 ACP 会话。
    *
+   * Note (Issue #2463, #2451): MCP servers are NO longer passed via
+   * session/new. ACP v0.23.1+ only supports http/sse MCP transports.
+   * Stdio MCP servers are written to {workspace}/.mcp.json by ChatAgent
+   * so that Claude Code loads them natively. The mcpServers field is
+   * always an empty array in the session/new request.
+   *
    * @param cwd - 工作目录
-   * @param options - 可选的会话配置（mcpServers、permissionMode 等）
+   * @param options - 可选的会话配置（permissionMode 等）
    * @returns 会话 ID 和模型信息
    */
   async createSession(
     cwd: string,
     options?: {
-      mcpServers?: unknown[];
       permissionMode?: string;
       model?: string;
       allowedTools?: string[];
@@ -217,7 +222,9 @@ export class AcpClient {
 
     const params: AcpSessionNewParams = {
       cwd,
-      mcpServers: options?.mcpServers ?? [],
+      // Issue #2463/#2451: mcpServers is always empty. Stdio MCP servers
+      // are loaded via .mcp.json by Claude Code, not through session/new.
+      mcpServers: [],
     };
 
     // Build _meta.claudeCode.options if any option is present
