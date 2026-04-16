@@ -39,6 +39,7 @@ export default [
         project: [
           './tsconfig.json',
           './packages/*/tsconfig.json',
+          './schedules/**/tsconfig.json',
         ],
         tsconfigRootDir: import.meta.dirname,
       },
