@@ -612,11 +612,25 @@ export class MessageHandler {
         });
         await response.writeFile(localPath);
 
+        // Issue #2411: Verify file was actually written to disk
+        try {
+          const stat = await fs.stat(localPath);
+          if (stat.size === 0) {
+            logger.warn({ fileKey, localPath, quotedMessageId: messageId }, 'Downloaded quoted file is empty (0 bytes)');
+            localPath = undefined;
+          }
+        } catch (statError) {
+          logger.error({ err: statError, fileKey, localPath, quotedMessageId: messageId }, 'Downloaded quoted file not found on disk after writeFile');
+          localPath = undefined;
+        }
+
         // Issue #1637, #1663: Ensure file has correct extension via file-utils API
-        const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
-        if (correctedPath !== localPath) {
-          localPath = correctedPath;
-          fileName = path.basename(correctedPath);
+        if (localPath) {
+          const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
+          if (correctedPath !== localPath) {
+            localPath = correctedPath;
+            fileName = path.basename(correctedPath);
+          }
         }
 
         logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
@@ -738,11 +752,25 @@ export class MessageHandler {
           });
           await response.writeFile(localPath);
 
+          // Issue #2411: Verify file was actually written to disk
+          try {
+            const stat = await fs.stat(localPath);
+            if (stat.size === 0) {
+              logger.warn({ fileKey, localPath, messageId: message_id }, 'Downloaded file is empty (0 bytes)');
+              localPath = undefined;
+            }
+          } catch (statError) {
+            logger.error({ err: statError, fileKey, localPath, messageId: message_id }, 'Downloaded file not found on disk after writeFile');
+            localPath = undefined;
+          }
+
           // Issue #1637, #1663: Ensure file has correct extension via file-utils API
-          const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
-          if (correctedPath !== localPath) {
-            localPath = correctedPath;
-            fileName = path.basename(correctedPath);
+          if (localPath) {
+            const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
+            if (correctedPath !== localPath) {
+              localPath = correctedPath;
+              fileName = path.basename(correctedPath);
+            }
           }
 
           logger.info({ fileKey, localPath }, 'File downloaded successfully');
