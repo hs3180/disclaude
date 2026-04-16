@@ -12,6 +12,7 @@ export type {
   ActionPromptMap,
   SendInteractiveResult,
   RegisterTempChatResult,
+  InsertDocxImageResult,
 } from './types.js';
 
 // Shared utilities
@@ -46,3 +47,13 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Docx Image Insertion (Issue #2278)
+export { insert_docx_image } from './insert-docx-image.js';
+export {
+  getTenantAccessToken,
+  createImageBlock,
+  uploadDocxImage,
+  replaceImageBlock,
+  clearTokenCache,
+} from './feishu-docx-api.js';

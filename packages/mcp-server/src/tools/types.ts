@@ -81,3 +81,17 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for insert_docx_image tool.
+ * Issue #2278: Inline image insertion in Feishu documents.
+ */
+export interface InsertDocxImageResult {
+  success: boolean;
+  message: string;
+  /** The block ID of the created image block */
+  blockId?: string;
+  /** The index where the image was inserted */
+  index?: number;
+  error?: string;
+}
+

@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,14 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
+export {
+  getTenantAccessToken,
+  createImageBlock,
+  uploadDocxImage,
+  replaceImageBlock,
+  clearTokenCache,
+} from './tools/feishu-docx-api.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +460,50 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Inline image insertion in Feishu documents
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image at a specific position in a Feishu document (docx).
+
+Uses the 3-step Feishu API flow: create empty image block → upload image → bind to block.
+This allows precise positioning of images within document text, unlike lark-cli's +media-insert which only appends to the end.
+
+## Parameters
+- **documentId**: Feishu document ID (from URL: /docx/{documentId})
+- **imagePath**: Path to the image file (relative to workspace or absolute)
+- **index**: 0-based position to insert the image block in the document
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, bmp, svg (max 20MB)
+
+## Example
+\`\`\`json
+{
+  "documentId": "doxcnxxxxxxxxxxxxxxx",
+  "imagePath": "/path/to/chart.png",
+  "index": 3
+}
+\`\`\`
+
+**Reference:** https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/document-docx/docx-v1/document-block-children/create`,
+    parameters: z.object({
+      documentId: z.string().describe('Feishu document ID (from URL: /docx/{documentId})'),
+      imagePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().int().nonnegative().describe('0-based position to insert the image block'),
+    }),
+    handler: async ({ documentId, imagePath, index }: {
+      documentId: string;
+      imagePath: string;
+      index: number;
+    }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Docx image insert failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
