@@ -20,6 +20,7 @@ vi.mock('./tools/index.js', () => ({
 vi.mock('./utils/card-validator.js', () => ({
   isValidFeishuCard: vi.fn().mockReturnValue(true),
   getCardValidationError: vi.fn().mockReturnValue('invalid card structure'),
+  detectMarkdownTableWarnings: vi.fn().mockReturnValue([]),
 }));
 
 // No need to mock @anthropic-ai/claude-agent-sdk:
