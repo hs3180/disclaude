@@ -185,6 +185,38 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     const feishuHandlers: FeishuApiHandlers = {
       ...baseHandlers,
 
+      // Issue #1919: Upload image via Feishu im.image.create and return image_key
+      uploadImage: async (filePath: string) => {
+        const fs = await import('fs');
+        const path = await import('path');
+        const fileName = path.basename(filePath);
+        const { size: fileSize } = fs.statSync(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+
+        if (!imageExtensions.includes(ext)) {
+          throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+        }
+        if (fileSize > 10 * 1024 * 1024) {
+          throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+        }
+
+        const uploadResp = await feishuChannel.getClient().im.image.create({
+          data: {
+            image_type: 'message',
+            image: fs.createReadStream(filePath),
+          },
+        });
+
+        const imageKey = uploadResp?.image_key;
+        if (!imageKey) {
+          throw new Error(`Failed to upload image: ${fileName} — no image_key returned`);
+        }
+
+        context.logger.info({ imageKey, fileName, fileSize }, 'Image uploaded via uploadImage handler');
+        return { imageKey, fileName, fileSize };
+      },
+
       // Issue #1571: Build interactive card from raw parameters using extracted builder
       sendInteractive: async (chatId: string, params: {
         question: string;

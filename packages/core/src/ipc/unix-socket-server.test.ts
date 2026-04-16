@@ -286,6 +286,74 @@ describe('createInteractiveMessageHandler', () => {
     });
   });
 
+  // ----- uploadImage (Issue #1919) -----
+  describe('uploadImage request', () => {
+    it('should call handler.uploadImage and return result', async () => {
+      const uploadImageContainer = createMockHandlersContainer({
+        uploadImage: vi.fn().mockResolvedValue({
+          imageKey: 'img_v3_test123',
+          fileName: 'chart.png',
+          fileSize: 51200,
+        }),
+      });
+      const uploadImageHandler = createInteractiveMessageHandler(registerActionPrompts, uploadImageContainer);
+      const request = createRequest('uploadImage', 'req-img-1', {
+        filePath: '/path/to/chart.png',
+      });
+      const response = await uploadImageHandler(request);
+
+      expect(uploadImageContainer.handlers!.uploadImage).toHaveBeenCalledWith('/path/to/chart.png');
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({
+        success: true,
+        imageKey: 'img_v3_test123',
+        fileName: 'chart.png',
+        fileSize: 51200,
+      });
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('uploadImage', 'req-img-2', {
+        filePath: '/path/to/chart.png',
+      });
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
+    });
+
+    it('should return error when uploadImage is not supported', async () => {
+      // Container with handlers that don't have uploadImage
+      const noImageContainer = createMockHandlersContainer();
+      // uploadImage is undefined by default in the mock
+      const noImageHandler = createInteractiveMessageHandler(registerActionPrompts, noImageContainer);
+      const request = createRequest('uploadImage', 'req-img-3', {
+        filePath: '/path/to/chart.png',
+      });
+      const response = await noImageHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('uploadImage not supported');
+    });
+
+    it('should return error when uploadImage throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        uploadImage: vi.fn().mockRejectedValue(new Error('Image upload failed')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('uploadImage', 'req-img-4', {
+        filePath: '/path/to/chart.png',
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Image upload failed');
+    });
+  });
+
   // ----- sendInteractive -----
   describe('sendInteractive request', () => {
     it('should call handler.sendInteractive and register action prompts', async () => {

@@ -248,7 +248,7 @@ export interface ChannelApiHandlersOptions {
 export function createChannelApiHandlers(
   channel: IChannel,
   options: ChannelApiHandlersOptions
-): Pick<ChannelApiHandlers, 'sendMessage' | 'sendCard' | 'uploadFile'> {
+): Pick<ChannelApiHandlers, 'sendMessage' | 'sendCard' | 'uploadFile' | 'uploadImage'> {
   const { logger, channelName } = options;
 
   return {
@@ -296,5 +296,10 @@ export function createChannelApiHandlers(
         fileSize: 0,    // synthetic — not available via sendMessage
       };
     },
+
+    // Issue #1919: Upload image and return image_key for card embedding.
+    // This handler is optional — channels that don't support image upload
+    // should leave it undefined and handle it in their wired descriptor instead.
+    uploadImage: undefined,
   };
 }

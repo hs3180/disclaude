@@ -673,6 +673,17 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Get the Feishu Lark client.
+   * Issue #1919: Expose client for image upload via uploadImage handler.
+   */
+  getClient(): lark.Client {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized — call start() first');
+    }
+    return this.client;
+  }
+
+  /**
    * Get the InteractionManager for this channel.
    */
   getInteractionManager(): InteractionManager {

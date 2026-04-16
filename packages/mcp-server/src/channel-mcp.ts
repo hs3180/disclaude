@@ -17,6 +17,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -411,6 +413,51 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image and return image_key for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image file and return an image_key for use in card messages.
+
+Use this to embed images into card messages (e.g., charts, diagrams, thumbnails).
+After uploading, use the returned image_key in card \`img\` elements.
+
+## Parameters
+- **filePath**: Path to the image file to upload (string)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico
+
+## Size Limit
+Maximum 10MB per image.
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\`
+
+Response will include \`image_key\` which can be used in send_card:
+\`\`\`json
+{
+  "card": {
+    "elements": [
+      { "tag": "img", "img_key": "img_v3_xxxx" }
+    ]
+  },
+  "chatId": "oc_xxx"
+}
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

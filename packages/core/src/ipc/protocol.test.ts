@@ -95,6 +95,15 @@ describe('IPC Protocol', () => {
       expect(uploadFile.payload.filePath).toBe('/path/to/file.pdf');
     });
 
+    it('should type-check uploadImage request', () => {
+      const uploadImage: IpcRequest<'uploadImage'> = {
+        type: 'uploadImage',
+        id: 'req-8',
+        payload: { filePath: '/path/to/chart.png' },
+      };
+      expect(uploadImage.payload.filePath).toBe('/path/to/chart.png');
+    });
+
     it('should type-check sendInteractive request', () => {
       const sendInteractive: IpcRequest<'sendInteractive'> = {
         type: 'sendInteractive',
@@ -160,6 +169,19 @@ describe('IPC Protocol', () => {
         },
       };
       expect(fileResponse.payload?.fileSize).toBe(1024);
+
+      const uploadImageResponse: IpcResponse<'uploadImage'> = {
+        id: 'req-4',
+        success: true,
+        payload: {
+          success: true,
+          imageKey: 'img_v3_xxxx',
+          fileName: 'chart.png',
+          fileSize: 51200,
+        },
+      };
+      expect(uploadImageResponse.payload?.imageKey).toBe('img_v3_xxxx');
+      expect(uploadImageResponse.payload?.fileSize).toBe(51200);
 
       const interactiveResponse: IpcResponse<'sendInteractive'> = {
         id: 'req-3',
