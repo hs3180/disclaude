@@ -513,13 +513,21 @@ interface ResolvedAcpCommand {
  * Detect the correct command for spawning an ACP-compatible agent process.
  *
  * Resolution order:
+ * 0. `agent.acpCommand` config override — user-specified command (highest priority)
  * 1. `claude-agent-acp` — dedicated ACP binary (preferred, always correct)
  * 2. `claude --agent-acp` — CLI flag (only if the installed version supports it)
  *
+ * @param configOverride - Optional user-specified ACP command from config (agent.acpCommand)
  * @returns The resolved command and args
  * @throws Error with actionable message if no valid command is found
  */
-export function resolveAcpCommand(): ResolvedAcpCommand {
+export function resolveAcpCommand(configOverride?: string): ResolvedAcpCommand {
+  // Strategy 0: User-specified command from config (agent.acpCommand)
+  if (configOverride) {
+    logger.debug({ command: configOverride }, 'Resolved ACP command from config override');
+    return { command: configOverride, args: [] };
+  }
+
   // Strategy 1: Try `claude-agent-acp` (dedicated binary)
   if (commandExists('claude-agent-acp')) {
     logger.debug('Resolved ACP command: claude-agent-acp');
@@ -538,7 +546,8 @@ export function resolveAcpCommand(): ResolvedAcpCommand {
     'No ACP-compatible agent command found. '
     + 'Install one of:\n'
     + '  1. claude-agent-acp (npm install -g @zed-industries/claude-agent-acp)\n'
-    + '  2. Or upgrade Claude CLI to a version that supports --agent-acp\n'
+    + '  2. Or set agent.acpCommand in disclaude.config.yaml\n'
+    + '  3. Or upgrade Claude CLI to a version that supports --agent-acp\n'
     + 'See Issue #2349 for details.',
   );
 }
@@ -603,8 +612,9 @@ export function createDefaultRuntimeContext(
 ): AgentRuntimeContext {
   // Create shared ACP Client instance (lazy-connect on first use)
   // Issue #2311: ACP Client replaces SDK Provider for agent execution
-  // Issue #2349: Auto-detect correct ACP command (claude-agent-acp or claude --agent-acp)
-  const { command: acpCommand, args: acpArgs } = resolveAcpCommand();
+  // Issue #2349: Auto-detect correct ACP command (config override > claude-agent-acp > claude --agent-acp)
+  const acpCommandOverride = fileConfigOnly.agent?.acpCommand;
+  const { command: acpCommand, args: acpArgs } = resolveAcpCommand(acpCommandOverride);
   logger.info({ command: acpCommand, args: acpArgs }, 'Resolved ACP transport command');
 
   const acpClient = new AcpClient({
