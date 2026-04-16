@@ -70,6 +70,9 @@ export async function send_card(params: {
       };
     }
 
+    // Note: GFM table auto-conversion is handled in channel-mcp.ts (the MCP entry point)
+    // No need to call transformCardTables here as channel-mcp.ts already processes the card
+
     const { appId, appSecret } = getFeishuCredentials();
 
     if (!appId || !appSecret) {
