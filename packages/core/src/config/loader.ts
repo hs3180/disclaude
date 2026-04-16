@@ -187,6 +187,22 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
 } {
   const errors: ConfigValidationError[] = [];
 
+  // If OpenAI API key is configured, model must also be configured
+  if (config.openai?.apiKey && !config.openai?.model) {
+    errors.push({
+      field: 'openai.model',
+      message: 'openai.model is required when openai.apiKey is set',
+    });
+  }
+
+  // If OpenAI model is configured, API key must also be configured
+  if (config.openai?.model && !config.openai?.apiKey) {
+    errors.push({
+      field: 'openai.apiKey',
+      message: 'openai.apiKey is required when openai.model is set',
+    });
+  }
+
   // If GLM API key is configured, model must also be configured
   if (config.glm?.apiKey && !config.glm?.model) {
     errors.push({

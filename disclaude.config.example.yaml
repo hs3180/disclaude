@@ -25,7 +25,7 @@ workspace:
 # -----------------------------------------------------------------------------
 agent:
   # API provider preference
-  # Options: anthropic, glm
+  # Options: anthropic, glm, openai
   provider: "glm"
 
   # Model to use for AI operations
@@ -117,6 +117,27 @@ glm:
 
   # API base URL (usually no need to change)
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+
+# -----------------------------------------------------------------------------
+# OpenAI API Configuration
+# -----------------------------------------------------------------------------
+# Enable OpenAI provider to use GPT-4o, o3, and other OpenAI models.
+# Requires an OpenAI ACP Server to be installed and accessible.
+# @see Issue #1333
+openai:
+  # OpenAI API key from https://platform.openai.com/
+  # apiKey: "your_openai_api_key_here"
+
+  # Model identifier (required when apiKey is set)
+  # Examples: gpt-4o, gpt-4o-mini, o3, o3-mini
+  # model: "gpt-4o"
+
+  # API base URL (usually no need to change, but can be set for Azure OpenAI or compatible APIs)
+  # apiBaseUrl: "https://api.openai.com/v1"
+
+  # ACP Server command for spawning the OpenAI ACP server process.
+  # If not set, auto-detects 'openai-acp-server' from PATH.
+  # acpCommand: "openai-acp-server"
 
 # -----------------------------------------------------------------------------
 # Logging Configuration

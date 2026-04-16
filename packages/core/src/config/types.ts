@@ -25,8 +25,8 @@ export interface WorkspaceConfig {
  * This avoids confusion about which model takes precedence.
  */
 export interface AgentConfig {
-  /** API provider preference (anthropic, glm) */
-  provider?: 'anthropic' | 'glm';
+  /** API provider preference (anthropic, glm, openai) */
+  provider?: 'anthropic' | 'glm' | 'openai';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -83,6 +83,29 @@ export interface GlmConfig {
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
+}
+
+/**
+ * OpenAI API configuration section.
+ *
+ * When using OpenAI provider, both apiKey and model are REQUIRED.
+ * The provider communicates via ACP protocol through a dedicated ACP server process.
+ *
+ * @see Issue #1333
+ */
+export interface OpenAIConfig {
+  /** API key (overrides OPENAI_API_KEY env var) */
+  apiKey?: string;
+  /** Model identifier - REQUIRED when apiKey is set (e.g. 'gpt-4o', 'o3') */
+  model?: string;
+  /** API base URL (overrides OPENAI_API_BASE_URL env var) */
+  apiBaseUrl?: string;
+  /**
+   * ACP Server command for spawning the OpenAI ACP server process.
+   * When set, skips auto-detection and uses this command directly.
+   * @example 'openai-acp-server', '/usr/local/bin/openai-acp-server'
+   */
+  acpCommand?: string;
 }
 
 /**
@@ -332,6 +355,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** OpenAI API settings */
+  openai?: OpenAIConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */
