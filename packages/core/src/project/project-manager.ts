@@ -62,8 +62,10 @@ export class ProjectManager {
   private readonly workspaceDir: string;
   /** Root directory containing built-in templates with CLAUDE.md files.
    *  Used by Sub-Issue D (#2459) for `instantiateFromTemplate()` to copy
-   *  `{packageDir}/templates/{name}/CLAUDE.md` into the instance workingDir. */
-  private readonly packageDir: string;
+   *  `{packageDir}/templates/{name}/CLAUDE.md` into the instance workingDir.
+   *  @internal Prefixed with _ until instantiateFromTemplate is implemented. */
+  // @ts-expect-error — packageDir will be used by instantiateFromTemplate (Sub-Issue D)
+  private readonly _packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -73,7 +75,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    this.packageDir = options.packageDir;
+    this._packageDir = options.packageDir;
     this.init(options.templatesConfig);
   }
 
@@ -353,8 +355,9 @@ export class ProjectManager {
    * @returns Array of bound chatIds
    */
   private getBoundChatIds(instanceName: string): string[] {
-    return this.instanceChatIds.get(instanceName)
-      ? [...this.instanceChatIds.get(instanceName)!]
+    const chatIds = this.instanceChatIds.get(instanceName);
+    return chatIds
+      ? [...chatIds]
       : [];
   }
 
