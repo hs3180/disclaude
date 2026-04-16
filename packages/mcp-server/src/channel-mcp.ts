@@ -18,7 +18,10 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
-  setMessageSentCallback
+  setMessageSentCallback,
+  // macOS screenshot (Issue #2216 Phase 1 Part 1/3)
+  mac_screenshot,
+  mac_calibrate,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
 import { transformCardTables } from './utils/table-converter.js';
@@ -41,6 +44,13 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
+
+// macOS Screenshot (Issue #2216 Phase 1 Part 1/3)
+export {
+  mac_screenshot,
+  mac_calibrate,
+  isMacOS,
+} from './tools/mac-screenshot.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
   return { content: [{ type: 'text', text }] };
@@ -451,6 +461,78 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+
+  // ============================================================================
+  // Issue #2216 Phase 1 (Part 1/3): macOS Screen Capture
+  // - mac_screenshot: Take screenshots via built-in screencapture command
+  // - mac_calibrate: Detect Retina scale factor for coordinate conversion
+  //
+  // Mouse/keyboard input and window management will follow in separate PRs.
+  // These tools only work on macOS. On other platforms, they return an error.
+  // ============================================================================
+
+  {
+    name: 'mac_screenshot',
+    description: `Take a screenshot on macOS using the built-in screencapture command.
+
+## Parameters
+- **region**: Optional crop region \`{x, y, width, height}\` in logical points
+- **cursor**: Whether to show cursor in screenshot (default: false)
+- **windowId**: Optional window ID to capture a specific window
+
+## Example
+\`\`\`json
+{"region": {"x": 0, "y": 0, "width": 800, "height": 600}}
+\`\`\`
+
+Returns the file path of the saved PNG screenshot.
+
+**Note**: Only works on macOS. Requires Screen Recording permission.`,
+    parameters: z.object({
+      region: z.object({
+        x: z.number(),
+        y: z.number(),
+        width: z.number(),
+        height: z.number(),
+      }).optional().describe('Crop region in logical points'),
+      cursor: z.boolean().optional().describe('Show cursor in screenshot (default: false)'),
+      windowId: z.number().optional().describe('Window ID to capture'),
+    }),
+    handler: async (params: {
+      region?: { x: number; y: number; width: number; height: number };
+      cursor?: boolean;
+      windowId?: number;
+    }) => {
+      const result = await mac_screenshot(params);
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
+    },
+  },
+  {
+    name: 'mac_calibrate',
+    description: `Calibrate screen coordinates for Retina displays on macOS.
+
+Detects the screen's backing scale factor and reports both logical and physical dimensions.
+Use this to convert between screenshot pixel coordinates and logical point coordinates.
+
+**Formula**: \`logical_coordinate = pixel_coordinate / scaleFactor\`
+
+## Example
+\`\`\`json
+{}
+\`\`\`
+
+Returns:
+- **scaleFactor**: Retina = 2.0, Standard = 1.0
+- **logicalWidth/logicalHeight**: Logical screen size (points)
+- **screenWidth/screenHeight**: Physical screen size (pixels)
+
+**Note**: Only works on macOS.`,
+    parameters: z.object({}),
+    handler: async () => {
+      const result = await mac_calibrate();
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
     },
   },
 ];

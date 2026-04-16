@@ -46,3 +46,11 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// macOS Screenshot (Issue #2216 Phase 1 Part 1/3: Screen capture)
+export {
+  isMacOS,
+  mac_screenshot,
+  mac_calibrate,
+} from './mac-screenshot.js';
+export type { ScreenshotResult, CalibrateResult } from './mac-screenshot.js';
