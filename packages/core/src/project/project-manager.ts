@@ -60,15 +60,20 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
+  /** Root directory containing built-in templates with CLAUDE.md files.
+   *  Used by Sub-Issue D (#2459) for `instantiateFromTemplate()` to copy
+   *  `{packageDir}/templates/{name}/CLAUDE.md` into the instance workingDir. */
   private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
+  /** chatId → instance name binding */
   private chatProjectMap: Map<string, string> = new Map();
+  /** Reverse index: instance name → Set of bound chatIds (O(1) lookup) */
+  private instanceChatIds: Map<string, Set<string>> = new Map();
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
     this.packageDir = options.packageDir;
-    // Store templatesConfig for init(), but don't load yet
     this.init(options.templatesConfig);
   }
 
@@ -128,6 +133,7 @@ export class ProjectManager {
 
       // Stale binding self-healing: instance was removed, clean up binding
       this.chatProjectMap.delete(chatId);
+      this.removeFromReverseIndex(boundName, chatId);
     }
 
     // Default: workspace root
@@ -180,6 +186,7 @@ export class ProjectManager {
 
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
+    this.addToReverseIndex(name, chatId);
 
     return {
       ok: true,
@@ -209,7 +216,14 @@ export class ProjectManager {
       return { ok: false, error: `实例 "${name}" 不存在` };
     }
 
+    // Remove from old instance's reverse index if rebinding
+    const oldName = this.chatProjectMap.get(chatId);
+    if (oldName && oldName !== name) {
+      this.removeFromReverseIndex(oldName, chatId);
+    }
+
     this.chatProjectMap.set(chatId, name);
+    this.addToReverseIndex(name, chatId);
 
     return {
       ok: true,
@@ -233,7 +247,11 @@ export class ProjectManager {
       return { ok: false, error: chatIdError };
     }
 
+    const boundName = this.chatProjectMap.get(chatId);
     this.chatProjectMap.delete(chatId);
+    if (boundName) {
+      this.removeFromReverseIndex(boundName, chatId);
+    }
 
     return {
       ok: true,
@@ -329,17 +347,41 @@ export class ProjectManager {
   /**
    * Get all chatIds bound to a specific instance.
    *
+   * Uses reverse index for O(1) lookup per instance.
+   *
    * @param instanceName - Instance name to look up
    * @returns Array of bound chatIds
    */
   private getBoundChatIds(instanceName: string): string[] {
-    const chatIds: string[] = [];
-    for (const [chatId, boundName] of this.chatProjectMap.entries()) {
-      if (boundName === instanceName) {
-        chatIds.push(chatId);
+    return this.instanceChatIds.get(instanceName)
+      ? [...this.instanceChatIds.get(instanceName)!]
+      : [];
+  }
+
+  /**
+   * Add a chatId to an instance's reverse index set.
+   */
+  private addToReverseIndex(instanceName: string, chatId: string): void {
+    let set = this.instanceChatIds.get(instanceName);
+    if (!set) {
+      set = new Set();
+      this.instanceChatIds.set(instanceName, set);
+    }
+    set.add(chatId);
+  }
+
+  /**
+   * Remove a chatId from an instance's reverse index set.
+   * Cleans up empty sets to avoid memory leaks.
+   */
+  private removeFromReverseIndex(instanceName: string, chatId: string): void {
+    const set = this.instanceChatIds.get(instanceName);
+    if (set) {
+      set.delete(chatId);
+      if (set.size === 0) {
+        this.instanceChatIds.delete(instanceName);
       }
     }
-    return chatIds;
   }
 
   // ───────────────────────────────────────────
