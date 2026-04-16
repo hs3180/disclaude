@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Service identifier (must be unique per service) -->
+    <key>Label</key>
+    <string>com.disclaude.primary</string>
+
+    <!-- Program to execute -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <!-- Path to the built primary-node CLI entry point -->
+        <string>/path/to/disclaude/packages/primary-node/dist/cli.js</string>
+        <string>start</string>
+        <!-- Optional: specify config file path -->
+        <!-- <string>--config</string> -->
+        <!-- <string>/path/to/disclaude/disclaude.config.yaml</string> -->
+    </array>
+
+    <!-- Start automatically when the user logs in -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart the service if it crashes -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Wait 5 seconds before restarting after a crash -->
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <!-- Working directory for the process -->
+    <key>WorkingDirectory</key>
+    <string>/path/to/disclaude</string>
+
+    <!-- Standard output log path -->
+    <key>StandardOutPath</key>
+    <string>/path/to/disclaude/logs/launchd-primary-out.log</string>
+
+    <!-- Standard error log path -->
+    <key>StandardErrorPath</key>
+    <string>/path/to/disclaude/logs/launchd-primary-err.log</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

@@ -13,6 +13,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 | [5 分钟接入飞书](docs/quickstart.md) | 极简快速上手指南 |
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
 | [GitHub App 配置指南](docs/github-app-guide.md) | GitHub App 认证配置教程 |
+| [生产部署指南](docs/deployment.md) | 平台部署指南（macOS launchd / Linux PM2 / Docker） |
 
 ## Features
 
@@ -25,6 +26,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 - **Custom skills** - Extensible workflow system (`.claude/skills/`)
 - **Message deduplication** - Prevents duplicate responses in WebSocket mode
 - **PM2 production ready** - Background service with log management
+- **macOS launchd support** - TCC-compatible process management for microphone/camera access
 
 ## Version
 

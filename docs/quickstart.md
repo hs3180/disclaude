@@ -67,9 +67,14 @@ glm:
 # 开发模式（自动重载）
 npm run dev
 
-# 生产模式（PM2 守护进程）
+# 生产模式 — macOS 用户请使用 launchd（避免 TCC 权限问题）
+npm run launchd:install       # macOS: 使用 launchd 守护进程
+
+# 生产模式 — Linux 用户使用 PM2
 npm run pm2:start
 ```
+
+> ⚠️ **macOS 用户注意**: 请使用 `launchd` 而非 PM2。PM2 在 macOS 上会导致麦克风等 TCC 权限被静默拒绝（[Issue #1957](https://github.com/hs3180/disclaude/issues/1957)）。详见 [部署指南](./deployment.md)。
 
 ## 第 5 步：验证
 
@@ -95,8 +100,12 @@ npm run pm2:start
 
 **❌ 连接失败** → 检查 App ID / App Secret 是否正确，查看日志 `npm run pm2:logs`
 
+**❌ macOS 麦克风无声音** → 使用 `launchd` 替代 PM2，参考 [部署指南](./deployment.md)
+
 ---
 
 > 📖 完整配置参考：[disclaude.config.example.yaml](../disclaude.config.example.yaml)
 >
 > 📖 详细飞书配置指南：[feishu-setup.md](./feishu-setup.md)
+>
+> 📖 生产部署指南：[deployment.md](./deployment.md)

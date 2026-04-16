@@ -14,7 +14,7 @@ npm run lint:fix     # ESLint with auto-fix
 npm run test         # Run tests
 npm run test:coverage # Run tests with coverage
 
-# === Production (PM2) ===
+# === Production (PM2) — Linux only ===
 npm run pm2:start     # Build and start PM2 service
 npm run pm2:restart   # Restart after code changes (manual only - not automatic)
 npm run pm2:reload    # Zero-downtime reload
@@ -25,6 +25,18 @@ npm run pm2:logs:out  # View output logs only (nostream)
 npm run pm2:status    # Check status
 npm run pm2:stop      # Stop service
 npm run pm2:delete    # Remove from PM2
+
+# === Production (launchd) — macOS only (avoids TCC permission issues) ===
+# See Issue #1957: PM2 breaks macOS TCC process chain permissions
+npm run launchd:install          # Build and install launchd services
+npm run launchd:install:primary  # Install primary node only
+npm run launchd:restart          # Build and restart all services
+npm run launchd:restart:primary  # Build and restart primary node only
+npm run launchd:status           # Check service status
+npm run launchd:logs             # View primary node logs
+npm run launchd:logs:follow      # Follow primary node logs (live tail)
+npm run launchd:stop             # Stop all services
+npm run launchd:uninstall        # Remove all launchd services
 
 # === CLI usage ===
 disclaude feishu              # Start Feishu bot

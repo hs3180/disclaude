@@ -28,6 +28,9 @@ pnpm-debug.log*
 # PM2
 .pm2/
 
+# launchd (generated plists — templates are *.example and should be tracked)
+scripts/launchd/*.plist
+
 # Logs (keep directory, ignore contents)
 logs/*
 !logs/.gitkeep
