@@ -19,6 +19,8 @@ import {
   writeStateFile,
   listAllStateFiles,
   ensureStateDir,
+  addLabel,
+  removeLabel,
   type PrStateFile,
 } from './scanner.js';
 
@@ -362,5 +364,82 @@ describe('edge cases', () => {
     expect(typeof parsed.createdAt).toBe('string');
     expect(typeof parsed.updatedAt).toBe('string');
     expect(typeof parsed.expiresAt).toBe('string');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Label management
+// ---------------------------------------------------------------------------
+
+describe('addLabel', () => {
+  it('returns failure when gh CLI is not available', async () => {
+    const result = await addLabel(999, 'pr-scanner:reviewing', 'nonexistent/repo');
+    expect(result.success).toBe(false);
+    expect(result.prNumber).toBe(999);
+    expect(result.label).toBe('pr-scanner:reviewing');
+    expect(result.action).toBe('added');
+    expect(result.error).toBeDefined();
+  });
+
+  it('returns correct structure on failure', async () => {
+    const result = await addLabel(123, 'test-label');
+    // In test environment gh likely fails, which is fine
+    expect(result).toHaveProperty('prNumber', 123);
+    expect(result).toHaveProperty('label', 'test-label');
+    expect(result).toHaveProperty('action', 'added');
+    expect(result).toHaveProperty('success');
+  });
+});
+
+describe('removeLabel', () => {
+  it('returns failure when gh CLI is not available', async () => {
+    const result = await removeLabel(999, 'pr-scanner:reviewing', 'nonexistent/repo');
+    expect(result.success).toBe(false);
+    expect(result.prNumber).toBe(999);
+    expect(result.label).toBe('pr-scanner:reviewing');
+    expect(result.action).toBe('removed');
+    expect(result.error).toBeDefined();
+  });
+
+  it('returns correct structure on failure', async () => {
+    const result = await removeLabel(456, 'test-label');
+    expect(result).toHaveProperty('prNumber', 456);
+    expect(result).toHaveProperty('label', 'test-label');
+    expect(result).toHaveProperty('action', 'removed');
+    expect(result).toHaveProperty('success');
+  });
+});
+
+describe('label integration with createState', () => {
+  it('creates state file even when label fails (non-blocking)', async () => {
+    // createState attempts to add label via gh, which fails in test env
+    // But the state file should still be created
+    const result = await createState(testDir, 500, 'oc_label_test');
+    expect(result.prNumber).toBe(500);
+    expect(result.state).toBe('reviewing');
+
+    // State file should exist on disk
+    const read = await readStateFile(testDir, 500);
+    expect(read).not.toBeNull();
+    expect(read!.prNumber).toBe(500);
+  });
+});
+
+describe('label integration with markState', () => {
+  it('transitions state even when label removal fails (non-blocking)', async () => {
+    // Create state first
+    await createState(testDir, 600, 'oc_mark_label');
+    // markState attempts to remove label via gh, which fails in test env
+    // But the state should still transition
+    const result = await markState(testDir, 600, 'approved');
+    expect(result.state).toBe('approved');
+    expect(result.prNumber).toBe(600);
+  });
+
+  it('does not remove label when state stays as reviewing', async () => {
+    await createState(testDir, 601, 'oc_stay');
+    // Transitioning reviewing → reviewing should not trigger label removal
+    const result = await markState(testDir, 601, 'reviewing');
+    expect(result.state).toBe('reviewing');
   });
 });

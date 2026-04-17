@@ -8,13 +8,14 @@
  * CLI usage:
  *   npx tsx scanner.ts --action check-capacity [--max-concurrent N]
  *   npx tsx scanner.ts --action list-candidates [--repo owner/repo]
- *   npx tsx scanner.ts --action create-state --pr N [--chat-id xxx]
- *   npx tsx scanner.ts --action mark --pr N --state reviewing|approved|closed
+ *   npx tsx scanner.ts --action create-state --pr N [--chat-id xxx] [--repo owner/repo]
+ *   npx tsx scanner.ts --action mark --pr N --state reviewing|approved|closed [--repo owner/repo]
  *   npx tsx scanner.ts --action status
  *
  * Environment variables:
  *   TEMP_CHATS_DIR   State file directory (default: .temp-chats)
  *   MAX_CONCURRENT   Max concurrent reviewing PRs (default: 3)
+ *   GH_REPO          Default GitHub repo (e.g. owner/repo)
  *
  * Exit codes:
  *   0 — success
@@ -57,6 +58,14 @@ export interface CandidatePr {
   author: string;
 }
 
+export interface LabelResult {
+  prNumber: number;
+  label: string;
+  action: 'added' | 'removed';
+  success: boolean;
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -65,6 +74,7 @@ const DEFAULT_MAX_CONCURRENT = 3;
 const DEFAULT_EXPIRY_HOURS = 48;
 const STATE_FILE_PREFIX = 'pr-';
 const STATE_FILE_SUFFIX = '.json';
+const REVIEWING_LABEL = 'pr-scanner:reviewing';
 
 function getStateDir(): string {
   return process.env.TEMP_CHATS_DIR
@@ -254,6 +264,7 @@ export async function createState(
   stateDir: string,
   prNumber: number,
   chatId: string,
+  repo?: string,
 ): Promise<PrStateFile> {
   // Check if state file already exists
   const existing = await readStateFile(stateDir, prNumber);
@@ -272,6 +283,13 @@ export async function createState(
   };
 
   await writeStateFile(stateDir, prNumber, stateFile);
+
+  // Add reviewing label (non-blocking)
+  const labelResult = await addLabel(prNumber, REVIEWING_LABEL, repo);
+  if (!labelResult.success) {
+    console.error(`WARN: Failed to add label "${REVIEWING_LABEL}" to PR #${prNumber}: ${labelResult.error}`);
+  }
+
   return stateFile;
 }
 
@@ -279,10 +297,19 @@ export async function markState(
   stateDir: string,
   prNumber: number,
   newState: PrState,
+  repo?: string,
 ): Promise<PrStateFile> {
   const existing = await readStateFile(stateDir, prNumber);
   if (!existing) {
     fail(`No state file found for PR #${prNumber}`);
+  }
+
+  // Remove reviewing label when transitioning out of reviewing (non-blocking)
+  if (existing.state === 'reviewing' && newState !== 'reviewing') {
+    const labelResult = await removeLabel(prNumber, REVIEWING_LABEL, repo);
+    if (!labelResult.success) {
+      console.error(`WARN: Failed to remove label "${REVIEWING_LABEL}" from PR #${prNumber}: ${labelResult.error}`);
+    }
   }
 
   const updated: PrStateFile = {
@@ -324,6 +351,48 @@ export async function statusReport(stateDir: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Label management
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a GitHub label to a PR. Non-blocking: errors are caught and returned.
+ */
+export async function addLabel(
+  prNumber: number,
+  label: string,
+  repo?: string,
+): Promise<LabelResult> {
+  const args = ['pr', 'edit', String(prNumber), '--add-label', label];
+  if (repo) args.push('--repo', repo);
+  try {
+    await execFileAsync('gh', args, { timeout: 30000 });
+    return { prNumber, label, action: 'added', success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { prNumber, label, action: 'added', success: false, error: msg };
+  }
+}
+
+/**
+ * Remove a GitHub label from a PR. Non-blocking: errors are caught and returned.
+ */
+export async function removeLabel(
+  prNumber: number,
+  label: string,
+  repo?: string,
+): Promise<LabelResult> {
+  const args = ['pr', 'edit', String(prNumber), '--remove-label', label];
+  if (repo) args.push('--repo', repo);
+  try {
+    await execFileAsync('gh', args, { timeout: 30000 });
+    return { prNumber, label, action: 'removed', success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { prNumber, label, action: 'removed', success: false, error: msg };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -334,7 +403,7 @@ function parseArgs(argv: string[]): Record<string, string> {
     const arg = argv[i];
     if (arg === '--action' || arg === '--pr' || arg === '--state' || arg === '--chat-id' || arg === '--repo' || arg === '--max-concurrent') {
       i++;
-      if (i >= argv.length) exit(`Missing value for ${arg}`);
+      if (i >= argv.length) fail(`Missing value for ${arg}`);
       args[arg.slice(2)] = argv[i];
     }
     i++;
@@ -349,15 +418,15 @@ Usage: npx tsx scanner.ts --action <action> [options]
 Actions:
   check-capacity          Check reviewing capacity
   list-candidates         List PRs without state files
-  create-state            Create a new PR state file
-  mark                    Update PR state
+  create-state            Create a new PR state file (adds reviewing label)
+  mark                    Update PR state (removes reviewing label on transition)
   status                  Show all tracked PRs
 
 Options:
   --pr N                  PR number (required for create-state, mark)
   --state S               Target state: reviewing|approved|closed (required for mark)
   --chat-id xxx           Chat ID (for create-state)
-  --repo owner/repo       GitHub repo (for list-candidates)
+  --repo owner/repo       GitHub repo (for label operations, list-candidates)
   --max-concurrent N      Max concurrent reviewing PRs (for check-capacity, default: 3)
 `);
   process.exit(1);
@@ -392,7 +461,8 @@ async function main(): Promise<void> {
       if (!args['pr']) fail('--pr is required for create-state');
       const prNumber = parsePrNumber(args['pr']);
       const chatId = args['chat-id'] ?? '';
-      const result = await createState(stateDir, prNumber, chatId);
+      const repo = args['repo'];
+      const result = await createState(stateDir, prNumber, chatId, repo);
       outputJson(result);
       break;
     }
@@ -404,7 +474,8 @@ async function main(): Promise<void> {
       if (!isValidState(args['state'])) {
         fail(`Invalid state: ${args['state']}. Must be one of: ${PR_STATES.join(', ')}`);
       }
-      const result = await markState(stateDir, prNumber, args['state']);
+      const repo = args['repo'];
+      const result = await markState(stateDir, prNumber, args['state'], repo);
       outputJson(result);
       break;
     }
