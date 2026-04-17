@@ -506,4 +506,71 @@ describe('WeChatApiClient', () => {
       expect(result[1].msg_id).toBe('msg-2');
     });
   });
+
+  describe('sendTyping (Issue #1556 Phase 3.2)', () => {
+    it('should send typing indicator via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendTyping({ to: 'user-1' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('ilink/bot/typing'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'AuthorizationType': 'ilink_bot_token',
+            'Authorization': 'Bearer bot-token',
+          }),
+        })
+      );
+    });
+
+    it('should include contextToken in request body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendTyping({ to: 'user-1', contextToken: 'ctx-123' });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.to_user_id).toBe('user-1');
+      expect(callBody.context_token).toBe('ctx-123');
+    });
+
+    it('should not throw on API errors (non-fatal)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Internal Server Error'),
+      });
+
+      client.setToken('bot-token');
+      // Should NOT throw — typing indicator is non-fatal
+      await expect(client.sendTyping({ to: 'user-1' })).resolves.toBeUndefined();
+    });
+
+    it('should not throw on network errors (non-fatal)', async () => {
+      mockFetch.mockRejectedValue(new Error('Network failure'));
+
+      client.setToken('bot-token');
+      // Should NOT throw — typing indicator is non-fatal
+      await expect(client.sendTyping({ to: 'user-1' })).resolves.toBeUndefined();
+    });
+
+    it('should not throw on API error ret code (non-fatal)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 2001, err_msg: 'Rate limited' })),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.sendTyping({ to: 'user-1' })).resolves.toBeUndefined();
+    });
+  });
 });

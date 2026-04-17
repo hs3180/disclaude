@@ -18,7 +18,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import type { WeChatGetUpdatesResponse } from './types.js';
+import type { WeChatGetUpdatesResponse, WeChatTypingResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -27,6 +27,9 @@ const DEFAULT_API_TIMEOUT_MS = 15_000;
 
 /** Long-poll timeout for QR status / getUpdates (milliseconds). */
 const LONG_POLL_TIMEOUT_MS = 35_000;
+
+/** Short timeout for typing indicator (milliseconds). Low-priority, non-essential. */
+const TYPING_TIMEOUT_MS = 5_000;
 
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
@@ -210,6 +213,49 @@ export class WeChatApiClient {
 
     await this.postJson('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message listening (getUpdates long-poll) — Issue #1556 Phase 3.1
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send a typing indicator to a user.
+   *
+   * POST /ilink/bot/typing
+   *
+   * This is a low-priority hint — failures are logged but never thrown,
+   * so typing indicator errors never block the core message flow.
+   *
+   * Uses a shorter timeout (5s) since typing indicators are non-essential.
+   *
+   * @param params - Typing indicator parameters
+   * @see Issue #1556 Phase 3.2
+   */
+  async sendTyping(params: {
+    /** Target user ID */
+    to: string;
+    /** Context token for thread replies */
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, contextToken } = params;
+
+    try {
+      await this.postJson<WeChatTypingResponse>(
+        'ilink/bot/typing',
+        {
+          to_user_id: to,
+          context_token: contextToken ?? undefined,
+        },
+        { timeoutMs: TYPING_TIMEOUT_MS },
+      );
+
+      logger.debug({ to }, 'Typing indicator sent');
+    } catch (error) {
+      // Non-fatal: typing indicator failures should never block message processing
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: errMsg, to }, 'Failed to send typing indicator (non-fatal)');
+    }
   }
 
   // ---------------------------------------------------------------------------
