@@ -24,7 +24,9 @@ export type IpcRequestType =
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Side group creation for context offloading (Issue #2351)
+  | 'createSideGroup';
 
 /**
  * IPC request payload types.
@@ -83,6 +85,12 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Side group creation for context offloading (Issue #2351)
+  createSideGroup: {
+    name: string;
+    members: string[];
+    description?: string;
+  };
 }
 
 /**
@@ -125,6 +133,13 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // Side group creation for context offloading (Issue #2351)
+  createSideGroup: {
+    success: boolean;
+    chatId?: string;
+    name?: string;
+    error?: string;
   };
 }
 

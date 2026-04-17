@@ -75,6 +75,8 @@ export interface ChannelApiHandlers {
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
+  /** Create a side group for context offloading (Issue #2351) */
+  createSideGroup?: (name: string, members: string[], description?: string) => Promise<{ success: boolean; chatId?: string; name?: string; error?: string }>;
 }
 
 /**
@@ -303,6 +305,34 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Side group creation for context offloading (Issue #2351)
+        case 'createSideGroup': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.createSideGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'createSideGroup not supported by this channel',
+            };
+          }
+          const { name, members, description } =
+            request.payload as IpcRequestPayloads['createSideGroup'];
+          try {
+            const result = await handlers.createSideGroup(name, members, description);
+            return { id: request.id, success: true, payload: { success: result.success, chatId: result.chatId, name: result.name } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

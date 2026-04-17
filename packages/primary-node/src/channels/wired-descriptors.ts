@@ -252,6 +252,53 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #2351: Side group creation for context offloading
+      createSideGroup: async (name: string, members: string[], description?: string) => {
+        const { execFile } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const execFileAsync = promisify(execFile);
+
+        // Truncate group name to max length (consistent with chat schema)
+        const truncatedName = Array.from(name).slice(0, 64).join('');
+        const membersStr = members.join(',');
+
+        let larkResult: string;
+        let larkError: string | null = null;
+
+        try {
+          const args = ['im', '+chat-create', '--name', truncatedName, '--users', membersStr];
+          if (description) {
+            args.push('--description', description);
+          }
+          const result = await execFileAsync('lark-cli', args, {
+            timeout: 30_000,
+            maxBuffer: 1024 * 1024,
+          });
+          larkResult = result.stdout;
+        } catch (err: unknown) {
+          const execErr = err as { stdout?: string; stderr?: string; message?: string };
+          larkResult = execErr.stdout ?? '';
+          larkError = execErr.stderr ?? execErr.message ?? '';
+        }
+
+        // Parse result to extract chat_id
+        let newChatId: string | undefined;
+        try {
+          const parsed = JSON.parse(larkResult);
+          newChatId = parsed?.data?.chat_id;
+        } catch {
+          // Not valid JSON
+        }
+
+        if (newChatId) {
+          context.logger.info({ chatId: newChatId, name: truncatedName }, 'Side group created via lark-cli');
+          return { success: true, chatId: newChatId, name: truncatedName };
+        } else {
+          const errorMsg = (larkError ?? larkResult ?? 'unknown error').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+          context.logger.error({ name: truncatedName, error: errorMsg }, 'Failed to create side group');
+          return { success: false, error: errorMsg };
+        }
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);
