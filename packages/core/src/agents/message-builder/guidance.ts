@@ -185,6 +185,68 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Agents run in an SDK subprocess where in-memory singletons
+ * in the main process are not accessible. The `.runtime-env` file in the
+ * workspace directory enables cross-process state sharing.
+ *
+ * This guidance tells agents about the runtime-env mechanism so they can
+ * actively discover and use shared environment variables written by other
+ * processes (skills, MCP servers, etc.).
+ *
+ * IMPORTANT: This guidance must NOT hardcode specific variable names.
+ * Instead, it describes the mechanism generically and instructs agents
+ * to discover available variables by reading the file at runtime.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment State Sharing
+
+You share state with other processes (skills, MCP servers, scheduled tasks) through a \`.runtime-env\` file in the workspace directory. This is the primary cross-process communication mechanism available to you.
+
+### How It Works
+
+- \`.runtime-env\` is a simple KEY=VALUE text file (one pair per line, \`#\` comments allowed)
+- It is **automatically loaded into your environment** (\`process.env\`) before each session
+- Other processes write variables to share data with you; you can write variables for them
+
+### Reading Shared Variables
+
+Check what is currently available:
+\`\`\`bash
+cat .runtime-env
+\`\`\`
+
+Or read a specific variable:
+\`\`\`bash
+echo $VARIABLE_NAME
+\`\`\`
+
+### Writing Shared Variables
+
+When you need to expose data for other processes:
+\`\`\`bash
+# Overwrite the entire file (preferred — avoids stale duplicates)
+echo "KEY1=value1" > .runtime-env
+echo "KEY2=value2" >> .runtime-env
+\`\`\`
+
+**Important**: Always rewrite the full file rather than appending, to prevent duplicate keys from accumulating.
+
+### Conventions
+
+- Variables written by other processes may change between sessions — always re-read before relying on them
+- Some variables have associated expiration timestamps (check the corresponding \`*_EXPIRES_AT\` variable if present)
+- \`.runtime-env\` is excluded from version control — never commit it`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildRuntimeEnvGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -99,6 +100,51 @@ describe('buildOutputFormatGuidance', () => {
     const result = buildOutputFormatGuidance();
     expect(result).toContain('Convert JSON objects to readable text');
     expect(result).toContain('Markdown tables instead of raw JSON');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime-env awareness section', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment State Sharing');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should explain the KEY=VALUE format', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should explain how to read variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('cat .runtime-env');
+  });
+
+  it('should explain how to write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('rewrite the full file');
+  });
+
+  it('should NOT hardcode specific variable names', () => {
+    const result = buildRuntimeEnvGuidance();
+    // Previous PRs were rejected for hardcoding these variable names
+    expect(result).not.toContain('GH_TOKEN');
+    expect(result).not.toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should mention dynamic discovery over static listing', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('re-read before relying');
+  });
+
+  it('should mention expiration convention generically', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('*_EXPIRES_AT');
+  });
+
+  it('should mention security note about version control', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('excluded from version control');
   });
 });
 
