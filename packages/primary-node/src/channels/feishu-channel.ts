@@ -706,6 +706,51 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Upload an image to Feishu and return image_key for card embedding.
+   *
+   * Unlike sendMessage({ type: 'file' }), this method does NOT send
+   * any message — it only uploads the image and returns the image_key
+   * so the caller can use it in card JSON (img element).
+   *
+   * Issue #1919: Agent needs image_key to embed images in send_card messages.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns image_key, fileName, and fileSize
+   * @throws Error if client not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) {
+      throw new Error(`Path is not a file: ${filePath}`);
+    }
+    if (stats.size > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${stats.size} bytes (max 10MB)`);
+    }
+
+    const fileName = path.basename(filePath);
+    logger.info({ filePath, fileName, fileSize: stats.size }, 'Uploading image for image_key');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName} — no image_key returned`);
+    }
+
+    logger.info({ imageKey, fileName }, 'Image uploaded successfully');
+    return { imageKey, fileName, fileSize: stats.size };
+  }
+
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
 
   /**

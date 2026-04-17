@@ -220,6 +220,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       },
       // Issue #1703: Temp chat lifecycle management handlers
       // Issue #2291: triggerMode enum parameter
+      // Issue #1919: Image upload for card embedding
+      uploadImage: (filePath: string) => {
+        return feishuChannel.uploadImage(filePath);
+      },
       registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => {
         const store = context.primaryNode.getChatStore();
         await store.registerTempChat(chatId, {
