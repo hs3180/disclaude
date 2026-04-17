@@ -7,7 +7,7 @@
  * Handles: MCP server configuration, iterator processing, restart/circuit-breaker logic.
  */
 
-import { Config, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type AgentQueryOptions, type QueryStreamResult } from '@disclaude/core';
+import { Config, MessageChannel, RestartManager, ConversationOrchestrator, ProgressReporter, type StreamingUserMessage, type QueryHandle, type AgentQueryOptions, type QueryStreamResult } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks } from './types.js';
 import type { ChatHistoryLoader } from './chat-history-loader.js';
@@ -29,6 +29,7 @@ export class AgentLoopManager {
   private channel?: MessageChannel;
   private queryHandle?: QueryHandle;
   private isSessionActive = false;
+  private progressReporter?: ProgressReporter;
   private readonly ctx: LoopContext;
 
   constructor(context: LoopContext) {
@@ -106,6 +107,8 @@ export class AgentLoopManager {
   /** Close session and release resources (for reset). */
   closeSession(): void {
     this.isSessionActive = false;
+    this.progressReporter?.stop();
+    this.progressReporter = undefined;
     this.channel?.close();
     this.channel = undefined;
     this.queryHandle?.close();
@@ -115,6 +118,8 @@ export class AgentLoopManager {
   /** Full shutdown — close all resources. */
   shutdown(): void {
     this.isSessionActive = false;
+    this.progressReporter?.stop();
+    this.progressReporter = undefined;
     this.channel?.close();
     this.channel = undefined;
     this.queryHandle?.close();
@@ -147,6 +152,7 @@ export class AgentLoopManager {
   /**
    * Process the SDK iterator. Preserves conversation context on unexpected end;
    * uses RestartManager for restart/circuit-breaker logic.
+   * Issue #857: Integrates ProgressReporter for long-running tasks.
    */
   private async processIterator(
     iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>,
@@ -155,15 +161,29 @@ export class AgentLoopManager {
     let iteratorError: Error | null = null;
     let messageCount = 0;
 
+    // Issue #857: Start progress reporter for this turn
+    const reporter = new ProgressReporter({
+      sendCard: (card: Record<string, unknown>) => callbacks.sendCard(chatId, card, 'progress'),
+    });
+    this.progressReporter = reporter;
+    reporter.start();
+
     try {
       for await (const { parsed } of iterator) {
         messageCount++;
         logger.debug({ chatId, messageCount, type: parsed.type }, 'SDK message received');
 
+        // Issue #857: Feed message into progress reporter
+        reporter.updateFromMessage(parsed.type, parsed.content);
+
         if (parsed.content) {
           await callbacks.sendMessage(chatId, parsed.content, conversationOrchestrator.getThreadRoot(chatId));
         }
         if (parsed.type === 'result') {
+          // Issue #857: Stop progress reporter — turn complete
+          reporter.stop();
+          this.progressReporter = undefined;
+
           logger.info({ chatId, content: parsed.content }, 'Result received, turn complete');
           restartManager.recordSuccess(chatId);
           if (callbacks.onDone) {
@@ -174,6 +194,11 @@ export class AgentLoopManager {
     } catch (error) {
       iteratorError = error as Error;
       logger.error({ err: iteratorError, chatId, messageCount }, 'Iterator error');
+
+      // Issue #857: Stop progress reporter on error
+      this.progressReporter?.stop();
+      this.progressReporter = undefined;
+
       const threadRoot = conversationOrchestrator.getThreadRoot(chatId);
       await callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
       if (callbacks.onDone) {

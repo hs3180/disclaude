@@ -17,3 +17,6 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Progress Reporter (Issue #857)
+export { ProgressReporter, type ProgressReporterConfig, type SendCardFn } from './progress-reporter.js';

@@ -207,6 +207,9 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  ProgressReporter,
+  type ProgressReporterConfig,
+  type SendCardFn,
 } from './task/index.js';
 
 // Queue module (Issue #1041)
