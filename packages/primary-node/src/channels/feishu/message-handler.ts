@@ -738,6 +738,16 @@ export class MessageHandler {
           });
           await response.writeFile(localPath);
 
+          // Issue #2411: Verify file was actually written to disk
+          try {
+            const stat = await fs.stat(localPath);
+            if (stat.size === 0) {
+              throw new Error(`Downloaded file is empty (0 bytes): ${localPath}`);
+            }
+          } catch (statError) {
+            throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
+          }
+
           // Issue #1637, #1663: Ensure file has correct extension via file-utils API
           const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
           if (correctedPath !== localPath) {
@@ -748,6 +758,7 @@ export class MessageHandler {
           logger.info({ fileKey, localPath }, 'File downloaded successfully');
         } catch (downloadError) {
           logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
+          localPath = undefined;
         }
       }
 
