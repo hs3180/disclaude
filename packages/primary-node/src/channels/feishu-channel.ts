@@ -680,6 +680,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Get the Lark Client for direct API access.
+   * Issue #2278: Exposed for document operations (inline image insertion).
+   *
+   * @throws Error if channel has not been started (client not initialized)
+   */
+  getClient(): lark.Client {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized. Call doStart() first.');
+    }
+    return this.client;
+  }
+
+  /**
    * Set the WelcomeService for this channel.
    */
   setWelcomeService(service: WelcomeService): void {

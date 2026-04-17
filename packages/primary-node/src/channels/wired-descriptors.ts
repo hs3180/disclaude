@@ -252,6 +252,70 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #2278: Inline image insertion in Feishu documents
+      insertDocxImage: async (documentId: string, imagePath: string, index: number) => {
+        const client = feishuChannel.getClient();
+        context.logger.info({ documentId, imagePath, index }, 'insertDocxImage: starting 3-step image insertion');
+
+        // Step 1: Create an empty image block at the specified index
+        // block_type 27 = Image block in Feishu docx API
+        const createResp = await client.docx.documentBlockChildren.create({
+          path: { document_id: documentId, block_id: documentId },
+          params: { document_revision_id: -1 },
+          data: {
+            children: [{
+              block_type: 27,
+              image: {},
+            }],
+            index,
+          },
+        });
+
+        const blockId = (createResp as { data?: { children?: Array<{ block_id?: string }> } })?.data?.children?.[0]?.block_id;
+        if (!blockId) {
+          throw new Error('Failed to create image block: no block_id returned');
+        }
+        context.logger.debug({ documentId, blockId }, 'insertDocxImage: step 1 - image block created');
+
+        // Step 2: Upload image file via Drive Media Upload API
+        const nodeFs = await import('node:fs');
+        const nodePath = await import('node:path');
+        const fileName = nodePath.basename(imagePath);
+        const fileStats = nodeFs.statSync(imagePath);
+
+        const uploadResp = await client.drive.media.uploadAll({
+          data: {
+            file_name: fileName,
+            parent_type: 'docx_image',
+            parent_node: documentId,
+            size: fileStats.size,
+            file: nodeFs.createReadStream(imagePath),
+          },
+        });
+
+        const fileToken = uploadResp?.file_token;
+        if (!fileToken) {
+          throw new Error('Failed to upload image: no file_token returned');
+        }
+        context.logger.debug({ documentId, fileToken }, 'insertDocxImage: step 2 - image uploaded');
+
+        // Step 3: Bind uploaded file to the image block via replace_image (using batchUpdate)
+        await client.docx.documentBlock.batchUpdate({
+          path: { document_id: documentId },
+          params: { document_revision_id: -1 },
+          data: {
+            requests: [{
+              replace_image: {
+                token: fileToken,
+              },
+              block_id: blockId,
+            }],
+          },
+        });
+
+        context.logger.info({ documentId, blockId, fileToken }, 'insertDocxImage: step 3 - image bound to block');
+        return { blockId };
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);

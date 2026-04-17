@@ -24,7 +24,9 @@ export type IpcRequestType =
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Document operations (Issue #2278)
+  | 'insertDocxImage';
 
 /**
  * IPC request payload types.
@@ -83,6 +85,12 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Document operations (Issue #2278: inline image insertion)
+  insertDocxImage: {
+    documentId: string;
+    imagePath: string;
+    index: number;
+  };
 }
 
 /**
@@ -125,6 +133,12 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // Document operations (Issue #2278)
+  insertDocxImage: {
+    success: boolean;
+    blockId?: string;
+    error?: string;
   };
 }
 
