@@ -218,3 +218,63 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the context offloading guidance section.
+ *
+ * Issue #2351: Informs the agent about the context offloading pattern —
+ * creating side group chats for long-form content delivery to keep
+ * the main conversation clean. Especially valuable in voice mode.
+ *
+ * The agent already has the necessary tools (register_temp_chat,
+ * send_text, send_card, send_file). This guidance teaches it the
+ * workflow and when to use it.
+ *
+ * @returns Formatted context offloading guidance section
+ */
+export function buildContextOffloadingGuidance(): string {
+  return `
+
+---
+
+## Context Offloading (Long-Form Content Delivery)
+
+**IMPORTANT**: When your response contains long-form content (code files, detailed reports, multi-section documentation), consider offloading it to a side group chat to keep the main conversation clean.
+
+### When to Offload
+
+Use context offloading when:
+- Your response contains **multiple code files** or configurations (e.g., "generate a full project setup")
+- Your response exceeds **~2000 characters** of structured content
+- The user explicitly requests delivery to a separate group (e.g., "发到新群聊", "单独拉一个群")
+- The content is better consumed as a **persistent reference** rather than a chat message
+
+### How to Offload
+
+You have the \`register_temp_chat\` tool for creating side groups with automatic lifecycle management:
+
+\`\`\`
+Step 1: register_temp_chat
+  - chatId: use a descriptive ID (e.g., "lite-llm-config-0417")
+  - expiresAt: set expiry (e.g., 24h from now in ISO format)
+  - creatorChatId: the current chat ID
+  - context: optional metadata about the content
+  - triggerMode: "always" so the bot responds in the side group
+
+Step 2: Reply in main chat
+  - Brief confirmation: "✅ 已创建群聊「{name}」，内容已发送"
+  - Do NOT dump the long content in the main chat
+
+Step 3: Send content to side group
+  - Use send_text or send_card to deliver the full content
+  - Split into multiple messages if needed (one per file/section)
+\`\`\`
+
+### Important Notes
+
+- The \`chats-activation\` schedule will automatically create the Feishu group
+- The \`chat-timeout\` skill will automatically dissolve the group when expired
+- Side groups are independent sessions — they do not affect the main conversation
+- Prefer offloading over sending very long messages directly in the main chat
+- If the content is short (< 500 chars) or a direct answer, respond normally without offloading`;
+}

@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildContextOffloadingGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,49 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildContextOffloadingGuidance', () => {
+  it('should include context offloading section header', () => {
+    const result = buildContextOffloadingGuidance();
+    expect(result).toContain('Context Offloading');
+    expect(result).toContain('Long-Form Content Delivery');
+  });
+
+  it('should describe when to offload content', () => {
+    const result = buildContextOffloadingGuidance();
+    expect(result).toContain('When to Offload');
+    expect(result).toContain('2000 characters');
+    expect(result).toContain('发到新群聊');
+  });
+
+  it('should describe the offloading workflow steps', () => {
+    const result = buildContextOffloadingGuidance();
+    expect(result).toContain('register_temp_chat');
+    expect(result).toContain('Step 1');
+    expect(result).toContain('Step 2');
+    expect(result).toContain('Step 3');
+    expect(result).toContain('send_text');
+    expect(result).toContain('send_card');
+  });
+
+  it('should mention automatic lifecycle management', () => {
+    const result = buildContextOffloadingGuidance();
+    expect(result).toContain('chats-activation');
+    expect(result).toContain('chat-timeout');
+    expect(result).toContain('automatically dissolve');
+  });
+
+  it('should mention triggerMode for side groups', () => {
+    const result = buildContextOffloadingGuidance();
+    expect(result).toContain('triggerMode');
+    expect(result).toContain('"always"');
+  });
+
+  it('should advise against offloading short content', () => {
+    const result = buildContextOffloadingGuidance();
+    expect(result).toContain('short (< 500 chars)');
+    expect(result).toContain('respond normally without offloading');
   });
 });
