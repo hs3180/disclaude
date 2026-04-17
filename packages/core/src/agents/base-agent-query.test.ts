@@ -18,7 +18,7 @@ import {
   handleIteratorError,
   type QueryContext,
 } from './base-agent-query.js';
-import type { AgentQueryOptions, AgentMessage as SdkAgentMessage } from '../sdk/index.js';
+import type { AgentQueryOptions, AgentMessage as SdkAgentMessage, StreamingUserMessage } from '../sdk/index.js';
 import type { Logger } from '../utils/logger.js';
 
 // ============================================================================
@@ -477,7 +477,7 @@ describe('createStreamQuery', () => {
   it('should convert string message content correctly', async () => {
     const ctx = createQueryContext();
     let receivedPrompt: unknown;
-    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* (sid: string, prompt: unknown) {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* (_sid: string, prompt: unknown) {
       receivedPrompt = prompt;
       yield createMockMessage();
     });
@@ -541,7 +541,7 @@ describe('createStreamQuery', () => {
       };
     }
 
-    const { iterator } = createStreamQuery(ctx, emptyContentInput(), defaultOptions);
+    const { iterator } = createStreamQuery(ctx, emptyContentInput() as AsyncGenerator<StreamingUserMessage>, defaultOptions);
 
     for await (const _ of iterator) {
       break;
