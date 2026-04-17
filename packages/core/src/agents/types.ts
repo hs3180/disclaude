@@ -90,7 +90,7 @@ export interface UserInput {
  * ChatAgent implements this interface and serves as the universal agent for all scenarios:
  * - Long-lived conversation (via handleInput + processMessage)
  * - One-shot task execution (via executeOnce) - replaces former SkillAgent/Subagent
- * - Scheduled tasks (via createScheduleAgent factory method)
+ * - Scheduled tasks (via AgentFactory.createAgent)
  *
  * @example
  * ```typescript
@@ -257,60 +257,17 @@ export interface BaseAgentConfig {
   acpClient?: import('../sdk/acp/acp-client.js').AcpClient;
 }
 
-/**
- * Configuration for ChatAgent.
- *
- * Extends BaseAgentConfig with platform-specific callbacks
- * for streaming conversation support.
- *
- * @example
- * ```typescript
- * const config: ChatAgentConfig = {
- *   apiKey: 'sk-...',
- *   model: 'claude-3-5-sonnet-20241022',
- *   provider: 'anthropic',
- *   callbacks: {
- *     sendMessage: async (chatId, text) => { ... },
- *     sendCard: async (chatId, card) => { ... },
- *     sendFile: async (chatId, filePath) => { ... },
- *   },
- * };
- * ```
- */
-export interface ChatAgentConfig extends BaseAgentConfig {
-  /**
-   * Callback functions for platform-specific operations.
-   */
-  callbacks: {
-    /** Send a text message */
-    sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
-    /** Send an interactive card */
-    sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
-    /** Send a file */
-    sendFile: (chatId: string, filePath: string) => Promise<void>;
-    /** Called when query completes */
-    onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
-  };
-}
-
 // ============================================================================
-// Agent Factory Types
+// Agent Configuration Types (Issue #2345 Phase 5: Legacy types removed)
 // ============================================================================
-
-/**
- * Configuration for creating agents.
- * @deprecated Use BaseAgentConfig or ChatAgentConfig instead.
- */
-export interface AgentConfig {
-  /** API key for authentication */
-  apiKey: string;
-  /** Model identifier */
-  model: string;
-  /** Optional API base URL */
-  apiBaseUrl?: string;
-  /** Permission mode for tool execution */
-  permissionMode?: 'default' | 'bypassPermissions';
-}
+//
+// ChatAgentConfig is now defined in worker-node only (chat-agent/types.ts).
+// The core package only defines BaseAgentConfig, which is the minimal
+// config shared by all agent types.
+//
+// Removed (Issue #2345 Phase 5):
+// - AgentConfig (deprecated, replaced by BaseAgentConfig)
+// - ChatAgentConfig in core (worker-node's version is canonical)
 
 // ============================================================================
 // Runtime Context Interface (Issue #1040)
@@ -415,58 +372,11 @@ export function clearRuntimeContext(): void {
 }
 
 // ============================================================================
-// Agent Factory Types (Issue #1501: Simplified)
+// Agent Factory Types — Removed (Issue #2345 Phase 5)
 // ============================================================================
-
-/**
- * Factory for creating Agent instances.
- *
- * Issue #711: Agent Lifecycle Management Strategy
- * Issue #1501: Simplified to only create ChatAgent instances
- *
- * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
- * |----------------|----------------|--------------|------------------|
- * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool        |
- * | ScheduleAgent  | ❌ No          | 24 hours     | None (temporary) |
- * | TaskAgent      | ❌ No          | Task finish  | None (temporary) |
- *
- * Note: SkillAgent and Subagent have been removed (Issue #1501).
- * - Skills are now handled via ChatAgent.executeOnce() or .md-defined subagents
- * - Subagents are defined via .claude/agents/*.md files (Issue #1410)
- *
- * @example
- * ```typescript
- * const factory = new AgentFactory(config);
- *
- * // Create ChatAgent (long-lived, store in AgentPool)
- * const agent = factory.createChatAgent('chat-agent', callbacks);
- *
- * // Create ScheduleAgent (short-lived, dispose after execution)
- * const scheduleAgent = factory.createScheduleAgent(chatId, callbacks);
- * try {
- *   await scheduleAgent.executeOnce(chatId, prompt);
- * } finally {
- *   scheduleAgent.dispose();
- * }
- * ```
- */
-export interface AgentFactoryInterface {
-  /**
-   * Create a ChatAgent instance.
-   * Long-lived, should be stored in AgentPool.
-   */
-  createChatAgent(name: string, ...args: unknown[]): ChatAgent;
-
-  /**
-   * Create a ScheduleAgent instance.
-   * Short-lived, caller must dispose after execution.
-   * Maximum lifetime: 24 hours.
-   */
-  createScheduleAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
-
-  /**
-   * Create a TaskAgent instance.
-   * Short-lived, caller must dispose after task completion.
-   */
-  createTaskAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
-}
+//
+// AgentFactoryInterface has been removed. There is only one Agent type
+// (ChatAgent), so the interface adds no abstraction value. The concrete
+// AgentFactory class in worker-node is the single source of truth.
+//
+// Use AgentFactory.createAgent() for all agent creation.

@@ -127,7 +127,7 @@ export async function executeTaskOnWorker(
 
   try {
     // Create agent for task execution
-    const agent = AgentFactory.createTaskAgent(task.chatId, ctx.callbacks);
+    const agent = AgentFactory.createAgent(task.chatId, ctx.callbacks);
 
     // Execute task
     await agent.executeOnce(

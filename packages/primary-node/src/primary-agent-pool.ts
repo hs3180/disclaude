@@ -57,7 +57,7 @@ export class PrimaryAgentPool {
   getOrCreateChatAgent(chatId: string, callbacks: ChatAgentCallbacks): ChatAgentInterface {
     let agent = this.agents.get(chatId);
     if (!agent) {
-      agent = AgentFactory.createChatAgent('chat-agent', chatId, callbacks, {
+      agent = AgentFactory.createAgent(chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
       });
       this.agents.set(chatId, agent);
