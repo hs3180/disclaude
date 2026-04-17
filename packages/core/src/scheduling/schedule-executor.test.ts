@@ -13,21 +13,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
+  type AgentFactoryFn,
 } from './schedule-executor.js';
+import type { ChatAgent } from '../agents/types.js';
 import type { SchedulerCallbacks } from './scheduler.js';
 
 describe('createScheduleExecutor', () => {
-  let mockAgent: ScheduleAgent;
-  let mockAgentFactory: ScheduleAgentFactory;
+  let mockAgent: ChatAgent;
+  let mockAgentFactory: AgentFactoryFn;
   let mockCallbacks: SchedulerCallbacks;
 
   beforeEach(() => {
     mockAgent = {
+      type: 'chat',
+      name: 'test-agent',
+      start: vi.fn().mockResolvedValue(undefined),
+      handleInput: vi.fn(),
+      processMessage: vi.fn(),
       executeOnce: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn(),
+      stop: vi.fn().mockReturnValue(false),
       dispose: vi.fn(),
-    };
+    } as unknown as ChatAgent;
 
     mockAgentFactory = vi.fn().mockReturnValue(mockAgent);
 

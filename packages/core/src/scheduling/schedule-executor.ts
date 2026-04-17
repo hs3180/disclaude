@@ -7,6 +7,9 @@
  * that can be used with the Scheduler. The executor uses a provided agent
  * factory to create short-lived agents for task execution.
  *
+ * Issue #2513: Removed ScheduleAgent/ScheduleAgentFactory types.
+ * The executor now uses ChatAgent directly, since all agents are ChatAgent instances.
+ *
  * Architecture:
  * ```
  * createScheduleExecutor(agentFactory) => TaskExecutor
@@ -21,44 +24,31 @@
  * @module @disclaude/core/scheduling
  */
 
+import type { ChatAgent } from '../agents/types.js';
 import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
 
 /**
- * Interface for an agent that can execute scheduled tasks.
+ * Factory function type for creating ChatAgent instances for task execution.
  *
- * This is a minimal interface that ChatAgent naturally satisfies.
- * The executeOnce signature matches ChatAgent.executeOnce(chatId, text, messageId?, senderOpenId?)
- * to enable structural typing without type assertions.
- *
- * Issue #1446: Fixed signature to be compatible with ChatAgent implementation.
- */
-export interface ScheduleAgent {
-  /** Execute the task once with the given prompt */
-  executeOnce: (chatId: string, prompt: string, messageId?: string, userId?: string) => Promise<void>;
-  /** Dispose the agent after execution */
-  dispose: () => void;
-}
-
-/**
- * Factory function type for creating ScheduleAgent instances.
+ * Issue #2513: Renamed from ScheduleAgentFactory. All agents are ChatAgent instances.
  *
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
  * @param model - Optional model override for this task (Issue #1338)
- * @returns A ScheduleAgent instance (caller must dispose)
+ * @returns A ChatAgent instance (caller must dispose)
  */
-export type ScheduleAgentFactory = (
+export type AgentFactoryFn = (
   chatId: string,
   callbacks: SchedulerCallbacks,
   model?: string
-) => ScheduleAgent;
+) => ChatAgent;
 
 /**
  * Options for creating a schedule executor.
  */
 export interface ScheduleExecutorOptions {
-  /** Factory function to create ScheduleAgent instances */
-  agentFactory: ScheduleAgentFactory;
+  /** Factory function to create ChatAgent instances */
+  agentFactory: AgentFactoryFn;
   /** Callbacks for sending messages (used for error handling) */
   callbacks: SchedulerCallbacks;
 }
