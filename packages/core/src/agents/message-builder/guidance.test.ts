@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildRuntimeEnvGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -99,6 +100,44 @@ describe('buildOutputFormatGuidance', () => {
     const result = buildOutputFormatGuidance();
     expect(result).toContain('Convert JSON objects to readable text');
     expect(result).toContain('Markdown tables instead of raw JSON');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime-env awareness section', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment Awareness');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should explain what runtime-env is', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('KEY=VALUE');
+    expect(result).toContain('cross-process shared state');
+  });
+
+  it('should explain how to read variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Reading Variables');
+    expect(result).toContain('process.env');
+  });
+
+  it('should explain how to write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Writing Variables');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should list known variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should include security notes', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.gitignore');
+    expect(result).toContain('expiration');
   });
 });
 

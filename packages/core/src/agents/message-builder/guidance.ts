@@ -185,6 +185,64 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Agents run in an SDK subprocess where in-memory singletons
+ * in the main process are not accessible. The `.runtime-env` file in the
+ * workspace directory enables cross-process state sharing.
+ *
+ * This guidance tells agents about the runtime-env mechanism so they can
+ * actively discover and use shared environment variables (e.g., tokens,
+ * configuration) written by other processes.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Awareness
+
+You have access to a **cross-process shared state mechanism** via \`.runtime-env\` — a simple KEY=VALUE file in the workspace directory that enables state sharing between you and other processes.
+
+### What is \`.runtime-env\`?
+
+- A file at \`.runtime-env\` in the workspace directory
+- Format: one \`KEY=VALUE\` pair per line, \`#\` comments allowed
+- Automatically loaded into your environment (\`process.env\`) before each session
+- Written by other processes (main process, MCP servers, skills) to share state with you
+
+### Reading Variables
+
+Runtime-env variables are pre-loaded into your environment. Access them directly:
+- Via Bash: \`echo $GH_TOKEN\` or \`printenv GH_TOKEN\`
+- Via Read tool: read the \`.runtime-env\` file directly
+
+### Writing Variables
+
+You can write variables for other processes to read:
+- Via Bash: \`echo "MY_KEY=my_value" >> .runtime-env\` (append) — but prefer overwriting the full file to avoid duplicates
+- Via Write tool: write the complete file with all KEY=VALUE pairs
+- Variables you write will be available to subsequent agent sessions and other processes
+
+### Known Variables
+
+| Variable | Written by | Purpose |
+|----------|-----------|---------|
+| \`GH_TOKEN\` | github-jwt-auth skill | GitHub API authentication token |
+| \`GH_TOKEN_EXPIRES_AT\` | github-jwt-auth skill | Token expiration timestamp |
+
+Other skills or processes may add additional variables.
+
+### Security Notes
+
+- \`.runtime-env\` is listed in \`.gitignore\` — it will NOT be committed
+- Tokens have expiration times — check \`GH_TOKEN_EXPIRES_AT\` before use
+- If a token is expired, trigger the refresh skill (e.g., github-jwt-auth) to get a new one`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
