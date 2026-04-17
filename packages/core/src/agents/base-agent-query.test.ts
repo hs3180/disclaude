@@ -10,7 +10,7 @@
  * Issue #1617 Phase 2: Agent layer testing.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import {
   executeQueryOnce,
   createStreamQuery,
@@ -37,7 +37,7 @@ function createMockAcpClient() {
       sessionId: 'test-session-id',
       model: 'claude-3-5-sonnet',
     })),
-    sendPrompt: vi.fn(),
+    sendPrompt: vi.fn() as Mock,
     cancelPrompt: vi.fn(async (_sessionId: string) => {}),
   };
 }
@@ -57,9 +57,9 @@ function createMockLogger(): Logger {
 
 /** Create a QueryContext with mock dependencies */
 function createQueryContext(overrides?: Partial<QueryContext>): QueryContext {
-  const acpClient = createMockAcpClient();
+  const acpClient = createMockAcpClient() as unknown as QueryContext['acpClient'];
   // Default sendPrompt: empty generator
-  acpClient.sendPrompt.mockImplementation(async function* () {});
+  (acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {});
 
   return {
     acpClient,
@@ -99,7 +99,7 @@ describe('executeQueryOnce', () => {
     ];
 
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       for (const msg of messages) {
         yield msg;
       }
@@ -188,7 +188,7 @@ describe('executeQueryOnce', () => {
     });
 
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield sdkMessage;
     });
 
@@ -205,7 +205,7 @@ describe('executeQueryOnce', () => {
 
   it('should handle empty response (no messages)', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {});
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {});
 
     const results = [];
     for await (const item of executeQueryOnce(ctx, 'test', defaultOptions)) {
@@ -217,7 +217,7 @@ describe('executeQueryOnce', () => {
 
   it('should log debug messages for each received message', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield createMockMessage({ type: 'text', content: 'response' });
     });
 
@@ -236,7 +236,7 @@ describe('executeQueryOnce', () => {
 
   it('should log session completion in finally block', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield createMockMessage();
     });
 
@@ -252,7 +252,7 @@ describe('executeQueryOnce', () => {
 
   it('should still log session completion when no messages are yielded', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {});
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {});
 
     for await (const _ of executeQueryOnce(ctx, 'test', defaultOptions)) {
       // empty
@@ -295,7 +295,7 @@ describe('createStreamQuery', () => {
 
   it('should yield messages from streaming conversation', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield createMockMessage({ type: 'text', content: 'Agent response' });
     });
 
@@ -314,7 +314,7 @@ describe('createStreamQuery', () => {
   it('should handle multiple input messages in same session', async () => {
     const ctx = createQueryContext();
     let callCount = 0;
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       callCount++;
       yield createMockMessage({ content: `Response ${callCount}` });
     });
@@ -343,7 +343,7 @@ describe('createStreamQuery', () => {
 
   it('should expose sessionId on handle after session creation', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield createMockMessage();
     });
 
@@ -364,7 +364,7 @@ describe('createStreamQuery', () => {
   it('should stop yielding when handle.close() is called', async () => {
     const ctx = createQueryContext();
     let promptCallCount = 0;
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       promptCallCount++;
       yield createMockMessage({ content: `Response ${promptCallCount}` });
     });
@@ -389,7 +389,7 @@ describe('createStreamQuery', () => {
 
   it('should cancel prompt on ACP client when handle.cancel() is called', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield createMockMessage();
     });
 
@@ -407,7 +407,7 @@ describe('createStreamQuery', () => {
 
   it('should handle cancel before session is created', () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield createMockMessage();
     });
 
@@ -429,11 +429,11 @@ describe('createStreamQuery', () => {
       resolveSessionCreation = resolve;
     });
 
-    ctx.acpClient.createSession.mockImplementation(async () => {
+    (ctx.acpClient as unknown as { createSession: Mock }).createSession.mockImplementation(async () => {
       await sessionCreationPromise;
       return { sessionId: 'delayed-session', model: 'claude-3-5-sonnet' };
     });
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {});
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {});
 
     const input = createInputGenerator(['msg1']);
     const { handle, iterator } = createStreamQuery(ctx, input, defaultOptions);
@@ -460,7 +460,7 @@ describe('createStreamQuery', () => {
 
   it('should ensure client is connected before creating session', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield createMockMessage();
     });
 
@@ -477,7 +477,7 @@ describe('createStreamQuery', () => {
   it('should convert string message content correctly', async () => {
     const ctx = createQueryContext();
     let receivedPrompt: unknown;
-    ctx.acpClient.sendPrompt.mockImplementation(async function* (sid: string, prompt: unknown) {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* (sid: string, prompt: unknown) {
       receivedPrompt = prompt;
       yield createMockMessage();
     });
@@ -495,7 +495,7 @@ describe('createStreamQuery', () => {
   it('should stringify non-string message content', async () => {
     const ctx = createQueryContext();
     let receivedPrompt: unknown;
-    ctx.acpClient.sendPrompt.mockImplementation(async function* (_sid: string, prompt: unknown) {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* (_sid: string, prompt: unknown) {
       receivedPrompt = prompt;
       yield createMockMessage();
     });
@@ -527,7 +527,7 @@ describe('createStreamQuery', () => {
   it('should handle empty content gracefully', async () => {
     const ctx = createQueryContext();
     let receivedPrompt: unknown;
-    ctx.acpClient.sendPrompt.mockImplementation(async function* (_sid: string, prompt: unknown) {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* (_sid: string, prompt: unknown) {
       receivedPrompt = prompt;
       yield createMockMessage();
     });
@@ -552,7 +552,7 @@ describe('createStreamQuery', () => {
 
   it('should log debug for each received message', async () => {
     const ctx = createQueryContext();
-    ctx.acpClient.sendPrompt.mockImplementation(async function* () {
+    (ctx.acpClient as unknown as { sendPrompt: Mock }).sendPrompt.mockImplementation(async function* () {
       yield createMockMessage({ type: 'text', content: 'response' });
     });
 
