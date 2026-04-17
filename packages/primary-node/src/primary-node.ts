@@ -60,6 +60,7 @@ import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
+import { checkMacAutoSleep } from './utils/check-mac-auto-sleep.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -386,6 +387,9 @@ export class PrimaryNode extends EventEmitter {
     }
 
     logger.info({ nodeId: this.localNodeId }, 'Starting PrimaryNode');
+
+    // Issue #2263: Check macOS auto-sleep at startup (unconditional, darwin-only)
+    checkMacAutoSleep();
 
     // Start IPC server for MCP Server connections (Issue #1042)
     await this.startIpcServer();
