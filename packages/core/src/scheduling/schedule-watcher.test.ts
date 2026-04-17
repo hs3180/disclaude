@@ -31,6 +31,20 @@ const { mockMkdir, mockWriteFile, mockReadFile, mockReaddir, mockStat, mockUnlin
   };
 });
 
+/** Create a mock Dirent-like object for readdir with withFileTypes. */
+function mockDirent(name: string, isDir: boolean) {
+  return {
+    name,
+    isDirectory: () => isDir,
+    isFile: () => !isDir,
+    isBlockDevice: () => false,
+    isCharacterDevice: () => false,
+    isSymbolicLink: () => false,
+    isFIFO: () => false,
+    isSocket: () => false,
+  };
+}
+
 vi.mock('fs/promises', () => ({
   default: {
     mkdir: mockMkdir,
@@ -350,13 +364,72 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('scanAll', () => {
-    it('should scan all .md files in the directory', async () => {
-      mockReaddir.mockResolvedValue(['daily-report.md', 'weekly-summary.md', 'notes.txt']);
+    it('should scan all flat .md files in the directory (legacy)', async () => {
+      mockReaddir.mockResolvedValue([
+        mockDirent('daily-report.md', false),
+        mockDirent('weekly-summary.md', false),
+        mockDirent('notes.txt', false),
+      ]);
       mockReadFile.mockResolvedValue(makeScheduleContent());
 
       const tasks = await scanner.scanAll();
       expect(tasks).toHaveLength(2);
       expect(mockReadFile).toHaveBeenCalledTimes(2);
+    });
+
+    it('should scan subdirectories for SCHEDULE.md (new format)', async () => {
+      mockReaddir.mockResolvedValue([
+        mockDirent('daily-report', true),
+        mockDirent('weekly-summary', true),
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const tasks = await scanner.scanAll();
+      expect(tasks).toHaveLength(2);
+      // Should read from subdirectory/SCHEDULE.md
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.stringContaining('daily-report/SCHEDULE.md'),
+        'utf-8'
+      );
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.stringContaining('weekly-summary/SCHEDULE.md'),
+        'utf-8'
+      );
+    });
+
+    it('should prioritize subdirectory over flat file with same slug', async () => {
+      mockReaddir.mockResolvedValue([
+        mockDirent('daily-report', true),    // subdirectory
+        mockDirent('daily-report.md', false), // flat file (same slug)
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const tasks = await scanner.scanAll();
+      // Should only load the subdirectory version
+      expect(tasks).toHaveLength(1);
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.stringContaining('daily-report/SCHEDULE.md'),
+        'utf-8'
+      );
+      // Should NOT read the flat file
+      expect(mockReadFile).not.toHaveBeenCalledWith(
+        expect.stringContaining('daily-report.md'),
+        'utf-8'
+      );
+    });
+
+    it('should skip subdirectories without SCHEDULE.md', async () => {
+      mockReaddir.mockResolvedValue([
+        mockDirent('empty-dir', true),
+        mockDirent('valid.md', false),
+      ]);
+      // First readFile call (for empty-dir/SCHEDULE.md) fails
+      mockReadFile
+        .mockRejectedValueOnce({ code: 'ENOENT' })
+        .mockResolvedValueOnce(makeScheduleContent());
+
+      const tasks = await scanner.scanAll();
+      expect(tasks).toHaveLength(1);
     });
 
     it('should return empty array when directory does not exist', async () => {
@@ -367,7 +440,10 @@ describe('ScheduleFileScanner', () => {
     });
 
     it('should skip files that fail to parse', async () => {
-      mockReaddir.mockResolvedValue(['valid.md', 'invalid.md']);
+      mockReaddir.mockResolvedValue([
+        mockDirent('valid.md', false),
+        mockDirent('invalid.md', false),
+      ]);
       mockReadFile
         .mockResolvedValueOnce(makeScheduleContent())
         .mockResolvedValueOnce('no frontmatter');
@@ -384,7 +460,7 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('writeTask', () => {
-    it('should write a task with schedule- prefix stripped from filename', async () => {
+    it('should write a task to subdirectory/SCHEDULE.md', async () => {
       const task: ScheduledTask = {
         id: 'schedule-daily-report',
         name: 'Daily Report',
@@ -397,7 +473,8 @@ describe('ScheduleFileScanner', () => {
       };
 
       const filePath = await scanner.writeTask(task);
-      expect(filePath).toBe(`${MOCK_DIR}/daily-report.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
+      expect(mockMkdir).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report`, { recursive: true });
       expect(mockWriteFile).toHaveBeenCalledTimes(1);
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
@@ -476,10 +553,10 @@ describe('ScheduleFileScanner', () => {
       };
 
       const filePath = await scanner.writeTask(task);
-      expect(filePath).toBe(`${MOCK_DIR}/my-task.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/my-task/SCHEDULE.md`);
     });
 
-    it('should call ensureDir before writing', async () => {
+    it('should create subdirectory before writing', async () => {
       const task: ScheduledTask = {
         id: 'schedule-test',
         name: 'Test',
@@ -491,14 +568,26 @@ describe('ScheduleFileScanner', () => {
       };
 
       await scanner.writeTask(task);
-      expect(mockMkdir).toHaveBeenCalledWith(MOCK_DIR, { recursive: true });
+      expect(mockMkdir).toHaveBeenCalledWith(`${MOCK_DIR}/test`, { recursive: true });
     });
   });
 
   describe('deleteTask', () => {
-    it('should delete a task file and return true', async () => {
+    it('should delete a subdirectory SCHEDULE.md file and return true', async () => {
       const result = await scanner.deleteTask('schedule-daily-report');
       expect(result).toBe(true);
+      expect(mockUnlink).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
+    });
+
+    it('should fallback to flat file when subdirectory does not exist', async () => {
+      // First unlink (subdirectory) fails with ENOENT
+      mockUnlink
+        .mockRejectedValueOnce({ code: 'ENOENT' } as NodeJS.ErrnoException)
+        .mockResolvedValueOnce(undefined);
+
+      const result = await scanner.deleteTask('schedule-daily-report');
+      expect(result).toBe(true);
+      expect(mockUnlink).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
       expect(mockUnlink).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report.md`);
     });
 
@@ -508,14 +597,14 @@ describe('ScheduleFileScanner', () => {
       expect(mockUnlink).not.toHaveBeenCalled();
     });
 
-    it('should return false when file does not exist (ENOENT)', async () => {
+    it('should return false when neither subdirectory nor flat file exists', async () => {
       mockUnlink.mockRejectedValue({ code: 'ENOENT' } as NodeJS.ErrnoException);
 
       const result = await scanner.deleteTask('schedule-nonexistent');
       expect(result).toBe(false);
     });
 
-    it('should throw on non-ENOENT errors', async () => {
+    it('should throw on non-ENOENT errors from subdirectory delete', async () => {
       mockUnlink.mockRejectedValue(new Error('Permission denied'));
 
       await expect(scanner.deleteTask('schedule-test')).rejects.toThrow('Permission denied');
@@ -523,14 +612,14 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('getFilePath', () => {
-    it('should strip schedule- prefix from task ID', () => {
+    it('should return subdirectory path for task ID with schedule- prefix', () => {
       const filePath = scanner.getFilePath('schedule-daily-report');
-      expect(filePath).toBe(`${MOCK_DIR}/daily-report.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
     });
 
-    it('should use task ID as-is without schedule- prefix', () => {
+    it('should return subdirectory path for task ID without schedule- prefix', () => {
       const filePath = scanner.getFilePath('my-task');
-      expect(filePath).toBe(`${MOCK_DIR}/my-task.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/my-task/SCHEDULE.md`);
     });
   });
 
@@ -622,7 +711,7 @@ describe('ScheduleFileWatcher', () => {
 
       expect(mockFsWatch).toHaveBeenCalledWith(
         MOCK_DIR,
-        { persistent: true, recursive: false },
+        { persistent: true, recursive: true },
         expect.any(Function)
       );
       expect(watcher.isRunning()).toBe(true);

@@ -83,6 +83,51 @@ function taskId(fileName: string): string {
   return `schedule-${fileName.replace(/\.md$/, '')}`;
 }
 
+/**
+ * Write a schedule markdown file in subdirectory format.
+ * The scanner generates task ID as `schedule-${subdirName}`.
+ */
+async function writeSubdirScheduleFile(
+  subdirName: string,
+  options: Parameters<typeof writeScheduleFile>[1] = {}
+): Promise<void> {
+  const {
+    name = 'Test Task',
+    cron = '0 9 * * *',
+    prompt = 'Run tests',
+    chatId = 'oc_test',
+    enabled = true,
+    createdBy,
+    blocking,
+    cooldownPeriod,
+    model,
+    lastExecutedAt,
+  } = options;
+
+  const content = `---
+name: ${name}
+cron: "${cron}"
+prompt: "${prompt}"
+chatId: ${chatId}
+enabled: ${enabled}
+${createdBy ? `createdBy: "${createdBy}"` : ''}
+${blocking !== undefined ? `blocking: ${blocking}` : ''}
+${cooldownPeriod !== undefined ? `cooldownPeriod: ${cooldownPeriod}` : ''}
+${model ? `model: "${model}"` : ''}
+${lastExecutedAt ? `lastExecutedAt: "${lastExecutedAt}"` : ''}
+---
+
+# ${name}
+
+${prompt}
+
+Schedule: \`${cron}\`
+`;
+  const subdir = path.join(tempDir, 'schedules', subdirName);
+  await fs.mkdir(subdir, { recursive: true });
+  await fs.writeFile(path.join(subdir, 'SCHEDULE.md'), content, 'utf-8');
+}
+
 describe('ScheduleManager', () => {
   let manager: ScheduleManager;
 
@@ -318,6 +363,78 @@ invalid yaml content [[[broken
       );
 
       // Should not throw, just skip the bad file
+      const result = await manager.listAll();
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('subdirectory format (Issue #2526)', () => {
+    it('should load schedule from subdirectory/SCHEDULE.md', async () => {
+      await writeSubdirScheduleFile('daily-report', {
+        name: 'Daily Report',
+        cron: '0 9 * * *',
+        prompt: 'Generate daily report',
+        chatId: 'oc_chat1',
+        enabled: true,
+      });
+
+      const result = await manager.get(taskId('daily-report'));
+      expect(result).toBeDefined();
+      expect(result!.id).toBe('schedule-daily-report');
+      expect(result!.name).toBe('Daily Report');
+      expect(result!.chatId).toBe('oc_chat1');
+    });
+
+    it('should list all tasks from both flat and subdirectory formats', async () => {
+      // Flat file (legacy)
+      await writeScheduleFile('flat-task.md', {
+        name: 'Flat Task',
+        cron: '0 9 * * *',
+        prompt: 'Legacy flat',
+        chatId: 'oc_chat1',
+      });
+      // Subdirectory file (new)
+      await writeSubdirScheduleFile('subdir-task', {
+        name: 'Subdir Task',
+        cron: '0 10 * * *',
+        prompt: 'New subdir',
+        chatId: 'oc_chat2',
+      });
+
+      const result = await manager.listAll();
+      expect(result).toHaveLength(2);
+      const ids = result.map(t => t.id);
+      expect(ids).toContain('schedule-flat-task');
+      expect(ids).toContain('schedule-subdir-task');
+    });
+
+    it('should prioritize subdirectory over flat file with same slug', async () => {
+      // Flat file
+      await writeScheduleFile('my-task.md', {
+        name: 'Flat Task',
+        cron: '0 9 * * *',
+        prompt: 'Legacy',
+        chatId: 'oc_chat1',
+      });
+      // Subdirectory with same slug
+      await writeSubdirScheduleFile('my-task', {
+        name: 'Subdir Task',
+        cron: '0 10 * * *',
+        prompt: 'New',
+        chatId: 'oc_chat1',
+      });
+
+      const result = await manager.listAll();
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Subdir Task');
+    });
+
+    it('should ignore subdirectories without SCHEDULE.md', async () => {
+      // Create a subdirectory without SCHEDULE.md
+      const emptyDir = path.join(tempDir, 'schedules', 'empty-dir');
+      await fs.mkdir(emptyDir, { recursive: true });
+      await fs.writeFile(path.join(emptyDir, 'other.txt'), 'not a schedule', 'utf-8');
+
       const result = await manager.listAll();
       expect(result).toEqual([]);
     });
