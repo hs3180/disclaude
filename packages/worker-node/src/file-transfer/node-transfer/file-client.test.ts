@@ -64,9 +64,9 @@ function mockErrorResponse(status: number, text: string) {
 }
 
 /** Get the fetch call arguments */
-function getFetchCall(index = 0): [string, RequestInit] {
+function getFetchCall(index = 0): RequestInit {
   const [, call] = mockFetch.mock.calls[index];
-  return call as [string, RequestInit];
+  return call as RequestInit;
 }
 
 // ============================================================================
