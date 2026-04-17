@@ -55,6 +55,9 @@ tasks/
 # Workspace directory (keep directory structure, ignore contents)
 workspace/*
 !workspace/.gitkeep
+
+# PR Scanner state files (temporary runtime data)
+.temp-chats/
 ecosystem.config.cjs
 
 # Integration test environment (contains secrets)
