@@ -206,8 +206,15 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state so memory and disk stay consistent
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      this.removeFromReverseIndex(name, chatId);
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -246,8 +253,19 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore old binding state
+      this.removeFromReverseIndex(name, chatId);
+      if (oldName && oldName !== name) {
+        this.addToReverseIndex(oldName, chatId);
+        this.chatProjectMap.set(chatId, oldName);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -277,8 +295,16 @@ export class ProjectManager {
       this.removeFromReverseIndex(boundName, chatId);
     }
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore binding
+      if (boundName) {
+        this.chatProjectMap.set(chatId, boundName);
+        this.addToReverseIndex(boundName, chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,

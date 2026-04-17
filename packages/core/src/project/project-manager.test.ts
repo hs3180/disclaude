@@ -682,6 +682,103 @@ describe('ProjectManager persist()', () => {
   });
 });
 
+describe('ProjectManager persist failure — rollback on create()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should rollback create() when persist fails', () => {
+    // Make persist fail by creating .disclaude as a file (not a directory)
+    const dataDir = join(workspaceDir, '.disclaude');
+    writeFileSync(dataDir, 'blocker', 'utf8');
+
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // Instance should NOT exist in memory (rolled back)
+    const instances = pm.listInstances();
+    expect(instances).toHaveLength(0);
+
+    // getActive should return default
+    expect(pm.getActive('chat_1').name).toBe('default');
+  });
+});
+
+describe('ProjectManager persist failure — rollback on use()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should rollback use() when persist fails', () => {
+    // Create an instance successfully first
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+
+    // Now make persist fail
+    const dataDir = join(workspaceDir, '.disclaude');
+    rmSync(dataDir, { recursive: true, force: true });
+    writeFileSync(dataDir, 'blocker', 'utf8');
+
+    // Try to bind a new chatId
+    const result = pm.use('chat_3', 'my-research');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // chat_3 should NOT be bound (rolled back)
+    expect(pm.getActive('chat_3').name).toBe('default');
+    // chat_1 and chat_2 should still be bound
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+    expect(pm.getActive('chat_2').name).toBe('my-research');
+  });
+});
+
+describe('ProjectManager persist failure — rollback on reset()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should rollback reset() when persist fails', () => {
+    // Create and bind
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+
+    // Now make persist fail
+    const dataDir = join(workspaceDir, '.disclaude');
+    rmSync(dataDir, { recursive: true, force: true });
+    writeFileSync(dataDir, 'blocker', 'utf8');
+
+    // Try to reset
+    const result = pm.reset('chat_1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // Binding should still exist (rolled back)
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+  });
+});
+
 describe('ProjectManager loadPersistedData()', () => {
   it('should restore instances from persisted state', () => {
     const opts = createOptions();
@@ -892,24 +989,28 @@ describe('ProjectManager — edge cases', () => {
   });
 
   it('should compute workingDir correctly with trailing slash in workspaceDir', () => {
+    const tempDir = createTempDir();
+    const workspaceDir = `${tempDir}/`;
     const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace/',
+      workspaceDir,
     }));
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(`${tempDir}/projects/test-project`);
     }
   });
 
   it('should compute workingDir correctly with multiple trailing slashes', () => {
+    const tempDir = createTempDir();
+    const workspaceDir = `${tempDir}///`;
     const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace///',
+      workspaceDir,
     }));
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(`${tempDir}/projects/test-project`);
     }
   });
 
