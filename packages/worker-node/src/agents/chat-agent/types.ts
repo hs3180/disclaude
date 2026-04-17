@@ -1,9 +1,8 @@
 /**
- * Type definitions for ChatAgent (formerly Pilot).
+ * Type definitions for ChatAgent.
  *
  * Extracted for better separation of concerns (Issue #697).
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
- * Issue #2345 Phase 1: Renamed from Pilot to ChatAgent.
  */
 
 import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions } from '@disclaude/core';
