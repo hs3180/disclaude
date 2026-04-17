@@ -466,6 +466,252 @@ describe('AcpClient', () => {
       // Client should still be connected (no crash)
       expect(client.state).toBe('connected');
     });
+
+    // ------------------------------------------------------------------------
+    // Issue #2532: Text chunk aggregation tests
+    // ------------------------------------------------------------------------
+    describe('text chunk aggregation (Issue #2532)', () => {
+      it('aggregates consecutive agent_message_chunk into one message', async () => {
+        const { client, transport } = createTestClient();
+        await connectClient(client, transport);
+
+        const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+        const firstMsgPromise = promptIter.next();
+        await yieldOnce();
+
+        const promptReq = transport.sentMessages.find(
+          (m) => (m as JsonRpcRequest).method === 'session/prompt',
+        ) as JsonRpcRequest;
+
+        // Simulate multiple small chunks (token-by-token)
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Hel' },
+        }));
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'lo ' },
+        }));
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'wor' },
+        }));
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'ld!' },
+        }));
+
+        // Boundary event (tool_call) triggers flush
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-1',
+          toolName: 'Bash',
+          content: { type: 'text', text: '{"command":"echo"}' },
+        }));
+
+        // Complete the prompt
+        transport.simulateMessage(successResponse(promptReq.id, {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 100, outputTokens: 50 },
+        }));
+
+        // Collect all messages
+        const messages = [];
+        messages.push((await firstMsgPromise).value);
+        for await (const msg of promptIter) {
+          messages.push(msg);
+        }
+
+        // The 4 chunks should be aggregated into ONE text message
+        const textMessages = messages.filter(m => m.type === 'text');
+        expect(textMessages.length).toBe(1);
+        expect(textMessages[0].content).toBe('Hello world!');
+      });
+
+      it('flushes buffered text before tool_result', async () => {
+        const { client, transport } = createTestClient();
+        await connectClient(client, transport);
+
+        const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+        const firstMsgPromise = promptIter.next();
+        await yieldOnce();
+
+        const promptReq = transport.sentMessages.find(
+          (m) => (m as JsonRpcRequest).method === 'session/prompt',
+        ) as JsonRpcRequest;
+
+        // Chunks followed by tool_result boundary
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Processing' },
+        }));
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: ' data...' },
+        }));
+
+        // tool_call_update (completed) is a boundary event
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-1',
+          toolName: 'Read',
+          state: 'completed',
+          content: { type: 'text', text: 'file contents' },
+        }));
+
+        transport.simulateMessage(successResponse(promptReq.id, {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 100, outputTokens: 50 },
+        }));
+
+        const messages = [];
+        messages.push((await firstMsgPromise).value);
+        for await (const msg of promptIter) {
+          messages.push(msg);
+        }
+
+        // Text should be aggregated, tool_result should follow
+        const textMessages = messages.filter(m => m.type === 'text');
+        expect(textMessages.length).toBe(1);
+        expect(textMessages[0].content).toBe('Processing data...');
+        const toolResults = messages.filter(m => m.type === 'tool_result');
+        expect(toolResults.length).toBe(1);
+      });
+
+      it('flushes buffered text on prompt result', async () => {
+        const { client, transport } = createTestClient();
+        await connectClient(client, transport);
+
+        const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+        const firstMsgPromise = promptIter.next();
+        await yieldOnce();
+
+        const promptReq = transport.sentMessages.find(
+          (m) => (m as JsonRpcRequest).method === 'session/prompt',
+        ) as JsonRpcRequest;
+
+        // Chunks with NO boundary event — result arrives directly
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Short' },
+        }));
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: ' answer' },
+        }));
+
+        // Result arrives — should flush buffered text first
+        transport.simulateMessage(successResponse(promptReq.id, {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 50, outputTokens: 10 },
+        }));
+
+        const messages = [];
+        messages.push((await firstMsgPromise).value);
+        for await (const msg of promptIter) {
+          messages.push(msg);
+        }
+
+        // Buffered text flushed before result
+        const textMessages = messages.filter(m => m.type === 'text');
+        expect(textMessages.length).toBe(1);
+        expect(textMessages[0].content).toBe('Short answer');
+        const resultMessages = messages.filter(m => m.type === 'result');
+        expect(resultMessages.length).toBe(1);
+      });
+
+      it('aggregates agent_thought_chunk separately from agent_message_chunk', async () => {
+        const { client, transport } = createTestClient();
+        await connectClient(client, transport);
+
+        const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+        const firstMsgPromise = promptIter.next();
+        await yieldOnce();
+
+        const promptReq = transport.sentMessages.find(
+          (m) => (m as JsonRpcRequest).method === 'session/prompt',
+        ) as JsonRpcRequest;
+
+        // Thinking chunks
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_thought_chunk',
+          content: { type: 'text', text: 'Let me ' },
+        }));
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_thought_chunk',
+          content: { type: 'text', text: 'think...' },
+        }));
+
+        // Text chunks
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Here is ' },
+        }));
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'my answer' },
+        }));
+
+        // Boundary flush
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'plan',
+          title: 'Done',
+        }));
+
+        transport.simulateMessage(successResponse(promptReq.id, {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 100, outputTokens: 50 },
+        }));
+
+        const messages = [];
+        messages.push((await firstMsgPromise).value);
+        for await (const msg of promptIter) {
+          messages.push(msg);
+        }
+
+        // Thinking and text should be separate aggregated messages
+        const thinkingMessages = messages.filter(m => m.type === 'thinking');
+        const textMessages = messages.filter(m => m.type === 'text');
+        expect(thinkingMessages.length).toBe(1);
+        expect(thinkingMessages[0].content).toBe('Let me think...');
+        expect(textMessages.length).toBe(1);
+        expect(textMessages[0].content).toBe('Here is my answer');
+      });
+
+      it('preserves existing behavior: single chunk still works', async () => {
+        const { client, transport } = createTestClient();
+        await connectClient(client, transport);
+
+        const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+        const firstMsgPromise = promptIter.next();
+        await yieldOnce();
+
+        const promptReq = transport.sentMessages.find(
+          (m) => (m as JsonRpcRequest).method === 'session/prompt',
+        ) as JsonRpcRequest;
+
+        // Single chunk → still buffered, flushed by result
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Hi there!' },
+        }));
+
+        transport.simulateMessage(successResponse(promptReq.id, {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 100, outputTokens: 50 },
+        }));
+
+        const messages = [];
+        messages.push((await firstMsgPromise).value);
+        for await (const msg of promptIter) {
+          messages.push(msg);
+        }
+
+        expect(messages[0].type).toBe('text');
+        expect(messages[0].content).toBe('Hi there!');
+        expect(messages[1].type).toBe('result');
+      });
+    });
   });
 
   // --------------------------------------------------------------------------
