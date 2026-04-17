@@ -21,7 +21,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
+import { send_file, send_text, send_card, send_interactive_message, insert_docx_image } from './channel-mcp.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -167,6 +167,32 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
+              {
+                name: 'insert_docx_image',
+                description: 'Insert an image at a specific position in a Feishu document. Unlike lark-cli docs +media-insert, supports position-based insertion via the index parameter.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    documentId: {
+                      type: 'string',
+                      description: 'The Feishu document ID',
+                    },
+                    imagePath: {
+                      type: 'string',
+                      description: 'Path to the image file (relative to workspace or absolute)',
+                    },
+                    index: {
+                      type: 'number',
+                      description: 'Position to insert at (0-based). Omit or -1 to append to end.',
+                    },
+                    caption: {
+                      type: 'string',
+                      description: 'Optional caption for the image',
+                    },
+                  },
+                  required: ['documentId', 'imagePath'],
+                },
+              },
             ],
           },
         };
@@ -241,6 +267,24 @@ async function handleMessage(message: unknown) {
         if (name === 'send_file') {
           const args = toolArgs as { filePath: string; chatId: string; parentMessageId?: string };
           const result = await send_file(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'insert_docx_image') {
+          const args = toolArgs as { documentId: string; imagePath: string; index?: number; caption?: string };
+          const result = await insert_docx_image(args);
 
           return {
             jsonrpc: '2.0',

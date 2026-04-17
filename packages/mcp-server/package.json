@@ -27,6 +27,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.62",
     "@disclaude/core": "*",
+    "@larksuiteoapi/node-sdk": "^1.60.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

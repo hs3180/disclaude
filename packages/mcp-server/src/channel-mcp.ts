@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,57 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Insert image at specific position in Feishu document
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image at a specific position in a Feishu document.
+
+Unlike \`lark-cli docs +media-insert\` which always appends to the end, this tool
+uses the Feishu API directly to support position-based insertion via the \`index\` parameter.
+
+## Parameters
+- **documentId**: The Feishu document ID (required)
+- **imagePath**: Path to the image file, relative to workspace or absolute (required)
+- **index**: Position to insert at (0-based). Omit or set to -1 to append to end. (optional)
+- **caption**: Optional caption for the image (optional)
+
+## Example
+\`\`\`json
+{
+  "documentId": "doxcn1234567",
+  "imagePath": "/path/to/chart.png",
+  "index": 3,
+  "caption": "Figure 1: Revenue growth"
+}
+\`\`\`
+
+## Supported Image Formats
+PNG, JPG, JPEG, GIF, BMP, WebP
+
+## Notes
+- The image file must not exceed 20MB
+- The document must be accessible by the Feishu App (correct permissions)
+- The \`index\` is 0-based among all top-level blocks in the document`,
+    parameters: z.object({
+      documentId: z.string().describe('The Feishu document ID'),
+      imagePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().int().optional().describe('Position to insert at (0-based). Omit or -1 to append to end.'),
+      caption: z.string().optional().describe('Optional caption for the image'),
+    }),
+    handler: async ({ documentId, imagePath, index, caption }: {
+      documentId: string;
+      imagePath: string;
+      index?: number;
+      caption?: string;
+    }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index, caption });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

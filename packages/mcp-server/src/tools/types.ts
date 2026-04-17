@@ -81,3 +81,23 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for insert_docx_image tool.
+ * Issue #2278: Insert image at specific position in Feishu document.
+ */
+export interface InsertDocxImageResult {
+  success: boolean;
+  message: string;
+  /** ID of the created image block */
+  blockId?: string;
+  /** File token returned by Drive upload */
+  fileToken?: string;
+  /** Original file name */
+  fileName?: string;
+  /** File size in bytes */
+  fileSize?: number;
+  error?: string;
+  platformCode?: number;
+  platformMsg?: string;
+}
+
