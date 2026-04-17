@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplates } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +65,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing `templates/` for auto-discovery */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +83,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -98,26 +99,53 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Initialize (or re-initialize) templates from config.
+   * Initialize (or re-initialize) templates.
+   *
+   * Template loading strategy:
+   * 1. Auto-discover templates from `{packageDir}/templates/` filesystem
+   * 2. Merge with `templatesConfig` — config can override discovered metadata
+   *    (displayName, description) or declare additional templates not on disk
+   *
+   * This means templates are available as soon as they are placed in the
+   * `templates/` directory — no config needed (Issue #2286).
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @param templatesConfig - Optional template configuration overrides (from disclaude.config.yaml)
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
 
-    if (!templatesConfig) {
-      return;
+    // Step 1: Auto-discover templates from filesystem
+    const discovered = discoverTemplates(this.packageDir);
+    for (const template of discovered.templates) {
+      this.templates.set(template.name, template);
     }
 
-    for (const [name, meta] of Object.entries(templatesConfig)) {
-      this.templates.set(name, {
-        name,
-        displayName: meta.displayName,
-        description: meta.description,
-      });
+    // Step 2: Merge config overrides
+    // - Discovered template + config → config metadata wins (displayName, description)
+    // - Config-only template (not discovered) → added for backward compatibility
+    if (templatesConfig) {
+      for (const [name, meta] of Object.entries(templatesConfig)) {
+        const existing = this.templates.get(name);
+        if (existing) {
+          // Override metadata from config
+          if (meta.displayName !== undefined) {
+            existing.displayName = meta.displayName;
+          }
+          if (meta.description !== undefined) {
+            existing.description = meta.description;
+          }
+        } else {
+          // Template in config but not discovered — still load it
+          this.templates.set(name, {
+            name,
+            displayName: meta.displayName,
+            description: meta.description,
+          });
+        }
+      }
     }
   }
 
