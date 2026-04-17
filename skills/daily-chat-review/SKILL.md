@@ -214,7 +214,13 @@ Use send_user_feedback with:
 - Create discussion threads for important issues
 - Track discussion outcomes
 
-### Phase 3: Automated Actions (Future)
+### Phase 3: Taste Integration (Issue #2335)
+- **Manual Corrections** detected in Step 2 can be auto-saved as taste rules
+- When a correction pattern occurs ≥2 times, suggest adding it as a taste rule
+- Use `/taste add` command to save detected preferences
+- Taste rules are auto-loaded into agent context to prevent future corrections
+
+### Phase 4: Automated Actions (Future)
 - Automatically create issues for detected problems
 - Create skills for repetitive tasks
 - Create schedules for automation opportunities

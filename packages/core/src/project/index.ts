@@ -30,3 +30,16 @@ export type {
 } from './template-discovery.js';
 
 export { ProjectManager } from './project-manager.js';
+
+// TasteManager — auto-summarized user taste (preferences)
+// @see Issue #2335
+
+export { TasteManager } from './taste-manager.js';
+
+export type {
+  TasteCategory,
+  TasteSource,
+  TasteRule,
+  TasteData,
+  TasteManagerOptions,
+} from './taste-types.js';
