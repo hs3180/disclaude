@@ -17,3 +17,10 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Record (Issue #1234 Phase 1: ETA prediction system)
+export {
+  TaskRecordManager,
+  type TaskRecordEntry,
+  type TaskRecordManagerOptions,
+} from './task-record.js';
