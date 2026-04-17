@@ -6,7 +6,8 @@
  * updates status to active. Marks expired or failed chats appropriately.
  *
  * Environment variables (optional):
- *   CHAT_MAX_PER_RUN  Max chats to process per execution (default: 10)
+ *   CHAT_MAX_PER_RUN     Max chats to process per execution (default: 10)
+ *   CHAT_SKIP_LARK_CHECK Set to '1' to skip lark-cli availability check (for testing)
  *
  * Exit codes:
  *   0 — success (or no pending chats found)
@@ -49,11 +50,13 @@ async function atomicWrite(filePath: string, data: string): Promise<void> {
 }
 
 async function main() {
-  // ---- Check lark-cli availability ----
-  try {
-    await execFileAsync('lark-cli', ['--version'], { timeout: 5000 });
-  } catch {
-    exit('Missing required dependency: lark-cli not found in PATH');
+  // ---- Check lark-cli availability (skippable for testing) ----
+  if (process.env.CHAT_SKIP_LARK_CHECK !== '1') {
+    try {
+      await execFileAsync('lark-cli', ['--version'], { timeout: 5000 });
+    } catch {
+      exit('Missing required dependency: lark-cli not found in PATH');
+    }
   }
   // ---- Parse and validate CHAT_MAX_PER_RUN ----
   let maxPerRun = DEFAULT_MAX_PER_RUN;
@@ -244,7 +247,7 @@ async function main() {
       } catch (err: unknown) {
         const execErr = err as { stdout?: string; stderr?: string; code?: number | null; message?: string };
         larkResult = execErr.stdout ?? '';
-        larkError = execErr.stderr ?? execErr.message ?? '';
+        larkError = execErr.stderr || execErr.message || '';
         exitCode = execErr.code ?? null;
       }
 
