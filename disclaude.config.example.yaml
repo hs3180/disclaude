@@ -244,6 +244,28 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Project Templates Configuration (Issue #1916, #2227)
+# -----------------------------------------------------------------------------
+# Define project templates for per-chatId Agent context switching.
+# When configured, agents can create isolated project instances with independent
+# working directories, each with its own CLAUDE.md context.
+#
+# Templates can also be auto-discovered from the package templates directory.
+# This config section is optional — when absent, the system runs in zero-config
+# mode (all chatIds use the workspace root as cwd).
+#
+# @see Issue #1916 (unified ProjectContext system)
+# @see Issue #2227 (config integration)
+#
+# projectTemplates:
+#   research:
+#     displayName: "研究模式"
+#     description: "专注研究的独立空间"
+#   book-reader:
+#     displayName: "读书助手"
+#     description: "阅读和笔记的独立空间"
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.

@@ -495,6 +495,23 @@ export class Config {
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
   }
+
+  /**
+   * Get project templates configuration from config file.
+   *
+   * Used by ProjectManager to load template definitions for per-chatId
+   * Agent context switching. Templates can also be auto-discovered from
+   * the filesystem via `discoverTemplates()`.
+   *
+   * @returns Project templates config, or undefined if not configured
+   * @see Issue #2227 (Sub-Issue E — config integration)
+   */
+  static getProjectTemplatesConfig(): Record<
+    string,
+    { displayName?: string; description?: string }
+  > | undefined {
+    return fileConfigOnly.projectTemplates;
+  }
 }
 
 // ============================================================================

@@ -344,6 +344,35 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /**
+   * Project templates configuration for per-chatId Agent context switching.
+   *
+   * Key = template name (must match a directory in `{packageDir}/templates/`).
+   * Value = optional display metadata.
+   *
+   * When not configured, the ProjectManager operates in zero-config mode
+   * (all chatIds use workspace root as cwd, identical to current behavior).
+   *
+   * @see Issue #1916 (parent — unified ProjectContext system)
+   * @see Issue #2227 (Sub-Issue E — config integration)
+   *
+   * @example
+   * ```yaml
+   * projectTemplates:
+   *   research:
+   *     displayName: "研究模式"
+   *     description: "专注研究的独立空间"
+   *   book-reader:
+   *     displayName: "读书助手"
+   * ```
+   */
+  projectTemplates?: Record<
+    string,
+    {
+      displayName?: string;
+      description?: string;
+    }
+  >;
 }
 
 /**
