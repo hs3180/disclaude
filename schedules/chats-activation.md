@@ -37,7 +37,7 @@ createdAt: 2026-04-03T00:00:00.000Z
 ## 执行步骤
 
 ```bash
-npx tsx skills/chat/chats-activation.ts
+npx tsx schedules/chats-activation.ts
 ```
 
 脚本完整实现了以下逻辑：
