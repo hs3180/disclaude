@@ -185,6 +185,57 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess and shares state
+ * with the main process via `{workspace}/.runtime-env`. However, the
+ * agent is unaware of which variables are available or how to use them.
+ * This guidance section informs the agent about the runtime-env mechanism.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You share state with the main process via a \`.runtime-env\` file. Some tools and services automatically write variables there (e.g., GitHub tokens), and you can read or write them too.
+
+### Known Variables
+
+| Variable | Writer | Purpose |
+|----------|--------|---------|
+| \`GH_TOKEN\` | \`github-jwt-auth\` skill | GitHub App installation access token |
+| \`GH_TOKEN_EXPIRES_AT\` | \`github-jwt-auth\` skill | Token expiration timestamp (ISO 8601) |
+
+### How to Read
+
+Runtime-env variables are **pre-loaded into \`process.env\`** before your session starts. You can access them directly:
+
+\`\`\`bash
+echo $GH_TOKEN
+\`\`\`
+
+Or read the raw file at \`{workspace}/.runtime-env\`.
+
+### How to Write
+
+Use the Bash tool to append or update variables (KEY=VALUE format, one per line):
+
+\`\`\`bash
+echo "MY_VAR=my_value" >> {workspace}/.runtime-env
+\`\`\`
+
+### Security Notes
+
+- The \`.runtime-env\` file is in \`.gitignore\` — never commit it
+- Check \`GH_TOKEN_EXPIRES_AT\` before using \`GH_TOKEN\`; if expired, run the \`github-jwt-auth\` skill to refresh
+- Never expose token values in user-facing messages`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

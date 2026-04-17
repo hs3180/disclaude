@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildRuntimeEnvGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -99,6 +100,44 @@ describe('buildOutputFormatGuidance', () => {
     const result = buildOutputFormatGuidance();
     expect(result).toContain('Convert JSON objects to readable text');
     expect(result).toContain('Markdown tables instead of raw JSON');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime-env awareness section', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment Variables');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should mention known runtime-env variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should explain how to read variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('process.env');
+    expect(result).toContain('How to Read');
+  });
+
+  it('should explain how to write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('How to Write');
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should include security notes', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Security Notes');
+    expect(result).toContain('.gitignore');
+    expect(result).toContain('expired');
+  });
+
+  it('should mention the github-jwt-auth skill as token writer', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('github-jwt-auth');
   });
 });
 
