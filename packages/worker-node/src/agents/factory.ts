@@ -2,8 +2,7 @@
  * AgentFactory - Factory for creating ChatAgent instances with unified configuration.
  *
  * Issue #2345 Phase 5: Simplified to a single createAgent() method.
- * The previous createScheduleAgent / createTaskAgent / createChatAgent methods
- * all had identical implementations. Now there is just one method.
+ * Phase 6: All schedule/task agent type distinctions removed.
  *
  * Uses unified configuration types from Issue #327.
  *
