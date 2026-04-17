@@ -233,6 +233,14 @@ For interactive cards with button click handlers, use send_interactive instead.
 - **card**: MUST be an object with config/header/elements, NOT an array or string
 - **chatId**: MUST be a non-empty string
 
+## Image Support (IMPORTANT)
+You can embed images in cards by using \`img\` elements in the card's \`elements\` array.
+**Local file paths are auto-uploaded**: set \`img_key\` to a local file path (e.g., \`/tmp/chart.png\`),
+and the system will automatically upload it to Feishu and replace the path with a valid \`image_key\`.
+- Supported formats: jpg, png, webp, gif, tiff, bmp, ico
+- Max file size: 10MB
+- Images must exist on the local filesystem at the time of sending
+
 ## Markdown Limitations (IMPORTANT)
 The \`markdown\` element supports a **restricted subset** of GFM:
 - ✅ Supported: bold, italic, links, lists, code blocks, headings
@@ -245,9 +253,10 @@ The \`markdown\` element supports a **restricted subset** of GFM:
 {
   "card": {
     "config": { "wide_screen_mode": true },
-    "header": { "title": { "tag": "plain_text", "content": "Status Update" } },
+    "header": { "title": { "tag": "plain_text", "content": "Report" } },
     "elements": [
-      { "tag": "div", "text": { "tag": "plain_text", "content": "Task completed successfully!" } }
+      { "tag": "img", "img_key": "/tmp/chart.png", "alt": { "tag": "plain_text", "content": "Chart" } },
+      { "tag": "div", "text": { "tag": "lark_md", "content": "See chart above" } }
     ]
   },
   "chatId": "oc_xxx"

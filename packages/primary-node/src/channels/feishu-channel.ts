@@ -434,9 +434,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
 
       case 'card': {
+        // Issue #1919: Auto-upload local image paths in card elements.
+        // When an img element's img_key is a local file path (e.g., /tmp/chart.png),
+        // upload it via Feishu im.image.create and replace with the returned image_key.
+        const processedCard = await this.autoUploadCardImages(message.card);
         const messageId = await sendFeishuMessage(
           'interactive',
-          JSON.stringify(message.card || {}),
+          JSON.stringify(processedCard || {}),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
         return messageId;
@@ -587,6 +591,102 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       default:
         throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
     }
+  }
+
+  // ─── Card Image Auto-Upload (Issue #1919) ─────────────────────────────
+
+  /**
+   * Check if a string looks like a local file path (not a Feishu image_key).
+   *
+   * Feishu image_keys typically start with `img_v2_` or `img_v3_`.
+   * Local paths start with `/`, `./`, `../`, or contain path separators.
+   */
+  private static isLocalImagePath(value: string): boolean {
+    if (!value || typeof value !== 'string') {return false;}
+    // Real Feishu image_keys start with "img_" prefix
+    if (value.startsWith('img_')) {return false;}
+    // Detect local file paths
+    return value.startsWith('/') || value.startsWith('./') || value.startsWith('../');
+  }
+
+  /**
+   * Recursively scan card elements for img elements with local file paths
+   * and upload them via Feishu im.image.create API.
+   *
+   * Modifies the card in-place: replaces local file paths in `img_key` fields
+   * with the returned Feishu `image_key` values.
+   *
+   * @param card - The Feishu card object (modified in-place)
+   * @returns The same card reference with local images uploaded and replaced
+   */
+  private async autoUploadCardImages(card: Record<string, unknown> | undefined): Promise<Record<string, unknown> | undefined> {
+    if (!card || !this.client) {return card;}
+
+    const {elements} = card;
+    if (!Array.isArray(elements)) {return card;}
+
+    const {client} = this;
+
+    const processElement = async (element: Record<string, unknown>): Promise<void> => {
+      // Check if this is an img element with a local path in img_key
+      if (element.tag === 'img' && typeof element.img_key === 'string') {
+        const imgKey = element.img_key as string;
+        if (FeishuChannel.isLocalImagePath(imgKey)) {
+          // Validate file exists before uploading
+          if (!fs.existsSync(imgKey)) {
+            logger.warn({ imgKey }, 'Card image path does not exist, skipping upload');
+            return;
+          }
+
+          const fileSize = fs.statSync(imgKey).size;
+          if (fileSize > 10 * 1024 * 1024) {
+            logger.warn({ imgKey, fileSize }, 'Card image exceeds 10MB limit, skipping upload');
+            return;
+          }
+
+          try {
+            const uploadResp = await client.im.image.create({
+              data: {
+                image_type: 'message',
+                image: fs.createReadStream(imgKey),
+              },
+            });
+            const imageKey = uploadResp?.image_key;
+            if (imageKey) {
+              element.img_key = imageKey;
+              logger.info({ localPath: imgKey, imageKey }, 'Card image uploaded successfully');
+            } else {
+              logger.warn({ imgKey }, 'Card image upload returned no image_key');
+            }
+          } catch (error) {
+            logger.error({ err: error, imgKey }, 'Failed to upload card image');
+          }
+        }
+      }
+
+      // Recursively process nested elements (e.g., column_set > column > widgets)
+      for (const [key, value] of Object.entries(element)) {
+        if (key === 'img_key') {continue;} // Already processed above
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+              await processElement(item as Record<string, unknown>);
+            }
+          }
+        } else if (value && typeof value === 'object') {
+          await processElement(value as Record<string, unknown>);
+        }
+      }
+    };
+
+    // Process all top-level elements
+    await Promise.all(
+      elements
+        .filter((e): e is Record<string, unknown> => e !== null && typeof e === 'object')
+        .map(e => processElement(e)),
+    );
+
+    return card;
   }
 
   /**

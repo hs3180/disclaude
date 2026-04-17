@@ -614,4 +614,227 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(result).toBe('reply_msg_001');
     });
   });
+
+  describe('card image auto-upload — Issue #1919', () => {
+    const tempFiles: string[] = [];
+
+    afterAll(() => {
+      for (const f of tempFiles) {
+        try { fs.unlinkSync(f); } catch { /* ignore */ }
+      }
+    });
+
+    it('should auto-upload local image paths in card elements', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      // Create a real temp image file
+      const testImagePath = path.join(os.tmpdir(), `test_card_img_${Date.now()}.png`);
+      fs.writeFileSync(testImagePath, Buffer.from(
+        '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
+        '0000000a49444154789c62000100000500010d0a2db40000000049454e44ae426082',
+        'hex',
+      ));
+      tempFiles.push(testImagePath);
+
+      const card: Record<string, unknown> = {
+        config: { wide_screen_mode: true },
+        header: { title: { tag: 'plain_text', content: 'Chart' } },
+        elements: [
+          { tag: 'img', img_key: testImagePath, alt: { tag: 'plain_text', content: 'Chart' } },
+        ],
+      };
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card,
+      });
+
+      // Image should have been uploaded
+      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(1);
+
+      // The card sent to Feishu should have the real image_key, not the local path
+      const [[createCall]] = mocks.createMock.mock.calls;
+      const sentCard = JSON.parse(createCall.data.content);
+      expect(sentCard.elements[0].img_key).toBe('img_key_001');
+    });
+
+    it('should not upload when img_key is already a Feishu image_key', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const card: Record<string, unknown> = {
+        config: { wide_screen_mode: true },
+        header: { title: { tag: 'plain_text', content: 'Chart' } },
+        elements: [
+          { tag: 'img', img_key: 'img_v3_abc123', alt: { tag: 'plain_text', content: 'Chart' } },
+        ],
+      };
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card,
+      });
+
+      // Image upload should NOT be called for existing image_keys
+      expect(mocks.imageCreateMock).not.toHaveBeenCalled();
+
+      // The card should be sent as-is
+      const [[createCall]] = mocks.createMock.mock.calls;
+      const sentCard = JSON.parse(createCall.data.content);
+      expect(sentCard.elements[0].img_key).toBe('img_v3_abc123');
+    });
+
+    it('should skip upload for non-existent image files', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const card: Record<string, unknown> = {
+        config: { wide_screen_mode: true },
+        header: { title: { tag: 'plain_text', content: 'Chart' } },
+        elements: [
+          { tag: 'img', img_key: '/nonexistent/path/image.png', alt: { tag: 'plain_text', content: 'Missing' } },
+        ],
+      };
+
+      // Should not throw — just skip the upload and send as-is
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card,
+      });
+
+      expect(mocks.imageCreateMock).not.toHaveBeenCalled();
+      // The card should still be sent (with the invalid path preserved)
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle nested img elements in column_set structures', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const testImagePath = path.join(os.tmpdir(), `test_nested_img_${Date.now()}.png`);
+      fs.writeFileSync(testImagePath, Buffer.from(
+        '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
+        '0000000a49444154789c62000100000500010d0a2db40000000049454e44ae426082',
+        'hex',
+      ));
+      tempFiles.push(testImagePath);
+
+      const card: Record<string, unknown> = {
+        config: { wide_screen_mode: true },
+        header: { title: { tag: 'plain_text', content: 'Report' } },
+        elements: [
+          {
+            tag: 'column_set',
+            columns: [
+              {
+                tag: 'column',
+                width: 'weighted',
+                weight: 1,
+                elements: [
+                  { tag: 'img', img_key: testImagePath, alt: { tag: 'plain_text', content: 'Nested chart' } },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card,
+      });
+
+      // Image should have been uploaded
+      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(1);
+
+      // Verify the nested img_key was replaced
+      const [[createCall]] = mocks.createMock.mock.calls;
+      const sentCard = JSON.parse(createCall.data.content);
+      const [firstElement] = sentCard.elements;
+      const [firstColumn] = firstElement.columns;
+      const [nestedImg] = firstColumn.elements;
+      expect(nestedImg.img_key).toBe('img_key_001');
+    });
+
+    it('should handle multiple images in a single card', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const img1Path = path.join(os.tmpdir(), `test_multi_img1_${Date.now()}.png`);
+      const img2Path = path.join(os.tmpdir(), `test_multi_img2_${Date.now()}.png`);
+      fs.writeFileSync(img1Path, Buffer.from('fake png 1'));
+      fs.writeFileSync(img2Path, Buffer.from('fake png 2'));
+      tempFiles.push(img1Path, img2Path);
+
+      // Make image upload return different keys per call
+      // Use mockImplementation to properly drain streams and avoid ENOENT race conditions
+      mocks.imageCreateMock
+        .mockImplementationOnce(async (opts: any) => {
+          const stream = opts?.data?.image;
+          if (stream && typeof stream.on === 'function') {
+            for await (const _chunk of stream) { /* intentionally empty */ }
+          }
+          return { image_key: 'first_img_key' };
+        })
+        .mockImplementationOnce(async (opts: any) => {
+          const stream = opts?.data?.image;
+          if (stream && typeof stream.on === 'function') {
+            for await (const _chunk of stream) { /* intentionally empty */ }
+          }
+          return { image_key: 'second_img_key' };
+        });
+
+      const card: Record<string, unknown> = {
+        config: { wide_screen_mode: true },
+        header: { title: { tag: 'plain_text', content: 'Multi-image' } },
+        elements: [
+          { tag: 'img', img_key: img1Path, alt: { tag: 'plain_text', content: 'First' } },
+          { tag: 'img', img_key: img2Path, alt: { tag: 'plain_text', content: 'Second' } },
+        ],
+      };
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card,
+      });
+
+      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(2);
+
+      const [[createCall]] = mocks.createMock.mock.calls;
+      const sentCard = JSON.parse(createCall.data.content);
+      expect(sentCard.elements[0].img_key).toBe('first_img_key');
+      expect(sentCard.elements[1].img_key).toBe('second_img_key');
+    });
+
+    it('should pass through cards without img elements unchanged', async () => {
+      const { client, mocks } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const card: Record<string, unknown> = {
+        config: { wide_screen_mode: true },
+        header: { title: { tag: 'plain_text', content: 'Text only' } },
+        elements: [
+          { tag: 'div', text: { tag: 'plain_text', content: 'Hello!' } },
+        ],
+      };
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card,
+      });
+
+      expect(mocks.imageCreateMock).not.toHaveBeenCalled();
+
+      const [[createCall]] = mocks.createMock.mock.calls;
+      const sentCard = JSON.parse(createCall.data.content);
+      expect(sentCard.elements[0].tag).toBe('div');
+    });
+  });
 });
