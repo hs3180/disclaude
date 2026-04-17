@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
 } from './guidance.js';
 
 /**
@@ -137,6 +138,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const discussionFocusGuidance = buildDiscussionFocusGuidance(msg.discussionContext);
 
     // Compose all sections
     const sections: string[] = [];
@@ -164,6 +166,10 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+
+    if (discussionFocusGuidance) {
+      sections.push(discussionFocusGuidance);
+    }
 
     const preamble = sections.join('\n');
 

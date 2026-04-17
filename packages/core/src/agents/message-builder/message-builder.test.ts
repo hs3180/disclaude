@@ -508,4 +508,75 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - discussion focus', () => {
+    it('should include discussion focus guidance when discussionContext is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionContext: 'Should we adopt microservices?',
+      }, 'chat-456');
+
+      expect(result).toContain('Discussion Focus Mode');
+      expect(result).toContain('Should we adopt microservices?');
+      expect(result).toContain('Stay anchored');
+    });
+
+    it('should not include discussion focus guidance when discussionContext is not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus Mode');
+    });
+
+    it('should not include discussion focus guidance when discussionContext is empty string', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionContext: '',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus Mode');
+    });
+
+    it('should not include discussion focus guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        discussionContext: 'Should we adopt microservices?',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus Mode');
+    });
+
+    it('should place discussion focus after other guidance sections', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionContext: 'Test topic',
+      }, 'chat-456');
+
+      const outputFormatIdx = result.indexOf('Output Format Requirements');
+      const locationIdx = result.indexOf('Location Awareness');
+      const discussionIdx = result.indexOf('Discussion Focus Mode');
+      expect(discussionIdx).toBeGreaterThan(outputFormatIdx);
+      expect(discussionIdx).toBeGreaterThan(locationIdx);
+    });
+
+    it('should include discussion focus alongside other guidance sections', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionContext: 'Test topic',
+      }, 'chat-456');
+
+      // All standard guidance should still be present
+      expect(result).toContain('Next Steps After Response');
+      expect(result).toContain('Output Format Requirements');
+      expect(result).toContain('Location Awareness');
+      expect(result).toContain('Discussion Focus Mode');
+    });
+  });
 });

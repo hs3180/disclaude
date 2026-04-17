@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,61 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildDiscussionFocusGuidance', () => {
+  it('should return empty string when no initial question is provided', () => {
+    expect(buildDiscussionFocusGuidance()).toBe('');
+    expect(buildDiscussionFocusGuidance(undefined)).toBe('');
+    expect(buildDiscussionFocusGuidance('')).toBe('');
+  });
+
+  it('should include discussion focus mode heading', () => {
+    const result = buildDiscussionFocusGuidance('Should we automate code formatting?');
+    expect(result).toContain('Discussion Focus Mode');
+  });
+
+  it('should include the original question', () => {
+    const result = buildDiscussionFocusGuidance('Should we automate code formatting?');
+    expect(result).toContain('Should we automate code formatting?');
+    expect(result).toContain('Original Question');
+  });
+
+  it('should include key discussion principles', () => {
+    const result = buildDiscussionFocusGuidance('Test question');
+    expect(result).toContain('Stay anchored');
+    expect(result).toContain('Gently redirect when needed');
+    expect(result).toContain('Depth over breadth');
+    expect(result).toContain('Summarize periodically');
+  });
+
+  it('should include boundaries', () => {
+    const result = buildDiscussionFocusGuidance('Test question');
+    expect(result).toContain('Do not chase every interesting tangent');
+    expect(result).toContain('confirm before abandoning it');
+  });
+
+  it('should include guidance against filler phrases', () => {
+    const result = buildDiscussionFocusGuidance('Test question');
+    expect(result).toContain('not performatively helpful');
+  });
+
+  it('should include redirection example', () => {
+    const result = buildDiscussionFocusGuidance('Test question');
+    expect(result).toContain('let\'s not lose sight of our original question');
+  });
+
+  it('should handle complex initial questions with special characters', () => {
+    const complexQuestion = 'How should we handle "edge cases" in the API — e.g., `null` values, empty arrays []?';
+    const result = buildDiscussionFocusGuidance(complexQuestion);
+    expect(result).toContain(complexQuestion);
+  });
+
+  it('should handle multi-line initial questions', () => {
+    const multiLineQuestion = 'Should we migrate to TypeScript?\nKey considerations:\n- Team expertise\n- Migration cost';
+    const result = buildDiscussionFocusGuidance(multiLineQuestion);
+    expect(result).toContain('Should we migrate to TypeScript?');
+    expect(result).toContain('Team expertise');
   });
 });
