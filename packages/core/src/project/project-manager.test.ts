@@ -859,6 +859,95 @@ describe('ProjectManager persistence round-trip', () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// delete()
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+
+  beforeEach(() => {
+    pm = new ProjectManager(createOptions());
+  });
+
+  it('should delete an existing instance', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.listInstances()).toHaveLength(1);
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+
+  it('should return error for non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should clean up all bindings when deleting instance', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+    pm.use('chat_3', 'my-research');
+
+    pm.delete('my-research');
+
+    // All previously bound chatIds should revert to default
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should not affect other instances when deleting one', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    pm.delete('research-1');
+
+    // research-1 is gone
+    expect(pm.getActive('chat_1').name).toBe('default');
+    // book-1 still exists
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+    expect(pm.listInstances()).toHaveLength(1);
+  });
+
+  it('should persist state after delete', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    pm.delete('my-research');
+
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+    expect(data.instances['my-research']).toBeUndefined();
+    expect(data.instances['book-1']).toBeDefined();
+    expect(data.chatProjectMap['chat_1']).toBeUndefined();
+  });
+
+  it('should survive reload after delete', () => {
+    const opts = createOptions();
+    const { workspaceDir: ws } = opts;
+
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'research-1');
+    pm1.create('chat_2', 'book-reader', 'book-1');
+    pm1.use('chat_3', 'research-1');
+
+    pm1.delete('research-1');
+
+    // Reload from persisted state
+    const pm2 = new ProjectManager({ ...opts, workspaceDir: ws });
+    expect(pm2.listInstances()).toHaveLength(1);
+    expect(pm2.listInstances()[0].name).toBe('book-1');
+    expect(pm2.getActive('chat_1').name).toBe('default');
+    expect(pm2.getActive('chat_2').name).toBe('book-1');
+    expect(pm2.getActive('chat_3').name).toBe('default');
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Edge Cases & Integration Scenarios
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

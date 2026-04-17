@@ -488,6 +488,41 @@ export class ProjectManager {
   }
 
   /**
+   * Delete a project instance from memory and persisted state.
+   *
+   * Removes the instance and all associated bindings. Any chatIds that were
+   * bound to this instance will revert to the default project.
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string): ProjectResult<void> {
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Collect all chatIds bound to this instance
+    const boundChatIds = this.getBoundChatIds(name);
+
+    // Remove all bindings pointing to this instance
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Clean up reverse index for this instance
+    this.instanceChatIds.delete(name);
+
+    // Remove the instance itself
+    this.instances.delete(name);
+
+    // Persist the updated state (instance removed, bindings cleaned)
+    this.persist();
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
    * Get the persist file path (for testing/debugging).
    *
    * @returns Absolute path to projects.json
