@@ -153,8 +153,8 @@ export type SubagentStatusCallback = (handle: SubagentHandle) => void;
  * Manager for spawning and tracking subagents.
  *
  * Provides a unified interface for creating subagents of different types:
- * - **schedule**: For scheduled task execution (uses AgentFactory.createScheduleAgent)
- * - **task**: For one-time task execution (uses AgentFactory.createTaskAgent)
+ * - **schedule**: For scheduled task execution (uses AgentFactory.createAgent)
+ * - **task**: For one-time task execution (uses AgentFactory.createAgent)
  *
  * Issue #1501: 'skill' type removed from this manager.
  *
@@ -268,7 +268,7 @@ export class SubagentManager {
     }
 
     // Create agent using factory
-    const agent = AgentFactory.createScheduleAgent(
+    const agent = AgentFactory.createAgent(
       options.chatId,
       options.callbacks
     );
@@ -322,7 +322,7 @@ export class SubagentManager {
     }
 
     // Create agent using factory
-    const agent = AgentFactory.createTaskAgent(
+    const agent = AgentFactory.createAgent(
       options.chatId,
       options.callbacks
     );

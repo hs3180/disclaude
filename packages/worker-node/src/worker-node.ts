@@ -58,7 +58,7 @@ interface FeedbackContext {
 
 /**
  * Simple AgentPool implementation for WorkerNode.
- * Uses the injected createChatAgent factory.
+ * Uses the injected createAgent factory (Issue #2345 Phase 5).
  */
 class WorkerAgentPool implements AgentPoolInterface {
   private readonly agents = new Map<string, ChatAgent>();
@@ -225,7 +225,7 @@ export class WorkerNode {
 
     // Issue #644: Create AgentPool with factory function
     this.agentPool = new WorkerAgentPool((_chatId: string, callbacks: ChatAgentCallbacks) => {
-      return this.deps.createChatAgent(_chatId, callbacks);
+      return this.deps.createAgent(_chatId, callbacks);
     });
 
     // Create a shared callbacks object that will be used for all agents
@@ -354,9 +354,9 @@ export class WorkerNode {
       },
       // Provide the executor function for dependency injection
       executor: async (chatId: string, prompt: string, userId?: string): Promise<void> => {
-        // Issue #711: Create ScheduleAgent (short-lived, not in AgentPool)
+        // Issue #2345: Create agent (short-lived, not in AgentPool)
         const callbacks = createCallbacks(chatId);
-        const agent = this.deps.createScheduleAgent(chatId, callbacks);
+        const agent = this.deps.createAgent(chatId, callbacks);
 
         try {
           await agent.executeOnce(chatId, prompt, undefined, userId);

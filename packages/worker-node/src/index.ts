@@ -124,9 +124,6 @@ export type {
   AgentUserInput as UserInput,
   AgentProvider,
   BaseAgentConfig,
-  ChatAgentConfig as CoreChatAgentConfig,
-  AgentConfig,
-  AgentFactoryInterface,
 } from '@disclaude/core';
 
 export {

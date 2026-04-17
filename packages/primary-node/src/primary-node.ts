@@ -467,7 +467,7 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1338: Pass model override for per-task model selection
     const executor = createScheduleExecutor({
       agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createScheduleAgent(chatId, toChatAgentCallbacks(callbacks), model ? { model } : {});
+        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), model ? { model } : {});
       },
       callbacks: schedulerCallbacks,
     });
