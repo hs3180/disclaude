@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildRuntimeEnvGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -120,5 +121,47 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime environment sharing section', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment Sharing');
+  });
+
+  it('should mention the .runtime-env file', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should describe cross-process state sharing', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('cross-process state sharing');
+    expect(result).toContain('MCP servers');
+  });
+
+  it('should mention common variables like GH_TOKEN', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should warn against exposing sensitive values', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Never');
+    expect(result).toContain('expose sensitive values');
+  });
+
+  it('should explain how to read and write the file', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Read tool');
+    expect(result).toContain('Write tool');
+  });
+
+  it('should mention inter-agent communication use case', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('inter-agent communication');
   });
 });

@@ -185,6 +185,48 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess and shares state with
+ * the main process (MCP servers, other agents) via a `.runtime-env` file
+ * in the workspace directory. This guidance makes the agent aware of the
+ * mechanism so it can read and write shared environment variables.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Sharing
+
+You have access to a **shared runtime environment file** (\`.runtime-env\`) in your workspace directory. This file enables cross-process state sharing between you, MCP servers, and other agents.
+
+### How It Works
+
+- **File location**: \`{workspace}/.runtime-env\`
+- **Format**: Simple \`KEY=VALUE\` per line (comments start with \`#\`)
+- **Reading**: The file's contents are automatically merged into your environment variables at startup
+- **Writing**: Use the **Write tool** to update \`{workspace}/.runtime-env\` — other processes will pick up changes on their next read
+
+### Common Variables
+
+| Variable | Purpose | Set By |
+|----------|---------|--------|
+| \`GH_TOKEN\` | GitHub authentication token | github-jwt-auth skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiration timestamp | github-jwt-auth skill |
+
+### Guidelines
+
+- You can **read** the current runtime env by using the Read tool on \`{workspace}/.runtime-env\`
+- You can **write** shared state by using the Write tool to update the file (use \`KEY=VALUE\` format)
+- **Never** expose sensitive values (tokens, keys) in your responses to users
+- When a skill or tool requires a token that isn't available, check if it's in the runtime env first
+- You can create new variables for inter-agent communication (e.g., task status, shared context)`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
