@@ -211,11 +211,11 @@ class ProjectManager {
 ```
 ProjectManager
   │
-  ├──→ Pilot (CwdProvider 注入)   §5 详细设计
+  ├──→ ChatAgent (CwdProvider 注入)   §5 详细设计
   │     startAgentLoop() → createSdkOptions({ cwd: project.workingDir })
   │
   ├──→ PrimaryAgentPool           创建 Agent 时注入 CwdProvider
-  │     getOrCreateChatAgent() → pilot.setCwdProvider(...)
+  │     getOrCreateChatAgent() → agent.setCwdProvider(...)
   │
   └──→ Control Handler            处理 /project 命令 + 触发 Session Reset
         ControlHandlerContext.projectManager
@@ -226,7 +226,7 @@ ProjectManager
 
 | 文件 | 改动内容 | 行数 |
 |------|----------|------|
-| `pilot/index.ts` | 新增 `cwdProvider` 属性 + `startAgentLoop` 注入 cwd | +5 |
+| `chat-agent/index.ts` | 新增 `cwdProvider` 属性 + `startAgentLoop` 注入 cwd | +5 |
 | `primary-agent-pool.ts` | 创建 Agent 时注入 cwdProvider | +3 |
 | `control/types.ts` | ControlHandlerContext 新增 `projectManager` | +3 |
 | `control/commands/project.ts` | 新增 /project 命令处理 | ~60 |
@@ -261,11 +261,11 @@ ProjectManager
 User Message
   → createDefaultMessageHandler()                      // channel-handlers.ts:175
     → agentPool.getOrCreateChatAgent(chatId, callbacks) // primary-agent-pool.ts:57
-    → agent.processMessage(chatId, text, ...)           // pilot/index.ts:512
-      → if (!isSessionActive) startAgentLoop()          // pilot/index.ts:539
-        → createSdkOptions({ disallowedTools, mcpServers })  // pilot/index.ts:689
+    → agent.processMessage(chatId, text, ...)           // chat-agent/index.ts:512
+      → if (!isSessionActive) startAgentLoop()          // chat-agent/index.ts:539
+        → createSdkOptions({ disallowedTools, mcpServers })  // chat-agent/index.ts:689
           → cwd: extra.cwd ?? this.getWorkspaceDir()          // base-agent.ts:157
-        → createQueryStream(channel.generator(), sdkOptions) // pilot/index.ts:703
+        → createQueryStream(channel.generator(), sdkOptions) // chat-agent/index.ts:703
           → SDK 启动，发现 cwd 中的 CLAUDE.md
 ```
 
@@ -283,7 +283,7 @@ User Message
 
 #### 核心思路
 
-1. **CwdProvider 回调**: Pilot 通过回调函数动态查询当前 project 的 workingDir，无需直接依赖 ProjectManager
+1. **CwdProvider 回调**: ChatAgent 通过回调函数动态查询当前 project 的 workingDir，无需直接依赖 ProjectManager
 2. **Session Reset**: Project 切换时调用 `agentPool.reset(chatId)` 关闭当前 Session
 3. **自动重建**: 下一条消息触发新的 `startAgentLoop()`，通过 CwdProvider 获取新 cwd
 
@@ -296,11 +296,11 @@ User Message
 export type CwdProvider = (chatId: string) => string | undefined;
 ```
 
-**② Pilot 注入 CwdProvider**
+**② ChatAgent 注入 CwdProvider**
 
 ```typescript
-// packages/worker-node/src/agents/pilot/index.ts
-class Pilot extends BaseAgent {
+// packages/worker-node/src/agents/chat-agent/index.ts
+class ChatAgent extends BaseAgent {
   private cwdProvider?: CwdProvider;  // 新增
 
   setCwdProvider(provider: CwdProvider): void {  // 新增
@@ -312,7 +312,7 @@ class Pilot extends BaseAgent {
 **③ startAgentLoop 注入 cwd（核心改动，仅 +2 行）**
 
 ```typescript
-// pilot/index.ts — startAgentLoop() 中，第 688-692 行附近
+// chat-agent/index.ts — startAgentLoop() 中，第 688-692 行附近
 
 // === 改动前 ===
 const sdkOptions = this.createSdkOptions({
@@ -340,10 +340,10 @@ class PrimaryAgentPool {
     this.projectManager = pm;
   }
 
-  getOrCreateChatAgent(chatId: string, callbacks: PilotCallbacks): ChatAgent {
+  getOrCreateChatAgent(chatId: string, callbacks: ChatAgentCallbacks): ChatAgent {
     let agent = this.agents.get(chatId);
     if (!agent) {
-      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
+      agent = AgentFactory.createChatAgent('chat-agent', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
       });
       // 注入 cwdProvider 👇
@@ -440,7 +440,7 @@ export async function handleProject(
   │     ├─→ ProjectManager.use(chatId, 'my-research')
   │     │     └─→ 更新 chatProjectMap: chatId → 'my-research'
   │     ├─→ agentPool.reset(chatId)                     ← Session Reset
-  │     │     └─→ Pilot.reset()
+  │     │     └─→ ChatAgent.reset()
   │     │           ├─→ isSessionActive = false
   │     │           ├─→ channel.close()
   │     │           ├─→ queryHandle.close()
@@ -451,7 +451,7 @@ export async function handleProject(
   │
   ├─→ createDefaultMessageHandler()
   │     ├─→ agentPool.getOrCreateChatAgent(chatId, callbacks)
-  │     │     └─→ 返回已有 Pilot（未销毁，只是 Session 被重置）
+  │     │     └─→ 返回已有 ChatAgent（未销毁，只是 Session 被重置）
   │     └─→ agent.processMessage(chatId, '帮我研究一下 X', ...)
   │           ├─→ !isSessionActive → startAgentLoop()
   │           │     ├─→ cwdProvider(chatId)
@@ -474,8 +474,8 @@ export async function handleProject(
 |------|------|------|
 | Default Project 的 cwd | `cwdProvider` 返回 `undefined` → 走 `getWorkspaceDir()` | 零改动，自然兼容 |
 | Agent 实例不销毁 | Project 切换只 reset Session，不 dispose Agent | Agent 实例（callbacks、messageBuilder）保持不变，开销极低 |
-| 切换时 Agent 正在处理消息 | `Pilot.reset()` 同步关闭 channel + queryHandle | 与 `/reset` 行为一致，用户可能看到不完整回复 |
-| 共享实例并发安全 | 两个 chatId → 两个独立 Pilot → 各自独立的 SDK 子进程 | 文件写入冲突由用户自行管理 |
+| 切换时 Agent 正在处理消息 | `ChatAgent.reset()` 同步关闭 channel + queryHandle | 与 `/reset` 行为一致，用户可能看到不完整回复 |
+| 共享实例并发安全 | 两个 chatId → 两个独立 ChatAgent → 各自独立的 SDK 子进程 | 文件写入冲突由用户自行管理 |
 
 ---
 
@@ -546,9 +546,9 @@ export async function handleProject(
 
 | 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|----------|
-| Project 切换中断进行中的 Agent | 中 | 中 | `Pilot.reset()` 同步关闭 channel/queryHandle，与 `/reset` 行为一致 |
+| Project 切换中断进行中的 Agent | 中 | 中 | `ChatAgent.reset()` 同步关闭 channel/queryHandle，与 `/reset` 行为一致 |
 | 实例 CLAUDE.md 与模板不同步 | 低 | 低 | 删除实例后重新 create；属于预期行为 |
-| 共享实例并发写入冲突 | 低 | 中 | 两个 chatId → 两个独立 Pilot → 各自独立的 SDK 子进程，仅文件层可能冲突 |
+| 共享实例并发写入冲突 | 低 | 中 | 两个 chatId → 两个独立 ChatAgent → 各自独立的 SDK 子进程，仅文件层可能冲突 |
 | projects.json 写入损坏 | 低 | 高 | 使用 write-then-rename 模式（先写 `.tmp`，再 `rename`）保证原子性 |
 
 ---
@@ -592,7 +592,7 @@ packages/core/
 │           └── project.ts          # /project 命令处理（含 Session Reset）
 │
 packages/worker-node/
-└── src/agents/pilot/
+└── src/agents/chat-agent/
     └── index.ts                    # 新增 cwdProvider 属性 + startAgentLoop 注入 cwd (+5 行)
 
 packages/primary-node/
