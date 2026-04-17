@@ -15,10 +15,16 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1953: Added triggerNow() for event-driven schedule invocation.
+ * - Public API to trigger a task immediately outside of cron
+ * - Respects blocking, cooldown, and enabled state
+ * - Foundation for any event-driven trigger mechanism (Options A-D)
+ *
  * Features:
  * - Dynamic task scheduling
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
+ * - Event-driven triggering via triggerNow()
  *
  * @module @disclaude/core/scheduling
  */
@@ -402,4 +408,75 @@ ${task.prompt}`;
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
   }
+
+  /**
+   * Trigger a task immediately, outside of its cron schedule.
+   *
+   * Issue #1953: Foundation for event-driven schedule trigger mechanism.
+   * This method enables any of the proposed approaches (A-D) by providing
+   * a public API to invoke a task on demand.
+   *
+   * Respects the same safety guards as cron-triggered execution:
+   * - Blocking: skips if previous execution is still running
+   * - Cooldown: skips if within cooldown period
+   * - Disabled: skips if task is not enabled
+   *
+   * @param taskId - Task ID to trigger
+   * @returns TriggerResult indicating whether the task was triggered
+   */
+  async triggerNow(taskId: string): Promise<TriggerResult> {
+    // Look up the task from active jobs or schedule manager
+    const activeEntry = this.activeJobs.get(taskId);
+    let task: ScheduledTask | undefined;
+
+    if (activeEntry) {
+      ({ task } = activeEntry);
+    } else {
+      // Task might not have a cron job (e.g., event-only mode in future)
+      // Try loading from schedule manager
+      task = await this.scheduleManager.get(taskId);
+    }
+
+    if (!task) {
+      logger.info({ taskId }, 'triggerNow: task not found');
+      return { triggered: false, reason: 'not_found' };
+    }
+
+    if (!task.enabled) {
+      logger.info({ taskId, name: task.name }, 'triggerNow: task is disabled');
+      return { triggered: false, reason: 'disabled' };
+    }
+
+    // Check cooldown period
+    if (task.cooldownPeriod && this.cooldownManager) {
+      const isInCooldown = await this.cooldownManager.isInCooldown(task.id, task.cooldownPeriod);
+      if (isInCooldown) {
+        logger.info({ taskId, name: task.name }, 'triggerNow: task is in cooldown');
+        return { triggered: false, reason: 'cooldown' };
+      }
+    }
+
+    // Check blocking mechanism
+    if (task.blocking && this.runningTasks.has(task.id)) {
+      logger.info({ taskId, name: task.name }, 'triggerNow: previous execution still running');
+      return { triggered: false, reason: 'blocking' };
+    }
+
+    // Execute the task
+    logger.info({ taskId, name: task.name, source: 'event-driven' }, 'Triggering task via triggerNow()');
+    await this.executeTask(task);
+    return { triggered: true };
+  }
+}
+
+/**
+ * Result of a triggerNow() invocation.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ */
+export interface TriggerResult {
+  /** Whether the task was successfully triggered */
+  triggered: boolean;
+  /** Reason for not triggering (when triggered=false) */
+  reason?: 'not_found' | 'disabled' | 'blocking' | 'cooldown';
 }

@@ -535,4 +535,178 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  describe('triggerNow', () => {
+    it('should trigger an active task immediately', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerNow('trigger-1');
+
+      expect(result.triggered).toBe(true);
+      expect(result.reason).toBeUndefined();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should return not_found for unknown task', async () => {
+      const result = await scheduler.triggerNow('nonexistent');
+
+      expect(result.triggered).toBe(false);
+      expect(result.reason).toBe('not_found');
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return disabled for disabled task', async () => {
+      const task = createTask({ id: 'trigger-disabled', enabled: false });
+      // Add task (it won't be added to activeJobs since disabled, but scheduleManager.get returns it)
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      const result = await scheduler.triggerNow('trigger-disabled');
+
+      expect(result.triggered).toBe(false);
+      expect(result.reason).toBe('disabled');
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return blocking when task is already running', async () => {
+      // Create a slow executor that won't resolve immediately
+      let resolveExecutor: () => void;
+      mockExecutor.mockReturnValue(new Promise<void>((resolve) => {
+        resolveExecutor = resolve;
+      }));
+
+      const task = createTask({ id: 'trigger-blocking', blocking: true });
+      scheduler.addTask(task);
+
+      // Fire the cron job to put task in running state
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait for the task to be marked as running
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-blocking')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Try to trigger while running
+      const result = await scheduler.triggerNow('trigger-blocking');
+
+      expect(result.triggered).toBe(false);
+      expect(result.reason).toBe('blocking');
+
+      // Clean up
+      resolveExecutor!();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-blocking')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should return cooldown when task is in cooldown', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date(),
+          cooldownEndsAt: new Date(Date.now() + 60000),
+          remainingMs: 60000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'trigger-cooldown', cooldownPeriod: 60000 });
+      cooldownScheduler.addTask(task);
+
+      const result = await cooldownScheduler.triggerNow('trigger-cooldown');
+
+      expect(result.triggered).toBe(false);
+      expect(result.reason).toBe('cooldown');
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should trigger task from scheduleManager when not in activeJobs', async () => {
+      const task = createTask({ id: 'trigger-mgr' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      // Don't addTask — task is only in scheduleManager
+      const result = await scheduler.triggerNow('trigger-mgr');
+
+      expect(result.triggered).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should send start notification when triggered', async () => {
+      const task = createTask({ id: 'trigger-notify', name: 'My Event Task' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerNow('trigger-notify');
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('My Event Task'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should wrap prompt with anti-recursion instructions', async () => {
+      const task = createTask({ id: 'trigger-wrap', name: 'EventTask', prompt: 'Do event work' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerNow('trigger-wrap');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      const {calls} = mockExecutor.mock;
+      const promptArg = calls[0][1] as string;
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('EventTask');
+      expect(promptArg).toContain('Do event work');
+    });
+
+    it('should allow non-blocking task to be triggered while running', async () => {
+      // Use a flag to track execution count
+      let executionCount = 0;
+      let resolveFirst: () => void;
+      const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
+
+      mockExecutor.mockImplementation(async () => {
+        executionCount++;
+        if (executionCount === 1) {
+          await firstPromise;
+        }
+      });
+
+      const task = createTask({ id: 'trigger-nonblock', blocking: false });
+      scheduler.addTask(task);
+
+      // Fire via cron to start running
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-nonblock')).toBe(true);
+      }, { timeout: 2000 });
+
+      // triggerNow should succeed since blocking is false
+      const result = await scheduler.triggerNow('trigger-nonblock');
+
+      expect(result.triggered).toBe(true);
+
+      // Resolve the first execution so both can complete
+      resolveFirst!();
+    });
+  });
 });

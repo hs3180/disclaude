@@ -56,6 +56,7 @@ export {
   type SchedulerCallbacks,
   type TaskExecutor,
   type SchedulerOptions,
+  type TriggerResult,
 } from './scheduler.js';
 
 // Schedule Executor (Issue #1382)
