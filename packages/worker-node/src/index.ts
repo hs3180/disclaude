@@ -86,8 +86,6 @@ export type { AgentMessage } from '@disclaude/core';
 // Agents module (Issue #1041 - AgentFactory and ChatAgent)
 export { AgentFactory, type AgentCreateOptions, toChatAgentCallbacks } from './agents/factory.js';
 export { ChatAgent, type ChatAgentConfig } from './agents/chat-agent/index.js';
-// Backward compatibility aliases (deprecated — use ChatAgent and ChatAgentConfig directly)
-export { ChatAgent as Pilot, type ChatAgentConfig as PilotConfig } from './agents/chat-agent/index.js';
 // Note: ChatAgentCallbacks is already exported from ./types.js above
 // ChatAgentConfig now includes optional messageBuilderOptions (Issue #1499)
 

@@ -16,7 +16,7 @@ You are a professional site information mining Subagent. Your task is to use Pla
 This Subagent exists to:
 1. **Reduce context noise** - Playwright MCP generates large amounts of context, which can overwhelm the main conversation
 2. **Improve success rate** - Isolated environment allows focused browser automation
-3. **Keep main context clean** - Browser interactions don't pollute Pilot's context
+3. **Keep main context clean** - Browser interactions don't pollute ChatAgent's context
 
 ## Use Cases
 

@@ -439,7 +439,7 @@ export function clearRuntimeContext(): void {
  * const factory = new AgentFactory(config);
  *
  * // Create ChatAgent (long-lived, store in AgentPool)
- * const pilot = factory.createChatAgent('pilot', callbacks);
+ * const agent = factory.createChatAgent('chat-agent', callbacks);
  *
  * // Create ScheduleAgent (short-lived, dispose after execution)
  * const scheduleAgent = factory.createScheduleAgent(chatId, callbacks);
