@@ -69,9 +69,6 @@ export {
   type ChatAgent,
   type AgentProvider,
   type BaseAgentConfig,
-  type ChatAgentConfig,
-  type AgentConfig,
-  type AgentFactoryInterface,
   // Type guards
   isChatAgent,
   isDisposable,
