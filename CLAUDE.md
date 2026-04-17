@@ -26,6 +26,15 @@ npm run pm2:status    # Check status
 npm run pm2:stop      # Stop service
 npm run pm2:delete    # Remove from PM2
 
+# === Production (launchd — macOS recommended) ===
+npm run launchd:install   # First-time: generate plist + build + start
+npm run launchd:start     # Build + start service
+npm run launchd:stop      # Stop service
+npm run launchd:restart   # Build + restart service
+npm run launchd:logs      # View recent logs
+npm run launchd:status    # Check service status
+npm run launchd:uninstall # Remove plist and stop service
+
 # === CLI usage ===
 disclaude feishu              # Start Feishu bot
 disclaude --prompt "<query>"  # Single prompt query
@@ -320,19 +329,16 @@ try { /* assertions */ } finally { await server.stop().catch(() => {}); }
 
 ## Development Workflow
 
-### PM2 Restart Policy
+### Service Restart Policy
 
-**PM2 service will NOT restart automatically after code changes.**
+**macOS (launchd — recommended):** `npm run launchd:restart` automatically builds before restarting.
 
-- Code changes require **explicit manual restart** via `npm run pm2:restart`
+**Linux (PM2):** `npm run pm2:restart` does NOT build. Use `npm run pm2:restart:build` or build manually first.
+
+General rules:
 - Always test changes with CLI mode before deploying
-- Only restart PM2 when **explicitly requested** by the user
-
-**Why?**
-- Prevents accidental deployment of untested code
-- Allows validation before production deployment
-- Gives control over deployment timing
-- Avoids surprising users with mid-conversation restarts
+- Only restart when **explicitly requested** by the user
+- **Why?** Prevents accidental deployment of untested code and mid-conversation restarts
 
 ### Testing New Features with CLI Mode
 
@@ -451,33 +457,24 @@ logger.debug({
 console.log('[DEBUG]', { context });
 ```
 
-### Check PM2 Logs
+### Check Service Logs
 
-**IMPORTANT: Always use `--nostream` mode when checking logs programmatically or via Agent.**
+**launchd (macOS):**
 
 ```bash
-# ✅ Recommended: Use npm scripts (default nostream mode)
+npm run launchd:logs          # View recent logs (stdout + stderr)
+tail -100 /tmp/disclaude-stdout.log   # stdout directly
+tail -100 /tmp/disclaude-stderr.log   # stderr directly
+tail -f /tmp/disclaude-stdout.log     # Live tail (Ctrl+C to exit)
+```
+
+**PM2 (Linux):**
+
+```bash
 npm run pm2:logs        # All logs (nostream, shows current logs)
 npm run pm2:logs:err    # Error logs only (nostream)
 npm run pm2:logs:out    # Output logs only (nostream)
-npm run pm2:logs:follow # Live tail mode (follow, for manual monitoring)
-
-# ❌ Avoid: Direct PM2 commands without --nostream
-# pm2 logs disclaude-feishu  # This will hang waiting for Ctrl+C!
-
-# ✅ If using PM2 directly, ALWAYS add --nostream
-pm2 logs disclaude-feishu --nostream       # All logs
-pm2 logs disclaude-feishu --nostream --err # Errors only
-pm2 logs disclaude-feishu --nostream --lines 100 # Last 100 lines
-
-# 🔧 For manual monitoring (follow mode)
-pm2 logs disclaude-feishu  # Follows logs in real-time (Ctrl+C to exit)
 ```
-
-**Why `--nostream` matters:**
-- **Without `--nostream`**: PM2 enters "follow mode" and streams logs indefinitely, blocking the command until manually interrupted (Ctrl+C)
-- **With `--nostream`**: PM2 outputs current logs and exits immediately - perfect for automation and Agent use
-- **Default npm scripts**: All `pm2:logs` commands use `--nostream` by default, except `pm2:logs:follow` which intentionally uses follow mode
 
 ### WebSocket Connection Issues
 
