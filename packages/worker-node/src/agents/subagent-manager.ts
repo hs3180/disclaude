@@ -13,6 +13,10 @@
  * - Progress callbacks
  * - Timeout support
  *
+ * Issue #2345 Phase 4: Split into subagent-manager.ts (class + dispatch),
+ * subagent-manager-types.ts (type definitions), and
+ * subagent-manager-lifecycle.ts (execution, termination, cleanup).
+ *
  * Architecture:
  * ```
  * ┌─────────────────────────────────────────────────────────────┐
@@ -39,111 +43,17 @@
  */
 
 import { randomUUID } from 'crypto';
-import { createLogger, type ChatAgent } from '@disclaude/core';
-import { AgentFactory } from './factory.js';
-import type { ChatAgentCallbacks } from './chat-agent/index.js';
+import { createLogger } from '@disclaude/core';
+import { executeSubagent, terminateSubagent, cleanupOldHandles } from './subagent-manager-lifecycle.js';
+import type {
+  SubagentOptions,
+  SubagentHandle,
+  SubagentStatus,
+  SubagentStatusCallback,
+  SubagentContext,
+} from './subagent-manager-types.js';
 
 const logger = createLogger('SubagentManager');
-
-// ============================================================================
-// Type Definitions
-// ============================================================================
-
-/**
- * Type of subagent to spawn.
- *
- * Issue #1501: 'skill' type removed. Skills are now handled via
- * ChatAgent.executeOnce() or .md-defined subagents.
- */
-export type SubagentType = 'schedule' | 'task';
-
-/**
- * Isolation mode for subagent execution.
- */
-export type IsolationMode = 'worktree' | 'none';
-
-/**
- * Status of a subagent.
- */
-export type SubagentStatus = 'starting' | 'running' | 'completed' | 'failed' | 'stopped';
-
-/**
- * Options for spawning a subagent.
- *
- * @example
- * ```typescript
- * const options: SubagentOptions = {
- *   type: 'task',
- *   name: 'issue-solver',
- *   prompt: 'Fix issue #123',
- *   chatId: 'chat-123',
- *   callbacks: {
- *     sendMessage: async (chatId, text) => { ... },
- *   },
- *   timeout: 60000,
- *   isolation: 'none',
- * };
- * ```
- */
-export interface SubagentOptions {
-  /** Type of subagent to spawn */
-  type: SubagentType;
-  /** Name/identifier for the subagent */
-  name: string;
-  /** Prompt/task for the subagent to execute */
-  prompt: string;
-  /** Chat ID for message delivery */
-  chatId: string;
-  /** Callbacks for sending messages */
-  callbacks: ChatAgentCallbacks;
-  /** Optional cron expression for scheduled execution (only for type='schedule') */
-  schedule?: string;
-  /** Optional timeout in milliseconds */
-  timeout?: number;
-  /** Isolation mode (default: 'none') */
-  isolation?: IsolationMode;
-  /** Optional progress callback */
-  onProgress?: (message: string) => void;
-  /** Optional sender OpenId for scheduled tasks */
-  senderOpenId?: string;
-}
-
-/**
- * Handle to a spawned subagent.
- *
- * Provides status tracking and control over the subagent lifecycle.
- */
-export interface SubagentHandle {
-  /** Unique subagent ID */
-  id: string;
-  /** Subagent type */
-  type: SubagentType;
-  /** Subagent name */
-  name: string;
-  /** Target chat ID */
-  chatId: string;
-  /** Current status */
-  status: SubagentStatus;
-  /** Process ID (if running in separate process) */
-  pid?: number;
-  /** Start time */
-  startedAt: Date;
-  /** Completion time (if completed) */
-  completedAt?: Date;
-  /** Error message (if failed) */
-  error?: string;
-  /** Output from the subagent */
-  output?: string;
-  /** Cron schedule (if scheduled) */
-  schedule?: string;
-  /** Isolation mode used */
-  isolation: IsolationMode;
-}
-
-/**
- * Callback for subagent status changes.
- */
-export type SubagentStatusCallback = (handle: SubagentHandle) => void;
 
 // ============================================================================
 // SubagentManager Implementation
@@ -183,8 +93,20 @@ export type SubagentStatusCallback = (handle: SubagentHandle) => void;
 export class SubagentManager {
   private handles: Map<string, SubagentHandle> = new Map();
   private processes: Map<string, import('child_process').ChildProcess> = new Map();
-  private inMemoryAgents: Map<string, ChatAgent> = new Map();
+  private inMemoryAgents: Map<string, import('@disclaude/core').ChatAgent> = new Map();
   private statusCallbacks: Set<SubagentStatusCallback> = new Set();
+
+  /**
+   * Get the internal context for lifecycle functions.
+   */
+  private getCtx(): SubagentContext {
+    return {
+      handles: this.handles,
+      processes: this.processes,
+      inMemoryAgents: this.inMemoryAgents,
+      notifyStatusChange: this.notifyStatusChange.bind(this),
+    };
+  }
 
   /**
    * Register a callback for status changes.
@@ -234,16 +156,7 @@ export class SubagentManager {
     this.handles.set(subagentId, handle);
 
     try {
-      switch (options.type) {
-        case 'schedule':
-          await this.spawnScheduleAgent(subagentId, options);
-          break;
-        case 'task':
-          await this.spawnTaskAgent(subagentId, options);
-          break;
-        default:
-          throw new Error(`Unknown subagent type: ${options.type}`);
-      }
+      await executeSubagent(subagentId, options, this.getCtx());
     } catch (error) {
       handle.status = 'failed';
       handle.error = error instanceof Error ? error.message : String(error);
@@ -256,149 +169,13 @@ export class SubagentManager {
   }
 
   /**
-   * Spawn a schedule agent in memory.
-   */
-  private async spawnScheduleAgent(
-    subagentId: string,
-    options: SubagentOptions
-  ): Promise<void> {
-    const handle = this.handles.get(subagentId);
-    if (!handle) {
-      throw new Error(`Subagent handle not found: ${subagentId}`);
-    }
-
-    // Create agent using factory
-    const agent = AgentFactory.createAgent(
-      options.chatId,
-      options.callbacks
-    );
-
-    this.inMemoryAgents.set(subagentId, agent);
-    handle.status = 'running';
-
-    logger.info({ subagentId, name: options.name }, 'Schedule subagent started');
-    this.notifyStatusChange(handle);
-
-    // Execute task
-    try {
-      await agent.executeOnce(
-        options.chatId,
-        options.prompt,
-        undefined,
-        options.senderOpenId
-      );
-
-      handle.status = 'completed';
-      handle.completedAt = new Date();
-      logger.info({ subagentId }, 'Schedule subagent completed');
-    } catch (error) {
-      handle.status = 'failed';
-      handle.error = error instanceof Error ? error.message : String(error);
-      handle.completedAt = new Date();
-      logger.error({ err: error, subagentId }, 'Schedule subagent failed');
-    }
-
-    this.notifyStatusChange(handle);
-
-    // Cleanup
-    try {
-      agent.dispose();
-    } catch (err) {
-      logger.error({ err, subagentId }, 'Error disposing schedule agent');
-    }
-    this.inMemoryAgents.delete(subagentId);
-  }
-
-  /**
-   * Spawn a task agent in memory.
-   */
-  private async spawnTaskAgent(
-    subagentId: string,
-    options: SubagentOptions
-  ): Promise<void> {
-    const handle = this.handles.get(subagentId);
-    if (!handle) {
-      throw new Error(`Subagent handle not found: ${subagentId}`);
-    }
-
-    // Create agent using factory
-    const agent = AgentFactory.createAgent(
-      options.chatId,
-      options.callbacks
-    );
-
-    this.inMemoryAgents.set(subagentId, agent);
-    handle.status = 'running';
-
-    logger.info({ subagentId, name: options.name }, 'Task subagent started');
-    this.notifyStatusChange(handle);
-
-    // Execute task
-    try {
-      await agent.executeOnce(
-        options.chatId,
-        options.prompt,
-        undefined,
-        options.senderOpenId
-      );
-
-      handle.status = 'completed';
-      handle.completedAt = new Date();
-      logger.info({ subagentId }, 'Task subagent completed');
-    } catch (error) {
-      handle.status = 'failed';
-      handle.error = error instanceof Error ? error.message : String(error);
-      handle.completedAt = new Date();
-      logger.error({ err: error, subagentId }, 'Task subagent failed');
-    }
-
-    this.notifyStatusChange(handle);
-
-    // Cleanup
-    try {
-      agent.dispose();
-    } catch (err) {
-      logger.error({ err, subagentId }, 'Error disposing task agent');
-    }
-    this.inMemoryAgents.delete(subagentId);
-  }
-
-  /**
    * Terminate a running subagent.
    *
    * @param subagentId - ID of subagent to terminate
    * @returns True if terminated, false if not found
    */
   terminate(subagentId: string): boolean {
-    const handle = this.handles.get(subagentId);
-    if (!handle) {
-      return false;
-    }
-
-    // Terminate child process if any
-    const childProcess = this.processes.get(subagentId);
-    if (childProcess) {
-      childProcess.kill('SIGTERM');
-      this.processes.delete(subagentId);
-    }
-
-    // Dispose in-memory agent if any
-    const agent = this.inMemoryAgents.get(subagentId);
-    if (agent) {
-      try {
-        agent.dispose();
-      } catch (err) {
-        logger.error({ err, subagentId }, 'Error disposing agent during termination');
-      }
-      this.inMemoryAgents.delete(subagentId);
-    }
-
-    handle.status = 'stopped';
-    handle.completedAt = new Date();
-    this.notifyStatusChange(handle);
-
-    logger.info({ subagentId }, 'Subagent terminated');
-    return true;
+    return terminateSubagent(subagentId, this.getCtx());
   }
 
   /**
@@ -465,26 +242,7 @@ export class SubagentManager {
    * @param maxAge - Maximum age in milliseconds (default: 1 hour)
    */
   cleanup(maxAge: number = 3600000): void {
-    const now = Date.now();
-    const toDelete: string[] = [];
-
-    for (const [id, handle] of this.handles) {
-      if (
-        (handle.status === 'completed' || handle.status === 'failed' || handle.status === 'stopped') &&
-        handle.completedAt &&
-        now - handle.completedAt.getTime() > maxAge
-      ) {
-        toDelete.push(id);
-      }
-    }
-
-    for (const id of toDelete) {
-      this.handles.delete(id);
-    }
-
-    if (toDelete.length > 0) {
-      logger.debug({ count: toDelete.length }, 'Cleaned up old subagent records');
-    }
+    cleanupOldHandles(this.handles, maxAge);
   }
 
   /**
