@@ -1,16 +1,18 @@
 /**
- * ProjectManager — core in-memory + persistent logic for per-chatId Agent context switching.
+ * ProjectManager — core in-memory + persistent + filesystem logic for per-chatId Agent context switching.
  *
  * Manages project templates, instances, and chatId bindings in memory,
- * with atomic persistence to `{workspace}/.disclaude/projects.json`.
+ * with atomic persistence to `{workspace}/.disclaude/projects.json`
+ * and filesystem operations for directory creation and CLAUDE.md copying.
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — persistence layer)
+ * @see Issue #2226 (Sub-Issue D — filesystem operations)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -64,8 +66,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing `templates/` with CLAUDE.md files */
+  private readonly packageDir?: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +84,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -162,9 +164,12 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
+   * When packageDir is configured, also creates the working directory
+   * and copies CLAUDE.md from the template. If filesystem operations
+   * fail, the entire creation is rolled back (no in-memory state is committed).
+   *
    * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
    *
    * @param chatId - Chat session requesting creation
@@ -192,6 +197,12 @@ export class ProjectManager {
     // Check name uniqueness
     if (this.instances.has(name)) {
       return { ok: false, error: `实例 "${name}" 已存在` };
+    }
+
+    // Filesystem operations: create working directory + copy CLAUDE.md
+    const fsResult = this.instantiateFromTemplate(name, templateName);
+    if (!fsResult.ok) {
+      return fsResult;
     }
 
     const workingDir = this.resolveWorkingDir(name);
@@ -353,6 +364,109 @@ export class ProjectManager {
   }
 
   // ───────────────────────────────────────────
+  // Filesystem Operations (Sub-Issue D)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate a project from a template on the filesystem.
+   *
+   * Creates the working directory `{workspaceDir}/projects/{name}/`
+   * and copies CLAUDE.md from `{packageDir}/templates/{templateName}/CLAUDE.md`.
+   *
+   * If packageDir is not configured, only creates the working directory
+   * (no CLAUDE.md copy attempted).
+   *
+   * Rollback: If CLAUDE.md copy fails after directory creation, the
+   * created directory is removed to maintain consistency.
+   *
+   * Path traversal protection: Verifies that the resolved working directory
+   * is within workspaceDir (defense-in-depth, since validateInstanceName
+   * already prevents traversal characters).
+   *
+   * @param name - Instance name (already validated)
+   * @param templateName - Template name (already validated)
+   * @returns ProjectResult indicating success or failure
+   */
+  private instantiateFromTemplate(name: string, templateName: string): ProjectResult<void> {
+    // Skip filesystem operations entirely when packageDir is not configured
+    if (!this.packageDir) {
+      return { ok: true, data: undefined };
+    }
+
+    const workingDir = this.resolveWorkingDir(name);
+
+    // Path traversal protection: verify resolved path is within workspaceDir
+    const resolvedWorking = resolve(workingDir);
+    const resolvedWorkspace = resolve(this.workspaceDir);
+    if (resolvedWorking !== resolvedWorkspace && !resolvedWorking.startsWith(resolvedWorkspace + sep)) {
+      return { ok: false, error: '路径解析异常：工作目录超出 workspace 范围' };
+    }
+
+    // Create working directory
+    try {
+      mkdirSync(workingDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(workingDir, templateName);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory
+      try {
+        rmSync(workingDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup failure — best effort
+      }
+      return copyResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from the template directory to the target working directory.
+   *
+   * Source: `{packageDir}/templates/{templateName}/CLAUDE.md`
+   * Target: `{targetDir}/CLAUDE.md`
+   *
+   * Behavior:
+   * - packageDir not configured → skip (returns success, no CLAUDE.md)
+   * - Template CLAUDE.md not found → error
+   * - Copy failure → error
+   *
+   * @param targetDir - Destination working directory
+   * @param templateName - Template to copy CLAUDE.md from
+   * @returns ProjectResult indicating success or failure
+   */
+  private copyClaudeMd(targetDir: string, templateName: string): ProjectResult<void> {
+    if (!this.packageDir) {
+      // packageDir not configured — skip CLAUDE.md copy (instance still valid)
+      return { ok: true, data: undefined };
+    }
+
+    const sourcePath = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+
+    if (!existsSync(sourcePath)) {
+      return { ok: false, error: `模板 CLAUDE.md 不存在: ${sourcePath}` };
+    }
+
+    try {
+      copyFileSync(sourcePath, join(targetDir, 'CLAUDE.md'));
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  // ───────────────────────────────────────────
   // Persistence Methods (Sub-Issue C)
   // ───────────────────────────────────────────
 
@@ -509,8 +623,6 @@ export class ProjectManager {
    * @returns Absolute working directory path
    */
   private resolveWorkingDir(name: string): string {
-    // Use simple path join (path traversal already validated in create())
-    // Avoid importing `path` to keep this module filesystem-free
     const ws = this.workspaceDir.replace(/\/+$/, '');
     return `${ws}/projects/${name}`;
   }
