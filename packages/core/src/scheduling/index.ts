@@ -65,3 +65,10 @@ export {
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
+
+// Trigger Watcher (Issue #1953)
+export {
+  TriggerWatcher,
+  type OnTriggerSignal,
+  type TriggerWatcherOptions,
+} from './trigger-watcher.js';

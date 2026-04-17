@@ -3,6 +3,7 @@ name: "Chats Activation"
 cron: "0 * * * * *"
 enabled: true
 blocking: true
+invocable: true
 chatId: "oc_71e5f41a029f3a120988b7ecb76df314"
 createdAt: 2026-04-03T00:00:00.000Z
 ---

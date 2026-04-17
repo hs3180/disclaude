@@ -340,6 +340,33 @@ ${task.prompt}`;
   }
 
   /**
+   * Immediately trigger a scheduled task by ID, bypassing cron timing.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   * Allows signal-file-based or programmatic invocation of invocable schedules.
+   * Respects blocking and cooldown settings.
+   *
+   * @param taskId - The ID of the task to trigger
+   * @returns true if the task was found and triggered, false otherwise
+   */
+  async triggerNow(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'triggerNow: task not found in active jobs');
+      return false;
+    }
+
+    if (!entry.task.invocable) {
+      logger.warn({ taskId, name: entry.task.name }, 'triggerNow: task is not invocable');
+      return false;
+    }
+
+    logger.info({ taskId, name: entry.task.name }, 'Event-driven trigger: executing task now');
+    await this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
    * Check if scheduler is running.
    */
   isRunning(): boolean {

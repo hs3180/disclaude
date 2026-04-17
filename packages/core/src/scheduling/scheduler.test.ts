@@ -507,6 +507,114 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('triggerNow (event-driven invocation, Issue #1953)', () => {
+    it('should immediately execute an invocable task', async () => {
+      const task = createTask({ id: 'trigger-1', invocable: true });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerNow('trigger-1');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Should pass task prompt (wrapped with anti-recursion instructions)
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Run tests');
+    });
+
+    it('should return false for unknown task ID', async () => {
+      const result = await scheduler.triggerNow('nonexistent');
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return false for non-invocable task', async () => {
+      const task = createTask({ id: 'no-invocable', invocable: false });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerNow('no-invocable');
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect blocking for invocable tasks', async () => {
+      const task = createTask({ id: 'blocking-invocable', invocable: true, blocking: true });
+      scheduler.addTask(task);
+
+      // Start first execution (it will block)
+      const slowExecutor = vi.fn().mockImplementation(() => new Promise(resolve => setTimeout(resolve, 500)));
+      const slowScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: slowExecutor,
+      });
+      slowScheduler.addTask(task);
+
+      // Fire via cron to mark as running
+      const jobs = slowScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait briefly for execution to start
+      await vi.waitFor(() => {
+        expect(slowScheduler.isTaskRunning('blocking-invocable')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Try to trigger while running - should be skipped by blocking
+      const result = await slowScheduler.triggerNow('blocking-invocable');
+      expect(result).toBe(true); // Task was found and invocable
+      // But only one execution should have started (the cron one)
+
+      slowScheduler.stop();
+    });
+
+    it('should send start notification when triggered', async () => {
+      const task = createTask({ id: 'notify-1', invocable: true, name: 'My Invocable Task' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerNow('notify-1');
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('My Invocable Task'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should respect cooldown for triggered tasks', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date(),
+          cooldownEndsAt: new Date(Date.now() + 60000),
+          remainingMs: 60000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'cooldown-trigger', invocable: true, cooldownPeriod: 60000 });
+      cooldownScheduler.addTask(task);
+
+      const result = await cooldownScheduler.triggerNow('cooldown-trigger');
+      expect(result).toBe(true); // Task was found
+
+      // Executor should not have been called due to cooldown
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+  });
+
   describe('multiple tasks', () => {
     it('should schedule and track multiple tasks', () => {
       const task1 = createTask({ id: 'multi-1', cron: '* * * * *' });

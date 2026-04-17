@@ -105,6 +105,7 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'enabled':
       case 'blocking':
+      case 'invocable':
         frontmatter[key] = value === 'true';
         break;
       case 'cooldownPeriod':
@@ -211,6 +212,7 @@ export class ScheduleFileScanner {
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
+        invocable: (frontmatter['invocable'] as boolean) ?? false,
         cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
@@ -258,6 +260,9 @@ export class ScheduleFileScanner {
 
     if (task.cooldownPeriod) {
       frontmatter.push(`cooldownPeriod: ${task.cooldownPeriod}`);
+    }
+    if (task.invocable) {
+      frontmatter.push('invocable: true');
     }
     if (task.createdBy) {
       frontmatter.push(`createdBy: ${task.createdBy}`);

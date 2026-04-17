@@ -41,4 +41,12 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Whether this schedule can be triggered by signal files (event-driven invocation).
+   * When true, writing a signal file to `workspace/triggers/{taskId}` will immediately
+   * trigger this schedule, bypassing the cron interval.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  invocable?: boolean;
 }
