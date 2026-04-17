@@ -123,6 +123,13 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
+          // OpenAI configuration (from config file)
+          // No fallback defaults - model must be explicitly configured
+  static readonly OPENAI_API_KEY = fileConfigOnly.openai?.apiKey || '';
+          static readonly OPENAI_MODEL = fileConfigOnly.openai?.model || '';
+          static readonly OPENAI_API_BASE_URL = fileConfigOnly.openai?.apiBaseUrl || '';
+          static readonly OPENAI_ACP_COMMAND = fileConfigOnly.openai?.acpCommand || '';
+
           // Anthropic Claude configuration (from env for fallback)
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
@@ -250,7 +257,8 @@ export class Config {
    * Validation priority (config file takes precedence over environment variables):
    * 1. If agent.provider is explicitly set, validate only that provider's config
    * 2. If GLM is configured (apiKey in config file), validate GLM config
-   * 3. Otherwise, if Anthropic env var exists, validate Anthropic config
+   * 3. If OpenAI is configured (apiKey in config file), validate OpenAI config
+   * 4. Otherwise, if Anthropic env var exists, validate Anthropic config
    *
    * @throws Error if required configuration is missing
    */
@@ -275,6 +283,20 @@ export class Config {
           message: 'glm.model is required when using GLM provider',
         });
       }
+    } else if (provider === 'openai') {
+      // User explicitly chose OpenAI - only validate OpenAI config
+      if (!this.OPENAI_API_KEY) {
+        errors.push({
+          field: 'openai.apiKey',
+          message: 'openai.apiKey is required when agent.provider is "openai"',
+        });
+      }
+      if (!this.OPENAI_MODEL) {
+        errors.push({
+          field: 'openai.model',
+          message: 'openai.model is required when using OpenAI provider',
+        });
+      }
     } else if (provider === 'anthropic') {
       // User explicitly chose Anthropic - only validate Anthropic config
       if (!this.ANTHROPIC_API_KEY) {
@@ -297,6 +319,14 @@ export class Config {
           message: 'glm.model is required when GLM API key is configured',
         });
       }
+    } else if (this.OPENAI_API_KEY) {
+      // No explicit provider, but OpenAI is configured in config file - validate OpenAI
+      if (!this.OPENAI_MODEL) {
+        errors.push({
+          field: 'openai.model',
+          message: 'openai.model is required when OpenAI API key is configured',
+        });
+      }
     } else if (this.ANTHROPIC_API_KEY) {
       // Fallback to Anthropic (from environment variable)
       if (!this.CLAUDE_MODEL) {
@@ -309,7 +339,7 @@ export class Config {
       // No provider configured at all
       errors.push({
         field: 'apiKey',
-        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
+        message: 'No API key configured. Set openai.apiKey, glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
       });
     }
 
@@ -319,6 +349,10 @@ export class Config {
       throw new Error(
         `Configuration validation failed:\n\n${messages}\n\n` +
         'Please update your disclaude.config.yaml file:\n' +
+        '  openai:\n' +
+        '    apiKey: "your-key"\n' +
+        '    model: "gpt-4o"\n' +
+        '  # or:\n' +
         '  glm:\n' +
         '    apiKey: "your-key"\n' +
         '    model: "glm-5"'
@@ -329,7 +363,7 @@ export class Config {
 
   /**
    * Get agent configuration based on available API keys.
-   * Prefers GLM if configured, otherwise falls back to Anthropic.
+   * Prefers GLM if configured, otherwise OpenAI, then falls back to Anthropic.
    *
    * @returns Agent configuration with API key and model
    * @throws Error if no API key is configured or model is missing
@@ -338,7 +372,7 @@ export class Config {
     apiKey: string;
     model: string;
     apiBaseUrl?: string;
-    provider: 'anthropic' | 'glm';
+    provider: 'anthropic' | 'openai' | 'glm';
   } {
     // Validate required configuration first
     this.validateRequiredConfig();
@@ -351,6 +385,17 @@ export class Config {
         model: this.GLM_MODEL,
         apiBaseUrl: this.GLM_API_BASE_URL,
         provider: 'glm',
+      };
+    }
+
+    // Try OpenAI if configured
+    if (this.OPENAI_API_KEY) {
+      logger.debug({ provider: 'OpenAI', model: this.OPENAI_MODEL }, 'Using OpenAI API configuration');
+      return {
+        apiKey: this.OPENAI_API_KEY,
+        model: this.OPENAI_MODEL,
+        apiBaseUrl: this.OPENAI_API_BASE_URL || undefined,
+        provider: 'openai',
       };
     }
 
@@ -553,6 +598,65 @@ export function resolveAcpCommand(configOverride?: string): ResolvedAcpCommand {
 }
 
 /**
+ * Detect the correct command for spawning an OpenAI-compatible ACP agent process.
+ *
+ * Resolution order:
+ * 0. `openai.acpCommand` config override — user-specified command (highest priority)
+ * 1. `codex-acp` — dedicated OpenAI ACP binary
+ * 2. `codex --acp` — Codex CLI with ACP flag
+ *
+ * @param configOverride - Optional user-specified ACP command from config (openai.acpCommand)
+ * @returns The resolved command and args
+ * @throws Error with actionable message if no valid command is found
+ * @see Issue #1333
+ */
+export function resolveOpenaiAcpCommand(configOverride?: string): ResolvedAcpCommand {
+  // Strategy 0: User-specified command from config (openai.acpCommand)
+  if (configOverride) {
+    logger.debug({ command: configOverride }, 'Resolved OpenAI ACP command from config override');
+    return { command: configOverride, args: [] };
+  }
+
+  // Strategy 1: Try `codex-acp` (dedicated OpenAI ACP binary)
+  if (commandExists('codex-acp')) {
+    logger.debug('Resolved OpenAI ACP command: codex-acp');
+    return { command: 'codex-acp', args: [] };
+  }
+
+  // Strategy 2: Try `codex --acp` (Codex CLI with ACP flag)
+  if (commandExists('codex') && codexSupportsAcp()) {
+    logger.debug('Resolved OpenAI ACP command: codex --acp');
+    return { command: 'codex', args: ['--acp'] };
+  }
+
+  // No valid command found — throw with actionable error
+  throw new Error(
+    'No OpenAI ACP-compatible agent command found. '
+    + 'Install one of:\n'
+    + '  1. codex-acp (dedicated OpenAI ACP binary)\n'
+    + '  2. Or set openai.acpCommand in disclaude.config.yaml\n'
+    + '  3. Or install Codex CLI with ACP support\n'
+    + 'See Issue #1333 for details.',
+  );
+}
+
+/**
+ * Check if the installed `codex` CLI supports `--acp` flag.
+ */
+function codexSupportsAcp(): boolean {
+  try {
+    const helpOutput = execFileSync('codex', ['--help'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).toString();
+    return helpOutput.includes('--acp') || helpOutput.includes('acp');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check if a command exists in PATH.
  */
 function commandExists(cmd: string): boolean {
@@ -613,21 +717,52 @@ export function createDefaultRuntimeContext(
   // Create shared ACP Client instance (lazy-connect on first use)
   // Issue #2311: ACP Client replaces SDK Provider for agent execution
   // Issue #2349: Auto-detect correct ACP command (config override > claude-agent-acp > claude --agent-acp)
-  const acpCommandOverride = fileConfigOnly.agent?.acpCommand;
-  const { command: acpCommand, args: acpArgs } = resolveAcpCommand(acpCommandOverride);
-  logger.info({ command: acpCommand, args: acpArgs }, 'Resolved ACP transport command');
+  // Issue #1333: Support OpenAI provider with its own ACP command
+  const agentConfig = Config.getAgentConfig();
+  const isProvider = (p: string) => agentConfig.provider === p;
+
+  // Resolve ACP command based on provider:
+  // - OpenAI: openai.acpCommand > auto-detect (codex-acp)
+  // - Others: agent.acpCommand > auto-detect (claude-agent-acp, claude --agent-acp)
+  let acpCommand: string;
+  let acpArgs: string[];
+  if (isProvider('openai')) {
+    const resolved = resolveOpenaiAcpCommand(Config.OPENAI_ACP_COMMAND);
+    acpCommand = resolved.command;
+    acpArgs = resolved.args;
+  } else {
+    const acpCommandOverride = fileConfigOnly.agent?.acpCommand;
+    const resolved = resolveAcpCommand(acpCommandOverride);
+    acpCommand = resolved.command;
+    acpArgs = resolved.args;
+  }
+  logger.info({ command: acpCommand, args: acpArgs, provider: agentConfig.provider }, 'Resolved ACP transport command');
+
+  // Build provider-specific environment variables
+  const providerEnv: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+  };
+  if (agentConfig.apiKey) {
+    if (isProvider('openai')) {
+      providerEnv.OPENAI_API_KEY = agentConfig.apiKey;
+    } else if (isProvider('glm')) {
+      // GLM uses ANTHROPIC_API_KEY with a compatible base URL
+      providerEnv.ANTHROPIC_API_KEY = agentConfig.apiKey;
+    } else {
+      providerEnv.ANTHROPIC_API_KEY = agentConfig.apiKey;
+    }
+  }
+  if (agentConfig.apiBaseUrl && isProvider('openai')) {
+    providerEnv.OPENAI_BASE_URL = agentConfig.apiBaseUrl;
+  } else if (agentConfig.apiBaseUrl) {
+    providerEnv.ANTHROPIC_BASE_URL = agentConfig.apiBaseUrl;
+  }
 
   const acpClient = new AcpClient({
     transport: new AcpStdioTransport({
       command: acpCommand,
       args: acpArgs,
-      env: {
-        ...process.env as Record<string, string>,
-        // Pass through API key if available
-        ...(Config.getAgentConfig().apiKey ? {
-          ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
-        } : {}),
-      },
+      env: providerEnv,
     }),
     // Auto-approve all permission requests in bot mode
     // (permissionMode: bypassPermissions handles this at SDK level)

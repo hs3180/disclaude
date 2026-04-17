@@ -494,6 +494,34 @@ describe('validateRequiredConfig', () => {
     expect(result.valid).toBe(false);
     expect(result.errors.length).toBeGreaterThanOrEqual(2);
   });
+
+  // OpenAI validation tests (Issue #1333)
+  it('should return error when openai.apiKey is set without openai.model', () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    const result = validateRequiredConfig({
+      openai: { apiKey: 'openai-key' },
+    } as any);
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].field).toBe('openai.model');
+  });
+
+  it('should return error when openai.model is set without openai.apiKey', () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    const result = validateRequiredConfig({
+      openai: { model: 'gpt-4o' },
+    } as any);
+    expect(result.valid).toBe(false);
+    expect(result.errors[0].field).toBe('openai.apiKey');
+  });
+
+  it('should return valid when both openai.apiKey and openai.model are set', () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    const result = validateRequiredConfig({
+      openai: { apiKey: 'openai-key', model: 'gpt-4o' },
+    } as any);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
 });
 
 describe('setLoadedConfig / getPreloadedConfig', () => {

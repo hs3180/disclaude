@@ -203,6 +203,24 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
     });
   }
 
+  // If OpenAI API key is configured, model must also be configured
+  if ((config as Record<string, unknown>).openai &&
+    typeof (config as Record<string, unknown>).openai === 'object') {
+    const {openai} = (config as Record<string, { apiKey?: string; model?: string }>);
+    if (openai?.apiKey && !openai?.model) {
+      errors.push({
+        field: 'openai.model',
+        message: 'openai.model is required when openai.apiKey is set',
+      });
+    }
+    if (openai?.model && !openai?.apiKey) {
+      errors.push({
+        field: 'openai.apiKey',
+        message: 'openai.apiKey is required when openai.model is set',
+      });
+    }
+  }
+
   // If Anthropic API key is configured (from env), agent.model should be set
   if (process.env.ANTHROPIC_API_KEY && !config.agent?.model) {
     errors.push({
