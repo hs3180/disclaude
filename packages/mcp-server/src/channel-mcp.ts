@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  upload_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -411,6 +413,48 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image and receive an image_key for embedding in card messages.
+
+Use this when you need to embed images inside send_card messages (e.g., charts, diagrams, photos).
+The returned image_key can be used in card \`img\` elements.
+
+**NOTE**: This only uploads the image — it does NOT send a message. Use send_card with the image_key to display it.
+
+## Parameters
+- **filePath**: Path to the image file to upload (string)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10MB)
+
+## Example
+\`\`\`json
+// Step 1: Upload image
+{"filePath": "/path/to/chart.png"}
+// Returns: { image_key: "img_xxx" }
+
+// Step 2: Use in send_card
+{
+  "card": {
+    "elements": [{ "tag": "img", "img_key": "img_xxx" }]
+  },
+  "chatId": "oc_xxx"
+}
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

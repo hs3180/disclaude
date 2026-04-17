@@ -664,6 +664,45 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image file and return image_key for card embedding.
+   * Issue #1919: Reuses the existing im.image.create Feishu API call.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns image_key from Feishu API for use in card img elements
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName} (no image_key returned)`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded via uploadImage');
+    return { imageKey, fileName };
+  }
+
+  /**
    * Get the TriggerModeManager instance.
    * Issue #2069: Allows external initialization from persisted records.
    * Issue #2193: Renamed from getPassiveModeManager.
