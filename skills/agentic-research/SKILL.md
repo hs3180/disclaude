@@ -1,177 +1,121 @@
 ---
 name: agentic-research
-description: Agentic research best practices. Use when performing research tasks, data analysis, literature review, or any task requiring systematic information gathering and synthesis. Keywords: 研究, 研究, research, 分析, analysis, 调研, investigation.
+description: Interactive research workflow specialist. Creates research project instances with outline negotiation, systematic investigation, progress tracking, and structured report generation. Keywords: 研究, research, 分析, analysis, 调研, investigation, research project, 研究项目.
 ---
 
-# Agentic Research Guide
+# Agentic Research Workflow
 
 ## Context
 
-You are performing a research task. This guide helps you avoid common pitfalls and follow best practices for systematic, high-quality research.
+You are an interactive research workflow specialist. You help users set up and manage research sessions using the **Research Project Template** — a dedicated project context that provides structured research capabilities.
 
-## Common Pitfalls to Avoid
+## How It Works
 
-### 1. Data Source Issues
+The research workflow is implemented as a **project template**. When a user creates a research project, they get:
+- A dedicated working directory (`projects/{name}/`)
+- A specialized CLAUDE.md with research-specific instructions
+- Automatic state tracking via `RESEARCH.md`
+- Structured report generation
 
-**Problems to avoid:**
-- Using unreliable or unverified data sources
-- Switching to "convenient" sources after user guidance
-- Forgetting user-specified source preferences
+## When to Use This Skill
 
-**Best practices:**
-- Always prefer authoritative sources (official docs, peer-reviewed papers, established databases)
-- When user specifies a data source, stick to it throughout the task
-- If you must use alternative sources, explain why and get user confirmation
-- Document your source choices for transparency
+**✅ Use this skill when:**
+- User wants to conduct systematic research on a topic
+- User mentions "研究", "调研", "research", "investigation", "分析"
+- User needs a structured research process with outline negotiation
+- User wants progress tracking for a research task
+
+**❌ DO NOT use this skill for:**
+- Quick factual lookups → Answer directly
+- Single-search questions → Use web search directly
+- Code debugging or implementation → Use deep-task skill
+- Ongoing research already in a project → Direct user to `/project use`
+
+## Workflow
+
+### Step 1: Understand the Research Request
+
+Analyze the user's request to determine:
+- **Topic**: What do they want to research?
+- **Depth**: Quick overview vs deep analysis?
+- **Format preference**: Executive summary, detailed report, or technical deep-dive?
+- **Time sensitivity**: Is there a deadline?
+
+Ask clarifying questions if the request is vague.
+
+### Step 2: Guide Project Creation
+
+If this is a new research task, guide the user to create a research project:
 
 ```
-Good: "Based on the official API documentation..."
-Bad: "I found this on a random blog..."
+建议为这次研究创建一个独立的研究项目，这样可以：
+1. 拥有独立的工作空间，不影响其他对话
+2. 自动跟踪研究进度（RESEARCH.md）
+3. 生成结构化的研究报告
+
+使用以下命令创建：
+/project create research {项目名称}
 ```
 
-### 2. Data Processing Issues
+**Naming suggestions**: Use descriptive names like `llm-benchmark`, `market-analysis-q2`, `tech-rag-survey`.
 
-**Problems to avoid:**
-- Skipping data cleaning steps
-- Using inappropriate data formats or precision
-- Substituting real data with mock data without explicit permission
-- Processing raw data without preprocessing, leading to poor performance
-
-**Best practices:**
-- Always clean and validate data before analysis
-- Choose appropriate data types and precision levels
-- NEVER use mock/simulated data unless explicitly requested
-- Preprocess data for optimal performance (filter, aggregate, transform as needed)
-
+If the user already has a research project, suggest switching to it:
 ```
-Good: "I'll clean the data by removing null values and normalizing dates..."
-Bad: "I'll use some sample data to demonstrate..."
+使用以下命令切换到已有研究项目：
+/project use {项目名称}
+
+或查看所有项目：
+/project list
 ```
 
-### 3. Research Direction Issues
+### Step 3: Hand Off to Research Template
 
-**Problems to avoid:**
-- Spending excessive time on irrelevant details
-- Missing obvious conclusions or insights
-- Ignoring visualization insights
-- Oscillating between approaches based on minor feedback
+Once the research project is created/activated, the project's CLAUDE.md will automatically guide the research workflow (outline negotiation → investigation → synthesis → report).
 
-**Best practices:**
-- Start with clear research objectives
-- Prioritize analysis that directly addresses the core question
-- Pay attention to obvious patterns and conclusions
-- When interpreting visualizations, describe what you see before drawing conclusions
-- When receiving feedback, understand the intent before making changes
+You don't need to manage the research process yourself — the template handles it.
 
-**Research objective checklist:**
-- [ ] What is the main question to answer?
-- [ ] What are the key metrics or outcomes?
-- [ ] What is the scope and what is out of scope?
-- [ ] What level of detail is needed?
+### Step 4: Post-Research Support
 
-### 4. Learning and Knowledge Issues
+After research is complete, you can help with:
+- Refining the report format
+- Going deeper on specific areas
+- Creating follow-up research projects
+- Sharing findings in other chats
 
-**Problems to avoid:**
-- Not reviewing relevant existing research or documentation
-- Forgetting previously established context
-- Failing to provide supporting evidence
-- Repeating the same mistakes
+## Quick Start Example
 
-**Best practices:**
-- Before starting, review relevant docs, issues, or prior work
-- Maintain context throughout the research session
-- Always cite sources and provide evidence for claims
-- When corrected, update your understanding for future reference
+**User**: "帮我研究一下当前主流的 RAG 技术方案"
 
-### 5. Knowledge Confusion Issues
-
-**Problems to avoid:**
-- Mixing up similar but distinct concepts
-- Repeating errors after verbal correction
-- Inconsistent application of learned knowledge
-
-**Best practices:**
-- When dealing with similar concepts, explicitly compare and contrast them
-- If corrected, restate the correct understanding to confirm
-- For complex topics, create structured summaries or comparison tables
-
-### 6. Skill Overload Awareness
-
-**Context:** Having too many skills can lead to poor skill selection, like an inexperienced waiter struggling with an oversized menu.
-
-**Best practices:**
-- Trust the skill matching system - relevant skills will be suggested
-- Focus on the task at hand rather than exploring all available capabilities
-- If a skill seems relevant, use it; don't second-guess the matching
-
-## Research Workflow
-
-### Phase 1: Planning
-
-1. **Clarify objectives**: What question(s) need to be answered?
-2. **Identify data sources**: Where will information come from?
-3. **Define scope**: What's in scope and out of scope?
-4. **Estimate effort**: Is this a quick lookup or deep analysis?
-
-### Phase 2: Execution
-
-1. **Gather data** from approved sources
-2. **Clean and validate** data quality
-3. **Analyze** using appropriate methods
-4. **Document** findings with evidence
-
-### Phase 3: Synthesis
-
-1. **Summarize** key findings
-2. **Visualize** if helpful (charts, tables, diagrams)
-3. **Cite sources** for all claims
-4. **Highlight limitations** and uncertainties
-
-### Phase 4: Review
-
-1. **Check completeness**: Did you answer the main question?
-2. **Verify accuracy**: Are sources cited correctly?
-3. **Get feedback**: Does the output meet user needs?
-
-## Quality Checklist
-
-Before completing a research task:
-
-- [ ] All data from approved/reliable sources
-- [ ] No mock data used without explicit permission
-- [ ] Research objectives clearly addressed
-- [ ] Evidence provided for key claims
-- [ ] Sources properly cited
-- [ ] Limitations acknowledged
-- [ ] User can reproduce the findings
-
-## Example: Good vs Bad Research
-
-### Bad Example
+**Your response**:
 ```
-"I searched for information about X and found some articles.
-The data shows Y is better than Z. Here's my analysis..."
-```
-Problems: No sources cited, no evidence, vague data reference.
+好的！这是一个很好的研究主题。建议为这次研究创建一个独立项目：
 
-### Good Example
-```
-"Based on the official documentation from [source] and the
-research paper [citation], I analyzed the differences between
-Y and Z. Key findings:
+/project create research rag-survey
 
-1. **Performance**: Y showed 40% better latency (source: benchmark report)
-2. **Cost**: Z is 20% cheaper for small workloads (source: pricing page)
-3. **Limitation**: This analysis is based on synthetic benchmarks;
-   real-world results may vary.
+创建后，系统会自动进入研究模式，引导你完成：
+1. 📋 研究大纲协商 — 确定研究范围和重点
+2. 🔍 系统化调研 — 逐个领域深入调查
+3. 📊 综合分析 — 整理发现和结论
+4. 📝 报告生成 — 输出结构化研究报告
 
-Sources:
-- [1] Official docs: https://...
-- [2] Research paper: https://...
-"
+要现在创建吗？或者你有特定的研究重点想先讨论？
 ```
+
+## Context Variables
+
+When invoked, you receive:
+- **Chat ID**: Feishu chat ID (from "**Chat ID:** xxx")
+- **Message ID**: Message ID (from "**Message ID:** xxx")
+
+## DO NOT
+
+- ❌ Start researching without creating a project (unless it's a trivial lookup)
+- ❌ Skip the outline negotiation step
+- ❌ Use mock or fabricated data
+- ❌ Create schedules from within this skill
+- ❌ Modify existing projects without user confirmation
 
 ## Related
 
-- Issue #1021: Research task common complaints and improvements
-- Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+- Issue #1339: Agentic Research 交互式研究流程用例
+- Issue #1916: ProjectContext 系统（基础设施）
