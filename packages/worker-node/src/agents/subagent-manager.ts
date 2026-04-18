@@ -39,7 +39,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { createLogger, type ChatAgent } from '@disclaude/core';
+import { createLogger, type ChatAgent, ProgressReporter, type SendCardCallback } from '@disclaude/core';
 import { AgentFactory } from './factory.js';
 import type { ChatAgentCallbacks } from './chat-agent/index.js';
 
@@ -106,6 +106,12 @@ export interface SubagentOptions {
   onProgress?: (message: string) => void;
   /** Optional sender OpenId for scheduled tasks */
   senderOpenId?: string;
+  /**
+   * Enable periodic progress card reporting.
+   * When true, sends progress cards every 60 seconds while the agent is running.
+   * Issue #857: Task progress tracking for complex tasks.
+   */
+  enableProgress?: boolean;
 }
 
 /**
@@ -185,6 +191,8 @@ export class SubagentManager {
   private processes: Map<string, import('child_process').ChildProcess> = new Map();
   private inMemoryAgents: Map<string, ChatAgent> = new Map();
   private statusCallbacks: Set<SubagentStatusCallback> = new Set();
+  /** Issue #857: Optional progress reporter for running subagents */
+  private progressReporters: Map<string, ProgressReporter> = new Map();
 
   /**
    * Register a callback for status changes.
@@ -233,6 +241,11 @@ export class SubagentManager {
 
     this.handles.set(subagentId, handle);
 
+    // Issue #857: Start progress tracking if enabled
+    if (options.enableProgress) {
+      this.startProgressTracking(subagentId, options);
+    }
+
     try {
       switch (options.type) {
         case 'schedule':
@@ -249,10 +262,65 @@ export class SubagentManager {
       handle.error = error instanceof Error ? error.message : String(error);
       handle.completedAt = new Date();
       this.notifyStatusChange(handle);
+      // Issue #857: Stop progress tracking on failure
+      void this.stopProgressTracking(subagentId, 'failed').catch(() => {
+        // Ignore errors during cleanup in catch block
+      });
       throw error;
     }
 
     return handle;
+  }
+
+  /**
+   * Issue #857: Start progress tracking for a subagent.
+   */
+  private startProgressTracking(subagentId: string, options: SubagentOptions): void {
+    try {
+      const sendCard: SendCardCallback = async (chatId, card, description) => {
+        await options.callbacks.sendCard(chatId, card, description);
+      };
+
+      const reporter = new ProgressReporter({
+        sendCard,
+        reportIntervalMs: 60_000, // 60 seconds
+      });
+
+      reporter.startTracking(subagentId, options.chatId, options.name);
+      this.progressReporters.set(subagentId, reporter);
+      logger.info({ subagentId }, 'Progress tracking started');
+    } catch (error) {
+      logger.error({ err: error, subagentId }, 'Failed to start progress tracking');
+    }
+  }
+
+  /**
+   * Issue #857: Stop progress tracking for a subagent.
+   */
+  private async stopProgressTracking(
+    subagentId: string,
+    finalStatus: 'completed' | 'failed' | 'stopped'
+  ): Promise<void> {
+    const reporter = this.progressReporters.get(subagentId);
+    if (!reporter) {return;}
+
+    try {
+      await reporter.stopTracking(subagentId, finalStatus);
+      reporter.dispose();
+      this.progressReporters.delete(subagentId);
+      logger.info({ subagentId, finalStatus }, 'Progress tracking stopped');
+    } catch (error) {
+      logger.error({ err: error, subagentId }, 'Failed to stop progress tracking');
+    }
+  }
+
+  /**
+   * Issue #857: Update progress status for a tracked subagent.
+   */
+  private updateProgressStatus(subagentId: string, status: 'starting' | 'running' | 'completed' | 'failed' | 'stopped'): void {
+    const reporter = this.progressReporters.get(subagentId);
+    if (!reporter) {return;}
+    reporter.updateStatus(subagentId, status);
   }
 
   /**
@@ -275,6 +343,9 @@ export class SubagentManager {
 
     this.inMemoryAgents.set(subagentId, agent);
     handle.status = 'running';
+
+    // Issue #857: Update progress reporter status
+    this.updateProgressStatus(subagentId, 'running');
 
     logger.info({ subagentId, name: options.name }, 'Schedule subagent started');
     this.notifyStatusChange(handle);
@@ -299,6 +370,9 @@ export class SubagentManager {
     }
 
     this.notifyStatusChange(handle);
+
+    // Issue #857: Stop progress tracking
+    await this.stopProgressTracking(subagentId, handle.status === 'completed' ? 'completed' : 'failed');
 
     // Cleanup
     try {
@@ -330,6 +404,9 @@ export class SubagentManager {
     this.inMemoryAgents.set(subagentId, agent);
     handle.status = 'running';
 
+    // Issue #857: Update progress reporter status
+    this.updateProgressStatus(subagentId, 'running');
+
     logger.info({ subagentId, name: options.name }, 'Task subagent started');
     this.notifyStatusChange(handle);
 
@@ -353,6 +430,9 @@ export class SubagentManager {
     }
 
     this.notifyStatusChange(handle);
+
+    // Issue #857: Stop progress tracking
+    await this.stopProgressTracking(subagentId, handle.status === 'completed' ? 'completed' : 'failed');
 
     // Cleanup
     try {
@@ -396,6 +476,9 @@ export class SubagentManager {
     handle.status = 'stopped';
     handle.completedAt = new Date();
     this.notifyStatusChange(handle);
+
+    // Issue #857: Stop progress tracking
+    void this.stopProgressTracking(subagentId, 'stopped');
 
     logger.info({ subagentId }, 'Subagent terminated');
     return true;
@@ -492,6 +575,11 @@ export class SubagentManager {
    */
   dispose(): void {
     this.terminateAll();
+    // Issue #857: Clean up all progress reporters
+    for (const reporter of this.progressReporters.values()) {
+      reporter.dispose();
+    }
+    this.progressReporters.clear();
     this.handles.clear();
     this.statusCallbacks.clear();
   }

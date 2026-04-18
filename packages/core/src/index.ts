@@ -112,6 +112,14 @@ export {
   AgentPool,
 } from './agents/agent-pool.js';
 
+// Progress Reporter (Issue #857)
+export {
+  type SendCardCallback,
+  type ProgressReporterConfig,
+  type TaskProgressInfo,
+  ProgressReporter,
+} from './agents/progress-reporter.js';
+
 // Base Agent
 export {
   type SdkOptionsExtra,
