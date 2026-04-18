@@ -17,20 +17,22 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
 import { transformCardTables } from './utils/table-converter.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
-import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
+import type { InteractiveOption, ActionPromptMap, UploadImageResult } from './tools/types.js';
 
 // Re-export
-export type { MessageSentCallback, InteractiveOption, ActionPromptMap } from './tools/types.js';
+export type { MessageSentCallback, InteractiveOption, ActionPromptMap, UploadImageResult } from './tools/types.js';
 export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -163,6 +165,18 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  // Issue #1919: Image upload for card embedding
+  upload_image: {
+    description: 'Upload an image and return image_key for embedding in interactive cards.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the image file' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -411,6 +425,38 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Image upload for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image and return an image_key for embedding in interactive cards.
+
+Unlike send_file, this tool only uploads the image to the platform's CDN and returns an image_key.
+No message is sent. The returned image_key can be used in card \`img\` elements.
+
+## Parameters
+- **filePath**: Path to the image file (string) — supports .jpg, .jpeg, .png, .webp, .gif, .tiff, .bmp, .ico
+
+## Returns
+- **image_key**: Use this in card JSON: \`{"tag": "img", "img_key": "<image_key>"}\`
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\`
+
+Response: \`image_key: "img_v3_xxx"\` — use in \`send_card\` or \`send_interactive\` card elements.`,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result: UploadImageResult = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
