@@ -5,7 +5,25 @@
  * - ScheduleFileScanner: Scans and parses schedule markdown files
  * - ScheduleFileWatcher: Hot reload for schedule files
  *
- * ## File Format
+ * ## File Format (Issue #2526: subdirectory structure)
+ *
+ * Schedules are organized in subdirectories, similar to skills:
+ * ```
+ * schedules/
+ * ├── daily-report/
+ * │   ├── SCHEDULE.md      ← schedule definition
+ * │   └── report.ts        ← optional implementation
+ * ├── pr-scanner/
+ * │   └── SCHEDULE.md
+ * └── ...
+ * ```
+ *
+ * Legacy flat format (backward compatible):
+ * ```
+ * schedules/
+ * ├── daily-report.md
+ * └── weekly-summary.md
+ * ```
  *
  * ```markdown
  * ---
@@ -21,6 +39,7 @@
  * ```
  *
  * Issue #1041: Migrated from @disclaude/worker-node to @disclaude/core.
+ * Issue #2526: Added subdirectory + SCHEDULE.md structure support.
  *
  * @module @disclaude/core/scheduling
  */
@@ -116,11 +135,17 @@ function parseScheduleFrontmatter(content: string): {
   return { frontmatter, contentStart: match[0].length };
 }
 
+/** Name of the schedule definition file inside each subdirectory. */
+const SCHEDULE_FILE = 'SCHEDULE.md';
+
 /**
- * Generate task ID from file name.
+ * Generate task ID from a file name or subdirectory name.
+ *
+ * For subdirectory SCHEDULE.md files, the caller should pass the directory name.
+ * For legacy flat files, pass the file name (e.g., "daily-report.md").
  */
-function generateTaskId(fileName: string): string {
-  const baseName = path.basename(fileName, '.md');
+function generateTaskId(name: string): string {
+  const baseName = path.basename(name, '.md');
   return `schedule-${baseName}`;
 }
 
@@ -155,7 +180,11 @@ export class ScheduleFileScanner {
   }
 
   /**
-   * Scan all .md files and return parsed tasks.
+   * Scan all schedule files and return parsed tasks.
+   *
+   * Issue #2526: Discovers schedules from subdirectories first
+   * (schedules/<name>/SCHEDULE.md), then falls back to legacy flat
+   * .md files for backward compatibility.
    */
   async scanAll(): Promise<ScheduleFileTask[]> {
     await this.ensureDir();
@@ -163,8 +192,23 @@ export class ScheduleFileScanner {
     const tasks: ScheduleFileTask[] = [];
 
     try {
-      const files = await fsPromises.readdir(this.schedulesDir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
+      const entries = await fsPromises.readdir(this.schedulesDir, { withFileTypes: true });
+
+      // Phase 1: Subdirectory discovery (primary, Issue #2526)
+      for (const entry of entries) {
+        if (!entry.isDirectory()) { continue; }
+
+        const scheduleFile = path.join(this.schedulesDir, entry.name, SCHEDULE_FILE);
+        const task = await this.parseFile(scheduleFile);
+        if (task) {
+          tasks.push(task);
+        }
+      }
+
+      // Phase 2: Legacy flat .md files (backward compat)
+      const mdFiles = entries
+        .filter(e => e.isFile() && e.name.endsWith('.md'))
+        .map(e => e.name);
 
       for (const file of mdFiles) {
         const filePath = path.join(this.schedulesDir, file);
@@ -188,6 +232,9 @@ export class ScheduleFileScanner {
 
   /**
    * Parse a single schedule file.
+   *
+   * Issue #2526: Derives task ID from the parent directory name
+   * for SCHEDULE.md files, or from the filename for legacy flat files.
    */
   async parseFile(filePath: string): Promise<ScheduleFileTask | null> {
     try {
@@ -201,10 +248,16 @@ export class ScheduleFileScanner {
       }
 
       const prompt = content.slice(contentStart).trim();
-      const fileName = path.basename(filePath);
+
+      // Issue #2526: Derive ID from parent directory for SCHEDULE.md,
+      // or from filename for legacy flat .md files.
+      const baseName = path.basename(filePath);
+      const idSource = baseName === SCHEDULE_FILE
+        ? path.basename(path.dirname(filePath))
+        : baseName;
 
       const task: ScheduleFileTask = {
-        id: generateTaskId(fileName),
+        id: generateTaskId(idSource),
         name: frontmatter['name'] as string,
         cron: frontmatter['cron'] as string,
         chatId: frontmatter['chatId'] as string,
@@ -238,14 +291,18 @@ export class ScheduleFileScanner {
 
   /**
    * Write a task to a markdown file.
+   *
+   * Issue #2526: Writes to subdirectory structure:
+   * schedules/<name>/SCHEDULE.md
    */
   async writeTask(task: ScheduledTask): Promise<string> {
-    await this.ensureDir();
+    const slug = task.id.startsWith('schedule-')
+      ? task.id.slice('schedule-'.length)
+      : task.id;
+    const subDir = path.join(this.schedulesDir, slug);
+    await fsPromises.mkdir(subDir, { recursive: true });
 
-    const fileName = task.id.startsWith('schedule-')
-      ? `${task.id.slice('schedule-'.length)}.md`
-      : `${task.id}.md`;
-    const filePath = path.join(this.schedulesDir, fileName);
+    const filePath = path.join(subDir, SCHEDULE_FILE);
 
     const frontmatter = [
       '---',
@@ -280,6 +337,9 @@ export class ScheduleFileScanner {
 
   /**
    * Delete a task file by task ID.
+   *
+   * Issue #2526: Tries subdirectory SCHEDULE.md first, then
+   * falls back to legacy flat .md file.
    */
   async deleteTask(taskId: string): Promise<boolean> {
     if (!taskId.startsWith('schedule-')) {
@@ -287,11 +347,24 @@ export class ScheduleFileScanner {
     }
 
     const slug = taskId.slice('schedule-'.length);
-    const filePath = path.join(this.schedulesDir, `${slug}.md`);
 
+    // Try subdirectory SCHEDULE.md first (Issue #2526)
+    const subDirPath = path.join(this.schedulesDir, slug, SCHEDULE_FILE);
     try {
-      await fsPromises.unlink(filePath);
-      logger.info({ taskId, filePath }, 'Deleted schedule file');
+      await fsPromises.unlink(subDirPath);
+      logger.info({ taskId, filePath: subDirPath }, 'Deleted schedule file (subdirectory)');
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    // Fallback: legacy flat .md file
+    const flatPath = path.join(this.schedulesDir, `${slug}.md`);
+    try {
+      await fsPromises.unlink(flatPath);
+      logger.info({ taskId, filePath: flatPath }, 'Deleted schedule file (flat)');
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -303,12 +376,14 @@ export class ScheduleFileScanner {
 
   /**
    * Get the file path for a task ID.
+   *
+   * Issue #2526: Returns subdirectory path: schedules/<name>/SCHEDULE.md
    */
   getFilePath(taskId: string): string {
     const slug = taskId.startsWith('schedule-')
       ? taskId.slice('schedule-'.length)
       : taskId;
-    return path.join(this.schedulesDir, `${slug}.md`);
+    return path.join(this.schedulesDir, slug, SCHEDULE_FILE);
   }
 }
 
@@ -349,6 +424,9 @@ export interface ScheduleFileWatcherOptions {
 
 /**
  * ScheduleFileWatcher - Watches schedule directory for changes.
+ *
+ * Issue #2526: Watches recursively to catch changes in subdirectories
+ * (e.g., schedules/<name>/SCHEDULE.md).
  */
 export class ScheduleFileWatcher {
   private schedulesDir: string;
@@ -373,6 +451,8 @@ export class ScheduleFileWatcher {
 
   /**
    * Start watching the schedules directory.
+   *
+   * Issue #2526: Uses recursive watching to catch subdirectory changes.
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -385,7 +465,7 @@ export class ScheduleFileWatcher {
     try {
       this.watcher = fs.watch(
         this.schedulesDir,
-        { persistent: true, recursive: false },
+        { persistent: true, recursive: true },
         (eventType, filename) => {
           this.handleFileEvent(eventType, filename);
         }
@@ -396,7 +476,7 @@ export class ScheduleFileWatcher {
       });
 
       this.running = true;
-      logger.info({ schedulesDir: this.schedulesDir }, 'File watcher started');
+      logger.info({ schedulesDir: this.schedulesDir }, 'File watcher started (recursive)');
 
     } catch (error) {
       logger.error({ err: error }, 'Failed to start file watcher');
@@ -431,6 +511,9 @@ export class ScheduleFileWatcher {
 
   /**
    * Handle file system event with debouncing.
+   *
+   * Issue #2526: Handles both subdirectory paths (e.g., "daily-report/SCHEDULE.md")
+   * and legacy flat paths (e.g., "daily-report.md").
    */
   private handleFileEvent(eventType: string, filename: string | null): void {
     if (!filename || !filename.endsWith('.md')) {
@@ -455,9 +538,17 @@ export class ScheduleFileWatcher {
 
   /**
    * Process the file event after debouncing.
+   *
+   * Issue #2526: Derives task ID from subdirectory name for
+   * SCHEDULE.md files, or from filename for legacy flat files.
    */
   private async processFileEvent(eventType: string, filePath: string, filename: string): Promise<void> {
-    const taskId = generateTaskId(filename);
+    // Derive task ID: from subdirectory name if SCHEDULE.md, else from filename
+    const baseName = path.basename(filename);
+    const idSource = baseName === SCHEDULE_FILE
+      ? path.basename(path.dirname(filename))
+      : baseName;
+    const taskId = generateTaskId(idSource);
 
     try {
       if (eventType === 'rename') {
