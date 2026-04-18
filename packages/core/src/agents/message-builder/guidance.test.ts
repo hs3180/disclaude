@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteSection,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,35 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildTasteSection', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildTasteSection()).toBe('');
+    expect(buildTasteSection(undefined)).toBe('');
+    expect(buildTasteSection('')).toBe('');
+  });
+
+  it('should return formatted section when taste context is provided', () => {
+    const tasteContext = `[User Preferences — auto-learned from your corrections]
+
+**代码风格**:
+  - 使用 const/let，禁止 var （严格遵守） [自动学习, 被纠正3次]`;
+
+    const result = buildTasteSection(tasteContext);
+    expect(result).toContain('User Preferences');
+    expect(result).toContain('使用 const/let');
+  });
+
+  it('should include instruction to follow preferences strictly', () => {
+    const result = buildTasteSection('Some taste rules here');
+    expect(result).toContain('Follow these preferences strictly');
+    expect(result).toContain('learned from your past interactions');
+  });
+
+  it('should include warning about not violating rules', () => {
+    const result = buildTasteSection('Some taste rules here');
+    expect(result).toContain('Do not violate these rules');
   });
 });

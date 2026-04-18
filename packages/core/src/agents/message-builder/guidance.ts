@@ -218,3 +218,33 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the user taste (preferences) section for Agent prompt injection.
+ *
+ * Issue #2335: Injects auto-learned user preferences into the agent context
+ * so the agent follows user tastes without repeated corrections.
+ *
+ * When taste rules exist for the current chatId, they are formatted as a
+ * guidance section that the agent should follow. Rules are grouped by
+ * category and annotated with their correction frequency.
+ *
+ * @param tasteContext - Formatted taste string from TasteManager.getFormattedTaste(),
+ *                       or undefined to skip
+ * @returns Formatted taste section, or empty string if no taste rules
+ */
+export function buildTasteSection(tasteContext?: string): string {
+  if (!tasteContext) {
+    return '';
+  }
+
+  return `
+
+---
+
+## User Preferences
+
+${tasteContext}
+
+**Important**: Follow these preferences strictly. They were learned from your past interactions with this user. Rules with higher correction counts indicate stronger user preference. Do not violate these rules unless the user explicitly asks you to do something differently.`;
+}

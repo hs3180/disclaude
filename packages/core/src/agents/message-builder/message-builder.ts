@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, location awareness)
+ *   ├── Guidance sections (next-step, output format, location awareness, taste)
  *   └── User message + attachments
  * ```
  *
@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteSection,
 } from './guidance.js';
 
 /**
@@ -137,6 +138,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const tasteSection = buildTasteSection(msg.tasteContext);
 
     // Compose all sections
     const sections: string[] = [];
@@ -155,6 +157,10 @@ export class MessageBuilder {
     }
     if (postHistory) {
       sections.push(postHistory);
+    }
+
+    if (tasteSection) {
+      sections.push(tasteSection);
     }
 
     if (toolsSection) {
