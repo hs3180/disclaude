@@ -21,6 +21,8 @@ export type IpcRequestType =
   | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
+  // Docx image insertion (Issue #2278)
+  | 'insertDocxImage'
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
@@ -49,6 +51,13 @@ export interface IpcRequestPayloads {
     chatId: string;
     filePath: string;
     threadId?: string;
+  };
+  // Docx image insertion (Issue #2278)
+  insertDocxImage: {
+    documentId: string;
+    imagePath: string;
+    index: number;
+    caption?: string;
   };
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {
@@ -99,6 +108,14 @@ export interface IpcResponsePayloads {
     fileType?: string;
     fileName?: string;
     fileSize?: number;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
+  };
+  // Docx image insertion (Issue #2278)
+  insertDocxImage: {
+    success: boolean;
+    blockId?: string;
+    fileToken?: string;
     error?: string;
     errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
   };

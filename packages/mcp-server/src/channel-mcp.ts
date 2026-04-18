@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -451,6 +452,60 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Docx image insertion at specific position
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image into a Feishu docx document at a specific position.
+
+Use this when generating documents with charts/diagrams that need images at precise locations (not just appended at the end).
+
+The tool performs a three-step API flow:
+1. Creates an empty image block (block_type: 27) at the specified index
+2. Uploads the image file via Drive Media Upload API
+3. Binds the uploaded file to the image block
+
+**NOTE**: This only inserts the image — it does NOT create the document. Use lark-cli or other methods to create the document first.
+
+## Parameters
+- **documentId**: The Feishu document ID (string, required)
+- **imagePath**: Path to the image file to insert (string, required)
+- **index**: Position in the document to insert the image (0-based, required)
+- **caption**: Optional caption text for the image (string, optional)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 20MB)
+
+## Example
+\`\`\`json
+// Insert a chart image between paragraphs
+{"documentId": "doxcnABCDEFG12345", "imagePath": "/workspace/report/chart.png", "index": 3, "caption": "Figure 1: Monthly Revenue"}
+\`\`\`
+
+## Workflow for Multi-Image Documents
+1. Create doc with text-only content via \`lark-cli docs +create\`
+2. Count block positions to determine insertion indices
+3. Insert images at desired positions (bottom-up to preserve indices)
+4. Alternatively, build incrementally: text → image → text → image`,
+    parameters: z.object({
+      documentId: z.string().describe('The Feishu document ID'),
+      imagePath: z.string().describe('Path to the image file to insert'),
+      index: z.number().int().min(0).describe('Position in the document to insert the image (0-based)'),
+      caption: z.string().optional().describe('Optional caption text for the image'),
+    }),
+    handler: async ({ documentId, imagePath, index, caption }: {
+      documentId: string;
+      imagePath: string;
+      index: number;
+      caption?: string;
+    }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index, caption });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Docx image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

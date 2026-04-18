@@ -252,6 +252,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #2278: Docx image insertion — three-step Lark API flow
+      insertDocxImage: async (documentId: string, imagePath: string, index: number, caption?: string) => {
+        return await feishuChannel.insertDocxImage(documentId, imagePath, index, caption);
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);

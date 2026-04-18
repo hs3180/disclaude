@@ -572,6 +572,33 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Insert an image into a Feishu docx document at a specific position via IPC.
+   * Issue #2278: Three-step flow — create empty image block, upload, replace.
+   */
+  async insertDocxImage(
+    documentId: string,
+    imagePath: string,
+    index: number,
+    caption?: string
+  ): Promise<{ success: boolean; blockId?: string; fileToken?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('insertDocxImage', { documentId, imagePath, index, caption });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, documentId, imagePath, index }, 'insertDocxImage failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
    * Send an interactive card with raw parameters via IPC.
    * Issue #1570: Phase 1 of IPC refactor — Primary Node owns card building.
    *

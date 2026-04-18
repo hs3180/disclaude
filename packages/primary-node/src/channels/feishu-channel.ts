@@ -833,4 +833,122 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     logger.info({ flushed: valid.length, dropped: queue.length - valid.length }, 'Offline queue flushed');
   }
+
+  // =========================================================================
+  // Docx Image Insertion (Issue #2278)
+  // =========================================================================
+
+  /**
+   * Insert an image into a Feishu docx document at a specific position.
+   *
+   * Three-step flow:
+   * 1. Create empty image block (block_type: 27) at the specified index
+   * 2. Upload image file via Drive Media Upload API (parent_type: "docx_image")
+   * 3. Replace the empty image block with the uploaded file via batchUpdate
+   *
+   * @param documentId - The Feishu document ID
+   * @param imagePath - Absolute path to the image file
+   * @param index - Position in the document to insert the image
+   * @param caption - Optional caption for the image
+   * @returns blockId and fileToken of the inserted image
+   */
+  async insertDocxImage(
+    documentId: string,
+    imagePath: string,
+    index: number,
+    caption?: string
+  ): Promise<{ blockId: string; fileToken: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    logger.info({ documentId, imagePath, index, caption }, 'insertDocxImage: starting 3-step flow');
+
+    // Step 1: Create empty image block at the specified index
+    // block_type 27 = image block (NOT 4, which is heading2)
+    const createResp = await this.client.docx.documentBlockChildren.create({
+      data: {
+        children: [
+          {
+            block_type: 27,
+            image: {
+              align: 1, // center alignment
+              ...(caption ? { caption: { content: caption } } : {}),
+            },
+          },
+        ],
+        index,
+      },
+      path: {
+        document_id: documentId,
+        block_id: documentId, // root block = documentId
+      },
+    });
+
+    const blockId = createResp?.data?.children?.[0]?.block_id;
+    if (!blockId) {
+      throw new Error('Failed to create image block: no block_id returned');
+    }
+
+    logger.info({ documentId, blockId, index }, 'insertDocxImage: step 1 complete — empty image block created');
+
+    // Step 2: Upload image file via Drive Media Upload API
+    const fileStats = fs.statSync(imagePath);
+    const fileName = path.basename(imagePath);
+
+    const uploadResp = await this.client.drive.media.uploadAll({
+      data: {
+        file_name: fileName,
+        parent_type: 'docx_image',
+        parent_node: documentId,
+        size: fileStats.size,
+        file: fs.createReadStream(imagePath),
+      },
+    });
+
+    const fileToken = uploadResp?.file_token;
+    if (!fileToken) {
+      // Rollback: delete the empty image block
+      try {
+        await this.client.docx.documentBlockChildren.batchDelete({
+          data: {
+            start_index: index,
+            end_index: index + 1,
+          },
+          path: {
+            document_id: documentId,
+            block_id: documentId,
+          },
+        });
+        logger.info({ documentId, index }, 'insertDocxImage: rolled back empty block after upload failure');
+      } catch (rollbackErr) {
+        logger.error({ err: rollbackErr, documentId, blockId }, 'insertDocxImage: rollback failed');
+      }
+      throw new Error('Failed to upload image: no file_token returned');
+    }
+
+    logger.info({ documentId, fileToken }, 'insertDocxImage: step 2 complete — image uploaded');
+
+    // Step 3: Replace empty image block with uploaded file via batchUpdate
+    await this.client.docx.documentBlock.batchUpdate({
+      data: {
+        requests: [
+          {
+            replace_image: {
+              token: fileToken,
+              ...(caption ? { caption: { content: caption } } : {}),
+            },
+            block_id: blockId,
+          },
+        ],
+      },
+      path: {
+        document_id: documentId,
+      },
+    });
+
+    logger.info({ documentId, blockId, fileToken }, 'insertDocxImage: step 3 complete — image bound to block');
+
+    return { blockId, fileToken };
+  }
 }
