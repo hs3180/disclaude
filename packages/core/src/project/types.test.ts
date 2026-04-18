@@ -217,7 +217,7 @@ describe('CwdProvider', () => {
 });
 
 describe('ProjectManagerOptions', () => {
-  it('should accept valid constructor options', () => {
+  it('should accept valid constructor options with templatesConfig', () => {
     const options: ProjectManagerOptions = {
       workspaceDir: '/workspace',
       packageDir: '/app/packages/core',
@@ -230,7 +230,16 @@ describe('ProjectManagerOptions', () => {
     };
     expect(options.workspaceDir).toBe('/workspace');
     expect(options.packageDir).toBe('/app/packages/core');
-    expect(Object.keys(options.templatesConfig)).toHaveLength(1);
+    expect(Object.keys(options.templatesConfig!)).toHaveLength(1);
+  });
+
+  it('should accept options without templatesConfig (auto-discovery only)', () => {
+    const options: ProjectManagerOptions = {
+      workspaceDir: '/workspace',
+      packageDir: '/app/packages/core',
+    };
+    expect(options.workspaceDir).toBe('/workspace');
+    expect(options.templatesConfig).toBeUndefined();
   });
 });
 

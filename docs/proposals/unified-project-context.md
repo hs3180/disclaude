@@ -59,7 +59,8 @@ ProjectContext {
  * 模板 CLAUDE.md 源文件: {packageDir}/templates/{name}/CLAUDE.md
  * 实例 workingDir: {workspace}/projects/{name}/
  *
- * 注意: 只有在 projectTemplates 配置中列出的模板才可用。
+ * 注意: 模板从 {packageDir}/templates/ 自动发现（Issue #2286）。
+ *       projectTemplates 配置可选地覆盖元数据或声明额外的模板。
  */
 interface ProjectTemplate {
   /** 模板名称 */

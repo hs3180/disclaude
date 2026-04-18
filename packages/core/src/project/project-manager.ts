@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplates } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +65,7 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +82,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -98,26 +98,47 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Initialize (or re-initialize) templates from config.
+   * Initialize (or re-initialize) templates.
+   *
+   * Templates are loaded in two stages:
+   * 1. **Auto-discover** from `{packageDir}/templates/` filesystem
+   * 2. **Merge** config overrides (displayName, description) on top
+   *
+   * Config can also declare additional templates not present on the filesystem.
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @param templatesConfig - Optional template configuration overrides (from disclaude.config.yaml)
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
 
-    if (!templatesConfig) {
-      return;
+    // Stage 1: Auto-discover templates from filesystem
+    if (this.packageDir) {
+      const { templates } = discoverTemplates(this.packageDir);
+      for (const template of templates) {
+        this.templates.set(template.name, template);
+      }
     }
 
-    for (const [name, meta] of Object.entries(templatesConfig)) {
-      this.templates.set(name, {
-        name,
-        displayName: meta.displayName,
-        description: meta.description,
-      });
+    // Stage 2: Merge config overrides/extensions
+    if (templatesConfig) {
+      for (const [name, meta] of Object.entries(templatesConfig)) {
+        const existing = this.templates.get(name);
+        if (existing) {
+          // Config overrides metadata for discovered template
+          existing.displayName = meta.displayName ?? existing.displayName;
+          existing.description = meta.description ?? existing.description;
+        } else {
+          // Config adds a template not found on filesystem
+          this.templates.set(name, {
+            name,
+            displayName: meta.displayName,
+            description: meta.description,
+          });
+        }
+      }
     }
   }
 

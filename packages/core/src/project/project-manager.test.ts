@@ -942,3 +942,201 @@ describe('ProjectManager — edge cases', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Auto-Discovery Integration (Issue #2286)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager auto-discovery', () => {
+  /** Helper: create a template directory with CLAUDE.md in packageDir */
+  function setupTemplateDir(
+    packageDir: string,
+    templateName: string,
+    options?: { claudeMd?: string; templateYaml?: string },
+  ): void {
+    const templateDir = join(packageDir, 'templates', templateName);
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(
+      join(templateDir, 'CLAUDE.md'),
+      options?.claudeMd ?? `# ${templateName} template`,
+    );
+    if (options?.templateYaml) {
+      writeFileSync(join(templateDir, 'template.yaml'), options.templateYaml);
+    }
+  }
+
+  it('should auto-discover templates from {packageDir}/templates/', () => {
+    const packageDir = createTempDir();
+    setupTemplateDir(packageDir, 'research', {
+      claudeMd: '# Research Template',
+      templateYaml: 'displayName: "研究模式"\ndescription: 专注研究',
+    });
+    setupTemplateDir(packageDir, 'book-reader', {
+      claudeMd: '# Book Reader Template',
+    });
+
+    const pm = new ProjectManager({
+      workspaceDir: createTempDir(),
+      packageDir,
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+    expect(templates.find((t) => t.name === 'research')).toEqual({
+      name: 'research',
+      displayName: '研究模式',
+      description: '专注研究',
+    });
+    expect(templates.find((t) => t.name === 'book-reader')).toEqual({
+      name: 'book-reader',
+    });
+  });
+
+  it('should work without any config when templates exist on filesystem', () => {
+    const packageDir = createTempDir();
+    setupTemplateDir(packageDir, 'research');
+
+    const pm = new ProjectManager({
+      workspaceDir: createTempDir(),
+      packageDir,
+    });
+
+    // Can create instances from auto-discovered templates
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.templateName).toBe('research');
+    }
+  });
+
+  it('should allow config to override discovered template metadata', () => {
+    const packageDir = createTempDir();
+    setupTemplateDir(packageDir, 'research', {
+      claudeMd: '# Research Template',
+      templateYaml: 'displayName: "研究模式"\ndescription: 旧描述',
+    });
+
+    const pm = new ProjectManager({
+      workspaceDir: createTempDir(),
+      packageDir,
+      templatesConfig: {
+        research: {
+          displayName: '自定义研究模式',
+        },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    // Config overrides displayName, description from filesystem is preserved
+    expect(templates[0].displayName).toBe('自定义研究模式');
+    expect(templates[0].description).toBe('旧描述');
+  });
+
+  it('should allow config to add templates not on filesystem', () => {
+    const packageDir = createTempDir();
+    setupTemplateDir(packageDir, 'research');
+
+    const pm = new ProjectManager({
+      workspaceDir: createTempDir(),
+      packageDir,
+      templatesConfig: {
+        custom: {
+          displayName: '自定义模板',
+          description: '仅在配置中声明的模板',
+        },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+    expect(templates.find((t) => t.name === 'research')).toBeDefined();
+    expect(templates.find((t) => t.name === 'custom')).toEqual({
+      name: 'custom',
+      displayName: '自定义模板',
+      description: '仅在配置中声明的模板',
+    });
+  });
+
+  it('should return empty templates when no filesystem templates and no config', () => {
+    const packageDir = createTempDir();
+    // No templates/ directory
+
+    const pm = new ProjectManager({
+      workspaceDir: createTempDir(),
+      packageDir,
+    });
+
+    expect(pm.listTemplates()).toEqual([]);
+  });
+
+  it('should merge filesystem + config templates correctly', () => {
+    const packageDir = createTempDir();
+    setupTemplateDir(packageDir, 'research', {
+      templateYaml: 'displayName: "研究"',
+    });
+    setupTemplateDir(packageDir, 'book-reader');
+    // coding only in config, not on filesystem
+
+    const pm = new ProjectManager({
+      workspaceDir: createTempDir(),
+      packageDir,
+      templatesConfig: {
+        research: { description: 'Config override description' },
+        coding: { displayName: '编码模式' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(3);
+
+    const research = templates.find((t) => t.name === 'research')!;
+    expect(research.displayName).toBe('研究'); // from filesystem
+    expect(research.description).toBe('Config override description'); // from config
+
+    const coding = templates.find((t) => t.name === 'coding')!;
+    expect(coding.displayName).toBe('编码模式'); // from config only
+
+    const bookReader = templates.find((t) => t.name === 'book-reader')!;
+    expect(bookReader.name).toBe('book-reader'); // from filesystem only
+  });
+
+  it('should re-discover templates on init() re-call', () => {
+    const packageDir = createTempDir();
+    setupTemplateDir(packageDir, 'research');
+
+    const pm = new ProjectManager({
+      workspaceDir: createTempDir(),
+      packageDir,
+    });
+
+    expect(pm.listTemplates()).toHaveLength(1);
+
+    // Add a new template to filesystem
+    setupTemplateDir(packageDir, 'coding');
+
+    // Re-init should re-discover
+    pm.init();
+    expect(pm.listTemplates()).toHaveLength(2);
+  });
+
+  it('should read metadata from CLAUDE.md frontmatter when no template.yaml', () => {
+    const packageDir = createTempDir();
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(
+      join(templateDir, 'CLAUDE.md'),
+      '---\ndisplayName: "Frontmatter模式"\ndescription: 从CLAUDE.md读取\n---\n\n# Research',
+    );
+
+    const pm = new ProjectManager({
+      workspaceDir: createTempDir(),
+      packageDir,
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Frontmatter模式');
+    expect(templates[0].description).toBe('从CLAUDE.md读取');
+  });
+});
