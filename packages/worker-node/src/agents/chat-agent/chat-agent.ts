@@ -8,7 +8,7 @@
  * RestartManager, MessageBuilder.
  */
 
-import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, loadRuntimeEnv, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { ChatHistoryLoader } from './chat-history-loader.js';
 import { AgentLoopManager } from './agent-loop-manager.js';
@@ -62,6 +62,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   protected getAgentName(): string { return 'ChatAgent'; }
   getChatId(): string { return this.boundChatId; }
 
+  /**
+   * Get available runtime-env keys for agent awareness (Issue #1371).
+   * Returns the keys (not values) of variables in .runtime-env,
+   * so the agent knows what shared state is available.
+   */
+  private getRuntimeEnvKeys(): string[] {
+    try {
+      const env = loadRuntimeEnv(this.getWorkspaceDir());
+      return Object.keys(env);
+    } catch {
+      return [];
+    }
+  }
+
   start(): Promise<void> {
     this.logger.debug({ chatId: this.boundChatId }, 'ChatAgent start() called - session is created on-demand');
     return Promise.resolve();
@@ -89,6 +103,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       const capabilities = this.callbacks.getCapabilities?.(chatId);
       const enhancedContent = this.messageBuilder.buildEnhancedContent({
         text: userInput.content, messageId, senderOpenId,
+        runtimeEnvKeys: this.getRuntimeEnvKeys(),
       }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
@@ -151,6 +166,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const capabilities = this.callbacks.getCapabilities?.(chatId);
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId: messageId ?? `cli-${Date.now()}`, senderOpenId,
+      runtimeEnvKeys: this.getRuntimeEnvKeys(),
     }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
@@ -216,6 +232,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       text, messageId, senderOpenId, attachments,
       chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.historyLoader.getPersistedContext(),
+      runtimeEnvKeys: this.getRuntimeEnvKeys(),
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

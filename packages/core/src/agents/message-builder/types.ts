@@ -30,6 +30,8 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /** Available runtime-env keys for agent awareness (Issue #1371) */
+  runtimeEnvKeys?: string[];
 }
 
 /**

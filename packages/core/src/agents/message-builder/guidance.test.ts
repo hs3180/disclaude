@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,57 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no keys are provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+    expect(buildRuntimeEnvGuidance([])).toBe('');
+  });
+
+  it('should include runtime environment section header', () => {
+    const result = buildRuntimeEnvGuidance(['GH_TOKEN']);
+    expect(result).toContain('Runtime Environment Variables');
+  });
+
+  it('should list available keys', () => {
+    const result = buildRuntimeEnvGuidance(['GH_TOKEN', 'GH_TOKEN_EXPIRES_AT']);
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should include descriptions for known keys', () => {
+    const result = buildRuntimeEnvGuidance(['GH_TOKEN']);
+    expect(result).toContain('GitHub Installation Access Token');
+    expect(result).toContain('auto-refreshed');
+  });
+
+  it('should list unknown keys without descriptions', () => {
+    const result = buildRuntimeEnvGuidance(['CUSTOM_VAR']);
+    expect(result).toContain('CUSTOM_VAR');
+    // Unknown keys should just show the key name without additional description
+    const lines = result.split('\n').filter(l => l.includes('CUSTOM_VAR'));
+    expect(lines.length).toBeGreaterThan(0);
+  });
+
+  it('should include usage notes about reading and writing', () => {
+    const result = buildRuntimeEnvGuidance(['GH_TOKEN']);
+    expect(result).toContain('Reading');
+    expect(result).toContain('Writing');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should include security warning about token exposure', () => {
+    const result = buildRuntimeEnvGuidance(['GH_TOKEN']);
+    expect(result).toContain('NEVER');
+    expect(result).toContain('token values in chat output');
+  });
+
+  it('should include freshness note about session start', () => {
+    const result = buildRuntimeEnvGuidance(['GH_TOKEN']);
+    expect(result).toContain('Freshness');
+    expect(result).toContain('session start');
   });
 });

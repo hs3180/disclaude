@@ -185,6 +185,59 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Known runtime-env key descriptions for agent awareness.
+ *
+ * Issue #1371: Agent needs to know what runtime-env variables are available
+ * and their purposes, so it can proactively use them.
+ */
+const RUNTIME_ENV_KEY_DESCRIPTIONS: Record<string, string> = {
+  GH_TOKEN: 'GitHub Installation Access Token (auto-refreshed, expires in 1 hour). Use via `GH_TOKEN=$GH_TOKEN gh ...` for authenticated GitHub CLI operations.',
+  GH_TOKEN_EXPIRES_AT: 'ISO 8601 timestamp when GH_TOKEN expires. Check this before long-running GitHub operations.',
+};
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess. Runtime-env variables
+ * are shared between the main process and agent subprocess via a file.
+ * This guidance tells the agent what variables are available and how
+ * to use them.
+ *
+ * @param availableKeys - Array of runtime-env key names currently available
+ * @returns Formatted runtime-env guidance section, or empty string if no keys
+ */
+export function buildRuntimeEnvGuidance(availableKeys?: string[]): string {
+  if (!availableKeys || availableKeys.length === 0) {
+    return '';
+  }
+
+  const keyDescriptions = availableKeys
+    .map((key) => {
+      const desc = RUNTIME_ENV_KEY_DESCRIPTIONS[key];
+      return desc ? `- **${key}**: ${desc}` : `- **${key}**`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You have access to the following **shared runtime environment variables**. These are set by Skills or the main process and merged into your process environment at startup.
+
+**Available variables:**
+${keyDescriptions}
+
+### Usage Notes
+
+- **Reading**: These variables are already in your process environment. Use them directly (e.g., \`GH_TOKEN=$GH_TOKEN gh issue list\`).
+- **Writing**: To share new state with other processes, append to \`.runtime-env\` in the workspace directory using the Write tool.
+- **Security**: **NEVER** expose token values in chat output. Only reference them by name.
+- **Freshness**: Variables are loaded at session start. If a token expires mid-session, Skills may refresh it — but you need to re-read the file to get the updated value.`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
