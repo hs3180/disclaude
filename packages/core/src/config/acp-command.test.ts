@@ -155,4 +155,77 @@ describe('resolveAcpCommand', () => {
     const result = resolveAcpCommand(undefined);
     expect(result).toEqual({ command: 'claude-agent-acp', args: [] });
   });
+
+  // ==========================================================================
+  // OpenAI provider-specific tests (Issue #1333)
+  // ==========================================================================
+
+  describe('OpenAI provider resolution', () => {
+    it('resolves codex --agent-acp when provider is openai and codex supports it', () => {
+      mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'which' && args[0] === 'codex') {
+          return '/usr/local/bin/codex';
+        }
+        if (cmd === 'codex' && args[0] === '--help') {
+          return 'Usage: codex [options]\n  --agent-acp    Start ACP mode\n';
+        }
+        return '';
+      });
+
+      const result = resolveAcpCommand(undefined, 'openai');
+      expect(result).toEqual({ command: 'codex', args: ['--agent-acp'] });
+    });
+
+    it('resolves openai-agent-acp when codex not found but dedicated binary exists', () => {
+      mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'which' && args[0] === 'codex') {
+          throw new Error('not found');
+        }
+        if (cmd === 'which' && args[0] === 'openai-agent-acp') {
+          return '/usr/local/bin/openai-agent-acp';
+        }
+        return '';
+      });
+
+      const result = resolveAcpCommand(undefined, 'openai');
+      expect(result).toEqual({ command: 'openai-agent-acp', args: [] });
+    });
+
+    it('falls through to claude-agent-acp when no OpenAI binary available', () => {
+      mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === 'which' && args[0] === 'codex') {
+          throw new Error('not found');
+        }
+        if (cmd === 'which' && args[0] === 'openai-agent-acp') {
+          throw new Error('not found');
+        }
+        if (cmd === 'which' && args[0] === 'claude-agent-acp') {
+          return '/usr/local/bin/claude-agent-acp';
+        }
+        return '';
+      });
+
+      const result = resolveAcpCommand(undefined, 'openai');
+      expect(result).toEqual({ command: 'claude-agent-acp', args: [] });
+    });
+
+    it('config override takes priority over OpenAI provider detection', () => {
+      mockExecFileSync.mockImplementation(() => '');
+
+      const result = resolveAcpCommand('/custom/openai-acp-binary', 'openai');
+      expect(result).toEqual({ command: '/custom/openai-acp-binary', args: [] });
+      expect(mockExecFileSync).not.toHaveBeenCalled();
+    });
+
+    it('throws error with OpenAI hint when provider is openai and no command found', () => {
+      mockExecFileSync.mockImplementation((cmd: string) => {
+        if (cmd === 'which') {
+          throw new Error('not found');
+        }
+        return '';
+      });
+
+      expect(() => resolveAcpCommand(undefined, 'openai')).toThrow(/For OpenAI.*codex/);
+    });
+  });
 });

@@ -25,8 +25,8 @@ export interface WorkspaceConfig {
  * This avoids confusion about which model takes precedence.
  */
 export interface AgentConfig {
-  /** API provider preference (anthropic, glm) */
-  provider?: 'anthropic' | 'glm';
+  /** API provider preference (anthropic, glm, openai) */
+  provider?: 'anthropic' | 'glm' | 'openai';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -126,6 +126,23 @@ export interface RuliuConfig {
   watchMentions?: string[];
   /** Webhook path for receiving messages */
   webhookPath?: string;
+}
+
+/**
+ * OpenAI API configuration section.
+ *
+ * When using OpenAI provider, both apiKey and model are REQUIRED.
+ * The ACP transport will pass OPENAI_API_KEY to the spawned agent process.
+ *
+ * @see Issue #1333
+ */
+export interface OpenaiConfig {
+  /** API key (overrides OPENAI_API_KEY env var) */
+  apiKey?: string;
+  /** Model identifier (e.g. 'gpt-4o', 'o3') - REQUIRED when apiKey is set */
+  model?: string;
+  /** API base URL (overrides OPENAI_API_BASE_URL env var) */
+  apiBaseUrl?: string;
 }
 
 /**
@@ -332,6 +349,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** OpenAI API settings */
+  openai?: OpenaiConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

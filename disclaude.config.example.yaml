@@ -25,7 +25,7 @@ workspace:
 # -----------------------------------------------------------------------------
 agent:
   # API provider preference
-  # Options: anthropic, glm
+  # Options: anthropic, glm, openai
   provider: "glm"
 
   # Model to use for AI operations
@@ -117,6 +117,22 @@ glm:
 
   # API base URL (usually no need to change)
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+
+# -----------------------------------------------------------------------------
+# OpenAI API Configuration
+# -----------------------------------------------------------------------------
+# Enable OpenAI as an alternative provider.
+# Requires an ACP-compatible agent binary (e.g. codex CLI with --agent-acp).
+# @see Issue #1333
+# openai:
+#   # OpenAI API key from https://platform.openai.com/
+#   apiKey: "your_openai_api_key_here"
+#
+#   # Model identifier (e.g. 'gpt-4o', 'o3')
+#   model: "gpt-4o"
+#
+#   # API base URL (optional, for custom endpoints)
+#   # apiBaseUrl: "https://api.openai.com/v1"
 
 # -----------------------------------------------------------------------------
 # Logging Configuration
