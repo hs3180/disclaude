@@ -26,6 +26,7 @@ import { readdir, readFile, writeFile, mkdir, stat, realpath, rename, unlink } f
 import { resolve, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 
@@ -40,7 +41,7 @@ export interface PrStateFile {
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
-  disbandRequested: null; // Phase 2: always null
+  disbandRequested: string | null; // ISO timestamp of disband request, or null
 }
 
 interface CheckCapacityResult {
@@ -176,9 +177,9 @@ export function validatePrStateFile(data: unknown, filePath: string): PrStateFil
     throw new ScannerError(`State file '${filePath}' has invalid or missing 'expiresAt'`);
   }
 
-  // disbandRequested must be null in Phase 1
-  if (obj.disbandRequested !== null) {
-    throw new ScannerError(`State file '${filePath}' has invalid 'disbandRequested' — must be null in Phase 1`);
+  // disbandRequested must be null or an ISO timestamp string
+  if (obj.disbandRequested !== null && typeof obj.disbandRequested !== 'string') {
+    throw new ScannerError(`State file '${filePath}' has invalid 'disbandRequested' — must be null or ISO timestamp`);
   }
 
   return data as PrStateFile;
@@ -543,8 +544,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  const msg = err instanceof Error ? err.message : String(err);
-  console.error(`ERROR: ${msg}`);
-  process.exit(1);
-});
+// Only run main if executed directly (not imported as a module)
+const __filename = fileURLToPath(import.meta.url);
+const isDirectRun = resolve(process.argv[1] ?? '') === __filename;
+
+if (isDirectRun) {
+  main().catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`ERROR: ${msg}`);
+    process.exit(1);
+  });
+}

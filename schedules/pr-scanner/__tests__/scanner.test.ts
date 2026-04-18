@@ -145,9 +145,15 @@ describe('scanner.ts', () => {
       expect(() => validatePrStateFile(state, 'test.json')).toThrow(/state/);
     });
 
-    it('should reject non-null disbandRequested', () => {
+    it('should accept string disbandRequested (ISO timestamp)', () => {
       const state = makeState();
-      (state as Record<string, unknown>).disbandRequested = 'something';
+      (state as Record<string, unknown>).disbandRequested = '2026-04-08T12:00:00Z';
+      expect(validatePrStateFile(state, 'test.json').disbandRequested).toBe('2026-04-08T12:00:00Z');
+    });
+
+    it('should reject non-string/non-null disbandRequested', () => {
+      const state = makeState();
+      (state as Record<string, unknown>).disbandRequested = 123;
       expect(() => validatePrStateFile(state, 'test.json')).toThrow(/disbandRequested/);
     });
 
