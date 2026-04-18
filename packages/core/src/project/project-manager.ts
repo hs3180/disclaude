@@ -9,7 +9,7 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   CwdProvider,
@@ -287,6 +287,56 @@ export class ProjectManager {
         workingDir: this.workspaceDir,
       },
     };
+  }
+
+  /**
+   * Delete a project instance by name.
+   *
+   * Removes the instance from memory and persisted state.
+   * Also cleans up all associated chatId bindings.
+   * Optionally removes the working directory from disk.
+   *
+   * @param name - Instance name to delete
+   * @param options - Deletion options
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string, options?: { removeWorkingDir?: boolean }): ProjectResult<void> {
+    if (!name || name.length === 0) {
+      return { ok: false, error: '实例名称不能为空' };
+    }
+
+    if (name === 'default') {
+      return { ok: false, error: '"default" 是保留名称，不能删除' };
+    }
+
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Remove all associated bindings
+    const boundChatIds = this.getBoundChatIds(name);
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+    this.instanceChatIds.delete(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Optionally remove working directory
+    if (options?.removeWorkingDir) {
+      try {
+        rmSync(instance.workingDir, { recursive: true, force: true });
+      } catch {
+        // Directory removal failure is non-fatal — instance is still deleted from state
+      }
+    }
+
+    // Persist after mutation
+    this.persist();
+
+    return { ok: true, data: undefined };
   }
 
   // ───────────────────────────────────────────

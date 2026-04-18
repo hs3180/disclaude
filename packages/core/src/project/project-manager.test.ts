@@ -942,3 +942,176 @@ describe('ProjectManager — edge cases', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// delete() (Sub-Issue C)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+
+  beforeEach(() => {
+    pm = new ProjectManager(createOptions());
+  });
+
+  it('should delete an existing instance', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.listInstances()).toHaveLength(1);
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+
+  it('should clean up all associated chatId bindings', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+    pm.use('chat_3', 'my-research');
+
+    // All three chatIds are bound to my-research
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+    expect(pm.getActive('chat_2').name).toBe('my-research');
+    expect(pm.getActive('chat_3').name).toBe('my-research');
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+
+    // All chatIds should revert to default
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should return error for non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should return error for empty name', () => {
+    const result = pm.delete('');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不能为空');
+    }
+  });
+
+  it('should reject deleting "default"', () => {
+    const result = pm.delete('default');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('保留名称');
+    }
+  });
+
+  it('should auto-persist after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    // Verify persisted state is updated
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+    expect(data.instances['my-research']).toBeUndefined();
+    expect(data.chatProjectMap['chat_1']).toBeUndefined();
+  });
+
+  it('should not affect other instances when deleting one', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    pm.delete('research-1');
+
+    // book-1 should still exist and be bound
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+    // chat_1 should revert to default (binding cleaned up)
+    expect(pm.getActive('chat_1').name).toBe('default');
+
+    const instances = pm.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('book-1');
+  });
+
+  it('should survive deletion across reload', () => {
+    const opts = createOptions();
+    const { workspaceDir } = opts;
+
+    // Create and delete
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'to-delete');
+    pm1.create('chat_2', 'book-reader', 'to-keep');
+    pm1.delete('to-delete');
+
+    // Reload — deleted instance should stay deleted
+    const pm2 = new ProjectManager({ ...opts, workspaceDir });
+    const instances = pm2.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('to-keep');
+
+    // chat_1 should be default (binding cleaned up)
+    expect(pm2.getActive('chat_1').name).toBe('default');
+    // chat_2 should still be bound to to-keep
+    expect(pm2.getActive('chat_2').name).toBe('to-keep');
+  });
+
+  it('should allow re-creating an instance after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    // Should be able to create a new instance with the same name
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.name).toBe('my-research');
+    }
+  });
+});
+
+describe('ProjectManager delete() — working directory cleanup', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should not remove working directory by default', () => {
+    pm.create('chat_1', 'research', 'my-research');
+
+    // Create the working directory manually
+    const workingDir = join(workspaceDir, 'projects', 'my-research');
+    mkdirSync(workingDir, { recursive: true });
+
+    pm.delete('my-research');
+
+    // Directory should still exist
+    expect(existsSync(workingDir)).toBe(true);
+  });
+
+  it('should remove working directory when removeWorkingDir is true', () => {
+    pm.create('chat_1', 'research', 'my-research');
+
+    // Create the working directory with a file
+    const workingDir = join(workspaceDir, 'projects', 'my-research');
+    mkdirSync(workingDir, { recursive: true });
+    writeFileSync(join(workingDir, 'test.txt'), 'hello', 'utf8');
+
+    pm.delete('my-research', { removeWorkingDir: true });
+
+    // Directory should be removed
+    expect(existsSync(workingDir)).toBe(false);
+  });
+
+  it('should not fail when removeWorkingDir is true but directory does not exist', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    // Don't create the working directory
+
+    const result = pm.delete('my-research', { removeWorkingDir: true });
+    expect(result.ok).toBe(true);
+  });
+});
