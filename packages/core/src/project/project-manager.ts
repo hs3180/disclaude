@@ -9,7 +9,7 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   CwdProvider,
@@ -494,6 +494,86 @@ export class ProjectManager {
    */
   getPersistPath(): string {
     return this.persistPath;
+  }
+
+  // ───────────────────────────────────────────
+  // Delete
+  // ───────────────────────────────────────────
+
+  /**
+   * Delete a project instance, cleaning up all associated state.
+   *
+   * Removes the instance from memory and persisted state, unbinds all
+   * associated chatIds, and optionally removes the working directory.
+   *
+   * @param name - Instance name to delete
+   * @param options - Delete options
+   * @returns ProjectResult with the deleted instance info on success
+   */
+  delete(name: string, options?: { removeWorkingDir?: boolean }): ProjectResult<ProjectContextConfig> {
+    // Validate instance name
+    if (!name || name.length === 0) {
+      return { ok: false, error: '实例名称不能为空' };
+    }
+
+    // Cannot delete "default"
+    if (name === 'default') {
+      return { ok: false, error: '"default" 是内置项目，不能删除' };
+    }
+
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Snapshot for return value
+    const deletedContext: ProjectContextConfig = {
+      name: instance.name,
+      templateName: instance.templateName,
+      workingDir: instance.workingDir,
+    };
+
+    // Collect all chatIds bound to this instance
+    const boundChatIds = this.getBoundChatIds(name);
+
+    // Remove all bindings
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Remove reverse index entry
+    this.instanceChatIds.delete(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Optionally remove working directory
+    if (options?.removeWorkingDir && existsSync(instance.workingDir)) {
+      try {
+        rmSync(instance.workingDir, { recursive: true, force: true });
+      } catch {
+        // Directory cleanup failure is non-fatal — instance is already removed from state
+        // Caller can manually clean up the directory later
+      }
+    }
+
+    // Persist the updated state
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore instance and bindings
+      this.instances.set(name, instance);
+      for (const chatId of boundChatIds) {
+        this.chatProjectMap.set(chatId, name);
+        this.addToReverseIndex(name, chatId);
+      }
+
+      return {
+        ok: false,
+        error: `删除成功但持久化失败，已回滚: ${persistResult.error}`,
+      };
+    }
+
+    return { ok: true, data: deletedContext };
   }
 
   // ───────────────────────────────────────────
