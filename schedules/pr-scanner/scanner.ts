@@ -13,6 +13,8 @@
  *   npx tsx scanner.ts --action list-candidates --pr-list 1,2,3
  *   npx tsx scanner.ts --action create-state --pr 123 [--chat-id oc_xxx]
  *   npx tsx scanner.ts --action mark --pr 123 --state approved
+ *   npx tsx scanner.ts --action add-label --pr 123 --label pr-scanner:reviewing [--repo owner/repo]
+ *   npx tsx scanner.ts --action remove-label --pr 123 --label pr-scanner:reviewing [--repo owner/repo]
  *   npx tsx scanner.ts --action status
  *
  * Exit codes:
@@ -22,6 +24,10 @@
 
 import { readdir, readFile, writeFile, mkdir, stat, realpath, rename, unlink } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 // ---- Types ----
 
@@ -57,6 +63,15 @@ export const DEFAULT_MAX_CONCURRENT = 5;
 export const EXPIRY_HOURS = 48;
 
 export const VALID_STATES: readonly PrState[] = ['reviewing', 'approved', 'closed'] as const;
+
+/** Default repository for label operations */
+export const DEFAULT_REPO = 'hs3180/disclaude';
+
+/** Label applied to PRs currently being reviewed */
+export const LABEL_REVIEWING = 'pr-scanner:reviewing';
+
+/** gh CLI timeout in milliseconds */
+export const GH_TIMEOUT_MS = 15_000;
 
 // ---- Validation helpers ----
 
@@ -324,6 +339,61 @@ async function actionStatus(): Promise<Record<PrState, PrStateFile[]>> {
   return result;
 }
 
+/** Label operation result */
+export interface LabelResult {
+  prNumber: number;
+  label: string;
+  action: 'added' | 'removed';
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * add-label: add a GitHub label to a PR via `gh pr edit`.
+ * Label failures are non-fatal — returns success=false instead of throwing.
+ */
+async function actionAddLabel(
+  prNumber: number,
+  label: string,
+  repo: string,
+): Promise<LabelResult> {
+  try {
+    await execFileAsync('gh', [
+      'pr', 'edit', String(prNumber),
+      '--repo', repo,
+      '--add-label', label,
+    ], { timeout: GH_TIMEOUT_MS });
+
+    return { prNumber, label, action: 'added', success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { prNumber, label, action: 'added', success: false, error: msg };
+  }
+}
+
+/**
+ * remove-label: remove a GitHub label from a PR via `gh pr edit`.
+ * Label failures are non-fatal — returns success=false instead of throwing.
+ */
+async function actionRemoveLabel(
+  prNumber: number,
+  label: string,
+  repo: string,
+): Promise<LabelResult> {
+  try {
+    await execFileAsync('gh', [
+      'pr', 'edit', String(prNumber),
+      '--repo', repo,
+      '--remove-label', label,
+    ], { timeout: GH_TIMEOUT_MS });
+
+    return { prNumber, label, action: 'removed', success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { prNumber, label, action: 'removed', success: false, error: msg };
+  }
+}
+
 // ---- CLI argument parsing ----
 
 function parseArgs(argv: string[]): Record<string, string> {
@@ -387,7 +457,7 @@ async function main(): Promise<void> {
 
   const action = args.action;
   if (!action) {
-    throw new ScannerError('--action is required (check-capacity|list-candidates|create-state|mark|status)');
+    throw new ScannerError('--action is required (check-capacity|list-candidates|create-state|mark|add-label|remove-label|status)');
   }
 
   switch (action) {
@@ -448,8 +518,28 @@ async function main(): Promise<void> {
       break;
     }
 
+    case 'add-label': {
+      const prNumber = validatePrNumber(args.pr);
+      const label = args.label || LABEL_REVIEWING;
+      const repo = args.repo || DEFAULT_REPO;
+      const result = await actionAddLabel(prNumber, label, repo);
+      console.log(JSON.stringify(result, null, 2));
+      // Exit with 0 even on label failure — labels are non-blocking
+      break;
+    }
+
+    case 'remove-label': {
+      const prNumber = validatePrNumber(args.pr);
+      const label = args.label || LABEL_REVIEWING;
+      const repo = args.repo || DEFAULT_REPO;
+      const result = await actionRemoveLabel(prNumber, label, repo);
+      console.log(JSON.stringify(result, null, 2));
+      // Exit with 0 even on label failure — labels are non-blocking
+      break;
+    }
+
     default:
-      throw new ScannerError(`Unknown action: '${action}' — must be one of: check-capacity, list-candidates, create-state, mark, status`);
+      throw new ScannerError(`Unknown action: '${action}' — must be one of: check-capacity, list-candidates, create-state, mark, add-label, remove-label, status`);
   }
 }
 

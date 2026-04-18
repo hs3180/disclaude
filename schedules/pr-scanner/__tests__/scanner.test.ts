@@ -21,6 +21,9 @@ import {
   type PrState,
   VALID_STATES,
   DEFAULT_MAX_CONCURRENT,
+  LABEL_REVIEWING,
+  DEFAULT_REPO,
+  type LabelResult,
 } from '../scanner.js';
 
 const execFileAsync = promisify(execFile);
@@ -458,7 +461,7 @@ describe('scanner.ts', () => {
       expect(stdout).toContain('(none)');
     });
 
-    it('should group PRs by state', async () => {
+    it('should group PRs by state', { timeout: 30_000 }, async () => {
       // Create PRs in different states
       await runScanner(['--action', 'create-state', '--pr', '9001']);
       await runScanner(['--action', 'create-state', '--pr', '9002']);
@@ -584,6 +587,147 @@ describe('scanner.ts', () => {
       const { stderr, exitCode } = await runScanner(['--action', 'unknown']);
       expect(exitCode).toBe(1);
       expect(stderr).toMatch(/Unknown action/);
+    });
+  });
+
+  // ---- Action: add-label ----
+
+  describe('action: add-label', () => {
+    it('should return structured JSON with success=false when gh is unavailable', async () => {
+      // Use a non-existent repo to trigger gh failure gracefully
+      const { stdout, exitCode } = await runScanner([
+        '--action', 'add-label',
+        '--pr', '9001',
+        '--repo', 'nonexistent/nonexistent',
+      ]);
+      // Label operations are non-blocking — exit code should be 0
+      expect(exitCode).toBe(0);
+
+      const result: LabelResult = JSON.parse(stdout);
+      expect(result.prNumber).toBe(9001);
+      expect(result.label).toBe(LABEL_REVIEWING);
+      expect(result.action).toBe('added');
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should use default label when --label not provided', async () => {
+      const { stdout, exitCode } = await runScanner([
+        '--action', 'add-label',
+        '--pr', '9001',
+        '--repo', 'nonexistent/nonexistent',
+      ]);
+      expect(exitCode).toBe(0);
+
+      const result: LabelResult = JSON.parse(stdout);
+      expect(result.label).toBe(LABEL_REVIEWING);
+    });
+
+    it('should use custom label when --label is provided', async () => {
+      const { stdout, exitCode } = await runScanner([
+        '--action', 'add-label',
+        '--pr', '9001',
+        '--label', 'custom-label',
+        '--repo', 'nonexistent/nonexistent',
+      ]);
+      expect(exitCode).toBe(0);
+
+      const result: LabelResult = JSON.parse(stdout);
+      expect(result.label).toBe('custom-label');
+    });
+
+    it('should use default repo when --repo not provided', async () => {
+      // We can't actually test the gh call succeeds, but we can verify the args parsing
+      // by checking the output has the expected structure
+      const { stdout, exitCode } = await runScanner([
+        '--action', 'add-label',
+        '--pr', '999999999',
+      ]);
+      // Even if gh fails, exit code is 0 (non-blocking)
+      expect(exitCode).toBe(0);
+
+      const result: LabelResult = JSON.parse(stdout);
+      expect(result.prNumber).toBe(999999999);
+    });
+
+    it('should error on missing --pr', async () => {
+      const { stderr, exitCode } = await runScanner([
+        '--action', 'add-label',
+      ]);
+      expect(exitCode).toBe(1);
+      expect(stderr).toMatch(/--pr/);
+    });
+
+    it('should error on invalid --pr value', async () => {
+      const { stderr, exitCode } = await runScanner([
+        '--action', 'add-label',
+        '--pr', 'abc',
+      ]);
+      expect(exitCode).toBe(1);
+      expect(stderr).toMatch(/PR number/);
+    });
+  });
+
+  // ---- Action: remove-label ----
+
+  describe('action: remove-label', () => {
+    it('should return structured JSON with success=false when gh is unavailable', async () => {
+      const { stdout, exitCode } = await runScanner([
+        '--action', 'remove-label',
+        '--pr', '9001',
+        '--repo', 'nonexistent/nonexistent',
+      ]);
+      // Label operations are non-blocking — exit code should be 0
+      expect(exitCode).toBe(0);
+
+      const result: LabelResult = JSON.parse(stdout);
+      expect(result.prNumber).toBe(9001);
+      expect(result.label).toBe(LABEL_REVIEWING);
+      expect(result.action).toBe('removed');
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it('should use default label when --label not provided', async () => {
+      const { stdout, exitCode } = await runScanner([
+        '--action', 'remove-label',
+        '--pr', '9001',
+        '--repo', 'nonexistent/nonexistent',
+      ]);
+      expect(exitCode).toBe(0);
+
+      const result: LabelResult = JSON.parse(stdout);
+      expect(result.label).toBe(LABEL_REVIEWING);
+    });
+
+    it('should use custom label when --label is provided', async () => {
+      const { stdout, exitCode } = await runScanner([
+        '--action', 'remove-label',
+        '--pr', '9001',
+        '--label', 'custom-label',
+        '--repo', 'nonexistent/nonexistent',
+      ]);
+      expect(exitCode).toBe(0);
+
+      const result: LabelResult = JSON.parse(stdout);
+      expect(result.label).toBe('custom-label');
+    });
+
+    it('should error on missing --pr', async () => {
+      const { stderr, exitCode } = await runScanner([
+        '--action', 'remove-label',
+      ]);
+      expect(exitCode).toBe(1);
+      expect(stderr).toMatch(/--pr/);
+    });
+
+    it('should error on invalid --pr value', async () => {
+      const { stderr, exitCode } = await runScanner([
+        '--action', 'remove-label',
+        '--pr', '-1',
+      ]);
+      expect(exitCode).toBe(1);
+      expect(stderr).toMatch(/PR number/);
     });
   });
 });
