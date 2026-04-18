@@ -344,6 +344,32 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /**
+   * Project template configuration.
+   *
+   * Controls which project templates are available for instantiation.
+   * Each key is a template name matching a subdirectory in `{packageDir}/templates/`.
+   * Value provides optional display metadata.
+   *
+   * The "default" project is always implicitly available (no template needed).
+   *
+   * @example
+   * ```yaml
+   * projectTemplates:
+   *   research:
+   *     displayName: "研究模式"
+   *     description: "专注研究的独立空间"
+   *   book-reader:
+   *     displayName: "读书助手"
+   * ```
+   *
+   * @see Issue #2227
+   * @see docs/proposals/unified-project-context.md §3
+   */
+  projectTemplates?: Record<string, {
+    displayName?: string;
+    description?: string;
+  }>;
 }
 
 /**

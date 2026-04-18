@@ -25,6 +25,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import type { ProjectTemplatesConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
 
@@ -494,6 +495,21 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get project template configuration from config file.
+   *
+   * Returns the projectTemplates section from disclaude.config.yaml,
+   * or undefined if not configured (zero-config: no templates available).
+   *
+   * @see Issue #2227
+   * @see docs/proposals/unified-project-context.md §3
+   *
+   * @returns Project template configuration or undefined
+   */
+  static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
+    return fileConfigOnly.projectTemplates;
   }
 }
 
