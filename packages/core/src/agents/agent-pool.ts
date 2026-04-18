@@ -19,7 +19,7 @@
  *
  * Lifecycle Strategy (Issue #711):
  * - ChatAgent: Long-lived, bound to chatId, stored in AgentPool
- * - ScheduleAgent/TaskAgent: Short-lived, not stored here
+ * - Short-lived task agents: Not stored here (created and disposed per execution)
  */
 
 import { createLogger, type Logger } from '../utils/logger.js';
@@ -49,8 +49,8 @@ export interface AgentPoolConfig {
  * giving each chatId its own ChatAgent instance.
  *
  * Lifecycle: ChatAgents are long-lived and persist across sessions.
- * Other agent types (ScheduleAgent, TaskAgent) are not
- * managed here - they should be created and disposed as needed.
+ * Short-lived task agents are not managed here — they should be
+ * created and disposed as needed (e.g., via SubagentManager).
  */
 export class AgentPool {
   private readonly chatAgentFactory: ChatAgentFactory;

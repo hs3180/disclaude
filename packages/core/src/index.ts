@@ -192,6 +192,8 @@ export {
   type OnFileRemoved,
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
+  type TaskAgent,
+  type TaskAgentFactory,
   type ScheduleAgent,
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,

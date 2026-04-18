@@ -2,8 +2,7 @@
  * AgentFactory - Factory for creating ChatAgent instances with unified configuration.
  *
  * Issue #2345 Phase 5: Simplified to a single createAgent() method.
- * The previous createScheduleAgent / createTaskAgent / createChatAgent methods
- * all had identical implementations. Now there is just one method.
+ * Issue #2513 Phase 6: No agent type distinction — all agents are ChatAgent.
  *
  * Uses unified configuration types from Issue #327.
  *
@@ -93,9 +92,8 @@ export interface AgentCreateOptions {
 /**
  * Factory for creating ChatAgent instances with unified configuration.
  *
- * Issue #2345 Phase 5: Simplified to a single createAgent() method.
- * All agent types (chat, schedule, task) are now ChatAgent instances
- * created through the same method.
+ * Issue #2345 Phase 5/6: Single createAgent() method. There is only
+ * one agent type (ChatAgent), used for all scenarios.
  *
  * Each call fetches default configuration from Config.getAgentConfig()
  * and allows optional overrides.

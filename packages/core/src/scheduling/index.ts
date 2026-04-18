@@ -61,6 +61,8 @@ export {
 // Schedule Executor (Issue #1382)
 export {
   createScheduleExecutor,
+  type TaskAgent,
+  type TaskAgentFactory,
   type ScheduleAgent,
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
