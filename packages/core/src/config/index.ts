@@ -477,6 +477,17 @@ export class Config {
   }
 
   /**
+   * Get project templates configuration.
+   * Enables per-chatId Agent context switching via ProjectManager.
+   * @see Issue #2227 (Sub-Issue E — integration)
+   *
+   * @returns Project templates configuration, or undefined if not configured
+   */
+  static getProjectTemplatesConfig(): DisclaudeConfig['projectTemplates'] {
+    return fileConfigOnly.projectTemplates;
+  }
+
+  /**
    * Get session timeout configuration.
    * Controls automatic cleanup of idle sessions.
    * @see Issue #1313

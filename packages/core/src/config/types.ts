@@ -314,6 +314,33 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * Project templates configuration.
+ * Imported from project module types to avoid duplication.
+ * @see Issue #2227 (Sub-Issue E — integration)
+ */
+
+/**
+ * Project templates configuration format for disclaude.config.yaml.
+ *
+ * Key = template name, Value = optional display metadata.
+ *
+ * ```yaml
+ * projectTemplates:
+ *   research:
+ *     displayName: "研究模式"
+ *     description: "专注研究的独立空间"
+ * ```
+ *
+ * @see packages/core/src/project/types.ts — ProjectTemplatesConfig
+ */
+export interface ProjectTemplatesConfig {
+  [templateName: string]: {
+    displayName?: string;
+    description?: string;
+  };
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -342,6 +369,14 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /**
+   * Project templates configuration.
+   * Enables per-chatId Agent context switching via ProjectManager.
+   * When absent, all chatIds use workspace root as cwd (zero-config compatible).
+   * @see Issue #1916 (unified ProjectContext system)
+   * @see Issue #2227 (Sub-Issue E — integration)
+   */
+  projectTemplates?: ProjectTemplatesConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
