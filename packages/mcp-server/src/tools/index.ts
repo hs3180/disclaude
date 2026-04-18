@@ -35,6 +35,9 @@ export { send_file } from './send-file.js';
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
 
+// Task status reading (Issue #857)
+export { get_task_status, type TaskStatusResult } from './task-status.js';
+
 // Interactive Message
 export {
   send_interactive_message,

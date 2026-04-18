@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  get_task_status,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -163,6 +164,17 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  get_task_status: {
+    description: 'Get the status of a deep task by reading its file system state.',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'The task ID (typically the message ID)' },
+      },
+      required: ['taskId'],
+    },
+    handler: get_task_status,
   },
 };
 
@@ -411,6 +423,71 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #857: Task status reading for independent progress reporting
+  {
+    name: 'get_task_status',
+    description: `Read the current status of a deep task from the file system.
+
+Use this to understand task progress before deciding whether to send a progress update.
+The Agent reads task context autonomously and decides when/how to report.
+
+## Parameters
+- **taskId**: The task ID (typically the message ID from context)
+
+## Returns
+- Task existence, phase (pending/evaluating/executing/completed)
+- Iteration count and per-iteration status
+- Whether the task has completed (final_result.md)
+- Task spec (task.md content, truncated)
+- Creation time and elapsed duration
+
+## Example
+\`\`\`json
+{"taskId": "om_abc123"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('The task ID (typically the message ID from context header)'),
+    }),
+    handler: async ({ taskId }: { taskId: string }) => {
+      try {
+        const result = await get_task_status({ taskId });
+        if (!result.success) {
+          return toolError(result.message);
+        }
+        // Return structured status as formatted text
+        const { status } = result;
+        if (!status || !status.exists) {
+          return toolSuccess(`Task ${taskId} not found. No task directory exists.`);
+        }
+
+        const lines = [
+          `📋 **Task Status: ${status.title || taskId}**`,
+          '',
+          `**Phase**: ${status.phase}`,
+          `**Iterations**: ${status.totalIterations}`,
+          `**Completed**: ${status.hasFinalResult ? '✅ Yes' : '❌ No'}`,
+          `**Elapsed**: ${status.elapsed || 'N/A'}`,
+        ];
+
+        if (status.iterations.length > 0) {
+          lines.push('', '**Iteration Details**:');
+          for (const iter of status.iterations) {
+            const evalIcon = iter.hasEvaluation ? '✅' : '⬜';
+            const execIcon = iter.hasExecution ? '✅' : '⬜';
+            lines.push(`  - Iter ${iter.iteration}: Eval ${evalIcon} Exec ${execIcon} (${iter.stepCount} steps)`);
+          }
+        }
+
+        if (status.hasFinalSummary) {
+          lines.push('', '_Final summary available_');
+        }
+
+        return toolSuccess(lines.join('\n'));
+      } catch (error) {
+        return toolError(`Task status check failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
