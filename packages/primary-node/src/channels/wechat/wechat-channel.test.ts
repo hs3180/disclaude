@@ -3,7 +3,7 @@
  *
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
- * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1)
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1 + 3.2)
  */
 
  
@@ -16,6 +16,9 @@ const mockSendText = vi.fn().mockResolvedValue(undefined);
 const mockSetToken = vi.fn();
 const mockHasToken = vi.fn().mockReturnValue(true);
 const mockGetUpdates = vi.fn().mockResolvedValue([]);
+const mockSendImage = vi.fn().mockResolvedValue(undefined);
+const mockSendFile = vi.fn().mockResolvedValue(undefined);
+const mockUploadMedia = vi.fn().mockResolvedValue({ url: 'https://cdn.example.com/file.png', fileKey: 'key-123' });
 
 vi.mock('./api-client.js', () => ({
   WeChatApiClient: vi.fn().mockImplementation(() => ({
@@ -23,6 +26,9 @@ vi.mock('./api-client.js', () => ({
     setToken: mockSetToken,
     hasToken: mockHasToken,
     getUpdates: mockGetUpdates,
+    sendImage: mockSendImage,
+    sendFile: mockSendFile,
+    uploadMedia: mockUploadMedia,
   })),
 }));
 
@@ -61,6 +67,9 @@ describe('WeChatChannel', () => {
     mockSendText.mockResolvedValue(undefined);
     mockGetUpdates.mockResolvedValue([]);
     mockIsListening.mockReturnValue(true);
+    mockSendImage.mockResolvedValue(undefined);
+    mockSendFile.mockResolvedValue(undefined);
+    mockUploadMedia.mockResolvedValue({ url: 'https://cdn.example.com/file.png', fileKey: 'key-123' });
   });
 
   afterEach(() => {
@@ -91,17 +100,17 @@ describe('WeChatChannel', () => {
   });
 
   describe('getCapabilities', () => {
-    it('should return current capabilities', () => {
+    it('should return enhanced capabilities', () => {
       const channel = new WeChatChannel();
       const caps = channel.getCapabilities();
       expect(caps).toEqual({
         supportsCard: false,
         supportsThread: false,
-        supportsFile: false,
+        supportsFile: true,
         supportsMarkdown: false,
         supportsMention: false,
         supportsUpdate: false,
-        supportedMcpTools: ['send_text'],
+        supportedMcpTools: ['send_text', 'send_file'],
       });
     });
   });
@@ -199,17 +208,82 @@ describe('WeChatChannel', () => {
       expect(mockSendText).not.toHaveBeenCalled();
     });
 
-    it('should ignore unsupported message types', async () => {
+    it('should throw when file message has no filePath', async () => {
       const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+      (channel as any).client = {
+        sendText: mockSendText,
+        hasToken: mockHasToken,
+        sendImage: mockSendImage,
+        sendFile: mockSendFile,
+        uploadMedia: mockUploadMedia,
+      };
+
+      await expect(
+        (channel as any).doSendMessage({ chatId: 'chat-1', type: 'file' })
+      ).rejects.toThrow('File path is required');
+    });
+
+    it('should send image file via CDN upload', async () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+      (channel as any).client = {
+        sendText: mockSendText,
+        hasToken: mockHasToken,
+        sendImage: mockSendImage,
+        sendFile: mockSendFile,
+        uploadMedia: mockUploadMedia,
+      };
+
+      // Create a temporary test file
+      const testFilePath = '/tmp/test-upload-image.png';
+      const fs = await import('node:fs');
+      fs.writeFileSync(testFilePath, Buffer.from('fake-image'));
 
       await (channel as any).doSendMessage({
         chatId: 'chat-1',
         type: 'file',
-        filePath: '/tmp/test.txt',
+        filePath: testFilePath,
       });
 
-      expect(mockSendText).not.toHaveBeenCalled();
+      expect(mockUploadMedia).toHaveBeenCalledTimes(1);
+      expect(mockSendImage).toHaveBeenCalledWith({
+        to: 'chat-1',
+        imageUrl: 'https://cdn.example.com/file.png',
+        contextToken: undefined,
+      });
+
+      // Cleanup
+      fs.unlinkSync(testFilePath);
+    });
+
+    it('should send non-image file via CDN upload', async () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+      (channel as any).client = {
+        sendText: mockSendText,
+        hasToken: mockHasToken,
+        sendImage: mockSendImage,
+        sendFile: mockSendFile,
+        uploadMedia: mockUploadMedia,
+      };
+
+      const testFilePath = '/tmp/test-upload-doc.pdf';
+      const fs = await import('node:fs');
+      fs.writeFileSync(testFilePath, Buffer.from('fake-pdf'));
+
+      await (channel as any).doSendMessage({
+        chatId: 'chat-1',
+        type: 'file',
+        filePath: testFilePath,
+      });
+
+      expect(mockUploadMedia).toHaveBeenCalledTimes(1);
+      expect(mockSendFile).toHaveBeenCalledWith({
+        to: 'chat-1',
+        fileUrl: 'https://cdn.example.com/file.png',
+        fileName: 'test-upload-doc.pdf',
+        contextToken: undefined,
+      });
+
+      fs.unlinkSync(testFilePath);
     });
 
     it('should ignore done signal type', async () => {
