@@ -288,3 +288,29 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Taste module — User preference auto-summarization (Issue #2335)
+export type {
+  TasteCategory,
+  TasteSource,
+  TasteRule,
+  TasteProfile,
+  TasteResult,
+  TasteSummary,
+  DetectedPattern,
+} from './taste/index.js';
+
+export {
+  getTastePath,
+  serializeToYaml,
+  parseFromYaml,
+  readTasteProfile,
+  writeTasteProfile,
+  deleteTasteProfile,
+  mergePatterns,
+  addManualRule,
+  removeRule,
+  getActiveRules,
+  getSummary,
+  formatTasteForContext,
+} from './taste/index.js';
