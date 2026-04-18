@@ -31,6 +31,7 @@ import type {
   AcpPermissionRequestParams,
   AcpPermissionResult,
   AcpSessionUpdateParams,
+  AcpAgentMessageChunkUpdate,
 } from './types.js';
 import {
   AcpError,
@@ -43,6 +44,19 @@ import {
 import { adaptSessionUpdate, adaptPromptResult } from './message-adapter.js';
 
 const logger = createLogger('AcpClient');
+
+// ============================================================================
+// 文本块聚合配置 (Issue #2532)
+// ============================================================================
+
+/**
+ * 文本块聚合 debounce 间隔（毫秒）。
+ *
+ * 连续的 agent_message_chunk 会被缓冲合并为一条消息。
+ * 当 chunk 流暂停超过此间隔后，缓冲区自动 flush。
+ * 非文本事件（tool_use, result 等）会立即触发 flush。
+ */
+const TEXT_CHUNK_FLUSH_MS = 300;
 
 // ============================================================================
 // 配置和类型
@@ -132,6 +146,12 @@ export class AcpClient {
 
   /** 当前活跃的 prompt streams，key 为 sessionId */
   private readonly activePrompts = new Map<string, ActivePrompt>();
+
+  /** Per-session 文本块缓冲区，用于聚合 agent_message_chunk (Issue #2532) */
+  private readonly textBuffers = new Map<string, string>();
+
+  /** Per-session debounce timer，超时后 flush 文本缓冲区 */
+  private readonly flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(config: AcpClientConfig) {
     this.transport = config.transport;
@@ -314,6 +334,9 @@ export class AcpClient {
       // 在后台处理 result 响应
       void promptPromise
         .then((result) => {
+          // Flush any remaining text buffer before pushing result (Issue #2532)
+          this.flushTextBuffer(sessionId);
+
           // 将 result 转为 AgentMessage 并推入队列
           const msg = adaptPromptResult(result);
           activePrompt.push(msg);
@@ -351,6 +374,7 @@ export class AcpClient {
         });
       }
     } finally {
+      this.cleanupSessionBuffer(sessionId);
       this.activePrompts.delete(sessionId);
     }
   }
@@ -379,6 +403,9 @@ export class AcpClient {
     if (this._state === 'disconnected') {
       return;
     }
+
+    // 清理文本块缓冲区 (Issue #2532)
+    this.cleanupAllBuffers();
 
     // 拒绝所有 pending requests
     for (const [_id, pending] of this.pendingRequests) {
@@ -505,9 +532,36 @@ export class AcpClient {
 
   /**
    * 处理 session/update 通知，转换为 AgentMessage 并推送到对应的 prompt stream。
+   *
+   * Issue #2532: agent_message_chunk 现在被缓冲聚合，连续的 text chunk 合并为
+   * 一条消息，减少飞书碎片消息。遇到非 text 事件或 debounce 超时时 flush 缓冲区。
    */
   private handleSessionUpdate(params: AcpSessionUpdateParams): void {
     const {update} = params;
+    const {sessionId} = params;
+
+    // Issue #2532: 缓冲 agent_message_chunk 进行文本聚合
+    if (update.sessionUpdate === 'agent_message_chunk') {
+      const chunkUpdate = update as AcpAgentMessageChunkUpdate;
+      if (chunkUpdate.content?.type === 'text') {
+        if (chunkUpdate.content.text) {
+          this.bufferTextChunk(sessionId, chunkUpdate.content.text);
+        }
+        // Empty text chunks are silently skipped (no buffer, no push)
+      } else {
+        // Non-text content in message chunk (e.g. image): flush buffer, push immediately
+        this.flushTextBuffer(sessionId);
+        const agentMessage = adaptSessionUpdate(update);
+        if (agentMessage) {
+          const active = this.activePrompts.get(sessionId);
+          if (active) {active.push(agentMessage);}
+        }
+      }
+      return;
+    }
+
+    // Non-text event: flush any buffered text first, then push current event
+    this.flushTextBuffer(sessionId);
 
     // 尝试适配为 AgentMessage
     const agentMessage = adaptSessionUpdate(update);
@@ -517,7 +571,7 @@ export class AcpClient {
     }
 
     // 推送到对应 session 的 prompt stream
-    const active = this.activePrompts.get(params.sessionId);
+    const active = this.activePrompts.get(sessionId);
     if (active) {
       active.push(agentMessage);
     }
@@ -557,11 +611,94 @@ export class AcpClient {
     }
   }
 
+  // ==========================================================================
+  // 文本块聚合 (Issue #2532)
+  // ==========================================================================
+
+  /**
+   * 将 text chunk 追加到 session 的缓冲区，并重置 debounce timer。
+   * 连续的 agent_message_chunk 会被合并，直到遇到非 text 事件或超时。
+   */
+  private bufferTextChunk(sessionId: string, text: string): void {
+    const existing = this.textBuffers.get(sessionId) ?? '';
+    this.textBuffers.set(sessionId, existing + text);
+
+    // Reset debounce timer
+    const existingTimer = this.flushTimers.get(sessionId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    const timer = setTimeout(() => {
+      this.flushTimers.delete(sessionId);
+      this.flushTextBuffer(sessionId);
+    }, TEXT_CHUNK_FLUSH_MS);
+    this.flushTimers.set(sessionId, timer);
+  }
+
+  /**
+   * Flush session 的文本缓冲区为一条 AgentMessage。
+   * 如果缓冲区为空则不产生消息。
+   */
+  private flushTextBuffer(sessionId: string): void {
+    // Clear debounce timer
+    const timer = this.flushTimers.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.flushTimers.delete(sessionId);
+    }
+
+    const text = this.textBuffers.get(sessionId);
+    if (!text || text.length === 0) {
+      this.textBuffers.delete(sessionId);
+      return;
+    }
+
+    this.textBuffers.delete(sessionId);
+
+    const active = this.activePrompts.get(sessionId);
+    if (active) {
+      active.push({
+        type: 'text',
+        content: text,
+        role: 'assistant',
+      });
+    }
+  }
+
+  /**
+   * 清理 session 的缓冲区（flush + 清理 timer）。
+   * 在 prompt 结束、disconnect、transport 错误时调用。
+   */
+  private cleanupSessionBuffer(sessionId: string): void {
+    const timer = this.flushTimers.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.flushTimers.delete(sessionId);
+    }
+    this.textBuffers.delete(sessionId);
+  }
+
+  /**
+   * 清理所有 session 的缓冲区和 timer。
+   * 在 transport 错误/关闭时调用（此时 prompt stream 已经被终止，无需 flush）。
+   */
+  private cleanupAllBuffers(): void {
+    for (const timer of this.flushTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.flushTimers.clear();
+    this.textBuffers.clear();
+  }
+
   /**
    * 处理 Transport 错误。
    */
   private handleError(err: Error): void {
     logger.error({ error: err.message }, 'Transport error');
+
+    // 清理文本块缓冲区 (Issue #2532)
+    this.cleanupAllBuffers();
 
     // 拒绝所有 pending requests
     for (const [_id, pending] of this.pendingRequests) {
@@ -583,6 +720,9 @@ export class AcpClient {
   private handleClose(): void {
     logger.info('Transport closed');
     this._state = 'disconnected';
+
+    // 清理文本块缓冲区 (Issue #2532)
+    this.cleanupAllBuffers();
 
     // 拒绝所有 pending requests
     for (const [_id, pending] of this.pendingRequests) {
