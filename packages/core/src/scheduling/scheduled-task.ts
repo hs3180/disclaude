@@ -27,6 +27,14 @@ export interface ScheduledTask {
   enabled: boolean;
   /** Whether to block concurrent executions (skip if previous still running) */
   blocking?: boolean;
+  /**
+   * Whether this task can be triggered by events (signal files) in addition to cron.
+   * When true, writing a trigger signal file to `.triggers/{schedule-name}.trigger`
+   * will immediately invoke the task (in addition to the cron schedule).
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  invocable?: boolean;
   /** Cooldown period in milliseconds (prevents re-execution for this duration after execution) */
   cooldownPeriod?: number;
   /** Creation timestamp */

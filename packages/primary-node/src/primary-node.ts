@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1953: Event-driven schedule trigger
+  TriggerWatcher,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -152,6 +154,8 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
+  // Issue #1953: Event-driven schedule trigger
+  protected triggerWatcher?: TriggerWatcher;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
@@ -505,8 +509,20 @@ export class PrimaryNode extends EventEmitter {
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
 
+    // Issue #1953: Start TriggerWatcher for event-driven schedule invocation
+    this.triggerWatcher = new TriggerWatcher({
+      schedulesDir,
+      onTrigger: async (scheduleName: string, source?: string) => {
+        const taskId = `schedule-${scheduleName}`;
+        logger.info({ taskId, source }, 'Trigger signal received, invoking schedule');
+        await this.scheduler?.invoke(taskId, source ?? 'trigger-signal');
+      },
+    });
+    await this.triggerWatcher.start();
+
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    console.log('✓ Trigger watcher started (event-driven)');
     logger.info('Scheduler initialized');
   }
 
@@ -514,6 +530,7 @@ export class PrimaryNode extends EventEmitter {
    * Stop the scheduler.
    */
   protected stopScheduler(): void {
+    this.triggerWatcher?.stop();
     this.scheduleFileWatcher?.stop();
     this.scheduler?.stop();
     logger.info('Scheduler stopped');

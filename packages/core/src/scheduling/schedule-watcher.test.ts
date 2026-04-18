@@ -212,6 +212,45 @@ describe('ScheduleFileScanner', () => {
       expect(task!.model).toBe('claude-sonnet-4-20250514');
     });
 
+    it('should parse invocable field when set to true (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_test"',
+        'enabled: true',
+        'blocking: true',
+        'invocable: true',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.invocable).toBe(true);
+    });
+
+    it('should default invocable to false when not specified (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Normal Task"',
+        'cron: "0 * * * * *"',
+        'chatId: "oc_test"',
+        '---',
+        '',
+        'Regular cron task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/normal-task.md`);
+      expect(task).not.toBeNull();
+      expect(task!.invocable).toBe(false);
+    });
+
     it('should default model to undefined when not specified', async () => {
       mockReadFile.mockResolvedValue(makeScheduleContent());
 

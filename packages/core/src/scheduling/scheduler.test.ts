@@ -507,6 +507,114 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('invoke (Issue #1953: event-driven trigger)', () => {
+    it('should invoke an invocable task by ID', async () => {
+      const task = createTask({ id: 'inv-1', invocable: true });
+      scheduler.addTask(task);
+
+      const result = await scheduler.invoke('inv-1', 'trigger-signal');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should return false for non-existent task', async () => {
+      const result = await scheduler.invoke('nonexistent', 'test');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return false for non-invocable task', async () => {
+      const task = createTask({ id: 'not-inv', invocable: false });
+      scheduler.addTask(task);
+
+      const result = await scheduler.invoke('not-inv', 'test');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return false for task without invocable flag (defaults to false)', async () => {
+      const task = createTask({ id: 'no-flag' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.invoke('no-flag', 'test');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should wrap prompt with anti-recursion instructions on invoke', async () => {
+      const task = createTask({
+        id: 'inv-prompt',
+        invocable: true,
+        name: 'My Invocable Task',
+        prompt: 'Do something special',
+      });
+      scheduler.addTask(task);
+
+      await scheduler.invoke('inv-prompt', 'test');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // eslint-disable-next-line prefer-destructuring
+      const promptArg = mockExecutor.mock.calls[0][1];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('My Invocable Task');
+      expect(promptArg).toContain('Do something special');
+    });
+
+    it('should respect blocking mechanism on invoke', async () => {
+      // Create a task that takes time to execute
+      let resolveExecutor: () => void;
+      const executorPromise = new Promise<void>(resolve => {
+        resolveExecutor = resolve;
+      });
+      mockExecutor.mockReturnValueOnce(executorPromise);
+
+      const task = createTask({ id: 'inv-blocking', invocable: true, blocking: true });
+      scheduler.addTask(task);
+
+      // Start first invocation (won't complete yet)
+      const invokePromise = scheduler.invoke('inv-blocking', 'first');
+
+      // Wait a tick to ensure the first invoke starts
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Resolve the executor to let the first invocation finish
+      resolveExecutor!();
+      await invokePromise;
+    });
+
+    it('should pass createdBy and model to executor on invoke', async () => {
+      const task = createTask({
+        id: 'inv-meta',
+        invocable: true,
+        createdBy: 'ou_user',
+        model: 'claude-sonnet-4-20250514',
+      });
+      scheduler.addTask(task);
+
+      await scheduler.invoke('inv-meta', 'test');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        'ou_user',
+        'claude-sonnet-4-20250514',
+      );
+    });
+  });
+
   describe('multiple tasks', () => {
     it('should schedule and track multiple tasks', () => {
       const task1 = createTask({ id: 'multi-1', cron: '* * * * *' });

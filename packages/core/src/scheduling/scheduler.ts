@@ -196,6 +196,44 @@ export class Scheduler {
   }
 
   /**
+   * Manually invoke (trigger) a task by its ID.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   * This method allows external callers (e.g., TriggerWatcher) to immediately
+   * execute a scheduled task without waiting for the next cron cycle.
+   *
+   * Behavior:
+   * - Respects the blocking mechanism (skips if already running)
+   * - Respects cooldown period (skips if in cooldown)
+   * - Works regardless of `invocable` flag (the caller is responsible for checking)
+   * - Logs the invocation source for traceability
+   *
+   * @param taskId - The ID of the task to invoke
+   * @param source - Description of what triggered this invocation (for logging)
+   * @returns true if the task was invoked (or attempted), false if skipped
+   */
+  async invoke(taskId: string, source: string = 'manual'): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+
+    if (!entry) {
+      logger.warn({ taskId, source }, 'Cannot invoke task: not found in active jobs');
+      return false;
+    }
+
+    const {task} = entry;
+
+    // Check if invocable
+    if (!task.invocable) {
+      logger.debug({ taskId, source }, 'Task is not invocable, skipping event trigger');
+      return false;
+    }
+
+    logger.info({ taskId, name: task.name, source }, 'Invoking scheduled task via event trigger');
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
    * Remove a task from the scheduler.
    *
    * @param taskId - Task ID to remove

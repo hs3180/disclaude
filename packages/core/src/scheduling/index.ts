@@ -10,6 +10,7 @@
  * - ScheduleManager: Query operations for scheduled tasks
  * - Scheduler: Cron-based task execution (with dependency injection)
  * - ScheduleExecutor: Unified executor factory (Issue #1382)
+ * - TriggerWatcher: Event-driven schedule trigger via signal files (Issue #1953)
  *
  * @module @disclaude/core/scheduling
  */
@@ -65,3 +66,10 @@ export {
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
+
+// Trigger Watcher (Issue #1953: event-driven schedule trigger)
+export {
+  TriggerWatcher,
+  type OnTrigger,
+  type TriggerWatcherOptions,
+} from './trigger-watcher.js';
