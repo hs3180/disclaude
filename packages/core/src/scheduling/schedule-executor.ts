@@ -24,15 +24,16 @@
 import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
 
 /**
- * Interface for an agent that can execute scheduled tasks.
+ * Interface for an agent that can execute tasks.
  *
  * This is a minimal interface that ChatAgent naturally satisfies.
  * The executeOnce signature matches ChatAgent.executeOnce(chatId, text, messageId?, senderOpenId?)
  * to enable structural typing without type assertions.
  *
  * Issue #1446: Fixed signature to be compatible with ChatAgent implementation.
+ * Issue #2513: Renamed from ScheduleAgent — there is only one agent type.
  */
-export interface ScheduleAgent {
+export interface ExecutableAgent {
   /** Execute the task once with the given prompt */
   executeOnce: (chatId: string, prompt: string, messageId?: string, userId?: string) => Promise<void>;
   /** Dispose the agent after execution */
@@ -40,25 +41,25 @@ export interface ScheduleAgent {
 }
 
 /**
- * Factory function type for creating ScheduleAgent instances.
+ * Factory function type for creating ExecutableAgent instances.
  *
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
  * @param model - Optional model override for this task (Issue #1338)
- * @returns A ScheduleAgent instance (caller must dispose)
+ * @returns An ExecutableAgent instance (caller must dispose)
  */
-export type ScheduleAgentFactory = (
+export type ExecutableAgentFactory = (
   chatId: string,
   callbacks: SchedulerCallbacks,
   model?: string
-) => ScheduleAgent;
+) => ExecutableAgent;
 
 /**
  * Options for creating a schedule executor.
  */
 export interface ScheduleExecutorOptions {
-  /** Factory function to create ScheduleAgent instances */
-  agentFactory: ScheduleAgentFactory;
+  /** Factory function to create agent instances */
+  agentFactory: ExecutableAgentFactory;
   /** Callbacks for sending messages (used for error handling) */
   callbacks: SchedulerCallbacks;
 }
