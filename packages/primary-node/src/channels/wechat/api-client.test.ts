@@ -506,4 +506,244 @@ describe('WeChatApiClient', () => {
       expect(result[1].msg_id).toBe('msg-2');
     });
   });
+
+  describe('sendImage (Issue #1556 Phase 3.2)', () => {
+    it('should send image message with CDN URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendImage({ to: 'user-123', imageUrl: 'https://cdn.example.com/img.png' });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [[callUrl, callOpts]] = mockFetch.mock.calls;
+      expect(callUrl).toContain('ilink/bot/sendmessage');
+      const body = JSON.parse(callOpts.body);
+      expect(body.msg.item_list[0].type).toBe(2);
+      expect(body.msg.item_list[0].image_item.url).toBe('https://cdn.example.com/img.png');
+      expect(body.msg.to_user_id).toBe('user-123');
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendImage({
+        to: 'user-123',
+        imageUrl: 'https://cdn.example.com/img.png',
+        contextToken: 'thread-abc',
+      });
+
+      const [[, callOpts2]] = mockFetch.mock.calls;
+      const body = JSON.parse(callOpts2.body);
+      expect(body.msg.context_token).toBe('thread-abc');
+    });
+
+    it('should throw on API error', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 1001, err_msg: 'Invalid token' })),
+      });
+
+      client.setToken('test-token');
+      await expect(client.sendImage({ to: 'user-123', imageUrl: 'https://cdn.example.com/img.png' }))
+        .rejects.toThrow('1001');
+    });
+  });
+
+  describe('sendFile (Issue #1556 Phase 3.2)', () => {
+    it('should send file message with CDN URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendFile({
+        to: 'user-123',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+        fileName: 'document.pdf',
+      });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [[callUrl, callOpts]] = mockFetch.mock.calls;
+      expect(callUrl).toContain('ilink/bot/sendmessage');
+      const body = JSON.parse(callOpts.body);
+      expect(body.msg.item_list[0].type).toBe(3);
+      expect(body.msg.item_list[0].file_item.url).toBe('https://cdn.example.com/doc.pdf');
+      expect(body.msg.item_list[0].file_item.file_name).toBe('document.pdf');
+    });
+
+    it('should send file without fileName', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendFile({
+        to: 'user-123',
+        fileUrl: 'https://cdn.example.com/file.dat',
+      });
+
+      const [[, callOpts]] = mockFetch.mock.calls;
+      const body = JSON.parse(callOpts.body);
+      expect(body.msg.item_list[0].file_item.file_name).toBeUndefined();
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendFile({
+        to: 'user-123',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+        fileName: 'doc.pdf',
+        contextToken: 'thread-xyz',
+      });
+
+      const [[, callOpts]] = mockFetch.mock.calls;
+      const body = JSON.parse(callOpts.body);
+      expect(body.msg.context_token).toBe('thread-xyz');
+    });
+  });
+
+  describe('uploadMedia (Issue #1556 Phase 3.2)', () => {
+    it('should upload file and return CDN URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file-abc.png',
+          file_key: 'key-123',
+        })),
+      });
+
+      client.setToken('test-token');
+      const result = await client.uploadMedia({
+        fileData: Buffer.from('fake-image-data'),
+        fileName: 'test.png',
+        mimeType: 'image/png',
+      });
+
+      expect(result.url).toBe('https://cdn.example.com/file-abc.png');
+      expect(result.fileKey).toBe('key-123');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      // Verify it's using FormData (the body won't be a JSON string)
+      const [[, callOpts]] = mockFetch.mock.calls;
+      expect(callOpts.body).toBeInstanceOf(FormData);
+    });
+
+    it('should throw when file is too large', async () => {
+      client.setToken('test-token');
+      const hugeBuffer = Buffer.alloc(21 * 1024 * 1024); // 21MB
+
+      await expect(client.uploadMedia({
+        fileData: hugeBuffer,
+        fileName: 'huge.bin',
+      })).rejects.toThrow('File too large');
+    });
+
+    it('should throw when response missing url', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, file_key: 'key-1' })),
+      });
+
+      client.setToken('test-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('missing url or file_key');
+    });
+
+    it('should throw when response missing file_key', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, url: 'https://cdn.example.com/f' })),
+      });
+
+      client.setToken('test-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('missing url or file_key');
+    });
+
+    it('should throw on API error response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 500, err_msg: 'Upload failed' })),
+      });
+
+      client.setToken('test-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('Upload failed');
+    });
+
+    it('should throw on HTTP error', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 413,
+        text: () => Promise.resolve('Payload Too Large'),
+      });
+
+      client.setToken('test-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('413');
+    });
+
+    it('should include auth headers in upload request', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/f',
+          file_key: 'key-1',
+        })),
+      });
+
+      client.setToken('my-bot-token');
+      await client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      });
+
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders['Authorization']).toBe('Bearer my-bot-token');
+      expect(callHeaders['AuthorizationType']).toBe('ilink_bot_token');
+    });
+
+    it('should accept file at exactly 20MB limit', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/f',
+          file_key: 'key-1',
+        })),
+      });
+
+      client.setToken('test-token');
+      const exactBuffer = Buffer.alloc(20 * 1024 * 1024); // exactly 20MB
+
+      const result = await client.uploadMedia({
+        fileData: exactBuffer,
+        fileName: 'exact.bin',
+      });
+      expect(result.url).toBe('https://cdn.example.com/f');
+    });
+  });
 });

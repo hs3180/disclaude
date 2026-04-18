@@ -58,14 +58,20 @@ describe('WeChatMessageListener', () => {
 
   describe('start / stop lifecycle', () => {
     it('should start and stop cleanly', async () => {
-      // Make getUpdates return empty to exit the loop quickly
-      mockClient.getUpdates = vi.fn().mockResolvedValue([]);
+      // Make getUpdates throw AbortError after one call to exit loop
+      let callCount = 0;
+      mockClient.getUpdates = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount >= 2) {
+          const err = new Error('Aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+        return Promise.resolve([]);
+      });
 
       listener.start();
       expect(listener.isListening()).toBe(true);
-
-      // Let one poll cycle complete
-      await vi.advanceTimersByTimeAsync(100);
 
       await listener.stop();
       expect(listener.isListening()).toBe(false);
@@ -85,7 +91,17 @@ describe('WeChatMessageListener', () => {
     });
 
     it('should be safe to call stop multiple times', async () => {
-      mockClient.getUpdates = vi.fn().mockResolvedValue([]);
+      // Make getUpdates throw AbortError after first call to exit loop
+      let callCount = 0;
+      mockClient.getUpdates = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount >= 2) {
+          const err = new Error('Aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+        return Promise.resolve([]);
+      });
 
       listener.start();
       await vi.advanceTimersByTimeAsync(50);
@@ -96,14 +112,23 @@ describe('WeChatMessageListener', () => {
     });
 
     it('should clear dedup cache on stop', async () => {
-      mockClient.getUpdates = vi.fn().mockResolvedValue([]);
+      // Make getUpdates throw AbortError to exit loop
+      let callCount = 0;
+      mockClient.getUpdates = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount >= 2) {
+          const err = new Error('Aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+        return Promise.resolve([]);
+      });
 
       // Access private seenMessageIds via any
       (listener as any).seenMessageIds.add('msg-1');
       (listener as any).seenMessageIds.add('msg-2');
 
       listener.start();
-      await vi.advanceTimersByTimeAsync(50);
       await listener.stop();
 
       expect((listener as any).seenMessageIds.size).toBe(0);
