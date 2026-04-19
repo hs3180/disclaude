@@ -8,6 +8,34 @@
  */
 
 /**
+ * Signal-based trigger configuration.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism (Method C — Signal File).
+ *
+ * When a task has a `trigger` config, Skills can write a signal file
+ * to the specified path to immediately trigger the schedule execution,
+ * bypassing the normal cron cycle. Cron continues as a fallback.
+ *
+ * Usage in frontmatter:
+ * ```yaml
+ * trigger:
+ *   signalPath: "workspace/chats/.trigger"
+ *   debounce: 5000
+ * ```
+ *
+ * In a Skill, trigger the schedule by:
+ * ```bash
+ * touch workspace/chats/.trigger
+ * ```
+ */
+export interface SignalTrigger {
+  /** File path to watch for signal files (absolute or relative to workspace). */
+  signalPath: string;
+  /** Debounce interval in milliseconds (default: 1000). Multiple signals within this window are batched. */
+  debounce?: number;
+}
+
+/**
  * Scheduled task definition.
  */
 export interface ScheduledTask {
@@ -41,4 +69,12 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Signal-based trigger configuration (Issue #1953).
+   *
+   * When set, the Scheduler watches the specified signalPath and
+   * triggers this task immediately when a signal file appears.
+   * Cron acts as a reduced-frequency fallback.
+   */
+  trigger?: SignalTrigger;
 }

@@ -1,5 +1,5 @@
 /**
- * Scheduler - Executes scheduled tasks using cron.
+ * Scheduler - Executes scheduled tasks using cron and signal triggers.
  *
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
@@ -15,8 +15,13 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1953: Added signal-based event-driven triggers.
+ * - Tasks can declare `trigger.signalPath` in frontmatter
+ * - SignalWatcher monitors signal files and triggers tasks immediately
+ * - Cron continues as a reduced-frequency fallback
+ *
  * Features:
- * - Dynamic task scheduling
+ * - Dynamic task scheduling (cron + signal triggers)
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
  *
@@ -28,6 +33,7 @@ import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
+import { SignalWatcher } from './signal-watcher.js';
 
 const logger = createLogger('Scheduler');
 
@@ -118,18 +124,30 @@ export class Scheduler {
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
+  /** Signal-based trigger watcher (Issue #1953) */
+  private signalWatcher: SignalWatcher;
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+
+    // Issue #1953: Initialize SignalWatcher to handle event-driven triggers
+    this.signalWatcher = new SignalWatcher({
+      onTrigger: (task: ScheduledTask) => {
+        // Trigger the task immediately via the same execution path as cron
+        void this.executeTask(task);
+      },
+    });
+
     logger.info('Scheduler created');
   }
 
   /**
    * Start the scheduler.
    * Loads all enabled tasks and schedules them.
+   * Issue #1953: Also starts signal watchers for tasks with trigger config.
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -145,12 +163,15 @@ export class Scheduler {
       await this.addTask(task);
     }
 
-    logger.info({ taskCount: this.activeJobs.size }, 'Scheduler started');
+    // Issue #1953: Start signal watchers for tasks with trigger config
+    await this.signalWatcher.start();
+
+    logger.info({ taskCount: this.activeJobs.size, signalCount: this.signalWatcher.getWatchedSignalCount() }, 'Scheduler started');
   }
 
   /**
    * Stop the scheduler.
-   * Stops all active cron jobs.
+   * Stops all active cron jobs and signal watchers.
    */
   stop(): void {
     this.running = false;
@@ -161,12 +182,17 @@ export class Scheduler {
     }
 
     this.activeJobs.clear();
+
+    // Issue #1953: Stop signal watchers
+    this.signalWatcher.stop();
+
     logger.info('Scheduler stopped');
   }
 
   /**
    * Add a task to the scheduler.
    * Creates a cron job for the task.
+   * Issue #1953: Also registers signal triggers if configured.
    *
    * @param task - Task to add
    */
@@ -193,10 +219,16 @@ export class Scheduler {
     } catch (error) {
       logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
     }
+
+    // Issue #1953: Register signal trigger if configured
+    if (task.trigger) {
+      this.signalWatcher.registerTask(task);
+    }
   }
 
   /**
    * Remove a task from the scheduler.
+   * Issue #1953: Also unregisters signal triggers.
    *
    * @param taskId - Task ID to remove
    */
@@ -207,6 +239,9 @@ export class Scheduler {
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
     }
+
+    // Issue #1953: Unregister signal trigger
+    this.signalWatcher.unregisterTask(taskId);
   }
 
   /**

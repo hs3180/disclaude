@@ -28,7 +28,7 @@
  */
 
 // Issue #1446: Re-export Scheduler and ScheduleManager from core (eliminates duplicate code)
-export { ScheduleManager, type ScheduledTask, type ScheduleManagerOptions } from '@disclaude/core';
+export { ScheduleManager, type ScheduledTask, type SignalTrigger, type ScheduleManagerOptions } from '@disclaude/core';
 export { Scheduler, type SchedulerOptions, type SchedulerCallbacks, type TaskExecutor } from '@disclaude/core';
 // ScheduleFileScanner, ScheduleFileWatcher re-exported from core (Issue #1395)
 export {
@@ -42,4 +42,11 @@ export {
   type ScheduleFileWatcherOptions,
   CooldownManager,
   type CooldownManagerOptions,
+} from '@disclaude/core';
+
+// SignalWatcher re-exported from core (Issue #1953: event-driven triggers)
+export {
+  SignalWatcher,
+  type OnTrigger,
+  type SignalWatcherOptions,
 } from '@disclaude/core';

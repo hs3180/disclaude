@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, SignalTrigger } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -70,6 +70,8 @@ function stripQuotes(value: string): string {
 
 /**
  * Parse YAML frontmatter from schedule content.
+ *
+ * Issue #1953: Extended to parse nested `trigger:` block for signal-based triggers.
  */
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
@@ -85,8 +87,50 @@ function parseScheduleFrontmatter(content: string): {
   const [, frontmatterText] = match;
   const frontmatter: Record<string, unknown> = {};
 
+  // Issue #1953: Track if we're inside a nested block (e.g., `trigger:`)
+  let currentNestedKey: string | null = null;
+  const nestedObj: Record<string, unknown> = {};
+
   const lines = frontmatterText.split('\n');
   for (const line of lines) {
+    // Detect nested block entry (e.g., "trigger:")
+    const nestedMatch = line.match(/^(\w+):\s*$/);
+    if (nestedMatch) {
+      // Flush previous nested block if any
+      if (currentNestedKey && Object.keys(nestedObj).length > 0) {
+        frontmatter[currentNestedKey] = { ...nestedObj };
+      }
+      [, currentNestedKey] = nestedMatch;
+      // Clear nestedObj for the new block (reuse same object via clear+reassign)
+      for (const k of Object.keys(nestedObj)) { delete nestedObj[k]; }
+      continue;
+    }
+
+    // Detect nested property (indented line, e.g., "  signalPath: ...")
+    if (currentNestedKey && /^\s+\w/.test(line)) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex === -1) { continue; }
+
+      const key = line.slice(0, colonIndex).trim();
+      const value = line.slice(colonIndex + 1).trim();
+
+      if (key === 'signalPath') {
+        nestedObj[key] = stripQuotes(value);
+      } else if (key === 'debounce') {
+        nestedObj[key] = parseInt(value, 10);
+      } else {
+        nestedObj[key] = stripQuotes(value);
+      }
+      continue;
+    }
+
+    // Reset nested context if we encounter a non-indented line
+    if (currentNestedKey && Object.keys(nestedObj).length > 0) {
+      frontmatter[currentNestedKey] = { ...nestedObj };
+      for (const k of Object.keys(nestedObj)) { delete nestedObj[k]; }
+    }
+    currentNestedKey = null;
+
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) { continue; }
 
@@ -111,6 +155,11 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = parseInt(value, 10);
         break;
     }
+  }
+
+  // Flush last nested block
+  if (currentNestedKey && Object.keys(nestedObj).length > 0) {
+    frontmatter[currentNestedKey] = { ...nestedObj };
   }
 
   return { frontmatter, contentStart: match[0].length };
@@ -216,6 +265,8 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        // Issue #1953: Parse signal-based trigger config
+        trigger: frontmatter['trigger'] as SignalTrigger | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +318,14 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    // Issue #1953: Serialize signal trigger config
+    if (task.trigger) {
+      frontmatter.push('trigger:');
+      frontmatter.push(`  signalPath: "${task.trigger.signalPath}"`);
+      if (task.trigger.debounce !== undefined) {
+        frontmatter.push(`  debounce: ${task.trigger.debounce}`);
+      }
     }
 
     frontmatter.push('---', '');
