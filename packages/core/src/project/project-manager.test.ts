@@ -859,6 +859,136 @@ describe('ProjectManager persistence round-trip', () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// delete() (Sub-Issue C)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should delete an existing instance and return its info', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    const result = pm.delete('my-research');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.name).toBe('my-research');
+      expect(result.data.templateName).toBe('research');
+      expect(result.data.workingDir).toBe(join(workspaceDir, 'projects/my-research'));
+    }
+  });
+
+  it('should remove instance from memory after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    const instances = pm.listInstances();
+    expect(instances).toHaveLength(0);
+  });
+
+  it('should remove all associated chatId bindings', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+    pm.use('chat_3', 'my-research');
+
+    pm.delete('my-research');
+
+    // All chatIds should revert to default
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should not affect other instances', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    pm.delete('research-1');
+
+    // book-1 should still exist
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+    const instances = pm.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('book-1');
+  });
+
+  it('should persist deletion to disk', () => {
+    const opts = createOptions();
+    const { workspaceDir: ws } = opts;
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'my-research');
+    pm1.create('chat_2', 'book-reader', 'book-1');
+    pm1.delete('my-research');
+
+    // Reload from disk
+    const pm2 = new ProjectManager({ ...opts, workspaceDir: ws });
+    const instances = pm2.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('book-1');
+    expect(pm2.getActive('chat_1').name).toBe('default');
+  });
+
+  it('should return error for non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should return error for empty name', () => {
+    const result = pm.delete('');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不能为空');
+    }
+  });
+
+  it('should return deleted instance info with bound chatIds', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.chatIds).toEqual(expect.arrayContaining(['chat_1', 'chat_2']));
+    }
+  });
+
+  it('should allow re-creating instance with same name after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    const result = pm.create('chat_2', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+    expect(pm.getActive('chat_2').name).toBe('my-research');
+  });
+
+  it('should handle full lifecycle: create → delete → create → persist → reload', () => {
+    const opts = createOptions();
+    const { workspaceDir: ws } = opts;
+
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'temp-project');
+    pm1.delete('temp-project');
+    pm1.create('chat_2', 'research', 'new-project');
+
+    // Reload
+    const pm2 = new ProjectManager({ ...opts, workspaceDir: ws });
+    expect(pm2.listInstances()).toHaveLength(1);
+    expect(pm2.listInstances()[0].name).toBe('new-project');
+    expect(pm2.getActive('chat_2').name).toBe('new-project');
+    expect(pm2.getActive('chat_1').name).toBe('default');
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Edge Cases & Integration Scenarios
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
