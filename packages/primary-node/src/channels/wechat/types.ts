@@ -109,3 +109,19 @@ export interface WeChatGetUpdatesResponse {
   /** List of new updates/messages */
   update_list?: WeChatUpdate[];
 }
+
+// ---------------------------------------------------------------------------
+// CDN upload types (Issue #1556 Phase 3.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Response from the CDN media upload API.
+ */
+export interface WeChatCdnUploadResponse {
+  /** Return code (0 = success) */
+  ret?: number;
+  /** CDN URL of the uploaded file */
+  url?: string;
+  /** File key for reference */
+  file_key?: string;
+}

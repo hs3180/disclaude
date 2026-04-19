@@ -18,7 +18,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import type { WeChatGetUpdatesResponse } from './types.js';
+import type { WeChatGetUpdatesResponse, WeChatCdnUploadResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -30,6 +30,9 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
+
+/** Maximum file size for CDN upload (20MB). */
+const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 
 /**
  * WeChat API Client for Tencent ilink Bot API (MVP).
@@ -212,6 +215,71 @@ export class WeChatApiClient {
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
   }
 
+  /**
+   * Send an image message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage with image_item.
+   *
+   * @param params - Image message parameters
+   */
+  async sendImage(params: {
+    to: string;
+    imageUrl: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, imageUrl, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 2, image_item: { url: imageUrl } }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, imageUrl }, 'Image message sent');
+  }
+
+  /**
+   * Send a file message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage with file_item.
+   *
+   * @param params - File message parameters
+   */
+  async sendFile(params: {
+    to: string;
+    fileUrl: string;
+    fileName?: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, fileUrl, fileName, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 3, file_item: { url: fileUrl, file_name: fileName } }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, fileUrl, fileName }, 'File message sent');
+  }
+
   // ---------------------------------------------------------------------------
   // Message listening (getUpdates long-poll) — Issue #1556 Phase 3.1
   // ---------------------------------------------------------------------------
@@ -254,8 +322,91 @@ export class WeChatApiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Internal helpers
+  // Media upload (Issue #1556 Phase 3.3)
   // ---------------------------------------------------------------------------
+
+  /**
+   * Upload a file to WeChat CDN.
+   *
+   * POST /ilink/bot/upload
+   *
+   * Uploads a file (image, document, etc.) to WeChat's CDN and returns
+   * a URL and file_key that can be used in sendImage/sendFile.
+   *
+   * @param params - Upload parameters
+   * @returns CDN URL and file key of the uploaded file
+   * @throws Error if file exceeds 20MB size limit
+   */
+  async uploadMedia(params: {
+    /** File content as Buffer */
+    fileData: Buffer;
+    /** File name (with extension) */
+    fileName: string;
+    /** MIME type (e.g., 'image/png', 'application/pdf') */
+    mimeType?: string;
+  }): Promise<{ url: string; fileKey: string }> {
+    const { fileData, fileName, mimeType } = params;
+
+    if (fileData.length > MAX_UPLOAD_SIZE_BYTES) {
+      throw new Error(`File too large: ${fileData.length} bytes (max ${MAX_UPLOAD_SIZE_BYTES})`);
+    }
+
+    const uploadUrl = `${this.baseUrl}/ilink/bot/upload`;
+
+    const authHeaders = this.buildAuthHeaders('');
+    const headers: Record<string, string> = {
+      'AuthorizationType': authHeaders['AuthorizationType'],
+      'Authorization': authHeaders['Authorization'] || '',
+      'X-WECHAT-UIN': authHeaders['X-WECHAT-UIN'],
+    };
+
+    if (this.routeTag) {
+      headers['SKRouteTag'] = this.routeTag;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DEFAULT_API_TIMEOUT_MS);
+
+    try {
+      const formData = new FormData();
+      const blob = new Blob([fileData], { type: mimeType || 'application/octet-stream' });
+      formData.append('file', blob, fileName);
+
+      const response = await fetch(uploadUrl, {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '(unreadable)');
+        logger.error({ status: response.status, body: text }, 'Upload failed');
+        throw new Error(`WeChat upload error [${response.status}]: ${text}`);
+      }
+
+      const rawText = await response.text();
+      const data = JSON.parse(rawText) as WeChatCdnUploadResponse;
+
+      const { ret } = data;
+      if (ret !== undefined && ret !== 0) {
+        const errMsg = (data as Record<string, unknown>).err_msg as string ?? `Error code ${ret}`;
+        throw new Error(`WeChat upload error [${ret}]: ${errMsg}`);
+      }
+
+      if (!data.url || !data.file_key) {
+        throw new Error('Upload response missing url or file_key');
+      }
+
+      logger.info({ fileName, url: data.url, fileKey: data.file_key }, 'File uploaded to CDN');
+      return { url: data.url, fileKey: data.file_key };
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
+  }
 
   /**
    * Make an authenticated POST request to the API.

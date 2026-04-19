@@ -9,7 +9,6 @@
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Media handling (CDN upload) — Issue #1556 Phase 3.3
  * - Typing indicator — Issue #1556 Phase 3.2
  * - Thread send support via context_token — Issue #1556 Phase 3.4
  *
@@ -156,6 +155,47 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       return;
     }
 
+    // File/image sending (Issue #1556 Phase 3.3)
+    if (message.type === 'file' && message.filePath) {
+      const { filePath } = message;
+      const fileName = filePath.split('/').pop() ?? 'file';
+
+      // Detect if it's an image based on extension
+      const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
+      const isImage = imageExtensions.some((ext) => fileName.toLowerCase().endsWith(ext));
+
+      // Read file, upload to CDN, then send
+      const fs = await import('fs');
+      const fileData = await fs.promises.readFile(filePath);
+
+      const { url: cdnUrl } = await this.client.uploadMedia({
+        fileData,
+        fileName,
+        mimeType: isImage ? `image/${fileName.split('.').pop()}` : undefined,
+      });
+
+      if (isImage) {
+        await this.client.sendImage({
+          to: message.chatId,
+          imageUrl: cdnUrl,
+          contextToken: message.threadId,
+        });
+      } else {
+        await this.client.sendFile({
+          to: message.chatId,
+          fileUrl: cdnUrl,
+          fileName,
+          contextToken: message.threadId,
+        });
+      }
+
+      logger.debug(
+        { chatId: message.chatId, fileName, isImage },
+        'File sent via CDN upload'
+      );
+      return;
+    }
+
     // Unsupported message types
     logger.warn(
       { type: message.type, chatId: message.chatId },
@@ -181,11 +221,11 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     return {
       supportsCard: false,
       supportsThread: false,
-      supportsFile: false,
+      supportsFile: true,
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text'],
+      supportedMcpTools: ['send_text', 'send_file'],
     };
   }
 
