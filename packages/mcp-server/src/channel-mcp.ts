@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -451,6 +452,60 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Docx inline image insertion
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image into a Feishu docx document at a specific position.
+
+This tool inserts an image inline at a precise position within a Feishu document, enabling
+proper interleaving of text and images. Without this tool, images can only be appended to
+the end of the document.
+
+## Parameters
+- **documentId**: The Feishu document ID (required)
+- **imagePath**: Path to the image file (required, relative to workspace or absolute)
+- **index**: Position to insert at (optional, defaults to end of document)
+- **caption**: Optional image caption text
+
+## Supported Formats
+JPG, JPEG, PNG, WebP, GIF, TIFF, BMP (max 20MB)
+
+## Example
+\`\`\`json
+{
+  "documentId": "doxcnMxxxxxxxxxx",
+  "imagePath": "./charts/sales-chart.png",
+  "index": 5,
+  "caption": "Q1 Sales Performance"
+}
+\`\`\`
+
+## How It Works
+1. Creates an empty image block at the specified position
+2. Uploads the image file to Feishu Drive
+3. Binds the uploaded file to the image block
+
+**Reference:** https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/document-docx/docx-v1/document-block-children/create`,
+    parameters: z.object({
+      documentId: z.string().describe('The Feishu document ID'),
+      imagePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().optional().describe('Position to insert at (defaults to end of document)'),
+      caption: z.string().optional().describe('Optional image caption'),
+    }),
+    handler: async ({ documentId, imagePath, index, caption }: {
+      documentId: string;
+      imagePath: string;
+      index?: number;
+      caption?: string;
+    }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index, caption });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Docx image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

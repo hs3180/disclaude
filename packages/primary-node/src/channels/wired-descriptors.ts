@@ -236,6 +236,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const record = await store.getTempChat(chatId);
         return { success: true, expiresAt: record?.expiresAt };
       },
+      // Issue #2278: Docx inline image insertion
+      insertDocxImage: async (documentId: string, imagePath: string, index?: number, caption?: string) => {
+        return await feishuChannel.insertDocxImage(documentId, imagePath, index, caption);
+      },
       listTempChats: async () => {
         const chatStore = context.primaryNode.getChatStore();
         const records = await chatStore.listTempChats();

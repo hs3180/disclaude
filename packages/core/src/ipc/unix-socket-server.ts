@@ -69,6 +69,8 @@ export interface ChannelApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
+  /** Insert image into docx at specific position (Issue #2278) */
+  insertDocxImage?: (documentId: string, imagePath: string, index?: number, caption?: string) => Promise<{ success: boolean; blockId?: string }>;
   /** Register a temp chat for lifecycle tracking (Issue #1703) */
   registerTempChat?: (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => Promise<{ success: boolean; expiresAt?: string }>;
   /** List all tracked temp chats (Issue #1703) */
@@ -223,6 +225,34 @@ export function createInteractiveMessageHandler(
             }
 
             return { id: request.id, success: true, payload: { success: true, ...result } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Docx inline image insertion (Issue #2278)
+        case 'insertDocxImage': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.insertDocxImage) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'insertDocxImage not supported by this channel',
+            };
+          }
+          const { documentId, imagePath, index, caption } =
+            request.payload as IpcRequestPayloads['insertDocxImage'];
+          try {
+            const result = await handlers.insertDocxImage(documentId, imagePath, index, caption);
+            return { id: request.id, success: true, payload: { success: result.success, blockId: result.blockId } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

@@ -12,6 +12,7 @@ export type {
   ActionPromptMap,
   SendInteractiveResult,
   RegisterTempChatResult,
+  InsertDocxImageResult,
 } from './types.js';
 
 // Shared utilities
@@ -46,3 +47,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Docx Inline Image Insertion (Issue #2278)
+export { insert_docx_image } from './insert-docx-image.js';

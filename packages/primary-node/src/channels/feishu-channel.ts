@@ -706,6 +706,115 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Insert an image into a Feishu docx document at a specific position.
+   *
+   * Issue #2278: Implements the 3-step API process:
+   * 1. Create empty image block (block_type: 27) at the specified index
+   * 2. Upload image file via Drive Media API (parent_type: "docx_image")
+   * 3. Bind uploaded file to image block via batchUpdate (replace_image)
+   *
+   * @param documentId - The document ID
+   * @param imagePath - Absolute path to the image file
+   * @param index - Position to insert at (optional, defaults to end)
+   * @param caption - Optional image caption
+   * @returns Object with blockId of the created image block
+   */
+  async insertDocxImage(
+    documentId: string,
+    imagePath: string,
+    index?: number,
+    caption?: string
+  ): Promise<{ success: boolean; blockId?: string }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const fileName = path.basename(imagePath);
+    const ext = path.extname(imagePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Not an image file: ${fileName} (supported: ${imageExtensions.join(', ')})`);
+    }
+
+    const { size: fileSize } = fs.statSync(imagePath);
+    if (fileSize > 20 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 20MB)`);
+    }
+
+    logger.info({ documentId, imagePath, index, caption, fileName, fileSize }, 'Inserting image into docx');
+
+    // Step 1: Create empty image block (block_type: 27)
+    const createData: Record<string, unknown> = {};
+    if (caption) {
+      createData.image = { align: 1, caption: { content: caption } };
+    } else {
+      createData.image = { align: 1 };
+    }
+
+    const createResp = await this.client.docx.documentBlockChildren.create({
+      data: {
+        children: [
+          {
+            block_type: 27,
+            ...createData,
+          },
+        ],
+        index,
+      },
+      path: {
+        document_id: documentId,
+        block_id: documentId, // Root block ID = document ID
+      },
+    });
+
+    if (!createResp?.data?.children?.[0]?.block_id) {
+      throw new Error(`Failed to create image block: ${JSON.stringify(createResp)}`);
+    }
+
+    const imageBlockId = createResp.data.children[0].block_id;
+    logger.debug({ imageBlockId }, 'Image block created');
+
+    // Step 2: Upload image file via Drive Media API
+    const uploadResp = await this.client.drive.media.uploadAll({
+      data: {
+        file_name: fileName,
+        parent_type: 'docx_image',
+        parent_node: documentId,
+        size: fileSize,
+        file: fs.createReadStream(imagePath),
+      },
+    });
+
+    const fileToken = uploadResp?.file_token;
+    if (!fileToken) {
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.debug({ fileToken }, 'Image uploaded to Drive');
+
+    // Step 3: Bind uploaded file to image block via replace_image
+    await this.client.docx.documentBlock.batchUpdate({
+      data: {
+        requests: [
+          {
+            replace_image: {
+              token: fileToken,
+            },
+            block_id: imageBlockId,
+          },
+        ],
+      },
+      path: {
+        document_id: documentId,
+      },
+    });
+
+    logger.info({ documentId, imageBlockId, fileToken }, 'Image inserted into docx successfully');
+
+    return { success: true, blockId: imageBlockId };
+  }
+
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
 
   /**
