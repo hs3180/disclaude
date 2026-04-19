@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteSection,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,29 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildTasteSection', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildTasteSection()).toBe('');
+    expect(buildTasteSection(undefined)).toBe('');
+  });
+
+  it('should return empty string for empty string context', () => {
+    expect(buildTasteSection('')).toBe('');
+  });
+
+  it('should return formatted section when context is provided', () => {
+    const tasteContext = '[Project Taste — 用户偏好]\n**代码风格**:\n  - 使用 const/let';
+    const result = buildTasteSection(tasteContext);
+    expect(result).toContain('User Preferences (Taste)');
+    expect(result).toContain('使用 const/let');
+  });
+
+  it('should wrap taste context in section delimiters', () => {
+    const result = buildTasteSection('some taste context');
+    expect(result).toContain('---');
+    expect(result).toContain('User Preferences (Taste)');
   });
 });

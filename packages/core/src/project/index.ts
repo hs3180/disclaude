@@ -30,3 +30,15 @@ export type {
 } from './template-discovery.js';
 
 export { ProjectManager } from './project-manager.js';
+
+// Taste module — per-project user preference management (Issue #2335)
+export type {
+  TasteCategory,
+  TasteData,
+  TasteManagerOptions,
+  TasteResult,
+  TasteRule,
+  TasteSource,
+} from './taste-types.js';
+
+export { TasteManager } from './taste-manager.js';

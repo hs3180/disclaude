@@ -185,6 +185,33 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the taste context section for agent prompt injection.
+ *
+ * Issue #2335: Injects per-project user taste (preferences) into the
+ * agent context so the agent automatically follows user preferences
+ * without needing repeated corrections.
+ *
+ * @param tasteContext - Pre-formatted taste context string from TasteManager,
+ *                       or undefined to skip
+ * @returns Formatted taste section, or empty string if no taste context
+ */
+export function buildTasteSection(tasteContext?: string): string {
+  if (!tasteContext) {
+    return '';
+  }
+
+  return `
+
+---
+
+## User Preferences (Taste)
+
+${tasteContext}
+
+---`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
