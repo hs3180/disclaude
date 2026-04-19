@@ -4,7 +4,7 @@
 #
 # Architecture: Multi-node distributed system
 # - Primary Node: Handles Feishu WebSocket connections + Agent execution + MCP
-# - Worker Node: Handles Pilot/Agent task execution (optional, for scaling)
+# - Worker Node: Handles ChatAgent task execution (optional, for scaling)
 #
 # Note: MCP functionality is built into Primary/Worker nodes, no separate deployment needed.
 #
