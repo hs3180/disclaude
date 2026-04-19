@@ -36,7 +36,7 @@ async function runScript(script: string, env: Record<string, string>): Promise<{
   }
 }
 
-const TEST_IDS = ['test-create-1', 'test-create-explicit', 'test-create-mention', 'test-query-1', 'test-list-1', 'test-response-1'];
+const TEST_IDS = ['test-create-1', 'test-create-explicit', 'test-create-mention', 'test-query-1', 'test-list-1', 'test-response-1', 'test-activate-1', 'test-activate-expired', 'test-activate-idempotent'];
 
 async function cleanupTestFiles() {
   for (const id of TEST_IDS) {
@@ -332,6 +332,133 @@ describe('chat scripts integration', () => {
 
       expect(result.code).toBe(1);
       expect(result.stderr).toContain('pending');
+    });
+  });
+
+  describe('activate', () => {
+    it('should activate a pending chat with chatId', async () => {
+      // Create a pending chat first
+      await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-activate-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test Activate',
+        CHAT_MEMBERS: '["ou_test123"]',
+        CHAT_CONTEXT: '{}',
+      });
+
+      // Activate it
+      const result = await runScript('skills/chat/activate.ts', {
+        CHAT_ID: 'test-activate-1',
+        CHAT_CHAT_ID: 'oc_activated123',
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('activated');
+
+      // Verify file was updated
+      const content = await readFile(resolve(CHAT_DIR, 'test-activate-1.json'), 'utf-8');
+      const data = JSON.parse(content);
+      expect(data.status).toBe('active');
+      expect(data.chatId).toBe('oc_activated123');
+      expect(data.activatedAt).toBeTruthy();
+      expect(data.activationAttempts).toBe(0);
+      expect(data.lastActivationError).toBeNull();
+      expect(data.failedAt).toBeNull();
+    });
+
+    it('should be idempotent when already active with same chatId', async () => {
+      // Create and activate
+      await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-activate-idempotent',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test Idempotent',
+        CHAT_MEMBERS: '["ou_test123"]',
+      });
+      await runScript('skills/chat/activate.ts', {
+        CHAT_ID: 'test-activate-idempotent',
+        CHAT_CHAT_ID: 'oc_idempotent123',
+      });
+
+      // Activate again with same chatId — should succeed
+      const result = await runScript('skills/chat/activate.ts', {
+        CHAT_ID: 'test-activate-idempotent',
+        CHAT_CHAT_ID: 'oc_idempotent123',
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('already active');
+    });
+
+    it('should reject activation of expired chat', async () => {
+      // Write an expired chat
+      const chatData = {
+        id: 'test-activate-expired',
+        status: 'expired',
+        chatId: null,
+        createdAt: '2026-01-01T00:00:00Z',
+        activatedAt: null,
+        expiresAt: '2099-12-31T23:59:59Z',
+        expiredAt: '2026-01-02T00:00:00Z',
+        createGroup: { name: 'Test', members: ['ou_test123'] },
+        context: {},
+        response: null,
+        activationAttempts: 0,
+        lastActivationError: null,
+        failedAt: null,
+      };
+      await writeFile(resolve(CHAT_DIR, 'test-activate-expired.json'), JSON.stringify(chatData, null, 2), 'utf-8');
+
+      const result = await runScript('skills/chat/activate.ts', {
+        CHAT_ID: 'test-activate-expired',
+        CHAT_CHAT_ID: 'oc_expired123',
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('expired');
+      expect(result.stderr).toContain('cannot activate');
+    });
+
+    it('should reject missing CHAT_CHAT_ID', async () => {
+      await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-activate-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test',
+        CHAT_MEMBERS: '["ou_test123"]',
+      });
+
+      const result = await runScript('skills/chat/activate.ts', {
+        CHAT_ID: 'test-activate-1',
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('CHAT_CHAT_ID');
+    });
+
+    it('should reject invalid Feishu chat ID format', async () => {
+      await runScript('skills/chat/create.ts', {
+        CHAT_ID: 'test-activate-1',
+        CHAT_EXPIRES_AT: '2099-12-31T23:59:59Z',
+        CHAT_GROUP_NAME: 'Test',
+        CHAT_MEMBERS: '["ou_test123"]',
+      });
+
+      const result = await runScript('skills/chat/activate.ts', {
+        CHAT_ID: 'test-activate-1',
+        CHAT_CHAT_ID: 'invalid_chat_id',
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('oc_xxxxx');
+    });
+
+    it('should reject non-existent chat', async () => {
+      const result = await runScript('skills/chat/activate.ts', {
+        CHAT_ID: 'nonexistent-chat',
+        CHAT_CHAT_ID: 'oc_test123',
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('not found');
     });
   });
 });
