@@ -16,6 +16,8 @@
  *   add-label        为 PR 添加 pr-scanner:reviewing label
  *   remove-label     为 PR 移除 pr-scanner:reviewing label
  *   status           列出所有跟踪的 PR，按 state 分组
+ *   check-expired    扫描过期的 reviewing PR（now > expiresAt）
+ *   mark-disband     更新 disbandRequested 时间戳
  *
  * 环境变量:
  *   PR_SCANNER_DIR   状态文件目录（默认: .temp-chats）
@@ -26,7 +28,7 @@
  *   0 — 成功
  *   1 — 致命错误
  *
- * Related: #2219, #2220
+ * Related: #2219, #2220, #2221
  */
 
 import { readdir, readFile, writeFile, mkdir, rename } from 'node:fs/promises';
@@ -49,7 +51,8 @@ export interface PRStateFile {
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
-  disbandRequested: boolean;
+  /** ISO 8601 timestamp of last disband request, or false if never requested */
+  disbandRequested: string | false;
 }
 
 /** check-capacity 输出 */
@@ -166,8 +169,12 @@ export function parseStateFile(json: string, filePath: string): PRStateFile {
     throw new Error(`State file '${filePath}' has invalid or missing 'expiresAt'`);
   }
 
-  if (typeof obj.disbandRequested !== 'boolean') {
-    throw new Error(`State file '${filePath}' has invalid or missing 'disbandRequested'`);
+  // disbandRequested: string (ISO timestamp) | false | boolean (legacy compat)
+  if (typeof obj.disbandRequested === 'boolean') {
+    // Legacy format: convert true → current time, false → false
+    (obj as Record<string, unknown>).disbandRequested = false;
+  } else if (typeof obj.disbandRequested !== 'string' && obj.disbandRequested !== false) {
+    throw new Error(`State file '${filePath}' has invalid 'disbandRequested' (must be ISO string or false)`);
   }
 
   return data as PRStateFile;
@@ -432,6 +439,62 @@ export async function actionStatus(): Promise<void> {
   console.log(JSON.stringify(summary, null, 2));
 }
 
+// ---- Lifecycle Actions (#2221) ----
+
+/** check-expired 输出项 */
+export interface ExpiredPR {
+  prNumber: number;
+  chatId: string | null;
+  expiresAt: string;
+  disbandRequested: string | false;
+}
+
+/**
+ * check-expired: 扫描过期的 reviewing PR（now > expiresAt）
+ * 输出 JSON 数组，供 Schedule Prompt 判断是否发送解散申请
+ */
+export async function actionCheckExpired(): Promise<void> {
+  const dir = getStateDir();
+  const states = await readAllStates(dir);
+  const now = nowISO();
+
+  const expired: ExpiredPR[] = states
+    .filter(s => s.state === 'reviewing' && s.expiresAt < now)
+    .map(s => ({
+      prNumber: s.prNumber,
+      chatId: s.chatId,
+      expiresAt: s.expiresAt,
+      disbandRequested: s.disbandRequested,
+    }));
+
+  console.log(JSON.stringify(expired, null, 2));
+}
+
+/**
+ * mark-disband: 更新 disbandRequested 为当前时间戳
+ * 需要 --pr <number> 参数
+ */
+export async function actionMarkDisband(prNumber: number): Promise<void> {
+  const filePath = stateFilePath(prNumber);
+
+  // 读取现有状态
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf-8');
+  } catch {
+    throw new Error(`State file not found for PR #${prNumber}: ${filePath}`);
+  }
+
+  const stateFile = parseStateFile(content, filePath);
+
+  const now = nowISO();
+  stateFile.disbandRequested = now;
+  stateFile.updatedAt = now;
+
+  await atomicWrite(filePath, JSON.stringify(stateFile, null, 2) + '\n');
+  console.log(JSON.stringify({ prNumber: stateFile.prNumber, disbandRequested: now }, null, 2));
+}
+
 // ---- CLI ----
 
 function readStdin(): Promise<string> {
@@ -468,7 +531,7 @@ async function main(): Promise<void> {
   const { action, pr, state } = parseArgs(process.argv.slice(2));
 
   if (!action) {
-    console.error('Usage: pr-scanner.ts --action <check-capacity|list-candidates|create-state|mark|add-label|remove-label|status> [--pr <number>] [--state <reviewing|approved|closed>]');
+    console.error('Usage: pr-scanner.ts --action <check-capacity|list-candidates|create-state|mark|add-label|remove-label|status|check-expired|mark-disband> [--pr <number>] [--state <reviewing|approved|closed>]');
     process.exit(1);
   }
 
@@ -519,8 +582,19 @@ async function main(): Promise<void> {
       await actionStatus();
       break;
 
+    case 'check-expired':
+      await actionCheckExpired();
+      break;
+
+    case 'mark-disband':
+      if (!pr) {
+        throw new Error('--pr <number> is required for mark-disband');
+      }
+      await actionMarkDisband(pr);
+      break;
+
     default:
-      throw new Error(`Unknown action: ${action}. Valid actions: check-capacity, list-candidates, create-state, mark, add-label, remove-label, status`);
+      throw new Error(`Unknown action: ${action}. Valid actions: check-capacity, list-candidates, create-state, mark, add-label, remove-label, status, check-expired, mark-disband`);
   }
 }
 

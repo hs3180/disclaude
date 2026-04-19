@@ -4,7 +4,7 @@
  * Unit tests for PR Scanner v2 基础脚本骨架。
  * 覆盖所有 action + 状态文件读写 + Label 管理 + 边界情况。
  *
- * Related: #2219, #2220
+ * Related: #2219, #2220, #2221
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -28,6 +28,8 @@ import {
   actionStatus,
   actionAddLabel,
   actionRemoveLabel,
+  actionCheckExpired,
+  actionMarkDisband,
   addReviewingLabel,
   removeReviewingLabel,
   atomicWrite,
@@ -129,7 +131,32 @@ describe('parseStateFile', () => {
   it('rejects missing disbandRequested', () => {
     const state = makeStateFile();
     delete (state as Record<string, unknown>).disbandRequested;
-    expect(() => parseStateFile(JSON.stringify(state), 'test.json')).toThrow('invalid or missing \'disbandRequested\'');
+    expect(() => parseStateFile(JSON.stringify(state), 'test.json')).toThrow('invalid \'disbandRequested\'');
+  });
+
+  it('accepts string disbandRequested (ISO timestamp)', () => {
+    const state = makeStateFile({ disbandRequested: '2026-04-19T10:00:00.000Z' });
+    const result = parseStateFile(JSON.stringify(state), 'test.json');
+    expect(result.disbandRequested).toBe('2026-04-19T10:00:00.000Z');
+  });
+
+  it('converts legacy boolean true disbandRequested to false', () => {
+    const state = makeStateFile();
+    (state as Record<string, unknown>).disbandRequested = true;
+    const result = parseStateFile(JSON.stringify(state), 'test.json');
+    expect(result.disbandRequested).toBe(false);
+  });
+
+  it('accepts false disbandRequested', () => {
+    const state = makeStateFile({ disbandRequested: false });
+    const result = parseStateFile(JSON.stringify(state), 'test.json');
+    expect(result.disbandRequested).toBe(false);
+  });
+
+  it('rejects numeric disbandRequested', () => {
+    const state = makeStateFile();
+    (state as Record<string, unknown>).disbandRequested = 123;
+    expect(() => parseStateFile(JSON.stringify(state), 'test.json')).toThrow('invalid \'disbandRequested\'');
   });
 
   it('rejects missing createdAt', () => {
@@ -628,6 +655,183 @@ describe('Label Management', () => {
 
       warnSpy.mockRestore();
       logSpy.mockRestore();
+    });
+  });
+});
+
+describe('Lifecycle Actions (#2221)', () => {
+  beforeEach(async () => {
+    await rm(TEST_DIR, { recursive: true, force: true });
+    await mkdir(TEST_DIR, { recursive: true });
+    process.env.PR_SCANNER_DIR = TEST_DIR;
+  });
+
+  afterEach(async () => {
+    delete process.env.PR_SCANNER_DIR;
+    await rm(TEST_DIR, { recursive: true, force: true });
+  });
+
+  describe('actionCheckExpired', () => {
+    it('returns empty array when no expired PRs', async () => {
+      // Create a non-expired PR (expiresAt is 48h in the future)
+      await writeStateFile(makeStateFile({ prNumber: 1, state: 'reviewing' }));
+
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await actionCheckExpired();
+      const output = spy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toEqual([]);
+      spy.mockRestore();
+    });
+
+    it('returns expired reviewing PRs', async () => {
+      // Create an expired PR (expiresAt in the past)
+      const expiredState = makeStateFile({
+        prNumber: 1,
+        state: 'reviewing',
+        expiresAt: '2026-04-18T00:00:00.000Z', // in the past
+      });
+      await writeStateFile(expiredState);
+
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await actionCheckExpired();
+      const output = spy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].prNumber).toBe(1);
+      expect(parsed[0].expiresAt).toBe('2026-04-18T00:00:00.000Z');
+      expect(parsed[0].disbandRequested).toBe(false);
+      spy.mockRestore();
+    });
+
+    it('excludes non-reviewing expired PRs', async () => {
+      await writeStateFile(makeStateFile({
+        prNumber: 1,
+        state: 'approved',
+        expiresAt: '2026-04-18T00:00:00.000Z',
+      }));
+
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await actionCheckExpired();
+      const output = spy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toEqual([]);
+      spy.mockRestore();
+    });
+
+    it('excludes non-expired reviewing PRs', async () => {
+      // expiresAt is 48h in the future by default
+      await writeStateFile(makeStateFile({ prNumber: 1, state: 'reviewing' }));
+
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await actionCheckExpired();
+      const output = spy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toEqual([]);
+      spy.mockRestore();
+    });
+
+    it('includes chatId and disbandRequested in output', async () => {
+      await writeStateFile(makeStateFile({
+        prNumber: 5,
+        state: 'reviewing',
+        chatId: 'oc_test123',
+        expiresAt: '2026-04-18T00:00:00.000Z',
+        disbandRequested: '2026-04-18T12:00:00.000Z',
+      }));
+
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await actionCheckExpired();
+      const output = spy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0].chatId).toBe('oc_test123');
+      expect(parsed[0].disbandRequested).toBe('2026-04-18T12:00:00.000Z');
+      spy.mockRestore();
+    });
+
+    it('returns multiple expired PRs', async () => {
+      await writeStateFile(makeStateFile({
+        prNumber: 1,
+        state: 'reviewing',
+        expiresAt: '2026-04-17T00:00:00.000Z',
+      }));
+      await writeStateFile(makeStateFile({
+        prNumber: 2,
+        state: 'reviewing',
+        expiresAt: '2026-04-18T00:00:00.000Z',
+      }));
+
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await actionCheckExpired();
+      const output = spy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toHaveLength(2);
+      spy.mockRestore();
+    });
+  });
+
+  describe('actionMarkDisband', () => {
+    it('updates disbandRequested to current timestamp', async () => {
+      await writeStateFile(makeStateFile({
+        prNumber: 1,
+        state: 'reviewing',
+        disbandRequested: false,
+      }));
+
+      const before = nowISO();
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await actionMarkDisband(1);
+      const output = spy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed.prNumber).toBe(1);
+      expect(parsed.disbandRequested).not.toBe(false);
+      // Timestamp should be recent
+      expect(new Date(parsed.disbandRequested).getTime()).toBeGreaterThanOrEqual(new Date(before).getTime() - 1000);
+      spy.mockRestore();
+
+      // Verify file on disk
+      const content = await readFile(stateFilePath(1), 'utf-8');
+      const fileState = JSON.parse(content);
+      expect(fileState.disbandRequested).not.toBe(false);
+      expect(typeof fileState.disbandRequested).toBe('string');
+    });
+
+    it('overwrites existing disbandRequested timestamp', async () => {
+      const oldTimestamp = '2026-04-17T00:00:00.000Z';
+      await writeStateFile(makeStateFile({
+        prNumber: 1,
+        state: 'reviewing',
+        disbandRequested: oldTimestamp,
+      }));
+
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await actionMarkDisband(1);
+      spy.mockRestore();
+
+      const content = await readFile(stateFilePath(1), 'utf-8');
+      const fileState = JSON.parse(content);
+      expect(fileState.disbandRequested).not.toBe(oldTimestamp);
+    });
+
+    it('throws when state file not found', async () => {
+      await expect(actionMarkDisband(999)).rejects.toThrow('not found');
+    });
+
+    it('updates updatedAt timestamp', async () => {
+      const original = makeStateFile({
+        prNumber: 1,
+        state: 'reviewing',
+        disbandRequested: false,
+      });
+      original.updatedAt = '2026-01-01T00:00:00.000Z';
+      await writeStateFile(original);
+
+      await actionMarkDisband(1);
+
+      const content = await readFile(stateFilePath(1), 'utf-8');
+      const updated = JSON.parse(content);
+      expect(updated.updatedAt).not.toBe('2026-01-01T00:00:00.000Z');
     });
   });
 });
