@@ -25,8 +25,8 @@ export interface WorkspaceConfig {
  * This avoids confusion about which model takes precedence.
  */
 export interface AgentConfig {
-  /** API provider preference (anthropic, glm) */
-  provider?: 'anthropic' | 'glm';
+  /** API provider preference (anthropic, glm, openai) */
+  provider?: 'anthropic' | 'glm' | 'openai';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -82,6 +82,22 @@ export interface GlmConfig {
   /** Model identifier - REQUIRED when apiKey is set */
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
+  apiBaseUrl?: string;
+}
+
+/**
+ * OpenAI API configuration section.
+ *
+ * When using OpenAI provider, apiKey is REQUIRED.
+ * Model defaults to 'gpt-4o' if not specified.
+ * @see Issue #1333
+ */
+export interface OpenAIConfig {
+  /** API key (overrides OPENAI_API_KEY env var) */
+  apiKey?: string;
+  /** Model identifier (default: gpt-4o) */
+  model?: string;
+  /** API base URL (overrides OPENAI_BASE_URL env var, for custom endpoints) */
   apiBaseUrl?: string;
 }
 
@@ -332,6 +348,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** OpenAI API settings (@see Issue #1333) */
+  openai?: OpenAIConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

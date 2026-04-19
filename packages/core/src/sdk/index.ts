@@ -15,7 +15,8 @@
  *     ├── types.ts             # ACP 协议类型
  *     ├── transport.ts         # stdio Transport
  *     ├── acp-client.ts        # ACP Client 实现
- *     └── message-adapter.ts   # ACP → AgentMessage 消息映射
+ *     ├── message-adapter.ts   # ACP → AgentMessage 消息映射
+ *     └── openai-server.ts     # OpenAI ACP Server（Issue #1333）
  * ```
  *
  * @module sdk
@@ -73,6 +74,7 @@ export {
   parseNdjsonBuffer,
   AcpStdioTransport,
   AcpClient,
+  runOpenaiAcpServer,
 } from './acp/index.js';
 
 export type {

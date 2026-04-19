@@ -123,6 +123,11 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
+          // OpenAI configuration (from config file, Issue #1333)
+  static readonly OPENAI_API_KEY = fileConfigOnly.openai?.apiKey || '';
+          static readonly OPENAI_MODEL = fileConfigOnly.openai?.model || 'gpt-4o';
+          static readonly OPENAI_BASE_URL = fileConfigOnly.openai?.apiBaseUrl || 'https://api.openai.com/v1';
+
           // Anthropic Claude configuration (from env for fallback)
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
@@ -275,6 +280,14 @@ export class Config {
           message: 'glm.model is required when using GLM provider',
         });
       }
+    } else if (provider === 'openai') {
+      // User explicitly chose OpenAI - validate OpenAI config (Issue #1333)
+      if (!this.OPENAI_API_KEY) {
+        errors.push({
+          field: 'openai.apiKey',
+          message: 'openai.apiKey is required when agent.provider is "openai"',
+        });
+      }
     } else if (provider === 'anthropic') {
       // User explicitly chose Anthropic - only validate Anthropic config
       if (!this.ANTHROPIC_API_KEY) {
@@ -297,6 +310,9 @@ export class Config {
           message: 'glm.model is required when GLM API key is configured',
         });
       }
+    } else if (this.OPENAI_API_KEY) {
+      // No explicit provider, but OpenAI is configured in config file (Issue #1333)
+      // OpenAI model has a default (gpt-4o), so only apiKey is required
     } else if (this.ANTHROPIC_API_KEY) {
       // Fallback to Anthropic (from environment variable)
       if (!this.CLAUDE_MODEL) {
@@ -309,7 +325,7 @@ export class Config {
       // No provider configured at all
       errors.push({
         field: 'apiKey',
-        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
+        message: 'No API key configured. Set openai.apiKey, glm.apiKey in disclaude.config.yaml, or ANTHROPIC_API_KEY environment variable',
       });
     }
 
@@ -329,7 +345,7 @@ export class Config {
 
   /**
    * Get agent configuration based on available API keys.
-   * Prefers GLM if configured, otherwise falls back to Anthropic.
+   * Prefers GLM if configured, then OpenAI, then falls back to Anthropic.
    *
    * @returns Agent configuration with API key and model
    * @throws Error if no API key is configured or model is missing
@@ -338,7 +354,7 @@ export class Config {
     apiKey: string;
     model: string;
     apiBaseUrl?: string;
-    provider: 'anthropic' | 'glm';
+    provider: 'anthropic' | 'glm' | 'openai';
   } {
     // Validate required configuration first
     this.validateRequiredConfig();
@@ -351,6 +367,17 @@ export class Config {
         model: this.GLM_MODEL,
         apiBaseUrl: this.GLM_API_BASE_URL,
         provider: 'glm',
+      };
+    }
+
+    // OpenAI if configured (Issue #1333)
+    if (this.OPENAI_API_KEY) {
+      logger.debug({ provider: 'OpenAI', model: this.OPENAI_MODEL }, 'Using OpenAI API configuration');
+      return {
+        apiKey: this.OPENAI_API_KEY,
+        model: this.OPENAI_MODEL,
+        apiBaseUrl: this.OPENAI_BASE_URL,
+        provider: 'openai',
       };
     }
 
@@ -514,27 +541,49 @@ interface ResolvedAcpCommand {
  *
  * Resolution order:
  * 0. `agent.acpCommand` config override — user-specified command (highest priority)
- * 1. `claude-agent-acp` — dedicated ACP binary (preferred, always correct)
- * 2. `claude --agent-acp` — CLI flag (only if the installed version supports it)
+ * 1. Provider-specific resolution:
+ *    - OpenAI provider: built-in OpenAI ACP Server (Issue #1333)
+ *    - Anthropic/GLM (default): claude-agent-acp / claude --agent-acp
+ * 2. `claude-agent-acp` — dedicated ACP binary (preferred, always correct)
+ * 3. `claude --agent-acp` — CLI flag (only if the installed version supports it)
  *
  * @param configOverride - Optional user-specified ACP command from config (agent.acpCommand)
+ * @param provider - Optional provider hint for provider-specific resolution
  * @returns The resolved command and args
  * @throws Error with actionable message if no valid command is found
  */
-export function resolveAcpCommand(configOverride?: string): ResolvedAcpCommand {
+export function resolveAcpCommand(
+  configOverride?: string,
+  provider?: 'anthropic' | 'glm' | 'openai',
+): ResolvedAcpCommand {
   // Strategy 0: User-specified command from config (agent.acpCommand)
   if (configOverride) {
     logger.debug({ command: configOverride }, 'Resolved ACP command from config override');
     return { command: configOverride, args: [] };
   }
 
-  // Strategy 1: Try `claude-agent-acp` (dedicated binary)
+  // Strategy 1: Provider-specific resolution (Issue #1333)
+  if (provider === 'openai') {
+    // OpenAI provider uses the built-in OpenAI ACP Server
+    const serverPath = resolveOpenaiServerPath();
+    if (serverPath) {
+      logger.debug({ path: serverPath }, 'Resolved ACP command: OpenAI ACP Server');
+      return { command: 'node', args: [serverPath] };
+    }
+    throw new Error(
+      'OpenAI ACP Server not found. '
+      + 'Ensure @disclaude/core is properly installed.\n'
+      + 'Or set agent.acpCommand in disclaude.config.yaml to a custom ACP-compatible command.',
+    );
+  }
+
+  // Strategy 2: Try `claude-agent-acp` (dedicated binary)
   if (commandExists('claude-agent-acp')) {
     logger.debug('Resolved ACP command: claude-agent-acp');
     return { command: 'claude-agent-acp', args: [] };
   }
 
-  // Strategy 2: Try `claude --agent-acp` (CLI flag)
+  // Strategy 3: Try `claude --agent-acp` (CLI flag)
   // Verify the flag is actually supported by checking `claude --help`
   if (commandExists('claude') && claudeSupportsAgentAcp()) {
     logger.debug('Resolved ACP command: claude --agent-acp');
@@ -547,9 +596,33 @@ export function resolveAcpCommand(configOverride?: string): ResolvedAcpCommand {
     + 'Install one of:\n'
     + '  1. claude-agent-acp (npm install -g @zed-industries/claude-agent-acp)\n'
     + '  2. Or set agent.acpCommand in disclaude.config.yaml\n'
-    + '  3. Or upgrade Claude CLI to a version that supports --agent-acp\n'
+    + '  3. Or use openai provider (agent.provider: openai + openai.apiKey)\n'
+    + '  4. Or upgrade Claude CLI to a version that supports --agent-acp\n'
     + 'See Issue #2349 for details.',
   );
+}
+
+/**
+ * Resolve the path to the OpenAI ACP Server entry point.
+ */
+function resolveOpenaiServerPath(): string | null {
+  // Try to find the openai-server.mjs file in the same directory as this module
+  if (typeof import.meta.url !== 'undefined') {
+    const moduleUrl = fileURLToPath(import.meta.url);
+    const moduleDir = path.dirname(moduleUrl);
+    // In compiled output: dist/config/index.js -> dist/sdk/acp/openai-server.mjs
+    const serverPath = path.resolve(moduleDir, 'sdk', 'acp', 'openai-server.mjs');
+    if (existsSync(serverPath)) {
+      return serverPath;
+    }
+    // In source: packages/core/src/config/index.ts -> packages/core/src/sdk/acp/openai-server.ts
+    const srcPath = path.resolve(moduleDir, '..', 'sdk', 'acp', 'openai-server.ts');
+    if (existsSync(srcPath)) {
+      // Use tsx for TypeScript execution
+      return srcPath;
+    }
+  }
+  return null;
 }
 
 /**
@@ -613,9 +686,29 @@ export function createDefaultRuntimeContext(
   // Create shared ACP Client instance (lazy-connect on first use)
   // Issue #2311: ACP Client replaces SDK Provider for agent execution
   // Issue #2349: Auto-detect correct ACP command (config override > claude-agent-acp > claude --agent-acp)
+  // Issue #1333: OpenAI provider uses built-in ACP Server
   const acpCommandOverride = fileConfigOnly.agent?.acpCommand;
-  const { command: acpCommand, args: acpArgs } = resolveAcpCommand(acpCommandOverride);
-  logger.info({ command: acpCommand, args: acpArgs }, 'Resolved ACP transport command');
+  const agentProvider = fileConfigOnly.agent?.provider;
+  const { command: acpCommand, args: acpArgs } = resolveAcpCommand(acpCommandOverride, agentProvider);
+  logger.info({ command: acpCommand, args: acpArgs, provider: agentProvider }, 'Resolved ACP transport command');
+
+  // Build provider-specific environment variables for the ACP subprocess
+  const agentConfig = Config.getAgentConfig();
+  const providerEnv: Record<string, string> = {};
+
+  if (agentConfig.provider === 'openai') {
+    // OpenAI ACP Server reads OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL
+    providerEnv.OPENAI_API_KEY = agentConfig.apiKey;
+    providerEnv.OPENAI_MODEL = agentConfig.model;
+    if (agentConfig.apiBaseUrl) {
+      providerEnv.OPENAI_BASE_URL = agentConfig.apiBaseUrl;
+    }
+  } else {
+    // Anthropic/GLM: pass ANTHROPIC_API_KEY (existing behavior)
+    if (agentConfig.apiKey) {
+      providerEnv.ANTHROPIC_API_KEY = agentConfig.apiKey;
+    }
+  }
 
   const acpClient = new AcpClient({
     transport: new AcpStdioTransport({
@@ -623,10 +716,7 @@ export function createDefaultRuntimeContext(
       args: acpArgs,
       env: {
         ...process.env as Record<string, string>,
-        // Pass through API key if available
-        ...(Config.getAgentConfig().apiKey ? {
-          ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
-        } : {}),
+        ...providerEnv,
       },
     }),
     // Auto-approve all permission requests in bot mode

@@ -1,7 +1,7 @@
 /**
  * ACP (Agent Client Protocol) 模块
  *
- * 提供 ACP 协议类型定义、Transport 层实现、消息适配器和 Client。
+ * 提供 ACP 协议类型定义、Transport 层实现、消息适配器、Client 和 OpenAI Server。
  */
 
 // 类型导出
@@ -67,3 +67,6 @@ export type {
   AcpServerCapabilities,
   PermissionRequestCallback,
 } from './acp-client.js';
+
+// OpenAI ACP Server 导出 (Issue #1333)
+export { run as runOpenaiAcpServer } from './openai-server.js';

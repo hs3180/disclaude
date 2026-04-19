@@ -203,6 +203,15 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
     });
   }
 
+  // OpenAI config validation (Issue #1333)
+  // If OpenAI model is explicitly configured but no apiKey, warn
+  if (config.openai?.model && !config.openai?.apiKey && !process.env.OPENAI_API_KEY) {
+    errors.push({
+      field: 'openai.apiKey',
+      message: 'openai.apiKey or OPENAI_API_KEY env var is required when openai.model is set',
+    });
+  }
+
   // If Anthropic API key is configured (from env), agent.model should be set
   if (process.env.ANTHROPIC_API_KEY && !config.agent?.model) {
     errors.push({
