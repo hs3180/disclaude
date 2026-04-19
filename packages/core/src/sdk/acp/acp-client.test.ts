@@ -708,4 +708,293 @@ describe('AcpClient', () => {
       expect(client.state).toBe('connected');
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Text chunk aggregation (Issue #2532)
+  // --------------------------------------------------------------------------
+  describe('text chunk aggregation (#2532)', () => {
+    it('aggregates consecutive text chunks into single message (flushed by tool_call)', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+      const firstMsgPromise = promptIter.next();
+      await yieldOnce();
+
+      const promptReq = transport.sentMessages.find(
+        (m) => (m as JsonRpcRequest).method === 'session/prompt',
+      ) as JsonRpcRequest;
+
+      // Send multiple consecutive text chunks
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Hello' },
+      }));
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: ', ' },
+      }));
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'world!' },
+      }));
+
+      // Send tool_call — triggers flush of text buffer
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'tc-1',
+        toolName: 'Bash',
+        content: { type: 'text', text: '{"command":"ls"}' },
+      }));
+
+      // Send result to complete
+      transport.simulateMessage(successResponse(promptReq.id, {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 100, outputTokens: 50 },
+      }));
+
+      // Collect all messages
+      const messages = [];
+      messages.push((await firstMsgPromise).value);
+      for await (const msg of promptIter) {
+        messages.push(msg);
+      }
+
+      // Should have: 1 aggregated text + 1 tool_use + 1 result = 3 messages
+      // (NOT 3 separate text + 1 tool_use + 1 result = 5)
+      expect(messages.length).toBe(3);
+      expect(messages[0].type).toBe('text');
+      expect(messages[0].content).toBe('Hello, world!');
+      expect(messages[1].type).toBe('tool_use');
+      expect(messages[2].type).toBe('result');
+    });
+
+    it('flushes text buffer when prompt result arrives', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+      const firstMsgPromise = promptIter.next();
+      await yieldOnce();
+
+      const promptReq = transport.sentMessages.find(
+        (m) => (m as JsonRpcRequest).method === 'session/prompt',
+      ) as JsonRpcRequest;
+
+      // Send text chunks — no tool_call to trigger flush
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Good ' },
+      }));
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'morning!' },
+      }));
+
+      // Send result — should flush text buffer first, then push result
+      transport.simulateMessage(successResponse(promptReq.id, {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 50, outputTokens: 20 },
+      }));
+
+      const messages = [];
+      messages.push((await firstMsgPromise).value);
+      for await (const msg of promptIter) {
+        messages.push(msg);
+      }
+
+      // Should have: 1 aggregated text + 1 result = 2 messages
+      expect(messages.length).toBe(2);
+      expect(messages[0].type).toBe('text');
+      expect(messages[0].content).toBe('Good morning!');
+      expect(messages[1].type).toBe('result');
+    });
+
+    it('flushes text buffer on debounce timeout', async () => {
+      vi.useFakeTimers();
+      try {
+        const { client, transport } = createTestClient();
+        await connectClient(client, transport);
+
+        const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+        const firstMsgPromise = promptIter.next();
+        await yieldOnce();
+
+        const promptReq = transport.sentMessages.find(
+          (m) => (m as JsonRpcRequest).method === 'session/prompt',
+        ) as JsonRpcRequest;
+
+        // Send text chunks
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Chunk1' },
+        }));
+        transport.simulateMessage(sessionUpdateNotification('sess-1', {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Chunk2' },
+        }));
+
+        // Advance past debounce (200ms)
+        vi.advanceTimersByTime(250);
+        await yieldOnce();
+
+        // The aggregated text should have been pushed
+        const firstResult = await firstMsgPromise;
+        expect(firstResult.value.type).toBe('text');
+        expect(firstResult.value.content).toBe('Chunk1Chunk2');
+
+        // Complete the prompt
+        transport.simulateMessage(successResponse(promptReq.id, {
+          stopReason: 'end_turn',
+          usage: { inputTokens: 50, outputTokens: 20 },
+        }));
+
+        const remaining = [];
+        for await (const msg of promptIter) {
+          remaining.push(msg);
+        }
+        // Only result message remaining
+        expect(remaining.length).toBe(1);
+        expect(remaining[0].type).toBe('result');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('handles empty text chunks without creating messages', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+      const firstMsgPromise = promptIter.next();
+      await yieldOnce();
+
+      const promptReq = transport.sentMessages.find(
+        (m) => (m as JsonRpcRequest).method === 'session/prompt',
+      ) as JsonRpcRequest;
+
+      // Send empty text chunk — should NOT be buffered
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: '' },
+      }));
+
+      // Send result
+      transport.simulateMessage(successResponse(promptReq.id, {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 50, outputTokens: 20 },
+      }));
+
+      const messages = [];
+      messages.push((await firstMsgPromise).value);
+      for await (const msg of promptIter) {
+        messages.push(msg);
+      }
+
+      // Should only have result (empty text was skipped)
+      expect(messages.length).toBe(1);
+      expect(messages[0].type).toBe('result');
+    });
+
+    it('flushes text buffer on thinking event', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      const promptIter = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello' }]);
+      const firstMsgPromise = promptIter.next();
+      await yieldOnce();
+
+      const promptReq = transport.sentMessages.find(
+        (m) => (m as JsonRpcRequest).method === 'session/prompt',
+      ) as JsonRpcRequest;
+
+      // Send text chunks
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Hello' },
+      }));
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: ' there' },
+      }));
+
+      // Send thinking — triggers flush
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'Let me think...' },
+      }));
+
+      // Complete
+      transport.simulateMessage(successResponse(promptReq.id, {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 50, outputTokens: 20 },
+      }));
+
+      const messages = [];
+      messages.push((await firstMsgPromise).value);
+      for await (const msg of promptIter) {
+        messages.push(msg);
+      }
+
+      // Should have: 1 aggregated text + 1 thinking + 1 result = 3
+      expect(messages.length).toBe(3);
+      expect(messages[0].type).toBe('text');
+      expect(messages[0].content).toBe('Hello there');
+      expect(messages[1].type).toBe('thinking');
+      expect(messages[2].type).toBe('result');
+    });
+
+    it('maintains independent buffers per session', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      // Start two prompts on different sessions
+      const iter1 = client.sendPrompt('sess-1', [{ type: 'text', text: 'Hello 1' }]);
+      const p1 = iter1.next();
+      await yieldOnce();
+
+      const iter2 = client.sendPrompt('sess-2', [{ type: 'text', text: 'Hello 2' }]);
+      const p2 = iter2.next();
+      await yieldOnce();
+
+      // Send text chunks to both sessions
+      transport.simulateMessage(sessionUpdateNotification('sess-1', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Text A' },
+      }));
+      transport.simulateMessage(sessionUpdateNotification('sess-2', {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Text B' },
+      }));
+
+      // Complete both with result (triggers flush)
+      const req1 = transport.sentMessages.find(
+        (m) => (m as JsonRpcRequest).method === 'session/prompt' && (m as JsonRpcRequest).id === 1,
+      ) as JsonRpcRequest;
+      const req2 = transport.sentMessages.find(
+        (m) => (m as JsonRpcRequest).method === 'session/prompt' && (m as JsonRpcRequest).id === 2,
+      ) as JsonRpcRequest;
+
+      transport.simulateMessage(successResponse(req1.id, {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }));
+      transport.simulateMessage(successResponse(req2.id, {
+        stopReason: 'end_turn',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }));
+
+      // Collect from both
+      const msgs1 = [(await p1).value];
+      for await (const msg of iter1) { msgs1.push(msg); }
+      const msgs2 = [(await p2).value];
+      for await (const msg of iter2) { msgs2.push(msg); }
+
+      // Each session should have its own text, not mixed
+      expect(msgs1.some(m => m.content === 'Text A')).toBe(true);
+      expect(msgs1.some(m => m.content === 'Text B')).toBe(false);
+      expect(msgs2.some(m => m.content === 'Text B')).toBe(true);
+      expect(msgs2.some(m => m.content === 'Text A')).toBe(false);
+    });
+  });
 });
