@@ -24,41 +24,41 @@
 import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
 
 /**
- * Interface for an agent that can execute scheduled tasks.
+ * Interface for a runnable task executor.
  *
- * This is a minimal interface that ChatAgent naturally satisfies.
- * The executeOnce signature matches ChatAgent.executeOnce(chatId, text, messageId?, senderOpenId?)
- * to enable structural typing without type assertions.
+ * Issue #2513: Renamed from ScheduleAgent. ChatAgent is the sole agent type;
+ * this is a minimal structural interface describing the capabilities needed
+ * for task execution (executeOnce + dispose). ChatAgent naturally satisfies it.
  *
  * Issue #1446: Fixed signature to be compatible with ChatAgent implementation.
  */
-export interface ScheduleAgent {
+export interface TaskRunner {
   /** Execute the task once with the given prompt */
   executeOnce: (chatId: string, prompt: string, messageId?: string, userId?: string) => Promise<void>;
-  /** Dispose the agent after execution */
+  /** Dispose resources after execution */
   dispose: () => void;
 }
 
 /**
- * Factory function type for creating ScheduleAgent instances.
+ * Factory function type for creating TaskRunner instances.
  *
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
  * @param model - Optional model override for this task (Issue #1338)
- * @returns A ScheduleAgent instance (caller must dispose)
+ * @returns A TaskRunner instance (caller must dispose)
  */
-export type ScheduleAgentFactory = (
+export type TaskRunnerFactory = (
   chatId: string,
   callbacks: SchedulerCallbacks,
   model?: string
-) => ScheduleAgent;
+) => TaskRunner;
 
 /**
  * Options for creating a schedule executor.
  */
 export interface ScheduleExecutorOptions {
-  /** Factory function to create ScheduleAgent instances */
-  agentFactory: ScheduleAgentFactory;
+  /** Factory function to create TaskRunner instances */
+  agentFactory: TaskRunnerFactory;
   /** Callbacks for sending messages (used for error handling) */
   callbacks: SchedulerCallbacks;
 }
