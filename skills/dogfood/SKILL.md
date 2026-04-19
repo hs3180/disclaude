@@ -1,0 +1,243 @@
+---
+name: dogfood
+description: Self-test and experience agent - automatically exercises system capabilities, simulates new-user interactions, and generates structured feedback reports. Use when user says keywords like "dogfood", "自我测试", "自体验", "体验新版本", "健康检查", "self-test", "smoke test".
+allowed-tools: Read, Glob, Grep, Bash
+---
+
+# Dogfood Skill — Auto Self-Experience
+
+Automatically experience and test the latest version of disclaude from a new-user perspective, generating structured feedback reports.
+
+## When to Use This Skill
+
+**Use this skill for:**
+- Post-release self-testing and verification
+- Health check of system capabilities
+- Generating experience reports with improvement suggestions
+- Smoke testing after deployment
+
+**Keywords that trigger this skill**: "dogfood", "自我测试", "自体验", "体验新版本", "健康检查", "self-test", "smoke test"
+
+## Context Variables
+
+When invoked, you receive:
+- **Chat ID**: Feishu chat ID (from "**Chat ID:** xxx")
+- **Message ID**: Message ID (from "**Message ID:** xxx")
+- **Sender Open ID**: Sender's open ID (from "**Sender Open ID:** xxx")
+
+---
+
+## Core Principle
+
+**Experience the system as a new user would**, not as a developer. Focus on discoverability, usability, and reliability. Report findings honestly, including things that work well.
+
+---
+
+## Dogfood Process
+
+### Step 1: Version & Changelog Check
+
+Gather version information to understand what to test:
+
+```bash
+# Current version
+cat package.json | grep '"version"'
+```
+
+Read the CHANGELOG.md to identify recent changes:
+- Use `Read` tool on `CHANGELOG.md`
+- Focus on the latest released version and [Unreleased] section
+- Identify new features, bug fixes, and breaking changes
+
+### Step 2: Build & Type Check
+
+Verify the codebase is in a healthy state:
+
+```bash
+# Type check (fast, catches type errors)
+npm run type-check 2>&1
+
+# Lint check
+npm run lint 2>&1 | tail -20
+```
+
+**Record**: Whether these pass or fail. Any errors are high-priority findings.
+
+### Step 3: Skill Inventory & Validation
+
+List and validate all available skills:
+
+```bash
+# List all skills
+ls skills/
+```
+
+For each skill directory, verify:
+1. `SKILL.md` exists
+2. Frontmatter has required `description` field
+3. Frontmatter `name` matches directory name
+4. Content is non-empty (more than just frontmatter)
+
+**Use `Read` and `Grep` tools** to check each skill's SKILL.md.
+
+**Report**: Any skill with missing/invalid configuration.
+
+### Step 4: Schedule Inventory & Validation
+
+List and validate all schedules:
+
+```bash
+# List all schedule files
+ls schedules/
+```
+
+For each schedule file, verify:
+1. Valid YAML frontmatter exists
+2. Required fields: `name`, `cron`, `chatId`
+3. `enabled` field is present
+4. Cron expression is valid format
+
+### Step 5: Simulated New-User Experience
+
+Simulate what a new user would encounter when using the system. Read the following to assess the new-user journey:
+
+1. **README.md** — Is it clear how to get started?
+2. **CLAUDE.md** — Are conventions well-documented?
+3. **SKILL_SPEC.md** — Is the skill development guide complete?
+4. **disclaude.config.example.yaml** — Is configuration well-documented?
+
+For each document, assess:
+- **Discoverability**: Can a new user find the information they need?
+- **Completeness**: Are there gaps in documentation?
+- **Accuracy**: Does documentation match the current code?
+
+### Step 6: Test Suite Health
+
+Check if tests exist and can run:
+
+```bash
+# Check test configuration
+cat vitest.config.ts
+
+# List test files
+find . -name "*.test.ts" -not -path "*/node_modules/*" | head -20
+```
+
+**Report**: Number of test files, coverage areas, any obvious gaps.
+
+### Step 7: Configuration Validation
+
+Check example config for completeness:
+
+```bash
+cat disclaude.config.example.yaml
+```
+
+Verify that the example config covers all required fields and has helpful comments.
+
+### Step 8: Generate Experience Report
+
+Create a structured report with the following sections:
+
+```markdown
+## 🐾 Dogfood Experience Report
+
+**Version**: [from package.json]
+**Date**: [current date]
+**Tester**: Automated dogfood skill
+
+---
+
+### 📊 Overall Health Score: [A/B/C/D/F]
+
+| Category | Status | Details |
+|----------|--------|---------|
+| Build & Types | ✅/❌ | [pass/fail count] |
+| Skills | ✅/❌ | [X/Y valid] |
+| Schedules | ✅/❌ | [X/Y valid] |
+| Documentation | ✅/❌ | [assessment] |
+| Tests | ✅/❌ | [X test files found] |
+
+---
+
+### ✨ What Works Well
+- [List of things that are well-implemented, documented, or designed]
+
+### 🐛 Issues Found
+- **[Severity: High/Medium/Low]** [Description]
+  - Location: [file or area]
+  - Impact: [how it affects users]
+  - Suggestion: [how to fix]
+
+### 💡 Improvement Suggestions
+- [Suggestions for UX, documentation, or code improvements]
+
+### 🎯 New-User Experience Notes
+- [Observations about the onboarding experience]
+- [Potential friction points]
+- [Things that are particularly smooth]
+
+---
+
+*Report generated by dogfood skill | disclaude self-testing framework*
+```
+
+### Step 9: Deliver Report
+
+**CRITICAL**: Always send the report to the user.
+
+```
+Use send_user_feedback with:
+- content: [The report in markdown format]
+- format: "text"
+- chatId: [The chatId from context]
+```
+
+---
+
+## Severity Guidelines
+
+| Severity | Criteria | Example |
+|----------|----------|---------|
+| **High** | Blocks normal usage, build fails, type errors | Type check fails, missing required config |
+| **Medium** | Degrades experience, confusing UX, missing docs | Skill missing description, unclear config |
+| **Low** | Minor polish, nice-to-have improvements | Typo in docs, inconsistent naming |
+
+## Quality Guidelines
+
+### What makes a good dogfood report:
+- ✅ Honest and objective (not everything is perfect)
+- ✅ Specific (cite files, line numbers, exact errors)
+- ✅ Actionable (clear suggestions for improvement)
+- ✅ Balanced (highlight both issues and successes)
+- ✅ User-perspective focused (how does this affect users?)
+
+### Avoid:
+- ❌ Only reporting problems (successes matter too)
+- ❌ Vague complaints without specifics
+- ❌ Developer-centric perspective (think like a new user)
+- ❌ Skipping sections of the report
+
+---
+
+## Checklist
+
+- [ ] Checked current version and changelog
+- [ ] Ran type-check and lint
+- [ ] Validated all skills have proper SKILL.md
+- [ ] Validated all schedule files have proper frontmatter
+- [ ] Assessed new-user documentation
+- [ ] Checked test coverage
+- [ ] Generated structured report
+- [ ] **Sent report via send_user_feedback** (CRITICAL)
+
+---
+
+## DO NOT
+
+- Skip sections of the report
+- Only report positive findings
+- Make assumptions without evidence
+- Send reports to wrong chatId
+- Modify any code during testing (read-only!)
+- Submit issues automatically without user approval
