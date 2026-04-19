@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,39 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime environment section header', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment');
+    expect(result).toContain('Cross-Process State');
+  });
+
+  it('should explain the runtime-env mechanism', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('SDK subprocess');
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should document how to read and write runtime-env', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('process.env');
+    expect(result).toContain('Write');
+    expect(result).toContain('Read');
+  });
+
+  it('should list common keys like GH_TOKEN', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should mention limitations of the file-based approach', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('flat key-value store');
+    expect(result).toContain('auto-synced');
   });
 });

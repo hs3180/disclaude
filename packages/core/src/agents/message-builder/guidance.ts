@@ -218,3 +218,55 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Informs the agent about the runtime-env mechanism
+ * for cross-process state sharing. The agent runs in an SDK subprocess,
+ * so runtime-env provides a file-based bridge for sharing state between
+ * the main process and agent subprocess.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment (Cross-Process State)
+
+You are running in an SDK subprocess. The main process (MCP servers, skills, bot lifecycle) shares state with you via a file-based mechanism called **runtime-env** (\`.runtime-env\` in the workspace directory).
+
+### How It Works
+
+- **Format**: Simple \`KEY=VALUE\` per line (like \`.env\` files)
+- **Read**: Values are automatically loaded into your environment variables at startup
+- **Write**: Use the Bash tool to append/update entries:
+  \`\`\`bash
+  echo "MY_KEY=my_value" >> .runtime-env
+  \`\`\`
+- **Delete**: Use the Bash tool to remove entries:
+  \`\`\`bash
+  sed -i '/^MY_KEY=/d' .runtime-env
+  \`\`\`
+
+### Common Keys
+
+| Key | Purpose | Set By |
+|-----|---------|--------|
+| \`GH_TOKEN\` | GitHub API token | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiry timestamp | \`github-jwt-auth\` skill |
+
+### When to Use
+
+- **Reading**: Check environment variables directly — they are already merged into \`process.env\`
+- **Writing**: When you need to pass state to the main process or other agents (e.g., authentication tokens, task status)
+- **Checking**: Use \`cat .runtime-env\` to see all currently shared variables
+
+### Important Notes
+
+- This is a **flat key-value store** — values must be strings
+- The file is shared across all processes — avoid frequent writes to prevent race conditions
+- Changes are **not** auto-synced to running agents — they are loaded at startup`;
+}
