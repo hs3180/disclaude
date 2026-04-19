@@ -263,39 +263,22 @@ export class RestartManager {
     }
   }
 
-  /**
-   * Get the current restart state for a chatId.
-   *
-   * @param chatId - The chat identifier
-   * @returns Restart state or undefined
-   */
+  /** Get the current restart state for a chatId. */
   getState(chatId: string): RestartState | undefined {
     return this.states.get(chatId);
   }
 
-  /**
-   * Get recent errors for a chatId.
-   *
-   * @param chatId - The chat identifier
-   * @returns Array of recent errors
-   */
+  /** Get recent errors for a chatId. */
   getRecentErrors(chatId: string): Array<{ message: string; timestamp: number }> {
     return this.states.get(chatId)?.recentErrors ?? [];
   }
 
-  /**
-   * Check if circuit is open for a chatId.
-   *
-   * @param chatId - The chat identifier
-   * @returns Whether circuit is open
-   */
+  /** Check if circuit is open for a chatId. */
   isCircuitOpen(chatId: string): boolean {
     return this.states.get(chatId)?.circuitOpen ?? false;
   }
 
-  /**
-   * Clear all states.
-   */
+  /** Clear all restart states. */
   clearAll(): void {
     this.states.clear();
     this.logger.debug('All restart states cleared');
