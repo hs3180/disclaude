@@ -17,6 +17,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -163,6 +165,17 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image and return image_key for card embedding.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -451,6 +464,42 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #1919: Image upload for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image to get an image_key for embedding in card messages.
+
+Use this tool when you need to embed an image inside a card message (e.g., charts, diagrams, reports).
+After uploading, use the returned \`image_key\` in the card's \`img\` element.
+
+## Parameters
+- **filePath**: Path to the image file (string, required)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10 MB)
+
+## Workflow
+1. Upload image → get \`image_key\`
+2. Use \`image_key\` in \`send_card\` with \`{ "tag": "img", "img_key": "image_key" }\`
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\`
+
+Returns \`image_key\` that can be used in card img elements.`,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

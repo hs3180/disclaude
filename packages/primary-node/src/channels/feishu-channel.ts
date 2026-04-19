@@ -646,6 +646,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }
@@ -653,6 +654,54 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   // Delegate trigger mode methods to TriggerModeManager (Issue #2193: renamed from PassiveMode)
   isTriggerEnabled(chatId: string): boolean {
     return this.triggerModeManager.isTriggerEnabled(chatId);
+  }
+
+  /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * This method only uploads the image to Feishu's CDN — it does NOT send
+   * a message. The returned image_key can be used in card messages with
+   * the `img` element's `img_key` field.
+   *
+   * Issue #1919: MCP tool support for inline image insertion in cards.
+   *
+   * @param filePath - Local file path of the image to upload
+   * @returns Object with imageKey, fileName, and fileSize
+   * @throws Error if client is not initialized, file not found, or upload fails
+   */
+  async uploadImageForCard(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Not an image file: ${fileName} (supported: ${imageExtensions.join(', ')})`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for card embedding');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName} — no image_key returned`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded for card embedding');
+    return { imageKey, fileName, fileSize };
   }
 
   setTriggerEnabled(chatId: string, enabled: boolean): void {
