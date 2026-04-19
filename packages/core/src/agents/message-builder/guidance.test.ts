@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,57 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildDiscussionFocusGuidance', () => {
+  it('should return empty string when no topic is provided', () => {
+    expect(buildDiscussionFocusGuidance()).toBe('');
+    expect(buildDiscussionFocusGuidance(undefined)).toBe('');
+    expect(buildDiscussionFocusGuidance('')).toBe('');
+  });
+
+  it('should include discussion focus heading when topic is provided', () => {
+    const result = buildDiscussionFocusGuidance('Should we adopt microservices?');
+    expect(result).toContain('Discussion Focus');
+    expect(result).toContain('focused discussion partner');
+  });
+
+  it('should include the discussion topic in the output', () => {
+    const result = buildDiscussionFocusGuidance('Should we adopt microservices?');
+    expect(result).toContain('Should we adopt microservices?');
+  });
+
+  it('should include core principles for staying on topic', () => {
+    const result = buildDiscussionFocusGuidance('How to improve code quality?');
+    expect(result).toContain('Stay on topic');
+    expect(result).toContain('north star');
+  });
+
+  it('should include gentle redirect guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('redirect when needed');
+    expect(result).toContain('conversation drifts');
+  });
+
+  it('should include depth over breadth principle', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Depth over breadth');
+  });
+
+  it('should include boundary guidelines', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Do not chase every interesting tangent');
+    expect(result).toContain('Periodically summarize progress');
+  });
+
+  it('should allow topic changes when user signals them', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('signals a topic change');
+  });
+
+  it('should format topic as a blockquote', () => {
+    const result = buildDiscussionFocusGuidance('What framework should we use?');
+    expect(result).toContain('> **What framework should we use?**');
   });
 });

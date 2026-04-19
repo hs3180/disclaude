@@ -508,4 +508,60 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - discussion focus', () => {
+    it('should include discussion focus guidance when discussionTopic is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'I think we should use React',
+        messageId: 'msg-123',
+        discussionTopic: 'Which frontend framework should we adopt?',
+      }, 'chat-456');
+
+      expect(result).toContain('Discussion Focus');
+      expect(result).toContain('Which frontend framework should we adopt?');
+      expect(result).toContain('focused discussion partner');
+    });
+
+    it('should not include discussion focus guidance when discussionTopic is not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+    });
+
+    it('should not include discussion focus guidance when discussionTopic is empty string', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: '',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+    });
+
+    it('should place discussion focus before next-step guidance', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Test topic',
+      }, 'chat-456');
+
+      const discussionIdx = result.indexOf('Discussion Focus');
+      const nextStepIdx = result.indexOf('Next Steps After Response');
+      expect(nextStepIdx).toBeGreaterThan(discussionIdx);
+    });
+
+    it('should not include discussion focus for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/command',
+        messageId: 'msg-123',
+        discussionTopic: 'Some topic',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+      expect(result).toContain('/command');
+    });
+  });
 });

@@ -218,3 +218,57 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the discussion focus guidance section.
+ *
+ * Issue #1228: Injects a discussion personality into the agent prompt
+ * when the agent is operating in a discussion context. The guidance
+ * anchors the agent to the initial discussion topic and helps prevent
+ * conversation drift.
+ *
+ * Since the SOUL.md system (#1315) was replaced by native CLAUDE.md,
+ * this guidance is injected directly via the MessageBuilder pipeline
+ * when a `discussionTopic` is present in the message data.
+ *
+ * @param discussionTopic - The initial question or topic of the discussion
+ * @returns Formatted discussion focus guidance section, or empty string if no topic
+ */
+export function buildDiscussionFocusGuidance(discussionTopic?: string): string {
+  if (!discussionTopic) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Discussion Focus
+
+You are a focused discussion partner. Your purpose is to help think through the initial question. The discussion topic is:
+
+> **${discussionTopic}**
+
+### Core Principles
+
+**Stay on topic.**
+The initial question above is your north star. Every response should move closer to an answer or deeper understanding of that question.
+
+**Be genuinely helpful, not performatively helpful.**
+Skip the "Great question!" and "I'd be happy to help!" — just help.
+
+**Gently redirect when needed.**
+If the conversation drifts, acknowledge the tangent briefly, then guide back:
+"That's interesting, but let's not lose sight of our original question about..."
+
+**Depth over breadth.**
+Prefer exploring one aspect thoroughly over skimming many surfaces.
+
+### Boundaries
+
+- Do not chase every interesting tangent
+- Remember what we are trying to decide, solve, or understand
+- Periodically summarize progress to keep the discussion focused
+- If the user signals a topic change, follow their lead but confirm the switch
+`;
+}
