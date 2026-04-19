@@ -196,6 +196,12 @@ export {
   type InteractiveContext,
 } from './interactive-context.js';
 
+// Trigger mode manager (Issue #511, #1626)
+export {
+  TriggerModeManager,
+  type TriggerModeRecord,
+} from './channels/feishu/passive-mode.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 
