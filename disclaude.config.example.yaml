@@ -255,6 +255,23 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Project Templates Configuration (Issue #1916, #2227)
+# -----------------------------------------------------------------------------
+# Configure project templates for per-chatId Agent context switching.
+# Templates allow creating isolated workspaces with their own CLAUDE.md.
+#
+# Template discovery can also be done automatically from the package directory.
+# See docs/proposals/unified-project-context.md for details.
+#
+# projectTemplates:
+#   research:
+#     displayName: "研究模式"
+#     description: "专注研究的独立空间"
+#   book-reader:
+#     displayName: "读书助手"
+#     description: "辅助阅读和笔记"
+
 # =============================================================================
 # Notes
 # =============================================================================
