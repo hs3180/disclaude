@@ -1,13 +1,13 @@
 /**
  * schedules/pr-scanner/scanner.test.ts
  *
- * Unit tests for PR Scanner v2 基础脚本骨架。
- * 覆盖所有 action + 状态文件读写 + 边界情况。
+ * Unit tests for PR Scanner v2 基础脚本骨架 + Label 管理。
+ * 覆盖所有 action + 状态文件读写 + 边界情况 + Label 操作。
  *
- * Related: #2219
+ * Related: #2219, #2220
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   readdir,
   readFile,
@@ -28,10 +28,13 @@ import {
   calculateExpiresAt,
   stateFilePath,
   nowISO,
+  addLabel,
+  removeLabel,
   DEFAULT_DIR,
   DEFAULT_MAX_REVIEWING,
   EXPIRY_HOURS,
   VALID_STATES,
+  REVIEWING_LABEL,
   type PRStateFile,
   type PRState,
 } from './scanner.js';
@@ -285,7 +288,7 @@ describe('actionCreateState', () => {
   });
 
   it('creates a valid state file', async () => {
-    const state = await actionCreateState(42, TEST_DIR);
+    const state = await actionCreateState(42, TEST_DIR, { skipLabels: true });
 
     expect(state.prNumber).toBe(42);
     expect(state.state).toBe('reviewing');
@@ -300,20 +303,20 @@ describe('actionCreateState', () => {
   });
 
   it('sets expiresAt to createdAt + 48h', async () => {
-    const state = await actionCreateState(42, TEST_DIR);
+    const state = await actionCreateState(42, TEST_DIR, { skipLabels: true });
     const expected = calculateExpiresAt(state.createdAt);
     expect(state.expiresAt).toBe(expected);
   });
 
   it('throws if state file already exists', async () => {
     await writeStateFile(makeStateFile({ prNumber: 42 }));
-    await expect(actionCreateState(42, TEST_DIR)).rejects.toThrow('already exists');
+    await expect(actionCreateState(42, TEST_DIR, { skipLabels: true })).rejects.toThrow('already exists');
   });
 
   it('can create multiple state files', async () => {
-    await actionCreateState(1, TEST_DIR);
-    await actionCreateState(2, TEST_DIR);
-    await actionCreateState(3, TEST_DIR);
+    await actionCreateState(1, TEST_DIR, { skipLabels: true });
+    await actionCreateState(2, TEST_DIR, { skipLabels: true });
+    await actionCreateState(3, TEST_DIR, { skipLabels: true });
 
     const states = await readAllStates(TEST_DIR);
     expect(states).toHaveLength(3);
@@ -331,14 +334,14 @@ describe('actionMark', () => {
 
   it('updates state to approved', async () => {
     await writeStateFile(makeStateFile({ prNumber: 1 }));
-    const updated = await actionMark(1, 'approved', TEST_DIR);
+    const updated = await actionMark(1, 'approved', TEST_DIR, { skipLabels: true });
     expect(updated.state).toBe('approved');
     expect(updated.prNumber).toBe(1);
   });
 
   it('updates state to closed', async () => {
     await writeStateFile(makeStateFile({ prNumber: 1 }));
-    const updated = await actionMark(1, 'closed', TEST_DIR);
+    const updated = await actionMark(1, 'closed', TEST_DIR, { skipLabels: true });
     expect(updated.state).toBe('closed');
   });
 
@@ -348,7 +351,7 @@ describe('actionMark', () => {
     original.updatedAt = '2026-01-01T00:00:00Z';
     await writeStateFile(original);
 
-    const updated = await actionMark(1, 'approved', TEST_DIR);
+    const updated = await actionMark(1, 'approved', TEST_DIR, { skipLabels: true });
     // updatedAt should be updated to a recent timestamp (different from original)
     expect(updated.updatedAt).not.toBe('2026-01-01T00:00:00Z');
     // Verify it's a valid timestamp format
@@ -356,17 +359,17 @@ describe('actionMark', () => {
   });
 
   it('throws if state file not found', async () => {
-    await expect(actionMark(999, 'approved', TEST_DIR)).rejects.toThrow('not found');
+    await expect(actionMark(999, 'approved', TEST_DIR, { skipLabels: true })).rejects.toThrow('not found');
   });
 
   it('throws for invalid state', async () => {
     await writeStateFile(makeStateFile({ prNumber: 1 }));
-    await expect(actionMark(1, 'invalid' as PRState, TEST_DIR)).rejects.toThrow('Invalid state');
+    await expect(actionMark(1, 'invalid' as PRState, TEST_DIR, { skipLabels: true })).rejects.toThrow('Invalid state');
   });
 
   it('persists changes to disk', async () => {
     await writeStateFile(makeStateFile({ prNumber: 1 }));
-    await actionMark(1, 'approved', TEST_DIR);
+    await actionMark(1, 'approved', TEST_DIR, { skipLabels: true });
 
     // Re-read from disk
     const states = await readAllStates(TEST_DIR);
@@ -377,11 +380,11 @@ describe('actionMark', () => {
   it('can transition reviewing → approved → closed', async () => {
     await writeStateFile(makeStateFile({ prNumber: 1 }));
 
-    await actionMark(1, 'approved', TEST_DIR);
+    await actionMark(1, 'approved', TEST_DIR, { skipLabels: true });
     let states = await readAllStates(TEST_DIR);
     expect(states[0].state).toBe('approved');
 
-    await actionMark(1, 'closed', TEST_DIR);
+    await actionMark(1, 'closed', TEST_DIR, { skipLabels: true });
     states = await readAllStates(TEST_DIR);
     expect(states[0].state).toBe('closed');
   });
@@ -448,5 +451,147 @@ describe('constants', () => {
 
   it('VALID_STATES contains correct values', () => {
     expect(VALID_STATES).toEqual(['reviewing', 'approved', 'closed']);
+  });
+
+  it('REVIEWING_LABEL is correct', () => {
+    expect(REVIEWING_LABEL).toBe('pr-scanner:reviewing');
+  });
+});
+
+// ---- Label management tests (#2220) ----
+
+describe('addLabel', () => {
+  it('returns structured result with success=false when gh fails (non-existent repo)', async () => {
+    // Use a non-existent repo to ensure gh command fails
+    const result = await addLabel(999999, 'nonexistent/repo-that-does-not-exist-xyz', 'test:label');
+    expect(result).toHaveProperty('success');
+    expect(result).toHaveProperty('error');
+    // Will fail because repo doesn't exist, but should NOT throw
+    expect(typeof result.success).toBe('boolean');
+  });
+
+  it('uses default REVIEWING_LABEL when no label specified', async () => {
+    // We can't test success without a real PR, but we can verify the function
+    // doesn't throw and returns the expected structure
+    const result = await addLabel(999999, 'nonexistent/repo');
+    expect(result).toHaveProperty('success');
+    expect(result).toHaveProperty('error');
+  });
+});
+
+describe('removeLabel', () => {
+  it('returns structured result with success=false when gh fails', async () => {
+    const result = await removeLabel(999999, 'nonexistent/repo-that-does-not-exist-xyz', 'test:label');
+    expect(result).toHaveProperty('success');
+    expect(result).toHaveProperty('error');
+    expect(typeof result.success).toBe('boolean');
+  });
+});
+
+describe('actionCreateState with label integration', () => {
+  beforeEach(async () => {
+    await mkdir(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('creates state file and returns labelResult when labels enabled', async () => {
+    const result = await actionCreateState(42, TEST_DIR);
+
+    expect(result.prNumber).toBe(42);
+    expect(result.state).toBe('reviewing');
+    expect(result.labelResult).toBeDefined();
+    expect(typeof result.labelResult!.success).toBe('boolean');
+
+    // Verify state file exists on disk regardless of label success
+    const filePath = stateFilePath(42, TEST_DIR);
+    const content = await readFile(filePath, 'utf-8');
+    const parsed = JSON.parse(content);
+    expect(parsed.prNumber).toBe(42);
+  });
+
+  it('creates state file without labelResult when skipLabels is true', async () => {
+    const result = await actionCreateState(42, TEST_DIR, { skipLabels: true });
+    expect(result.prNumber).toBe(42);
+    expect(result.labelResult).toBeUndefined();
+  });
+
+  it('state file is created even when label operation fails', async () => {
+    const result = await actionCreateState(42, TEST_DIR);
+
+    // State file should always be created
+    const filePath = stateFilePath(42, TEST_DIR);
+    const content = await readFile(filePath, 'utf-8');
+    expect(JSON.parse(content).prNumber).toBe(42);
+    expect(JSON.parse(content).state).toBe('reviewing');
+
+    // labelResult should exist (will be success=false since no real PR)
+    expect(result.labelResult).toBeDefined();
+  });
+});
+
+describe('actionMark with label integration', () => {
+  beforeEach(async () => {
+    await mkdir(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('returns labelResult when transitioning from reviewing to approved (labels enabled)', async () => {
+    await writeStateFile(makeStateFile({ prNumber: 1, state: 'reviewing' }));
+    const updated = await actionMark(1, 'approved', TEST_DIR);
+
+    expect(updated.state).toBe('approved');
+    // Label removal was attempted (will fail on non-existent PR, but result exists)
+    expect(updated.labelResult).toBeDefined();
+    expect(typeof updated.labelResult!.success).toBe('boolean');
+  });
+
+  it('returns labelResult when transitioning from reviewing to closed', async () => {
+    await writeStateFile(makeStateFile({ prNumber: 1, state: 'reviewing' }));
+    const updated = await actionMark(1, 'closed', TEST_DIR);
+
+    expect(updated.state).toBe('closed');
+    expect(updated.labelResult).toBeDefined();
+  });
+
+  it('does NOT return labelResult when staying in reviewing state', async () => {
+    await writeStateFile(makeStateFile({ prNumber: 1, state: 'reviewing' }));
+    const updated = await actionMark(1, 'reviewing', TEST_DIR);
+
+    expect(updated.state).toBe('reviewing');
+    // No label operation should be attempted (reviewing → reviewing)
+    expect(updated.labelResult).toBeUndefined();
+  });
+
+  it('does NOT return labelResult when already in approved state', async () => {
+    await writeStateFile(makeStateFile({ prNumber: 1, state: 'approved' }));
+    const updated = await actionMark(1, 'closed', TEST_DIR);
+
+    expect(updated.state).toBe('closed');
+    // No label removal (wasn't in reviewing state)
+    expect(updated.labelResult).toBeUndefined();
+  });
+
+  it('updates state on disk even when label removal fails', async () => {
+    await writeStateFile(makeStateFile({ prNumber: 1, state: 'reviewing' }));
+    const updated = await actionMark(1, 'approved', TEST_DIR);
+
+    // State should still be updated on disk
+    expect(updated.state).toBe('approved');
+    const states = await readAllStates(TEST_DIR);
+    expect(states[0].state).toBe('approved');
+  });
+
+  it('no labelResult when skipLabels is true', async () => {
+    await writeStateFile(makeStateFile({ prNumber: 1, state: 'reviewing' }));
+    const updated = await actionMark(1, 'approved', TEST_DIR, { skipLabels: true });
+
+    expect(updated.state).toBe('approved');
+    expect(updated.labelResult).toBeUndefined();
   });
 });

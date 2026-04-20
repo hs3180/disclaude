@@ -10,9 +10,11 @@
  *   npx tsx scanner.ts --action list-candidates --repo hs3180/disclaude
  *   npx tsx scanner.ts --action create-state --pr 123
  *   npx tsx scanner.ts --action mark --pr 123 --state approved
+ *   npx tsx scanner.ts --action add-label --pr 123
+ *   npx tsx scanner.ts --action remove-label --pr 123
  *   npx tsx scanner.ts --action status
  *
- * Related: #2219
+ * Related: #2219, #2220
  */
 
 import { readdir, readFile, writeFile, mkdir, rename } from 'node:fs/promises';
@@ -49,6 +51,9 @@ export const EXPIRY_HOURS = 48;
 
 /** Valid state transitions */
 export const VALID_STATES: PRState[] = ['reviewing', 'approved', 'closed'];
+
+/** GitHub Label applied to PRs under review */
+export const REVIEWING_LABEL = 'pr-scanner:reviewing';
 
 // ---- Helpers ----
 
@@ -231,13 +236,15 @@ export async function actionListCandidates(
 }
 
 /**
- * create-state: Write a new state file for a PR
- * Returns JSON: the created state file content
+ * create-state: Write a new state file for a PR and optionally add the reviewing label.
+ * Returns JSON: the created state file content + optional label result.
+ * Label failure does NOT block state file creation.
  */
 export async function actionCreateState(
   prNumber: number,
   dir?: string,
-): Promise<PRStateFile> {
+  options?: { skipLabels?: boolean },
+): Promise<PRStateFile & { labelResult?: { success: boolean; error?: string } }> {
   const actualDir = dir ?? getDir();
   const filePath = stateFilePath(prNumber, actualDir);
 
@@ -265,19 +272,29 @@ export async function actionCreateState(
 
   await atomicWrite(filePath, JSON.stringify(state, null, 2) + '\n');
 
-  console.log(JSON.stringify(state, null, 2));
-  return state;
+  // Add reviewing label (non-blocking, skip in tests or when --no-labels flag is set)
+  let labelResult: { success: boolean; error?: string } | undefined;
+  if (!options?.skipLabels) {
+    labelResult = await addLabel(prNumber, getRepo());
+  }
+
+  const result = { ...state, labelResult };
+  console.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 /**
- * mark: Update the state field of an existing state file
- * Returns JSON: the updated state file content
+ * mark: Update the state field of an existing state file.
+ * When transitioning away from 'reviewing', optionally removes the reviewing label.
+ * Label failure does NOT block state update.
+ * Returns JSON: the updated state file content + optional label result.
  */
 export async function actionMark(
   prNumber: number,
   newState: PRState,
   dir?: string,
-): Promise<PRStateFile> {
+  options?: { skipLabels?: boolean },
+): Promise<PRStateFile & { labelResult?: { success: boolean; error?: string } }> {
   if (!VALID_STATES.includes(newState)) {
     throw new Error(`Invalid state '${newState}'. Must be one of: ${VALID_STATES.join(', ')}`);
   }
@@ -305,8 +322,15 @@ export async function actionMark(
 
   await atomicWrite(filePath, JSON.stringify(updated, null, 2) + '\n');
 
-  console.log(JSON.stringify(updated, null, 2));
-  return updated;
+  // Remove reviewing label when leaving reviewing state (non-blocking)
+  let labelResult: { success: boolean; error?: string } | undefined;
+  if (!options?.skipLabels && existing.state === 'reviewing' && newState !== 'reviewing') {
+    labelResult = await removeLabel(prNumber, getRepo());
+  }
+
+  const result = { ...updated, labelResult };
+  console.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 /**
@@ -349,6 +373,58 @@ export async function actionStatus(dir?: string): Promise<string> {
   return result;
 }
 
+// ---- Label operations (Sub-Issue B / #2220) ----
+
+/**
+ * addLabel: Add the reviewing label to a PR via `gh pr edit`.
+ * Label failure does NOT throw — it logs a warning and returns success=false.
+ */
+export async function addLabel(
+  prNumber: number,
+  repo: string = getRepo(),
+  label: string = REVIEWING_LABEL,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await execFileAsync('gh', [
+      'pr', 'edit', String(prNumber),
+      '--repo', repo,
+      '--add-label', label,
+    ], { timeout: 15000 });
+    console.log(JSON.stringify({ success: true, prNumber, label, action: 'added' }));
+    return { success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`WARN: Failed to add label '${label}' to PR #${prNumber}: ${msg}`);
+    console.log(JSON.stringify({ success: false, prNumber, label, error: msg }));
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * removeLabel: Remove the reviewing label from a PR via `gh pr edit`.
+ * Label failure does NOT throw — it logs a warning and returns success=false.
+ */
+export async function removeLabel(
+  prNumber: number,
+  repo: string = getRepo(),
+  label: string = REVIEWING_LABEL,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await execFileAsync('gh', [
+      'pr', 'edit', String(prNumber),
+      '--repo', repo,
+      '--remove-label', label,
+    ], { timeout: 15000 });
+    console.log(JSON.stringify({ success: true, prNumber, label, action: 'removed' }));
+    return { success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`WARN: Failed to remove label '${label}' from PR #${prNumber}: ${msg}`);
+    console.log(JSON.stringify({ success: false, prNumber, label, error: msg }));
+    return { success: false, error: msg };
+  }
+}
+
 // ---- CLI ----
 
 function parseArgs(argv: string[]): Record<string, string> {
@@ -373,13 +449,15 @@ async function main(): Promise<void> {
   const action = args.action;
 
   if (!action) {
-    console.error('Usage: scanner.ts --action <check-capacity|list-candidates|create-state|mark|status> [options]');
+    console.error('Usage: scanner.ts --action <check-capacity|list-candidates|create-state|mark|add-label|remove-label|status> [options]');
     console.error('');
     console.error('Actions:');
     console.error('  check-capacity         Check reviewing capacity');
     console.error('  list-candidates        List untracked open PRs');
-    console.error('  create-state --pr N    Create state file for PR #N');
-    console.error('  mark --pr N --state S  Update state for PR #N');
+    console.error('  create-state --pr N    Create state file for PR #N (+ add reviewing label)');
+    console.error('  mark --pr N --state S  Update state for PR #N (+ remove label if leaving reviewing)');
+    console.error('  add-label --pr N       Add reviewing label to PR #N');
+    console.error('  remove-label --pr N    Remove reviewing label from PR #N');
     console.error('  status                 Show all tracked PRs');
     process.exit(1);
   }
@@ -433,9 +511,37 @@ async function main(): Promise<void> {
       await actionStatus();
       break;
 
+    case 'add-label': {
+      if (!args.pr) {
+        console.error('ERROR: --pr is required for add-label action');
+        process.exit(1);
+      }
+      const prNumber = parseInt(args.pr, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) {
+        console.error(`ERROR: Invalid PR number: ${args.pr}`);
+        process.exit(1);
+      }
+      await addLabel(prNumber, args.repo, args.label);
+      break;
+    }
+
+    case 'remove-label': {
+      if (!args.pr) {
+        console.error('ERROR: --pr is required for remove-label action');
+        process.exit(1);
+      }
+      const prNumber = parseInt(args.pr, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) {
+        console.error(`ERROR: Invalid PR number: ${args.pr}`);
+        process.exit(1);
+      }
+      await removeLabel(prNumber, args.repo, args.label);
+      break;
+    }
+
     default:
       console.error(`ERROR: Unknown action '${action}'`);
-      console.error('Valid actions: check-capacity, list-candidates, create-state, mark, status');
+      console.error('Valid actions: check-capacity, list-candidates, create-state, mark, add-label, remove-label, status');
       process.exit(1);
   }
 }
