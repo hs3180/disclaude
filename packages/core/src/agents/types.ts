@@ -221,7 +221,7 @@ export function isDisposable(obj: unknown): obj is Disposable {
 /**
  * API provider type.
  */
-export type AgentProvider = 'anthropic' | 'glm';
+export type AgentProvider = 'anthropic' | 'glm' | 'openai';
 
 /**
  * Base configuration for all agents.
@@ -300,7 +300,7 @@ export interface AgentRuntimeContext {
   /** Get the workspace directory path */
   getWorkspaceDir(): string;
   /** Get agent configuration (API key, model, provider) */
-  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider };
+  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: 'anthropic' | 'glm' | 'openai' };
   /** Get logging configuration */
   getLoggingConfig(): { sdkDebug: boolean };
   /** Get global environment variables */

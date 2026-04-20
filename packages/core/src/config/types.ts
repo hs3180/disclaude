@@ -25,8 +25,8 @@ export interface WorkspaceConfig {
  * This avoids confusion about which model takes precedence.
  */
 export interface AgentConfig {
-  /** API provider preference (anthropic, glm) */
-  provider?: 'anthropic' | 'glm';
+  /** API provider preference (anthropic, glm, openai) */
+  provider?: 'anthropic' | 'glm' | 'openai';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -83,6 +83,38 @@ export interface GlmConfig {
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
+}
+
+/**
+ * OpenAI API configuration section (Issue #1333).
+ *
+ * When using OpenAI provider via ACP protocol, apiKey is REQUIRED.
+ * The OpenAI Agent ACP server is spawned as a subprocess communicating
+ * over JSON-RPC 2.0 via stdio, using the same ACP protocol as Claude.
+ *
+ * @example disclaude.config.yaml
+ * ```yaml
+ * agent:
+ *   provider: openai
+ * openai:
+ *   apiKey: sk-...
+ *   model: gpt-4o
+ * ```
+ */
+export interface OpenAiConfig {
+  /** API key (overrides OPENAI_API_KEY env var) */
+  apiKey?: string;
+  /** Model identifier (default: gpt-4o) */
+  model?: string;
+  /** API base URL (overrides OPENAI_BASE_URL env var) */
+  apiBaseUrl?: string;
+  /**
+   * ACP Agent command for spawning the OpenAI Agent subprocess.
+   * When set, skips auto-detection and uses this command directly.
+   * @example 'python -m openai_agents --acp', '/usr/local/bin/openai-agent-acp'
+   * @see Issue #1333
+   */
+  acpCommand?: string;
 }
 
 /**
@@ -332,6 +364,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** OpenAI API settings (Issue #1333) */
+  openai?: OpenAiConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */
