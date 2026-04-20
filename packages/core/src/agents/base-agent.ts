@@ -21,7 +21,8 @@ import {
   type AgentQueryOptions,
 } from '../sdk/index.js';
 import { createLogger, type Logger } from '../utils/logger.js';
-import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
+import { getRuntimeContext, hasRuntimeContext } from './runtime-context.js';
+import { type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
 
 // Extracted modules (Issue #2345 Phase 2)

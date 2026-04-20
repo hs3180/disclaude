@@ -25,7 +25,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
-import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
+import { type AgentRuntimeContext, setRuntimeContext } from '../agents/runtime-context.js';
 import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
 
 // Re-export sub-modules

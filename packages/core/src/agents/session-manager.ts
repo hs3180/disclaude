@@ -192,6 +192,3 @@ export class SessionManager {
     this.logger.info('All sessions closed');
   }
 }
-
-// Backward compatibility alias (deprecated — use ChatAgentSession)
-export type PilotSession = ChatAgentSession;

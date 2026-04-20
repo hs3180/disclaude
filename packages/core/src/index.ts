@@ -72,20 +72,22 @@ export {
   // Type guards
   isChatAgent,
   isDisposable,
-  // Runtime context
+} from './agents/types.js';
+
+// Runtime context (Issue #2345 Phase 4: extracted to own module)
+export {
   type AgentRuntimeContext,
   setRuntimeContext,
   getRuntimeContext,
   hasRuntimeContext,
   clearRuntimeContext,
-} from './agents/types.js';
+} from './agents/runtime-context.js';
 
 // Message channel
 export { MessageChannel } from './agents/message-channel.js';
 
 // Session management
 export {
-  type PilotSession,
   type ChatAgentSession,
   type SessionManagerConfig,
   SessionManager,

@@ -9,14 +9,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   isChatAgent,
   isDisposable,
+  type ChatAgent,
+  type Disposable,
+} from './types.js';
+import {
   setRuntimeContext,
   getRuntimeContext,
   hasRuntimeContext,
   clearRuntimeContext,
-  type ChatAgent,
-  type Disposable,
   type AgentRuntimeContext,
-} from './types.js';
+} from './runtime-context.js';
 
 describe('Type Guards', () => {
   describe('isChatAgent', () => {

@@ -7,18 +7,9 @@
  * - Circuit breaker to pause processing after repeated failures
  *
  * Architecture:
- * ```
- * ChatAgent.processIterator() error
- *         ↓
- * RestartManager.shouldRestart()
- *         ↓
- * ┌───────┴───────┐
- * │ Allow restart │ → wait(backoff) → restart
- * │ Block restart │ → circuit open, stop processing
- * └───────────────┘
- * ```
- *
- * @module agents/restart-manager
+ * ChatAgent.processIterator() error → RestartManager.shouldRestart()
+ *   → Allow: wait(backoff) → restart
+ *   → Block: circuit open, stop processing
  */
 
 import type { Logger } from '../utils/logger.js';

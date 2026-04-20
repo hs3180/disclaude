@@ -7,7 +7,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseAgent, type SdkOptionsExtra, type IteratorYieldResult, type QueryStreamResult } from './base-agent.js';
-import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './types.js';
+import { setRuntimeContext, clearRuntimeContext } from './runtime-context.js';
+import { type BaseAgentConfig } from './types.js';
 import type { AgentMessage, StreamingUserMessage } from '../sdk/index.js';
 
 // ============================================================================
