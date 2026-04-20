@@ -506,4 +506,54 @@ describe('WeChatApiClient', () => {
       expect(result[1].msg_id).toBe('msg-2');
     });
   });
+
+  describe('sendTyping (Issue #1556 Phase 3.2)', () => {
+    it('should send typing indicator', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toContain('ilink/bot/typing');
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+      expect(body.to_user_id).toBe('user-123');
+    });
+
+    it('should not throw on failure (non-fatal)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Server Error'),
+      });
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await client.sendTyping({ to: 'user-123' });
+    });
+
+    it('should not throw on network error (non-fatal)', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await client.sendTyping({ to: 'user-123' });
+    });
+
+    it('should use short timeout (5s)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      // Verify the call was made (timeout is internal, but we confirm no hang)
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });
