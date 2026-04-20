@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,54 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no runtime env vars are provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+  });
+
+  it('should return empty string when empty object is provided', () => {
+    expect(buildRuntimeEnvGuidance({})).toBe('');
+  });
+
+  it('should include Runtime Environment section heading', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123' });
+    expect(result).toContain('Runtime Environment');
+  });
+
+  it('should list runtime env vars with keys and values', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123', SOME_VAR: 'hello' });
+    expect(result).toContain('`GH_TOKEN`');
+    expect(result).toContain('`SOME_VAR`');
+    expect(result).toContain('hello');
+  });
+
+  it('should mask sensitive values (tokens, keys, secrets)', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123def456', AWS_SECRET_KEY: 'secret_value' });
+    expect(result).toContain('...');
+    expect(result).not.toContain('ghs_abc123def456');
+    expect(result).not.toContain('secret_value');
+    expect(result).toContain('chars)');
+  });
+
+  it('should show non-sensitive values in full', () => {
+    const result = buildRuntimeEnvGuidance({ MODE: 'production', REGION: 'us-east-1' });
+    expect(result).toContain('production');
+    expect(result).toContain('us-east-1');
+    expect(result).not.toContain('...');
+  });
+
+  it('should include descriptions for well-known variables', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_xxx' });
+    expect(result).toContain('GitHub personal access token');
+  });
+
+  it('should include usage notes about .runtime-env file', () => {
+    const result = buildRuntimeEnvGuidance({ KEY: 'value' });
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('process.env');
   });
 });

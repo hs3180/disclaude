@@ -8,7 +8,7 @@
  * RestartManager, MessageBuilder.
  */
 
-import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, loadRuntimeEnv, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { ChatHistoryLoader } from './chat-history-loader.js';
 import { AgentLoopManager } from './agent-loop-manager.js';
@@ -89,6 +89,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       const capabilities = this.callbacks.getCapabilities?.(chatId);
       const enhancedContent = this.messageBuilder.buildEnhancedContent({
         text: userInput.content, messageId, senderOpenId,
+        runtimeEnvVars: loadRuntimeEnv(Config.getWorkspaceDir()),
       }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
@@ -151,6 +152,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const capabilities = this.callbacks.getCapabilities?.(chatId);
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId: messageId ?? `cli-${Date.now()}`, senderOpenId,
+      runtimeEnvVars: loadRuntimeEnv(Config.getWorkspaceDir()),
     }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
@@ -216,6 +218,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       text, messageId, senderOpenId, attachments,
       chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.historyLoader.getPersistedContext(),
+      runtimeEnvVars: loadRuntimeEnv(Config.getWorkspaceDir()),
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

@@ -218,3 +218,60 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Well-known runtime environment variables and their descriptions.
+ *
+ * Issue #1371: Provides human-readable descriptions for common
+ * runtime-env keys so agents understand their purpose.
+ */
+const RUNTIME_ENV_DESCRIPTIONS: Record<string, string> = {
+  GH_TOKEN: 'GitHub personal access token for API operations',
+  GH_TOKEN_EXPIRES_AT: 'ISO timestamp when the GitHub token expires',
+  CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 'Flag enabling experimental agent teams mode',
+};
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Informs the agent about available runtime environment
+ * variables that are shared between processes via `.runtime-env` file.
+ * This allows the agent to be aware of cross-process state (e.g.,
+ * GitHub tokens) without needing direct access to the main process.
+ *
+ * @param runtimeEnvVars - Current runtime environment variables, or undefined to skip
+ * @returns Formatted runtime env guidance section, or empty string if no vars
+ */
+export function buildRuntimeEnvGuidance(runtimeEnvVars?: Record<string, string>): string {
+  if (!runtimeEnvVars || Object.keys(runtimeEnvVars).length === 0) {
+    return '';
+  }
+
+  const varList = Object.entries(runtimeEnvVars)
+    .map(([key, value]) => {
+      const description = RUNTIME_ENV_DESCRIPTIONS[key];
+      // Mask sensitive values (tokens, keys, secrets)
+      const isSensitive = /token|key|secret|password|credential/i.test(key);
+      const displayValue = isSensitive
+        ? `${value.slice(0, 6)}... (${value.length} chars)`
+        : value;
+      const descLine = description ? ` — ${description}` : '';
+      return `- \`${key}\` = \`${displayValue}\`${descLine}`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment
+
+The following environment variables are available via the shared runtime environment (\`.runtime-env\`). These are set by the system or other processes and can be used for cross-process coordination:
+
+${varList}
+
+**Usage notes:**
+- These variables are read from \`{workspace}/.runtime-env\` and merged into your subprocess environment
+- You can read them via standard environment variable access (e.g., \`process.env.GH_TOKEN\`)
+- Sensitive values are masked above for display purposes, but the full values are available in your environment`;
+}
