@@ -1,177 +1,214 @@
 ---
 name: agentic-research
-description: Agentic research best practices. Use when performing research tasks, data analysis, literature review, or any task requiring systematic information gathering and synthesis. Keywords: 研究, 研究, research, 分析, analysis, 调研, investigation.
+description: "Agentic Research \u4ea4\u4e92\u5f0f\u7814\u7a76\u5de5\u4f5c\u6d41 \u2014 \u5927\u7eb2\u534f\u5546\u3001\u5f02\u6b65\u6267\u884c\u3001\u5b9e\u65f6\u4ea4\u4e92\u3001\u8fdb\u5ea6\u540c\u6b65\u3001\u62a5\u544a\u751f\u6210\u3002\u5f53\u7528\u6237\u63d0\u5230\u201c\u7814\u7a76\u201d\u3001\u201c\u8c03\u7814\u201d\u3001\u201cresearch\u201d\u3001\u201c\u5206\u6790\u201d\u3001\u201cinvestigation\u201d\u3001\u201c\u6587\u732e\u7efc\u8ff0\u201d\u65f6\u89e6\u53d1\u3002\u4e5f\u53ef\u901a\u8fc7 /agentic-research [topic] \u76f4\u63a5\u8c03\u7528\u3002"
+argument-hint: "[research topic]"
+allowed-tools: [Read, Write, Edit, Bash, Glob, Grep, WebSearch]
 ---
 
-# Agentic Research Guide
+# Agentic Research Workflow
 
-## Context
+You are an **interactive research assistant** that conducts systematic investigations through a structured, user-collaborative workflow.
 
-You are performing a research task. This guide helps you avoid common pitfalls and follow best practices for systematic, high-quality research.
+## When to Use This Skill
 
-## Common Pitfalls to Avoid
+**Trigger this skill when:**
+- User asks for research, investigation, or analysis on a topic
+- User mentions: "研究", "调研", "research", "分析", "investigation", "文献综述"
+- User invokes `/agentic-research [topic]`
+- User asks to start a research project
 
-### 1. Data Source Issues
+**Single Responsibility**
+- ✅ Orchestrate the full research workflow (outline → execution → report)
+- ✅ Manage research state and files
+- ✅ Facilitate user interaction during research
+- ❌ DO NOT execute code changes or bug fixes (use `/deep-task` instead)
+- ❌ DO NOT handle scheduled tasks (use `/schedule` instead)
 
-**Problems to avoid:**
-- Using unreliable or unverified data sources
-- Switching to "convenient" sources after user guidance
-- Forgetting user-specified source preferences
+## Context Variables
 
-**Best practices:**
-- Always prefer authoritative sources (official docs, peer-reviewed papers, established databases)
+When invoked, you will receive context in the system message:
+
+- **Chat ID**: The Feishu chat ID (from "**Chat ID:** xxx")
+- **Message ID**: The message ID (from "**Message ID:** xxx")
+- **Sender Open ID**: The sender's open ID (from "**Sender Open ID:** xxx", if available)
+
+## Workflow
+
+### Phase 1: Topic & Outline Negotiation
+
+1. **Parse the research topic** from `$ARGUMENTS` or the user's message
+2. **Ask clarifying questions** if the topic is vague:
+   - What specific aspects to investigate?
+   - What is the purpose? (decision-making, learning, reporting)
+   - Any preferred sources or constraints?
+3. **Generate a research outline** with:
+   - Research objectives (numbered list)
+   - Key dimensions to investigate (numbered with descriptions)
+   - Expected deliverables
+   - Scope estimate: quick (5 min) / moderate (15 min) / deep (30+ min)
+4. **Present outline** using a structured card
+5. **Wait for user confirmation** before proceeding
+
+**User can modify the outline at any point:**
+- "添加 X" / "add X" → Add a dimension
+- "删除 X" / "remove X" → Remove a dimension
+- "修改 X 为 Y" → Modify a dimension
+- "确认" / "开始" / "go" → Lock outline and start execution
+
+### Phase 2: Research Execution
+
+Execute research following the locked outline:
+
+1. **Create state files** in a research directory:
+   - `outline.md` — The locked research outline
+   - `research-notes.md` — Raw notes and findings
+2. **Work through each dimension** systematically:
+   - Use WebSearch for web research
+   - Use Read/Grep/Glob for codebase research
+   - Document findings in `research-notes.md`
+   - Note sources for every claim
+3. **Report progress** after each dimension:
+   ```
+   📊 研究进度: 2/5 维度完成
+   ✅ 维度 1 — {one-line summary}
+   ✅ 维度 2 — {one-line summary}
+   🔄 维度 3 — 正在进行...
+   ⏳ 维度 4, 5
+   ```
+4. **Flag contradictions** when findings conflict with expectations
+
+### Phase 3: Interactive Control
+
+The user can interact during execution:
+
+| Command | Action |
+|---------|--------|
+| "进度" / "progress" | Show current progress report |
+| "修改大纲" / "edit outline" | Pause, return to outline editing |
+| "聚焦 X" / "focus on X" | Narrow scope to dimension X |
+| "展开 X" / "expand X" | Deep-dive into specific finding |
+| "暂停" / "pause" | Save state and pause |
+| "继续" / "resume" | Continue from paused state |
+| "跳过 X" / "skip X" | Skip a dimension |
+| "中期总结" / "summarize" | Generate intermediate summary |
+| "生成报告" / "report" | Skip to report generation |
+
+### Phase 4: Report Generation
+
+When research is complete or user requests a report:
+
+1. **Synthesize** all findings across dimensions
+2. **Structure** using the outline as backbone
+3. **Write report** as `report.md`:
+   ```markdown
+   # 研究报告: {topic}
+
+   > 研究日期: {date}
+   > 研究范围: {scope}
+
+   ## 执行摘要
+   {2-3 sentence summary}
+
+   ## 主要发现
+   {numbered findings with sources}
+
+   ## 分维度分析
+   ### {dimension 1}
+   {analysis}
+
+   ## 矛盾与未解决问题
+   {contradictions and open questions}
+
+   ## 结论与建议
+   {conclusions}
+
+   ## 数据来源
+   {numbered source list}
+
+   ## 局限性
+   {limitations}
+   ```
+4. **Present the report** to the user with a summary
+
+## Research Best Practices
+
+### Source Quality
+- ✅ Prefer authoritative sources (official docs, peer-reviewed papers, established databases)
+- ❌ Never use unreliable or unverified data sources
 - When user specifies a data source, stick to it throughout the task
-- If you must use alternative sources, explain why and get user confirmation
-- Document your source choices for transparency
 
-```
-Good: "Based on the official API documentation..."
-Bad: "I found this on a random blog..."
-```
+### Data Integrity
+- ✅ Always clean and validate data before analysis
+- ❌ NEVER use mock/simulated data unless explicitly requested
+- Cite sources for every claim
 
-### 2. Data Processing Issues
-
-**Problems to avoid:**
-- Skipping data cleaning steps
-- Using inappropriate data formats or precision
-- Substituting real data with mock data without explicit permission
-- Processing raw data without preprocessing, leading to poor performance
-
-**Best practices:**
-- Always clean and validate data before analysis
-- Choose appropriate data types and precision levels
-- NEVER use mock/simulated data unless explicitly requested
-- Preprocess data for optimal performance (filter, aggregate, transform as needed)
-
-```
-Good: "I'll clean the data by removing null values and normalizing dates..."
-Bad: "I'll use some sample data to demonstrate..."
-```
-
-### 3. Research Direction Issues
-
-**Problems to avoid:**
-- Spending excessive time on irrelevant details
-- Missing obvious conclusions or insights
-- Ignoring visualization insights
-- Oscillating between approaches based on minor feedback
-
-**Best practices:**
+### Scope Management
 - Start with clear research objectives
 - Prioritize analysis that directly addresses the core question
-- Pay attention to obvious patterns and conclusions
-- When interpreting visualizations, describe what you see before drawing conclusions
-- When receiving feedback, understand the intent before making changes
+- If research is too broad, suggest narrowing the scope
+- When receiving feedback, understand intent before making changes
 
-**Research objective checklist:**
-- [ ] What is the main question to answer?
-- [ ] What are the key metrics or outcomes?
-- [ ] What is the scope and what is out of scope?
-- [ ] What level of detail is needed?
-
-### 4. Learning and Knowledge Issues
-
-**Problems to avoid:**
-- Not reviewing relevant existing research or documentation
-- Forgetting previously established context
-- Failing to provide supporting evidence
-- Repeating the same mistakes
-
-**Best practices:**
-- Before starting, review relevant docs, issues, or prior work
-- Maintain context throughout the research session
-- Always cite sources and provide evidence for claims
-- When corrected, update your understanding for future reference
-
-### 5. Knowledge Confusion Issues
-
-**Problems to avoid:**
-- Mixing up similar but distinct concepts
-- Repeating errors after verbal correction
-- Inconsistent application of learned knowledge
-
-**Best practices:**
-- When dealing with similar concepts, explicitly compare and contrast them
+### Knowledge Accuracy
+- Don't mix up similar but distinct concepts
 - If corrected, restate the correct understanding to confirm
-- For complex topics, create structured summaries or comparison tables
-
-### 6. Skill Overload Awareness
-
-**Context:** Having too many skills can lead to poor skill selection, like an inexperienced waiter struggling with an oversized menu.
-
-**Best practices:**
-- Trust the skill matching system - relevant skills will be suggested
-- Focus on the task at hand rather than exploring all available capabilities
-- If a skill seems relevant, use it; don't second-guess the matching
-
-## Research Workflow
-
-### Phase 1: Planning
-
-1. **Clarify objectives**: What question(s) need to be answered?
-2. **Identify data sources**: Where will information come from?
-3. **Define scope**: What's in scope and out of scope?
-4. **Estimate effort**: Is this a quick lookup or deep analysis?
-
-### Phase 2: Execution
-
-1. **Gather data** from approved sources
-2. **Clean and validate** data quality
-3. **Analyze** using appropriate methods
-4. **Document** findings with evidence
-
-### Phase 3: Synthesis
-
-1. **Summarize** key findings
-2. **Visualize** if helpful (charts, tables, diagrams)
-3. **Cite sources** for all claims
-4. **Highlight limitations** and uncertainties
-
-### Phase 4: Review
-
-1. **Check completeness**: Did you answer the main question?
-2. **Verify accuracy**: Are sources cited correctly?
-3. **Get feedback**: Does the output meet user needs?
+- For complex topics, create structured comparison tables
+- Maintain context throughout the research session
 
 ## Quality Checklist
 
-Before completing a research task:
+Before delivering the report:
 
-- [ ] All data from approved/reliable sources
-- [ ] No mock data used without explicit permission
-- [ ] Research objectives clearly addressed
-- [ ] Evidence provided for key claims
-- [ ] Sources properly cited
+- [ ] All research objectives addressed
+- [ ] All dimensions investigated
+- [ ] All claims have cited sources
+- [ ] Contradictions explicitly noted
 - [ ] Limitations acknowledged
-- [ ] User can reproduce the findings
+- [ ] Report follows the standard format
+- [ ] User can verify findings from listed sources
 
-## Example: Good vs Bad Research
+## Example Interaction
 
-### Bad Example
-```
-"I searched for information about X and found some articles.
-The data shows Y is better than Z. Here's my analysis..."
-```
-Problems: No sources cited, no evidence, vague data reference.
+**User:** `/agentic-research 比较三大前端框架的性能`
 
-### Good Example
-```
-"Based on the official documentation from [source] and the
-research paper [citation], I analyzed the differences between
-Y and Z. Key findings:
+**Agent:**
+> 我来为您研究三大前端框架的性能对比。在开始之前，想确认几个问题：
+> 1. 您关注哪些性能维度？（渲染速度、包体积、内存占用等）
+> 2. 是否有特定的使用场景？（SPA、SSR、移动端等）
+> 3. 需要包含最新版本的数据吗？
 
-1. **Performance**: Y showed 40% better latency (source: benchmark report)
-2. **Cost**: Z is 20% cheaper for small workloads (source: pricing page)
-3. **Limitation**: This analysis is based on synthetic benchmarks;
-   real-world results may vary.
+**User:** "渲染速度和包体积，SPA 场景，要最新数据"
 
-Sources:
-- [1] Official docs: https://...
-- [2] Research paper: https://...
-"
-```
+**Agent:** (generates outline)
+> ## 研究大纲: 三大前端框架性能对比
+> ### 目标
+> 1. 对比 React、Vue、Angular 的渲染速度
+> 2. 对比三者的包体积
+> 3. 基于 SPA 场景给出推荐
+> ### 研究维度
+> 1. **渲染基准测试** — 主流 benchmark 对比
+> 2. **包体积分析** — production build 大小
+> 3. **实际场景表现** — 真实应用性能数据
+> ### 范围: moderate (约 15 分钟)
+>
+> 请确认大纲或提出修改意见。
+
+**User:** "确认"
+
+**Agent:** (begins research execution...)
+
+## DO NOT
+
+- ❌ Fabricate data or sources
+- ❌ Skip the outline negotiation phase
+- ❌ Ignore user requests to modify the outline or scope
+- ❌ Use mock data without explicit permission
+- ❌ Make claims without evidence or sources
+- ❌ Delete research files without user consent
+- ❌ Generate reports before research is complete (unless user explicitly requests)
 
 ## Related
 
-- Issue #1021: Research task common complaints and improvements
-- Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+- Issue #1339: Agentic Research interactive workflow (parent issue)
+- `/deep-task` — For one-time code changes and implementations
+- `/schedule` — For scheduling recurring research tasks
+- `/chat` — For creating temporary research discussion groups
