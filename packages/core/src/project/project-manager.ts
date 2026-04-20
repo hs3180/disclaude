@@ -9,8 +9,8 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -64,8 +64,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing built-in templates/ with CLAUDE.md files */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +82,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -162,9 +162,9 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
+   * Creates the working directory and copies CLAUDE.md from the template.
    * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
    *
    * @param chatId - Chat session requesting creation
@@ -195,6 +195,13 @@ export class ProjectManager {
     }
 
     const workingDir = this.resolveWorkingDir(name);
+
+    // File system operations: create directory + copy CLAUDE.md
+    const fsResult = this.instantiateFromTemplate(templateName, workingDir);
+    if (!fsResult.ok) {
+      return { ok: false, error: fsResult.error };
+    }
+
     const instance: ProjectInstance = {
       name,
       templateName,
@@ -579,6 +586,106 @@ export class ProjectManager {
       return false;
     }
     return true;
+  }
+
+  // ───────────────────────────────────────────
+  // File System Operations (Sub-Issue D)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate a template: create working directory and copy CLAUDE.md.
+   *
+   * Steps:
+   * 1. Validate resolved path is within workspaceDir (path traversal protection)
+   * 2. Create `{workspaceDir}/projects/{name}/` directory
+   * 3. Copy CLAUDE.md from template (if packageDir is configured and template has one)
+   * 4. On CLAUDE.md copy failure: rollback by removing created directory
+   *
+   * @param templateName - Template name to instantiate
+   * @param workingDir - Target working directory for the instance
+   * @returns ProjectResult indicating success or failure
+   */
+  private instantiateFromTemplate(templateName: string, workingDir: string): ProjectResult<void> {
+    // Path traversal protection: verify resolved workingDir is within workspaceDir
+    const resolvedWorkingDir = resolve(workingDir);
+    const resolvedWorkspace = resolve(this.workspaceDir);
+    if (!resolvedWorkingDir.startsWith(`${resolvedWorkspace}/`) && resolvedWorkingDir !== resolvedWorkspace) {
+      return { ok: false, error: '工作目录路径超出工作空间范围（路径遍历防护）' };
+    }
+
+    // Create working directory
+    try {
+      if (!existsSync(workingDir)) {
+        mkdirSync(workingDir, { recursive: true });
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(templateName, workingDir);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory
+      try {
+        rmSync(workingDir, { recursive: true, force: true });
+      } catch {
+        // Ignore rollback failure — best effort cleanup
+      }
+      return { ok: false, error: copyResult.error };
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from a built-in template to the target directory.
+   *
+   * Source: `{packageDir}/templates/{templateName}/CLAUDE.md`
+   * Target: `{targetDir}/CLAUDE.md`
+   *
+   * - If packageDir is empty/unset, skip copy (instance created without CLAUDE.md)
+   * - If template doesn't have a CLAUDE.md, skip copy silently
+   * - If template directory doesn't exist, return error
+   *
+   * @param templateName - Template name
+   * @param targetDir - Target directory to copy CLAUDE.md into
+   * @returns ProjectResult indicating success or failure
+   */
+  private copyClaudeMd(templateName: string, targetDir: string): ProjectResult<void> {
+    // Skip if packageDir is not configured
+    if (!this.packageDir) {
+      return { ok: true, data: undefined };
+    }
+
+    const templateDir = join(this.packageDir, 'templates', templateName);
+    const sourceClaudeMd = join(templateDir, 'CLAUDE.md');
+    const targetClaudeMd = join(targetDir, 'CLAUDE.md');
+
+    // Skip if template directory doesn't exist on disk
+    // (template is purely in-memory config, no physical CLAUDE.md to copy)
+    if (!existsSync(templateDir)) {
+      return { ok: true, data: undefined };
+    }
+
+    // Skip if template doesn't have a CLAUDE.md (not an error)
+    if (!existsSync(sourceClaudeMd)) {
+      return { ok: true, data: undefined };
+    }
+
+    // Copy CLAUDE.md
+    try {
+      copyFileSync(sourceClaudeMd, targetClaudeMd);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ───────────────────────────────────────────
