@@ -105,7 +105,7 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 ## Operations
 
-All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `skills/chat/`. All scripts include built-in Chat ID validation (path traversal protection), file locking (via `fs.flock`), and native JSON validation. Scripts are implemented in TypeScript and run via `tsx`.
+All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `skills/chat/`. All scripts include built-in Chat ID validation (path traversal protection), file locking (PID-based atomic lock files via `lock.ts`), and native JSON validation. Scripts are implemented in TypeScript and run via `tsx`.
 
 ### 1. Create Chat
 

@@ -23,7 +23,7 @@ createdAt: 2026-04-06T00:00:00.000Z
 - `@larksuite/cli`（飞书官方 CLI，npm 全局安装）
 - Node.js 20.12+（用于 `fs.flock` 文件锁，低版本自动降级为无锁模式）
 
-> **⚠️ 平台要求**: 本 Schedule 使用 TypeScript 实现，通过 `tsx` 运行。文件锁依赖 Node.js 20.12+ 的 `fs.flock`，低版本自动降级为无锁模式（可接受，因并发风险低）。
+> **⚠️ 平台要求**: 本 Schedule 使用 TypeScript 实现，通过 `tsx` 运行。文件锁使用 PID-based 原子锁文件（`lock.ts`），无需 `fs.flock` 支持。
 
 ## 职责边界
 
@@ -97,7 +97,7 @@ npx tsx skills/chat-timeout/chat-timeout.ts
 4. **串行处理**: 一次处理一个会话，避免并发问题
 5. **不创建新 Schedule**: 这是定时任务执行环境的规则
 6. **不修改其他文件**: 只处理 `workspace/chats/` 目录下的文件
-7. **并发安全**: 使用 `fs.flock` 文件锁防止多个 Schedule 实例同时处理同一文件（Node 20.12+）
+7. **并发安全**: 使用 PID-based 原子锁文件（`lock.ts`）防止多个 Schedule 实例同时处理同一文件
 8. **超时保护**: `lark-cli` 调用设 30 秒超时（`child_process.timeout`），防止挂起阻塞后续 Schedule
 9. **响应感知**: 有用户响应的会话不解散群组，保留结果供消费方读取
 10. **优雅降级**: 群组解散失败不影响状态更新，避免因 API 暂时不可用导致无限重试
