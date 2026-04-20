@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +65,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing templates/ subdirectory */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,12 +83,15 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
 
-    this.init(options.templatesConfig);
+    // Auto-discover templates from {packageDir}/templates/ when no config provided,
+    // then merge with any explicit config (config takes precedence).
+    const resolvedConfig = this.resolveTemplatesConfig(options.packageDir, options.templatesConfig);
+    this.init(resolvedConfig);
 
     // Restore persisted state after templates are loaded
     this.loadPersistedData();
@@ -119,6 +123,39 @@ export class ProjectManager {
         description: meta.description,
       });
     }
+  }
+
+  /**
+   * Resolve effective templates configuration by merging auto-discovered
+   * templates with explicit config.
+   *
+   * Strategy:
+   * 1. Auto-discover templates from `{packageDir}/templates/`
+   * 2. If explicit config is provided, merge it on top (config wins for overlapping names)
+   * 3. If no config provided, use only discovered templates
+   *
+   * This ensures templates are available "out of the box" (install-and-use),
+   * while still allowing config-based overrides for displayName/description.
+   *
+   * @param packageDir - Package directory for auto-discovery
+   * @param explicitConfig - Optional explicit config from disclaude.config.yaml
+   * @returns Merged ProjectTemplatesConfig
+   */
+  private resolveTemplatesConfig(
+    packageDir: string,
+    explicitConfig?: ProjectTemplatesConfig,
+  ): ProjectTemplatesConfig {
+    // Step 1: Auto-discover from filesystem
+    const discovered = discoverTemplatesAsConfig(packageDir);
+
+    // Step 2: If no explicit config, use only discovered
+    if (!explicitConfig || Object.keys(explicitConfig).length === 0) {
+      return discovered;
+    }
+
+    // Step 3: Merge — discovered first, explicit config overrides
+    const merged: ProjectTemplatesConfig = { ...discovered, ...explicitConfig };
+    return merged;
   }
 
   // ───────────────────────────────────────────
