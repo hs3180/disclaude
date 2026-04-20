@@ -66,7 +66,7 @@ function isPlanUpdate(update: AcpSessionUpdate): update is AcpPlanUpdate {
 // ============================================================================
 
 /** 从 ACP 内容块中提取文本 */
-function extractText(content?: AcpContentBlock): string {
+export function extractText(content?: AcpContentBlock): string {
   if (!content) {
     return '';
   }
