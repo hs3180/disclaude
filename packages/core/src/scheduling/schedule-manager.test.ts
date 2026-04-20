@@ -27,6 +27,8 @@ afterEach(async () => {
 /**
  * Write a schedule markdown file with YAML frontmatter.
  * The scanner generates task ID as `schedule-${fileNameWithoutExt}`.
+ *
+ * Issue #2526: Supports both flat and subdirectory layouts.
  */
 async function writeScheduleFile(
   fileName: string,
@@ -76,6 +78,51 @@ ${prompt}
 Schedule: \`${cron}\`
 `;
   await fs.writeFile(path.join(tempDir, 'schedules', fileName), content, 'utf-8');
+}
+
+/**
+ * Write a schedule file in subdirectory layout (Issue #2526).
+ * Creates `<schedulesDir>/<dirName>/SCHEDULE.md`.
+ */
+async function writeSubdirScheduleFile(
+  dirName: string,
+  options: Parameters<typeof writeScheduleFile>[1] = {}
+): Promise<void> {
+  const {
+    name = 'Test Task',
+    cron = '0 9 * * *',
+    prompt = 'Run tests',
+    chatId = 'oc_test',
+    enabled = true,
+    createdBy,
+    blocking,
+    cooldownPeriod,
+    model,
+    lastExecutedAt,
+  } = options;
+
+  const content = `---
+name: ${name}
+cron: "${cron}"
+prompt: "${prompt}"
+chatId: ${chatId}
+enabled: ${enabled}
+${createdBy ? `createdBy: "${createdBy}"` : ''}
+${blocking !== undefined ? `blocking: ${blocking}` : ''}
+${cooldownPeriod !== undefined ? `cooldownPeriod: ${cooldownPeriod}` : ''}
+${model ? `model: "${model}"` : ''}
+${lastExecutedAt ? `lastExecutedAt: "${lastExecutedAt}"` : ''}
+---
+
+# ${name}
+
+${prompt}
+
+Schedule: \`${cron}\`
+`;
+  const dir = path.join(tempDir, 'schedules', dirName);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'SCHEDULE.md'), content, 'utf-8');
 }
 
 /** Derive the task ID from the filename (matches ScheduleFileScanner behavior) */
@@ -320,6 +367,44 @@ invalid yaml content [[[broken
       // Should not throw, just skip the bad file
       const result = await manager.listAll();
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('subdirectory layout (Issue #2526)', () => {
+    it('should discover schedules in subdirectories', async () => {
+      await writeSubdirScheduleFile('daily-report', {
+        name: 'Daily Report',
+        cron: '0 9 * * *',
+        prompt: 'Generate daily report',
+        chatId: 'oc_chat1',
+        enabled: true,
+      });
+
+      const result = await manager.get('schedule-daily-report');
+      expect(result).toBeDefined();
+      expect(result!.id).toBe('schedule-daily-report');
+      expect(result!.name).toBe('Daily Report');
+      expect(result!.sourceFile).toContain('daily-report/SCHEDULE.md');
+    });
+
+    it('should mix flat files and subdirectory schedules', async () => {
+      await writeScheduleFile('flat-task.md', {
+        name: 'Flat Task',
+        cron: '0 9 * * *',
+        prompt: 'Flat task',
+        chatId: 'oc_chat1',
+      });
+      await writeSubdirScheduleFile('subdir-task', {
+        name: 'Subdir Task',
+        cron: '0 10 * * *',
+        prompt: 'Subdir task',
+        chatId: 'oc_chat1',
+      });
+
+      const result = await manager.listAll();
+      expect(result).toHaveLength(2);
+      expect(result.map(t => t.id)).toContain('schedule-flat-task');
+      expect(result.map(t => t.id)).toContain('schedule-subdir-task');
     });
   });
 });

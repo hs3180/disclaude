@@ -67,6 +67,16 @@ import type { ScheduledTask } from './scheduled-task.js';
 
 const MOCK_DIR = '/tmp/test-schedules';
 
+/** Create a mock Dirent for a file. */
+function mockFile(name: string) {
+  return { name, isFile: () => true, isDirectory: () => false };
+}
+
+/** Create a mock Dirent for a directory. */
+function mockDir(name: string) {
+  return { name, isFile: () => false, isDirectory: () => true };
+}
+
 /** Create a valid schedule markdown content. */
 function makeScheduleContent(overrides: Record<string, string> = {}): string {
   const defaults: Record<string, string> = {
@@ -109,7 +119,7 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('parseFile', () => {
-    it('should parse a valid schedule file', async () => {
+    it('should parse a valid schedule file (flat layout)', async () => {
       const content = makeScheduleContent();
       mockReadFile.mockResolvedValue(content);
 
@@ -347,16 +357,71 @@ describe('ScheduleFileScanner', () => {
       expect(task!.sourceFile).toBe(`${MOCK_DIR}/test.md`);
       expect(task!.fileMtime).toEqual(new Date('2026-03-20T12:00:00Z'));
     });
+
+    it('should derive task ID from parent directory for SCHEDULE.md (Issue #2526)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime: new Date('2026-03-20T12:00:00Z'),
+        birthtime: new Date('2026-01-01T00:00:00Z'),
+      } as Awaited<ReturnType<typeof import('fs/promises').stat>>);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.id).toBe('schedule-daily-report');
+      expect(task!.sourceFile).toBe(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
+    });
   });
 
   describe('scanAll', () => {
-    it('should scan all .md files in the directory', async () => {
-      mockReaddir.mockResolvedValue(['daily-report.md', 'weekly-summary.md', 'notes.txt']);
+    it('should scan all .md files in the directory (flat layout)', async () => {
+      mockReaddir.mockResolvedValue([mockFile('daily-report.md'), mockFile('weekly-summary.md'), mockFile('notes.txt')]);
       mockReadFile.mockResolvedValue(makeScheduleContent());
 
       const tasks = await scanner.scanAll();
       expect(tasks).toHaveLength(2);
       expect(mockReadFile).toHaveBeenCalledTimes(2);
+    });
+
+    it('should discover schedules in subdirectories (Issue #2526)', async () => {
+      mockReaddir.mockResolvedValue([
+        mockDir('daily-report'),
+        mockDir('weekly-summary'),
+        mockFile('notes.txt'),
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const tasks = await scanner.scanAll();
+      expect(tasks).toHaveLength(2);
+      expect(mockReadFile).toHaveBeenCalledWith(
+        `${MOCK_DIR}/daily-report/SCHEDULE.md`,
+        'utf-8'
+      );
+      expect(mockReadFile).toHaveBeenCalledWith(
+        `${MOCK_DIR}/weekly-summary/SCHEDULE.md`,
+        'utf-8'
+      );
+    });
+
+    it('should scan both flat files and subdirectories', async () => {
+      mockReaddir.mockResolvedValue([
+        mockFile('flat-task.md'),
+        mockDir('subdir-task'),
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const tasks = await scanner.scanAll();
+      expect(tasks).toHaveLength(2);
+    });
+
+    it('should skip dot-directories when scanning subdirectories', async () => {
+      mockReaddir.mockResolvedValue([
+        mockDir('.git'),
+        mockDir('daily-report'),
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const tasks = await scanner.scanAll();
+      expect(tasks).toHaveLength(1);
     });
 
     it('should return empty array when directory does not exist', async () => {
@@ -367,7 +432,7 @@ describe('ScheduleFileScanner', () => {
     });
 
     it('should skip files that fail to parse', async () => {
-      mockReaddir.mockResolvedValue(['valid.md', 'invalid.md']);
+      mockReaddir.mockResolvedValue([mockFile('valid.md'), mockFile('invalid.md')]);
       mockReadFile
         .mockResolvedValueOnce(makeScheduleContent())
         .mockResolvedValueOnce('no frontmatter');
@@ -384,7 +449,7 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('writeTask', () => {
-    it('should write a task with schedule- prefix stripped from filename', async () => {
+    it('should write a task to subdirectory layout (Issue #2526)', async () => {
       const task: ScheduledTask = {
         id: 'schedule-daily-report',
         name: 'Daily Report',
@@ -397,7 +462,7 @@ describe('ScheduleFileScanner', () => {
       };
 
       const filePath = await scanner.writeTask(task);
-      expect(filePath).toBe(`${MOCK_DIR}/daily-report.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
       expect(mockWriteFile).toHaveBeenCalledTimes(1);
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
@@ -476,10 +541,10 @@ describe('ScheduleFileScanner', () => {
       };
 
       const filePath = await scanner.writeTask(task);
-      expect(filePath).toBe(`${MOCK_DIR}/my-task.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/my-task/SCHEDULE.md`);
     });
 
-    it('should call ensureDir before writing', async () => {
+    it('should call ensureDir and create subdirectory before writing', async () => {
       const task: ScheduledTask = {
         id: 'schedule-test',
         name: 'Test',
@@ -492,14 +557,15 @@ describe('ScheduleFileScanner', () => {
 
       await scanner.writeTask(task);
       expect(mockMkdir).toHaveBeenCalledWith(MOCK_DIR, { recursive: true });
+      expect(mockMkdir).toHaveBeenCalledWith(`${MOCK_DIR}/test`, { recursive: true });
     });
   });
 
   describe('deleteTask', () => {
-    it('should delete a task file and return true', async () => {
+    it('should delete a task file from subdirectory and return true', async () => {
       const result = await scanner.deleteTask('schedule-daily-report');
       expect(result).toBe(true);
-      expect(mockUnlink).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report.md`);
+      expect(mockUnlink).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
     });
 
     it('should return false for task IDs without schedule- prefix', async () => {
@@ -523,14 +589,14 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('getFilePath', () => {
-    it('should strip schedule- prefix from task ID', () => {
+    it('should return subdirectory path with schedule- prefix stripped (Issue #2526)', () => {
       const filePath = scanner.getFilePath('schedule-daily-report');
-      expect(filePath).toBe(`${MOCK_DIR}/daily-report.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
     });
 
     it('should use task ID as-is without schedule- prefix', () => {
       const filePath = scanner.getFilePath('my-task');
-      expect(filePath).toBe(`${MOCK_DIR}/my-task.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/my-task/SCHEDULE.md`);
     });
   });
 
@@ -622,7 +688,7 @@ describe('ScheduleFileWatcher', () => {
 
       expect(mockFsWatch).toHaveBeenCalledWith(
         MOCK_DIR,
-        { persistent: true, recursive: false },
+        { persistent: true, recursive: true },
         expect.any(Function)
       );
       expect(watcher.isRunning()).toBe(true);
@@ -830,6 +896,42 @@ describe('ScheduleFileWatcher', () => {
       await vi.runAllTimersAsync();
 
       expect(onFileAdded).toHaveBeenCalledTimes(2);
+    });
+
+    it('should handle subdirectory SCHEDULE.md events (Issue #2526)', async () => {
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      eventCallback('rename', 'daily-report/SCHEDULE.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      expect(onFileAdded).toHaveBeenCalledTimes(1);
+      expect(onFileAdded.mock.calls[0][0].id).toBe('schedule-daily-report');
+    });
+
+    it('should handle subdirectory SCHEDULE.md change events (Issue #2526)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent({ name: 'Updated Report' }));
+
+      eventCallback('change', 'daily-report/SCHEDULE.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      expect(onFileChanged).toHaveBeenCalledTimes(1);
+      expect(onFileChanged.mock.calls[0][0].name).toBe('Updated Report');
+    });
+
+    it('should handle subdirectory SCHEDULE.md removal events (Issue #2526)', async () => {
+      mockAccess.mockRejectedValue({ code: 'ENOENT' });
+
+      eventCallback('rename', 'daily-report/SCHEDULE.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      expect(onFileRemoved).toHaveBeenCalledWith(
+        'schedule-daily-report',
+        `${MOCK_DIR}/daily-report/SCHEDULE.md`
+      );
     });
   });
 });
