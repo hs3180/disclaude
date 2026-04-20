@@ -35,7 +35,7 @@ export interface ScheduledTask {
   lastExecutedAt?: string;
   /**
    * Optional model override for this task.
-   * When set, the schedule agent will use this model instead of the global default.
+   * When set, the agent will use this model instead of the global default.
    * Defined in schedule markdown frontmatter (e.g., `model: "claude-sonnet-4-20250514"`).
    *
    * Issue #1338: Smart model selection per task scenario.
