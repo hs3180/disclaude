@@ -53,6 +53,32 @@ function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManag
   };
 }
 
+/**
+ * Create options with filesystem templates for auto-discovery tests.
+ * Creates actual template directories under packageDir/templates/.
+ */
+function createOptionsWithFsTemplates(
+  templateNames: string[],
+  overrides?: Partial<ProjectManagerOptions>,
+): ProjectManagerOptions {
+  const workspaceDir = createTempDir();
+  const packageDir = join(workspaceDir, 'packages/core');
+  const templatesDir = join(packageDir, 'templates');
+
+  for (const name of templateNames) {
+    const templateDir = join(templatesDir, name);
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), `# ${name} Template`);
+  }
+
+  return {
+    workspaceDir,
+    packageDir,
+    // No templatesConfig — rely on auto-discovery
+    ...overrides,
+  };
+}
+
 const EMPTY_CONFIG: ProjectTemplatesConfig = {};
 
 // Cleanup all temp directories after all tests
@@ -940,5 +966,100 @@ describe('ProjectManager — edge cases', () => {
 
     const result = pm.create('chat_1', 'minimal', 'my-minimal');
     expect(result.ok).toBe(true);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Auto-Discovery (Issue #2286)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager auto-discovery (Issue #2286)', () => {
+  it('should auto-discover templates from packageDir when no templatesConfig provided', () => {
+    const opts = createOptionsWithFsTemplates(['research', 'book-reader']);
+    const pm = new ProjectManager(opts);
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+    const names = templates.map((t) => t.name).sort();
+    expect(names).toEqual(['book-reader', 'research']);
+  });
+
+  it('should prefer explicit templatesConfig over auto-discovery', () => {
+    // Filesystem has research and book-reader
+    const opts = createOptionsWithFsTemplates(['research', 'book-reader'], {
+      // But config only declares coding
+      templatesConfig: {
+        coding: { displayName: '编码模式' },
+      },
+    });
+    const pm = new ProjectManager(opts);
+
+    const templates = pm.listTemplates();
+    // Should use explicit config, not discovered templates
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('coding');
+  });
+
+  it('should work with zero templates (no config, no filesystem templates)', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+    mkdirSync(packageDir, { recursive: true });
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      // No templatesConfig, no templates on disk
+    });
+
+    expect(pm.listTemplates()).toEqual([]);
+  });
+
+  it('should allow creating instances from auto-discovered templates', () => {
+    const opts = createOptionsWithFsTemplates(['research']);
+    const pm = new ProjectManager(opts);
+
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.templateName).toBe('research');
+    }
+  });
+
+  it('should discover templates with metadata from template.yaml', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# Research');
+    writeFileSync(join(templateDir, 'template.yaml'), 'displayName: "研究模式"\ndescription: 专注研究');
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0]).toEqual({
+      name: 'research',
+      displayName: '研究模式',
+      description: '专注研究',
+    });
+  });
+
+  it('should handle templatesConfig: undefined (auto-discover)', () => {
+    const opts = createOptionsWithFsTemplates(['coding']);
+    // Explicitly set to undefined
+    opts.templatesConfig = undefined;
+    const pm = new ProjectManager(opts);
+
+    expect(pm.listTemplates()).toHaveLength(1);
+    expect(pm.listTemplates()[0].name).toBe('coding');
+  });
+
+  it('should handle empty templatesConfig (auto-discover)', () => {
+    const opts = createOptionsWithFsTemplates(['coding']);
+    opts.templatesConfig = {};
+    const pm = new ProjectManager(opts);
+
+    // Empty config should trigger auto-discovery
+    expect(pm.listTemplates()).toHaveLength(1);
+    expect(pm.listTemplates()[0].name).toBe('coding');
   });
 });

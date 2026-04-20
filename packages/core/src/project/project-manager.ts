@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +65,7 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,12 +82,14 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
 
-    this.init(options.templatesConfig);
+    // Resolve templates: explicit config takes precedence, otherwise auto-discover
+    const resolvedConfig = this.resolveTemplatesConfig(options.templatesConfig);
+    this.init(resolvedConfig);
 
     // Restore persisted state after templates are loaded
     this.loadPersistedData();
@@ -119,6 +121,33 @@ export class ProjectManager {
         description: meta.description,
       });
     }
+  }
+
+  /**
+   * Resolve templates configuration with auto-discovery fallback.
+   *
+   * Strategy:
+   * 1. If `templatesConfig` is provided and non-empty → use it (backward compatible)
+   * 2. Otherwise → auto-discover from `{packageDir}/templates/`
+   *
+   * This ensures that:
+   * - Explicit config always takes precedence (user override)
+   * - Zero-config works out of the box (templates auto-discovered)
+   *
+   * @param templatesConfig - Explicit config from constructor options (may be undefined)
+   * @returns Resolved templates config (from explicit config or auto-discovery)
+   *
+   * @see Issue #2286 — Project templates should auto-discover from package directory
+   */
+  private resolveTemplatesConfig(templatesConfig?: ProjectTemplatesConfig): ProjectTemplatesConfig | undefined {
+    // Explicit config takes precedence
+    if (templatesConfig && Object.keys(templatesConfig).length > 0) {
+      return templatesConfig;
+    }
+
+    // Auto-discover from package directory
+    const discovered = discoverTemplatesAsConfig(this.packageDir);
+    return Object.keys(discovered).length > 0 ? discovered : undefined;
   }
 
   // ───────────────────────────────────────────
