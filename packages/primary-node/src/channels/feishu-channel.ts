@@ -621,6 +621,105 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Insert an image into a Feishu document at a specific position.
+   * Issue #2278: Three-step API flow for inline image insertion.
+   *
+   * 1. Create empty image block (block_type: 27) at the specified index
+   * 2. Upload image file via Drive Media Upload API
+   * 3. Bind uploaded file to image block via replace_image
+   *
+   * @param documentId - Feishu document ID
+   * @param imagePath - Absolute path to the image file
+   * @param index - 0-based position to insert the image block
+   * @returns Object with success status and optional blockId
+   */
+  async insertDocxImage(
+    documentId: string,
+    imagePath: string,
+    index: number,
+  ): Promise<{ success: boolean; blockId?: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const {client} = this;
+
+    // Validate image file exists
+    if (!fs.existsSync(imagePath)) {
+      throw new Error(`Image file not found: ${imagePath}`);
+    }
+
+    const fileExt = path.extname(imagePath).toLowerCase();
+    const supportedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+    if (!supportedExtensions.includes(fileExt)) {
+      throw new Error(`Unsupported image format: ${fileExt}. Supported: ${supportedExtensions.join(', ')}`);
+    }
+
+    logger.info({ documentId, imagePath, index }, 'Starting docx image insertion (3-step)');
+
+    // Step 1: Create empty image block (block_type: 27) at the specified index
+    // Note: The create API's image type only accepts align/caption/scale.
+    // We create a placeholder block, then bind the uploaded file via replace_image in step 3.
+    const createResp = await client.docx.documentBlockChildren.create({
+      path: { document_id: documentId, block_id: documentId },
+      data: {
+        children: [{
+          block_type: 27,
+          image: {},
+        }],
+        index,
+      },
+    });
+
+    // Extract the block_id of the created image block
+    const children = (createResp as { data?: { children?: Array<{ block_id?: string }> } })?.data?.children;
+    const imageBlockId = children?.[0]?.block_id;
+    if (!imageBlockId) {
+      throw new Error('Failed to create image block: no block_id returned');
+    }
+    logger.info({ documentId, imageBlockId, index }, 'Step 1: Created empty image block');
+
+    // Step 2: Upload image file via Drive Media Upload API (parent_type: docx_image)
+    const fileName = path.basename(imagePath);
+    const fileSize = fs.statSync(imagePath).size;
+    const uploadResp = await client.drive.media.uploadAll({
+      data: {
+        parent_type: 'docx_image',
+        parent_node: documentId,
+        file_name: fileName,
+        size: fileSize,
+        file: fs.createReadStream(imagePath),
+      },
+    });
+
+    const fileToken = (uploadResp as { data?: { file_token?: string } })?.data?.file_token
+      ?? uploadResp as unknown as string | undefined;
+    // uploadAll may return { file_token } directly or wrapped in data
+    const resolvedFileToken = fileToken || (uploadResp as unknown as { file_token?: string })?.file_token;
+    if (!resolvedFileToken) {
+      throw new Error('Failed to upload image: no file_token returned');
+    }
+    logger.info({ documentId, fileToken: resolvedFileToken, fileName }, 'Step 2: Uploaded image file');
+
+    // Step 3: Bind uploaded file to image block via replace_image using batchUpdate
+    await client.docx.documentBlock.batchUpdate({
+      path: { document_id: documentId },
+      data: {
+        requests: [{
+          block_id: imageBlockId,
+          replace_image: {
+            token: resolvedFileToken,
+          },
+        }],
+      },
+    });
+
+    logger.info({ documentId, imageBlockId, fileToken }, 'Step 3: Bound image file to block');
+
+    return { success: true, blockId: imageBlockId };
+  }
+
   protected checkHealth(): boolean {
     // Use WsConnectionManager's health check (Issue #1351)
     if (this.wsConnectionManager) {
@@ -646,6 +745,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'insert_docx_image',
       ],
     };
   }

@@ -252,6 +252,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #2278: Document image insertion
+      insertDocxImage: async (documentId: string, imagePath: string, index: number) => {
+        return await feishuChannel.insertDocxImage(documentId, imagePath, index);
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);

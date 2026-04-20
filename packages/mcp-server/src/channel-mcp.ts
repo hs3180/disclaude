@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -163,6 +165,19 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  insert_docx_image: {
+    description: 'Insert an image into a Feishu document at a specific position.',
+    parameters: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', description: 'The Feishu document ID' },
+        imagePath: { type: 'string', description: 'Path to the image file to insert' },
+        index: { type: 'integer', description: '0-based position to insert the image block', minimum: 0 },
+      },
+      required: ['documentId', 'imagePath', 'index'],
+    },
+    handler: insert_docx_image,
   },
 };
 
@@ -451,6 +466,50 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Document image insertion
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image into a Feishu document at a specific position.
+
+This tool uses a 3-step API flow:
+1. Create an empty image block (block_type: 27) at the specified index
+2. Upload the image file via Drive Media Upload API
+3. Bind the uploaded file to the image block
+
+## Parameters
+- **documentId**: The Feishu document ID (string, required)
+- **imagePath**: Path to the image file (string, required, supports jpg/jpeg/png/webp/gif/bmp)
+- **index**: 0-based position to insert the image block (integer, required)
+
+## Example
+\`\`\`json
+{
+  "documentId": "doxcnAbCdEfGhIjKlMnOpQ",
+  "imagePath": "/path/to/chart.png",
+  "index": 3
+}
+\`\`\`
+
+## Important Notes
+- The image file must exist on the server's filesystem
+- Maximum image file size: 20MB
+- Supported formats: jpg, jpeg, png, webp, gif, bmp
+- The index is 0-based; use 0 to insert at the beginning
+- Requires IPC connection to Primary Node`,
+    parameters: z.object({
+      documentId: z.string().describe('The Feishu document ID'),
+      imagePath: z.string().describe('Path to the image file to insert'),
+      index: z.number().int().min(0).describe('0-based position to insert the image block'),
+    }),
+    handler: async ({ documentId, imagePath, index }: { documentId: string; imagePath: string; index: number }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Document image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
