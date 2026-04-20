@@ -17,6 +17,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -163,6 +165,17 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image and return image_key for embedding in cards.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the image file to upload' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -411,6 +424,40 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image and return the image_key for embedding in cards.
+
+Use this tool when you need to embed an image inside a Feishu card message (e.g., charts, diagrams).
+After uploading, use the returned \`image_key\` in the \`img\` element of \`send_card\`.
+
+This tool does NOT send a message — it only uploads the image. Use \`send_file\` to send images as standalone messages.
+
+## Parameters
+- **filePath**: Path to the image file (string, required)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10MB)
+
+## Example Workflow
+\`\`\`
+1. Generate chart: python plot.py → /workspace/chart.png
+2. Upload image: upload_image({ filePath: "/workspace/chart.png" }) → image_key: "img_v3_xxx"
+3. Embed in card: send_card({ card: { elements: [{ tag: "img", img_key: "img_v3_xxx" }] }, chatId: "oc_xxx" })
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
