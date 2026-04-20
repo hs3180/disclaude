@@ -535,4 +535,115 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  describe('triggerTask (Issue #1953: event-driven trigger)', () => {
+    it('should trigger task immediately and return true', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      const result = scheduler.triggerTask('trigger-1');
+      expect(result).toBe(true);
+
+      // Wait for async executor to be called
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+    });
+
+    it('should return false for non-existent task', () => {
+      const result = scheduler.triggerTask('nonexistent');
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect cooldown when triggered manually', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date('2026-01-01T12:00:00'),
+          cooldownEndsAt: new Date('2026-01-01T13:00:00'),
+          remainingMs: 3600000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'trigger-cd', cooldownPeriod: 3600000 });
+      cooldownScheduler.addTask(task);
+
+      const result = cooldownScheduler.triggerTask('trigger-cd');
+      expect(result).toBe(true);
+
+      // Should send cooldown message, not execute
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('冷静期'),
+        );
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect blocking when triggered manually', async () => {
+      // Make executor hang (simulate long-running task)
+      mockExecutor.mockImplementationOnce(() => new Promise(() => {}));
+
+      const blockingTask = createTask({ id: 'trigger-block', blocking: true });
+      scheduler.addTask(blockingTask);
+
+      // Fire the cron job to start a long-running execution
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-block')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Now try to trigger while running
+      const result = scheduler.triggerTask('trigger-block');
+      expect(result).toBe(true);
+
+      // Wait a bit to ensure the second trigger was skipped
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Executor should still only have been called once (the initial cron trigger)
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle executor errors in triggered tasks', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('trigger error'));
+
+      const task = createTask({ id: 'trigger-err' });
+      scheduler.addTask(task);
+
+      const result = scheduler.triggerTask('trigger-err');
+      expect(result).toBe(true);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+
+      // Running state should be cleared even on error
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-err')).toBe(false);
+      }, { timeout: 2000 });
+    });
+  });
 });

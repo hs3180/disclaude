@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, WatchConfig } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -109,6 +109,17 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'cooldownPeriod':
         frontmatter[key] = parseInt(value, 10);
+        break;
+      case 'watch':
+        // Issue #1953: Parse comma-separated watch paths
+        // Format: watch: "path1,path2,path3"
+        const watchValue = stripQuotes(value);
+        if (watchValue) {
+          const paths = watchValue.split(',').map(p => p.trim()).filter(p => p.length > 0);
+          if (paths.length > 0) {
+            frontmatter[key] = { paths } as WatchConfig;
+          }
+        }
         break;
     }
   }
@@ -216,6 +227,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watch: frontmatter['watch'] as WatchConfig | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };

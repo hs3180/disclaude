@@ -317,6 +317,54 @@ describe('ScheduleFileScanner', () => {
       expect(task!.cron).toBe('0 9 * * *');
     });
 
+    it('should parse watch field with single path (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Watched Task"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'watch: "workspace/chats/"',
+        '---',
+        '',
+        'Task with watch config.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/watched-task.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/chats/']);
+    });
+
+    it('should parse watch field with multiple comma-separated paths (Issue #1953)', async () => {
+      const content = [
+        '---',
+        'name: "Multi Watch Task"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'watch: "workspace/chats/,workspace/prs/"',
+        '---',
+        '',
+        'Task with multiple watch paths.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/multi-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/chats/', 'workspace/prs/']);
+    });
+
+    it('should default watch to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeUndefined();
+    });
+
     it('should default enabled to true when not specified', async () => {
       const content = [
         '---',

@@ -402,4 +402,30 @@ ${task.prompt}`;
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
   }
+
+  /**
+   * Trigger a task immediately (event-driven trigger).
+   *
+   * Issue #1953: Allows external triggers (file watchers, signals, etc.)
+   * to execute a schedule immediately without waiting for cron.
+   *
+   * The task must exist in the active jobs. Respects cooldown and blocking
+   * mechanisms — if the task is in cooldown or currently running, it will
+   * be skipped (same behavior as cron-triggered execution).
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if the task was found and execution was attempted, false otherwise
+   */
+  triggerTask(taskId: string): boolean {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'Cannot trigger: task not found in active jobs');
+      return false;
+    }
+
+    // Delegate to executeTask which handles cooldown, blocking, error handling
+    // Use fireOnTick pattern but call executeTask directly
+    void this.executeTask(entry.task);
+    return true;
+  }
 }
