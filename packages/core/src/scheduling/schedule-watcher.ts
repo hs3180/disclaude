@@ -117,10 +117,19 @@ function parseScheduleFrontmatter(content: string): {
 }
 
 /**
- * Generate task ID from file name.
+ * Generate task ID from file path.
+ *
+ * Supports two layouts (Issue #2526):
+ * - **Subdirectory**: `schedules/<name>/SCHEDULE.md` → `schedule-<name>`
+ * - **Flat (legacy)**: `schedules/<name>.md` → `schedule-<name>`
  */
-function generateTaskId(fileName: string): string {
-  const baseName = path.basename(fileName, '.md');
+function generateTaskId(filePath: string): string {
+  const baseName = path.basename(filePath, '.md');
+  if (baseName === 'SCHEDULE') {
+    // Use the parent directory name as the schedule slug
+    const parentDir = path.basename(path.dirname(filePath));
+    return `schedule-${parentDir}`;
+  }
   return `schedule-${baseName}`;
 }
 
@@ -155,7 +164,14 @@ export class ScheduleFileScanner {
   }
 
   /**
-   * Scan all .md files and return parsed tasks.
+   * Scan all schedule files and return parsed tasks.
+   *
+   * Supports two layouts (Issue #2526):
+   * - **Subdirectory**: `schedules/<name>/SCHEDULE.md` (preferred)
+   * - **Flat (legacy)**: `schedules/<name>.md`
+   *
+   * Scanning priority: subdirectory SCHEDULE.md files are discovered first,
+   * then flat .md files in the root are included for backward compatibility.
    */
   async scanAll(): Promise<ScheduleFileTask[]> {
     await this.ensureDir();
@@ -163,14 +179,30 @@ export class ScheduleFileScanner {
     const tasks: ScheduleFileTask[] = [];
 
     try {
-      const files = await fsPromises.readdir(this.schedulesDir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
+      const entries = await fsPromises.readdir(this.schedulesDir, { withFileTypes: true });
 
-      for (const file of mdFiles) {
-        const filePath = path.join(this.schedulesDir, file);
-        const task = await this.parseFile(filePath);
-        if (task) {
-          tasks.push(task);
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          // Check for subdirectory/SCHEDULE.md
+          const scheduleFile = path.join(this.schedulesDir, entry.name, 'SCHEDULE.md');
+          try {
+            const stat = await fsPromises.stat(scheduleFile);
+            if (stat.isFile()) {
+              const task = await this.parseFile(scheduleFile);
+              if (task) {
+                tasks.push(task);
+              }
+            }
+          } catch {
+            // Subdirectory doesn't contain SCHEDULE.md — skip silently
+          }
+        } else if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'SCHEDULE.md') {
+          // Flat .md file in the root (legacy support)
+          const filePath = path.join(this.schedulesDir, entry.name);
+          const task = await this.parseFile(filePath);
+          if (task) {
+            tasks.push(task);
+          }
         }
       }
 
@@ -201,10 +233,9 @@ export class ScheduleFileScanner {
       }
 
       const prompt = content.slice(contentStart).trim();
-      const fileName = path.basename(filePath);
 
       const task: ScheduleFileTask = {
-        id: generateTaskId(fileName),
+        id: generateTaskId(filePath),
         name: frontmatter['name'] as string,
         cron: frontmatter['cron'] as string,
         chatId: frontmatter['chatId'] as string,
@@ -238,14 +269,18 @@ export class ScheduleFileScanner {
 
   /**
    * Write a task to a markdown file.
+   *
+   * Uses subdirectory layout: `schedules/<slug>/SCHEDULE.md` (Issue #2526).
    */
   async writeTask(task: ScheduledTask): Promise<string> {
     await this.ensureDir();
 
-    const fileName = task.id.startsWith('schedule-')
-      ? `${task.id.slice('schedule-'.length)}.md`
-      : `${task.id}.md`;
-    const filePath = path.join(this.schedulesDir, fileName);
+    const slug = task.id.startsWith('schedule-')
+      ? task.id.slice('schedule-'.length)
+      : task.id;
+    const subDir = path.join(this.schedulesDir, slug);
+    await fsPromises.mkdir(subDir, { recursive: true });
+    const filePath = path.join(subDir, 'SCHEDULE.md');
 
     const frontmatter = [
       '---',
@@ -280,6 +315,9 @@ export class ScheduleFileScanner {
 
   /**
    * Delete a task file by task ID.
+   *
+   * Tries subdirectory layout first (`<slug>/SCHEDULE.md`), then falls back
+   * to legacy flat layout (`<slug>.md`) for backward compatibility.
    */
   async deleteTask(taskId: string): Promise<boolean> {
     if (!taskId.startsWith('schedule-')) {
@@ -287,11 +325,24 @@ export class ScheduleFileScanner {
     }
 
     const slug = taskId.slice('schedule-'.length);
-    const filePath = path.join(this.schedulesDir, `${slug}.md`);
 
+    // Try subdirectory layout first
+    const subDirPath = path.join(this.schedulesDir, slug, 'SCHEDULE.md');
     try {
-      await fsPromises.unlink(filePath);
-      logger.info({ taskId, filePath }, 'Deleted schedule file');
+      await fsPromises.unlink(subDirPath);
+      logger.info({ taskId, filePath: subDirPath }, 'Deleted schedule file (subdirectory layout)');
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    // Fallback to legacy flat layout
+    const flatPath = path.join(this.schedulesDir, `${slug}.md`);
+    try {
+      await fsPromises.unlink(flatPath);
+      logger.info({ taskId, filePath: flatPath }, 'Deleted schedule file (flat layout)');
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -303,12 +354,14 @@ export class ScheduleFileScanner {
 
   /**
    * Get the file path for a task ID.
+   *
+   * Returns the subdirectory path: `schedules/<slug>/SCHEDULE.md` (Issue #2526).
    */
   getFilePath(taskId: string): string {
     const slug = taskId.startsWith('schedule-')
       ? taskId.slice('schedule-'.length)
       : taskId;
-    return path.join(this.schedulesDir, `${slug}.md`);
+    return path.join(this.schedulesDir, slug, 'SCHEDULE.md');
   }
 }
 
@@ -373,6 +426,9 @@ export class ScheduleFileWatcher {
 
   /**
    * Start watching the schedules directory.
+   *
+   * Uses recursive watching to detect changes in subdirectory SCHEDULE.md
+   * files (Issue #2526).
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -385,7 +441,7 @@ export class ScheduleFileWatcher {
     try {
       this.watcher = fs.watch(
         this.schedulesDir,
-        { persistent: true, recursive: false },
+        { persistent: true, recursive: true },
         (eventType, filename) => {
           this.handleFileEvent(eventType, filename);
         }
@@ -396,7 +452,7 @@ export class ScheduleFileWatcher {
       });
 
       this.running = true;
-      logger.info({ schedulesDir: this.schedulesDir }, 'File watcher started');
+      logger.info({ schedulesDir: this.schedulesDir }, 'File watcher started (recursive)');
 
     } catch (error) {
       logger.error({ err: error }, 'Failed to start file watcher');
@@ -431,6 +487,9 @@ export class ScheduleFileWatcher {
 
   /**
    * Handle file system event with debouncing.
+   *
+   * Accepts filenames from both root-level `.md` files and subdirectory
+   * `SCHEDULE.md` files (e.g. `chat-timeout/SCHEDULE.md`).
    */
   private handleFileEvent(eventType: string, filename: string | null): void {
     if (!filename || !filename.endsWith('.md')) {
@@ -447,7 +506,7 @@ export class ScheduleFileWatcher {
 
     const timer = setTimeout(() => {
       this.debounceTimers.delete(filePath);
-      void this.processFileEvent(eventType, filePath, filename);
+      void this.processFileEvent(eventType, filePath);
     }, this.debounceMs);
 
     this.debounceTimers.set(filePath, timer);
@@ -456,8 +515,8 @@ export class ScheduleFileWatcher {
   /**
    * Process the file event after debouncing.
    */
-  private async processFileEvent(eventType: string, filePath: string, filename: string): Promise<void> {
-    const taskId = generateTaskId(filename);
+  private async processFileEvent(eventType: string, filePath: string): Promise<void> {
+    const taskId = generateTaskId(filePath);
 
     try {
       if (eventType === 'rename') {
@@ -466,17 +525,17 @@ export class ScheduleFileWatcher {
         if (exists) {
           const task = await this.fileScanner.parseFile(filePath);
           if (task) {
-            logger.info({ taskId, filename }, 'Schedule file added');
+            logger.info({ taskId, filePath }, 'Schedule file added');
             this.onFileAdded(task);
           }
         } else {
-          logger.info({ taskId, filename }, 'Schedule file removed');
+          logger.info({ taskId, filePath }, 'Schedule file removed');
           this.onFileRemoved(taskId, filePath);
         }
       } else if (eventType === 'change') {
         const task = await this.fileScanner.parseFile(filePath);
         if (task) {
-          logger.info({ taskId, filename }, 'Schedule file changed');
+          logger.info({ taskId, filePath }, 'Schedule file changed');
           this.onFileChanged(task);
         }
       }

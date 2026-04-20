@@ -41,9 +41,9 @@ When invoked, you receive:
 
 ## Schedule File Location
 
-Files stored in `workspace/schedules/` as Markdown files.
+Files stored in `workspace/schedules/` as Markdown files in subdirectory layout.
 
-Filename format: `{name}-{uuid}.md`
+Directory format: `workspace/schedules/<name>/SCHEDULE.md`
 
 ---
 
@@ -57,9 +57,9 @@ Filename format: `{name}-{uuid}.md`
    - Cron expression (cron format or natural language)
    - Content (prompt to execute)
 
-2. Generate unique filename: `{name}-{uuid}.md`
+2. Generate subdirectory path: `workspace/schedules/{name}-{uuid}/SCHEDULE.md`
 
-3. Create file with `Write` tool
+3. Create directory and file with `Write` tool (parent directories are auto-created)
 
 4. **SEND FEEDBACK** confirming creation
 
@@ -96,7 +96,7 @@ Schedule content prompt here
 This preserves the configuration for potential future reactivation and maintains an audit trail.
 
 **Steps:**
-1. Find schedule files with `Glob`: `workspace/schedules/*.md`
+1. Find schedule files with `Glob`: `workspace/schedules/*/SCHEDULE.md`
 2. Read files with `Read`
 3. Filter by current `chatId`
 4. Confirm schedule to disable
@@ -296,7 +296,7 @@ This example demonstrates how to create a schedule for the 0.4.2 MVP use case: d
 
 ### Schedule File
 
-Create `workspace/schedules/daily-soul-question.md`:
+Create `workspace/schedules/daily-soul-question/SCHEDULE.md`:
 
 ```markdown
 ---
