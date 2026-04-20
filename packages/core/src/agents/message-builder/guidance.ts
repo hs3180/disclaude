@@ -218,3 +218,74 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the user taste preferences guidance section.
+ *
+ * Issue #2335: Injects learned user preferences into the agent prompt
+ * so the Agent automatically follows them in subsequent interactions.
+ *
+ * Taste rules are grouped by category and include source metadata
+ * (auto-detected correction count, CLAUDE.md origin, or manually set).
+ *
+ * @param tasteGroups - Taste data grouped by category (from TasteManager.toGuidanceData())
+ * @returns Formatted taste guidance section, or empty string if no rules
+ */
+export function buildTasteGuidance(
+  tasteGroups?: { category: string; rules: TasteRule[] }[],
+): string {
+  if (!tasteGroups || tasteGroups.length === 0) {
+    return '';
+  }
+
+  const categoryNames: Record<string, string> = {
+    code_style: '代码风格',
+    interaction: '交互习惯',
+    tech_choice: '技术偏好',
+    project_convention: '项目规范',
+    other: '其他偏好',
+  };
+
+  const sections = tasteGroups.map((group) => {
+    const displayName = categoryNames[group.category] ?? group.category;
+    const ruleItems = group.rules
+      .map((rule) => {
+        const sourceLabel =
+          rule.source === 'auto_detected'
+            ? `（被纠正 ${rule.count ?? 1} 次）`
+            : rule.source === 'claude_md'
+              ? '（来自 CLAUDE.md）'
+              : '';
+        return `- ${rule.content}${sourceLabel}`;
+      })
+      .join('\n');
+    return `**${displayName}**:\n${ruleItems}`;
+  });
+
+  return `
+
+---
+
+## User Taste Preferences
+
+The user has the following learned preferences. **Always follow these** in your responses unless the user explicitly asks otherwise in the current message.
+
+${sections.join('\n\n')}
+
+When following a taste preference, you may briefly note the reason: "（基于你的偏好：xxx）"
+---`;
+}
+
+/**
+ * Type for taste rule used in buildTasteGuidance.
+ * Re-imported here to keep guidance.ts self-contained.
+ */
+interface TasteRule {
+  id: string;
+  content: string;
+  category: string;
+  source: 'auto_detected' | 'claude_md' | 'manual';
+  count?: number;
+  lastSeen?: string;
+  createdAt: string;
+}

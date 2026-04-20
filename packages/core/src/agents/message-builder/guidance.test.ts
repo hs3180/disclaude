@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,75 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildTasteGuidance', () => {
+  it('should return empty string when no groups provided', () => {
+    expect(buildTasteGuidance()).toBe('');
+    expect(buildTasteGuidance(undefined)).toBe('');
+    expect(buildTasteGuidance([])).toBe('');
+  });
+
+  it('should include taste preferences header', () => {
+    const result = buildTasteGuidance([
+      { category: 'code_style', rules: [{ id: '1', content: '使用 const/let', category: 'code_style', source: 'manual', createdAt: '2026-04-01T00:00:00Z' }] },
+    ]);
+    expect(result).toContain('User Taste Preferences');
+    expect(result).toContain('Always follow these');
+  });
+
+  it('should display category name in Chinese for known categories', () => {
+    const result = buildTasteGuidance([
+      { category: 'code_style', rules: [{ id: '1', content: '使用 const/let', category: 'code_style', source: 'manual', createdAt: '2026-04-01T00:00:00Z' }] },
+    ]);
+    expect(result).toContain('代码风格');
+  });
+
+  it('should display raw category name for unknown categories', () => {
+    const result = buildTasteGuidance([
+      { category: 'custom_cat', rules: [{ id: '1', content: 'some rule', category: 'custom_cat', source: 'manual', createdAt: '2026-04-01T00:00:00Z' }] },
+    ]);
+    expect(result).toContain('custom_cat');
+  });
+
+  it('should include correction count for auto-detected rules', () => {
+    const result = buildTasteGuidance([
+      { category: 'code_style', rules: [{ id: '1', content: '使用 const/let', category: 'code_style', source: 'auto_detected', count: 3, createdAt: '2026-04-01T00:00:00Z' }] },
+    ]);
+    expect(result).toContain('被纠正 3 次');
+  });
+
+  it('should include source label for CLAUDE.md rules', () => {
+    const result = buildTasteGuidance([
+      { category: 'other', rules: [{ id: '1', content: '使用中文', category: 'other', source: 'claude_md', createdAt: '2026-04-01T00:00:00Z' }] },
+    ]);
+    expect(result).toContain('来自 CLAUDE.md');
+  });
+
+  it('should not include source label for manual rules', () => {
+    const result = buildTasteGuidance([
+      { category: 'other', rules: [{ id: '1', content: '使用中文', category: 'other', source: 'manual', createdAt: '2026-04-01T00:00:00Z' }] },
+    ]);
+    expect(result).not.toContain('被纠正');
+    expect(result).not.toContain('来自 CLAUDE.md');
+  });
+
+  it('should format multiple categories', () => {
+    const result = buildTasteGuidance([
+      { category: 'code_style', rules: [{ id: '1', content: '使用 const/let', category: 'code_style', source: 'manual', createdAt: '2026-04-01T00:00:00Z' }] },
+      { category: 'interaction', rules: [{ id: '2', content: '回复简洁', category: 'interaction', source: 'auto_detected', count: 2, createdAt: '2026-04-01T00:00:00Z' }] },
+    ]);
+    expect(result).toContain('代码风格');
+    expect(result).toContain('交互习惯');
+    expect(result).toContain('使用 const/let');
+    expect(result).toContain('回复简洁');
+  });
+
+  it('should include taste explanation note', () => {
+    const result = buildTasteGuidance([
+      { category: 'other', rules: [{ id: '1', content: 'some rule', category: 'other', source: 'manual', createdAt: '2026-04-01T00:00:00Z' }] },
+    ]);
+    expect(result).toContain('基于你的偏好');
   });
 });

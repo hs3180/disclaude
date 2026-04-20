@@ -128,6 +128,7 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteGuidance,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
@@ -288,3 +289,15 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Taste module (Issue #2335: auto-summarize user taste)
+export {
+  TasteManager,
+  TasteCategory,
+  type TasteResult,
+  type TasteRule,
+  type TasteSource,
+  type TastePersistData,
+  type TasteManagerOptions,
+  type AddTasteRuleOptions,
+} from './taste/index.js';
