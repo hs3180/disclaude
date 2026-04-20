@@ -67,3 +67,7 @@ export type {
   AcpServerCapabilities,
   PermissionRequestCallback,
 } from './acp-client.js';
+
+// Chunk Aggregator 导出
+export { TextChunkAggregator } from './chunk-aggregator.js';
+export type { TextChunkAggregatorOptions } from './chunk-aggregator.js';

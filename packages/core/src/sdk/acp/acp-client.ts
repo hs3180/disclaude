@@ -31,6 +31,8 @@ import type {
   AcpPermissionRequestParams,
   AcpPermissionResult,
   AcpSessionUpdateParams,
+  AcpAgentMessageChunkUpdate,
+  AcpAgentThoughtChunkUpdate,
 } from './types.js';
 import {
   AcpError,
@@ -41,6 +43,7 @@ import {
   type IAcpTransport,
 } from './transport.js';
 import { adaptSessionUpdate, adaptPromptResult } from './message-adapter.js';
+import { TextChunkAggregator } from './chunk-aggregator.js';
 
 const logger = createLogger('AcpClient');
 
@@ -133,10 +136,18 @@ export class AcpClient {
   /** 当前活跃的 prompt streams，key 为 sessionId */
   private readonly activePrompts = new Map<string, ActivePrompt>();
 
+  /** Text chunk aggregator — buffers consecutive text/thinking chunks (Issue #2532) */
+  private readonly chunkAggregator: TextChunkAggregator;
+
   constructor(config: AcpClientConfig) {
     this.transport = config.transport;
     this.timeout = config.timeout ?? 30000;
     this.onPermissionRequest = config.onPermissionRequest;
+
+    this.chunkAggregator = new TextChunkAggregator({
+      debounceMs: 500,
+      onFlush: (sessionId) => this.flushAggregatedChunks(sessionId),
+    });
   }
 
   /** 当前连接状态 */
@@ -314,12 +325,18 @@ export class AcpClient {
       // 在后台处理 result 响应
       void promptPromise
         .then((result) => {
+          // Flush any remaining text chunks before result (Issue #2532)
+          this.flushAggregatedChunks(sessionId);
+
           // 将 result 转为 AgentMessage 并推入队列
           const msg = adaptPromptResult(result);
           activePrompt.push(msg);
           activePrompt.complete();
         })
         .catch((err) => {
+          // Flush any remaining text chunks on error (Issue #2532)
+          this.flushAggregatedChunks(sessionId);
+
           activePrompt.error(
             err instanceof Error ? err : new Error(String(err)),
           );
@@ -379,6 +396,12 @@ export class AcpClient {
     if (this._state === 'disconnected') {
       return;
     }
+
+    // Flush all buffered chunks before disconnecting (Issue #2532)
+    for (const sessionId of [...this.activePrompts.keys()]) {
+      this.flushAggregatedChunks(sessionId);
+    }
+    this.chunkAggregator.disposeAll();
 
     // 拒绝所有 pending requests
     for (const [_id, pending] of this.pendingRequests) {
@@ -505,9 +528,36 @@ export class AcpClient {
 
   /**
    * 处理 session/update 通知，转换为 AgentMessage 并推送到对应的 prompt stream。
+   *
+   * Issue #2532: Consecutive text/thinking chunks are buffered by the
+   * TextChunkAggregator and flushed as a single aggregated message when
+   * a non-chunk event arrives or the debounce timer fires.
    */
   private handleSessionUpdate(params: AcpSessionUpdateParams): void {
-    const {update} = params;
+    const {update, sessionId} = params;
+
+    // Aggregate text chunks (Issue #2532)
+    if (update.sessionUpdate === 'agent_message_chunk') {
+      const {content} = (update as AcpAgentMessageChunkUpdate);
+      if (content?.type === 'text' && content.text) {
+        this.chunkAggregator.addText(sessionId, content.text);
+        return;
+      }
+      // Non-text content (e.g., image) — fall through to normal handling
+    }
+
+    // Aggregate thinking chunks (Issue #2532)
+    if (update.sessionUpdate === 'agent_thought_chunk') {
+      const {content} = (update as AcpAgentThoughtChunkUpdate);
+      if (content?.type === 'text' && content.text) {
+        this.chunkAggregator.addThinking(sessionId, content.text);
+        return;
+      }
+      // Non-text content — fall through to normal handling
+    }
+
+    // Non-chunk update: flush any buffered chunks first
+    this.flushAggregatedChunks(sessionId);
 
     // 尝试适配为 AgentMessage
     const agentMessage = adaptSessionUpdate(update);
@@ -517,9 +567,23 @@ export class AcpClient {
     }
 
     // 推送到对应 session 的 prompt stream
-    const active = this.activePrompts.get(params.sessionId);
+    const active = this.activePrompts.get(sessionId);
     if (active) {
       active.push(agentMessage);
+    }
+  }
+
+  /**
+   * Flush aggregated text/thinking chunks for a session and push to the prompt stream.
+   * Called by the TextChunkAggregator's debounce timer and before non-chunk events.
+   */
+  private flushAggregatedChunks(sessionId: string): void {
+    const messages = this.chunkAggregator.flush(sessionId);
+    const active = this.activePrompts.get(sessionId);
+    if (active) {
+      for (const msg of messages) {
+        active.push(msg);
+      }
     }
   }
 
@@ -563,6 +627,12 @@ export class AcpClient {
   private handleError(err: Error): void {
     logger.error({ error: err.message }, 'Transport error');
 
+    // Flush all buffered chunks on transport error (Issue #2532)
+    for (const sessionId of [...this.activePrompts.keys()]) {
+      this.flushAggregatedChunks(sessionId);
+    }
+    this.chunkAggregator.disposeAll();
+
     // 拒绝所有 pending requests
     for (const [_id, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);
@@ -583,6 +653,12 @@ export class AcpClient {
   private handleClose(): void {
     logger.info('Transport closed');
     this._state = 'disconnected';
+
+    // Flush all buffered chunks on transport close (Issue #2532)
+    for (const sessionId of [...this.activePrompts.keys()]) {
+      this.flushAggregatedChunks(sessionId);
+    }
+    this.chunkAggregator.disposeAll();
 
     // 拒绝所有 pending requests
     for (const [_id, pending] of this.pendingRequests) {
