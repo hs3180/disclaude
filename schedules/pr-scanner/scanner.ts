@@ -12,6 +12,8 @@
  *   npx tsx scanner.ts --action list-candidates [--repo OWNER/REPO]
  *   npx tsx scanner.ts --action create-state --pr NUMBER [--chat-id ID]
  *   npx tsx scanner.ts --action mark --pr NUMBER --state reviewing|approved|closed
+ *   npx tsx scanner.ts --action add-label --pr NUMBER [--label LABEL] [--repo OWNER/REPO]
+ *   npx tsx scanner.ts --action remove-label --pr NUMBER [--label LABEL] [--repo OWNER/REPO]
  *   npx tsx scanner.ts --action status
  *
  * Exit codes:
@@ -58,6 +60,8 @@ export const STATE_DIR = '.temp-chats';
 export const VALID_STATES: readonly PRState[] = ['reviewing', 'approved', 'closed'] as const;
 export const DEFAULT_MAX_CONCURRENT = 3;
 export const EXPIRY_HOURS = 48;
+export const REVIEWING_LABEL = 'pr-scanner:reviewing';
+export const DEFAULT_REPO = 'hs3180/disclaude';
 
 // ---- Helpers ----
 
@@ -336,6 +340,42 @@ export async function status(): Promise<string> {
   return lines.join('\n');
 }
 
+/**
+ * add-label: Add a GitHub label to a PR.
+ * Non-blocking — logs errors but does not throw.
+ */
+export async function addLabel(prNumber: number, repo: string, label: string): Promise<{ success: boolean; error: string | null }> {
+  try {
+    await execFileAsync('gh', [
+      'pr', 'edit', String(prNumber),
+      '--repo', repo,
+      '--add-label', label,
+    ], { timeout: 30_000 });
+    return { success: true, error: null };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * remove-label: Remove a GitHub label from a PR.
+ * Non-blocking — logs errors but does not throw.
+ */
+export async function removeLabel(prNumber: number, repo: string, label: string): Promise<{ success: boolean; error: string | null }> {
+  try {
+    await execFileAsync('gh', [
+      'pr', 'edit', String(prNumber),
+      '--repo', repo,
+      '--remove-label', label,
+    ], { timeout: 30_000 });
+    return { success: true, error: null };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
 // ---- CLI ----
 
 function printUsage(): never {
@@ -346,6 +386,8 @@ Actions:
   list-candidates [--repo OWNER/REPO]   List open PRs without state files
   create-state --pr NUMBER [--chat-id ID]  Create state file for a PR
   mark --pr NUMBER --state reviewing|approved|closed  Update PR state
+  add-label --pr NUMBER [--label LABEL] [--repo OWNER/REPO]  Add GitHub label
+  remove-label --pr NUMBER [--label LABEL] [--repo OWNER/REPO]  Remove GitHub label
   status                                Show all tracked PRs grouped by state
 
 Options:
@@ -353,7 +395,8 @@ Options:
   --repo OWNER/REPO    GitHub repository (default: hs3180/disclaude)
   --pr NUMBER          PR number
   --state STATE        New state (reviewing|approved|closed)
-  --chat-id ID         Optional chat ID for create-state`);
+  --chat-id ID         Optional chat ID for create-state
+  --label LABEL        Label name (default: ${REVIEWING_LABEL})`);
   process.exit(1);
 }
 
@@ -392,6 +435,11 @@ async function main(): Promise<void> {
   const chatId = chatIdIdx !== -1 && chatIdIdx + 1 < args.length
     ? args[chatIdIdx + 1]
     : null;
+
+  const labelIdx = args.indexOf('--label');
+  const labelValue = labelIdx !== -1 && labelIdx + 1 < args.length
+    ? args[labelIdx + 1]
+    : REVIEWING_LABEL;
 
   try {
     switch (action) {
@@ -438,6 +486,32 @@ async function main(): Promise<void> {
       case 'status': {
         const output = await status();
         console.log(output);
+        break;
+      }
+
+      case 'add-label': {
+        if (prNumber === null || !Number.isFinite(prNumber) || prNumber <= 0) {
+          console.error('ERROR: --pr must be a positive integer');
+          process.exit(1);
+        }
+        const result = await addLabel(prNumber, repo, labelValue);
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.success) {
+          console.error(`WARN: Failed to add label '${labelValue}' to PR #${prNumber}: ${result.error}`);
+        }
+        break;
+      }
+
+      case 'remove-label': {
+        if (prNumber === null || !Number.isFinite(prNumber) || prNumber <= 0) {
+          console.error('ERROR: --pr must be a positive integer');
+          process.exit(1);
+        }
+        const result = await removeLabel(prNumber, repo, labelValue);
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.success) {
+          console.error(`WARN: Failed to remove label '${labelValue}' from PR #${prNumber}: ${result.error}`);
+        }
         break;
       }
 

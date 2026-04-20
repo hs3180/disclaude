@@ -18,10 +18,14 @@ import {
   createState,
   markState,
   status,
+  addLabel,
+  removeLabel,
   STATE_DIR,
   VALID_STATES,
   DEFAULT_MAX_CONCURRENT,
   EXPIRY_HOURS,
+  REVIEWING_LABEL,
+  DEFAULT_REPO,
   type PRStateFile,
   type PRState,
 } from '../scanner.js';
@@ -411,6 +415,58 @@ describe('scanner', () => {
 
       expect(marked1.state).toBe('approved');
       expect(marked2.state).toBe('closed');
+    });
+  });
+
+  // ---- Label Management ----
+
+  describe('addLabel', () => {
+    it('should return failure result when gh CLI fails (PR not found)', async () => {
+      // Uses real gh CLI — PR #999999 doesn't exist, so this tests the failure path
+      const result = await addLabel(999999, DEFAULT_REPO, REVIEWING_LABEL);
+      expect(result.success).toBe(false);
+      expect(result.error).toBeTruthy();
+    });
+
+    it('should not throw even when gh CLI fails', async () => {
+      // Critical behavior: non-blocking error handling
+      await expect(addLabel(999999, DEFAULT_REPO, REVIEWING_LABEL)).resolves.not.toThrow();
+    });
+
+    it('should return an object with success and error fields', async () => {
+      const result = await addLabel(999999, DEFAULT_REPO, REVIEWING_LABEL);
+      expect(result).toHaveProperty('success');
+      expect(result).toHaveProperty('error');
+      expect(typeof result.success).toBe('boolean');
+    });
+  });
+
+  describe('removeLabel', () => {
+    it('should return failure result when gh CLI fails (PR not found)', async () => {
+      const result = await removeLabel(999999, DEFAULT_REPO, REVIEWING_LABEL);
+      expect(result.success).toBe(false);
+      expect(result.error).toBeTruthy();
+    });
+
+    it('should not throw even when gh CLI fails', async () => {
+      await expect(removeLabel(999999, DEFAULT_REPO, REVIEWING_LABEL)).resolves.not.toThrow();
+    });
+
+    it('should return an object with success and error fields', async () => {
+      const result = await removeLabel(999999, DEFAULT_REPO, REVIEWING_LABEL);
+      expect(result).toHaveProperty('success');
+      expect(result).toHaveProperty('error');
+      expect(typeof result.success).toBe('boolean');
+    });
+  });
+
+  describe('constants', () => {
+    it('should have correct REVIEWING_LABEL', () => {
+      expect(REVIEWING_LABEL).toBe('pr-scanner:reviewing');
+    });
+
+    it('should have correct DEFAULT_REPO', () => {
+      expect(DEFAULT_REPO).toBe('hs3180/disclaude');
     });
   });
 });
