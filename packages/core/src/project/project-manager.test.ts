@@ -892,24 +892,28 @@ describe('ProjectManager — edge cases', () => {
   });
 
   it('should compute workingDir correctly with trailing slash in workspaceDir', () => {
-    const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace/',
-    }));
+    const opts = createOptions();
+    const pm = new ProjectManager({
+      ...opts,
+      workspaceDir: `${opts.workspaceDir  }/`,
+    });
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(join(opts.workspaceDir, 'projects/test-project'));
     }
   });
 
   it('should compute workingDir correctly with multiple trailing slashes', () => {
-    const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace///',
-    }));
+    const opts = createOptions();
+    const pm = new ProjectManager({
+      ...opts,
+      workspaceDir: `${opts.workspaceDir  }///`,
+    });
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(join(opts.workspaceDir, 'projects/test-project'));
     }
   });
 
@@ -940,5 +944,226 @@ describe('ProjectManager — edge cases', () => {
 
     const result = pm.create('chat_1', 'minimal', 'my-minimal');
     expect(result.ok).toBe(true);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// delete() Method (Issue #2225)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should delete an existing instance from memory and disk', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.listInstances()).toHaveLength(1);
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.name).toBe('my-research');
+      expect(result.data.unboundChatIds).toEqual(['chat_1']);
+    }
+
+    expect(pm.listInstances()).toHaveLength(0);
+    expect(pm.getActive('chat_1').name).toBe('default');
+  });
+
+  it('should reject deleting non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should reject deleting "default" instance', () => {
+    const result = pm.delete('default');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('保留名称');
+    }
+  });
+
+  it('should clean up all bindings when deleting an instance', () => {
+    pm.create('chat_1', 'research', 'shared-project');
+    pm.use('chat_2', 'shared-project');
+    pm.use('chat_3', 'shared-project');
+
+    const result = pm.delete('shared-project');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.unboundChatIds).toHaveLength(3);
+      expect(result.data.unboundChatIds).toEqual(
+        expect.arrayContaining(['chat_1', 'chat_2', 'chat_3']),
+      );
+    }
+
+    // All chatIds should fall back to default
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should not affect other instances when deleting one', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+    pm.use('chat_3', 'book-1');
+
+    pm.delete('research-1');
+
+    expect(pm.listInstances()).toHaveLength(1);
+    expect(pm.listInstances()[0].name).toBe('book-1');
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+    expect(pm.getActive('chat_3').name).toBe('book-1');
+  });
+
+  it('should persist deletion to disk', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    // Reload from disk — instance should still be gone
+    const pm2 = new ProjectManager(createOptions({ workspaceDir }));
+    expect(pm2.listInstances()).toHaveLength(0);
+  });
+
+  it('should reject empty name', () => {
+    const result = pm.delete('');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不能为空');
+    }
+  });
+
+  it('should reject invalid names with path traversal', () => {
+    const result = pm.delete('../etc');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('路径遍历');
+    }
+  });
+
+  it('should handle deleting instance with no bindings', () => {
+    pm.create('chat_1', 'research', 'temp-project');
+    pm.reset('chat_1');
+
+    // Instance exists but has no bindings
+    const result = pm.delete('temp-project');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.unboundChatIds).toEqual([]);
+    }
+
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Persist Error Propagation (Issue #2225)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager — persist error propagation', () => {
+  it('should return error when create() persist fails', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+
+    // Make .disclaude directory read-only to force persist failure
+    const dataDir = join(opts.workspaceDir, '.disclaude');
+    mkdirSync(dataDir, { recursive: true });
+    // Write a file then make directory read-only
+    writeFileSync(join(dataDir, 'lock'), '');
+    rmSync(dataDir, { recursive: true, force: true });
+    // Create a file (not directory) at the persist path to block directory creation
+    writeFileSync(`${opts.workspaceDir  }/.disclaude`, 'block', 'utf8');
+
+    // Now creating .disclaude as a dir will fail since a file exists with that name
+    const result = pm.create('chat_1', 'research', 'blocked-project');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // Instance should NOT exist in memory (rolled back)
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+
+  it('should return error when use() persist fails', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+
+    // Create an instance first (persist succeeds)
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+
+    // Block persist by replacing .disclaude dir with a file
+    rmSync(join(opts.workspaceDir, '.disclaude'), { recursive: true, force: true });
+    writeFileSync(`${opts.workspaceDir  }/.disclaude`, 'block', 'utf8');
+
+    // Try to bind another chatId — persist should fail
+    const result = pm.use('chat_2', 'my-research');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // chat_2 should NOT be bound (rolled back)
+    expect(pm.getActive('chat_2').name).toBe('default');
+    // Original binding should still be intact
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+  });
+
+  it('should return error when reset() persist fails', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+
+    // Create and bind
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+
+    // Block persist
+    rmSync(join(opts.workspaceDir, '.disclaude'), { recursive: true, force: true });
+    writeFileSync(`${opts.workspaceDir  }/.disclaude`, 'block', 'utf8');
+
+    // Try to reset — persist should fail
+    const result = pm.reset('chat_1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // Binding should still be intact (rolled back)
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+  });
+
+  it('should return error when delete() persist fails and rollback', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.listInstances()).toHaveLength(1);
+
+    // Block persist
+    rmSync(join(opts.workspaceDir, '.disclaude'), { recursive: true, force: true });
+    writeFileSync(`${opts.workspaceDir  }/.disclaude`, 'block', 'utf8');
+
+    // Try to delete — persist should fail
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // Instance should still exist (rolled back)
+    expect(pm.listInstances()).toHaveLength(1);
+    expect(pm.listInstances()[0].name).toBe('my-research');
+    // Binding should still be intact
+    expect(pm.getActive('chat_1').name).toBe('my-research');
   });
 });
