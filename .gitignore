@@ -69,3 +69,4 @@ disclaude-test-server.log
 
 # Test data
 data/
+.temp-chats/
