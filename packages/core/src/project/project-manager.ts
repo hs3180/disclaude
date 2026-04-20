@@ -206,8 +206,15 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      this.removeFromReverseIndex(name, chatId);
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -246,8 +253,20 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore old binding or remove new one
+      if (oldName && oldName !== name) {
+        this.chatProjectMap.set(chatId, oldName);
+        this.removeFromReverseIndex(name, chatId);
+        this.addToReverseIndex(oldName, chatId);
+      } else {
+        this.chatProjectMap.delete(chatId);
+        this.removeFromReverseIndex(name, chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -272,13 +291,30 @@ export class ProjectManager {
     }
 
     const boundName = this.chatProjectMap.get(chatId);
-    this.chatProjectMap.delete(chatId);
-    if (boundName) {
-      this.removeFromReverseIndex(boundName, chatId);
+
+    // If no binding exists, nothing to do
+    if (!boundName) {
+      return {
+        ok: true,
+        data: {
+          name: 'default',
+          workingDir: this.workspaceDir,
+        },
+      };
     }
 
-    // Persist after mutation
-    this.persist();
+    // Remove binding from memory
+    this.chatProjectMap.delete(chatId);
+    this.removeFromReverseIndex(boundName, chatId);
+
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore the removed binding
+      this.chatProjectMap.set(chatId, boundName);
+      this.addToReverseIndex(boundName, chatId);
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,

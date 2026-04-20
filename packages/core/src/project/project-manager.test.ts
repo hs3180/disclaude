@@ -892,24 +892,28 @@ describe('ProjectManager — edge cases', () => {
   });
 
   it('should compute workingDir correctly with trailing slash in workspaceDir', () => {
-    const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace/',
-    }));
+    const opts = createOptions();
+    const pm = new ProjectManager({
+      ...opts,
+      workspaceDir: `${opts.workspaceDir}/`,
+    });
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(join(opts.workspaceDir, 'projects/test-project'));
     }
   });
 
   it('should compute workingDir correctly with multiple trailing slashes', () => {
-    const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace///',
-    }));
+    const opts = createOptions();
+    const pm = new ProjectManager({
+      ...opts,
+      workspaceDir: `${opts.workspaceDir}///`,
+    });
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(join(opts.workspaceDir, 'projects/test-project'));
     }
   });
 
@@ -940,5 +944,126 @@ describe('ProjectManager — edge cases', () => {
 
     const result = pm.create('chat_1', 'minimal', 'my-minimal');
     expect(result.ok).toBe(true);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Persist Failure Rollback (Issue #2225)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Helper: make persist fail by turning .disclaude into a file instead of a directory.
+ * Must be called AFTER the first successful persist (or with a fresh workspace).
+ */
+function blockPersistDir(workspaceDir: string): void {
+  const dataDir = join(workspaceDir, '.disclaude');
+  rmSync(dataDir, { recursive: true, force: true });
+  writeFileSync(dataDir, 'blocker', 'utf8');
+}
+
+describe('ProjectManager persist failure — rollback on create()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should rollback create() when persist fails', () => {
+    blockPersistDir(workspaceDir);
+
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // Instance should NOT exist in memory (rolled back)
+    expect(pm.listInstances()).toHaveLength(0);
+
+    // getActive should return default
+    expect(pm.getActive('chat_1').name).toBe('default');
+  });
+});
+
+describe('ProjectManager persist failure — rollback on use()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should rollback use() when persist fails (new binding)', () => {
+    // Create an instance successfully first
+    pm.create('chat_1', 'research', 'my-research');
+
+    // Now make persist fail
+    blockPersistDir(workspaceDir);
+
+    // Try to bind a new chatId
+    const result = pm.use('chat_2', 'my-research');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // chat_2 should NOT be bound (rolled back)
+    expect(pm.getActive('chat_2').name).toBe('default');
+    // chat_1 should still be bound
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+  });
+
+  it('should rollback use() when rebinding fails (restore old binding)', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    // Bind chat_1 to research-1 first
+    pm.use('chat_1', 'research-1');
+    expect(pm.getActive('chat_1').name).toBe('research-1');
+
+    // Now make persist fail
+    blockPersistDir(workspaceDir);
+
+    // Try to rebind chat_1 to book-1
+    const result = pm.use('chat_1', 'book-1');
+    expect(result.ok).toBe(false);
+
+    // chat_1 should still be bound to research-1 (rolled back)
+    expect(pm.getActive('chat_1').name).toBe('research-1');
+  });
+});
+
+describe('ProjectManager persist failure — rollback on reset()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should rollback reset() when persist fails', () => {
+    // Create and bind
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.getActive('chat_1').name).toBe('my-research');
+
+    // Now make persist fail
+    blockPersistDir(workspaceDir);
+
+    // Try to reset
+    const result = pm.reset('chat_1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('持久化');
+    }
+
+    // Binding should still exist (rolled back)
+    expect(pm.getActive('chat_1').name).toBe('my-research');
   });
 });
