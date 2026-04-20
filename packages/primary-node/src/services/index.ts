@@ -12,3 +12,8 @@ export {
   resetDebugGroupService,
   type DebugGroupInfo,
 } from './debug-group-service.js';
+
+export {
+  insertDocxImage,
+  type InsertDocxImageResult,
+} from './docx-image-service.js';

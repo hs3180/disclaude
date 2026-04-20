@@ -10,6 +10,7 @@
  * - send_card: Send a display-only card to a chat
  * - send_interactive: Send an interactive card with buttons/actions
  * - send_file: Send a file to a chat
+ * - insert_docx_image: Insert an image into a Feishu document
  *
  * Environment Variables Required:
  * - FEISHU_APP_ID: Platform app ID
@@ -21,7 +22,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
+import { send_file, send_text, send_card, send_interactive_message, insert_docx_image } from './channel-mcp.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -167,6 +168,28 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
+              {
+                name: 'insert_docx_image',
+                description: 'Insert an image into a Feishu document at a specified position. Supports PNG, JPEG, GIF, WebP, BMP (max 20MB).',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    documentId: {
+                      type: 'string',
+                      description: 'Feishu document ID (from the document URL)',
+                    },
+                    imagePath: {
+                      type: 'string',
+                      description: 'Path to the image file (relative to workspace or absolute)',
+                    },
+                    index: {
+                      type: 'number',
+                      description: 'Position to insert at (0-based, -1 or omit for append at end)',
+                    },
+                  },
+                  required: ['documentId', 'imagePath'],
+                },
+              },
             ],
           },
         };
@@ -241,6 +264,24 @@ async function handleMessage(message: unknown) {
         if (name === 'send_file') {
           const args = toolArgs as { filePath: string; chatId: string; parentMessageId?: string };
           const result = await send_file(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'insert_docx_image') {
+          const args = toolArgs as { documentId: string; imagePath: string; index?: number };
+          const result = await insert_docx_image(args);
 
           return {
             jsonrpc: '2.0',

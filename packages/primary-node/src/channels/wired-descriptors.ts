@@ -37,6 +37,7 @@ import {
   buildActionPrompts,
   validateInteractiveParams,
 } from '../platforms/feishu/card-builders/index.js';
+import { insertDocxImage } from '../services/docx-image-service.js';
 
 // ============================================================================
 // REST Wired Descriptor
@@ -251,6 +252,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const chatStore = context.primaryNode.getChatStore();
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
+      },
+      // Issue #2278: Insert image into Feishu document at specified position
+      insertDocxImage: async (documentId: string, imagePath: string, index: number) => {
+        const client = feishuChannel.getClient();
+        return await insertDocxImage(client, documentId, imagePath, index);
       },
     };
 

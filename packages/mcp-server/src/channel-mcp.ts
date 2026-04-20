@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -163,6 +165,19 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  insert_docx_image: {
+    description: 'Insert an image into a Feishu document at a specified position.',
+    parameters: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', description: 'Feishu document ID (from the document URL)' },
+        imagePath: { type: 'string', description: 'Path to the image file (relative to workspace or absolute)' },
+        index: { type: 'number', description: 'Position to insert at (0-based, -1 or omit for append at end)' },
+      },
+      required: ['documentId', 'imagePath'],
+    },
+    handler: insert_docx_image,
   },
 };
 
@@ -451,6 +466,45 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Insert image into Feishu document at specified position
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image into a Feishu document at a specified position.
+
+This is useful when generating rich documents (reports, analyses) that include charts or diagrams.
+The image will be inserted as a block at the given position index.
+
+## Parameters
+- **documentId**: Feishu document ID (from the document URL, e.g. "xxxxxx" from https://feishu.cn/docx/xxxxxx)
+- **imagePath**: Path to the image file (relative to workspace or absolute)
+- **index**: Position to insert at (0-based, -1 or omit to append at the end)
+
+## Three-Step API Flow
+1. Creates an empty image block at the specified position
+2. Uploads the image file via Drive Media API
+3. Binds the uploaded file to the image block
+
+## Supported Image Formats
+PNG, JPEG, GIF, WebP, BMP (max 20MB)
+
+## Example
+\`\`\`json
+{"documentId": "doxcnxxxxxx", "imagePath": "./charts/revenue.png", "index": 3}
+\`\`\``,
+    parameters: z.object({
+      documentId: z.string().describe('Feishu document ID (from the document URL)'),
+      imagePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().optional().describe('Position to insert at (0-based, -1 or omit for append at end)'),
+    }),
+    handler: async ({ documentId, imagePath, index }: { documentId: string; imagePath: string; index?: number }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
