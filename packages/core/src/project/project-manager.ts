@@ -11,6 +11,7 @@
 
 import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createLogger } from '../utils/logger.js';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -21,6 +22,9 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
+
+const logger = createLogger('ProjectManager');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +68,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing `templates/` for auto-discovery */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +86,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -98,26 +102,84 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Initialize (or re-initialize) templates from config.
+   * Initialize (or re-initialize) templates from config and/or auto-discovery.
+   *
+   * Template resolution order:
+   * 1. Auto-discover templates from `{packageDir}/templates/` directory
+   * 2. Merge with explicit `templatesConfig` (config values override discovery)
+   *
+   * This means:
+   * - If no `templatesConfig` is provided, templates are fully auto-discovered
+   * - If `templatesConfig` is provided, it supplements/overrides discovered templates
+   * - If no templates directory exists and no config is provided, no templates are loaded
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @param templatesConfig - Template configuration (from disclaude.config.yaml, optional)
+   *
+   * @see Issue #2286 — Project templates should auto-discover from package directory
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
 
-    if (!templatesConfig) {
+    // Step 1: Auto-discover templates from packageDir/templates/
+    const discoveredConfig = this.discoverTemplatesFromPackage();
+
+    // Step 2: Merge — discovered as base, explicit config as override
+    const mergedConfig: ProjectTemplatesConfig = {
+      ...discoveredConfig,
+      ...templatesConfig,
+    };
+
+    if (Object.keys(mergedConfig).length === 0) {
       return;
     }
 
-    for (const [name, meta] of Object.entries(templatesConfig)) {
+    for (const [name, meta] of Object.entries(mergedConfig)) {
       this.templates.set(name, {
         name,
         displayName: meta.displayName,
         description: meta.description,
       });
+    }
+
+    const discoveredCount = Object.keys(discoveredConfig).length;
+    const configCount = templatesConfig ? Object.keys(templatesConfig).length : 0;
+    logger.debug(
+      { discovered: discoveredCount, fromConfig: configCount, total: this.templates.size },
+      'Templates loaded (auto-discovered + config)',
+    );
+  }
+
+  /**
+   * Discover templates from the package directory.
+   *
+   * Scans `{packageDir}/templates/` for valid template directories.
+   * Returns an empty config if the directory doesn't exist.
+   *
+   * @returns ProjectTemplatesConfig from auto-discovered templates
+   */
+  private discoverTemplatesFromPackage(): ProjectTemplatesConfig {
+    if (!this.packageDir) {
+      return {};
+    }
+
+    try {
+      const config = discoverTemplatesAsConfig(this.packageDir);
+      if (Object.keys(config).length > 0) {
+        logger.debug(
+          { packageDir: this.packageDir, count: Object.keys(config).length },
+          'Auto-discovered templates from package directory',
+        );
+      }
+      return config;
+    } catch (err) {
+      logger.warn(
+        { packageDir: this.packageDir, err: err instanceof Error ? err.message : String(err) },
+        'Failed to auto-discover templates, skipping',
+      );
+      return {};
     }
   }
 

@@ -859,6 +859,162 @@ describe('ProjectManager persistence round-trip', () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Auto-Discovery Integration (Issue #2286)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager auto-discovery (Issue #2286)', () => {
+  it('should auto-discover templates from packageDir/templates/', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir();
+
+    // Create a template directory
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# Research Template');
+    writeFileSync(join(templateDir, 'template.yaml'), 'displayName: "研究模式"\ndescription: "专注研究"');
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      // No templatesConfig — should auto-discover
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0]).toEqual({
+      name: 'research',
+      displayName: '研究模式',
+      description: '专注研究',
+    });
+  });
+
+  it('should work without any templates (no config, no discovery)', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir();
+    // No templates directory, no config
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+    });
+
+    expect(pm.listTemplates()).toEqual([]);
+  });
+
+  it('should merge config templates with auto-discovered templates', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir();
+
+    // Create a discovered template
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# Research');
+    writeFileSync(join(templateDir, 'template.yaml'), 'displayName: "发现的研究"');
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      templatesConfig: {
+        'book-reader': { displayName: '读书助手' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    // Should have both discovered and configured templates
+    expect(templates).toHaveLength(2);
+    const names = templates.map((t) => t.name).sort();
+    expect(names).toEqual(['book-reader', 'research']);
+    // Discovered template should have its metadata
+    expect(templates.find((t) => t.name === 'research')?.displayName).toBe('发现的研究');
+    // Config template should have its metadata
+    expect(templates.find((t) => t.name === 'book-reader')?.displayName).toBe('读书助手');
+  });
+
+  it('should allow config to override auto-discovered template metadata', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir();
+
+    // Create a discovered template
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# Research');
+    writeFileSync(join(templateDir, 'template.yaml'), 'displayName: "Discovered Name"');
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      templatesConfig: {
+        research: { displayName: 'Config Override', description: 'From config' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    // Config should override discovered metadata
+    expect(templates[0].displayName).toBe('Config Override');
+    expect(templates[0].description).toBe('From config');
+  });
+
+  it('should support auto-discovered templates for instance creation', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir();
+
+    // Create a discovered template
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# Research');
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      // No templatesConfig
+    });
+
+    // Should be able to create instance from auto-discovered template
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.templateName).toBe('research');
+    }
+  });
+
+  it('should re-discover templates on init() re-call', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir();
+
+    // Start with no templates
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+    });
+    expect(pm.listTemplates()).toEqual([]);
+
+    // Add a template to the filesystem
+    const templateDir = join(packageDir, 'templates', 'new-template');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# New Template');
+
+    // Re-init should discover the new template
+    pm.init();
+    expect(pm.listTemplates()).toHaveLength(1);
+    expect(pm.listTemplates()[0].name).toBe('new-template');
+  });
+
+  it('should handle packageDir without templates directory gracefully', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir();
+    // packageDir exists but has no templates/ subdirectory
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+    });
+
+    expect(pm.listTemplates()).toEqual([]);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Edge Cases & Integration Scenarios
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
