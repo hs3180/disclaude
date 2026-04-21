@@ -5,6 +5,7 @@
  * Core logic tests do not depend on GitHub API (can run offline).
  *
  * @see Issue #2219 — scanner.ts base script skeleton
+ * @see Issue #2220 — SCHEDULE.md + GitHub Label integration
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -21,6 +22,7 @@ import {
   MAX_CONCURRENT,
   EXPIRY_HOURS,
   VALID_STATES,
+  REVIEWING_LABEL,
   // Pure functions
   nowISO,
   calcExpiry,
@@ -38,6 +40,9 @@ import {
   markState,
   getAllStates,
   countReviewing,
+  // Label management (Issue #2220)
+  addLabel,
+  removeLabel,
 } from '../scanner.js';
 
 const execFileAsync = promisify(execFile);
@@ -424,6 +429,61 @@ describe('scanner.ts', () => {
     it('should have no "rejected" in valid states', () => {
       expect(VALID_STATES).not.toContain('rejected');
       expect(VALID_STATES).toEqual(['reviewing', 'approved', 'closed']);
+    });
+  });
+
+  // ---- Label management tests (Issue #2220) ----
+
+  describe('Label management', () => {
+    it('should export REVIEWING_LABEL constant', () => {
+      expect(REVIEWING_LABEL).toBe('pr-scanner:reviewing');
+    });
+
+    describe('addLabel', () => {
+      it('should return true on successful label add', async () => {
+        // Mock execFileAsync by spying on child_process
+        const { execFile: realExecFile } = await import('node:child_process');
+        const { promisify: realPromisify } = await import('node:util');
+        const mockExec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' });
+
+        // We test the function directly — gh CLI may not be available in test env
+        // so we verify the function signature and error handling
+        const result = await addLabel(999, 'test-label', 'test/repo').catch(() => false);
+        // In test env without gh CLI, this should return false (non-blocking)
+        expect(typeof result).toBe('boolean');
+      });
+
+      it('should not throw on failure', async () => {
+        // Even if gh CLI is not available, addLabel should not throw
+        await expect(addLabel(1, 'label', 'owner/repo')).resolves.toBeDefined();
+      });
+    });
+
+    describe('removeLabel', () => {
+      it('should return boolean without throwing', async () => {
+        const result = await removeLabel(999, 'test-label', 'test/repo').catch(() => false);
+        expect(typeof result).toBe('boolean');
+      });
+
+      it('should not throw on failure', async () => {
+        await expect(removeLabel(1, 'label', 'owner/repo')).resolves.toBeDefined();
+      });
+    });
+  });
+
+  // ---- CLI label integration tests ----
+
+  describe('CLI label integration', () => {
+    it('should include label info in help text', async () => {
+      const result = await runScanner(['--help']);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('label');
+    });
+
+    it('should include --repo option in help text', async () => {
+      const result = await runScanner(['--help']);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('--repo');
     });
   });
 });

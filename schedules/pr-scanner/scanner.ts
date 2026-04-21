@@ -8,8 +8,9 @@
  * CLI Interface (--action mode):
  *   check-capacity   Count `state: reviewing` files, report availability
  *   list-candidates  List open PRs not yet tracked (requires gh CLI)
- *   create-state     Create a state file for a PR
+ *   create-state     Create a state file for a PR (+ add reviewing label)
  *   mark             Update the state field of an existing state file
+ *                    (removes reviewing label when leaving reviewing state)
  *   status           List all tracked PRs grouped by state
  *
  * State file path: `.temp-chats/pr-{number}.json`
@@ -29,6 +30,7 @@
  *   1 — fatal error (invalid args, I/O failure)
  *
  * @see Issue #2219 — scanner.ts base script skeleton
+ * @see Issue #2220 — SCHEDULE.md + GitHub Label integration
  * @see Issue #2210 — PR Scanner v2 parent issue
  */
 
@@ -74,6 +76,7 @@ export const MAX_CONCURRENT = 3;
 export const EXPIRY_HOURS = 48;
 export const UTC_DATETIME_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 export const VALID_STATES: readonly PRState[] = ['reviewing', 'approved', 'closed'] as const;
+export const REVIEWING_LABEL = 'pr-scanner:reviewing';
 
 // ---- Helpers (exported for testing) ----
 
@@ -121,6 +124,48 @@ export async function ensureStateDir(): Promise<string> {
   const dir = resolve(STATE_DIR);
   await mkdir(dir, { recursive: true });
   return dir;
+}
+
+// ---- GitHub Label Management (Issue #2220) ----
+
+/** Add a GitHub label to a PR (non-blocking — logs warning on failure) */
+export async function addLabel(
+  prNumber: number,
+  label: string,
+  repo: string = 'hs3180/disclaude',
+): Promise<boolean> {
+  try {
+    await execFileAsync('gh', [
+      'pr', 'edit', String(prNumber),
+      '--repo', repo,
+      '--add-label', label,
+    ], { timeout: 30_000 });
+    return true;
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`WARN: Failed to add label '${label}' to PR #${prNumber}: ${errMsg}`);
+    return false;
+  }
+}
+
+/** Remove a GitHub label from a PR (non-blocking — logs warning on failure) */
+export async function removeLabel(
+  prNumber: number,
+  label: string,
+  repo: string = 'hs3180/disclaude',
+): Promise<boolean> {
+  try {
+    await execFileAsync('gh', [
+      'pr', 'edit', String(prNumber),
+      '--repo', repo,
+      '--remove-label', label,
+    ], { timeout: 30_000 });
+    return true;
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`WARN: Failed to remove label '${label}' from PR #${prNumber}: ${errMsg}`);
+    return false;
+  }
 }
 
 // ---- State File Operations (exported for testing) ----
@@ -368,10 +413,10 @@ function printUsage(): never {
 Actions:
   check-capacity           Count reviewing PRs, report availability
   list-candidates          List open PRs not yet tracked
-  create-state             Create state file for a PR
+  create-state             Create state file for a PR (+ add reviewing label)
     --pr <number>            PR number (required)
     --chat-id <string>       Chat ID (required)
-  mark                     Update state of a PR
+  mark                     Update state of a PR (+ remove reviewing label on exit)
     --pr <number>            PR number (required)
     --state <state>          New state: reviewing|approved|closed (required)
   status                   List all tracked PRs grouped by state
@@ -456,6 +501,8 @@ async function main(): Promise<void> {
         exitWithError('Missing --chat-id <string> for create-state');
       }
       const result = await createStateFile(prNumber, chatId);
+      // Add reviewing label (non-blocking, Issue #2220)
+      await addLabel(prNumber, REVIEWING_LABEL, repo);
       console.log(JSON.stringify(result, null, 2));
       break;
     }
@@ -467,7 +514,19 @@ async function main(): Promise<void> {
       if (!newState || !isValidState(newState)) {
         exitWithError(`Missing or invalid --state for mark (must be: ${VALID_STATES.join('|')})`);
       }
+      // Read current state to detect transition out of reviewing (Issue #2220)
+      let prevState: PRState | null = null;
+      try {
+        const current = await readStateFile(prNumber);
+        prevState = current.state;
+      } catch {
+        // File doesn't exist or invalid — will be caught by markState below
+      }
       const result = await markState(prNumber, newState as PRState);
+      // Remove reviewing label when leaving reviewing state (non-blocking)
+      if (prevState === 'reviewing' && newState !== 'reviewing') {
+        await removeLabel(prNumber, REVIEWING_LABEL, repo);
+      }
       console.log(JSON.stringify(result, null, 2));
       break;
     }
