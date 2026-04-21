@@ -32,7 +32,7 @@ import {
   hasRuntimeContext,
   getRuntimeContext,
   clearRuntimeContext,
-} from '../agents/types.js';
+} from '../agents/runtime-context.js';
 
 describe('Config.getGlobalEnv()', () => {
   it('should return an object (never null or undefined)', () => {
