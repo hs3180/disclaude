@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteGuidance,
 } from './guidance.js';
 
 /**
@@ -138,6 +139,10 @@ export class MessageBuilder {
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
+    // Issue #2335: User taste (preferences) injection
+    const tasteContent = this.options.buildTasteContent?.(chatId);
+    const tasteGuidance = buildTasteGuidance(tasteContent);
+
     // Compose all sections
     const sections: string[] = [];
 
@@ -164,6 +169,10 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+
+    if (tasteGuidance) {
+      sections.push(tasteGuidance);
+    }
 
     const preamble = sections.join('\n');
 

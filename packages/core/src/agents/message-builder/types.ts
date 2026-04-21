@@ -105,4 +105,14 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * Build user taste (preferences) content for agent context injection.
+   *
+   * Issue #2335: Injects auto-learned user preferences into the prompt
+   * so the agent follows them without repeated corrections.
+   *
+   * @returns Pre-formatted taste rules string, or undefined if no taste
+   */
+  buildTasteContent?: (chatId: string) => string | undefined;
 }
