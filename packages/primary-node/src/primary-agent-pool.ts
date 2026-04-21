@@ -11,8 +11,9 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
-import { AgentFactory, type ChatAgentCallbacks, type ChatAgentInterface } from '@disclaude/worker-node';
+import { type MessageBuilderOptions, type ChatAgent as ChatAgentInterface } from '@disclaude/core';
+import { AgentFactory } from './agents/factory.js';
+import type { ChatAgentCallbacks } from './agents/chat-agent/types.js';
 
 /**
  * Options for PrimaryAgentPool initialization.

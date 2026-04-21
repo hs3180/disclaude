@@ -21,7 +21,7 @@ import {
   type ChannelApiHandlers,
   type FeishuCard,
 } from '@disclaude/core';
-import type { ChatAgentCallbacks } from '@disclaude/worker-node';
+import type { ChatAgentCallbacks } from '../agents/chat-agent/types.js';
 import type { Logger } from 'pino';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
 
@@ -102,7 +102,7 @@ export function createChannelCallbacksFactory(
     },
     sendCard: async (
       chatId: string,
-      card: FeishuCard,
+      card: Record<string, unknown>,
       description?: string,
       parentMessageId?: string
     ) => {

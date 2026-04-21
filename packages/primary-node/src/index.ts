@@ -199,5 +199,9 @@ export {
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 
+// Agents module (Issue #2717 Phase 1: Migrated from @disclaude/worker-node)
+export { AgentFactory, toChatAgentCallbacks, type AgentCreateOptions } from './agents/factory.js';
+export { ChatAgent, type ChatAgentCallbacks, type ChatAgentConfig } from './agents/chat-agent/index.js';
+
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';

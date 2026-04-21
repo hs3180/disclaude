@@ -25,8 +25,9 @@ import type {
   MessageHandler,
   ControlHandler,
   FeishuApiHandlers,
+  ChatAgent as ChatAgentInterface,
 } from '@disclaude/core';
-import type { ChatAgentCallbacks, ChatAgentInterface } from '@disclaude/worker-node';
+import type { ChatAgentCallbacks } from './agents/chat-agent/types.js';
 import type { Logger } from 'pino';
 import { ChannelManager } from './channel-manager.js';
 
