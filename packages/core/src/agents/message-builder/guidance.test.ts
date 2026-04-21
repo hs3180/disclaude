@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,39 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime-env section header', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment Variables');
+  });
+
+  it('should explain the runtime-env mechanism', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('runtime-env');
+    expect(result).toContain('file-based');
+    expect(result).toContain('process boundaries');
+  });
+
+  it('should include usage instructions for Read/Write/Edit tools', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Read tool');
+    expect(result).toContain('Write tool');
+    expect(result).toContain('Edit tool');
+  });
+
+  it('should list common variables with their purposes', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+    expect(result).toContain('ACTIVE_CHAT_ID');
+  });
+
+  it('should include usage guidelines', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Guidelines');
+    expect(result).toContain('read the file first');
   });
 });

@@ -218,3 +218,60 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: Tells the agent about the file-based runtime-env mechanism
+ * for cross-process state sharing. The agent runs in an SDK subprocess and
+ * cannot access in-memory singletons from the main process. Runtime-env
+ * provides a file-based key-value store that both processes can read/write.
+ *
+ * The agent learns:
+ * - What runtime-env is and where the file lives
+ * - How to read current variables (Read tool)
+ * - How to write/update variables (Write/Edit tool)
+ * - Common variable names and their purposes
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You have access to a file-based shared state mechanism called **runtime-env**.
+
+### What It Is
+
+The file \`.runtime-env\` in the workspace directory stores key-value pairs (one \`KEY=VALUE\` per line). This file is readable and writable by both the main process and your subprocess, making it the standard way to share state across process boundaries.
+
+### How to Use
+
+- **Read current variables**: Use the Read tool on the \`.runtime-env\` file in the workspace directory
+- **Write a new variable**: Use the Edit tool to add or update a \`KEY=VALUE\` line, or the Write tool to overwrite the entire file
+- **Delete a variable**: Use the Edit tool to remove the corresponding line
+
+### Common Variables
+
+| Variable | Purpose |
+|----------|---------|
+| \`GH_TOKEN\` | GitHub API token (auto-refreshed by scheduler) |
+| \`GH_TOKEN_EXPIRES_AT\` | GitHub token expiration timestamp |
+| \`ACTIVE_CHAT_ID\` | Currently active chat session identifier |
+
+### When to Use
+
+- **Scheduled tasks**: Store tokens or credentials that need to persist across task executions
+- **Cross-agent communication**: Share state between different agents or processes
+- **Credential management**: Read tokens set by the main process, or store tokens you generate
+
+### Guidelines
+
+- Always read the file first before writing to avoid overwriting existing variables
+- Use the Edit tool for surgical changes (add/update/remove a single variable)
+- Use the Write tool only when you need to rewrite the entire file
+- Lines starting with \`#\` are comments and should be preserved`;
+}

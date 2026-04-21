@@ -94,6 +94,17 @@ describe('MessageBuilder', () => {
       expect(result).not.toContain('Next Steps After Response');
       expect(result).not.toContain('Output Format Requirements');
       expect(result).not.toContain('Location Awareness');
+      expect(result).not.toContain('Runtime Environment Variables');
+    });
+
+    it('should include runtime-env awareness guidance for regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Runtime Environment Variables');
+      expect(result).toContain('runtime-env');
     });
   });
 
