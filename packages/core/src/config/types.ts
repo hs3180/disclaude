@@ -9,6 +9,19 @@
  */
 
 /**
+ * Project template configuration for the unified ProjectContext system.
+ * Maps template names to display metadata.
+ *
+ * @see Issue #1916 — unified ProjectContext system
+ */
+export interface ProjectTemplatesConfig {
+  [templateName: string]: {
+    displayName?: string;
+    description?: string;
+  };
+}
+
+/**
  * Workspace configuration section.
  */
 export interface WorkspaceConfig {
@@ -342,6 +355,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project template configuration for ProjectContext system (Issue #1916) */
+  projectTemplates?: ProjectTemplatesConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

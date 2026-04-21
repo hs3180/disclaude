@@ -7,6 +7,7 @@
 import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
+import type { ProjectManager } from '../project/index.js';
 
 /**
  * 执行节点信息
@@ -56,6 +57,9 @@ export interface ControlHandlerContext {
     /** Set the trigger mode for a chat */
     setMode(chatId: string, mode: TriggerMode): void;
   };
+
+  /** Project context management (Issue #1916) */
+  projectManager?: ProjectManager;
 
   /** 日志记录器 */
   logger?: Logger;
