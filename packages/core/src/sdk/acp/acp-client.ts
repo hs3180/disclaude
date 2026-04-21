@@ -92,6 +92,9 @@ interface ActivePrompt {
   error: (err: Error) => void;
 }
 
+/** Debounce interval (ms) for flushing buffered text chunks (Issue #2532) */
+const TEXT_BUFFER_FLUSH_MS = 200;
+
 // ============================================================================
 // AcpClient 实现
 // ============================================================================
@@ -132,6 +135,12 @@ export class AcpClient {
 
   /** 当前活跃的 prompt streams，key 为 sessionId */
   private readonly activePrompts = new Map<string, ActivePrompt>();
+
+  /** 文本块缓冲区，用于聚合连续的 agent_message_chunk（Issue #2532） */
+  private readonly textBuffers = new Map<string, string>();
+
+  /** 防抖定时器，超时后自动 flush 对应 session 的文本缓冲 */
+  private readonly flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(config: AcpClientConfig) {
     this.transport = config.transport;
@@ -314,6 +323,9 @@ export class AcpClient {
       // 在后台处理 result 响应
       void promptPromise
         .then((result) => {
+          // 先 flush 剩余的文本缓冲（Issue #2532）
+          this.flushTextBuffer(sessionId);
+
           // 将 result 转为 AgentMessage 并推入队列
           const msg = adaptPromptResult(result);
           activePrompt.push(msg);
@@ -351,6 +363,12 @@ export class AcpClient {
         });
       }
     } finally {
+      // 清理文本缓冲区和防抖定时器（Issue #2532）
+      const timer = this.flushTimers.get(sessionId);
+      if (timer) {clearTimeout(timer);}
+      this.flushTimers.delete(sessionId);
+      this.textBuffers.delete(sessionId);
+
       this.activePrompts.delete(sessionId);
     }
   }
@@ -392,6 +410,13 @@ export class AcpClient {
       active.error(new AcpError('Client disconnecting', -1));
     }
     this.activePrompts.clear();
+
+    // 清理文本缓冲区和防抖定时器（Issue #2532）
+    for (const timer of this.flushTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.flushTimers.clear();
+    this.textBuffers.clear();
 
     // 断开 Transport
     try {
@@ -505,9 +530,38 @@ export class AcpClient {
 
   /**
    * 处理 session/update 通知，转换为 AgentMessage 并推送到对应的 prompt stream。
+   *
+   * 对 agent_message_chunk 文本内容进行缓冲聚合（Issue #2532）：
+   * - 连续的 text 类型 chunk 追加到缓冲区
+   * - 遇到非 text 事件时先 flush 缓冲区
+   * - 设置 debounce timer，超时也 flush
+   * - prompt 结束时 flush 剩余缓冲
    */
   private handleSessionUpdate(params: AcpSessionUpdateParams): void {
-    const {update} = params;
+    const { update } = params;
+    const {sessionId} = params;
+
+    // 对 agent_message_chunk 的 text 内容进行缓冲聚合
+    if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
+      const {text} = update.content;
+      if (text.length > 0) {
+        const currentBuffer = this.textBuffers.get(sessionId) ?? '';
+        this.textBuffers.set(sessionId, currentBuffer + text);
+      }
+
+      // 重置 debounce timer
+      const existingTimer = this.flushTimers.get(sessionId);
+      if (existingTimer) {clearTimeout(existingTimer);}
+
+      this.flushTimers.set(sessionId, setTimeout(() => {
+        this.flushTextBuffer(sessionId);
+      }, TEXT_BUFFER_FLUSH_MS));
+
+      return;
+    }
+
+    // 非 text 事件：先 flush 缓冲区，再处理当前事件
+    this.flushTextBuffer(sessionId);
 
     // 尝试适配为 AgentMessage
     const agentMessage = adaptSessionUpdate(update);
@@ -517,9 +571,36 @@ export class AcpClient {
     }
 
     // 推送到对应 session 的 prompt stream
-    const active = this.activePrompts.get(params.sessionId);
+    const active = this.activePrompts.get(sessionId);
     if (active) {
       active.push(agentMessage);
+    }
+  }
+
+  /**
+   * 刷新指定 session 的文本缓冲区，将聚合后的内容作为单条 AgentMessage 推送。
+   */
+  private flushTextBuffer(sessionId: string): void {
+    const timer = this.flushTimers.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.flushTimers.delete(sessionId);
+    }
+
+    const buffer = this.textBuffers.get(sessionId);
+    if (!buffer || buffer.length === 0) {
+      this.textBuffers.delete(sessionId);
+      return;
+    }
+    this.textBuffers.delete(sessionId);
+
+    const active = this.activePrompts.get(sessionId);
+    if (active) {
+      active.push({
+        type: 'text',
+        content: buffer,
+        role: 'assistant',
+      });
     }
   }
 
@@ -575,6 +656,13 @@ export class AcpClient {
       active.error(new AcpError(`Transport error: ${err.message}`, -1));
     }
     this.activePrompts.clear();
+
+    // 清理文本缓冲区和防抖定时器（Issue #2532）
+    for (const timer of this.flushTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.flushTimers.clear();
+    this.textBuffers.clear();
   }
 
   /**
@@ -596,6 +684,13 @@ export class AcpClient {
       active.error(new AcpError('Transport closed', -1));
     }
     this.activePrompts.clear();
+
+    // 清理文本缓冲区和防抖定时器（Issue #2532）
+    for (const timer of this.flushTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.flushTimers.clear();
+    this.textBuffers.clear();
   }
 
   /**
