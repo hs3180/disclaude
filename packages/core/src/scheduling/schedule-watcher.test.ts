@@ -534,6 +534,175 @@ describe('ScheduleFileScanner', () => {
     });
   });
 
+  describe('parseFile - watch config (Issue #1953)', () => {
+    it('should parse watch config with paths and debounce', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  paths:',
+        '    - "workspace/chats"',
+        '  debounce: 5000',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/chats']);
+      expect(task!.watch!.debounce).toBe(5000);
+    });
+
+    it('should parse watch config with multiple paths', async () => {
+      const content = [
+        '---',
+        'name: "Multi Watch Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  paths:',
+        '    - "workspace/chats"',
+        '    - "workspace/events"',
+        '    - "workspace/signals"',
+        '---',
+        '',
+        'Watch multiple directories.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/multi-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/chats', 'workspace/events', 'workspace/signals']);
+    });
+
+    it('should parse watch config without debounce (uses default)', async () => {
+      const content = [
+        '---',
+        'name: "Watch No Debounce"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  paths:',
+        '    - "workspace/data"',
+        '---',
+        '',
+        'Watch without debounce.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-debounce.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/data']);
+      expect(task!.watch!.debounce).toBeUndefined();
+    });
+
+    it('should parse watch config as last field in frontmatter', async () => {
+      const content = [
+        '---',
+        'name: "Watch Last"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'model: "claude-sonnet"',
+        'watch:',
+        '  paths:',
+        '    - "workspace/last"',
+        '---',
+        '',
+        'Watch is last field.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/watch-last.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch!.paths).toEqual(['workspace/last']);
+      expect(task!.model).toBe('claude-sonnet');
+    });
+
+    it('should default watch to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeUndefined();
+    });
+  });
+
+  describe('writeTask - watch config (Issue #1953)', () => {
+    it('should write watch config to frontmatter', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-watch-write',
+        name: 'Watch Write Test',
+        cron: '0 * * * *',
+        prompt: 'Test watch writing',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        watch: {
+          paths: ['workspace/chats'],
+          debounce: 5000,
+        },
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('watch:');
+      expect(writtenContent).toContain('  paths:');
+      expect(writtenContent).toContain('    - "workspace/chats"');
+      expect(writtenContent).toContain('  debounce: 5000');
+    });
+
+    it('should not write watch field when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-watch-write',
+        name: 'No Watch Write',
+        cron: '0 * * * *',
+        prompt: 'No watch config',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('watch:');
+    });
+
+    it('should write multiple watch paths', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-multi-paths',
+        name: 'Multi Paths',
+        cron: '0 * * * *',
+        prompt: 'Multiple paths',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        watch: {
+          paths: ['workspace/chats', 'workspace/events'],
+        },
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('    - "workspace/chats"');
+      expect(writtenContent).toContain('    - "workspace/events"');
+    });
+  });
+
   describe('parseFile - empty model warning (Issue #1338)', () => {
     it('should warn when model is empty string', async () => {
       const content = [

@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, WatchTrigger } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -70,6 +70,16 @@ function stripQuotes(value: string): string {
 
 /**
  * Parse YAML frontmatter from schedule content.
+ *
+ * Issue #1953: Added support for `watch` section parsing.
+ * The watch section is a multi-line block with indented sub-keys:
+ *
+ * ```yaml
+ * watch:
+ *   paths:
+ *     - "workspace/chats"
+ *   debounce: 5000
+ * ```
  */
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
@@ -86,13 +96,64 @@ function parseScheduleFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
 
   const lines = frontmatterText.split('\n');
+  let inWatchBlock = false;
+  let inWatchPaths = false;
+  const watchPaths: string[] = [];
+  let watchDebounce: number | undefined;
+
   for (const line of lines) {
+    // Detect watch block boundaries
+    const isTopLevel = !line.startsWith(' ') && !line.startsWith('\t');
+    if (isTopLevel) {
+      if (inWatchBlock) {
+        // End of watch block — assemble the WatchTrigger
+        if (watchPaths.length > 0) {
+          const watch: WatchTrigger = { paths: watchPaths };
+          if (watchDebounce !== undefined) {
+            watch.debounce = watchDebounce;
+          }
+          frontmatter['watch'] = watch;
+        }
+        inWatchBlock = false;
+        inWatchPaths = false;
+      }
+
+      inWatchPaths = false;
+    }
+
+    // Handle YAML list items inside watch.paths (before colon check — list items may not contain colons)
+    if (inWatchPaths && line.trimStart().startsWith('- ')) {
+      const pathValue = stripQuotes(line.trimStart().slice(2).trim());
+      if (pathValue) {
+        watchPaths.push(pathValue);
+      }
+      continue;
+    }
+
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) { continue; }
 
     const key = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
 
+    if (key === 'watch' && value === '') {
+      // Start of watch block
+      inWatchBlock = true;
+      continue;
+    }
+
+    if (inWatchBlock) {
+      if (key === 'paths' && value === '') {
+        inWatchPaths = true;
+        continue;
+      }
+      if (key === 'debounce') {
+        watchDebounce = parseInt(value, 10);
+        continue;
+      }
+    }
+
+    // Standard scalar fields
     switch (key) {
       case 'name':
       case 'cron':
@@ -111,6 +172,15 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = parseInt(value, 10);
         break;
     }
+  }
+
+  // Handle watch block at end of frontmatter (no trailing top-level key)
+  if (inWatchBlock && watchPaths.length > 0) {
+    const watch: WatchTrigger = { paths: watchPaths };
+    if (watchDebounce !== undefined) {
+      watch.debounce = watchDebounce;
+    }
+    frontmatter['watch'] = watch;
   }
 
   return { frontmatter, contentStart: match[0].length };
@@ -216,6 +286,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watch: frontmatter['watch'] as WatchTrigger | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +338,16 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.watch) {
+      frontmatter.push('watch:');
+      frontmatter.push('  paths:');
+      for (const watchPath of task.watch.paths) {
+        frontmatter.push(`    - "${watchPath}"`);
+      }
+      if (task.watch.debounce !== undefined) {
+        frontmatter.push(`  debounce: ${task.watch.debounce}`);
+      }
     }
 
     frontmatter.push('---', '');

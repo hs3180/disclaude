@@ -1,5 +1,5 @@
 /**
- * Scheduler - Executes scheduled tasks using cron.
+ * Scheduler - Executes scheduled tasks using cron and file watch triggers.
  *
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
@@ -15,8 +15,13 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1953: Added event-driven schedule triggering via file watchers.
+ * - Schedules with `watch` config trigger immediately on file changes
+ * - Cron schedule serves as fallback
+ * - Debounce prevents rapid re-triggering
+ *
  * Features:
- * - Dynamic task scheduling
+ * - Dynamic task scheduling (cron + file watch)
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
  *
@@ -26,6 +31,7 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
+import { ScheduleTrigger } from './schedule-trigger.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
@@ -80,11 +86,12 @@ export interface SchedulerOptions {
 }
 
 /**
- * Scheduler - Manages cron-based task execution.
+ * Scheduler - Manages cron-based and watch-based task execution.
  *
  * Issue #711: Uses short-lived ScheduleAgents (max 24h lifetime).
  * Each execution creates a fresh agent, ensuring isolation.
  * Issue #1041: Uses dependency injection for task execution.
+ * Issue #1953: Added watch trigger for event-driven execution.
  *
  * Usage:
  * ```typescript
@@ -118,18 +125,28 @@ export class Scheduler {
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
+  /**
+   * Issue #1953: File watch trigger for event-driven execution.
+   * Monitors paths specified in schedule frontmatter `watch` config.
+   */
+  private trigger: ScheduleTrigger;
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.trigger = new ScheduleTrigger({
+      onTriggered: (task) => this.triggerTask(task),
+    });
     logger.info('Scheduler created');
   }
 
   /**
    * Start the scheduler.
-   * Loads all enabled tasks and schedules them.
+   * Loads all enabled tasks, schedules them via cron, and starts watch triggers.
+   *
+   * Issue #1953: Also starts file watchers for tasks with watch config.
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -145,15 +162,26 @@ export class Scheduler {
       await this.addTask(task);
     }
 
-    logger.info({ taskCount: this.activeJobs.size }, 'Scheduler started');
+    // Issue #1953: Start watch triggers
+    await this.trigger.start();
+
+    logger.info(
+      { taskCount: this.activeJobs.size, watchCount: this.trigger.getTaskCount() },
+      'Scheduler started'
+    );
   }
 
   /**
    * Stop the scheduler.
-   * Stops all active cron jobs.
+   * Stops all active cron jobs and watch triggers.
+   *
+   * Issue #1953: Also stops file watchers.
    */
   stop(): void {
     this.running = false;
+
+    // Issue #1953: Stop watch triggers first
+    this.trigger.stop();
 
     for (const [taskId, entry] of this.activeJobs) {
       void entry.job.stop();
@@ -166,7 +194,9 @@ export class Scheduler {
 
   /**
    * Add a task to the scheduler.
-   * Creates a cron job for the task.
+   * Creates a cron job for the task and registers watch triggers if configured.
+   *
+   * Issue #1953: Also registers task with ScheduleTrigger if watch config is present.
    *
    * @param task - Task to add
    */
@@ -190,6 +220,19 @@ export class Scheduler {
 
       this.activeJobs.set(task.id, { taskId: task.id, job, task });
       logger.info({ taskId: task.id, cron: task.cron, name: task.name }, 'Scheduled task');
+
+      // Issue #1953: Register for watch triggering if configured
+      if (task.watch) {
+        this.trigger.registerTask(task);
+        // If trigger is already running, we need to set up the watcher
+        if (this.trigger.isRunning()) {
+          void this.trigger.start();
+        }
+        logger.info(
+          { taskId: task.id, name: task.name, watchPaths: task.watch.paths },
+          'Registered task for watch triggering'
+        );
+      }
     } catch (error) {
       logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
     }
@@ -197,6 +240,9 @@ export class Scheduler {
 
   /**
    * Remove a task from the scheduler.
+   * Also unregisters from watch triggers if applicable.
+   *
+   * Issue #1953: Also unregisters task from ScheduleTrigger.
    *
    * @param taskId - Task ID to remove
    */
@@ -207,6 +253,9 @@ export class Scheduler {
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
     }
+
+    // Issue #1953: Unregister from watch trigger
+    this.trigger.unregisterTask(taskId);
   }
 
   /**
@@ -401,5 +450,30 @@ ${task.prompt}`;
   async clearCooldown(taskId: string): Promise<boolean> {
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
+  }
+
+  /**
+   * Trigger a task execution immediately (called by ScheduleTrigger on file changes).
+   *
+   * Issue #1953: Entry point for event-driven task execution.
+   * Delegates to executeTask which handles cooldown, blocking, and execution.
+   *
+   * @param task - The task to trigger
+   */
+  triggerTask(task: ScheduledTask): void {
+    logger.info(
+      { taskId: task.id, name: task.name, trigger: 'watch' },
+      'Task triggered by file watch'
+    );
+    void this.executeTask(task);
+  }
+
+  /**
+   * Get the watch trigger instance (for testing/diagnostics).
+   *
+   * Issue #1953: Exposes ScheduleTrigger for status queries.
+   */
+  getTrigger(): ScheduleTrigger {
+    return this.trigger;
   }
 }

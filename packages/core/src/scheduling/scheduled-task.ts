@@ -4,8 +4,31 @@
  * Shared type for scheduled task data structure.
  * Used by both ScheduleManager and Scheduler.
  *
+ * Issue #1953: Added watch trigger support for event-driven execution.
+ *
  * @module @disclaude/core/scheduling
  */
+
+/**
+ * Watch trigger configuration for event-driven schedule execution.
+ *
+ * Issue #1953: Allows schedules to be triggered by file system changes
+ * in addition to cron-based timing.
+ *
+ * @example
+ * ```yaml
+ * watch:
+ *   paths:
+ *     - "workspace/chats"
+ *   debounce: 5000
+ * ```
+ */
+export interface WatchTrigger {
+  /** Directory paths to watch for file changes */
+  paths: string[];
+  /** Debounce interval in milliseconds (default: 1000) */
+  debounce?: number;
+}
 
 /**
  * Scheduled task definition.
@@ -41,4 +64,12 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional watch trigger configuration for event-driven execution.
+   * When set, the schedule is triggered immediately when watched paths change.
+   * The cron schedule serves as a fallback.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  watch?: WatchTrigger;
 }
