@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,59 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildDiscussionFocusGuidance', () => {
+  it('should return empty string when no topic is provided', () => {
+    expect(buildDiscussionFocusGuidance()).toBe('');
+    expect(buildDiscussionFocusGuidance(undefined)).toBe('');
+    expect(buildDiscussionFocusGuidance('')).toBe('');
+  });
+
+  it('should include discussion focus heading', () => {
+    const result = buildDiscussionFocusGuidance('Should we use TypeScript?');
+    expect(result).toContain('Discussion Focus');
+    expect(result).toContain('focused discussion');
+  });
+
+  it('should include the topic as a quoted question', () => {
+    const result = buildDiscussionFocusGuidance('Should we automate code formatting?');
+    expect(result).toContain('Should we automate code formatting?');
+    expect(result).toContain('north star');
+  });
+
+  it('should include stay-on-topic guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Stay on topic');
+    expect(result).toContain('Do not chase every interesting tangent');
+  });
+
+  it('should include redirect guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Gently redirect');
+    expect(result).toContain('let\'s not lose sight of our original question');
+  });
+
+  it('should include depth-over-breadth guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Depth over breadth');
+  });
+
+  it('should include boundary rules', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Boundaries');
+    expect(result).toContain('drift away from the original question');
+  });
+
+  it('should include progress summary guidance', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('Summarize progress periodically');
+  });
+
+  it('should allow user to explicitly change topic', () => {
+    const result = buildDiscussionFocusGuidance('Test topic');
+    expect(result).toContain('user explicitly changes the topic');
+    expect(result).toContain('follow their lead');
   });
 });

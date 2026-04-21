@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, location awareness)
+ *   ├── Guidance sections (next-step, output format, location awareness, discussion focus)
  *   └── User message + attachments
  * ```
  *
@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
 } from './guidance.js';
 
 /**
@@ -48,6 +49,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - Discussion focus guidance (Issue #1228)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -137,6 +139,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const discussionFocusGuidance = buildDiscussionFocusGuidance(msg.discussionTopic);
 
     // Compose all sections
     const sections: string[] = [];
@@ -164,6 +167,10 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+
+    if (discussionFocusGuidance) {
+      sections.push(discussionFocusGuidance);
+    }
 
     const preamble = sections.join('\n');
 

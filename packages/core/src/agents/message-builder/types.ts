@@ -30,6 +30,8 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /** Discussion topic to keep the conversation focused (Issue #1228) */
+  discussionTopic?: string;
 }
 
 /**

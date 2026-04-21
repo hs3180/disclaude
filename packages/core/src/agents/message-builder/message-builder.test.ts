@@ -508,4 +508,71 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - discussion focus', () => {
+    it('should include discussion focus guidance when discussionTopic is set', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'I think we should use formatting tools',
+        messageId: 'msg-123',
+        discussionTopic: 'Should we automate code formatting?',
+      }, 'chat-456');
+
+      expect(result).toContain('Discussion Focus');
+      expect(result).toContain('Should we automate code formatting?');
+      expect(result).toContain('north star');
+    });
+
+    it('should not include discussion focus guidance when discussionTopic is not set', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+    });
+
+    it('should not include discussion focus guidance when discussionTopic is empty string', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: '',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+    });
+
+    it('should not include discussion focus guidance for skill commands even with topic', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        discussionTopic: 'Some topic',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus');
+    });
+
+    it('should place discussion focus after location awareness guidance', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Discussion topic here',
+      }, 'chat-456');
+
+      const locationIdx = result.indexOf('Location Awareness');
+      const discussionIdx = result.indexOf('Discussion Focus');
+      expect(discussionIdx).toBeGreaterThan(locationIdx);
+    });
+
+    it('should place discussion focus before user message', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'My response',
+        messageId: 'msg-123',
+        discussionTopic: 'Original question',
+      }, 'chat-456');
+
+      const discussionIdx = result.indexOf('Discussion Focus');
+      const userMessageIdx = result.indexOf('--- User Message ---');
+      expect(userMessageIdx).toBeGreaterThan(discussionIdx);
+    });
+  });
 });

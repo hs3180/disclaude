@@ -218,3 +218,50 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the discussion focus guidance section.
+ *
+ * Issue #1228: Keeps discussions focused on the initial topic.
+ * When a ChatAgent is in a discussion group, this guidance ensures
+ * the conversation stays on track without complex drift detection.
+ *
+ * Adapted from the SOUL.md-based design to use the MessageBuilder
+ * guidance system (SOUL.md was superseded by CLAUDE.md native support).
+ *
+ * @param topic - The initial discussion topic/question to anchor on
+ * @returns Formatted discussion focus guidance section, or empty string if no topic
+ */
+export function buildDiscussionFocusGuidance(topic?: string): string {
+  if (!topic) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Discussion Focus
+
+**IMPORTANT: You are in a focused discussion. Stay on topic.**
+
+The initial question you are discussing is:
+
+> **${topic}**
+
+This is your north star. Every response should move the discussion closer to an answer or deeper understanding of this question.
+
+### Guidelines
+
+- **Stay on topic.** Do not chase every interesting tangent. The initial question is your guide.
+- **Be genuinely helpful, not performatively helpful.** Skip filler phrases — just help.
+- **Gently redirect when needed.** If the conversation drifts, acknowledge the tangent briefly, then guide back. Example: "That's interesting, but let's not lose sight of our original question about..."
+- **Depth over breadth.** Explore one aspect thoroughly rather than skimming many surfaces.
+- **Summarize progress periodically** to keep the discussion focused and help track what's been established.
+
+### Boundaries
+
+- Do not let the discussion drift away from the original question
+- Remember what the discussion is trying to decide, solve, or understand
+- If the user explicitly changes the topic, follow their lead — but gently note the shift`;
+}
