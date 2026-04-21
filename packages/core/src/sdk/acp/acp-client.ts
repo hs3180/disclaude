@@ -56,6 +56,9 @@ export type PermissionRequestCallback = (
   params: AcpPermissionRequestParams,
 ) => Promise<AcpPermissionResult>;
 
+/** 默认文本块聚合 debounce 间隔（毫秒） */
+const DEFAULT_CHUNK_DEBOUNCE_MS = 500;
+
 /** ACP Client 配置 */
 export interface AcpClientConfig {
   /** Transport 实例（stdio 或自定义） */
@@ -64,6 +67,20 @@ export interface AcpClientConfig {
   timeout?: number;
   /** 权限请求回调，不设置则自动批准 */
   onPermissionRequest?: PermissionRequestCallback;
+  /**
+   * 文本块聚合 debounce 间隔（毫秒），默认 500。
+   * 连续的 agent_message_chunk 会在该时间窗口内聚合为一条消息。
+   * 设为 0 禁用聚合（每个 chunk 独立发送）。
+   */
+  chunkDebounceMs?: number;
+}
+
+/** Per-session 文本块缓冲状态（用于聚合 agent_message_chunk） */
+interface TextBufferState {
+  /** 累积的文本片段 */
+  parts: string[];
+  /** Debounce 定时器 */
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 /** ACP initialize 响应中的服务端能力（简化） */
@@ -120,6 +137,7 @@ export class AcpClient {
   private readonly transport: IAcpTransport;
   private readonly timeout: number;
   private readonly onPermissionRequest?: PermissionRequestCallback;
+  private readonly chunkDebounceMs: number;
 
   /** 客户端状态 */
   private _state: AcpClientState = 'disconnected';
@@ -133,10 +151,14 @@ export class AcpClient {
   /** 当前活跃的 prompt streams，key 为 sessionId */
   private readonly activePrompts = new Map<string, ActivePrompt>();
 
+  /** Per-session 文本块缓冲（Issue #2532: 聚合 agent_message_chunk） */
+  private readonly textBuffers = new Map<string, TextBufferState>();
+
   constructor(config: AcpClientConfig) {
     this.transport = config.transport;
     this.timeout = config.timeout ?? 30000;
     this.onPermissionRequest = config.onPermissionRequest;
+    this.chunkDebounceMs = config.chunkDebounceMs ?? DEFAULT_CHUNK_DEBOUNCE_MS;
   }
 
   /** 当前连接状态 */
@@ -314,6 +336,8 @@ export class AcpClient {
       // 在后台处理 result 响应
       void promptPromise
         .then((result) => {
+          // Issue #2532: 在推送 result 之前，先 flush 该 session 的文本缓冲
+          this.flushTextBuffer(sessionId, activePrompt);
           // 将 result 转为 AgentMessage 并推入队列
           const msg = adaptPromptResult(result);
           activePrompt.push(msg);
@@ -351,6 +375,7 @@ export class AcpClient {
         });
       }
     } finally {
+      this.clearTextBuffer(sessionId);
       this.activePrompts.delete(sessionId);
     }
   }
@@ -388,7 +413,8 @@ export class AcpClient {
     this.pendingRequests.clear();
 
     // 终止所有活跃的 prompt streams
-    for (const [_sid, active] of this.activePrompts) {
+    for (const [sid, active] of this.activePrompts) {
+      this.clearTextBuffer(sid);
       active.error(new AcpError('Client disconnecting', -1));
     }
     this.activePrompts.clear();
@@ -505,9 +531,12 @@ export class AcpClient {
 
   /**
    * 处理 session/update 通知，转换为 AgentMessage 并推送到对应的 prompt stream。
+   *
+   * Issue #2532: 连续的 agent_message_chunk 会在 chunkDebounceMs 窗口内
+   * 聚合为一条消息，避免飞书碎片消息。遇到非 text 事件时自动 flush 缓冲。
    */
   private handleSessionUpdate(params: AcpSessionUpdateParams): void {
-    const {update} = params;
+    const {sessionId, update} = params;
 
     // 尝试适配为 AgentMessage
     const agentMessage = adaptSessionUpdate(update);
@@ -516,10 +545,88 @@ export class AcpClient {
       return;
     }
 
-    // 推送到对应 session 的 prompt stream
-    const active = this.activePrompts.get(params.sessionId);
-    if (active) {
+    const active = this.activePrompts.get(sessionId);
+    if (!active) {
+      return;
+    }
+
+    // 聚合逻辑禁用时，直接推送
+    if (this.chunkDebounceMs <= 0) {
       active.push(agentMessage);
+      return;
+    }
+
+    if (agentMessage.type === 'text') {
+      // 文本块 → 追加到缓冲区
+      this.bufferTextChunk(sessionId, active, agentMessage.content);
+    } else {
+      // 非文本事件 → 先 flush 缓冲区，再推送当前事件
+      this.flushTextBuffer(sessionId, active);
+      active.push(agentMessage);
+    }
+  }
+
+  /**
+   * 将文本块追加到 session 的缓冲区，并重置 debounce timer。
+   */
+  private bufferTextChunk(
+    sessionId: string,
+    active: ActivePrompt,
+    text: string,
+  ): void {
+    let buf = this.textBuffers.get(sessionId);
+    if (!buf) {
+      buf = { parts: [], timer: null };
+      this.textBuffers.set(sessionId, buf);
+    }
+
+    buf.parts.push(text);
+
+    // 重置 debounce timer：超时后 flush 缓冲区
+    if (buf.timer) {
+      clearTimeout(buf.timer);
+    }
+    buf.timer = setTimeout(() => {
+      this.flushTextBuffer(sessionId, active);
+    }, this.chunkDebounceMs);
+  }
+
+  /**
+   * Flush session 的文本缓冲区，将聚合后的文本作为单条 AgentMessage 推送。
+   */
+  private flushTextBuffer(sessionId: string, active: ActivePrompt): void {
+    const buf = this.textBuffers.get(sessionId);
+    if (!buf || buf.parts.length === 0) {
+      return;
+    }
+
+    // 清除定时器
+    if (buf.timer) {
+      clearTimeout(buf.timer);
+    }
+
+    // 聚合并推送
+    const aggregated = buf.parts.join('');
+    buf.parts = [];
+    buf.timer = null;
+
+    active.push({
+      type: 'text',
+      content: aggregated,
+      role: 'assistant',
+    });
+  }
+
+  /**
+   * 清理 session 的文本缓冲区（不推送内容）。
+   */
+  private clearTextBuffer(sessionId: string): void {
+    const buf = this.textBuffers.get(sessionId);
+    if (buf) {
+      if (buf.timer) {
+        clearTimeout(buf.timer);
+      }
+      this.textBuffers.delete(sessionId);
     }
   }
 
@@ -571,7 +678,8 @@ export class AcpClient {
     this.pendingRequests.clear();
 
     // 终止所有活跃的 prompt streams
-    for (const [_sid, active] of this.activePrompts) {
+    for (const [sid, active] of this.activePrompts) {
+      this.clearTextBuffer(sid);
       active.error(new AcpError(`Transport error: ${err.message}`, -1));
     }
     this.activePrompts.clear();
@@ -592,7 +700,8 @@ export class AcpClient {
     this.pendingRequests.clear();
 
     // 终止所有活跃的 prompt streams
-    for (const [_sid, active] of this.activePrompts) {
+    for (const [sid, active] of this.activePrompts) {
+      this.clearTextBuffer(sid);
       active.error(new AcpError('Transport closed', -1));
     }
     this.activePrompts.clear();
