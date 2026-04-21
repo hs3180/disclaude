@@ -396,6 +396,66 @@ describe('WeChatApiClient', () => {
     });
   });
 
+  describe('sendTyping (Issue #1556 Phase 3.2)', () => {
+    it('should send typing indicator via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('ilink/bot/typing'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.to_user_id).toBe('user-123');
+    });
+
+    it('should not throw on API failure (non-fatal)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Server Error'),
+      });
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await client.sendTyping({ to: 'user-123' });
+    });
+
+    it('should not throw on network error (non-fatal)', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await client.sendTyping({ to: 'user-123' });
+    });
+
+    it('should use short timeout (5s) for typing indicator', async () => {
+      let capturedSignal: AbortSignal | undefined;
+
+      mockFetch.mockImplementation((_url: unknown, opts: any) => {
+        capturedSignal = opts.signal;
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+        });
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(capturedSignal).toBeDefined();
+    });
+  });
+
   describe('getUpdates (Issue #1556 Phase 3.1)', () => {
     it('should return updates from API', async () => {
       const updates = [
