@@ -37,6 +37,7 @@ import {
   buildActionPrompts,
   validateInteractiveParams,
 } from '../platforms/feishu/card-builders/index.js';
+import { insertDocxImage } from '../platforms/feishu/docx-image-inserter.js';
 
 // ============================================================================
 // REST Wired Descriptor
@@ -251,6 +252,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const chatStore = context.primaryNode.getChatStore();
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
+      },
+      // Issue #2278: Feishu document inline image insertion
+      insertDocxImage: async (documentId: string, imagePath: string, opts?: { index?: number; width?: number; height?: number; caption?: string }) => {
+        const client = feishuChannel.getClient();
+        return await insertDocxImage(client, documentId, imagePath, opts);
       },
     };
 

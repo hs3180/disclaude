@@ -673,6 +673,18 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Get the Lark client instance.
+   * Issue #2278: Exposed for docx image insertion via IPC handler.
+   * @throws Error if client is not initialized
+   */
+  getClient(): lark.Client {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+    return this.client;
+  }
+
+  /**
    * Get the InteractionManager for this channel.
    */
   getInteractionManager(): InteractionManager {

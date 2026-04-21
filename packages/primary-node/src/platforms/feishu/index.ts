@@ -68,3 +68,6 @@ export {
 } from './card-builders/interactive-card-builder.js';
 
 export { extractCardTextContent } from './card-builders/card-text-extractor.js';
+
+// Docx image insertion (Issue #2278)
+export { insertDocxImage, type InsertDocxImageResult } from './docx-image-inserter.js';

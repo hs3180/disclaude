@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -163,6 +165,22 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  insert_docx_image: {
+    description: 'Insert an image at a specific position in a Feishu document (docx).',
+    parameters: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', description: 'Feishu document ID (from URL: /docx/{documentId})' },
+        imagePath: { type: 'string', description: 'Path to the image file (relative to workspace or absolute)' },
+        index: { type: 'number', description: 'Insert position index (0-based). Omit to append at end.' },
+        width: { type: 'number', description: 'Optional image width in pixels' },
+        height: { type: 'number', description: 'Optional image height in pixels' },
+        caption: { type: 'string', description: 'Optional caption text below the image' },
+      },
+      required: ['documentId', 'imagePath'],
+    },
+    handler: insert_docx_image,
   },
 };
 
@@ -451,6 +469,60 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Feishu document inline image insertion
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image at a specific position in a Feishu document (docx).
+
+This tool uses a 3-step Feishu API flow to insert images inline:
+1. Creates an empty image block at the specified index
+2. Uploads the image file
+3. Binds the uploaded image to the block
+
+## Parameters
+- **documentId**: Feishu document ID (from URL: /docx/{documentId}) (required)
+- **imagePath**: Path to the image file (relative to workspace or absolute) (required)
+- **index**: Insert position (0-based). Omit to append at the end.
+- **width**: Optional image width in pixels
+- **height**: Optional image height in pixels
+- **caption**: Optional caption text below the image
+
+## Example
+\`\`\`json
+{
+  "documentId": "doxcnM6L",
+  "imagePath": "/path/to/chart.png",
+  "index": 5,
+  "caption": "Figure 1: Revenue chart"
+}
+\`\`\`
+
+## Supported Image Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico, svg (max 20MB)`,
+    parameters: z.object({
+      documentId: z.string().describe('Feishu document ID (from URL: /docx/{documentId})'),
+      imagePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().optional().describe('Insert position index (0-based). Omit to append at end.'),
+      width: z.number().optional().describe('Optional image width in pixels'),
+      height: z.number().optional().describe('Optional image height in pixels'),
+      caption: z.string().optional().describe('Optional caption text below the image'),
+    }),
+    handler: async ({ documentId, imagePath, index, width, height, caption }: {
+      documentId: string;
+      imagePath: string;
+      index?: number;
+      width?: number;
+      height?: number;
+      caption?: string;
+    }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index, width, height, caption });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
