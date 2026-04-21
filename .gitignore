@@ -52,6 +52,9 @@ Thumbs.db
 # Task records
 tasks/
 
+# PR Scanner state files (runtime data)
+.temp-chats/
+
 # Workspace directory (keep directory structure, ignore contents)
 workspace/*
 !workspace/.gitkeep
