@@ -459,6 +459,18 @@ export class Config {
   }
 
   /**
+   * Get project templates configuration from config file.
+   * @see Issue #1916 (parent), Issue #2227 (integration)
+   *
+   * Returns undefined when no projectTemplates are configured (zero-config mode).
+   *
+   * @returns Project templates configuration or undefined
+   */
+  static getProjectTemplatesConfig(): DisclaudeConfig['projectTemplates'] {
+    return fileConfigOnly.projectTemplates;
+  }
+
+  /**
    * Get session restoration configuration.
    * Controls how chat history is loaded when agent starts or resets.
    * @see Issue #1213

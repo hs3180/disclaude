@@ -344,6 +344,27 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /**
+   * Project templates configuration for per-chatId Agent context switching.
+   * @see Issue #1916 (parent), Issue #2227 (integration)
+   *
+   * When configured, enables `/project create|use|reset|list|info` commands
+   * to manage per-chatId working directory switching.
+   *
+   * ```yaml
+   * projectTemplates:
+   *   research:
+   *     displayName: "研究模式"
+   *     description: "专注研究的独立空间"
+   * ```
+   */
+  projectTemplates?: Record<
+    string,
+    {
+      displayName?: string;
+      description?: string;
+    }
+  >;
 }
 
 /**
