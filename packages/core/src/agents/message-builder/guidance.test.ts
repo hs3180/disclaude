@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,63 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no runtime env is provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+  });
+
+  it('should return empty string when runtime env is empty', () => {
+    expect(buildRuntimeEnvGuidance({})).toBe('');
+  });
+
+  it('should include runtime environment section with variables', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_xxx' });
+    expect(result).toContain('Runtime Environment Variables');
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GitHub API token');
+  });
+
+  it('should list all provided variables sorted alphabetically', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_xxx',
+      CUSTOM_VAR: 'custom_value',
+    });
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('CUSTOM_VAR');
+    // CUSTOM_VAR comes before GH_TOKEN alphabetically
+    const customIdx = result.indexOf('CUSTOM_VAR');
+    const ghIdx = result.indexOf('GH_TOKEN');
+    expect(customIdx).toBeLessThan(ghIdx);
+  });
+
+  it('should show known descriptions for recognized variables', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_xxx',
+      GH_TOKEN_EXPIRES_AT: '2026-01-01T00:00:00Z',
+    });
+    expect(result).toContain('GitHub API token for GitHub operations');
+    expect(result).toContain('GitHub token expiration timestamp');
+  });
+
+  it('should show generic description for unknown variables', () => {
+    const result = buildRuntimeEnvGuidance({ MY_CUSTOM_KEY: 'value' });
+    expect(result).toContain('MY_CUSTOM_KEY');
+    expect(result).toContain('Custom runtime variable');
+  });
+
+  it('should include usage instructions', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_xxx' });
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('environment variables in your process');
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should not expose variable values in the guidance', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'super_secret_token' });
+    expect(result).not.toContain('super_secret_token');
   });
 });

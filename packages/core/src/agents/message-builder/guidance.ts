@@ -218,3 +218,60 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Known runtime environment variable descriptions.
+ *
+ * Maps variable names to human-readable descriptions so the agent
+ * can understand what each variable is used for.
+ */
+const RUNTIME_ENV_DESCRIPTIONS: Record<string, string> = {
+  GH_TOKEN: 'GitHub API token for GitHub operations (set by github-jwt-auth skill)',
+  GH_TOKEN_EXPIRES_AT: 'GitHub token expiration timestamp (ISO 8601 format)',
+};
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Informs the agent about available runtime environment
+ * variables shared between the main process and agent subprocess via
+ * the `.runtime-env` file.
+ *
+ * @param runtimeEnv - Current runtime environment variables (key names only are shown)
+ * @returns Formatted runtime-env awareness section, or empty string if no variables
+ */
+export function buildRuntimeEnvGuidance(runtimeEnv?: Record<string, string>): string {
+  if (!runtimeEnv || Object.keys(runtimeEnv).length === 0) {
+    return '';
+  }
+
+  const varRows = Object.keys(runtimeEnv)
+    .sort()
+    .map(key => {
+      const desc = RUNTIME_ENV_DESCRIPTIONS[key] || 'Custom runtime variable';
+      return `| \`${key}\` | ${desc} |`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The following runtime environment variables are available in the current session. These are shared between the main process and your agent subprocess via the \`.runtime-env\` file in the workspace directory.
+
+### Available Variables
+
+| Variable | Description |
+|----------|------------|
+${varRows}
+
+### Usage
+
+- These variables are already available as environment variables in your process
+- To **read** all variables: read the file \`.runtime-env\` in the workspace directory
+- To **update** a variable: write to \`.runtime-env\` using \`KEY=VALUE\` format (one per line)
+- Changes written to the file take effect on the next agent session
+`;
+}

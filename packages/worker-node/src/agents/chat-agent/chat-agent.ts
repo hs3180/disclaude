@@ -8,7 +8,7 @@
  * RestartManager, MessageBuilder.
  */
 
-import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, loadRuntimeEnv, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { ChatHistoryLoader } from './chat-history-loader.js';
 import { AgentLoopManager } from './agent-loop-manager.js';
@@ -212,10 +212,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     const capabilities = this.callbacks.getCapabilities?.(chatId);
+    const runtimeEnv = loadRuntimeEnv(this.getWorkspaceDir());
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments,
       chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.historyLoader.getPersistedContext(),
+      runtimeEnv: Object.keys(runtimeEnv).length > 0 ? runtimeEnv : undefined,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {
