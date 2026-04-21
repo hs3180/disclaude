@@ -69,3 +69,6 @@ disclaude-test-server.log
 
 # Test data
 data/
+
+# PR Scanner state files
+.temp-chats/
