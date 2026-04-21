@@ -41,6 +41,9 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
     workspace: { dir: '/test/workspace' },
     messaging: { debug: { forwardPatterns: ['error.*'] } },
     tools: { mcpServers: { test: { command: 'node' } } },
+    projectTemplates: {
+      research: { displayName: '研究模式', description: '专注研究的独立空间' },
+    },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
 }));
@@ -149,6 +152,17 @@ describe('Config', () => {
       const debug = Config.getDebugConfig();
       expect(debug).toBeDefined();
       expect(typeof debug).toBe('object');
+    });
+  });
+
+  describe('getProjectTemplatesConfig', () => {
+    it('should return project templates config when configured', () => {
+      const templates = Config.getProjectTemplatesConfig();
+      expect(templates).toBeDefined();
+      expect(templates?.research).toEqual({
+        displayName: '研究模式',
+        description: '专注研究的独立空间',
+      });
     });
   });
 

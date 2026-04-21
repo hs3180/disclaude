@@ -24,6 +24,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectTemplatesConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
@@ -446,6 +447,20 @@ export class Config {
    */
   static getDebugConfig(): DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
+  }
+
+  /**
+   * Get project templates configuration.
+   *
+   * Returns templates from config file if specified. When not configured,
+   * templates should be auto-discovered from the package directory using
+   * `discoverTemplatesAsConfig()`.
+   *
+   * @see Issue #2227 — Config integration
+   * @returns Project templates configuration or undefined
+   */
+  static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
+    return fileConfigOnly.projectTemplates;
   }
 
   /**
