@@ -69,6 +69,8 @@ export interface ChannelApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
+  /** Upload image and return image_key for card embedding (Issue #1919) */
+  uploadImage?: (filePath: string) => Promise<{ imageKey: string; fileName: string; fileSize: number }>;
   /** Register a temp chat for lifecycle tracking (Issue #1703) */
   registerTempChat?: (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => Promise<{ success: boolean; expiresAt?: string }>;
   /** List all tracked temp chats (Issue #1703) */
@@ -222,6 +224,34 @@ export function createInteractiveMessageHandler(
               );
             }
 
+            return { id: request.id, success: true, payload: { success: true, ...result } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Image upload for card embedding (Issue #1919)
+        case 'uploadImage': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.uploadImage) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'uploadImage not supported by this channel',
+            };
+          }
+          const { filePath } =
+            request.payload as IpcRequestPayloads['uploadImage'];
+          try {
+            const result = await handlers.uploadImage(filePath);
             return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

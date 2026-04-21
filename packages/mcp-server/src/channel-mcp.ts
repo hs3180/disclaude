@@ -17,6 +17,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -163,6 +165,17 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image and return image_key for embedding in card messages.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the image file to upload' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -416,6 +429,44 @@ For display-only cards, use send_card instead.
   },
   // Issue #1703: Temp chat lifecycle management
   // Issue #2291: triggerMode enum parameter
+  // Issue #1919: Image upload for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image to Feishu and return an image_key for embedding in card messages.
+
+Use this when you need to include images inside card messages (send_card). The returned image_key
+can be used in the card's \`img\` element.
+
+**Workflow:**
+1. Generate/save your image to a local file (e.g., matplotlib chart, screenshot)
+2. Call upload_image with the file path
+3. Use the returned image_key in send_card's img element: \`{ "tag": "img", "img_key": "<image_key>" }\`
+
+## Parameters
+- **filePath**: Path to the image file (supports: .jpg, .jpeg, .png, .webp, .gif, .tiff, .bmp, .ico)
+
+## Limitations
+- Maximum file size: 10MB
+- Only for embedding in card messages. To send an image as a standalone message, use send_file instead.
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\`
+
+Returns: \`{ success: true, image_key: "img_v3_xxx...", fileName: "chart.png", fileSize: 12345 }\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
   {
     name: 'register_temp_chat',
     description: `Register a temporary chat for automatic lifecycle management.
