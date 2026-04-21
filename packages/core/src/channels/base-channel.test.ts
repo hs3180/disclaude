@@ -17,6 +17,8 @@ import type {
   OutgoingMessage,
   MessageHandler,
   ControlHandler,
+  ControlResponse,
+  IncomingMessage,
 } from '../types/channel.js';
 
 // ============================================================================
@@ -65,6 +67,18 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
   /** Expose isRunning for testing */
   get testIsRunning(): boolean {
     return (this as unknown as { isRunning: boolean }).isRunning;
+  }
+
+  /** Expose protected emitMessage for testing */
+  // eslint-disable-next-line require-await
+  async testEmitMessage(message: IncomingMessage): Promise<void> {
+    return this.emitMessage(message);
+  }
+
+  /** Expose protected emitControl for testing */
+  // eslint-disable-next-line require-await
+  async testEmitControl(command: Parameters<ControlHandler>[0]): Promise<ControlResponse> {
+    return this.emitControl(command);
   }
 }
 
@@ -319,6 +333,117 @@ describe('BaseChannel', () => {
       const channel = createTestChannel();
       const caps = channel.getCapabilities();
       expect(caps).toBeDefined();
+    });
+  });
+
+  // ==========================================================================
+  // Issue #1617 Phase 2: emitMessage / emitControl coverage
+  // ==========================================================================
+
+  describe('emitMessage (protected)', () => {
+    it('should delegate to registered message handler when set', async () => {
+      const channel = createTestChannel();
+      const handler: MessageHandler = vi.fn();
+      channel.onMessage(handler);
+
+      const message: IncomingMessage = {
+        messageId: 'msg-1',
+        chatId: 'chat-1',
+        content: 'Hello',
+        messageType: 'text',
+      };
+      await channel.testEmitMessage(message);
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledWith(message);
+    });
+
+    it('should not throw when no message handler is registered', async () => {
+      const channel = createTestChannel();
+      // No onMessage() call — handler is undefined
+
+      const message: IncomingMessage = {
+        messageId: 'msg-2',
+        chatId: 'chat-1',
+        content: 'Hello',
+        messageType: 'text',
+      };
+      // Should log warning but not throw
+      await expect(channel.testEmitMessage(message)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('emitControl (protected)', () => {
+    it('should delegate to registered control handler when set', async () => {
+      const channel = createTestChannel();
+      const handler: ControlHandler = vi.fn().mockResolvedValue({ success: true, message: 'ok' });
+      channel.onControl(handler);
+
+      const command = { type: 'reset' as const, chatId: 'chat-1' };
+      const result = await channel.testEmitControl(command);
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledWith(command);
+      expect(result).toEqual({ success: true, message: 'ok' });
+    });
+
+    it('should return failure response when no control handler is registered', async () => {
+      const channel = createTestChannel();
+      // No onControl() call — handler is undefined
+
+      const command = { type: 'status' as const, chatId: 'chat-1' };
+      const result = await channel.testEmitControl(command);
+      expect(result).toEqual({ success: false, error: 'No control handler registered' });
+    });
+  });
+
+  describe('start - concurrent state transitions', () => {
+    it('should be no-op when already in starting state', async () => {
+      const channel = createTestChannel();
+      // Simulate the starting state by using a slow doStart that still increments the counter
+      let resolveStart: () => void;
+      (channel as unknown as { doStart: () => Promise<void> }).doStart = () => {
+        channel.doStartCalls++;
+        return new Promise<void>((resolve) => { resolveStart = resolve; });
+      };
+
+      // First start — hangs in 'starting' state
+      const startPromise = channel.start();
+      expect(channel.status).toBe('starting');
+
+      // Second start while starting — should be no-op (doStartCalls stays at 1)
+      await channel.start();
+      expect(channel.doStartCalls).toBe(1);
+
+      // Complete the first start
+      resolveStart!();
+      await startPromise;
+      expect(channel.status).toBe('running');
+    });
+  });
+
+  describe('stop - concurrent state transitions', () => {
+    it('should be no-op when already in stopping state', async () => {
+      const channel = createTestChannel();
+      await channel.start();
+
+      // Simulate the stopping state by using a slow doStop that still increments the counter
+      let resolveStop: () => void;
+      (channel as unknown as { doStop: () => Promise<void> }).doStop = () => {
+        channel.doStopCalls++;
+        return new Promise<void>((resolve) => { resolveStop = resolve; });
+      };
+
+      // First stop — hangs in 'stopping' state
+      const stopPromise = channel.stop();
+      expect(channel.status).toBe('stopping');
+
+      // Second stop while stopping — should be no-op (doStopCalls stays at 1)
+      await channel.stop();
+      expect(channel.doStopCalls).toBe(1);
+
+      // Complete the first stop
+      resolveStop!();
+      await stopPromise;
+      expect(channel.status).toBe('stopped');
     });
   });
 });
