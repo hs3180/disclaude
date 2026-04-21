@@ -206,8 +206,15 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: remove what we just added
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      this.removeFromReverseIndex(name, chatId);
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -237,17 +244,33 @@ export class ProjectManager {
       return { ok: false, error: `实例 "${name}" 不存在` };
     }
 
-    // Remove from old instance's reverse index if rebinding
+    // Snapshot old binding for rollback
     const oldName = this.chatProjectMap.get(chatId);
-    if (oldName && oldName !== name) {
+    const wasInOldReverseIndex = oldName && oldName !== name;
+
+    // Remove from old instance's reverse index if rebinding
+    if (wasInOldReverseIndex) {
       this.removeFromReverseIndex(oldName, chatId);
     }
 
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore old binding
+      if (oldName) {
+        this.chatProjectMap.set(chatId, oldName);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      this.removeFromReverseIndex(name, chatId);
+      if (wasInOldReverseIndex && oldName) {
+        this.addToReverseIndex(oldName, chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -271,14 +294,23 @@ export class ProjectManager {
       return { ok: false, error: chatIdError };
     }
 
+    // Snapshot old binding for rollback
     const boundName = this.chatProjectMap.get(chatId);
     this.chatProjectMap.delete(chatId);
     if (boundName) {
       this.removeFromReverseIndex(boundName, chatId);
     }
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore old binding
+      if (boundName) {
+        this.chatProjectMap.set(chatId, boundName);
+        this.addToReverseIndex(boundName, chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -328,6 +360,53 @@ export class ProjectManager {
     return result.sort((a, b) =>
       a.createdAt.localeCompare(b.createdAt),
     );
+  }
+
+  /**
+   * Delete a project instance (from memory + disk persistence).
+   *
+   * Removes the instance and all its associated chatId bindings.
+   * Any chatId that was bound to this instance reverts to the default project.
+   *
+   * Does NOT delete the working directory on disk — that requires explicit
+   * filesystem cleanup by the caller (Sub-Issue D scope).
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string): ProjectResult<void> {
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Snapshot state for rollback
+    const boundChatIds = this.getBoundChatIds(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Remove all associated bindings
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Clean up reverse index
+    this.instanceChatIds.delete(name);
+
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore instance and all bindings
+      this.instances.set(name, instance);
+      for (const chatId of boundChatIds) {
+        this.chatProjectMap.set(chatId, name);
+      }
+      this.instanceChatIds.set(name, new Set(boundChatIds));
+      return { ok: false, error: persistResult.error };
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ───────────────────────────────────────────
