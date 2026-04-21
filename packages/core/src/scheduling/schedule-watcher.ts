@@ -28,8 +28,9 @@
 import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
+import yaml from 'js-yaml';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, TriggerConfig, WatchTriggerConfig } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -70,6 +71,9 @@ function stripQuotes(value: string): string {
 
 /**
  * Parse YAML frontmatter from schedule content.
+ *
+ * Issue #1953: Uses js-yaml for full YAML support including nested
+ * trigger configuration.
  */
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
@@ -83,8 +87,18 @@ function parseScheduleFrontmatter(content: string): {
   }
 
   const [, frontmatterText] = match;
-  const frontmatter: Record<string, unknown> = {};
 
+  try {
+    const parsed = yaml.load(frontmatterText) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object') {
+      return { frontmatter: parsed, contentStart: match[0].length };
+    }
+  } catch (error) {
+    logger.warn({ err: error }, 'Failed to parse frontmatter with js-yaml, falling back to simple parser');
+  }
+
+  // Fallback: simple line-by-line parser for basic fields
+  const frontmatter: Record<string, unknown> = {};
   const lines = frontmatterText.split('\n');
   for (const line of lines) {
     const colonIndex = line.indexOf(':');
@@ -114,6 +128,64 @@ function parseScheduleFrontmatter(content: string): {
   }
 
   return { frontmatter, contentStart: match[0].length };
+}
+
+/**
+ * Parse trigger configuration from frontmatter data.
+ *
+ * Issue #1953: Extracts structured trigger config from YAML frontmatter.
+ *
+ * Expected format:
+ * ```yaml
+ * trigger:
+ *   events:
+ *     - chat:pending
+ *     - file:created
+ *   watch:
+ *     - path: workspace/chats/*.json
+ *       filter: '.status == "pending"'
+ *       debounce: 5000
+ *   invocable: true
+ * ```
+ */
+function parseTriggerConfig(raw: unknown): TriggerConfig | undefined {
+  if (!raw || typeof raw !== 'object') { return undefined; }
+
+  const trigger = raw as Record<string, unknown>;
+  const config: TriggerConfig = {};
+
+  // Parse events
+  if (Array.isArray(trigger['events'])) {
+    config.events = trigger['events'].filter((e): e is string => typeof e === 'string');
+  }
+
+  // Parse watch
+  if (Array.isArray(trigger['watch'])) {
+    config.watch = trigger['watch']
+      .filter((w): w is Record<string, unknown> => w && typeof w === 'object' && typeof w['path'] === 'string')
+      .map((w) => {
+        const watchConfig: WatchTriggerConfig = { path: w['path'] as string };
+        if (typeof w['filter'] === 'string') {
+          watchConfig.filter = w['filter'];
+        }
+        if (typeof w['debounce'] === 'number') {
+          watchConfig.debounce = w['debounce'];
+        }
+        return watchConfig;
+      });
+  }
+
+  // Parse invocable
+  if (typeof trigger['invocable'] === 'boolean') {
+    config.invocable = trigger['invocable'];
+  }
+
+  // Only return if there's actual config
+  if (config.events?.length || config.watch?.length || config.invocable !== undefined) {
+    return config;
+  }
+
+  return undefined;
 }
 
 /**
@@ -216,6 +288,8 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        // Issue #1953: Parse trigger configuration
+        trigger: parseTriggerConfig(frontmatter['trigger']),
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +341,32 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    // Issue #1953: Write trigger configuration
+    if (task.trigger) {
+      const triggerLines: string[] = ['trigger:'];
+      if (task.trigger.invocable !== undefined) {
+        triggerLines.push(`  invocable: ${task.trigger.invocable}`);
+      }
+      if (task.trigger.events && task.trigger.events.length > 0) {
+        triggerLines.push('  events:');
+        for (const event of task.trigger.events) {
+          triggerLines.push(`    - ${event}`);
+        }
+      }
+      if (task.trigger.watch && task.trigger.watch.length > 0) {
+        triggerLines.push('  watch:');
+        for (const w of task.trigger.watch) {
+          triggerLines.push(`    - path: "${w.path}"`);
+          if (w.filter) {
+            triggerLines.push(`      filter: '${w.filter}'`);
+          }
+          if (w.debounce !== undefined) {
+            triggerLines.push(`      debounce: ${w.debounce}`);
+          }
+        }
+      }
+      frontmatter.push(...triggerLines);
     }
 
     frontmatter.push('---', '');

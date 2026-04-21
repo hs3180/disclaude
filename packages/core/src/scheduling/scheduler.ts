@@ -1,5 +1,5 @@
 /**
- * Scheduler - Executes scheduled tasks using cron.
+ * Scheduler - Executes scheduled tasks using cron and event-driven triggers.
  *
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
@@ -15,10 +15,17 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1953: Added event-driven trigger support.
+ * - Tasks can declare trigger.events in frontmatter
+ * - Scheduler subscribes to TriggerBus events for matching tasks
+ * - Scheduler.trigger(taskId) allows direct invocation
+ * - Cron remains as fallback
+ *
  * Features:
- * - Dynamic task scheduling
+ * - Dynamic task scheduling (cron + event-driven)
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
+ * - Direct task invocation via trigger()
  *
  * @module @disclaude/core/scheduling
  */
@@ -28,6 +35,7 @@ import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
+import { TriggerBus, type TriggerHandler } from './trigger-bus.js';
 
 const logger = createLogger('Scheduler');
 
@@ -77,6 +85,14 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * TriggerBus for event-driven schedule triggering.
+   * When provided, the scheduler will subscribe to events declared
+   * in task trigger configurations and execute matching tasks.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  triggerBus?: TriggerBus;
 }
 
 /**
@@ -114,16 +130,27 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private triggerBus?: TriggerBus;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
+  /**
+   * Registered event trigger subscriptions.
+   * Maps eventName -> Set of taskIds that should be triggered.
+   *
+   * Issue #1953: Event-driven trigger support.
+   */
+  private eventSubscriptions: Map<string, Set<string>> = new Map();
+  /** Registered TriggerBus handler references for cleanup */
+  private registeredHandlers: Map<string, TriggerHandler> = new Map();
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.triggerBus = options.triggerBus;
     logger.info('Scheduler created');
   }
 
@@ -150,10 +177,19 @@ export class Scheduler {
 
   /**
    * Stop the scheduler.
-   * Stops all active cron jobs.
+   * Stops all active cron jobs and cleans up event subscriptions.
+   *
+   * Issue #1953: Also removes TriggerBus subscriptions.
    */
   stop(): void {
     this.running = false;
+
+    // Issue #1953: Clean up all event trigger subscriptions
+    for (const [event, handler] of this.registeredHandlers) {
+      this.triggerBus?.off(event, handler);
+    }
+    this.registeredHandlers.clear();
+    this.eventSubscriptions.clear();
 
     for (const [taskId, entry] of this.activeJobs) {
       void entry.job.stop();
@@ -166,7 +202,9 @@ export class Scheduler {
 
   /**
    * Add a task to the scheduler.
-   * Creates a cron job for the task.
+   * Creates a cron job for the task and registers event triggers if configured.
+   *
+   * Issue #1953: Also registers TriggerBus subscriptions for event-driven tasks.
    *
    * @param task - Task to add
    */
@@ -193,14 +231,25 @@ export class Scheduler {
     } catch (error) {
       logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
     }
+
+    // Issue #1953: Register event-driven triggers
+    if (task.trigger?.events && this.triggerBus) {
+      this.registerEventTriggers(task);
+    }
   }
 
   /**
    * Remove a task from the scheduler.
+   * Stops the cron job and removes event trigger subscriptions.
+   *
+   * Issue #1953: Also cleans up TriggerBus subscriptions.
    *
    * @param taskId - Task ID to remove
    */
   removeTask(taskId: string): void {
+    // Issue #1953: Unregister event triggers
+    this.unregisterEventTriggers(taskId);
+
     const entry = this.activeJobs.get(taskId);
     if (entry) {
       void entry.job.stop();
@@ -330,6 +379,125 @@ ${task.prompt}`;
     await this.stop();
     await this.start();
     logger.info('Scheduler reloaded all tasks');
+  }
+
+  /**
+   * Trigger a task to execute immediately, bypassing cron schedule.
+   *
+   * Issue #1953: Direct invocation for event-driven triggering.
+   * This is the core API for the event-driven trigger mechanism.
+   *
+   * The task must be:
+   * 1. Currently loaded in the scheduler (added via addTask)
+   * 2. Either have `trigger.invocable: true` or have any trigger config
+   *
+   * If the task is blocking and currently running, the trigger is skipped.
+   * If the task is in cooldown, the trigger is skipped.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if the task was triggered, false if skipped
+   */
+  async trigger(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'Cannot trigger unknown task');
+      return false;
+    }
+
+    const { task } = entry;
+
+    // Check if task allows direct invocation
+    const isInvocable = task.trigger?.invocable ?? (task.trigger?.events !== undefined || task.trigger?.watch !== undefined);
+    if (!isInvocable) {
+      logger.warn({ taskId, name: task.name }, 'Task is not invocable (no trigger config or invocable: false)');
+      return false;
+    }
+
+    logger.info({ taskId, name: task.name, source: 'event-trigger' }, 'Triggering task immediately');
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
+   * Trigger all tasks that listen for a specific event.
+   *
+   * Issue #1953: Maps TriggerBus events to task executions.
+   *
+   * @param event - Event name
+   * @returns Array of task IDs that were triggered
+   */
+  async triggerByEvent(event: string): Promise<string[]> {
+    const taskIds = this.eventSubscriptions.get(event);
+    if (!taskIds || taskIds.size === 0) {
+      return [];
+    }
+
+    const triggered: string[] = [];
+    for (const taskId of taskIds) {
+      const success = await this.trigger(taskId);
+      if (success) {
+        triggered.push(taskId);
+      }
+    }
+
+    return triggered;
+  }
+
+  /**
+   * Register event trigger subscriptions for a task.
+   *
+   * Issue #1953: Subscribes to TriggerBus events declared in task config.
+   *
+   * @param task - Task with trigger.events configuration
+   */
+  private registerEventTriggers(task: ScheduledTask): void {
+    const events = task.trigger?.events;
+    if (!events || !this.triggerBus) { return; }
+
+    for (const event of events) {
+      // Track subscription
+      if (!this.eventSubscriptions.has(event)) {
+        this.eventSubscriptions.set(event, new Set());
+
+        // Register a single handler per event that dispatches to triggerByEvent
+        const handler: TriggerHandler = () => {
+          void this.triggerByEvent(event);
+        };
+
+        this.registeredHandlers.set(event, handler);
+        this.triggerBus.on(event, handler);
+      }
+
+      this.eventSubscriptions.get(event)?.add(task.id);
+      logger.info({ taskId: task.id, event, name: task.name }, 'Registered event trigger');
+    }
+  }
+
+  /**
+   * Unregister event trigger subscriptions for a task.
+   *
+   * Issue #1953: Cleans up TriggerBus subscriptions when task is removed.
+   *
+   * @param taskId - Task ID to unregister
+   */
+  private unregisterEventTriggers(taskId: string): void {
+    if (!this.triggerBus) { return; }
+
+    for (const [event, taskIds] of this.eventSubscriptions) {
+      if (taskIds.delete(taskId)) {
+        logger.debug({ taskId, event }, 'Unregistered event trigger');
+
+        // If no more tasks listen to this event, remove the handler
+        if (taskIds.size === 0) {
+          const handler = this.registeredHandlers.get(event);
+          if (handler) {
+            this.triggerBus.off(event, handler);
+            this.registeredHandlers.delete(event);
+          }
+          this.eventSubscriptions.delete(event);
+        }
+      }
+    }
   }
 
   /**

@@ -8,14 +8,15 @@
  * - ScheduleFileScanner: Scans and parses schedule markdown files
  * - ScheduleFileWatcher: Hot reload for schedule files
  * - ScheduleManager: Query operations for scheduled tasks
- * - Scheduler: Cron-based task execution (with dependency injection)
+ * - Scheduler: Cron-based + event-driven task execution (with dependency injection)
  * - ScheduleExecutor: Unified executor factory (Issue #1382)
+ * - TriggerBus: Event bus for event-driven schedule triggering (Issue #1953)
  *
  * @module @disclaude/core/scheduling
  */
 
 // Types
-export { type ScheduledTask } from './scheduled-task.js';
+export { type ScheduledTask, type TriggerConfig, type WatchTriggerConfig } from './scheduled-task.js';
 
 // Cooldown
 export {
@@ -65,3 +66,11 @@ export {
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
+
+// Trigger Bus (Issue #1953: event-driven schedule trigger)
+export {
+  TriggerBus,
+  triggerBus,
+  type TriggerEventData,
+  type TriggerHandler,
+} from './trigger-bus.js';

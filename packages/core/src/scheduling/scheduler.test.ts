@@ -2,16 +2,18 @@
  * Tests for Scheduler.
  *
  * Verifies cron-based task execution, cooldown handling,
- * blocking mechanism, and lifecycle management.
+ * blocking mechanism, lifecycle management, and event-driven triggers.
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
+ * Issue #1953: Event-driven schedule trigger mechanism.
  */
 
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { Scheduler, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
+import { TriggerBus } from './trigger-bus.js';
 
 function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -533,6 +535,216 @@ describe('Scheduler', () => {
 
       expect(scheduler.getActiveJobs()).toHaveLength(2);
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
+    });
+  });
+
+  // Issue #1953: Event-driven trigger tests
+  describe('trigger (Issue #1953)', () => {
+    it('should trigger a task with invocable: true', async () => {
+      const task = createTask({
+        id: 'invocable-1',
+        trigger: { invocable: true },
+      });
+      scheduler.addTask(task);
+
+      const result = await scheduler.trigger('invocable-1');
+
+      expect(result).toBe(true);
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should trigger a task with trigger.events config', async () => {
+      const task = createTask({
+        id: 'event-task',
+        trigger: { events: ['chat:pending'] },
+      });
+      scheduler.addTask(task);
+
+      const result = await scheduler.trigger('event-task');
+
+      expect(result).toBe(true);
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should trigger a task with trigger.watch config', async () => {
+      const task = createTask({
+        id: 'watch-task',
+        trigger: { watch: [{ path: 'workspace/chats/*.json' }] },
+      });
+      scheduler.addTask(task);
+
+      const result = await scheduler.trigger('watch-task');
+
+      expect(result).toBe(true);
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should refuse to trigger a task without trigger config', async () => {
+      const task = createTask({ id: 'no-trigger' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.trigger('no-trigger');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should refuse to trigger a task with invocable: false', async () => {
+      const task = createTask({
+        id: 'not-invocable',
+        trigger: { invocable: false },
+      });
+      scheduler.addTask(task);
+
+      const result = await scheduler.trigger('not-invocable');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return false for unknown task', async () => {
+      const result = await scheduler.trigger('nonexistent');
+      expect(result).toBe(false);
+    });
+
+    it('should pass task data to executor on trigger', async () => {
+      const task = createTask({
+        id: 'trigger-data',
+        prompt: 'Custom trigger prompt',
+        trigger: { invocable: true },
+      });
+      scheduler.addTask(task);
+
+      await scheduler.trigger('trigger-data');
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Custom trigger prompt'),
+        undefined,
+        undefined,
+      );
+    });
+  });
+
+  describe('trigger with TriggerBus (Issue #1953)', () => {
+    let triggerBus: TriggerBus;
+
+    beforeEach(() => {
+      triggerBus = new TriggerBus();
+      scheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        triggerBus,
+      });
+    });
+
+    afterEach(() => {
+      triggerBus.offAll();
+    });
+
+    it('should trigger task when TriggerBus event fires', async () => {
+      const task = createTask({
+        id: 'bus-task',
+        trigger: { events: ['chat:pending'] },
+      });
+      scheduler.addTask(task);
+
+      triggerBus.emit('chat:pending', { chatId: 'oc_new' });
+
+      // Wait for async processing
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should not trigger task on unrelated event', async () => {
+      const task = createTask({
+        id: 'bus-task-2',
+        trigger: { events: ['chat:pending'] },
+      });
+      scheduler.addTask(task);
+
+      triggerBus.emit('unrelated:event');
+
+      // Give some time for potential (unwanted) execution
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should trigger multiple tasks listening to the same event', async () => {
+      const task1 = createTask({
+        id: 'multi-1',
+        trigger: { events: ['shared:event'] },
+      });
+      const task2 = createTask({
+        id: 'multi-2',
+        trigger: { events: ['shared:event'] },
+      });
+
+      scheduler.addTask(task1);
+      scheduler.addTask(task2);
+
+      triggerBus.emit('shared:event');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+
+    it('should clean up TriggerBus subscriptions on removeTask', async () => {
+      const task = createTask({
+        id: 'cleanup-task',
+        trigger: { events: ['cleanup:event'] },
+      });
+      scheduler.addTask(task);
+
+      // Remove task
+      scheduler.removeTask('cleanup-task');
+
+      // Emit event - should not trigger anything
+      triggerBus.emit('cleanup:event');
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should clean up all TriggerBus subscriptions on stop', async () => {
+      const task = createTask({
+        id: 'stop-task',
+        trigger: { events: ['stop:event'] },
+      });
+      scheduler.addTask(task);
+
+      scheduler.stop();
+
+      triggerBus.emit('stop:event');
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should handle task with multiple trigger events', async () => {
+      const task = createTask({
+        id: 'multi-event',
+        trigger: { events: ['event:a', 'event:b'] },
+      });
+      scheduler.addTask(task);
+
+      triggerBus.emit('event:a');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      triggerBus.emit('event:b');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
     });
   });
 });
