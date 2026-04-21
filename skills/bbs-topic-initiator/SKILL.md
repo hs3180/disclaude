@@ -198,7 +198,7 @@ React 19 正式发布了！🎉
 
 ### Schedule Configuration
 
-To enable automatic topic initiation, create a schedule file in `schedules/`:
+To enable automatic topic initiation, create a schedule file in `schedules/<name>/SCHEDULE.md`:
 
 ```markdown
 ---

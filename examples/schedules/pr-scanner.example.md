@@ -107,7 +107,7 @@ PR #{number}: {title}
 
 ## 使用说明
 
-1. 复制此文件到 `workspace/schedules/pr-scanner.md`
+1. 复制此文件到 `workspace/schedules/pr-scanner/SCHEDULE.md`
 2. 将 `chatId` 替换为实际的飞书群聊 ID（用于接收通知）
 3. 设置 `enabled: true`
 4. 调度器将自动加载并执行
