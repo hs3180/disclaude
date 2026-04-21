@@ -218,3 +218,23 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the user taste preferences section for agent context injection.
+ *
+ * Issue #2335: Injects auto-learned user preferences into the agent prompt
+ * so the agent follows them without requiring repeated corrections.
+ *
+ * The tasteContext string is pre-formatted by TasteReader.formatTasteForPrompt().
+ * This function wraps it with a header for consistent presentation.
+ *
+ * @param tasteContext - Pre-formatted taste preferences string, or undefined to skip
+ * @returns Formatted taste preferences section, or empty string if no context
+ */
+export function buildTasteGuidance(tasteContext?: string): string {
+  if (!tasteContext) {
+    return '';
+  }
+
+  return tasteContext;
+}

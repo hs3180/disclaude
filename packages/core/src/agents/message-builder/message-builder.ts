@@ -19,7 +19,8 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, location awareness)
+ *   ├── Guidance sections (next-step, output format, location awareness, taste)
+
  *   └── User message + attachments
  * ```
  *
@@ -35,6 +36,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteGuidance,
 } from './guidance.js';
 
 /**
@@ -48,6 +50,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Location awareness guidance (Issue #1198)
+ * - User taste preferences guidance (Issue #2335)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -137,6 +140,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const tasteGuidance = buildTasteGuidance(msg.tasteContext);
 
     // Compose all sections
     const sections: string[] = [];
@@ -159,6 +163,11 @@ export class MessageBuilder {
 
     if (toolsSection) {
       sections.push(`\n---\n\n## Tools\n${toolsSection}`);
+    }
+
+    // User taste preferences (Issue #2335)
+    if (tasteGuidance) {
+      sections.push(tasteGuidance);
     }
 
     sections.push(nextStepGuidance);
