@@ -198,7 +198,8 @@ export interface WorkerNodeDependencies {
   getWorkspaceDir: () => string;
 
   /** Factory to create ChatAgent instances (for AgentPool and Scheduler).
-   *  Issue #2345 Phase 5: Unified from createChatAgent + createScheduleAgent. */
+   *  Issue #2345 Phase 5: Unified to single createAgent() method.
+   *  Issue #2513: ScheduleAgent type removed — ChatAgent is the sole agent type. */
   createAgent: ChatAgentFactory;
 
   /** Logger instance */

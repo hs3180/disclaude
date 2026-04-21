@@ -2,10 +2,12 @@
  * Schedule Executor Factory - Creates TaskExecutor for scheduled task execution.
  *
  * Issue #1382: Unified executor implementation for both Primary Node and Worker Node.
+ * Issue #2513: Replaced ScheduleAgent type with ChatAgent. There is only one
+ * Agent type in the codebase.
  *
  * This module provides a factory function to create TaskExecutor instances
  * that can be used with the Scheduler. The executor uses a provided agent
- * factory to create short-lived agents for task execution.
+ * factory to create short-lived ChatAgent instances for task execution.
  *
  * Architecture:
  * ```
@@ -22,43 +24,14 @@
  */
 
 import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
-
-/**
- * Interface for an agent that can execute scheduled tasks.
- *
- * This is a minimal interface that ChatAgent naturally satisfies.
- * The executeOnce signature matches ChatAgent.executeOnce(chatId, text, messageId?, senderOpenId?)
- * to enable structural typing without type assertions.
- *
- * Issue #1446: Fixed signature to be compatible with ChatAgent implementation.
- */
-export interface ScheduleAgent {
-  /** Execute the task once with the given prompt */
-  executeOnce: (chatId: string, prompt: string, messageId?: string, userId?: string) => Promise<void>;
-  /** Dispose the agent after execution */
-  dispose: () => void;
-}
-
-/**
- * Factory function type for creating ScheduleAgent instances.
- *
- * @param chatId - Chat ID for message delivery
- * @param callbacks - Callbacks for sending messages
- * @param model - Optional model override for this task (Issue #1338)
- * @returns A ScheduleAgent instance (caller must dispose)
- */
-export type ScheduleAgentFactory = (
-  chatId: string,
-  callbacks: SchedulerCallbacks,
-  model?: string
-) => ScheduleAgent;
+import type { ChatAgent } from '../agents/types.js';
 
 /**
  * Options for creating a schedule executor.
  */
 export interface ScheduleExecutorOptions {
-  /** Factory function to create ScheduleAgent instances */
-  agentFactory: ScheduleAgentFactory;
+  /** Factory function to create ChatAgent instances for scheduled task execution */
+  agentFactory: (chatId: string, callbacks: SchedulerCallbacks, model?: string) => ChatAgent;
   /** Callbacks for sending messages (used for error handling) */
   callbacks: SchedulerCallbacks;
 }
@@ -93,6 +66,9 @@ export interface ScheduleExecutorOptions {
  *   executor,
  * });
  * ```
+ *
+ * Note: The agent factory returns ChatAgent instances. ChatAgent naturally
+ * satisfies the executor's requirements (executeOnce + dispose).
  */
 export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskExecutor {
   const { agentFactory, callbacks } = options;
