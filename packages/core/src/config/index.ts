@@ -459,6 +459,21 @@ export class Config {
   }
 
   /**
+   * Get project template configuration from config file.
+   *
+   * Returns the projectTemplates section from disclaude.config.yaml,
+   * used by ProjectManager to initialize available templates.
+   * If not configured, returns undefined (templates can be auto-discovered instead).
+   *
+   * @see Issue #1916 (parent — unified ProjectContext system)
+   * @see Issue #2227 (Sub-Issue E — config integration)
+   * @returns Project template configuration or undefined
+   */
+  static getProjectTemplatesConfig(): DisclaudeConfig['projectTemplates'] {
+    return fileConfigOnly.projectTemplates;
+  }
+
+  /**
    * Get session restoration configuration.
    * Controls how chat history is loaded when agent starts or resets.
    * @see Issue #1213

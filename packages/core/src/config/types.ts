@@ -8,6 +8,8 @@
  * are NOT included here - they are defined in the main project's config/types.ts.
  */
 
+import type { ProjectTemplatesConfig } from '../project/types.js';
+
 /**
  * Workspace configuration section.
  */
@@ -342,6 +344,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project template configuration (Issue #1916, Issue #2227) */
+  projectTemplates?: ProjectTemplatesConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
