@@ -6,18 +6,7 @@
  * - Exponential backoff between restarts
  * - Circuit breaker to pause processing after repeated failures
  *
- * Architecture:
- * ```
- * ChatAgent.processIterator() error
- *         ↓
- * RestartManager.shouldRestart()
- *         ↓
- * ┌───────┴───────┐
- * │ Allow restart │ → wait(backoff) → restart
- * │ Block restart │ → circuit open, stop processing
- * └───────────────┘
- * ```
- *
+ * Uses shouldRestart() to decide whether to allow restart with backoff or block via circuit breaker.
  * @module agents/restart-manager
  */
 
