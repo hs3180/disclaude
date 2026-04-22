@@ -80,6 +80,12 @@ export {
   clearRuntimeContext,
 } from './agents/types.js';
 
+// ChatAgent callback and config types (Issue #2717 Phase 1: extracted from worker-node)
+export type {
+  ChatAgentCallbacks,
+  ChatAgentConfig,
+} from './agents/chat-agent-types.js';
+
 // Message channel
 export { MessageChannel } from './agents/message-channel.js';
 

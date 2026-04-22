@@ -1,7 +1,7 @@
 /**
  * Type definitions for ChatAgent.
  *
- * Issue #2717 Phase 1: ChatAgentCallbacks and ChatAgentConfig now defined in core.
+ * Issue #2717 Phase 1: ChatAgentCallbacks and ChatAgentConfig extracted to core.
  * This file re-exports from core for backward compatibility.
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
  */

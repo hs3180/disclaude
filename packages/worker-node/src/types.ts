@@ -5,11 +5,16 @@
  * from the main application, allowing WorkerNode to remain in the package
  * without importing from src/.
  *
+ * Issue #2717 Phase 1: ChatAgentCallbacks imported from @disclaude/core.
+ *
  * @see Issue #1041 - Separate Worker Node code to @disclaude/worker-node
  */
 
 import type { Logger } from 'pino';
-import type { FileRef, FeishuCard, ChannelCapabilities } from '@disclaude/core';
+import type { FileRef, ChatAgentCallbacks as CoreChatAgentCallbacks } from '@disclaude/core';
+
+// Re-export ChatAgentCallbacks from core for backward compatibility
+export type { ChatAgentCallbacks } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgent Interface
@@ -19,6 +24,7 @@ import type { FileRef, FeishuCard, ChannelCapabilities } from '@disclaude/core';
  * ChatAgent - Continuous conversation agent interface.
  *
  * Minimal interface for the methods used by WorkerNode.
+ * This is a subset of the core ChatAgent interface.
  */
 export interface ChatAgent {
   /** Agent type identifier */
@@ -103,29 +109,9 @@ export interface AgentPoolInterface {
 // ============================================================================
 
 /**
- * ChatAgentCallbacks - Callbacks for ChatAgent to send messages.
- *
- * Used when creating ChatAgent instances.
- */
-export interface ChatAgentCallbacks {
-  /** Send a text message */
-  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
-  /** Send an interactive card */
-  sendCard: (chatId: string, card: FeishuCard, description?: string, parentMessageId?: string) => Promise<void>;
-  /** Send a file */
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
-  /** Called when query completes */
-  onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
-  /** Get channel capabilities for a chat (Issue #582) */
-  getCapabilities?: (chatId: string) => ChannelCapabilities | undefined;
-  /** Get chat history for first message context (Issue #1230, #1863) */
-  getChatHistory?: (chatId: string) => Promise<string | undefined>;
-}
-
-/**
  * ChatAgentFactory - Factory function to create ChatAgent instances.
  */
-export type ChatAgentFactory = (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
+export type ChatAgentFactory = (chatId: string, callbacks: CoreChatAgentCallbacks) => ChatAgent;
 
 // ============================================================================
 // Scheduler Types
