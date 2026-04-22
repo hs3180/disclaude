@@ -942,3 +942,205 @@ describe('ProjectManager — edge cases', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Auto-Discovery Integration (Issue #2286)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager — template auto-discovery (#2286)', () => {
+  let workspaceDir: string;
+  let packageDir: string;
+  const discoveryTempDirs: string[] = [];
+
+  /** Create options with a real packageDir containing a templates/ directory */
+  function createDiscoveryOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManagerOptions {
+    workspaceDir = mkdtempSync(join(tmpdir(), 'pm-disc-ws-'));
+    packageDir = mkdtempSync(join(tmpdir(), 'pm-disc-pkg-'));
+    discoveryTempDirs.push(workspaceDir, packageDir);
+    return {
+      workspaceDir,
+      packageDir,
+      ...overrides,
+    };
+  }
+
+  /** Create a template directory with CLAUDE.md */
+  function createTemplateDir(name: string, meta?: { displayName?: string; description?: string }): void {
+    const templateDir = join(packageDir, 'templates', name);
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), `# ${name} Template`);
+
+    if (meta?.displayName || meta?.description) {
+      const lines: string[] = [];
+      if (meta.displayName) {lines.push(`displayName: "${meta.displayName}"`);}
+      if (meta.description) {lines.push(`description: ${meta.description}`);}
+      writeFileSync(join(templateDir, 'template.yaml'), lines.join('\n'));
+    }
+  }
+
+  afterEach(() => {
+    for (const dir of discoveryTempDirs.splice(0)) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  });
+
+  // ── Auto-discovery without config ──
+
+  it('should auto-discover templates from {packageDir}/templates/', () => {
+    const opts = createDiscoveryOptions();
+    createTemplateDir('research', { displayName: '研究模式' });
+    createTemplateDir('book-reader', { displayName: '读书助手' });
+
+    const pm = new ProjectManager(opts);
+    const templates = pm.listTemplates();
+
+    expect(templates).toHaveLength(2);
+    expect(templates.find((t) => t.name === 'research')).toEqual({
+      name: 'research',
+      displayName: '研究模式',
+      description: undefined,
+    });
+    expect(templates.find((t) => t.name === 'book-reader')).toEqual({
+      name: 'book-reader',
+      displayName: '读书助手',
+      description: undefined,
+    });
+  });
+
+  it('should work with no config and no templates directory', () => {
+    const opts = createDiscoveryOptions();
+    // No templates/ directory created
+
+    const pm = new ProjectManager(opts);
+    expect(pm.listTemplates()).toEqual([]);
+  });
+
+  it('should work with empty config and discovered templates', () => {
+    const opts = createDiscoveryOptions({ templatesConfig: {} });
+    createTemplateDir('research');
+
+    const pm = new ProjectManager(opts);
+    expect(pm.listTemplates()).toHaveLength(1);
+    expect(pm.listTemplates()[0].name).toBe('research');
+  });
+
+  it('should allow creating instances from auto-discovered templates', () => {
+    const opts = createDiscoveryOptions();
+    createTemplateDir('research');
+
+    const pm = new ProjectManager(opts);
+    const result = pm.create('chat_1', 'research', 'my-research');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.templateName).toBe('research');
+    }
+  });
+
+  // ── Merge: config overrides discovered metadata ──
+
+  it('should merge config with discovered templates — config overrides metadata', () => {
+    const opts = createDiscoveryOptions();
+    createTemplateDir('research', { displayName: '发现的名字' });
+
+    const pm = new ProjectManager({
+      ...opts,
+      templatesConfig: {
+        research: { displayName: '配置的名字', description: '配置的描述' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0]).toEqual({
+      name: 'research',
+      displayName: '配置的名字',
+      description: '配置的描述',
+    });
+  });
+
+  it('should merge config with discovered templates — config supplements metadata', () => {
+    const opts = createDiscoveryOptions();
+    createTemplateDir('research', { displayName: '研究模式' });
+
+    const pm = new ProjectManager({
+      ...opts,
+      templatesConfig: {
+        research: { description: '新描述' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    // displayName from discovery, description from config
+    expect(templates[0]).toEqual({
+      name: 'research',
+      displayName: '研究模式',
+      description: '新描述',
+    });
+  });
+
+  it('should include config-only templates not found on filesystem', () => {
+    const opts = createDiscoveryOptions();
+    createTemplateDir('research');
+
+    const pm = new ProjectManager({
+      ...opts,
+      templatesConfig: {
+        research: {},
+        'config-only': { displayName: 'Config Only Template' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+    expect(templates.find((t) => t.name === 'config-only')).toEqual({
+      name: 'config-only',
+      displayName: 'Config Only Template',
+      description: undefined,
+    });
+  });
+
+  it('should skip invalid template directories during discovery', () => {
+    const opts = createDiscoveryOptions();
+    // Valid template
+    createTemplateDir('research');
+    // Invalid: directory without CLAUDE.md
+    mkdirSync(join(packageDir, 'templates', 'no-claude-md'), { recursive: true });
+    // Invalid: "default" is reserved
+    const defaultDir = join(packageDir, 'templates', 'default');
+    mkdirSync(defaultDir, { recursive: true });
+    writeFileSync(join(defaultDir, 'CLAUDE.md'), '# Default');
+
+    const pm = new ProjectManager(opts);
+    const templates = pm.listTemplates();
+
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('research');
+  });
+
+  // ── Backward compatibility ──
+
+  it('should maintain backward compatibility with explicit config-only templates', () => {
+    const opts = createDiscoveryOptions();
+    // No templates/ directory at all
+
+    const pm = new ProjectManager({
+      ...opts,
+      templatesConfig: {
+        research: { displayName: '研究模式', description: '专注研究' },
+        'book-reader': { displayName: '读书助手' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+    // Sorted by name
+    expect(templates[0].name).toBe('book-reader');
+    expect(templates[1].name).toBe('research');
+  });
+});

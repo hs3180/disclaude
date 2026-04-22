@@ -35,8 +35,11 @@ export type ProjectResult<T> =
  * Template CLAUDE.md source: `{packageDir}/templates/{name}/CLAUDE.md`
  * Instance workingDir: `{workspace}/projects/{name}/`
  *
- * Only templates listed in `projectTemplates` config are available.
+ * Templates are auto-discovered from `{packageDir}/templates/` by default.
+ * Config entries in `projectTemplates` can override displayName/description.
  * The "default" project is always implicitly available (no template needed).
+ *
+ * @see Issue #2286 — Project templates should auto-discover from package directory
  */
 export interface ProjectTemplate {
   /** Template name (unique identifier, e.g. "research", "book-reader") */
@@ -189,6 +192,14 @@ export interface ProjectManagerOptions {
   /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
   packageDir: string;
 
-  /** Template configuration from disclaude.config.yaml */
-  templatesConfig: ProjectTemplatesConfig;
+  /**
+   * Template configuration from disclaude.config.yaml (optional).
+   *
+   * When omitted, templates are auto-discovered from `{packageDir}/templates/`.
+   * When provided, discovered templates are merged with config templates;
+   * config entries take precedence for displayName/description overrides.
+   *
+   * @see template-discovery.ts for auto-discovery rules
+   */
+  templatesConfig?: ProjectTemplatesConfig;
 }

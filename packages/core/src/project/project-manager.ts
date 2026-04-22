@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplates } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +65,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory for template auto-discovery */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +83,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -98,26 +99,49 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Initialize (or re-initialize) templates from config.
+   * Initialize (or re-initialize) templates from config + auto-discovery.
+   *
+   * Template resolution order:
+   * 1. Auto-discover templates from `{packageDir}/templates/` (if directory exists)
+   * 2. Merge with explicit config entries — config takes precedence for displayName/description
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @param templatesConfig - Template configuration (from disclaude.config.yaml), optional
+   *
+   * @see Issue #2286 — Project templates should auto-discover from package directory
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
 
-    if (!templatesConfig) {
-      return;
+    // Step 1: Auto-discover templates from filesystem
+    const discoveryResult = discoverTemplates(this.packageDir);
+    for (const template of discoveryResult.templates) {
+      this.templates.set(template.name, {
+        name: template.name,
+        displayName: template.displayName,
+        description: template.description,
+      });
     }
 
-    for (const [name, meta] of Object.entries(templatesConfig)) {
-      this.templates.set(name, {
-        name,
-        displayName: meta.displayName,
-        description: meta.description,
-      });
+    // Step 2: Merge explicit config — config takes precedence for metadata overrides
+    if (templatesConfig) {
+      for (const [name, meta] of Object.entries(templatesConfig)) {
+        const existing = this.templates.get(name);
+        if (existing) {
+          // Config overrides discovered metadata
+          existing.displayName = meta.displayName ?? existing.displayName;
+          existing.description = meta.description ?? existing.description;
+        } else {
+          // Config-only template (not discovered from filesystem)
+          this.templates.set(name, {
+            name,
+            displayName: meta.displayName,
+            description: meta.description,
+          });
+        }
+      }
     }
   }
 
