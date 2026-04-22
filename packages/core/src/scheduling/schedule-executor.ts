@@ -24,15 +24,15 @@
 import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
 
 /**
- * Interface for an agent that can execute scheduled tasks.
+ * Minimal interface for an executable agent.
  *
- * This is a minimal interface that ChatAgent naturally satisfies.
- * The executeOnce signature matches ChatAgent.executeOnce(chatId, text, messageId?, senderOpenId?)
- * to enable structural typing without type assertions.
+ * ChatAgent naturally satisfies this interface via structural typing.
+ * The executeOnce signature matches ChatAgent.executeOnce(chatId, text, messageId?, senderOpenId?).
  *
  * Issue #1446: Fixed signature to be compatible with ChatAgent implementation.
+ * Issue #2513: Renamed from ScheduleAgent — there is only one agent type (ChatAgent).
  */
-export interface ScheduleAgent {
+export interface Executable {
   /** Execute the task once with the given prompt */
   executeOnce: (chatId: string, prompt: string, messageId?: string, userId?: string) => Promise<void>;
   /** Dispose the agent after execution */
@@ -40,25 +40,25 @@ export interface ScheduleAgent {
 }
 
 /**
- * Factory function type for creating ScheduleAgent instances.
+ * Factory function type for creating Executable instances.
  *
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
  * @param model - Optional model override for this task (Issue #1338)
- * @returns A ScheduleAgent instance (caller must dispose)
+ * @returns An Executable instance (caller must dispose)
  */
-export type ScheduleAgentFactory = (
+export type ExecutableFactory = (
   chatId: string,
   callbacks: SchedulerCallbacks,
   model?: string
-) => ScheduleAgent;
+) => Executable;
 
 /**
  * Options for creating a schedule executor.
  */
 export interface ScheduleExecutorOptions {
-  /** Factory function to create ScheduleAgent instances */
-  agentFactory: ScheduleAgentFactory;
+  /** Factory function to create agent instances */
+  agentFactory: ExecutableFactory;
   /** Callbacks for sending messages (used for error handling) */
   callbacks: SchedulerCallbacks;
 }

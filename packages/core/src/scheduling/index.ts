@@ -61,7 +61,7 @@ export {
 // Schedule Executor (Issue #1382)
 export {
   createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
+  type Executable,
+  type ExecutableFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
