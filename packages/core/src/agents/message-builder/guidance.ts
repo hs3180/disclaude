@@ -185,6 +185,72 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, so in-memory singletons
+ * from the main process are inaccessible. A file-based `.runtime-env` mechanism
+ * is used for cross-process state sharing. This guidance section informs the
+ * agent about the mechanism so it can actively discover and use shared variables.
+ *
+ * Previous attempts:
+ * - PR #1469 (SharedMemory) — closed, over-engineered
+ * - PR #1489 (worker-node MessageBuilder) — closed, wrong layer
+ *
+ * This is the core-level implementation, composable and framework-agnostic.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+**You have access to shared environment variables via the \`.runtime-env\` mechanism.**
+
+You run in an SDK subprocess — in-memory singletons from the main process are inaccessible. A file-based \`.runtime-env\` in the workspace directory enables cross-process state sharing.
+
+### How It Works
+
+- The file \`{workspace}/.runtime-env\` stores KEY=VALUE pairs (one per line)
+- All variables are pre-loaded into your \`process.env\` at startup via \`BaseAgent.createSdkOptions()\`
+- Both the main process (MCP servers, skills) and your subprocess can read/write this file
+
+### Known Variables
+
+| Variable | Purpose | Written By |
+|----------|---------|------------|
+| \`GH_TOKEN\` | GitHub App Installation Access Token | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiry time (ISO 8601, 1h lifetime) | \`github-jwt-auth\` skill |
+
+Other skills may write additional variables over time.
+
+### How to Read Variables
+
+Variables are already loaded into \`process.env\`. You can access them directly:
+\`\`\`bash
+echo "GitHub token available: \${GH_TOKEN:+yes}"
+echo "Expires at: \$GH_TOKEN_EXPIRES_AT"
+\`\`\`
+
+### How to Write Variables
+
+Append or update entries in \`.runtime-env\` using KEY=VALUE format:
+\`\`\`bash
+echo "MY_VAR=my_value" >> .runtime-env
+\`\`\`
+
+To update an existing variable, remove the old line first and append the new one.
+
+### Security Notes
+
+- \`.runtime-env\` should be in \`.gitignore\` — never commit tokens or secrets
+- Check token expiration (\`GH_TOKEN_EXPIRES_AT\`) before use — tokens expire after 1 hour
+- If a token is expired, suggest the user run the \`github-jwt-auth\` skill to refresh it`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
