@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -163,6 +165,21 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  insert_docx_image: {
+    description: `Insert an image into a Feishu document at a specified position.
+Uses the Feishu docx API to perform inline image insertion with precise position control.
+Requires Primary Node to be running (IPC).`,
+    parameters: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string', description: 'Feishu document ID' },
+        imagePath: { type: 'string', description: 'Path to the image file (relative to workspace or absolute)' },
+        index: { type: 'number', description: '0-based position where the image block should be inserted' },
+      },
+      required: ['documentId', 'imagePath', 'index'],
+    },
+    handler: insert_docx_image,
   },
 };
 
@@ -411,6 +428,51 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #2278: Feishu docx image insertion
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image into a Feishu document at a specified position.
+
+This tool enables precise inline image insertion in Feishu documents, solving the
+limitation of \`lark-cli docs +media-insert\` which only appends images to the end.
+
+The tool performs a three-step API flow:
+1. Creates an empty image block (block_type: 27) at the specified index
+2. Uploads the image file via Drive Media API
+3. Binds the uploaded file to the image block
+
+## Parameters
+- **documentId**: Feishu document ID (from URL or create response)
+- **imagePath**: Path to the image file (relative to workspace or absolute)
+- **index**: 0-based position where the image block should be inserted
+
+## Prerequisites
+- The document must already exist (use \`lark-cli docs +create\` first)
+- The image file must exist on the local filesystem
+- Primary Node must be running (IPC required)
+
+## Example
+\`\`\`json
+{
+  "documentId": "doxcnxxxxxxxxxxxxxxx",
+  "imagePath": "/path/to/chart.png",
+  "index": 3
+}
+\`\`\``,
+    parameters: z.object({
+      documentId: z.string().describe('Feishu document ID'),
+      imagePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().int().min(0).describe('0-based position where the image block should be inserted'),
+    }),
+    handler: async ({ documentId, imagePath, index }: { documentId: string; imagePath: string; index: number }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

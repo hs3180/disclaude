@@ -695,6 +695,44 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Feishu Docx image insertion (Issue #2278)
+  // ============================================================================
+
+  /**
+   * Insert an image into a Feishu document at a specified position via IPC.
+   *
+   * Issue #2278: Three-step API flow:
+   * 1. Create empty image block (block_type: 27) at the specified index
+   * 2. Upload image file via Drive Media API
+   * 3. Bind uploaded file to the image block via replace_image
+   *
+   * @param documentId - Feishu document ID
+   * @param imagePath - Local file path of the image
+   * @param index - 0-based position index for insertion
+   */
+  async insertDocxImage(
+    documentId: string,
+    imagePath: string,
+    index: number
+  ): Promise<{ success: boolean; blockId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('insertDocxImage', { documentId, imagePath, index });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, documentId, imagePath, index }, 'insertDocxImage failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

@@ -27,6 +27,7 @@ import {
   attachmentManager,
 } from '@disclaude/core';
 import { InteractionManager, WelcomeService, createFeishuClient } from '../platforms/feishu/index.js';
+import { DocxImageInserter } from '../services/docx-image-inserter.js';
 import {
   TriggerModeManager,
   MentionDetector,
@@ -646,6 +647,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'insert_docx_image',
       ],
     };
   }
@@ -704,6 +706,32 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  /**
+   * Insert an image into a Feishu document at a specified position.
+   *
+   * Issue #2278: Uses DocxImageInserter to perform the three-step API flow:
+   * 1. Create empty image block (block_type: 27) at the specified index
+   * 2. Upload image file via Drive Media Upload API
+   * 3. Bind uploaded file to the image block via replace_image
+   *
+   * @param documentId - Feishu document ID
+   * @param imagePath - Local file path of the image
+   * @param index - 0-based position index for insertion
+   * @returns Result with blockId on success
+   */
+  async insertDocxImage(
+    documentId: string,
+    imagePath: string,
+    index: number,
+  ): Promise<{ success: boolean; blockId?: string; error?: string }> {
+    if (!this.client) {
+      return { success: false, error: 'Client not initialized' };
+    }
+    const inserter = new DocxImageInserter(this.client);
+    const result = await inserter.insertImage(documentId, imagePath, index);
+    return result;
   }
 
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────

@@ -24,7 +24,9 @@ export type IpcRequestType =
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Feishu Docx image insertion (Issue #2278)
+  | 'insertDocxImage';
 
 /**
  * IPC request payload types.
@@ -83,6 +85,15 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Feishu Docx image insertion (Issue #2278)
+  insertDocxImage: {
+    /** Feishu document ID */
+    documentId: string;
+    /** Local file path of the image to insert */
+    imagePath: string;
+    /** 0-based position index where the image block should be inserted */
+    index: number;
+  };
 }
 
 /**
@@ -125,6 +136,14 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // Feishu Docx image insertion (Issue #2278)
+  insertDocxImage: {
+    success: boolean;
+    /** ID of the created image block */
+    blockId?: string;
+    /** Error message on failure */
+    error?: string;
   };
 }
 
