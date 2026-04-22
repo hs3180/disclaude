@@ -260,6 +260,46 @@ export class ProjectManager {
   }
 
   /**
+   * Delete a project instance and clean up all associated bindings.
+   *
+   * Removes the instance from memory, unbinds all chatIds that were
+   * using this instance (reverting them to default), and persists
+   * the updated state to disk.
+   *
+   * Does NOT delete the working directory on disk — that's Sub-Issue D (#2226).
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string): ProjectResult<void> {
+    if (!name || name.length === 0) {
+      return { ok: false, error: '实例名称不能为空' };
+    }
+
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Collect all chatIds bound to this instance before cleanup
+    const boundChatIds = this.getBoundChatIds(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Clean up reverse index
+    this.instanceChatIds.delete(name);
+
+    // Unbind all chatIds that were using this instance
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Persist the updated state
+    return this.persist();
+  }
+
+  /**
    * Reset a chatId's binding, reverting to default project.
    *
    * @param chatId - Chat session to reset

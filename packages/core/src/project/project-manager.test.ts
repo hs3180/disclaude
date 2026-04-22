@@ -453,6 +453,128 @@ describe('ProjectManager reset()', () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// delete()
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+
+  beforeEach(() => {
+    pm = new ProjectManager(createOptions());
+  });
+
+  it('should delete an existing instance', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.listInstances()).toHaveLength(1);
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+
+  it('should reject deleting a non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should reject empty name', () => {
+    const result = pm.delete('');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不能为空');
+    }
+  });
+
+  it('should unbind all chatIds when deleting an instance', () => {
+    pm.create('chat_1', 'research', 'shared-project');
+    pm.use('chat_2', 'shared-project');
+    pm.use('chat_3', 'shared-project');
+
+    pm.delete('shared-project');
+
+    // All chatIds should revert to default
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should not affect other instances when deleting one', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+    pm.use('chat_3', 'research-1');
+
+    pm.delete('research-1');
+
+    // book-1 should still exist
+    expect(pm.listInstances()).toHaveLength(1);
+    expect(pm.listInstances()[0].name).toBe('book-1');
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+    // chat_3 was bound to research-1, should revert to default
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should persist deletion to disk', () => {
+    pm.create('chat_1', 'research', 'my-research');
+
+    const persistPath = pm.getPersistPath();
+
+    // Verify instance is persisted
+    const before = JSON.parse(readFileSync(persistPath, 'utf8'));
+    expect(before.instances['my-research']).toBeDefined();
+
+    pm.delete('my-research');
+
+    // Verify instance is removed from persisted file
+    const after = JSON.parse(readFileSync(persistPath, 'utf8'));
+    expect(after.instances['my-research']).toBeUndefined();
+    expect(after.chatProjectMap['chat_1']).toBeUndefined();
+  });
+
+  it('should allow creating a new instance with the same name after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    const result = pm.create('chat_2', 'book-reader', 'my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.templateName).toBe('book-reader');
+    }
+  });
+
+  it('should handle deleting an instance with no bindings', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.reset('chat_1');
+
+    // Instance exists but has no bindings
+    expect(pm.listInstances()).toHaveLength(1);
+    expect(pm.listInstances()[0].chatIds).toEqual([]);
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+
+  it('should persist deletion correctly across reload', () => {
+    const opts = createOptions();
+    const { workspaceDir } = opts;
+
+    // Create, delete, reload
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'my-research');
+    pm1.delete('my-research');
+
+    // Reload — instance should still be gone
+    const pm2 = new ProjectManager({ ...opts, workspaceDir });
+    expect(pm2.listInstances()).toHaveLength(0);
+    expect(pm2.getActive('chat_1').name).toBe('default');
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // listTemplates()
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
