@@ -646,6 +646,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }
@@ -704,6 +705,58 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * Issue #1919: Used by the upload_image MCP tool to get image_key
+   * for embedding images in card messages (img elements).
+   *
+   * Unlike send_file which sends the image as a standalone message,
+   * this method only uploads and returns the key — the Agent can then
+   * use the key in send_card's img elements.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   * @throws Error if client not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    // Validate image format
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    // Validate file exists and get size
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for card embedding');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName} — no image_key returned`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully');
+    return { imageKey, fileName, fileSize };
   }
 
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
