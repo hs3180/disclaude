@@ -535,4 +535,146 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  // Issue #1953: Event-driven trigger support
+  describe('triggerTask', () => {
+    it('should execute task when triggerTask is called', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-1');
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Run tests'),
+        undefined,
+        undefined,
+      );
+    });
+
+    it('should ignore triggerTask for non-existent task', async () => {
+      await scheduler.triggerTask('nonexistent');
+
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect blocking when triggerTask is called', async () => {
+      // Make executor hang
+      let resolveExecutor: () => void;
+      const executorPromise = new Promise<void>((resolve) => {
+        resolveExecutor = resolve;
+      });
+      mockExecutor.mockReturnValueOnce(executorPromise);
+
+      const task = createTask({ id: 'blocking-trigger', blocking: true });
+      scheduler.addTask(task);
+
+      // First trigger - starts execution
+      const triggerPromise = scheduler.triggerTask('blocking-trigger');
+
+      // Second trigger - should be skipped due to blocking
+      await scheduler.triggerTask('blocking-trigger');
+
+      // Only one executor call despite two triggers
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+
+      // Clean up
+      resolveExecutor!();
+      await triggerPromise;
+    });
+
+    it('should send error message when triggered task fails', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('Trigger execution failed'));
+
+      const task = createTask({ id: 'trigger-fail' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-fail');
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('执行失败'),
+      );
+    });
+
+    it('should clear running state when triggered task fails', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('fail'));
+
+      const task = createTask({ id: 'trigger-fail-clear' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-fail-clear');
+
+      expect(scheduler.isTaskRunning('trigger-fail-clear')).toBe(false);
+    });
+  });
+
+  describe('eventTriggerManager integration', () => {
+    it('should register event trigger when adding task with trigger config', () => {
+      const mockEventTriggerManager = {
+        registerTask: vi.fn(),
+        unregisterTask: vi.fn(),
+      };
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        eventTriggerManager: mockEventTriggerManager as any,
+      });
+
+      const task = createTask({
+        id: 'event-task',
+        trigger: { watch: [{ path: 'chats/*.json' }] },
+      });
+
+      s.addTask(task);
+
+      expect(mockEventTriggerManager.registerTask).toHaveBeenCalledWith(task);
+    });
+
+    it('should unregister event trigger when removing task', () => {
+      const mockEventTriggerManager = {
+        registerTask: vi.fn(),
+        unregisterTask: vi.fn(),
+      };
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        eventTriggerManager: mockEventTriggerManager as any,
+      });
+
+      const task = createTask({ id: 'event-rm-task' });
+      s.addTask(task);
+      s.removeTask('event-rm-task');
+
+      expect(mockEventTriggerManager.unregisterTask).toHaveBeenCalledWith('event-rm-task');
+    });
+
+    it('should return eventTriggerManager via getter', () => {
+      const mockEventTriggerManager = {
+        registerTask: vi.fn(),
+        unregisterTask: vi.fn(),
+      };
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        eventTriggerManager: mockEventTriggerManager as any,
+      });
+
+      expect(s.getEventTriggerManager()).toBe(mockEventTriggerManager);
+    });
+
+    it('should return undefined when no eventTriggerManager', () => {
+      expect(scheduler.getEventTriggerManager()).toBeUndefined();
+    });
+  });
 });

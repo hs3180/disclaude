@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1953: Event-driven schedule triggers
+  EventTriggerManager,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from '@disclaude/worker-node';
 import { ExecNodeRegistry } from './exec-node-registry.js';
@@ -152,6 +154,8 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
+  // Issue #1953: Event-driven triggers
+  protected eventTriggerManager?: EventTriggerManager;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
@@ -484,6 +488,24 @@ export class PrimaryNode extends EventEmitter {
       executor,
     });
 
+    // Issue #1953: Initialize EventTriggerManager
+    this.eventTriggerManager = new EventTriggerManager({
+      workspaceDir,
+      onTrigger: (taskId: string) => {
+        logger.info({ taskId }, 'Event trigger fired, triggering task');
+        void this.scheduler?.triggerTask(taskId);
+      },
+    });
+
+    // Re-create scheduler with event trigger manager
+    this.scheduler = new Scheduler({
+      scheduleManager: this.scheduleManager,
+      cooldownManager: this.cooldownManager,
+      callbacks: schedulerCallbacks,
+      executor,
+      eventTriggerManager: this.eventTriggerManager,
+    });
+
     // Initialize file watcher for hot reload
     this.scheduleFileWatcher = new ScheduleFileWatcher({
       schedulesDir,
@@ -505,8 +527,12 @@ export class PrimaryNode extends EventEmitter {
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
 
+    // Issue #1953: Start event trigger manager
+    this.eventTriggerManager.start();
+
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    console.log('✓ Event trigger manager started');
     logger.info('Scheduler initialized');
   }
 
@@ -514,6 +540,7 @@ export class PrimaryNode extends EventEmitter {
    * Stop the scheduler.
    */
   protected stopScheduler(): void {
+    this.eventTriggerManager?.stop();
     this.scheduleFileWatcher?.stop();
     this.scheduler?.stop();
     logger.info('Scheduler stopped');

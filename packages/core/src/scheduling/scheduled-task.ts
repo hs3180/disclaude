@@ -4,8 +4,36 @@
  * Shared type for scheduled task data structure.
  * Used by both ScheduleManager and Scheduler.
  *
+ * Issue #1953: Added event-driven trigger configuration.
+ *
  * @module @disclaude/core/scheduling
  */
+
+/**
+ * A single trigger watch rule.
+ * When the specified path changes (file created/modified/deleted),
+ * the schedule is immediately triggered (in addition to cron).
+ */
+export interface TriggerRule {
+  /** File system path to watch (relative to workspace dir) */
+  path: string;
+  /** Optional JMESPath-like filter expression (future use) */
+  filter?: string;
+  /** Debounce interval in milliseconds (default: 5000) */
+  debounceMs?: number;
+}
+
+/**
+ * Event-driven trigger configuration for a scheduled task.
+ * Allows schedules to be triggered immediately when watched files change,
+ * in addition to the regular cron schedule.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ */
+export interface TriggerConfig {
+  /** Array of watch rules that trigger this schedule */
+  watch: TriggerRule[];
+}
 
 /**
  * Scheduled task definition.
@@ -41,4 +69,13 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+
+  /**
+   * Optional event-driven trigger configuration.
+   * When set, file system changes matching the watch rules will
+   * immediately trigger the schedule (in addition to cron).
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  trigger?: TriggerConfig;
 }

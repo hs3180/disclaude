@@ -1,5 +1,5 @@
 /**
- * Scheduler - Executes scheduled tasks using cron.
+ * Scheduler - Executes scheduled tasks using cron + event-driven triggers.
  *
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
@@ -15,10 +15,16 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1953: Added event-driven trigger support.
+ * - Tasks can define `trigger.watch` rules for file-system-based triggers
+ * - EventTriggerManager watches paths and calls triggerTask()
+ * - Both cron and event triggers share the same execution logic
+ *
  * Features:
  * - Dynamic task scheduling
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
+ * - Event-driven triggers for immediate execution on file changes
  *
  * @module @disclaude/core/scheduling
  */
@@ -26,6 +32,7 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
+import { EventTriggerManager } from './event-trigger.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
@@ -67,6 +74,7 @@ export type TaskExecutor = (chatId: string, prompt: string, userId?: string, mod
  * Uses executor function for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
  * Issue #1041: Uses dependency injection for executor.
+ * Issue #1953: Added eventTriggerManager for event-driven triggers.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
@@ -77,6 +85,8 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /** EventTriggerManager for event-driven triggers (Issue #1953) */
+  eventTriggerManager?: EventTriggerManager;
 }
 
 /**
@@ -114,6 +124,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private eventTriggerManager?: EventTriggerManager;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -124,6 +135,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.eventTriggerManager = options.eventTriggerManager;
     logger.info('Scheduler created');
   }
 
@@ -167,6 +179,7 @@ export class Scheduler {
   /**
    * Add a task to the scheduler.
    * Creates a cron job for the task.
+   * Registers event triggers if configured (Issue #1953).
    *
    * @param task - Task to add
    */
@@ -193,10 +206,16 @@ export class Scheduler {
     } catch (error) {
       logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
     }
+
+    // Issue #1953: Register event triggers if configured
+    if (this.eventTriggerManager) {
+      this.eventTriggerManager.registerTask(task);
+    }
   }
 
   /**
    * Remove a task from the scheduler.
+   * Also unregisters event triggers (Issue #1953).
    *
    * @param taskId - Task ID to remove
    */
@@ -206,6 +225,11 @@ export class Scheduler {
       void entry.job.stop();
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
+    }
+
+    // Issue #1953: Unregister event triggers
+    if (this.eventTriggerManager) {
+      this.eventTriggerManager.unregisterTask(taskId);
     }
   }
 
@@ -337,6 +361,33 @@ ${task.prompt}`;
    */
   getActiveJobs(): ActiveJob[] {
     return Array.from(this.activeJobs.values());
+  }
+
+  /**
+   * Trigger a task immediately (event-driven).
+   * Called by EventTriggerManager when a file change is detected.
+   *
+   * Respects blocking and cooldown settings just like cron-triggered execution.
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * @param taskId - Task ID to trigger
+   */
+  async triggerTask(taskId: string): Promise<void> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.debug({ taskId }, 'Trigger ignored - task not found');
+      return;
+    }
+
+    await this.executeTask(entry.task);
+  }
+
+  /**
+   * Get the EventTriggerManager instance (if configured).
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  getEventTriggerManager(): EventTriggerManager | undefined {
+    return this.eventTriggerManager;
   }
 
   /**

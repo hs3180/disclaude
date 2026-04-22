@@ -555,6 +555,139 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  // Issue #1953: Event-driven trigger parsing
+  describe('parseFile - trigger configuration (Issue #1953)', () => {
+    it('should parse trigger with single watch rule', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'trigger:',
+        '  watch:',
+        '    - path: "workspace/chats/*.json"',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.trigger).toBeDefined();
+      expect(task!.trigger!.watch).toHaveLength(1);
+      expect(task!.trigger!.watch[0].path).toBe('workspace/chats/*.json');
+    });
+
+    it('should parse trigger with multiple watch rules', async () => {
+      const content = [
+        '---',
+        'name: "Multi Watch Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_multi"',
+        'trigger:',
+        '  watch:',
+        '    - path: "workspace/chats/*.json"',
+        '      debounceMs: 3000',
+        '    - path: "workspace/events/*.json"',
+        '      filter: ".type == \'create\'"',
+        '      debounceMs: 1000',
+        '---',
+        '',
+        'Watch multiple paths.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/multi-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.trigger).toBeDefined();
+      expect(task!.trigger!.watch).toHaveLength(2);
+      expect(task!.trigger!.watch[0].path).toBe('workspace/chats/*.json');
+      expect(task!.trigger!.watch[0].debounceMs).toBe(3000);
+      expect(task!.trigger!.watch[1].path).toBe('workspace/events/*.json');
+      expect(task!.trigger!.watch[1].filter).toBe(".type == 'create'");
+      expect(task!.trigger!.watch[1].debounceMs).toBe(1000);
+    });
+
+    it('should default trigger to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-trigger.md`);
+      expect(task).not.toBeNull();
+      expect(task!.trigger).toBeUndefined();
+    });
+
+    it('should handle trigger block with empty watch array', async () => {
+      const content = [
+        '---',
+        'name: "Empty Watch"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_empty"',
+        'trigger:',
+        '  watch:',
+        '---',
+        '',
+        'Empty watch task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/empty-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.trigger).toBeUndefined();
+    });
+  });
+
+  describe('writeTask - trigger configuration (Issue #1953)', () => {
+    it('should write trigger configuration to file', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-trigger-task',
+        name: 'Trigger Task',
+        cron: '0 */5 * * *',
+        prompt: 'Triggered task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        trigger: {
+          watch: [
+            { path: 'workspace/chats/*.json', debounceMs: 5000 },
+            { path: 'workspace/events/*.json', filter: '.type == "create"' },
+          ],
+        },
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('trigger:');
+      expect(writtenContent).toContain('watch:');
+      expect(writtenContent).toContain('path: "workspace/chats/*.json"');
+      expect(writtenContent).toContain('debounceMs: 5000');
+      expect(writtenContent).toContain('path: "workspace/events/*.json"');
+      // filter uses single quotes to avoid conflict with inner double quotes
+      expect(writtenContent).toContain("filter: '.type == \"create\"'");
+    });
+
+    it('should not write trigger when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-trigger',
+        name: 'No Trigger',
+        cron: '0 * * * *',
+        prompt: 'Regular task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('trigger:');
+    });
+  });
 });
 
 // ============================================================================

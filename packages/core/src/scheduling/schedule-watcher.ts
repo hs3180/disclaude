@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, TriggerConfig, TriggerRule } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -86,12 +86,36 @@ function parseScheduleFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
 
   const lines = frontmatterText.split('\n');
+  let inTriggerBlock = false;
+  let triggerLines: string[] = [];
+
   for (const line of lines) {
+    // Handle trigger block (Issue #1953)
+    if (inTriggerBlock) {
+      // If the line is not indented, we've left the trigger block
+      if (line.length > 0 && !line.startsWith(' ') && !line.startsWith('\t')) {
+        inTriggerBlock = false;
+        frontmatter['trigger'] = parseTriggerBlock(triggerLines);
+        triggerLines = [];
+        // Fall through to process this line normally
+      } else {
+        triggerLines.push(line);
+        continue;
+      }
+    }
+
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) { continue; }
 
     const key = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
+
+    // Detect start of trigger block
+    if (key === 'trigger' && value === '') {
+      inTriggerBlock = true;
+      triggerLines = [];
+      continue;
+    }
 
     switch (key) {
       case 'name':
@@ -113,7 +137,89 @@ function parseScheduleFrontmatter(content: string): {
     }
   }
 
+  // Handle case where trigger block is at the end of frontmatter
+  if (inTriggerBlock && triggerLines.length > 0) {
+    frontmatter['trigger'] = parseTriggerBlock(triggerLines);
+  }
+
   return { frontmatter, contentStart: match[0].length };
+}
+
+/**
+ * Parse a trigger block from frontmatter.
+ *
+ * Expected format:
+ * ```
+ * trigger:
+ *   watch:
+ *     - path: "workspace/chats/*.json"
+ *       filter: '.status == "pending"'
+ *       debounceMs: 5000
+ * ```
+ */
+function parseTriggerBlock(lines: string[]): TriggerConfig | undefined {
+  const rules: TriggerRule[] = [];
+  let currentRule: Partial<TriggerRule> | null = null;
+  let inWatchArray = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Skip empty lines
+    if (trimmed === '') {continue;}
+
+    // Detect "watch:" line
+    if (trimmed === 'watch:') {
+      inWatchArray = true;
+      continue;
+    }
+
+    if (!inWatchArray) {continue;}
+
+    // Detect array item "- path: ..."
+    if (trimmed.startsWith('- path:')) {
+      // Save previous rule
+      if (currentRule && currentRule.path) {
+        rules.push(currentRule as TriggerRule);
+      }
+      currentRule = {
+        path: stripQuotes(trimmed.slice('- path:'.length).trim()),
+      };
+      continue;
+    }
+
+    // Parse properties of current rule
+    if (currentRule) {
+      const colonIndex = trimmed.indexOf(':');
+      if (colonIndex === -1) {continue;}
+
+      const key = trimmed.slice(0, colonIndex).trim();
+      const value = trimmed.slice(colonIndex + 1).trim();
+
+      switch (key) {
+        case 'path':
+          currentRule.path = stripQuotes(value);
+          break;
+        case 'filter':
+          currentRule.filter = stripQuotes(value);
+          break;
+        case 'debounceMs':
+          currentRule.debounceMs = parseInt(value, 10);
+          break;
+      }
+    }
+  }
+
+  // Don't forget the last rule
+  if (currentRule && currentRule.path) {
+    rules.push(currentRule as TriggerRule);
+  }
+
+  if (rules.length === 0) {
+    return undefined;
+  }
+
+  return { watch: rules };
 }
 
 /**
@@ -216,6 +322,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        trigger: frontmatter['trigger'] as TriggerConfig | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +374,21 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+
+    // Issue #1953: Write trigger configuration
+    if (task.trigger && task.trigger.watch.length > 0) {
+      frontmatter.push('trigger:');
+      frontmatter.push('  watch:');
+      for (const rule of task.trigger.watch) {
+        frontmatter.push(`    - path: "${rule.path}"`);
+        if (rule.filter) {
+          frontmatter.push(`      filter: '${rule.filter}'`);
+        }
+        if (rule.debounceMs !== undefined) {
+          frontmatter.push(`      debounceMs: ${rule.debounceMs}`);
+        }
+      }
     }
 
     frontmatter.push('---', '');
