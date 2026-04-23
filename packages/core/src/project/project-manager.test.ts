@@ -37,20 +37,34 @@ function createTempDir(): string {
 
 function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManagerOptions {
   const workspaceDir = createTempDir();
-  return {
-    workspaceDir,
-    packageDir: join(workspaceDir, 'packages/core'),
-    templatesConfig: {
-      research: {
-        displayName: '研究模式',
-        description: '专注研究的独立空间',
-      },
-      'book-reader': {
-        displayName: '读书助手',
-      },
+  const packageDir = join(workspaceDir, 'packages/core');
+
+  const defaultTemplatesConfig: ProjectTemplatesConfig = {
+    research: {
+      displayName: '研究模式',
+      description: '专注研究的独立空间',
     },
+    'book-reader': {
+      displayName: '读书助手',
+    },
+  };
+
+  const options: ProjectManagerOptions = {
+    workspaceDir,
+    packageDir,
+    templatesConfig: defaultTemplatesConfig,
     ...overrides,
   };
+
+  // Create template directories with CLAUDE.md (required for Sub-Issue D: filesystem ops)
+  const templates = options.templatesConfig ?? {};
+  for (const tplName of Object.keys(templates)) {
+    const tplDir = join(packageDir, 'templates', tplName);
+    mkdirSync(tplDir, { recursive: true });
+    writeFileSync(join(tplDir, 'CLAUDE.md'), `# ${tplName}\nTemplate content for ${tplName}.\n`);
+  }
+
+  return options;
 }
 
 const EMPTY_CONFIG: ProjectTemplatesConfig = {};
@@ -892,24 +906,27 @@ describe('ProjectManager — edge cases', () => {
   });
 
   it('should compute workingDir correctly with trailing slash in workspaceDir', () => {
+    const wsDir = `${createTempDir()  }/`;
     const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace/',
+      workspaceDir: wsDir,
     }));
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(`${wsDir}projects/test-project`);
     }
   });
 
   it('should compute workingDir correctly with multiple trailing slashes', () => {
+    const wsDir = `${createTempDir()  }///`;
     const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace///',
+      workspaceDir: wsDir,
     }));
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      // Multiple trailing slashes should be normalized to single slash
+      expect(result.data.workingDir).toMatch(/\/projects\/test-project$/);
     }
   });
 

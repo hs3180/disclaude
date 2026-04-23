@@ -21,7 +21,7 @@
  * @module agents/factory
  */
 
-import { Config, type ChatAgent as ChatAgentInterface, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type ChatAgent as ChatAgentInterface, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type CwdProvider } from '@disclaude/core';
 import { ChatAgent, type ChatAgentConfig } from './chat-agent/index.js';
 import type { ChatAgentCallbacks as PublicChatAgentCallbacks } from '../types.js';
 
@@ -88,6 +88,12 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Optional CwdProvider for per-chatId project context switching.
+   * Issue #1916: Injected into ChatAgent for dynamic cwd resolution.
+   */
+  cwdProvider?: CwdProvider;
 }
 
 /**
@@ -160,6 +166,7 @@ export class AgentFactory {
       chatId,
       callbacks: callbacks as ChatAgentConfig['callbacks'],
       messageBuilderOptions: options.messageBuilderOptions,
+      cwdProvider: options.cwdProvider,
     };
 
     return new ChatAgent(config);

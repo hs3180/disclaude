@@ -8,7 +8,7 @@
  * RestartManager, MessageBuilder.
  */
 
-import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData, type CwdProvider } from '@disclaude/core';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { ChatHistoryLoader } from './chat-history-loader.js';
 import { AgentLoopManager } from './agent-loop-manager.js';
@@ -21,6 +21,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   readonly name = 'ChatAgent';
   private readonly boundChatId: string;
   private readonly callbacks: ChatAgentCallbacks;
+  private readonly cwdProvider?: CwdProvider;
 
   // Managers for separated concerns
   private readonly conversationOrchestrator: ConversationOrchestrator;
@@ -34,6 +35,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+    this.cwdProvider = config.cwdProvider;
 
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
     this.restartManager = new RestartManager({
@@ -54,6 +56,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       logger: this.logger,
       createSdkOptions: (opts) => this.createSdkOptions(opts),
       createQueryStream: (gen, opts) => this.createQueryStream(gen, opts),
+      cwdProvider: this.cwdProvider,
     });
 
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');

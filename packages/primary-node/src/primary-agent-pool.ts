@@ -8,10 +8,13 @@
  * message building (e.g., Feishu sections). This decouples Feishu-specific
  * logic from worker-node.
  *
+ * Issue #1916: Accepts optional CwdProvider for per-chatId project context
+ * switching. Injected into ChatAgent at creation time.
+ *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider } from '@disclaude/core';
 import { AgentFactory, type ChatAgentCallbacks, type ChatAgentInterface } from '@disclaude/worker-node';
 
 /**
@@ -31,6 +34,17 @@ export interface PrimaryAgentPoolOptions {
    * Example: createFeishuMessageBuilderOptions() for Feishu channels.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Optional CwdProvider for per-chatId project context switching.
+   *
+   * When provided, all ChatAgent instances created by this pool will
+   * use this provider to dynamically resolve the working directory
+   * at session start time (Issue #1916).
+   *
+   * Set via `setCwdProvider()` after construction, or pass in options.
+   */
+  cwdProvider?: CwdProvider;
 }
 
 /**
@@ -42,9 +56,23 @@ export interface PrimaryAgentPoolOptions {
 export class PrimaryAgentPool {
   private readonly agents = new Map<string, ChatAgentInterface>();
   private readonly options: PrimaryAgentPoolOptions;
+  private cwdProvider?: CwdProvider;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
+    this.cwdProvider = options.cwdProvider;
+  }
+
+  /**
+   * Set the CwdProvider for project context switching (Issue #1916).
+   *
+   * Can be called after construction to inject the provider once
+   * ProjectManager is initialized.
+   *
+   * @param provider - CwdProvider callback
+   */
+  setCwdProvider(provider: CwdProvider): void {
+    this.cwdProvider = provider;
   }
 
   /**
@@ -59,6 +87,7 @@ export class PrimaryAgentPool {
     if (!agent) {
       agent = AgentFactory.createAgent(chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        cwdProvider: this.cwdProvider,
       });
       this.agents.set(chatId, agent);
     }

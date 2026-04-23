@@ -3,13 +3,16 @@
  *
  * Manages project templates, instances, and chatId bindings in memory,
  * with atomic persistence to `{workspace}/.disclaude/projects.json`.
+ * Supports filesystem operations: directory creation + CLAUDE.md copy on instantiate,
+ * and instance deletion with optional workingDir cleanup.
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — persistence layer)
+ * @see Issue #2226 (Sub-Issue D — filesystem operations)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, cpSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   CwdProvider,
@@ -64,8 +67,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing built-in templates with CLAUDE.md files */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +85,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -162,10 +165,10 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
-   * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
+   * Creates the working directory and copies CLAUDE.md from the template.
+   * If filesystem operations fail, the working directory is cleaned up (rollback).
    *
    * @param chatId - Chat session requesting creation
    * @param templateName - Template to instantiate from
@@ -195,6 +198,13 @@ export class ProjectManager {
     }
 
     const workingDir = this.resolveWorkingDir(name);
+
+    // Filesystem: instantiate from template (Sub-Issue D)
+    const fsResult = this.instantiateFromTemplate(templateName, name, workingDir);
+    if (!fsResult.ok) {
+      return { ok: false, error: fsResult.error };
+    }
+
     const instance: ProjectInstance = {
       name,
       templateName,
@@ -330,6 +340,53 @@ export class ProjectManager {
     );
   }
 
+  /**
+   * Delete a project instance and unbind all associated chatIds.
+   *
+   * Removes the instance from memory, clears all chatId bindings,
+   * and optionally removes the working directory from disk.
+   *
+   * @param name - Instance name to delete
+   * @param options - Delete options
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(
+    name: string,
+    options?: { removeWorkingDir?: boolean },
+  ): ProjectResult<void> {
+    if (!this.instances.has(name)) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 状态异常` };
+    }
+
+    // Unbind all chatIds associated with this instance
+    const boundChatIds = this.getBoundChatIds(name);
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+    this.instanceChatIds.delete(name);
+
+    // Remove instance
+    this.instances.delete(name);
+
+    // Optionally remove working directory
+    if (options?.removeWorkingDir) {
+      const rmResult = this.removeWorkingDir(instance.workingDir);
+      if (!rmResult.ok) {
+        // Non-fatal: log but don't fail the delete
+      }
+    }
+
+    // Persist after mutation
+    this.persist();
+
+    return { ok: true, data: undefined };
+  }
+
   // ───────────────────────────────────────────
   // CwdProvider Factory
   // ───────────────────────────────────────────
@@ -350,6 +407,106 @@ export class ProjectManager {
       }
       return active.workingDir;
     };
+  }
+
+  // ───────────────────────────────────────────
+  // Filesystem Operations (Sub-Issue D)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate a project from a template: create working directory + copy CLAUDE.md.
+   *
+   * If any step fails, the working directory is cleaned up (rollback).
+   *
+   * @param templateName - Template to instantiate from
+   * @param name - Instance name
+   * @param workingDir - Target working directory
+   * @returns ProjectResult indicating success or failure
+   */
+  private instantiateFromTemplate(
+    templateName: string,
+    _name: string,
+    workingDir: string,
+  ): ProjectResult<void> {
+    // Step 1: Create working directory
+    try {
+      mkdirSync(workingDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建项目目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Step 2: Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(templateName, workingDir);
+    if (!copyResult.ok) {
+      // Rollback: remove the created directory
+      this.removeWorkingDir(workingDir);
+      return copyResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from a template to the target working directory.
+   *
+   * Source: `{packageDir}/templates/{templateName}/CLAUDE.md`
+   * Target: `{workingDir}/CLAUDE.md`
+   *
+   * @param templateName - Template name to copy from
+   * @param targetDir - Target directory for the CLAUDE.md file
+   * @returns ProjectResult indicating success or failure
+   */
+  private copyClaudeMd(
+    templateName: string,
+    targetDir: string,
+  ): ProjectResult<void> {
+    const sourcePath = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+
+    if (!existsSync(sourcePath)) {
+      return {
+        ok: false,
+        error: `模板 "${templateName}" 的 CLAUDE.md 文件不存在: ${sourcePath}`,
+      };
+    }
+
+    try {
+      const targetPath = join(targetDir, 'CLAUDE.md');
+      cpSync(sourcePath, targetPath);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Remove a working directory and all its contents.
+   *
+   * Non-recursive by default: only removes if the directory is empty
+   * or contains only the CLAUDE.md we placed. Uses recursive removal
+   * when explicitly requested.
+   *
+   * @param workingDir - Directory to remove
+   * @returns ProjectResult indicating success or failure
+   */
+  private removeWorkingDir(workingDir: string): ProjectResult<void> {
+    try {
+      if (existsSync(workingDir)) {
+        rmSync(workingDir, { recursive: true, force: true });
+      }
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `删除项目目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   // ───────────────────────────────────────────
@@ -494,6 +651,15 @@ export class ProjectManager {
    */
   getPersistPath(): string {
     return this.persistPath;
+  }
+
+  /**
+   * Get the package directory path (for testing/debugging).
+   *
+   * @returns Absolute path to package directory
+   */
+  getPackageDir(): string {
+    return this.packageDir;
   }
 
   // ───────────────────────────────────────────

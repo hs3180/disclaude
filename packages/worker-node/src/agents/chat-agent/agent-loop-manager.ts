@@ -7,7 +7,7 @@
  * Handles: MCP server configuration, iterator processing, restart/circuit-breaker logic.
  */
 
-import { Config, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type AgentQueryOptions, type QueryStreamResult } from '@disclaude/core';
+import { Config, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type AgentQueryOptions, type QueryStreamResult, type CwdProvider } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks } from './types.js';
 import type { ChatHistoryLoader } from './chat-history-loader.js';
@@ -21,8 +21,10 @@ export interface LoopContext {
   conversationOrchestrator: ConversationOrchestrator;
   restartManager: RestartManager;
   logger: Logger;
-  createSdkOptions: (extra?: { disallowedTools?: string[]; mcpServers?: Record<string, unknown> }) => AgentQueryOptions;
+  createSdkOptions: (extra?: { disallowedTools?: string[]; mcpServers?: Record<string, unknown>; cwd?: string }) => AgentQueryOptions;
   createQueryStream: (input: AsyncGenerator<StreamingUserMessage>, options: AgentQueryOptions) => QueryStreamResult;
+  /** Optional CwdProvider for per-chatId project context switching (Issue #1916) */
+  cwdProvider?: CwdProvider;
 }
 
 export class AgentLoopManager {
@@ -57,10 +59,16 @@ export class AgentLoopManager {
     }
 
     const mcpServers = this.buildMcpServers(chatId, callbacks);
-    const sdkOptions = createSdkOptions({ disallowedTools: ['EnterPlanMode'], mcpServers });
+    // Issue #1916: Resolve project cwd via CwdProvider (if configured)
+    const projectCwd = this.ctx.cwdProvider?.(chatId);
+    const sdkOptions = createSdkOptions({
+      disallowedTools: ['EnterPlanMode'],
+      mcpServers,
+      ...(projectCwd && { cwd: projectCwd }),
+    });
 
     logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools: callbacks.getCapabilities?.(chatId)?.supportedMcpTools },
+      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools: callbacks.getCapabilities?.(chatId)?.supportedMcpTools, projectCwd },
       'Starting SDK query with message channel',
     );
 

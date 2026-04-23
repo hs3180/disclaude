@@ -5,7 +5,7 @@
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
  */
 
-import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions } from '@disclaude/core';
+import type { ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, CwdProvider } from '@disclaude/core';
 
 /**
  * Callback functions for platform-specific operations.
@@ -100,6 +100,19 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * options when creating ChatAgent instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Optional CwdProvider callback for dynamic working directory resolution.
+   *
+   * When provided, the ChatAgent will query this callback at session start
+   * to determine the working directory for the Agent SDK. This enables
+   * per-chatId project context switching (Issue #1916).
+   *
+   * Returns undefined for "default" project → SDK falls back to workspace dir.
+   *
+   * @see docs/proposals/unified-project-context.md §5.2
+   */
+  cwdProvider?: CwdProvider;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

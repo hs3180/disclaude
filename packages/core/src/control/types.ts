@@ -7,6 +7,12 @@
 import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
+import type {
+  InstanceInfo,
+  ProjectContextConfig,
+  ProjectResult,
+  ProjectTemplate,
+} from '../project/types.js';
 
 /**
  * 执行节点信息
@@ -59,6 +65,17 @@ export interface ControlHandlerContext {
 
   /** 日志记录器 */
   logger?: Logger;
+
+  /** ProjectManager for per-chatId Agent context switching (Issue #1916) */
+  projectManager?: {
+    getActive(chatId: string): ProjectContextConfig;
+    create(chatId: string, templateName: string, name: string): ProjectResult<ProjectContextConfig>;
+    use(chatId: string, name: string): ProjectResult<ProjectContextConfig>;
+    reset(chatId: string): ProjectResult<ProjectContextConfig>;
+    delete(name: string, options?: { removeWorkingDir?: boolean }): ProjectResult<void>;
+    listTemplates(): ProjectTemplate[];
+    listInstances(): InstanceInfo[];
+  };
 }
 
 /**
