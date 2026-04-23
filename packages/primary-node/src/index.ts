@@ -8,7 +8,10 @@
  * - PrimaryNode implementation
  * - Platform adapters
  * - IPC server
- * - WebSocket server
+ * - Agent modules (ChatAgent, AgentFactory)
+ *
+ * Issue #2717 Phase 1: Agent modules migrated from @disclaude/worker-node.
+ * WebSocket server and ExecNodeManager removed (dead code).
  *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
@@ -85,26 +88,19 @@ export {
 } from './ipc/index.js';
 
 // Node services (Issue #1040)
+// Issue #2717 Phase 1: ExecNodeManager removed (dead code — never used outside its own file)
 export {
   ExecNodeRegistry,
   type ConnectedExecNode,
   type ExecNodeRegistryConfig,
 } from './exec-node-registry.js';
 
-export {
-  ExecNodeManager,
-  type ConnectedExecNode as ManagedExecNode,
-} from './exec-node-manager.js';
-
 // Note: ChannelManager is now internal to PrimaryNode (Issue #1594).
 // Access it via primaryNode.getChannelManager() instead of direct import.
 
-export {
-  WebSocketServerService,
-  type WebSocketServerServiceConfig,
-  type IFileStorageService,
-  type FileTransferAPIHandler,
-} from './websocket-server-service.js';
+// Issue #2717 Phase 1: WebSocketServerService removed from exports.
+// It was never imported by PrimaryNode — only dead-exported.
+// It will be fully deleted in Phase 2.
 
 // Platform adapters (Issue #1040)
 export {
@@ -195,6 +191,19 @@ export {
   type ActionPromptMap,
   type InteractiveContext,
 } from './interactive-context.js';
+
+// Agent module (Issue #2717 Phase 1: migrated from @disclaude/worker-node)
+export {
+  AgentFactory,
+  toChatAgentCallbacks,
+  type AgentCreateOptions,
+} from './agents/factory.js';
+
+export {
+  ChatAgent,
+  type ChatAgentCallbacks,
+  type ChatAgentConfig,
+} from './agents/chat-agent/index.js';
 
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
