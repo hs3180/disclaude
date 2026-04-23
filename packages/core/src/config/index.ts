@@ -126,6 +126,8 @@ export class Config {
           // Anthropic Claude configuration (from env for fallback)
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+          // Custom Anthropic-compatible API endpoint (Issue #2768)
+          static readonly AGENT_API_BASE_URL = fileConfigOnly.agent?.apiBaseUrl || '';
 
           // Logging configuration
           static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
@@ -355,10 +357,11 @@ export class Config {
     }
 
     // Fallback to Anthropic
-    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
+    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL, apiBaseUrl: this.AGENT_API_BASE_URL || undefined }, 'Using Anthropic API configuration');
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      ...(this.AGENT_API_BASE_URL ? { apiBaseUrl: this.AGENT_API_BASE_URL } : {}),
       provider: 'anthropic',
     };
   }
@@ -626,6 +629,11 @@ export function createDefaultRuntimeContext(
         // Pass through API key if available
         ...(Config.getAgentConfig().apiKey ? {
           ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
+        } : {}),
+        // Pass custom API base URL if configured (Issue #2768)
+        // This overrides any ANTHROPIC_BASE_URL from ~/.claude/settings.json
+        ...(Config.getAgentConfig().apiBaseUrl ? {
+          ANTHROPIC_BASE_URL: Config.getAgentConfig().apiBaseUrl,
         } : {}),
       },
     }),

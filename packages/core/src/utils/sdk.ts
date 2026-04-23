@@ -103,6 +103,18 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+
+    // Issue #2768: When using a custom endpoint, clean up stale provider-specific
+    // custom headers that may have leaked from ~/.claude/settings.json or pm2 env.
+    // Only keep ANTHROPIC_CUSTOM_HEADERS if explicitly provided in extraEnv.
+    // Note: process.env overrides extraEnv in the spread above, so we must
+    // re-apply the extraEnv value as a forced override when it's explicit.
+    const hasExplicitCustomHeaders = extraEnv && 'ANTHROPIC_CUSTOM_HEADERS' in extraEnv;
+    if (hasExplicitCustomHeaders) {
+      env.ANTHROPIC_CUSTOM_HEADERS = extraEnv.ANTHROPIC_CUSTOM_HEADERS;
+    } else {
+      delete env.ANTHROPIC_CUSTOM_HEADERS;
+    }
   }
 
   return env;
