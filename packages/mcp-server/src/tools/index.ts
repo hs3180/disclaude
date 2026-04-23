@@ -12,6 +12,7 @@ export type {
   ActionPromptMap,
   SendInteractiveResult,
   RegisterTempChatResult,
+  InsertDocxImageResult,
 } from './types.js';
 
 // Shared utilities
@@ -34,6 +35,9 @@ export { send_file } from './send-file.js';
 
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
+
+// Docx image insertion (Issue #2278)
+export { insert_docx_image } from './insert-docx-image.js';
 
 // Interactive Message
 export {
