@@ -21,6 +21,8 @@ export type IpcRequestType =
   | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
+  // Image upload for card embedding (Issue #1919)
+  | 'uploadImage'
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
@@ -64,6 +66,10 @@ export interface IpcRequestPayloads {
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
+  // Image upload for card embedding (Issue #1919)
+  uploadImage: {
+    filePath: string;
+  };
   // Temporary chat lifecycle management (Issue #1703)
   // Issue #2291: triggerMode enum replaces passiveMode boolean
   registerTempChat: {
@@ -106,6 +112,15 @@ export interface IpcResponsePayloads {
   sendInteractive: {
     success: boolean;
     messageId?: string;
+  };
+  // Image upload for card embedding (Issue #1919)
+  uploadImage: {
+    success: boolean;
+    imageKey?: string;
+    fileName?: string;
+    fileSize?: number;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
   };
   // Temporary chat lifecycle management (Issue #1703)
   registerTempChat: {

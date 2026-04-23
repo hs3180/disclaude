@@ -218,6 +218,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
 
         return { messageId, actionPrompts: resolvedActionPrompts };
       },
+      // Issue #1919: Upload image and return image_key for card embedding
+      uploadImage: (filePath: string) => {
+        return feishuChannel.uploadImage(filePath);
+      },
       // Issue #1703: Temp chat lifecycle management handlers
       // Issue #2291: triggerMode enum parameter
       registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => {

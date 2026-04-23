@@ -630,6 +630,45 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image to Feishu and return image_key for card embedding.
+   * Issue #1919: Enables agents to embed images in card messages.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object containing imageKey, fileName, and fileSize
+   * @throws Error if upload fails or image_key is not returned
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const { size: fileSize } = fs.statSync(filePath);
+
+    // Validate file size (max 10MB for images)
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for card embedding');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      logger.error({ fileName }, 'Failed to upload image, no image_key returned');
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully');
+    return { imageKey, fileName, fileSize };
+  }
+
+  /**
    * Get the capabilities of Feishu channel.
    */
   getCapabilities(): ChannelCapabilities {
@@ -646,6 +685,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }
