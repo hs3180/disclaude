@@ -288,3 +288,27 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module (Issue #1916 — unified ProjectContext system)
+// Re-exports from barrel file for clean public API
+export {
+  ProjectManager,
+  discoverTemplates,
+  discoveryResultToConfig,
+  discoverTemplatesAsConfig,
+} from './project/index.js';
+
+export type {
+  CwdProvider,
+  InstanceInfo,
+  PersistedInstance,
+  ProjectContextConfig,
+  ProjectManagerOptions,
+  ProjectResult,
+  ProjectTemplate,
+  ProjectTemplatesConfig,
+  ProjectsPersistData,
+  DiscoveryResult,
+  DiscoveryError,
+  DiscoveryOptions,
+} from './project/index.js';

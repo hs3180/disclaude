@@ -25,6 +25,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import type { ProjectTemplatesConfig, ProjectManagerOptions } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
 
@@ -494,6 +495,58 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get project template configuration from config file.
+   * @see Issue #1916 (unified ProjectContext system)
+   *
+   * @returns Project templates config, or undefined if not configured
+   */
+  static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
+    return fileConfigOnly.projectTemplates;
+  }
+
+  /**
+   * Get ProjectManager constructor options derived from config.
+   *
+   * Combines workspace directory, package directory, and template config
+   * into a single ProjectManagerOptions object.
+   *
+   * @see Issue #1916 (unified ProjectContext system)
+   * @see Issue #2227 (Sub-Issue E — integration)
+   * @returns ProjectManagerOptions ready for ProjectManager constructor
+   */
+  static getProjectManagerOptions(): ProjectManagerOptions {
+    return {
+      workspaceDir: Config.getWorkspaceDir(),
+      packageDir: Config.getPackageDir(),
+      templatesConfig: Config.getProjectTemplatesConfig() ?? {},
+    };
+  }
+
+  /**
+   * Get the package directory (for built-in templates).
+   *
+   * Resolved using the same logic as getBuiltinDir() but returns
+   * the root package directory.
+   *
+   * @returns Absolute path to the package directory
+   */
+  static getPackageDir(): string {
+    // In CommonJS bundling, import.meta.url is undefined
+    if (typeof import.meta.url === 'undefined') {
+      return '/app';
+    }
+
+    const moduleUrl = fileURLToPath(import.meta.url);
+    const moduleDir = path.dirname(moduleUrl);
+    const isBundled = path.basename(moduleDir) === 'dist';
+
+    if (isBundled) {
+      return path.resolve(moduleDir, '..');
+    }
+    return path.resolve(moduleDir, '..', '..');
   }
 }
 
