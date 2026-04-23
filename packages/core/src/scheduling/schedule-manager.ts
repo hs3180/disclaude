@@ -2,7 +2,8 @@
  * Schedule Manager - Query operations for scheduled tasks.
  *
  * Manages scheduled tasks that are triggered by cron expressions.
- * Tasks are persisted as markdown files in the schedules/ directory.
+ * Tasks are persisted as markdown files in the schedules/ directory,
+ * each in its own subdirectory as SCHEDULE.md (Issue #2526).
  *
  * Features:
  * - Query operations for scheduled tasks (list, get)
