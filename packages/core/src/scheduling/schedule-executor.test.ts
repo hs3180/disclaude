@@ -13,14 +13,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
+  type TaskExecutorAgent,
+  type TaskExecutorAgentFactory,
 } from './schedule-executor.js';
 import type { SchedulerCallbacks } from './scheduler.js';
 
 describe('createScheduleExecutor', () => {
-  let mockAgent: ScheduleAgent;
-  let mockAgentFactory: ScheduleAgentFactory;
+  let mockAgent: TaskExecutorAgent;
+  let mockAgentFactory: TaskExecutorAgentFactory;
   let mockCallbacks: SchedulerCallbacks;
 
   beforeEach(() => {
