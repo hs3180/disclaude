@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteSection,
 } from './guidance.js';
 
 /**
@@ -133,6 +134,9 @@ export class MessageBuilder {
     // Channel-specific tools section
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
+    // Taste preferences section (Issue #2335)
+    const tasteSection = buildTasteSection(msg.tasteContext);
+
     // Core guidance sections (framework-agnostic)
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
@@ -159,6 +163,10 @@ export class MessageBuilder {
 
     if (toolsSection) {
       sections.push(`\n---\n\n## Tools\n${toolsSection}`);
+    }
+
+    if (tasteSection) {
+      sections.push(tasteSection);
     }
 
     sections.push(nextStepGuidance);

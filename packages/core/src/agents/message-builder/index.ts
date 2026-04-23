@@ -23,4 +23,5 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteSection,
 } from './guidance.js';

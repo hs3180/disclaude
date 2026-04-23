@@ -122,7 +122,9 @@ export type ControlCommandType =
   // Debug group command (Issue #2244: merged /show-debug & /clear-debug into /debug toggle)
   | 'debug'
   // Trigger mode control (Issue #511, renamed #2193)
-  | 'trigger';
+  | 'trigger'
+  // Taste preferences management (Issue #2335)
+  | 'taste';
 
 /**
  * Control command from user to agent.
