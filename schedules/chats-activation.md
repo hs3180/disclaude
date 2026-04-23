@@ -20,9 +20,9 @@ createdAt: 2026-04-03T00:00:00.000Z
 ## 前置依赖
 
 - `@larksuite/cli`（飞书官方 CLI，npm 全局安装）
-- Node.js 20.12+（用于 `fs.flock` 文件锁，低版本自动降级为无锁模式）
+- Node.js 18+（使用 PID-based 文件锁，无 `fs.flock` 依赖）
 
-> **⚠️ 平台要求**: 本 Schedule 使用 TypeScript 实现，通过 `tsx` 运行。文件锁依赖 Node.js 20.12+ 的 `fs.flock`，低版本自动降级为无锁模式（可接受，因并发风险低）。
+> **⚠️ 平台要求**: 本 Schedule 使用 TypeScript 实现，通过 `tsx` 运行。文件锁使用 PID-based 方案（零依赖，所有 Node.js 版本可用），通过 `process.kill(pid, 0)` 检测持有者进程存活状态。
 
 ## 职责边界
 
@@ -85,7 +85,7 @@ npx tsx schedules/chats-activation.ts
 | Schedule 崩溃后恢复 | 检测已有 chatId，幂等恢复为 `active` |
 | Chat 文件损坏（非 JSON） | 记录警告，跳过该文件 |
 | `lark-cli` 超时（> 30s） | 视为创建失败，记录超时错误，进入重试流程 |
-| 并发处理同一文件 | `fs.flock` 排他锁（Node 20.12+），跳过已被其他实例处理的文件 |
+| 并发处理同一文件 | PID-based 排他锁，跳过已被其他实例处理的文件 |
 | `pending` 群聊已过期 | 标记为 `expired`，跳过激活，不消耗重试次数 |
 | 非标准 `expiresAt` 格式 | 跳过过期检查（fail-open），不标记为 expired |
 
@@ -97,7 +97,7 @@ npx tsx schedules/chats-activation.ts
 4. **串行处理**: 一次处理一个群聊，避免并发问题
 5. **不创建新 Schedule**: 这是定时任务执行环境的规则
 6. **不修改其他文件**: 只处理 `workspace/chats/` 目录下的文件
-7. **并发安全**: 使用 `fs.flock` 文件锁防止多个 Schedule 实例同时处理同一文件（Node 20.12+）
+7. **并发安全**: 使用 PID-based 文件锁防止多个 Schedule 实例同时处理同一文件
 8. **超时保护**: `lark-cli` 调用设 30 秒超时（`child_process.timeout`），防止挂起阻塞后续 Schedule
 9. **失败记录**: 达到重试上限后标记为 `failed` 并记录错误信息，消费方可轮询检测
 10. **过期预检**: 在激活前检查 `expiresAt`，已过期的 pending 群聊直接标记为 `expired`，避免无意义的群组创建
