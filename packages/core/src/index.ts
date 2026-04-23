@@ -85,7 +85,6 @@ export { MessageChannel } from './agents/message-channel.js';
 
 // Session management
 export {
-  type PilotSession,
   type ChatAgentSession,
   type SessionManagerConfig,
   SessionManager,
