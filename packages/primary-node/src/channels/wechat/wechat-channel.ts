@@ -5,13 +5,13 @@
  * - QR code authentication (ilink/bot/get_bot_qrcode + get_qrcode_status)
  * - Text message sending (ilink/bot/sendmessage)
  * - Message listening via getUpdates long-poll (Issue #1556 Phase 3.1)
+ * - Media handling via CDN upload (Issue #1556 Phase 3.2)
  *
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Media handling (CDN upload) — Issue #1556 Phase 3.3
- * - Typing indicator — Issue #1556 Phase 3.2
- * - Thread send support via context_token — Issue #1556 Phase 3.4
+ * - Typing indicator — Issue #1556 Phase 3.2 (removed from scope)
+ * - Thread send support via context_token — Issue #1556 Phase 3.4 (removed from scope)
  *
  * @module channels/wechat/wechat-channel
  * @see Issue #1473 - WeChat Channel MVP
@@ -23,11 +23,18 @@ import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
 import type { WeChatChannelConfig } from './types.js';
+import path from 'node:path';
+import fs from 'node:fs';
 
 const logger = createLogger('WeChatChannel');
 
 /** Default API base URL for WeChat ilink Bot API. */
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
+
+/** Image file extensions for auto-detecting image vs file. */
+const IMAGE_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico',
+]);
 
 /**
  * WeChat Channel.
@@ -124,7 +131,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Send a message through the WeChat channel.
    *
-   * MVP: Supports 'text' and 'card' (downgraded to JSON text) types.
+   * Supports: 'text', 'card' (downgraded to JSON text), 'file' (CDN upload).
    * Other types are logged as warnings and silently ignored.
    */
   protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
@@ -156,10 +163,16 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       return;
     }
 
+    // File sending via CDN upload (Issue #1556 Phase 3.2)
+    if (message.type === 'file' && message.filePath) {
+      await this.sendFileMessage(message);
+      return;
+    }
+
     // Unsupported message types
     logger.warn(
       { type: message.type, chatId: message.chatId },
-      'WeChat MVP unsupported message type, ignoring'
+      'WeChat unsupported message type, ignoring'
     );
   }
 
@@ -175,17 +188,17 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Get the capabilities of the WeChat channel.
    *
-   * MVP capabilities: only send_text is supported.
+   * Supports text and file sending via CDN upload (Issue #1556 Phase 3.2).
    */
   getCapabilities(): ChannelCapabilities {
     return {
       supportsCard: false,
       supportsThread: false,
-      supportsFile: false,
+      supportsFile: true,
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text'],
+      supportedMcpTools: ['send_text', 'send_file'],
     };
   }
 
@@ -201,5 +214,81 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    */
   getMessageListener(): WeChatMessageListener | undefined {
     return this.messageListener;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Media helpers (Issue #1556 Phase 3.2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send a file message via CDN upload.
+   *
+   * Reads the local file, uploads to WeChat CDN, then sends as
+   * image or file depending on file extension.
+   */
+  private async sendFileMessage(message: OutgoingMessage): Promise<void> {
+    if (!this.client || !message.filePath) {
+      return;
+    }
+
+    const {filePath} = message;
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    logger.info({ chatId: message.chatId, filePath, fileName }, 'Uploading media');
+
+    const fileData = fs.readFileSync(filePath);
+    const mimeType = this.getMimeType(ext);
+
+    // Upload to CDN
+    const { url: cdnUrl } = await this.client.uploadMedia({
+      fileData,
+      fileName,
+      mimeType,
+    });
+
+    // Send as image or file depending on extension
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      await this.client.sendImage({
+        to: message.chatId,
+        imageUrl: cdnUrl,
+        contextToken: message.threadId,
+      });
+      logger.info({ chatId: message.chatId, fileName }, 'Image message sent');
+    } else {
+      await this.client.sendFile({
+        to: message.chatId,
+        fileUrl: cdnUrl,
+        fileName,
+        contextToken: message.threadId,
+      });
+      logger.info({ chatId: message.chatId, fileName }, 'File message sent');
+    }
+  }
+
+  /**
+   * Get MIME type from file extension.
+   */
+  private getMimeType(ext: string): string {
+    const mimeMap: Record<string, string> = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+      '.gif': 'image/gif',
+      '.tiff': 'image/tiff',
+      '.bmp': 'image/bmp',
+      '.ico': 'image/x-icon',
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xls': 'application/vnd.ms-excel',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.txt': 'text/plain',
+      '.zip': 'application/zip',
+      '.mp4': 'video/mp4',
+      '.mp3': 'audio/mpeg',
+    };
+    return mimeMap[ext] || 'application/octet-stream';
   }
 }
