@@ -1,22 +1,8 @@
 /**
  * RestartManager - Manages Agent loop restart with backoff and circuit breaker.
  *
- * Prevents infinite restart loops by implementing:
- * - Maximum restart count limit
- * - Exponential backoff between restarts
- * - Circuit breaker to pause processing after repeated failures
- *
- * Architecture:
- * ```
- * ChatAgent.processIterator() error
- *         ↓
- * RestartManager.shouldRestart()
- *         ↓
- * ┌───────┴───────┐
- * │ Allow restart │ → wait(backoff) → restart
- * │ Block restart │ → circuit open, stop processing
- * └───────────────┘
- * ```
+ * Prevents infinite restart loops with max restart count, exponential backoff,
+ * and circuit breaker to pause processing after repeated failures.
  *
  * @module agents/restart-manager
  */
