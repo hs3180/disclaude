@@ -21,7 +21,12 @@
  *   0 — success
  *   1 — fatal error (invalid args, I/O failure)
  *
- * Related: #2219, #2210
+ * GitHub Label management:
+ *   create-state → add `pr-scanner:reviewing` label (best-effort)
+ *   mark (away from reviewing) → remove `pr-scanner:reviewing` label (best-effort)
+ *   Label failures are logged but never block the main flow.
+ *
+ * Related: #2219, #2220, #2210
  */
 
 import { readdir, readFile, writeFile, mkdir, stat, realpath, rename } from 'node:fs/promises';
@@ -68,6 +73,7 @@ const GH_TIMEOUT_MS = 30_000;
 
 /** Maximum concurrent reviewing PRs (configurable via env) */
 const DEFAULT_MAX_CONCURRENT = 2;
+const REVIEWING_LABEL = 'pr-scanner:reviewing';
 
 // ---- Helpers ----
 
@@ -230,6 +236,40 @@ async function ghPrList(repo: string): Promise<GhPrItem[]> {
   return parsed as GhPrItem[];
 }
 
+/**
+ * Add a GitHub label to a PR (best-effort).
+ * Failures are logged to stderr but never throw or block the caller.
+ */
+async function ghAddLabel(repo: string, prNumber: number, label: string): Promise<void> {
+  try {
+    await execFileAsync(
+      'gh',
+      ['pr', 'edit', String(prNumber), '--repo', repo, '--add-label', label],
+      { timeout: GH_TIMEOUT_MS },
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`WARN: Failed to add label '${label}' to PR #${prNumber}: ${msg}`);
+  }
+}
+
+/**
+ * Remove a GitHub label from a PR (best-effort).
+ * Failures are logged to stderr but never throw or block the caller.
+ */
+async function ghRemoveLabel(repo: string, prNumber: number, label: string): Promise<void> {
+  try {
+    await execFileAsync(
+      'gh',
+      ['pr', 'edit', String(prNumber), '--repo', repo, '--remove-label', label],
+      { timeout: GH_TIMEOUT_MS },
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`WARN: Failed to remove label '${label}' from PR #${prNumber}: ${msg}`);
+  }
+}
+
 // ---- Actions ----
 
 /** check-capacity: count reviewing state files */
@@ -299,6 +339,12 @@ async function actionCreateState(prNumber: number): Promise<void> {
     }
     await atomicWrite(filePath, JSON.stringify(stateFile, null, 2) + '\n');
     console.log(JSON.stringify(stateFile, null, 2));
+
+    // Best-effort: add reviewing label on GitHub
+    const repo = process.env.PR_SCANNER_REPO;
+    if (repo) {
+      await ghAddLabel(repo, prNumber, REVIEWING_LABEL);
+    }
   } finally {
     await lock.release();
   }
@@ -341,11 +387,20 @@ async function actionMark(prNumber: number, newState: PrState): Promise<void> {
     }
 
     const currentState = parseStateFile(currentContent, filePath);
+    const previousState = currentState.state;
     currentState.state = newState;
     currentState.updatedAt = nowISO();
 
     await atomicWrite(filePath, JSON.stringify(currentState, null, 2) + '\n');
     console.log(JSON.stringify(currentState, null, 2));
+
+    // Best-effort: remove reviewing label when leaving reviewing state
+    if (previousState === 'reviewing' && newState !== 'reviewing') {
+      const repo = process.env.PR_SCANNER_REPO;
+      if (repo) {
+        await ghRemoveLabel(repo, prNumber, REVIEWING_LABEL);
+      }
+    }
   } finally {
     await lock.release();
   }
@@ -412,7 +467,9 @@ Actions:
   check-capacity   Count reviewing state files, output JSON
   list-candidates  List open PRs not yet tracked (requires PR_SCANNER_REPO env)
   create-state     Create state file for a PR (requires --pr)
+                   Also adds 'pr-scanner:reviewing' GitHub label (best-effort)
   mark             Update state field (requires --pr and --state)
+                   Removes 'pr-scanner:reviewing' label when leaving reviewing (best-effort)
   status           List all tracked PRs grouped by state
 
 Options:
@@ -421,7 +478,7 @@ Options:
 
 Environment:
   PR_SCANNER_MAX_CONCURRENT  Max concurrent reviewing PRs (default: 2)
-  PR_SCANNER_REPO            GitHub repo for list-candidates (e.g. owner/repo)`);
+  PR_SCANNER_REPO            GitHub repo for list-candidates and label ops (e.g. owner/repo)`);
         process.exit(0);
         break;
       default:

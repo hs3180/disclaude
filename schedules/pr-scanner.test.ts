@@ -434,4 +434,71 @@ describe('pr-scanner', () => {
       expect(created.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
     });
   });
+
+  // ---- Label management (best-effort) ----
+
+  describe('label management (best-effort)', () => {
+    it('create-state should succeed even without PR_SCANNER_REPO', async () => {
+      // Without PR_SCANNER_REPO, label ops are skipped — should still succeed
+      const result = await runScanner(
+        ['--action', 'create-state', '--pr', '9001'],
+        { PR_SCANNER_REPO: '' },
+      );
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.prNumber).toBe(9001);
+      expect(data.state).toBe('reviewing');
+    });
+
+    it('create-state should succeed even when gh label fails', async () => {
+      // Set a bogus repo so gh command will fail — create-state should still succeed
+      const result = await runScanner(
+        ['--action', 'create-state', '--pr', '9001'],
+        { PR_SCANNER_REPO: 'nonexistent/repo-that-does-not-exist' },
+      );
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.prNumber).toBe(9001);
+      // Label failure should appear as a WARN on stderr
+      // (may or may not appear depending on gh CLI availability)
+    });
+
+    it('mark to approved should succeed even without PR_SCANNER_REPO', async () => {
+      await writeStateFile(9001, makeStateFile({ prNumber: 9001, state: 'reviewing' }));
+
+      const result = await runScanner(
+        ['--action', 'mark', '--pr', '9001', '--state', 'approved'],
+        { PR_SCANNER_REPO: '' },
+      );
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.state).toBe('approved');
+    });
+
+    it('mark to closed should succeed even when gh label fails', async () => {
+      await writeStateFile(9001, makeStateFile({ prNumber: 9001, state: 'reviewing' }));
+
+      const result = await runScanner(
+        ['--action', 'mark', '--pr', '9001', '--state', 'closed'],
+        { PR_SCANNER_REPO: 'nonexistent/repo-that-does-not-exist' },
+      );
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.state).toBe('closed');
+    });
+
+    it('mark from approved to closed should not attempt label removal', async () => {
+      // Only removing label when transitioning FROM reviewing to non-reviewing
+      await writeStateFile(9001, makeStateFile({ prNumber: 9001, state: 'approved' }));
+
+      const result = await runScanner(
+        ['--action', 'mark', '--pr', '9001', '--state', 'closed'],
+        { PR_SCANNER_REPO: 'nonexistent/repo-that-does-not-exist' },
+      );
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.state).toBe('closed');
+      // Should NOT have a label removal WARN because state was 'approved' not 'reviewing'
+    });
+  });
 });
