@@ -350,8 +350,8 @@ describe('Scheduler', () => {
         expect(mockExecutor).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
-      // eslint-disable-next-line prefer-destructuring
-      const [, promptArg] = mockExecutor.mock.calls[0];
+       
+      const [, promptArg] = mockExecutor.mock.calls[0] as [unknown, string];
       expect(promptArg).toContain('Scheduled Task Execution Context');
       expect(promptArg).toContain('My Task');
       expect(promptArg).toContain('Do NOT create new scheduled tasks');
@@ -533,6 +533,94 @@ describe('Scheduler', () => {
 
       expect(scheduler.getActiveJobs()).toHaveLength(2);
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
+    });
+  });
+
+  describe('triggerNow (Issue #1953)', () => {
+    it('should trigger a task for immediate execution', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerNow('trigger-1');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+    });
+
+    it('should return false for non-existent task', async () => {
+      const result = await scheduler.triggerNow('nonexistent');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect blocking mechanism during triggerNow', async () => {
+      const task = createTask({ id: 'trigger-blocking', blocking: true });
+      scheduler.addTask(task);
+
+      // Manually mark as running
+      (scheduler as unknown as { runningTasks: Set<string> }).runningTasks.add('trigger-blocking');
+
+      const result = await scheduler.triggerNow('trigger-blocking');
+
+      expect(result).toBe(true); // triggerNow returns true because task exists
+      // But executor should not have been called because task was already running
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should wrap prompt with anti-recursion instructions via triggerNow', async () => {
+      const task = createTask({ id: 'trigger-prompt', name: 'Event Task', prompt: 'Handle event' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerNow('trigger-prompt');
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      const [, promptArg] = mockExecutor.mock.calls[0] as [unknown, string];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('Event Task');
+      expect(promptArg).toContain('Handle event');
+    });
+
+    it('should handle errors from triggerNow execution', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('Trigger failed'));
+      const task = createTask({ id: 'trigger-err' });
+      scheduler.addTask(task);
+
+      // Should not throw
+      const result = await scheduler.triggerNow('trigger-err');
+      expect(result).toBe(true);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('getTask (Issue #1953)', () => {
+    it('should return task from active jobs', () => {
+      const task = createTask({ id: 'get-1', name: 'My Task' });
+      scheduler.addTask(task);
+
+      const result = scheduler.getTask('get-1');
+
+      expect(result).toBeDefined();
+      expect(result!.name).toBe('My Task');
+    });
+
+    it('should return undefined for non-existent task', () => {
+      const result = scheduler.getTask('nonexistent');
+      expect(result).toBeUndefined();
     });
   });
 });

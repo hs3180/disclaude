@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, TriggerConfig } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -108,7 +108,11 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = value === 'true';
         break;
       case 'cooldownPeriod':
+      case 'triggerDebounce':
         frontmatter[key] = parseInt(value, 10);
+        break;
+      case 'triggerWatch':
+        frontmatter[key] = stripQuotes(value);
         break;
     }
   }
@@ -220,6 +224,16 @@ export class ScheduleFileScanner {
         fileMtime: stats.mtime,
       };
 
+      // Issue #1953: Build trigger config from flat frontmatter fields
+      const triggerWatch = frontmatter['triggerWatch'] as string | undefined;
+      if (triggerWatch) {
+        const trigger: TriggerConfig = {
+          watch: triggerWatch,
+          debounce: frontmatter['triggerDebounce'] as number | undefined,
+        };
+        task.trigger = trigger;
+      }
+
       // Issue #1338: Warn if model is specified but looks suspicious (e.g., empty)
       if (task.model && task.model.trim().length === 0) {
         logger.warn({ taskId: task.id, name: task.name }, 'Schedule task has empty model value, will be ignored');
@@ -267,6 +281,14 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+
+    // Issue #1953: Write trigger config as flat fields
+    if (task.trigger?.watch) {
+      frontmatter.push(`triggerWatch: "${task.trigger.watch}"`);
+      if (task.trigger.debounce) {
+        frontmatter.push(`triggerDebounce: ${task.trigger.debounce}`);
+      }
     }
 
     frontmatter.push('---', '');

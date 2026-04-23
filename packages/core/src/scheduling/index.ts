@@ -15,7 +15,7 @@
  */
 
 // Types
-export { type ScheduledTask } from './scheduled-task.js';
+export { type ScheduledTask, type TriggerConfig } from './scheduled-task.js';
 
 // Cooldown
 export {
@@ -65,3 +65,10 @@ export {
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
+
+// Event Trigger (Issue #1953)
+export {
+  EventTriggerManager,
+  type TriggerCallback,
+  type EventTriggerManagerOptions,
+} from './event-trigger.js';
