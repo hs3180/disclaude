@@ -784,6 +784,49 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Create a new Feishu group chat.
+   *
+   * Uses the lark-oapi SDK's im.chat.create API to create a group with
+   * optional name, description, and initial members.
+   *
+   * Issue #2351: Context Offloading — side group creation for long-form content.
+   *
+   * @param name - Group name
+   * @param description - Optional group description
+   * @param members - Optional list of open IDs to add as initial members
+   * @returns The chat ID of the newly created group
+   */
+  async createGroup(name: string, description?: string, members?: string[]): Promise<{ chatId: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    logger.info({ name, description, memberCount: members?.length }, 'Creating group');
+
+    const createResp = await this.client.im.chat.create({
+      data: {
+        name,
+        description,
+        chat_mode: 'group',
+        chat_type: 'private',
+        user_id_list: members,
+      },
+      params: {
+        user_id_type: 'open_id',
+        set_bot_manager: true,
+      },
+    });
+
+    const chatId = createResp.data?.chat_id;
+    if (!chatId) {
+      throw new Error('Failed to create group: no chat_id returned');
+    }
+
+    logger.info({ name, chatId }, 'Group created successfully');
+    return { chatId };
+  }
+
+  /**
    * Flush the offline message queue after a successful reconnection.
    *
    * Filters out expired messages (older than `MAX_MESSAGE_AGE_MS`) and

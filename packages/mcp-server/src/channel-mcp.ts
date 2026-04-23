@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  create_group,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { create_group } from './tools/create-group.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,43 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2351: Context Offloading — side group creation
+  {
+    name: 'create_group',
+    description: `Create a new Feishu group chat for delivering long-form content.
+
+Use this to create a side group where you can send detailed code, reports, or documentation,
+keeping the main conversation clean. After creating the group, use send_text or send_card
+to deliver content to the new group's chatId.
+
+## Parameters
+- **name**: Group name (required)
+- **description**: Optional group description
+- **members**: Optional list of open IDs to add as initial members
+
+## Example
+\`\`\`json
+{"name": "LiteLLM 配置方案", "description": "LiteLLM proxy 配置文件和架构文档", "members": ["ou_xxxx"]}
+\`\`\`
+
+## Typical Workflow
+1. Call create_group to create a side group
+2. Use send_text or send_card with the returned chatId to send content
+3. Optionally call register_temp_chat with the chatId for automatic cleanup`,
+    parameters: z.object({
+      name: z.string().describe('Group name'),
+      description: z.string().optional().describe('Optional group description'),
+      members: z.array(z.string()).optional().describe('Optional list of open IDs to add as initial members'),
+    }),
+    handler: async ({ name, description, members }: {
+      name: string;
+      description?: string;
+      members?: string[];
+    }) => {
+      const result = await create_group({ name, description, members });
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
     },
   },
 ];

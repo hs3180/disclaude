@@ -696,6 +696,36 @@ export class UnixSocketIpcClient {
   }
 
   /**
+   * Create a new group chat via IPC.
+   * Issue #2351: Context Offloading - side group creation for long-form content.
+   *
+   * @param name - Group name
+   * @param description - Optional group description
+   * @param members - Optional list of open IDs to add as members
+   */
+  async createGroup(
+    name: string,
+    description?: string,
+    members?: string[]
+  ): Promise<{ success: boolean; chatId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('createGroup', { name, description, members });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, name }, 'createGroup failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
    * Handle incoming data.
    */
   private handleData(data: string): void {
