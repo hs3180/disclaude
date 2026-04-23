@@ -9,8 +9,8 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, rmSync, copyFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -64,8 +64,7 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +81,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir ?? '';
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -162,10 +161,11 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
-   * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
+   * Creates the working directory at `{workspaceDir}/projects/{name}/` and
+   * copies CLAUDE.md from the template (if packageDir is configured).
+   * On filesystem failure, in-memory state is rolled back.
    *
    * @param chatId - Chat session requesting creation
    * @param templateName - Template to instantiate from
@@ -205,6 +205,16 @@ export class ProjectManager {
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
+
+    // Filesystem instantiation (Sub-Issue D — #2226)
+    const fsResult = this.instantiateFromTemplate(name, templateName);
+    if (!fsResult.ok) {
+      // Rollback in-memory state on filesystem failure
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      this.removeFromReverseIndex(name, chatId);
+      return { ok: false, error: fsResult.error };
+    }
 
     // Persist after mutation
     this.persist();
@@ -494,6 +504,113 @@ export class ProjectManager {
    */
   getPersistPath(): string {
     return this.persistPath;
+  }
+
+  // ───────────────────────────────────────────
+  // Filesystem Operations (Sub-Issue D — #2226)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate a project's filesystem from its template.
+   *
+   * Creates the working directory and copies CLAUDE.md from the template.
+   * Rollback: if CLAUDE.md copy fails, the created directory is removed.
+   *
+   * @param name - Instance name (already validated)
+   * @param templateName - Template name (already validated)
+   * @returns ProjectResult indicating success or failure
+   */
+  private instantiateFromTemplate(name: string, templateName: string): ProjectResult<void> {
+    const workingDir = this.resolveWorkingDir(name);
+
+    // Defense-in-depth: verify resolved path is within workspaceDir
+    const pathError = this.validateResolvedPath(workingDir);
+    if (pathError) {
+      return { ok: false, error: pathError };
+    }
+
+    // Create working directory
+    try {
+      mkdirSync(workingDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(workingDir, templateName);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory
+      try {
+        rmSync(workingDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup failure — directory may be partially created
+      }
+      return copyResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from template source to the target working directory.
+   *
+   * Behavior:
+   * - packageDir not configured (empty) → skip (instance has no CLAUDE.md)
+   * - Template CLAUDE.md doesn't exist → error
+   *
+   * @param targetDir - Working directory to copy CLAUDE.md into
+   * @param templateName - Template name to find source CLAUDE.md
+   * @returns ProjectResult indicating success or failure
+   */
+  private copyClaudeMd(targetDir: string, templateName: string): ProjectResult<void> {
+    if (!this.packageDir) {
+      // packageDir not configured — skip CLAUDE.md copy
+      return { ok: true, data: undefined };
+    }
+
+    const sourcePath = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+
+    if (!existsSync(sourcePath)) {
+      return { ok: false, error: `模板 CLAUDE.md 不存在: ${templateName}` };
+    }
+
+    try {
+      copyFileSync(sourcePath, join(targetDir, 'CLAUDE.md'));
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Validate that a resolved working directory path is within workspaceDir.
+   *
+   * Defense-in-depth check: even though validateInstanceName() blocks
+   * path traversal characters, this ensures the final resolved path
+   * stays within the workspace boundary.
+   *
+   * @param workingDir - Resolved working directory path
+   * @returns Error message string, or null if valid
+   */
+  private validateResolvedPath(workingDir: string): string | null {
+    const resolved = resolve(workingDir);
+    const resolvedWorkspace = resolve(this.workspaceDir);
+
+    // Allow exactly workspaceDir or paths under it
+    if (resolved === resolvedWorkspace) {
+      return null;
+    }
+    if (resolved.startsWith(`${resolvedWorkspace  }/`)) {
+      return null;
+    }
+
+    return '路径验证失败：工作目录不在 workspace 范围内';
   }
 
   // ───────────────────────────────────────────
