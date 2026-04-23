@@ -942,3 +942,122 @@ describe('ProjectManager — edge cases', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Auto-Discovery Integration (Issue #2286)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager auto-discovery (Issue #2286)', () => {
+  let packageDir: string;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    packageDir = mkdtempSync(join(tmpdir(), 'pm-pkg-'));
+    workspaceDir = mkdtempSync(join(tmpdir(), 'pm-ws-'));
+    tempDirs.push(packageDir, workspaceDir);
+  });
+
+  it('should auto-discover templates from packageDir when templatesConfig is omitted', () => {
+    // Create template files on disk
+    const researchDir = join(packageDir, 'templates', 'research');
+    mkdirSync(researchDir, { recursive: true });
+    writeFileSync(join(researchDir, 'CLAUDE.md'), '# Research Template');
+    writeFileSync(
+      join(researchDir, 'template.yaml'),
+      'displayName: "研究模式"\ndescription: 专注研究的独立空间',
+    );
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    const templates = pm.listTemplates();
+
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('research');
+    expect(templates[0].displayName).toBe('研究模式');
+    expect(templates[0].description).toBe('专注研究的独立空间');
+  });
+
+  it('should auto-discover multiple templates from packageDir', () => {
+    for (const name of ['research', 'book-reader', 'code-review']) {
+      const templateDir = join(packageDir, 'templates', name);
+      mkdirSync(templateDir, { recursive: true });
+      writeFileSync(join(templateDir, 'CLAUDE.md'), `# ${name} Template`);
+    }
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    const templates = pm.listTemplates();
+
+    expect(templates).toHaveLength(3);
+    const names = templates.map((t) => t.name);
+    expect(names).toContain('research');
+    expect(names).toContain('book-reader');
+    expect(names).toContain('code-review');
+  });
+
+  it('should return empty templates when packageDir has no templates/', () => {
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    expect(pm.listTemplates()).toEqual([]);
+  });
+
+  it('should return empty templates when templates/ directory is empty', () => {
+    mkdirSync(join(packageDir, 'templates'), { recursive: true });
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    expect(pm.listTemplates()).toEqual([]);
+  });
+
+  it('should prefer explicit templatesConfig over auto-discovery', () => {
+    // Create template files on disk
+    const researchDir = join(packageDir, 'templates', 'research');
+    mkdirSync(researchDir, { recursive: true });
+    writeFileSync(join(researchDir, 'CLAUDE.md'), '# Research');
+
+    // But provide explicit config with a different template
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      templatesConfig: {
+        coding: { displayName: '编码模式' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('coding');
+    // 'research' from filesystem should NOT be loaded
+    expect(templates.find((t) => t.name === 'research')).toBeUndefined();
+  });
+
+  it('should create instances from auto-discovered templates', () => {
+    const researchDir = join(packageDir, 'templates', 'research');
+    mkdirSync(researchDir, { recursive: true });
+    writeFileSync(join(researchDir, 'CLAUDE.md'), '# Research');
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    const result = pm.create('chat_1', 'research', 'my-research');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.templateName).toBe('research');
+    }
+  });
+
+  it('should getPackageDir() return the configured packageDir', () => {
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    expect(pm.getPackageDir()).toBe(packageDir);
+  });
+
+  it('should read metadata from CLAUDE.md frontmatter when no template.yaml', () => {
+    const researchDir = join(packageDir, 'templates', 'research');
+    mkdirSync(researchDir, { recursive: true });
+    writeFileSync(
+      join(researchDir, 'CLAUDE.md'),
+      '---\ndisplayName: "研究模式"\ndescription: 专注研究\n---\n\n# Research Template',
+    );
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    const templates = pm.listTemplates();
+
+    expect(templates[0].displayName).toBe('研究模式');
+    expect(templates[0].description).toBe('专注研究');
+  });
+});

@@ -189,6 +189,13 @@ export interface ProjectManagerOptions {
   /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
   packageDir: string;
 
-  /** Template configuration from disclaude.config.yaml */
-  templatesConfig: ProjectTemplatesConfig;
+  /**
+   * Template configuration from disclaude.config.yaml.
+   *
+   * When omitted (or undefined), templates are auto-discovered from
+   * `{packageDir}/templates/` via `discoverTemplatesAsConfig()`.
+   *
+   * @see Issue #2286 — auto-discover from package directory
+   */
+  templatesConfig?: ProjectTemplatesConfig;
 }

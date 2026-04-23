@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +65,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory (contains `templates/` for auto-discovery and CLAUDE.md files) */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,12 +83,17 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
 
-    this.init(options.templatesConfig);
+    // Auto-discover templates from filesystem when no explicit config provided
+    // @see Issue #2286 — templates should auto-discover from package directory
+    const templatesConfig = options.templatesConfig
+      ?? discoverTemplatesAsConfig(options.packageDir);
+
+    this.init(templatesConfig);
 
     // Restore persisted state after templates are loaded
     this.loadPersistedData();
@@ -494,6 +500,15 @@ export class ProjectManager {
    */
   getPersistPath(): string {
     return this.persistPath;
+  }
+
+  /**
+   * Get the package directory (for testing/debugging).
+   *
+   * @returns Absolute path to the package directory
+   */
+  getPackageDir(): string {
+    return this.packageDir;
   }
 
   // ───────────────────────────────────────────
