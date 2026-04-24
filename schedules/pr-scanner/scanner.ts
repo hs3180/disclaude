@@ -10,6 +10,8 @@
  *   --action list-candidates             List open PRs not yet tracked
  *   --action create-state --pr <number>  Create a new state file for a PR
  *   --action mark --pr <number> --state <s>  Update state field of a PR
+ *   --action add-label --pr <number>     Add pr-scanner:reviewing label to PR
+ *   --action remove-label --pr <number>  Remove pr-scanner:* labels from PR
  *   --action status                      List all tracked PRs grouped by state
  *
  * Exit codes:
@@ -48,6 +50,8 @@ export const DEFAULT_STATE_DIR = '.temp-chats';
 export const VALID_STATES: PRState[] = ['reviewing', 'approved', 'closed'];
 export const MAX_CONCURRENT = 3;
 export const EXPIRY_HOURS = 48;
+export const SCANNER_LABEL_REVIEWING = 'pr-scanner:reviewing';
+export const SCANNER_LABELS = ['pr-scanner:reviewing', 'pr-scanner:approved', 'pr-scanner:closed'] as const;
 
 /**
  * Resolve the state directory.
@@ -335,6 +339,60 @@ async function actionStatus(): Promise<void> {
   console.log(lines.join('\n'));
 }
 
+/**
+ * Add pr-scanner:reviewing label to a PR.
+ * Label operation failure is logged but does not throw (non-blocking).
+ */
+async function actionAddLabel(prNumber: number): Promise<void> {
+  const result = await ghLabelOp(prNumber, 'add', SCANNER_LABEL_REVIEWING);
+  console.log(JSON.stringify(result, null, 2));
+}
+
+/**
+ * Remove all pr-scanner:* labels from a PR.
+ * Label operation failure is logged but does not throw (non-blocking).
+ */
+async function actionRemoveLabel(prNumber: number): Promise<void> {
+  const results: Array<{ label: string; success: boolean; error?: string }> = [];
+  for (const label of SCANNER_LABELS) {
+    const result = await ghLabelOp(prNumber, 'remove', label);
+    results.push(result);
+  }
+  console.log(JSON.stringify(results, null, 2));
+}
+
+interface LabelOpResult {
+  prNumber: number;
+  label: string;
+  operation: 'add' | 'remove';
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Perform a GitHub label operation via gh CLI.
+ * Non-blocking: catches errors and returns them in the result instead of throwing.
+ */
+async function ghLabelOp(
+  prNumber: number,
+  operation: 'add' | 'remove',
+  label: string,
+): Promise<LabelOpResult> {
+  const flag = operation === 'add' ? '--add-label' : '--remove-label';
+  try {
+    await execFileAsync(
+      'gh',
+      ['pr', 'edit', String(prNumber), flag, label],
+      { maxBuffer: 1024 * 1024, timeout: 30_000 },
+    );
+    return { prNumber, label, operation, success: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`WARN: Label ${operation} failed for PR #${prNumber} (${label}): ${msg}`);
+    return { prNumber, label, operation, success: false, error: msg };
+  }
+}
+
 function formatAge(isoTimestamp: string): string {
   const now = Date.now();
   const then = new Date(isoTimestamp).getTime();
@@ -408,9 +466,23 @@ async function main(): Promise<void> {
       await actionStatus();
       break;
 
+    case 'add-label':
+      if (!parsed.pr) {
+        throw new ScannerError('Missing required argument: --pr <number> for add-label');
+      }
+      await actionAddLabel(parsed.pr);
+      break;
+
+    case 'remove-label':
+      if (!parsed.pr) {
+        throw new ScannerError('Missing required argument: --pr <number> for remove-label');
+      }
+      await actionRemoveLabel(parsed.pr);
+      break;
+
     default:
       throw new ScannerError(
-        `Unknown action: '${parsed.action}' — valid actions: check-capacity, list-candidates, create-state, mark, status`,
+        `Unknown action: '${parsed.action}' — valid actions: check-capacity, list-candidates, create-state, mark, add-label, remove-label, status`,
       );
   }
 }

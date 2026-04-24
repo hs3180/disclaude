@@ -443,4 +443,83 @@ describe('scanner.ts', () => {
       expect(content.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     });
   });
+
+  // ---- add-label action ----
+
+  describe('add-label', () => {
+    it('should error when --pr is missing', async () => {
+      const result = await runScanner(['--action', 'add-label']);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Missing required argument: --pr');
+    });
+
+    it('should handle gh CLI failure gracefully (non-blocking)', async () => {
+      // gh pr edit will fail in test environment (no auth / no repo)
+      const result = await runScanner(['--action', 'add-label', '--pr', '9001']);
+      // Non-blocking: should exit 0 even on failure
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      expect(output.prNumber).toBe(9001);
+      expect(output.label).toBe('pr-scanner:reviewing');
+      expect(output.operation).toBe('add');
+      expect(typeof output.success).toBe('boolean');
+      // In test env, gh likely fails
+      if (!output.success) {
+        expect(output.error).toBeTruthy();
+      }
+    });
+
+    it('should output valid JSON structure on add-label', async () => {
+      const result = await runScanner(['--action', 'add-label', '--pr', '9001']);
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      expect(output).toHaveProperty('prNumber', 9001);
+      expect(output).toHaveProperty('label', 'pr-scanner:reviewing');
+      expect(output).toHaveProperty('operation', 'add');
+      expect(output).toHaveProperty('success');
+    });
+  });
+
+  // ---- remove-label action ----
+
+  describe('remove-label', () => {
+    it('should error when --pr is missing', async () => {
+      const result = await runScanner(['--action', 'remove-label']);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Missing required argument: --pr');
+    });
+
+    it('should handle gh CLI failure gracefully (non-blocking)', async () => {
+      // gh pr edit will fail in test environment (no auth / no repo)
+      const result = await runScanner(['--action', 'remove-label', '--pr', '9001']);
+      // Non-blocking: should exit 0 even on failure
+      expect(result.code).toBe(0);
+
+      const output = JSON.parse(result.stdout);
+      expect(Array.isArray(output)).toBe(true);
+      // Should attempt to remove all SCANNER_LABELS
+      expect(output.length).toBe(3);
+
+      for (const item of output) {
+        expect(item).toHaveProperty('prNumber', 9001);
+        expect(item).toHaveProperty('operation', 'remove');
+        expect(item).toHaveProperty('success');
+        expect(item).toHaveProperty('label');
+        expect(item.label).toMatch(/^pr-scanner:/);
+      }
+    });
+
+    it('should attempt removal of all scanner labels', async () => {
+      const result = await runScanner(['--action', 'remove-label', '--pr', '9001']);
+      expect(result.code).toBe(0);
+
+      const output: Array<{ label: string }> = JSON.parse(result.stdout);
+      const labels = output.map((item) => item.label);
+      expect(labels).toContain('pr-scanner:reviewing');
+      expect(labels).toContain('pr-scanner:approved');
+      expect(labels).toContain('pr-scanner:closed');
+    });
+  });
 });
