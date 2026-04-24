@@ -44,6 +44,9 @@ import { adaptSessionUpdate, adaptPromptResult } from './message-adapter.js';
 
 const logger = createLogger('AcpClient');
 
+/** Debounce interval for flushing accumulated text chunks (ms) */
+const TEXT_FLUSH_DEBOUNCE_MS = 500;
+
 // ============================================================================
 // 配置和类型
 // ============================================================================
@@ -92,6 +95,12 @@ interface ActivePrompt {
   error: (err: Error) => void;
 }
 
+/** Per-session text buffer for aggregating agent_message_chunk events (Issue #2532) */
+interface SessionTextBuffer {
+  text: string;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
 // ============================================================================
 // AcpClient 实现
 // ============================================================================
@@ -132,6 +141,9 @@ export class AcpClient {
 
   /** 当前活跃的 prompt streams，key 为 sessionId */
   private readonly activePrompts = new Map<string, ActivePrompt>();
+
+  /** Per-session text accumulation buffers for chunk aggregation (Issue #2532) */
+  private readonly sessionBuffers = new Map<string, SessionTextBuffer>();
 
   constructor(config: AcpClientConfig) {
     this.transport = config.transport;
@@ -314,6 +326,8 @@ export class AcpClient {
       // 在后台处理 result 响应
       void promptPromise
         .then((result) => {
+          // Flush any pending text buffer before pushing result (Issue #2532)
+          this.flushTextBuffer(sessionId);
           // 将 result 转为 AgentMessage 并推入队列
           const msg = adaptPromptResult(result);
           activePrompt.push(msg);
@@ -351,6 +365,7 @@ export class AcpClient {
         });
       }
     } finally {
+      this.cleanupSessionBuffer(sessionId);
       this.activePrompts.delete(sessionId);
     }
   }
@@ -392,6 +407,14 @@ export class AcpClient {
       active.error(new AcpError('Client disconnecting', -1));
     }
     this.activePrompts.clear();
+
+    // 清理所有 session buffers (Issue #2532)
+    for (const [_sid, buffer] of this.sessionBuffers) {
+      if (buffer.timer !== null) {
+        clearTimeout(buffer.timer);
+      }
+    }
+    this.sessionBuffers.clear();
 
     // 断开 Transport
     try {
@@ -505,11 +528,28 @@ export class AcpClient {
 
   /**
    * 处理 session/update 通知，转换为 AgentMessage 并推送到对应的 prompt stream。
+   *
+   * Issue #2532: 连续 agent_message_chunk 会被聚合为单条消息，
+   * 避免飞书端收到大量碎片消息。边界事件（tool_call 等）或 debounce
+   * 超时会触发 flush。
    */
   private handleSessionUpdate(params: AcpSessionUpdateParams): void {
-    const {update} = params;
+    const { update } = params;
+    const {sessionId} = params;
 
-    // 尝试适配为 AgentMessage
+    // Aggregate agent_message_chunk into text buffer instead of pushing immediately
+    if (update.sessionUpdate === 'agent_message_chunk') {
+      const text = update.content.type === 'text' ? update.content.text : '';
+      if (text) {
+        this.appendTextBuffer(sessionId, text);
+      }
+      return;
+    }
+
+    // Non-chunk event: flush any pending text buffer first
+    this.flushTextBuffer(sessionId);
+
+    // Then process normally
     const agentMessage = adaptSessionUpdate(update);
     if (!agentMessage) {
       logger.debug({ updateType: update.sessionUpdate }, 'Unhandled session update type');
@@ -517,9 +557,75 @@ export class AcpClient {
     }
 
     // 推送到对应 session 的 prompt stream
-    const active = this.activePrompts.get(params.sessionId);
+    const active = this.activePrompts.get(sessionId);
     if (active) {
       active.push(agentMessage);
+    }
+  }
+
+  /**
+   * Append text to the per-session accumulation buffer and schedule debounce flush.
+   * (Issue #2532)
+   */
+  private appendTextBuffer(sessionId: string, text: string): void {
+    let buffer = this.sessionBuffers.get(sessionId);
+    if (!buffer) {
+      buffer = { text: '', timer: null };
+      this.sessionBuffers.set(sessionId, buffer);
+    }
+    buffer.text += text;
+
+    // Reset debounce timer
+    if (buffer.timer !== null) {
+      clearTimeout(buffer.timer);
+    }
+    buffer.timer = setTimeout(() => {
+      this.flushTextBuffer(sessionId);
+    }, TEXT_FLUSH_DEBOUNCE_MS);
+  }
+
+  /**
+   * Flush the per-session text buffer, pushing an aggregated AgentMessage.
+   * Called on boundary events, debounce timeout, and prompt completion.
+   * (Issue #2532)
+   */
+  private flushTextBuffer(sessionId: string): void {
+    const buffer = this.sessionBuffers.get(sessionId);
+    if (!buffer || buffer.text.length === 0) {
+      return;
+    }
+
+    // Clear debounce timer
+    if (buffer.timer !== null) {
+      clearTimeout(buffer.timer);
+      buffer.timer = null;
+    }
+
+    const aggregatedText = buffer.text;
+    buffer.text = '';
+
+    const active = this.activePrompts.get(sessionId);
+    if (active) {
+      active.push({
+        type: 'text',
+        content: aggregatedText,
+        role: 'assistant',
+      });
+    }
+  }
+
+  /**
+   * Clean up the per-session text buffer (timer + data).
+   * Called when an active prompt is removed or on disconnect.
+   * (Issue #2532)
+   */
+  private cleanupSessionBuffer(sessionId: string): void {
+    const buffer = this.sessionBuffers.get(sessionId);
+    if (buffer) {
+      if (buffer.timer !== null) {
+        clearTimeout(buffer.timer);
+      }
+      this.sessionBuffers.delete(sessionId);
     }
   }
 
@@ -575,6 +681,14 @@ export class AcpClient {
       active.error(new AcpError(`Transport error: ${err.message}`, -1));
     }
     this.activePrompts.clear();
+
+    // 清理所有 session buffers (Issue #2532)
+    for (const [_sid, buffer] of this.sessionBuffers) {
+      if (buffer.timer !== null) {
+        clearTimeout(buffer.timer);
+      }
+    }
+    this.sessionBuffers.clear();
   }
 
   /**
@@ -596,6 +710,14 @@ export class AcpClient {
       active.error(new AcpError('Transport closed', -1));
     }
     this.activePrompts.clear();
+
+    // 清理所有 session buffers (Issue #2532)
+    for (const [_sid, buffer] of this.sessionBuffers) {
+      if (buffer.timer !== null) {
+        clearTimeout(buffer.timer);
+      }
+    }
+    this.sessionBuffers.clear();
   }
 
   /**
