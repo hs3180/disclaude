@@ -13,6 +13,7 @@ vi.mock('./tools/index.js', () => ({
   send_card: vi.fn(),
   send_interactive: vi.fn(),
   send_file: vi.fn(),
+  upload_image: vi.fn(),
   register_temp_chat: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));

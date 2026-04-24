@@ -17,6 +17,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -164,6 +166,17 @@ For display-only cards, use send_card instead.`,
     },
     handler: send_file,
   },
+  upload_image: {
+    description: 'Upload an image and return image_key for card embedding.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the image file to upload' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
+  },
 };
 
 export const channelToolDefinitions: InlineToolDefinition[] = [
@@ -173,6 +186,7 @@ export const channelToolDefinitions: InlineToolDefinition[] = [
   // - send_card: Display-only cards (no interactions)
   // - send_interactive: Interactive cards with button handlers
   // - send_file: File uploads
+  // - upload_image: Image upload for card embedding (Issue #1919)
   // Issue #1298: Removed start_group_discussion (business logic not MCP scope)
   // ============================================================================
   {
@@ -411,6 +425,51 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Image upload for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image file and return the image_key for embedding in card messages.
+
+Use this to embed images inside Feishu card messages (send_card). After uploading, use the returned
+image_key in the card's \`img\` element: \`{ "tag": "img", "img_key": "image_key_here" }\`.
+
+## Parameters
+- **filePath**: Path to the image file to upload (string, required)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico
+
+## Size Limit
+Maximum 10MB
+
+## Example Workflow
+\`\`\`
+1. upload_image({ filePath: "/path/to/chart.png" })
+   → Returns: image_key = "img_xxx"
+
+2. send_card({
+     card: {
+       config: { wide_screen_mode: true },
+       header: { title: { tag: "plain_text", content: "Chart" } },
+       elements: [
+         { "tag": "img", "img_key": "img_xxx" }
+       ]
+     },
+     chatId: "oc_xxx"
+   })
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

@@ -695,6 +695,48 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * Issue #1919: Allows MCP tools to upload images for embedding in card messages.
+   * Uses the same `im.image.create` API as the file message flow,
+   * but returns the image_key instead of sending it as a message.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns image_key and file metadata
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully');
+    return { imageKey, fileName, fileSize };
+  }
+
+  /**
    * Get bot info for IPC handlers.
    * Returns bot's open_id and app_id.
    */
