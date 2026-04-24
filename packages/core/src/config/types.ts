@@ -21,12 +21,12 @@ export interface WorkspaceConfig {
 /**
  * Agent configuration section.
  *
- * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
- * This avoids confusion about which model takes precedence.
+ * Note: model is configured per-provider (glm.model for GLM, openai.model for OpenAI,
+ * agent.model for Anthropic). This avoids confusion about which model takes precedence.
  */
 export interface AgentConfig {
-  /** API provider preference (anthropic, glm) */
-  provider?: 'anthropic' | 'glm';
+  /** API provider preference (anthropic, glm, openai) */
+  provider?: 'anthropic' | 'glm' | 'openai';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
@@ -44,9 +44,9 @@ export interface AgentConfig {
    * ACP Agent command for spawning the subprocess.
    * When set, skips auto-detection (resolveAcpCommand) and uses this command directly.
    * Override this to use a custom ACP-compatible agent binary.
-   * @example 'claude-agent-acp', '/usr/local/bin/my-acp-agent'
+   * @example 'claude-agent-acp', '/usr/local/bin/my-acp-agent', 'openai-acp-server'
    * @see https://github.com/zed-industries/claude-agent-acp
-   * @see Issue #2349
+   * @see Issue #2349, #1333
    */
   acpCommand?: string;
 }
@@ -83,6 +83,37 @@ export interface GlmConfig {
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
+}
+
+/**
+ * OpenAI API configuration section (Issue #1333).
+ *
+ * When using OpenAI provider, both apiKey and model are REQUIRED.
+ * The ACP transport connects to an OpenAI-compatible ACP server
+ * (e.g., openai-acp-server) which translates ACP protocol to OpenAI API calls.
+ *
+ * Configuration example:
+ * ```yaml
+ * openai:
+ *   apiKey: "sk-..."
+ *   model: "gpt-4o"
+ *   acpCommand: "openai-acp-server"  # ACP server binary for OpenAI
+ * ```
+ */
+export interface OpenAiConfig {
+  /** API key (overrides OPENAI_API_KEY env var) */
+  apiKey?: string;
+  /** Model identifier - REQUIRED when apiKey is set */
+  model?: string;
+  /** API base URL (overrides OPENAI_API_BASE_URL env var) */
+  apiBaseUrl?: string;
+  /**
+   * ACP server command for OpenAI provider.
+   * When set, overrides agent.acpCommand for this specific provider.
+   * Points to an ACP-compatible server that translates ACP to OpenAI API.
+   * @example 'openai-acp-server', '/usr/local/bin/openai-acp'
+   */
+  acpCommand?: string;
 }
 
 /**
@@ -332,6 +363,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** OpenAI API settings (Issue #1333) */
+  openai?: OpenAiConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

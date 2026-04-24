@@ -220,8 +220,13 @@ export function isDisposable(obj: unknown): obj is Disposable {
 
 /**
  * API provider type.
+ *
+ * Supported providers:
+ * - 'anthropic': Anthropic Claude via ACP (claude-code / claude-agent-acp)
+ * - 'glm': Zhipu AI GLM via Anthropic-compatible API
+ * - 'openai': OpenAI via ACP-compatible server (Issue #1333)
  */
-export type AgentProvider = 'anthropic' | 'glm';
+export type AgentProvider = 'anthropic' | 'glm' | 'openai';
 
 /**
  * Base configuration for all agents.
