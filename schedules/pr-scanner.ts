@@ -14,7 +14,7 @@
  *     "createdAt": string,       // ISO 8601 Z-suffix
  *     "updatedAt": string,       // ISO 8601 Z-suffix
  *     "expiresAt": string,       // createdAt + 48h
- *     "disbandRequested": null   // Phase 2 placeholder
+ *     "disbandRequested": string | null  // ISO timestamp or null
  *   }
  *
  * Exit codes:
@@ -26,7 +26,11 @@
  *   mark (away from reviewing) → remove `pr-scanner:reviewing` label (best-effort)
  *   Label failures are logged but never block the main flow.
  *
- * Related: #2219, #2220, #2210
+ * Lifecycle management (Phase 2):
+ *   check-expired → list expired reviewing PRs (now > expiresAt)
+ *   mark-disband   → set disbandRequested timestamp on a PR (requires --pr)
+ *
+ * Related: #2219, #2220, #2221, #2210
  */
 
 import { readdir, readFile, writeFile, mkdir, stat, realpath, rename } from 'node:fs/promises';
@@ -49,7 +53,7 @@ export interface PrStateFile {
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
-  disbandRequested: null;
+  disbandRequested: string | null;
 }
 
 export interface CapacityInfo {
@@ -147,7 +151,9 @@ export function parseStateFile(json: string, filePath: string): PrStateFile {
   }
 
   if (obj.disbandRequested !== null) {
-    throw new Error(`State file '${filePath}' has invalid 'disbandRequested' (must be null in Phase 1)`);
+    if (typeof obj.disbandRequested !== 'string' || !UTC_DATETIME_REGEX.test(obj.disbandRequested)) {
+      throw new Error(`State file '${filePath}' has invalid 'disbandRequested' (must be null or valid ISO 8601 Z-suffix timestamp)`);
+    }
   }
 
   return data as PrStateFile;
@@ -437,6 +443,68 @@ async function actionStatus(): Promise<void> {
   console.log(`\nTotal: ${states.length} tracked PR(s)`);
 }
 
+/** check-expired: list reviewing PRs that have passed their expiresAt */
+async function actionCheckExpired(): Promise<void> {
+  const states = await readAllStates();
+  const now = new Date();
+
+  const expired = states.filter((s) => {
+    if (s.state !== 'reviewing') return false;
+    const expiresAt = new Date(s.expiresAt);
+    return now > expiresAt;
+  });
+
+  console.log(JSON.stringify(expired, null, 2));
+}
+
+/** mark-disband: set disbandRequested timestamp on a PR */
+async function actionMarkDisband(prNumber: number): Promise<void> {
+  const filePath = stateFilePath(prNumber);
+
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf-8');
+  } catch {
+    exit(`State file for PR #${prNumber} not found at '${filePath}'`);
+  }
+
+  let stateFile: PrStateFile;
+  try {
+    stateFile = parseStateFile(content, filePath);
+  } catch (err) {
+    exit(`Corrupted state file '${filePath}': ${err instanceof Error ? err.message : err}`);
+  }
+
+  // Only allow disband for reviewing state
+  if (stateFile.state !== 'reviewing') {
+    exit(`Cannot request disband for PR #${prNumber}: state is '${stateFile.state}', must be 'reviewing'`);
+  }
+
+  const lock = await acquireLock(`${filePath}.lock`, 'exclusive', 0);
+  try {
+    // Re-read under lock to avoid lost updates
+    let currentContent: string;
+    try {
+      currentContent = await readFile(filePath, 'utf-8');
+    } catch {
+      exit(`State file disappeared during mark-disband: '${filePath}'`);
+    }
+
+    const currentState = parseStateFile(currentContent, filePath);
+    if (currentState.state !== 'reviewing') {
+      exit(`Cannot request disband for PR #${prNumber}: state changed to '${currentState.state}'`);
+    }
+
+    currentState.disbandRequested = nowISO();
+    currentState.updatedAt = nowISO();
+
+    await atomicWrite(filePath, JSON.stringify(currentState, null, 2) + '\n');
+    console.log(JSON.stringify(currentState, null, 2));
+  } finally {
+    await lock.release();
+  }
+}
+
 // ---- CLI argument parsing ----
 
 function parseArgs(args: string[]): { action: string; pr?: number; state?: string } {
@@ -470,10 +538,12 @@ Actions:
                    Also adds 'pr-scanner:reviewing' GitHub label (best-effort)
   mark             Update state field (requires --pr and --state)
                    Removes 'pr-scanner:reviewing' label when leaving reviewing (best-effort)
+  check-expired    List expired reviewing PRs (now > expiresAt)
+  mark-disband     Set disbandRequested timestamp (requires --pr)
   status           List all tracked PRs grouped by state
 
 Options:
-  --pr <number>    PR number (required for create-state, mark)
+  --pr <number>    PR number (required for create-state, mark, mark-disband)
   --state <state>  New state: reviewing, approved, closed (required for mark)
 
 Environment:
@@ -518,8 +588,15 @@ async function main() {
     case 'status':
       await actionStatus();
       break;
+    case 'check-expired':
+      await actionCheckExpired();
+      break;
+    case 'mark-disband':
+      if (!pr) exit('--pr is required for mark-disband action');
+      await actionMarkDisband(pr);
+      break;
     default:
-      exit(`Unknown action '${action}'. Valid actions: check-capacity, list-candidates, create-state, mark, status`);
+      exit(`Unknown action '${action}'. Valid actions: check-capacity, list-candidates, create-state, mark, check-expired, mark-disband, status`);
   }
 }
 

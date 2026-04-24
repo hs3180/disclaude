@@ -153,9 +153,26 @@ describe('pr-scanner', () => {
       expect(() => parseStateFile(JSON.stringify({ ...makeStateFile(), state: 'pending' }), 'test.json')).toThrow('state');
     });
 
-    it('should reject non-null disbandRequested', () => {
+    it('should reject invalid disbandRequested values', () => {
       expect(() => parseStateFile(JSON.stringify({ ...makeStateFile(), disbandRequested: 'yes' }), 'test.json')).toThrow('disbandRequested');
       expect(() => parseStateFile(JSON.stringify({ ...makeStateFile(), disbandRequested: false }), 'test.json')).toThrow('disbandRequested');
+    });
+
+    it('should accept null disbandRequested', () => {
+      const data = makeStateFile({ disbandRequested: null });
+      const result = parseStateFile(JSON.stringify(data), 'test.json');
+      expect(result.disbandRequested).toBeNull();
+    });
+
+    it('should accept valid ISO timestamp disbandRequested', () => {
+      const data = makeStateFile({ disbandRequested: '2026-04-08T12:00:00Z' });
+      const result = parseStateFile(JSON.stringify(data), 'test.json');
+      expect(result.disbandRequested).toBe('2026-04-08T12:00:00Z');
+    });
+
+    it('should reject non-ISO disbandRequested string', () => {
+      expect(() => parseStateFile(JSON.stringify({ ...makeStateFile(), disbandRequested: '2026-04-08' }), 'test.json')).toThrow('disbandRequested');
+      expect(() => parseStateFile(JSON.stringify({ ...makeStateFile(), disbandRequested: '2026-04-08T12:00:00+08:00' }), 'test.json')).toThrow('disbandRequested');
     });
 
     it('should accept chatId as null', () => {
@@ -432,6 +449,144 @@ describe('pr-scanner', () => {
 
       expect(diffHours).toBe(48);
       expect(created.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
+    });
+  });
+
+  // ---- Lifecycle management (Phase 2) ----
+
+  describe('action: check-expired', () => {
+    it('should return empty array when no expired PRs', async () => {
+      // No state files at all
+      const result = await runScanner(['--action', 'check-expired']);
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data).toEqual([]);
+    });
+
+    it('should return expired reviewing PRs', async () => {
+      // Create a PR that expired in the past
+      const pastExpiry = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2 hours ago
+      const expiredIso = pastExpiry.toISOString().replace(/\.\d{3}Z$/, 'Z');
+      await writeStateFile(9001, makeStateFile({
+        prNumber: 9001,
+        state: 'reviewing',
+        expiresAt: expiredIso,
+      }));
+      // Create a PR that hasn't expired yet (far future)
+      const futureExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
+      const futureIso = futureExpiry.toISOString().replace(/\.\d{3}Z$/, 'Z');
+      await writeStateFile(9002, makeStateFile({
+        prNumber: 9002,
+        state: 'reviewing',
+        expiresAt: futureIso,
+      }));
+
+      const result = await runScanner(['--action', 'check-expired']);
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.length).toBe(1);
+      expect(data[0].prNumber).toBe(9001);
+    });
+
+    it('should not return non-reviewing expired PRs', async () => {
+      // An approved PR that has expired should NOT be returned
+      const pastExpiry = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const expiredIso = pastExpiry.toISOString().replace(/\.\d{3}Z$/, 'Z');
+      await writeStateFile(9001, makeStateFile({
+        prNumber: 9001,
+        state: 'approved',
+        expiresAt: expiredIso,
+      }));
+
+      const result = await runScanner(['--action', 'check-expired']);
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data).toEqual([]);
+    });
+
+    it('should return multiple expired reviewing PRs', async () => {
+      const pastExpiry = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const expiredIso = pastExpiry.toISOString().replace(/\.\d{3}Z$/, 'Z');
+      await writeStateFile(9001, makeStateFile({ prNumber: 9001, state: 'reviewing', expiresAt: expiredIso }));
+      await writeStateFile(9002, makeStateFile({ prNumber: 9002, state: 'reviewing', expiresAt: expiredIso }));
+
+      const result = await runScanner(['--action', 'check-expired']);
+      expect(result.exitCode).toBe(0);
+      const data = JSON.parse(result.stdout);
+      expect(data.length).toBe(2);
+      const nums = data.map((s: PrStateFile) => s.prNumber);
+      expect(nums).toContain(9001);
+      expect(nums).toContain(9002);
+    });
+  });
+
+  describe('action: mark-disband', () => {
+    it('should set disbandRequested timestamp on reviewing PR', async () => {
+      await writeStateFile(9001, makeStateFile({ prNumber: 9001, state: 'reviewing' }));
+
+      const before = new Date();
+      const result = await runScanner(['--action', 'mark-disband', '--pr', '9001']);
+      expect(result.exitCode).toBe(0);
+
+      const data = JSON.parse(result.stdout);
+      expect(data.prNumber).toBe(9001);
+      expect(data.state).toBe('reviewing');
+      expect(data.disbandRequested).not.toBeNull();
+      expect(typeof data.disbandRequested).toBe('string');
+
+      // Verify timestamp is recent
+      const disbandTime = new Date(data.disbandRequested);
+      expect(disbandTime.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
+
+      // Verify on disk
+      const content = await readFile(stateFilePath(9001), 'utf-8');
+      const parsed = JSON.parse(content);
+      expect(parsed.disbandRequested).not.toBeNull();
+    });
+
+    it('should require --pr flag', async () => {
+      const result = await runScanner(['--action', 'mark-disband']);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('--pr is required');
+    });
+
+    it('should fail for non-existent PR', async () => {
+      const result = await runScanner(['--action', 'mark-disband', '--pr', '9999']);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('not found');
+    });
+
+    it('should reject disband for approved PR', async () => {
+      await writeStateFile(9001, makeStateFile({ prNumber: 9001, state: 'approved' }));
+
+      const result = await runScanner(['--action', 'mark-disband', '--pr', '9001']);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('must be \'reviewing\'');
+    });
+
+    it('should reject disband for closed PR', async () => {
+      await writeStateFile(9001, makeStateFile({ prNumber: 9001, state: 'closed' }));
+
+      const result = await runScanner(['--action', 'mark-disband', '--pr', '9001']);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('must be \'reviewing\'');
+    });
+
+    it('should update disbandRequested (idempotent re-send)', async () => {
+      const firstDisband = '2026-04-08T12:00:00Z';
+      await writeStateFile(9001, makeStateFile({
+        prNumber: 9001,
+        state: 'reviewing',
+        disbandRequested: firstDisband,
+      }));
+
+      const result = await runScanner(['--action', 'mark-disband', '--pr', '9001']);
+      expect(result.exitCode).toBe(0);
+
+      const data = JSON.parse(result.stdout);
+      // Should be updated to a new timestamp (not the old one)
+      expect(data.disbandRequested).not.toBe(firstDisband);
+      expect(new Date(data.disbandRequested).getTime()).toBeGreaterThan(new Date(firstDisband).getTime());
     });
   });
 
