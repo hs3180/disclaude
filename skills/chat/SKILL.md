@@ -105,7 +105,7 @@ Each chat is a single JSON file in `workspace/chats/`:
 
 ## Operations
 
-All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `skills/chat/`. All scripts include built-in Chat ID validation (path traversal protection), file locking (via `fs.flock`), and native JSON validation. Scripts are implemented in TypeScript and run via `tsx`.
+All scripts accept input via **environment variables** (avoids shell quoting issues with JSON) and are located in `skills/chat/`. All scripts include built-in Chat ID validation (path traversal protection), PID-based file locking (zero dependencies, works on all Node.js versions), and native JSON validation. Scripts are implemented in TypeScript and run via `tsx`.
 
 ### 1. Create Chat
 
@@ -243,7 +243,7 @@ workspace/chats/
 - ❌ Create chats without a valid `expiresAt` (must be UTC Z-suffix)
 - ❌ Use YAML format (always JSON)
 - ❌ Delete chat files manually
-- ❌ Manually delete `.lock` files (cleaned up by `chats-cleanup` schedule)
+- ❌ Manually delete `.lock` files (cleaned up by `chats-cleanup` schedule and `tryRemoveStaleLock()` during lock acquisition)
 
 ## Error Handling
 
@@ -256,8 +256,8 @@ workspace/chats/
 | Duplicate `id` | Report "Chat {id} already exists" |
 | Invalid chat ID (path traversal) | Report "Invalid chat ID" and reject immediately |
 | Duplicate response | Report "Chat {id} already has a response" and reject |
-| Node.js not available | Exit with error (required runtime, v20.12+ for file locking) |
-| File locking unavailable | No-op fallback with warning (requires Node 20.12+) |
+| Node.js not available | Exit with error (required runtime, v18+) |
+| File locking unavailable | N/A — PID-based locking has no special requirements |
 
 ## Example: PR Review Chat
 
