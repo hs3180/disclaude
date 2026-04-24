@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, WatchPath } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -70,6 +70,8 @@ function stripQuotes(value: string): string {
 
 /**
  * Parse YAML frontmatter from schedule content.
+ *
+ * Issue #1953: Extended to support `watch` field (array of objects).
  */
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
@@ -86,12 +88,71 @@ function parseScheduleFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
 
   const lines = frontmatterText.split('\n');
+  let inWatchBlock = false;
+  const watchEntries: WatchPath[] = [];
+  let currentWatchEntry: Partial<WatchPath> | null = null;
+
   for (const line of lines) {
+    // Handle watch block (Issue #1953)
+    if (inWatchBlock) {
+      // Check if we're leaving the watch block (non-indented line with content)
+      if (line.length > 0 && !line.startsWith(' ') && !line.startsWith('-')) {
+        // Flush current entry
+        if (currentWatchEntry?.path) {
+          watchEntries.push(currentWatchEntry as WatchPath);
+        }
+        currentWatchEntry = null;
+        inWatchBlock = false;
+        // Fall through to normal processing
+      } else {
+        // Parse watch array entries
+        const trimmed = line.trim();
+        if (trimmed.startsWith('- path:')) {
+          // New entry - flush previous
+          if (currentWatchEntry?.path) {
+            watchEntries.push(currentWatchEntry as WatchPath);
+          }
+          const pathValue = stripQuotes(trimmed.slice('- path:'.length).trim());
+          currentWatchEntry = { path: pathValue };
+        } else if (trimmed.startsWith('path:')) {
+          // Shorthand: watch entry with just path
+          if (currentWatchEntry?.path) {
+            watchEntries.push(currentWatchEntry as WatchPath);
+          }
+          const pathValue = stripQuotes(trimmed.slice('path:'.length).trim());
+          currentWatchEntry = { path: pathValue };
+        } else if (trimmed.startsWith('debounceMs:') && currentWatchEntry) {
+          currentWatchEntry.debounceMs = parseInt(trimmed.slice('debounceMs:'.length).trim(), 10);
+        } else if (trimmed.startsWith('- ') && !trimmed.includes('path:')) {
+          // Simple string entry: `- "workspace/chats/*.json"`
+          const simplePath = stripQuotes(trimmed.slice(2).trim());
+          if (simplePath) {
+            watchEntries.push({ path: simplePath });
+          }
+        }
+        continue;
+      }
+    }
+
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) { continue; }
 
     const key = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
+
+    // Detect start of watch block
+    if (key === 'watch') {
+      inWatchBlock = true;
+      // Check for inline array: watch: ["path1", "path2"]
+      if (value.startsWith('[')) {
+        const items = value.slice(1, -1).split(',').map(s => stripQuotes(s.trim())).filter(Boolean);
+        for (const item of items) {
+          watchEntries.push({ path: item });
+        }
+        inWatchBlock = false;
+      }
+      continue;
+    }
 
     switch (key) {
       case 'name':
@@ -111,6 +172,15 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = parseInt(value, 10);
         break;
     }
+  }
+
+  // Flush last watch entry
+  if (currentWatchEntry?.path) {
+    watchEntries.push(currentWatchEntry as WatchPath);
+  }
+
+  if (watchEntries.length > 0) {
+    frontmatter['watch'] = watchEntries;
   }
 
   return { frontmatter, contentStart: match[0].length };
@@ -216,6 +286,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watch: frontmatter['watch'] as WatchPath[] | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +338,18 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    // Issue #1953: Write watch paths
+    if (task.watch && task.watch.length > 0) {
+      frontmatter.push('watch:');
+      for (const w of task.watch) {
+        if (w.debounceMs) {
+          frontmatter.push(`  - path: "${w.path}"`);
+          frontmatter.push(`    debounceMs: ${w.debounceMs}`);
+        } else {
+          frontmatter.push(`  - path: "${w.path}"`);
+        }
+      }
     }
 
     frontmatter.push('---', '');

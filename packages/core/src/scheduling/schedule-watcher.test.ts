@@ -555,6 +555,129 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  // Issue #1953: watch field parsing tests
+  describe('parseFile - watch field (Issue #1953)', () => {
+    it('should parse watch field with object entries', async () => {
+      const content = [
+        '---',
+        'name: "Chat Activation"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  - path: "workspace/chats/*.json"',
+        '    debounceMs: 5000',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chat-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch).toHaveLength(1);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![0].debounceMs).toBe(5000);
+    });
+
+    it('should parse watch field with multiple entries', async () => {
+      const content = [
+        '---',
+        'name: "Multi Watch"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  - path: "workspace/chats/*.json"',
+        '    debounceMs: 3000',
+        '  - path: "workspace/events/*.json"',
+        '---',
+        '',
+        'Watch multiple paths.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/multi-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toHaveLength(2);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![0].debounceMs).toBe(3000);
+      expect(task!.watch![1].path).toBe('workspace/events/*.json');
+      expect(task!.watch![1].debounceMs).toBeUndefined();
+    });
+
+    it('should parse inline array watch field', async () => {
+      const content = [
+        '---',
+        'name: "Inline Watch"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'watch: ["workspace/chats/*.json", "workspace/events/*.json"]',
+        '---',
+        '',
+        'Inline watch paths.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/inline-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toHaveLength(2);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![1].path).toBe('workspace/events/*.json');
+    });
+
+    it('should default watch to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeUndefined();
+    });
+
+    it('should write watch field to file', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-watched-task',
+        name: 'Watched Task',
+        cron: '0 */5 * * * *',
+        prompt: 'Activate chats',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        watch: [
+          { path: 'workspace/chats/*.json', debounceMs: 5000 },
+          { path: 'workspace/events/*.json' },
+        ],
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('watch:');
+      expect(writtenContent).toContain('path: "workspace/chats/*.json"');
+      expect(writtenContent).toContain('debounceMs: 5000');
+      expect(writtenContent).toContain('path: "workspace/events/*.json"');
+    });
+
+    it('should not write watch field when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-watch',
+        name: 'No Watch Task',
+        cron: '0 * * * *',
+        prompt: 'Simple task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('watch:');
+    });
+  });
 });
 
 // ============================================================================

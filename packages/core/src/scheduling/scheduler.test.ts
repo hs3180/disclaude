@@ -535,4 +535,123 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  // Issue #1953: Event-driven triggerNow tests
+  describe('triggerNow', () => {
+    it('should trigger immediate execution of an active task', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerNow('trigger-1');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should return false for non-existent task', async () => {
+      const result = await scheduler.triggerNow('nonexistent');
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return false for disabled task', async () => {
+      const task = createTask({ id: 'disabled-trigger', enabled: false });
+      // Don't add to active jobs (disabled tasks aren't added)
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      const result = await scheduler.triggerNow('disabled-trigger');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when task is blocked (already running)', async () => {
+      // Simulate a running task
+      mockExecutor.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 1000)));
+
+      const task = createTask({ id: 'blocked-trigger', blocking: true });
+      scheduler.addTask(task);
+
+      // Start execution
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait until task is marked as running
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocked-trigger')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Try to trigger while running
+      const result = await scheduler.triggerNow('blocked-trigger');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when task is in cooldown', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date(),
+          cooldownEndsAt: new Date(Date.now() + 60000),
+          remainingMs: 60000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'cooldown-trigger', cooldownPeriod: 60000 });
+      cooldownScheduler.addTask(task);
+
+      const result = await cooldownScheduler.triggerNow('cooldown-trigger');
+      expect(result).toBe(false);
+      expect(mockCooldownManager.isInCooldown).toHaveBeenCalledWith('cooldown-trigger', 60000);
+    });
+
+    it('should look up task from schedule manager if not in active jobs', async () => {
+      const task = createTask({ id: 'lookup-trigger' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      const result = await scheduler.triggerNow('lookup-trigger');
+
+      expect(result).toBe(true);
+      expect(mockScheduleManager.get).toHaveBeenCalledWith('lookup-trigger');
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('getTask', () => {
+    it('should return task from active jobs', async () => {
+      const task = createTask({ id: 'get-1' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.getTask('get-1');
+      expect(result).toBeDefined();
+      expect(result?.id).toBe('get-1');
+    });
+
+    it('should fall back to schedule manager', async () => {
+      const task = createTask({ id: 'get-2' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      const result = await scheduler.getTask('get-2');
+      expect(result).toBeDefined();
+      expect(result?.id).toBe('get-2');
+    });
+
+    it('should return undefined for non-existent task', async () => {
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(undefined);
+
+      const result = await scheduler.getTask('nonexistent');
+      expect(result).toBeUndefined();
+    });
+  });
 });

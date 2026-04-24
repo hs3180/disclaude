@@ -402,4 +402,72 @@ ${task.prompt}`;
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
   }
+
+  /**
+   * Trigger immediate execution of a task by ID.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   * Allows external components (like EventTrigger) to immediately
+   * execute a task without waiting for the next cron tick.
+   *
+   * Respects blocking and cooldown settings the same as cron-triggered execution.
+   *
+   * @param taskId - ID of the task to trigger
+   * @returns true if the task was triggered, false if skipped (not found, disabled, blocked, or in cooldown)
+   */
+  async triggerNow(taskId: string): Promise<boolean> {
+    // Look up the task from active jobs first, then from schedule manager
+    let task: ScheduledTask | undefined = this.activeJobs.get(taskId)?.task;
+
+    if (!task) {
+      task = await this.scheduleManager.get(taskId);
+    }
+
+    if (!task) {
+      logger.warn({ taskId }, 'triggerNow: task not found');
+      return false;
+    }
+
+    if (!task.enabled) {
+      logger.debug({ taskId }, 'triggerNow: task is disabled');
+      return false;
+    }
+
+    // Check cooldown period
+    if (task.cooldownPeriod && this.cooldownManager) {
+      const isInCooldown = await this.cooldownManager.isInCooldown(task.id, task.cooldownPeriod);
+      if (isInCooldown) {
+        logger.info({ taskId: task.id, name: task.name }, 'triggerNow: task in cooldown, skipping');
+        return false;
+      }
+    }
+
+    // Check blocking mechanism
+    if (task.blocking && this.runningTasks.has(task.id)) {
+      logger.info({ taskId: task.id, name: task.name }, 'triggerNow: task already running, skipping');
+      return false;
+    }
+
+    logger.info({ taskId: task.id, name: task.name }, 'triggerNow: executing task immediately');
+
+    // Execute using the same logic as cron-triggered execution
+    void this.executeTask(task);
+    return true;
+  }
+
+  /**
+   * Get a task by ID from active jobs or schedule manager.
+   *
+   * Issue #1953: Utility method for EventTrigger to look up tasks.
+   *
+   * @param taskId - Task ID
+   * @returns The task or undefined
+   */
+  async getTask(taskId: string): Promise<ScheduledTask | undefined> {
+    const activeJob = this.activeJobs.get(taskId);
+    if (activeJob) {
+      return activeJob.task;
+    }
+    return await this.scheduleManager.get(taskId);
+  }
 }

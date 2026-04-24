@@ -8,6 +8,19 @@
  */
 
 /**
+ * A single watch path configuration.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ * When a file matching the path pattern changes, the schedule is triggered immediately.
+ */
+export interface WatchPath {
+  /** Glob pattern or directory path to watch (relative to workspace) */
+  path: string;
+  /** Debounce interval in milliseconds (default: 1000) */
+  debounceMs?: number;
+}
+
+/**
  * Scheduled task definition.
  */
 export interface ScheduledTask {
@@ -41,4 +54,19 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional file paths to watch for changes.
+   * When a file matching any of these patterns changes, the schedule is triggered immediately.
+   * Cron continues as a fallback (reduced frequency recommended).
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * @example
+   * ```yaml
+   * watch:
+   *   - path: "workspace/chats/*.json"
+   *     debounceMs: 5000
+   * ```
+   */
+  watch?: WatchPath[];
 }
