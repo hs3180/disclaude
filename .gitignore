@@ -69,3 +69,4 @@ disclaude-test-server.log
 
 # Test data
 data/
+node_modules/\ndist/\n.temp-chats/\n.test-temp-chats/\n*.tmp
