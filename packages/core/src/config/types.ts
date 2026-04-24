@@ -86,6 +86,38 @@ export interface GlmConfig {
 }
 
 /**
+ * Anthropic API configuration section.
+ *
+ * Provides explicit Anthropic-compatible endpoint configuration in
+ * disclaude.config.yaml, with higher priority than environment variables
+ * (including those leaked from ~/.claude/settings.json).
+ *
+ * @see Issue #2768
+ */
+export interface AnthropicConfig {
+  /**
+   * API key for Anthropic or compatible service.
+   * Overrides ANTHROPIC_API_KEY environment variable.
+   */
+  apiKey?: string;
+  /**
+   * API base URL for Anthropic-compatible endpoints.
+   * Overrides ANTHROPIC_BASE_URL environment variable.
+   * Use this to point to third-party compatible APIs:
+   * - Zhipu GLM: "https://open.bigmodel.cn/api/anthropic"
+   * - Baidu Comate: "https://oneapi-comate.baidu-int.com/api"
+   * - Custom proxy: any Anthropic-compatible endpoint
+   */
+  apiBaseUrl?: string;
+  /**
+   * Custom HTTP headers to send with API requests.
+   * Overrides ANTHROPIC_CUSTOM_HEADERS environment variable.
+   * Set to empty string "" to explicitly clear inherited headers.
+   */
+  customHeaders?: string;
+}
+
+/**
  * Ruliu reply mode.
  * Controls how the bot responds to messages.
  */
@@ -332,6 +364,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** Anthropic API settings (higher priority than env vars) */
+  anthropic?: AnthropicConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

@@ -42,6 +42,7 @@ export interface SdkBuildContext {
   agentTeamsEnabled: boolean;
   apiKey: string;
   apiBaseUrl?: string;
+  customHeaders?: string;
   model: string;
 }
 
@@ -179,6 +180,7 @@ export function buildSdkOptions(
     ctx.apiBaseUrl,
     globalEnv,
     ctx.loggingConfig.sdkDebug,
+    ctx.customHeaders,
   );
 
   // Set model

@@ -165,6 +165,16 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     return false;
   }
 
+  // Validate anthropic config if present
+  if (config.anthropic?.apiBaseUrl && typeof config.anthropic.apiBaseUrl !== 'string') {
+    logger.error('anthropic.apiBaseUrl must be a string');
+    return false;
+  }
+  if (config.anthropic?.customHeaders !== undefined && typeof config.anthropic.customHeaders !== 'string') {
+    logger.error('anthropic.customHeaders must be a string');
+    return false;
+  }
+
   // Validate logging config if present
   if (config.logging?.level && typeof config.logging.level !== 'string') {
     logger.error('logging.level must be a string');
@@ -203,11 +213,12 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
     });
   }
 
-  // If Anthropic API key is configured (from env), agent.model should be set
-  if (process.env.ANTHROPIC_API_KEY && !config.agent?.model) {
+  // If Anthropic API key is configured (from config or env), agent.model should be set
+  const hasAnthropicKey = !!(config.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY);
+  if (hasAnthropicKey && !config.agent?.model) {
     errors.push({
       field: 'agent.model',
-      message: 'agent.model is required when ANTHROPIC_API_KEY env var is set',
+      message: 'agent.model is required when Anthropic API key is configured (anthropic.apiKey or ANTHROPIC_API_KEY)',
     });
   }
 

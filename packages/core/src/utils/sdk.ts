@@ -60,13 +60,15 @@ export function extractText(message: AgentMessage): string {
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param customHeaders - Optional custom headers; explicitly controls ANTHROPIC_CUSTOM_HEADERS
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  customHeaders?: string,
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -103,6 +105,26 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Issue #2768: Control ANTHROPIC_CUSTOM_HEADERS to prevent proxy-specific
+  // headers from leaking when switching providers.
+  // - If customHeaders is explicitly provided (even empty string), use it
+  // - If apiBaseUrl is set but customHeaders is not, clear inherited headers
+  //   to prevent stale proxy headers from interfering
+  if (customHeaders !== undefined) {
+    if (customHeaders) {
+      env.ANTHROPIC_CUSTOM_HEADERS = customHeaders;
+    } else {
+      // Empty string → explicitly clear headers
+      delete env.ANTHROPIC_CUSTOM_HEADERS;
+    }
+  } else if (apiBaseUrl) {
+    // apiBaseUrl is configured but customHeaders is not explicitly set.
+    // Clean up any inherited ANTHROPIC_CUSTOM_HEADERS to prevent
+    // proxy-specific headers (e.g., Baidu Comate's comate_custom_header)
+    // from leaking when using a different endpoint.
+    delete env.ANTHROPIC_CUSTOM_HEADERS;
   }
 
   return env;

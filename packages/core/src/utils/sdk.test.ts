@@ -197,5 +197,30 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    // Issue #2768: ANTHROPIC_CUSTOM_HEADERS cleanup tests
+    it('should set ANTHROPIC_CUSTOM_HEADERS when customHeaders is provided', () => {
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, '{"x-custom": "value"}');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('{"x-custom": "value"}');
+    });
+
+    it('should clear ANTHROPIC_CUSTOM_HEADERS when customHeaders is empty string', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', '{"comate_custom_header": "old"}');
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, '');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should clear ANTHROPIC_CUSTOM_HEADERS when apiBaseUrl is set but customHeaders is not', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', '{"comate_custom_header": "old"}');
+      const env = buildSdkEnv('sk-test-key', 'https://open.bigmodel.cn/api/anthropic');
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should preserve ANTHROPIC_CUSTOM_HEADERS when neither apiBaseUrl nor customHeaders is set', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', '{"existing": "header"}');
+      const env = buildSdkEnv('sk-test-key');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('{"existing": "header"}');
+    });
   });
 });

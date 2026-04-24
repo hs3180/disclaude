@@ -247,6 +247,13 @@ export interface BaseAgentConfig {
   provider?: AgentProvider;
   /** Optional API base URL (e.g., for GLM) */
   apiBaseUrl?: string;
+  /**
+   * Custom HTTP headers for API requests.
+   * When set, controls ANTHROPIC_CUSTOM_HEADERS env var for the SDK subprocess.
+   * Empty string clears inherited headers; undefined preserves process.env.
+   * @see Issue #2768
+   */
+  customHeaders?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
   /**
@@ -300,7 +307,7 @@ export interface AgentRuntimeContext {
   /** Get the workspace directory path */
   getWorkspaceDir(): string;
   /** Get agent configuration (API key, model, provider) */
-  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider };
+  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; customHeaders?: string; provider: AgentProvider };
   /** Get logging configuration */
   getLoggingConfig(): { sdkDebug: boolean };
   /** Get global environment variables */

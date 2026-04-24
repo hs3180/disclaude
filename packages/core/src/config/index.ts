@@ -123,8 +123,11 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Anthropic Claude configuration (config file takes priority over env vars)
+          // Issue #2768: anthropic config section overrides ANTHROPIC_* env vars
+          static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl || '';
+          static readonly ANTHROPIC_CUSTOM_HEADERS = fileConfigOnly.anthropic?.customHeaders ?? null;
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -338,6 +341,7 @@ export class Config {
     apiKey: string;
     model: string;
     apiBaseUrl?: string;
+    customHeaders?: string;
     provider: 'anthropic' | 'glm';
   } {
     // Validate required configuration first
@@ -359,6 +363,8 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      ...(this.ANTHROPIC_API_BASE_URL ? { apiBaseUrl: this.ANTHROPIC_API_BASE_URL } : {}),
+      ...(this.ANTHROPIC_CUSTOM_HEADERS !== null ? { customHeaders: this.ANTHROPIC_CUSTOM_HEADERS } : {}),
       provider: 'anthropic',
     };
   }
@@ -626,6 +632,10 @@ export function createDefaultRuntimeContext(
         // Pass through API key if available
         ...(Config.getAgentConfig().apiKey ? {
           ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
+        } : {}),
+        // Issue #2768: Pass apiBaseUrl from config to override ~/.claude/settings.json
+        ...(Config.getAgentConfig().apiBaseUrl ? {
+          ANTHROPIC_BASE_URL: Config.getAgentConfig().apiBaseUrl,
         } : {}),
       },
     }),
