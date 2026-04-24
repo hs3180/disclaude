@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,51 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Insert image into Feishu document at specific position
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image into a Feishu document at a specific position.
+
+This tool performs a 3-step process:
+1. Creates an empty image block at the specified index
+2. Uploads the image file
+3. Binds the uploaded image to the block
+
+Use this when you need precise control over image placement in Feishu documents.
+
+## Parameters
+- **documentId**: Feishu document ID (from URL: /docx/{document_id})
+- **imagePath**: Path to the image file (relative to workspace or absolute)
+- **index**: 0-based position where to insert. -1 means append to end.
+- **width**: Optional width in pixels (0 = auto)
+
+## Example
+\`\`\`json
+{"documentId": "doxcn1234567", "imagePath": "/path/to/chart.png", "index": 3}
+\`\`\`
+
+## Supported formats
+PNG, JPG, JPEG, GIF, BMP, WebP (max 20MB)`,
+    parameters: z.object({
+      documentId: z.string().describe('Feishu document ID (from URL: /docx/{document_id})'),
+      imagePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().describe('0-based position where to insert. -1 means append to end.'),
+      width: z.number().optional().describe('Optional width in pixels (0 = auto)'),
+    }),
+    handler: async ({ documentId, imagePath, index, width }: {
+      documentId: string;
+      imagePath: string;
+      index: number;
+      width?: number;
+    }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index, width });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Docx image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

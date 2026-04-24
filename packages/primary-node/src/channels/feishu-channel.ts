@@ -680,6 +680,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Get Feishu credentials (appId and appSecret).
+   * Issue #2278: Used by IPC handlers for direct Feishu API calls.
+   */
+  getFeishuCredentials(): { appId: string; appSecret: string } {
+    return { appId: this.appId, appSecret: this.appSecret };
+  }
+
+  /**
    * Set the WelcomeService for this channel.
    */
   setWelcomeService(service: WelcomeService): void {
