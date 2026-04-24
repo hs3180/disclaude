@@ -1,12 +1,13 @@
 /**
  * SubagentManager - Unified interface for spawning and managing subagents.
  *
- * Issue #997: Unifies subagent creation across:
- * - Schedule Task agents
- * - Task agents
- *
+ * Issue #997: Unifies subagent creation across all use cases.
  * Issue #1501: Simplified - 'skill' type removed (skills now handled via
  * ChatAgent.executeOnce() or .md-defined subagents in .claude/agents/).
+ * Issue #2513: Removed ScheduleAgent/TaskAgent type distinction.
+ * All subagents are created identically via AgentFactory.createAgent().
+ *
+ * Features:
  * - Unified spawn API with consistent options
  * - Lifecycle management (start, stop, status)
  * - Optional worktree isolation
@@ -23,11 +24,9 @@
  * │        │                    │                               │
  * │        ▼                    ▼                               │
  * │   ┌─────────┐   ┌────────────────────────────────────┐     │
- * │   │ Process │   │         SubagentType               │     │
- * │   │ Manager │   │  ┌─────────┐         ┌───────┐     │     │
- * │   └─────────┘   │  │schedule │         │ task  │     │     │
- * │                 │  └─────────┘         └───────┘     │     │
- * │                 └────────────────────────────────────┘     │
+ * │   │ Process │   │    AgentFactory.createAgent()      │     │
+ * │   │ Manager │   │    (all subagents are ChatAgent)   │     │
+ * │   └─────────┘   └────────────────────────────────────┘     │
  * │                                                             │
  * │   list() ──► SubagentHandle[]                              │
  * │   terminate(id) ──► void                                   │
@@ -52,8 +51,9 @@ const logger = createLogger('SubagentManager');
 /**
  * Type of subagent to spawn.
  *
- * Issue #1501: 'skill' type removed. Skills are now handled via
- * ChatAgent.executeOnce() or .md-defined subagents.
+ * Issue #2513: Removed ScheduleAgent/TaskAgent distinction.
+ * There is only one Agent type: ChatAgent.
+ * The 'type' field is kept for logging and identification purposes only.
  */
 export type SubagentType = 'schedule' | 'task';
 
@@ -69,6 +69,9 @@ export type SubagentStatus = 'starting' | 'running' | 'completed' | 'failed' | '
 
 /**
  * Options for spawning a subagent.
+ *
+ * Issue #2513: The 'type' field is for identification/logging only.
+ * All subagents are created identically via AgentFactory.createAgent().
  *
  * @example
  * ```typescript
@@ -86,7 +89,7 @@ export type SubagentStatus = 'starting' | 'running' | 'completed' | 'failed' | '
  * ```
  */
 export interface SubagentOptions {
-  /** Type of subagent to spawn */
+  /** Type identifier for logging and categorization (all types use the same ChatAgent) */
   type: SubagentType;
   /** Name/identifier for the subagent */
   name: string;
@@ -116,7 +119,7 @@ export interface SubagentOptions {
 export interface SubagentHandle {
   /** Unique subagent ID */
   id: string;
-  /** Subagent type */
+  /** Subagent type identifier (for logging/categorization only) */
   type: SubagentType;
   /** Subagent name */
   name: string;
@@ -152,9 +155,9 @@ export type SubagentStatusCallback = (handle: SubagentHandle) => void;
 /**
  * Manager for spawning and tracking subagents.
  *
- * Provides a unified interface for creating subagents of different types:
- * - **schedule**: For scheduled task execution (uses AgentFactory.createAgent)
- * - **task**: For one-time task execution (uses AgentFactory.createAgent)
+ * Issue #2513: There is no distinction between agent types.
+ * All subagents are ChatAgent instances created via AgentFactory.createAgent().
+ * The 'type' field in SubagentOptions is for logging and categorization only.
  *
  * Issue #1501: 'skill' type removed from this manager.
  *
@@ -162,7 +165,7 @@ export type SubagentStatusCallback = (handle: SubagentHandle) => void;
  * ```typescript
  * const manager = new SubagentManager();
  *
- * // Spawn a task agent
+ * // Spawn a subagent
  * const handle = await manager.spawn({
  *   type: 'task',
  *   name: 'issue-solver',
@@ -234,16 +237,7 @@ export class SubagentManager {
     this.handles.set(subagentId, handle);
 
     try {
-      switch (options.type) {
-        case 'schedule':
-          await this.spawnScheduleAgent(subagentId, options);
-          break;
-        case 'task':
-          await this.spawnTaskAgent(subagentId, options);
-          break;
-        default:
-          throw new Error(`Unknown subagent type: ${options.type}`);
-      }
+      await this.spawnInMemoryAgent(subagentId, options);
     } catch (error) {
       handle.status = 'failed';
       handle.error = error instanceof Error ? error.message : String(error);
@@ -256,9 +250,12 @@ export class SubagentManager {
   }
 
   /**
-   * Spawn a schedule agent in memory.
+   * Spawn an in-memory agent for task execution.
+   *
+   * Issue #2513: Unified from spawnScheduleAgent and spawnTaskAgent.
+   * All subagents are ChatAgent instances created identically.
    */
-  private async spawnScheduleAgent(
+  private async spawnInMemoryAgent(
     subagentId: string,
     options: SubagentOptions
   ): Promise<void> {
@@ -276,7 +273,7 @@ export class SubagentManager {
     this.inMemoryAgents.set(subagentId, agent);
     handle.status = 'running';
 
-    logger.info({ subagentId, name: options.name }, 'Schedule subagent started');
+    logger.info({ subagentId, name: options.name, type: options.type }, 'Subagent started');
     this.notifyStatusChange(handle);
 
     // Execute task
@@ -290,12 +287,12 @@ export class SubagentManager {
 
       handle.status = 'completed';
       handle.completedAt = new Date();
-      logger.info({ subagentId }, 'Schedule subagent completed');
+      logger.info({ subagentId }, 'Subagent completed');
     } catch (error) {
       handle.status = 'failed';
       handle.error = error instanceof Error ? error.message : String(error);
       handle.completedAt = new Date();
-      logger.error({ err: error, subagentId }, 'Schedule subagent failed');
+      logger.error({ err: error, subagentId }, 'Subagent failed');
     }
 
     this.notifyStatusChange(handle);
@@ -304,61 +301,7 @@ export class SubagentManager {
     try {
       agent.dispose();
     } catch (err) {
-      logger.error({ err, subagentId }, 'Error disposing schedule agent');
-    }
-    this.inMemoryAgents.delete(subagentId);
-  }
-
-  /**
-   * Spawn a task agent in memory.
-   */
-  private async spawnTaskAgent(
-    subagentId: string,
-    options: SubagentOptions
-  ): Promise<void> {
-    const handle = this.handles.get(subagentId);
-    if (!handle) {
-      throw new Error(`Subagent handle not found: ${subagentId}`);
-    }
-
-    // Create agent using factory
-    const agent = AgentFactory.createAgent(
-      options.chatId,
-      options.callbacks
-    );
-
-    this.inMemoryAgents.set(subagentId, agent);
-    handle.status = 'running';
-
-    logger.info({ subagentId, name: options.name }, 'Task subagent started');
-    this.notifyStatusChange(handle);
-
-    // Execute task
-    try {
-      await agent.executeOnce(
-        options.chatId,
-        options.prompt,
-        undefined,
-        options.senderOpenId
-      );
-
-      handle.status = 'completed';
-      handle.completedAt = new Date();
-      logger.info({ subagentId }, 'Task subagent completed');
-    } catch (error) {
-      handle.status = 'failed';
-      handle.error = error instanceof Error ? error.message : String(error);
-      handle.completedAt = new Date();
-      logger.error({ err: error, subagentId }, 'Task subagent failed');
-    }
-
-    this.notifyStatusChange(handle);
-
-    // Cleanup
-    try {
-      agent.dispose();
-    } catch (err) {
-      logger.error({ err, subagentId }, 'Error disposing task agent');
+      logger.error({ err, subagentId }, 'Error disposing agent');
     }
     this.inMemoryAgents.delete(subagentId);
   }

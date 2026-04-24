@@ -89,8 +89,8 @@ export interface UserInput {
  * This is the **only** agent interface in the simplified architecture (Issue #1501).
  * ChatAgent implements this interface and serves as the universal agent for all scenarios:
  * - Long-lived conversation (via handleInput + processMessage)
- * - One-shot task execution (via executeOnce) - replaces former SkillAgent/Subagent
- * - Scheduled tasks (via AgentFactory.createAgent)
+ * - One-shot task execution (via executeOnce)
+ * - Scheduled tasks (via createScheduleExecutor + AgentFactory.createAgent)
  *
  * @example
  * ```typescript

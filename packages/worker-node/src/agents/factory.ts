@@ -2,8 +2,8 @@
  * AgentFactory - Factory for creating ChatAgent instances with unified configuration.
  *
  * Issue #2345 Phase 5: Simplified to a single createAgent() method.
- * The previous createScheduleAgent / createTaskAgent / createChatAgent methods
- * all had identical implementations. Now there is just one method.
+ * Issue #2513: Removed ScheduleAgent/TaskAgent type distinction entirely.
+ * There is only one agent type: ChatAgent, created via createAgent().
  *
  * Uses unified configuration types from Issue #327.
  *
@@ -94,8 +94,8 @@ export interface AgentCreateOptions {
  * Factory for creating ChatAgent instances with unified configuration.
  *
  * Issue #2345 Phase 5: Simplified to a single createAgent() method.
- * All agent types (chat, schedule, task) are now ChatAgent instances
- * created through the same method.
+ * Issue #2513: All agent types are ChatAgent instances.
+ * There is no distinction between chat, schedule, or task agents.
  *
  * Each call fetches default configuration from Config.getAgentConfig()
  * and allows optional overrides.
@@ -124,7 +124,7 @@ export class AgentFactory {
    *
    * This is the unified factory method for all agent creation.
    * Whether the agent is used for long-lived chat, short-lived scheduled tasks,
-   * or one-time task execution, they are all ChatAgent instances.
+   * or one-time task execution — all are ChatAgent instances.
    *
    * @param chatId - Chat ID for message delivery and session binding
    * @param callbacks - Callbacks for platform-specific operations
@@ -138,7 +138,7 @@ export class AgentFactory {
    *   messageBuilderOptions: { ... },
    * });
    *
-   * // Short-lived schedule/task agent (dispose after execution)
+   * // Short-lived agent (dispose after execution)
    * const agent = AgentFactory.createAgent('chat-456', callbacks, {
    *   model: 'claude-3-5-sonnet-20241022',
    * });
