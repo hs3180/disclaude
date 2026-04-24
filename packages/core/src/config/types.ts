@@ -342,6 +342,13 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project template configuration (Issue #2227) */
+  projectTemplates?: Record<string, {
+    /** Human-readable display name (e.g. "研究模式") */
+    displayName?: string;
+    /** Template description for /project list display */
+    description?: string;
+  }>;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

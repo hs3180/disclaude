@@ -358,6 +358,70 @@ describe('validateConfig', () => {
     // Should still validate as we only check known structure
     expect(validateConfig(config)).toBe(true);
   });
+
+  // Issue #2227: projectTemplates validation
+  it('should validate valid projectTemplates config', () => {
+    const config = {
+      projectTemplates: {
+        research: { displayName: '研究模式', description: '专注研究' },
+        'book-reader': { displayName: '阅读模式' },
+      },
+    };
+
+    expect(validateConfig(config)).toBe(true);
+  });
+
+  it('should validate projectTemplates with empty metadata', () => {
+    const config = {
+      projectTemplates: {
+        research: {},
+      },
+    };
+
+    expect(validateConfig(config)).toBe(true);
+  });
+
+  it('should reject projectTemplates that is not an object', () => {
+    const config1 = { projectTemplates: 'invalid' };
+    const config2 = { projectTemplates: 123 };
+    const config3 = { projectTemplates: ['array'] };
+    const config4 = { projectTemplates: null };
+
+    expect(validateConfig(config1 as unknown as Record<string, unknown>)).toBe(false);
+    expect(validateConfig(config2 as unknown as Record<string, unknown>)).toBe(false);
+    expect(validateConfig(config3 as unknown as Record<string, unknown>)).toBe(false);
+    expect(validateConfig(config4 as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  it('should reject projectTemplates with non-object value', () => {
+    const config = {
+      projectTemplates: {
+        research: 'invalid',
+      },
+    };
+
+    expect(validateConfig(config as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  it('should reject projectTemplates with invalid displayName type', () => {
+    const config = {
+      projectTemplates: {
+        research: { displayName: 123 },
+      },
+    };
+
+    expect(validateConfig(config as unknown as Record<string, unknown>)).toBe(false);
+  });
+
+  it('should reject projectTemplates with invalid description type', () => {
+    const config = {
+      projectTemplates: {
+        research: { description: ['array'] },
+      },
+    };
+
+    expect(validateConfig(config as unknown as Record<string, unknown>)).toBe(false);
+  });
 });
 
 describe('config loader integration', () => {

@@ -449,6 +449,19 @@ export class Config {
   }
 
   /**
+   * Get project templates configuration from config file.
+   *
+   * Returns the projectTemplates section from disclaude.config.yaml,
+   * which maps template names to their display metadata.
+   *
+   * @see Issue #2227 — ProjectManager config integration
+   * @returns Project templates config or undefined
+   */
+  static getProjectTemplatesConfig(): DisclaudeConfig['projectTemplates'] {
+    return fileConfigOnly.projectTemplates;
+  }
+
+  /**
    * Check if Agent Teams mode is enabled.
    * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
    *

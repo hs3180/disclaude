@@ -41,6 +41,10 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
     workspace: { dir: '/test/workspace' },
     messaging: { debug: { forwardPatterns: ['error.*'] } },
     tools: { mcpServers: { test: { command: 'node' } } },
+    projectTemplates: {
+      research: { displayName: '研究模式', description: '专注研究的独立空间' },
+      'book-reader': { displayName: '阅读模式' },
+    },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
 }));
@@ -149,6 +153,21 @@ describe('Config', () => {
       const debug = Config.getDebugConfig();
       expect(debug).toBeDefined();
       expect(typeof debug).toBe('object');
+    });
+  });
+
+  // Issue #2227: projectTemplates config integration
+  describe('getProjectTemplatesConfig', () => {
+    it('should return projectTemplates from config file', () => {
+      const templates = Config.getProjectTemplatesConfig();
+      expect(templates).toBeDefined();
+      expect(templates?.research).toEqual({
+        displayName: '研究模式',
+        description: '专注研究的独立空间',
+      });
+      expect(templates?.['book-reader']).toEqual({
+        displayName: '阅读模式',
+      });
     });
   });
 

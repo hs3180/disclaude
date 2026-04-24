@@ -171,6 +171,33 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     return false;
   }
 
+  // Validate projectTemplates config if present (Issue #2227)
+  if (config.projectTemplates !== undefined) {
+    if (typeof config.projectTemplates !== 'object' || config.projectTemplates === null || Array.isArray(config.projectTemplates)) {
+      logger.error('projectTemplates must be an object');
+      return false;
+    }
+    for (const [key, value] of Object.entries(config.projectTemplates)) {
+      if (typeof key !== 'string' || key.length === 0) {
+        logger.error('projectTemplates keys must be non-empty strings');
+        return false;
+      }
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        logger.error(`projectTemplates.${key} must be an object`);
+        return false;
+      }
+      const meta = value as Record<string, unknown>;
+      if (meta.displayName !== undefined && typeof meta.displayName !== 'string') {
+        logger.error(`projectTemplates.${key}.displayName must be a string`);
+        return false;
+      }
+      if (meta.description !== undefined && typeof meta.description !== 'string') {
+        logger.error(`projectTemplates.${key}.description must be a string`);
+        return false;
+      }
+    }
+  }
+
   return true;
 }
 
