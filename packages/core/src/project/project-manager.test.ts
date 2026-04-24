@@ -1,5 +1,5 @@
 /**
- * Unit tests for ProjectManager — in-memory + persistence logic.
+ * Unit tests for ProjectManager — in-memory + persistence + filesystem logic.
  *
  * Tests cover:
  * - Template loading and querying
@@ -10,10 +10,12 @@
  * - CwdProvider factory
  * - Persistence (atomic write, load, restore, corruption handling)
  * - Delete operation
+ * - Filesystem operations (directory creation, CLAUDE.md copy, rollback)
  * - Edge cases (empty config, duplicate names, etc.)
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — persistence layer)
+ * @see Issue #2226 (Sub-Issue D — filesystem operations)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -35,11 +37,32 @@ function createTempDir(): string {
   return dir;
 }
 
+/**
+ * Create template CLAUDE.md files for testing.
+ * Sets up {packageDir}/templates/{name}/CLAUDE.md for each configured template.
+ */
+function setupTemplateClaudeMdFiles(packageDir: string, templateNames: string[]): void {
+  for (const name of templateNames) {
+    const templateDir = join(packageDir, 'templates', name);
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), `# ${name} Template\n\nCLAUDE.md content for ${name}.\n`, 'utf8');
+  }
+}
+
 function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManagerOptions {
   const workspaceDir = createTempDir();
+  const packageDir = join(workspaceDir, 'packages/core');
+  const templateNames = Object.keys(
+    overrides?.templatesConfig ?? {
+      research: { displayName: '研究模式', description: '专注研究的独立空间' },
+      'book-reader': { displayName: '读书助手' },
+    },
+  );
+  setupTemplateClaudeMdFiles(packageDir, templateNames);
+
   return {
     workspaceDir,
-    packageDir: join(workspaceDir, 'packages/core'),
+    packageDir,
     templatesConfig: {
       research: {
         displayName: '研究模式',
@@ -892,24 +915,26 @@ describe('ProjectManager — edge cases', () => {
   });
 
   it('should compute workingDir correctly with trailing slash in workspaceDir', () => {
+    const ws = createTempDir();
     const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace/',
+      workspaceDir: `${ws  }/`,
     }));
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(join(ws, 'projects/test-project'));
     }
   });
 
   it('should compute workingDir correctly with multiple trailing slashes', () => {
+    const ws = createTempDir();
     const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace///',
+      workspaceDir: `${ws  }///`,
     }));
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(join(ws, 'projects/test-project'));
     }
   });
 
@@ -940,5 +965,160 @@ describe('ProjectManager — edge cases', () => {
 
     const result = pm.create('chat_1', 'minimal', 'my-minimal');
     expect(result.ok).toBe(true);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Filesystem Operations (Sub-Issue D — Issue #2226)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager create() — filesystem operations', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should create working directory on disk', () => {
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+
+    const projectDir = join(workspaceDir, 'projects', 'my-research');
+    expect(existsSync(projectDir)).toBe(true);
+  });
+
+  it('should copy CLAUDE.md from template to instance directory', () => {
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+
+    const claudeMdPath = join(workspaceDir, 'projects', 'my-research', 'CLAUDE.md');
+    expect(existsSync(claudeMdPath)).toBe(true);
+
+    const content = readFileSync(claudeMdPath, 'utf8');
+    expect(content).toContain('research Template');
+  });
+
+  it('should create separate directories for different instances', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    expect(existsSync(join(workspaceDir, 'projects', 'research-1'))).toBe(true);
+    expect(existsSync(join(workspaceDir, 'projects', 'book-1'))).toBe(true);
+
+    // Each should have its own CLAUDE.md
+    const researchMd = readFileSync(join(workspaceDir, 'projects', 'research-1', 'CLAUDE.md'), 'utf8');
+    const bookMd = readFileSync(join(workspaceDir, 'projects', 'book-1', 'CLAUDE.md'), 'utf8');
+    expect(researchMd).toContain('research Template');
+    expect(bookMd).toContain('book-reader Template');
+  });
+
+  it('should return error when template CLAUDE.md is missing', () => {
+    // Create a template config entry but don't create the CLAUDE.md file
+    const opts = createOptions();
+    const { workspaceDir: ws } = opts;
+
+    // Add a template that has no CLAUDE.md on disk
+    const noFileTemplateDir = join(opts.packageDir!, 'templates', 'no-claude-md');
+    mkdirSync(noFileTemplateDir, { recursive: true });
+
+    const pmWithBadTemplate = new ProjectManager({
+      ...opts,
+      workspaceDir: ws,
+      templatesConfig: {
+        'no-claude-md': {},
+      },
+    });
+
+    const result = pmWithBadTemplate.create('chat_1', 'no-claude-md', 'test-instance');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('CLAUDE.md 不存在');
+    }
+  });
+
+  it('should rollback directory when CLAUDE.md copy fails', () => {
+    const opts = createOptions();
+    const { workspaceDir: ws } = opts;
+
+    // Create a template config entry but make the CLAUDE.md path point to a non-existent file
+    const templateDir = join(opts.packageDir!, 'templates', 'broken');
+    mkdirSync(templateDir, { recursive: true });
+    // Don't create CLAUDE.md in this template dir
+
+    const pmBroken = new ProjectManager({
+      ...opts,
+      workspaceDir: ws,
+      templatesConfig: {
+        broken: {},
+      },
+    });
+
+    const result = pmBroken.create('chat_1', 'broken', 'test-rollback');
+    expect(result.ok).toBe(false);
+
+    // Directory should have been rolled back
+    const projectDir = join(ws, 'projects', 'test-rollback');
+    expect(existsSync(projectDir)).toBe(false);
+  });
+});
+
+describe('ProjectManager create() — without packageDir', () => {
+  it('should create instance without CLAUDE.md when packageDir is not configured', () => {
+    const opts = createOptions({ packageDir: undefined });
+    const pm = new ProjectManager(opts);
+
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+
+    // Directory should be created
+    const projectDir = join(opts.workspaceDir, 'projects', 'my-research');
+    expect(existsSync(projectDir)).toBe(true);
+
+    // CLAUDE.md should NOT exist (no packageDir)
+    expect(existsSync(join(projectDir, 'CLAUDE.md'))).toBe(false);
+  });
+
+  it('should work with empty packageDir', () => {
+    const opts = createOptions({ packageDir: '' });
+    const pm = new ProjectManager(opts);
+
+    const result = pm.create('chat_1', 'research', 'empty-pkg');
+    expect(result.ok).toBe(true);
+
+    // Directory should exist, no CLAUDE.md
+    const projectDir = join(opts.workspaceDir, 'projects', 'empty-pkg');
+    expect(existsSync(projectDir)).toBe(true);
+    expect(existsSync(join(projectDir, 'CLAUDE.md'))).toBe(false);
+  });
+});
+
+describe('ProjectManager create() — directory creation edge cases', () => {
+  it('should create nested projects/ directory if it does not exist', () => {
+    const ws = createTempDir();
+    // Don't create projects/ directory — it should be created automatically
+    const opts = createOptions({ workspaceDir: ws });
+    const pm = new ProjectManager(opts);
+
+    const result = pm.create('chat_1', 'research', 'nested-test');
+    expect(result.ok).toBe(true);
+    expect(existsSync(join(ws, 'projects', 'nested-test'))).toBe(true);
+  });
+
+  it('should handle existing project directory gracefully', () => {
+    const opts = createOptions();
+    const { workspaceDir: ws } = opts;
+
+    // Pre-create the project directory
+    mkdirSync(join(ws, 'projects', 'pre-existing'), { recursive: true });
+
+    const pm = new ProjectManager(opts);
+    const result = pm.create('chat_1', 'research', 'pre-existing');
+    expect(result.ok).toBe(true);
+
+    // CLAUDE.md should still be copied
+    expect(existsSync(join(ws, 'projects', 'pre-existing', 'CLAUDE.md'))).toBe(true);
   });
 });

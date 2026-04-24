@@ -9,8 +9,8 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -64,8 +64,7 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  private readonly packageDir: string | undefined;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +81,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -162,10 +161,10 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
-   * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
+   * Creates the working directory and copies CLAUDE.md from the template.
+   * If filesystem operations fail, the in-memory state is not created.
    *
    * @param chatId - Chat session requesting creation
    * @param templateName - Template to instantiate from
@@ -194,7 +193,13 @@ export class ProjectManager {
       return { ok: false, error: `实例 "${name}" 已存在` };
     }
 
+    // Filesystem operations: create directory + copy CLAUDE.md
     const workingDir = this.resolveWorkingDir(name);
+    const fsResult = this.instantiateFromTemplate(name, templateName, workingDir);
+    if (!fsResult.ok) {
+      return { ok: false, error: fsResult.error };
+    }
+
     const instance: ProjectInstance = {
       name,
       templateName,
@@ -509,10 +514,108 @@ export class ProjectManager {
    * @returns Absolute working directory path
    */
   private resolveWorkingDir(name: string): string {
-    // Use simple path join (path traversal already validated in create())
-    // Avoid importing `path` to keep this module filesystem-free
     const ws = this.workspaceDir.replace(/\/+$/, '');
     return `${ws}/projects/${name}`;
+  }
+
+  // ───────────────────────────────────────────
+  // Filesystem Operations (Sub-Issue D)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate a project from a template on the filesystem.
+   *
+   * Creates the working directory and copies CLAUDE.md from the template.
+   * If any step fails, rolls back (removes created directory).
+   *
+   * Path traversal protection: verifies the resolved path is within workspaceDir
+   * as a defense-in-depth measure (in addition to name validation in create()).
+   *
+   * @param name - Instance name (already validated)
+   * @param templateName - Template name (already validated)
+   * @param workingDir - Computed working directory path
+   * @returns ProjectResult indicating success or failure
+   */
+  private instantiateFromTemplate(
+    _name: string,
+    templateName: string,
+    workingDir: string,
+  ): ProjectResult<void> {
+    // Defense in depth: verify resolved path is within workspaceDir
+    const resolvedWorkingDir = resolve(workingDir);
+    const resolvedWorkspaceDir = resolve(this.workspaceDir);
+    const expectedPrefix = resolvedWorkspaceDir.endsWith('/')
+      ? resolvedWorkspaceDir
+      : `${resolvedWorkspaceDir  }/`;
+    if (!resolvedWorkingDir.startsWith(expectedPrefix)) {
+      return {
+        ok: false,
+        error: `工作目录路径不在 workspace 范围内: ${workingDir}`,
+      };
+    }
+
+    // Create working directory
+    try {
+      mkdirSync(resolvedWorkingDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Copy CLAUDE.md if packageDir is configured
+    if (this.packageDir) {
+      const copyResult = this.copyClaudeMd(templateName, resolvedWorkingDir);
+      if (!copyResult.ok) {
+        // Rollback: remove created directory
+        try {
+          rmSync(resolvedWorkingDir, { recursive: true, force: true });
+        } catch {
+          // Ignore rollback failure — directory may be partially created
+        }
+        return copyResult;
+      }
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from a template directory to the target directory.
+   *
+   * Source: `{packageDir}/templates/{templateName}/CLAUDE.md`
+   * Target: `{targetDir}/CLAUDE.md`
+   *
+   * @param templateName - Template name to copy CLAUDE.md from
+   * @param targetDir - Target instance directory
+   * @returns ProjectResult indicating success or failure
+   */
+  private copyClaudeMd(templateName: string, targetDir: string): ProjectResult<void> {
+    if (!this.packageDir) {
+      // No packageDir configured — skip CLAUDE.md copy
+      return { ok: true, data: undefined };
+    }
+
+    const sourcePath = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+
+    if (!existsSync(sourcePath)) {
+      return {
+        ok: false,
+        error: `模板 "${templateName}" 的 CLAUDE.md 不存在: ${sourcePath}`,
+      };
+    }
+
+    try {
+      copyFileSync(sourcePath, join(targetDir, 'CLAUDE.md'));
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
   }
 
   /**

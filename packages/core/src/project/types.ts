@@ -186,8 +186,8 @@ export interface ProjectManagerOptions {
   /** Workspace root directory (parent of `projects/` instances dir) */
   workspaceDir: string;
 
-  /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
-  packageDir: string;
+  /** Package directory (contains `templates/` with built-in CLAUDE.md files). Optional — if not set, instances are created without CLAUDE.md. */
+  packageDir?: string;
 
   /** Template configuration from disclaude.config.yaml */
   templatesConfig: ProjectTemplatesConfig;
