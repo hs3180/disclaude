@@ -200,6 +200,10 @@ export {
 // Task module (Issue #1041 - migrated from worker-node)
 export type {
   TaskDefinitionDetails,
+  TaskContextEntry,
+  TaskContextStatus,
+  TaskStep,
+  TaskContextUpdateCallback,
 } from './task/index.js';
 
 export {
@@ -207,6 +211,10 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  // Issue #857: Reporter Agent shared state
+  TaskContext,
+  getTaskContext,
+  resetTaskContext,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

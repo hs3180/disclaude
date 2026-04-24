@@ -22,6 +22,7 @@
 
 import { createLogger } from '@disclaude/core';
 import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
+import { get_current_task_status } from './tools/get-task-status.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -167,6 +168,23 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
+              {
+                name: 'get_current_task_status',
+                description: 'Get the current status of a running deep task. Provide taskId for a specific task, chatId for the active task in a chat, or neither to list all active tasks. (Issue #857)',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    taskId: {
+                      type: 'string',
+                      description: 'Specific task ID to query',
+                    },
+                    chatId: {
+                      type: 'string',
+                      description: 'Chat ID to find the active task for',
+                    },
+                  },
+                },
+              },
             ],
           },
         };
@@ -251,6 +269,22 @@ async function handleMessage(message: unknown) {
                 text: result.success
                   ? result.message
                   : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'get_current_task_status') {
+          const args = toolArgs as { taskId?: string; chatId?: string };
+          const result = await get_current_task_status(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: JSON.stringify(result, null, 2),
               }],
             },
           };

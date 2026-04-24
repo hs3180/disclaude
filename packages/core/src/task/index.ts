@@ -17,3 +17,16 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Context (Issue #857: Reporter Agent shared state)
+export {
+  TaskContext,
+  getTaskContext,
+  resetTaskContext,
+} from './task-context.js';
+export type {
+  TaskContextEntry,
+  TaskContextStatus,
+  TaskStep,
+  TaskContextUpdateCallback,
+} from './task-context.js';

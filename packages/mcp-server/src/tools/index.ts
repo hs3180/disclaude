@@ -46,3 +46,13 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Task Status (Issue #857: Reporter Agent)
+export {
+  get_current_task_status,
+  GET_TASK_STATUS_SCHEMA,
+} from './get-task-status.js';
+export type {
+  GetTaskStatusParams,
+  GetTaskStatusResult,
+} from './get-task-status.js';
