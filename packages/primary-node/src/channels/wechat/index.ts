@@ -18,4 +18,6 @@ export type {
   WeChatMessageItem,
   WeChatUpdate,
   WeChatGetUpdatesResponse,
+  WeChatMediaUploadResult,
 } from './types.js';
+export { MAX_MEDIA_FILE_SIZE, IMAGE_EXTENSIONS } from './types.js';

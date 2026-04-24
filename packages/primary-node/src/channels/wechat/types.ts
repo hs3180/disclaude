@@ -109,3 +109,27 @@ export interface WeChatGetUpdatesResponse {
   /** List of new updates/messages */
   update_list?: WeChatUpdate[];
 }
+
+// ---------------------------------------------------------------------------
+// Media upload API types (Issue #1556 Phase 3.2)
+// ---------------------------------------------------------------------------
+
+/** Maximum file size for media upload (20 MB). */
+export const MAX_MEDIA_FILE_SIZE = 20 * 1024 * 1024;
+
+/** Image file extensions recognized by WeChat API. */
+export const IMAGE_EXTENSIONS = new Set([
+  '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
+]);
+
+/**
+ * Result of a media upload to WeChat CDN.
+ */
+export interface WeChatMediaUploadResult {
+  /** CDN URL of the uploaded file */
+  url: string;
+  /** File name as stored on CDN */
+  file_name?: string;
+  /** File size in bytes */
+  file_size?: number;
+}

@@ -177,14 +177,15 @@ describe('WiredChannelDescriptors', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.name).toBe('WeChat');
     });
 
-    it('should have MVP capabilities (text only)', () => {
+    it('should have capabilities with file support (Issue #1556 Phase 3.2)', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.defaultCapabilities).toEqual({
         supportsCard: false,
         supportsThread: false,
-        supportsFile: false,
+        supportsFile: true,
         supportsMarkdown: false,
         supportsMention: false,
         supportsUpdate: false,
+        supportedMcpTools: ['send_text', 'send_file'],
       });
     });
 
