@@ -2,7 +2,9 @@
  * PrimaryAgentPool - Agent pool for Primary Node.
  *
  * Manages ChatAgent instances for each chatId, using AgentFactory
- * from @disclaude/worker-node to create ChatAgent instances.
+ * from @disclaude/core to create ChatAgent instances.
+ *
+ * Issue #2717 Phase 1: Updated to import from @disclaude/core.
  *
  * Issue #1499: Accepts optional MessageBuilderOptions for channel-specific
  * message building (e.g., Feishu sections). This decouples Feishu-specific
@@ -11,8 +13,8 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
-import { AgentFactory, type ChatAgentCallbacks, type ChatAgentInterface } from '@disclaude/worker-node';
+import { type MessageBuilderOptions, AgentFactory, type ChatAgentCallbacks, type ChatAgent as ChatAgentInterface } from '@disclaude/core';
+import { createChannelMcpServer } from '@disclaude/mcp-server';
 
 /**
  * Options for PrimaryAgentPool initialization.
@@ -59,6 +61,7 @@ export class PrimaryAgentPool {
     if (!agent) {
       agent = AgentFactory.createAgent(chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        channelMcpFactory: () => createChannelMcpServer(),
       });
       this.agents.set(chatId, agent);
     }

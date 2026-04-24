@@ -53,8 +53,11 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #2717 Phase 1: AgentFactory migrated to core
+  AgentFactory,
+  toChatAgentCallbacks,
 } from '@disclaude/core';
-import { AgentFactory, toChatAgentCallbacks } from '@disclaude/worker-node';
+import { createChannelMcpServer } from '@disclaude/mcp-server';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -471,7 +474,10 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1338: Pass model override for per-task model selection
     const executor = createScheduleExecutor({
       agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), model ? { model } : {});
+        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), {
+          ...(model ? { model } : {}),
+          channelMcpFactory: () => createChannelMcpServer(),
+        });
       },
       callbacks: schedulerCallbacks,
     });

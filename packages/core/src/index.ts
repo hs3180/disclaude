@@ -133,6 +133,25 @@ export {
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
 
+// ChatAgent + AgentFactory (Issue #2717 Phase 1: migrated from worker-node to core)
+export {
+  ChatAgent as ChatAgentImpl,
+  ChatHistoryLoader,
+  AgentLoopManager,
+  type ChatAgentCallbacks,
+  type ChatAgentConfig,
+  type HistoryLoaderCallbacks,
+  type LoopContext,
+} from './agents/chat-agent/index.js';
+
+// Agent Factory (Issue #2717 Phase 1: migrated from worker-node to core)
+export {
+  AgentFactory,
+  toChatAgentCallbacks,
+  type AgentCreateOptions,
+  type ChatAgentExternalCallbacks,
+} from './agents/factory.js';
+
 // Skills module (Issue #430)
 export {
   type DiscoveredSkill,
