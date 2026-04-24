@@ -15,6 +15,14 @@ export type {
   ProjectTemplate,
   ProjectTemplatesConfig,
   ProjectsPersistData,
+  // Taste types (Issue #2335)
+  TasteSource,
+  TasteCategory,
+  TasteRule,
+  TasteData,
+  TasteManagerOptions,
+  AddTasteInput,
+  UpdateTasteInput,
 } from './types.js';
 
 export {
@@ -30,3 +38,6 @@ export type {
 } from './template-discovery.js';
 
 export { ProjectManager } from './project-manager.js';
+
+// TasteManager (Issue #2335)
+export { TasteManager } from './taste-manager.js';

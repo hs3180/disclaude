@@ -192,3 +192,119 @@ export interface ProjectManagerOptions {
   /** Template configuration from disclaude.config.yaml */
   templatesConfig: ProjectTemplatesConfig;
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Taste Types (Issue #2335)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Source of a taste rule — how it was learned.
+ *
+ * - `auto`: Automatically detected from repeated user corrections
+ * - `claude_md`: Extracted from CLAUDE.md preferences section
+ * - `manual`: Explicitly added by the user via /taste command
+ */
+export type TasteSource = 'auto' | 'claude_md' | 'manual';
+
+/**
+ * Predefined taste categories for organizing preferences.
+ */
+export type TasteCategory = 'code_style' | 'interaction' | 'tech_preference' | 'project_norm' | 'other';
+
+/**
+ * A single taste rule representing a learned user preference.
+ *
+ * Each rule captures:
+ * - What the preference is (content)
+ * - How it was learned (source)
+ * - How strongly it should be weighted (correctionCount)
+ * - When it was last observed (lastSeen)
+ *
+ * @see Issue #2335
+ */
+export interface TasteRule {
+  /** Unique identifier for this rule */
+  id: string;
+
+  /** Taste category for grouping related preferences */
+  category: TasteCategory;
+
+  /** The preference rule as a human-readable instruction */
+  content: string;
+
+  /** How this rule was learned */
+  source: TasteSource;
+
+  /** Number of times the user corrected this issue (weight signal) */
+  correctionCount: number;
+
+  /** ISO 8601 timestamp when this rule was last observed/reinforced */
+  lastSeen: string;
+
+  /** ISO 8601 timestamp when this rule was first created */
+  createdAt: string;
+}
+
+/**
+ * Full taste data for a single project.
+ *
+ * Stored in `{workspace}/.disclaude/taste/{projectName}.json`.
+ * The "default" project uses `default.json`.
+ *
+ * @see Issue #2335
+ */
+export interface TasteData {
+  /** Project name this taste belongs to */
+  projectName: string;
+
+  /** List of taste rules */
+  rules: TasteRule[];
+
+  /** ISO 8601 timestamp of last modification */
+  updatedAt: string;
+}
+
+/**
+ * Options for constructing a TasteManager instance.
+ *
+ * @see Issue #2335
+ */
+export interface TasteManagerOptions {
+  /** Workspace root directory */
+  workspaceDir: string;
+}
+
+/**
+ * Input for adding a new taste rule.
+ *
+ * Omits auto-generated fields (id, correctionCount, lastSeen, createdAt).
+ */
+export interface AddTasteInput {
+  /** Taste category */
+  category: TasteCategory;
+
+  /** The preference rule content */
+  content: string;
+
+  /** How this rule was learned (defaults to 'manual') */
+  source?: TasteSource;
+
+  /** Initial correction count (defaults to 1) */
+  correctionCount?: number;
+}
+
+/**
+ * Input for updating an existing taste rule.
+ *
+ * All fields are optional — only provided fields will be updated.
+ */
+export interface UpdateTasteInput {
+  /** Updated category */
+  category?: TasteCategory;
+
+  /** Updated preference rule content */
+  content?: string;
+
+  /** Updated correction count */
+  correctionCount?: number;
+}
