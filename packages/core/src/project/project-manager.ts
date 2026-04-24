@@ -11,6 +11,7 @@
 
 import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -55,17 +56,21 @@ interface ProjectInstance {
  *
  * Lifecycle:
  * 1. Construct with `ProjectManagerOptions`
- * 2. Call `init()` (or `init(templatesConfig)`) to load templates
- * 3. Use `create()`, `use()`, `getActive()`, `reset()` to manage projects
- * 4. Call `createCwdProvider()` to get a CwdProvider for Agent injection
+ * 2. Templates are auto-loaded (from discovery or config) in constructor
+ * 3. Optionally call `init()` to reload templates
+ * 4. Use `create()`, `use()`, `getActive()`, `reset()` to manage projects
+ * 5. Call `createCwdProvider()` to get a CwdProvider for Agent injection
  *
- * Zero-config: if no templates are configured, behavior is identical to
- * the current system (all chatIds use workspace root as cwd).
+ * Auto-discovery: when `templatesConfig` is omitted in options, templates are
+ * auto-discovered from `{packageDir}/templates/`. When provided, config-based
+ * templates are merged with discovered ones (config takes priority).
+ *
+ * Zero-config: if no templates are configured and none are discovered, behavior
+ * is identical to the current system (all chatIds use workspace root as cwd).
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,12 +87,14 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
 
-    this.init(options.templatesConfig);
+    // Auto-discover templates, merge with config if provided
+    const resolvedConfig = this.resolveTemplatesConfig(options.templatesConfig);
+    this.init(resolvedConfig);
 
     // Restore persisted state after templates are loaded
     this.loadPersistedData();
@@ -98,10 +105,41 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
+   * Resolve the effective templates config by merging auto-discovered and
+   * config-based templates.
+   *
+   * - Auto-discover from `{packageDir}/templates/`
+   * - If `configTemplates` is provided, merge: discovered + config (config wins)
+   * - If not provided, use discovered templates only
+   *
+   * @param configTemplates - Optional templates from disclaude.config.yaml
+   * @returns Merged ProjectTemplatesConfig
+   */
+  private resolveTemplatesConfig(configTemplates?: ProjectTemplatesConfig): ProjectTemplatesConfig {
+    // Step 1: Auto-discover from filesystem
+    const discovered = discoverTemplatesAsConfig(this.packageDir);
+
+    // Step 2: If no config override, return discovered as-is
+    if (!configTemplates) {
+      return discovered;
+    }
+
+    // Step 3: Merge — discovered as base, config overrides
+    const merged: ProjectTemplatesConfig = { ...discovered };
+    for (const [name, meta] of Object.entries(configTemplates)) {
+      merged[name] = meta;
+    }
+    return merged;
+  }
+
+  /**
    * Initialize (or re-initialize) templates from config.
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
+   *
+   * Note: This method does NOT re-run auto-discovery. To re-discover,
+   * create a new ProjectManager instance.
    *
    * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
    */
