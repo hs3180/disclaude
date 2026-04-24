@@ -31,6 +31,7 @@ import type {
   AcpPermissionRequestParams,
   AcpPermissionResult,
   AcpSessionUpdateParams,
+  AcpClientCapabilities,
 } from './types.js';
 import {
   AcpError,
@@ -64,6 +65,27 @@ export interface AcpClientConfig {
   timeout?: number;
   /** 权限请求回调，不设置则自动批准 */
   onPermissionRequest?: PermissionRequestCallback;
+  /**
+   * 自定义客户端能力声明（initialize 握手时发送）。
+   * 不设置时使用 Claude Code 默认能力。
+   * 当连接非 Claude ACP Server 时可覆盖此值。
+   * @see Issue #1333
+   */
+  clientCapabilities?: AcpClientCapabilities;
+  /**
+   * 自定义 session/new 元数据构建器。
+   * 不设置时使用 Claude Code 默认的 `_meta.claudeCode` 格式。
+   * 当连接非 Claude ACP Server 时可覆盖此值。
+   * @see Issue #1333
+   */
+  sessionMetaBuilder?: (options: {
+    permissionMode?: string;
+    model?: string;
+    allowedTools?: string[];
+    disallowedTools?: string[];
+    env?: Record<string, string>;
+    settingSources?: string[];
+  }) => Record<string, unknown> | undefined;
 }
 
 /** ACP initialize 响应中的服务端能力（简化） */
@@ -120,6 +142,8 @@ export class AcpClient {
   private readonly transport: IAcpTransport;
   private readonly timeout: number;
   private readonly onPermissionRequest?: PermissionRequestCallback;
+  private readonly clientCapabilities?: AcpClientCapabilities;
+  private readonly sessionMetaBuilder?: AcpClientConfig['sessionMetaBuilder'];
 
   /** 客户端状态 */
   private _state: AcpClientState = 'disconnected';
@@ -137,6 +161,8 @@ export class AcpClient {
     this.transport = config.transport;
     this.timeout = config.timeout ?? 30000;
     this.onPermissionRequest = config.onPermissionRequest;
+    this.clientCapabilities = config.clientCapabilities;
+    this.sessionMetaBuilder = config.sessionMetaBuilder;
   }
 
   /** 当前连接状态 */
@@ -176,7 +202,7 @@ export class AcpClient {
       // ACP initialize 握手
       const params: AcpInitializeParams = {
         protocolVersion: 1,
-        clientCapabilities: {
+        clientCapabilities: this.clientCapabilities ?? {
           auth: { terminal: true },
           fs: { readTextFile: true, writeTextFile: true },
           terminal: true,
@@ -227,21 +253,30 @@ export class AcpClient {
       mcpServers: [],
     };
 
-    // Build _meta.claudeCode.options if any option is present
-    const claudeOptions: NonNullable<NonNullable<AcpSessionNewParams['_meta']>['claudeCode']>['options'] = {};
-    if (options?.permissionMode) { claudeOptions.permissionMode = options.permissionMode; }
-    if (options?.model) { claudeOptions.model = options.model; }
-    if (options?.allowedTools) { claudeOptions.allowedTools = options.allowedTools; }
-    if (options?.disallowedTools) { claudeOptions.disallowedTools = options.disallowedTools; }
-    if (options?.env) { claudeOptions.env = options.env; }
-    if (options?.settingSources) { claudeOptions.settingSources = options.settingSources; }
+    // Build session metadata: use custom builder or default Claude Code format
+    if (this.sessionMetaBuilder) {
+      // Custom meta builder for non-Claude ACP servers (Issue #1333)
+      const customMeta = this.sessionMetaBuilder(options ?? {});
+      if (customMeta && Object.keys(customMeta).length > 0) {
+        params._meta = customMeta as AcpSessionNewParams['_meta'];
+      }
+    } else {
+      // Default Claude Code _meta format
+      const claudeOptions: NonNullable<NonNullable<AcpSessionNewParams['_meta']>['claudeCode']>['options'] = {};
+      if (options?.permissionMode) { claudeOptions.permissionMode = options.permissionMode; }
+      if (options?.model) { claudeOptions.model = options.model; }
+      if (options?.allowedTools) { claudeOptions.allowedTools = options.allowedTools; }
+      if (options?.disallowedTools) { claudeOptions.disallowedTools = options.disallowedTools; }
+      if (options?.env) { claudeOptions.env = options.env; }
+      if (options?.settingSources) { claudeOptions.settingSources = options.settingSources; }
 
-    if (Object.keys(claudeOptions).length > 0) {
-      params._meta = {
-        claudeCode: {
-          options: claudeOptions,
-        },
-      };
+      if (Object.keys(claudeOptions).length > 0) {
+        params._meta = {
+          claudeCode: {
+            options: claudeOptions,
+          },
+        };
+      }
     }
 
     const result = await this.sendRequest<AcpSessionNewResult>('session/new', params);

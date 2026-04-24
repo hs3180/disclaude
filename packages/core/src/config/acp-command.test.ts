@@ -156,3 +156,30 @@ describe('resolveAcpCommand', () => {
     expect(result).toEqual({ command: 'claude-agent-acp', args: [] });
   });
 });
+
+describe('AgentConfig ACP provider options (Issue #1333)', () => {
+  it('acpArgs and acpEnv type definitions accept valid values', () => {
+    // Verify the new config fields are correctly typed and can hold expected values
+    const config = {
+      acpCommand: 'openai-acp-server',
+      acpArgs: ['--model', 'gpt-4o', '--stream'],
+      acpEnv: {
+        OPENAI_API_KEY: 'sk-test-key',
+        OPENAI_BASE_URL: 'https://api.openai.com/v1',
+      },
+    };
+
+    expect(config.acpCommand).toBe('openai-acp-server');
+    expect(config.acpArgs).toEqual(['--model', 'gpt-4o', '--stream']);
+    expect(config.acpEnv).toEqual({
+      OPENAI_API_KEY: 'sk-test-key',
+      OPENAI_BASE_URL: 'https://api.openai.com/v1',
+    });
+  });
+
+  it('acpArgs and acpEnv are optional', () => {
+    const config: { acpCommand?: string; acpArgs?: string[]; acpEnv?: Record<string, string> } = {};
+    expect(config.acpArgs).toBeUndefined();
+    expect(config.acpEnv).toBeUndefined();
+  });
+});

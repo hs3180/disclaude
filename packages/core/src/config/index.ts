@@ -613,21 +613,34 @@ export function createDefaultRuntimeContext(
   // Create shared ACP Client instance (lazy-connect on first use)
   // Issue #2311: ACP Client replaces SDK Provider for agent execution
   // Issue #2349: Auto-detect correct ACP command (config override > claude-agent-acp > claude --agent-acp)
+  // Issue #1333: Support non-Claude ACP servers via configurable env, args, capabilities, and meta
   const acpCommandOverride = fileConfigOnly.agent?.acpCommand;
-  const { command: acpCommand, args: acpArgs } = resolveAcpCommand(acpCommandOverride);
-  logger.info({ command: acpCommand, args: acpArgs }, 'Resolved ACP transport command');
+  const resolved = resolveAcpCommand(acpCommandOverride);
+  // Append user-configured acpArgs to auto-detected args
+  const acpArgs = [
+    ...resolved.args,
+    ...(fileConfigOnly.agent?.acpArgs ?? []),
+  ];
+  logger.info({ command: resolved.command, args: acpArgs }, 'Resolved ACP transport command');
+
+  // Build ACP subprocess environment:
+  // 1. process.env (base)
+  // 2. Provider-specific API key injection (backward compatible)
+  // 3. User-configured acpEnv (highest priority, can override anything)
+  const agentConfig = Config.getAgentConfig();
+  const acpEnv: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    // Pass through API key for Claude Code (backward compatible)
+    ...(agentConfig.apiKey ? { ANTHROPIC_API_KEY: agentConfig.apiKey } : {}),
+    // User-configured env vars (Issue #1333: supports OpenAI, etc.)
+    ...(fileConfigOnly.agent?.acpEnv ?? {}),
+  };
 
   const acpClient = new AcpClient({
     transport: new AcpStdioTransport({
-      command: acpCommand,
+      command: resolved.command,
       args: acpArgs,
-      env: {
-        ...process.env as Record<string, string>,
-        // Pass through API key if available
-        ...(Config.getAgentConfig().apiKey ? {
-          ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
-        } : {}),
-      },
+      env: acpEnv,
     }),
     // Auto-approve all permission requests in bot mode
     // (permissionMode: bypassPermissions handles this at SDK level)

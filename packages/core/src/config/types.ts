@@ -49,6 +49,22 @@ export interface AgentConfig {
    * @see Issue #2349
    */
   acpCommand?: string;
+  /**
+   * Additional arguments for the ACP agent command.
+   * Appended to the auto-detected or configured acpCommand args.
+   * Useful for passing provider-specific flags to non-Claude ACP servers.
+   * @example ['--model', 'gpt-4o', '--temperature', '0.7']
+   * @see Issue #1333
+   */
+  acpArgs?: string[];
+  /**
+   * Additional environment variables for the ACP agent subprocess.
+   * Merged on top of process.env and default API key injection.
+   * Allows configuring provider-specific env vars for non-Claude ACP servers.
+   * @example { OPENAI_API_KEY: 'sk-...', OPENAI_BASE_URL: 'https://api.openai.com/v1' }
+   * @see Issue #1333
+   */
+  acpEnv?: Record<string, string>;
 }
 
 /**

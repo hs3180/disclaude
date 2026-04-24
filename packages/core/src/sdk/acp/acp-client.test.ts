@@ -708,4 +708,164 @@ describe('AcpClient', () => {
       expect(client.state).toBe('connected');
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Provider-agnostic configuration (Issue #1333)
+  // --------------------------------------------------------------------------
+  describe('provider-agnostic configuration', () => {
+    it('uses default Claude capabilities when clientCapabilities not set', async () => {
+      const { client, transport } = createTestClient();
+      const connectPromise = client.connect();
+      await yieldOnce();
+
+      const initReq = transport.sentMessages[0] as JsonRpcRequest;
+      const params = initReq.params as Record<string, unknown>;
+
+      // Should have default Claude capabilities
+      expect(params.clientCapabilities).toEqual({
+        auth: { terminal: true },
+        fs: { readTextFile: true, writeTextFile: true },
+        terminal: true,
+      });
+
+      transport.simulateMessage(successResponse(initReq.id, {}));
+      await connectPromise;
+    });
+
+    it('uses custom clientCapabilities when provided', async () => {
+      const customCapabilities = {
+        auth: { terminal: false },
+        fs: { readTextFile: false, writeTextFile: false },
+        terminal: false,
+      };
+      const { client, transport } = createTestClient(undefined, {
+        clientCapabilities: customCapabilities,
+      });
+
+      const connectPromise = client.connect();
+      await yieldOnce();
+
+      const initReq = transport.sentMessages[0] as JsonRpcRequest;
+      const params = initReq.params as Record<string, unknown>;
+
+      // Should use custom capabilities
+      expect(params.clientCapabilities).toEqual(customCapabilities);
+
+      transport.simulateMessage(successResponse(initReq.id, {}));
+      await connectPromise;
+    });
+
+    it('uses default Claude _meta format when sessionMetaBuilder not set', async () => {
+      const { client, transport } = createTestClient();
+      await connectClient(client, transport);
+
+      const sessionPromise = client.createSession('/workspace', {
+        model: 'claude-3-5-sonnet',
+        permissionMode: 'bypassPermissions',
+      });
+      await yieldOnce();
+
+      const sessionReq = transport.sentMessages[1] as JsonRpcRequest;
+      const params = sessionReq.params as Record<string, unknown>;
+
+      // Should have Claude-specific _meta.claudeCode.options format
+      expect(params._meta).toEqual({
+        claudeCode: {
+          options: {
+            model: 'claude-3-5-sonnet',
+            permissionMode: 'bypassPermissions',
+          },
+        },
+      });
+
+      transport.simulateMessage(successResponse(sessionReq.id, {
+        sessionId: 'test-session-1',
+        models: { availableModels: [{ modelId: 'claude-3-5-sonnet' }], currentModelId: 'claude-3-5-sonnet' },
+      }));
+      await sessionPromise;
+    });
+
+    it('uses custom sessionMetaBuilder when provided', async () => {
+      const customMetaBuilder = (options: Record<string, unknown>) => ({
+        openai: { model: options.model, stream: true },
+      });
+      const { client, transport } = createTestClient(undefined, {
+        sessionMetaBuilder: customMetaBuilder,
+      });
+      await connectClient(client, transport);
+
+      const sessionPromise = client.createSession('/workspace', {
+        model: 'gpt-4o',
+      });
+      await yieldOnce();
+
+      const sessionReq = transport.sentMessages[1] as JsonRpcRequest;
+      const params = sessionReq.params as Record<string, unknown>;
+
+      // Should use custom meta format instead of Claude's _meta.claudeCode
+      expect(params._meta).toEqual({
+        openai: { model: 'gpt-4o', stream: true },
+      });
+      // Should NOT have claudeCode key
+      expect((params._meta as Record<string, unknown>).claudeCode).toBeUndefined();
+
+      transport.simulateMessage(successResponse(sessionReq.id, {
+        sessionId: 'test-session-2',
+        models: { availableModels: [{ modelId: 'gpt-4o' }], currentModelId: 'gpt-4o' },
+      }));
+      await sessionPromise;
+    });
+
+    it('sessionMetaBuilder returning undefined skips _meta', async () => {
+      const { client, transport } = createTestClient(undefined, {
+        sessionMetaBuilder: () => undefined,
+      });
+      await connectClient(client, transport);
+
+      const sessionPromise = client.createSession('/workspace', {
+        model: 'some-model',
+      });
+      await yieldOnce();
+
+      const sessionReq = transport.sentMessages[1] as JsonRpcRequest;
+      const params = sessionReq.params as Record<string, unknown>;
+
+      // _meta should not be set when builder returns undefined
+      expect(params._meta).toBeUndefined();
+
+      transport.simulateMessage(successResponse(sessionReq.id, {
+        sessionId: 'test-session-3',
+        models: { availableModels: [{ modelId: 'some-model' }], currentModelId: 'some-model' },
+      }));
+      await sessionPromise;
+    });
+
+    it('sessionMetaBuilder receiving empty options returns empty meta', async () => {
+      const customMetaBuilder = (options: Record<string, unknown>) => {
+        const entries = Object.entries(options);
+        if (entries.length === 0) { return undefined; }
+        return { custom: options };
+      };
+      const { client, transport } = createTestClient(undefined, {
+        sessionMetaBuilder: customMetaBuilder,
+      });
+      await connectClient(client, transport);
+
+      // No options passed
+      const sessionPromise = client.createSession('/workspace');
+      await yieldOnce();
+
+      const sessionReq = transport.sentMessages[1] as JsonRpcRequest;
+      const params = sessionReq.params as Record<string, unknown>;
+
+      // _meta should be undefined when no options and builder returns undefined
+      expect(params._meta).toBeUndefined();
+
+      transport.simulateMessage(successResponse(sessionReq.id, {
+        sessionId: 'test-session-4',
+        models: { availableModels: [], currentModelId: 'default' },
+      }));
+      await sessionPromise;
+    });
+  });
 });
