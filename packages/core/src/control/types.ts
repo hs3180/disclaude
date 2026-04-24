@@ -57,6 +57,22 @@ export interface ControlHandlerContext {
     setMode(chatId: string, mode: TriggerMode): void;
   };
 
+  /** Project context management (Issue #1916 Phase 2) */
+  projectManager?: {
+    /** Get the active project context for a chatId */
+    getActive(chatId: string): import('../project/types.js').ProjectContextConfig;
+    /** Create a new project instance from a template */
+    create(chatId: string, templateName: string, name: string): import('../project/types.js').ProjectResult<import('../project/types.js').ProjectContextConfig>;
+    /** Bind a chatId to an existing instance */
+    use(chatId: string, name: string): import('../project/types.js').ProjectResult<import('../project/types.js').ProjectContextConfig>;
+    /** Reset a chatId's binding to default */
+    reset(chatId: string): import('../project/types.js').ProjectResult<import('../project/types.js').ProjectContextConfig>;
+    /** List all available templates */
+    listTemplates(): import('../project/types.js').ProjectTemplate[];
+    /** List all instances */
+    listInstances(): import('../project/types.js').InstanceInfo[];
+  };
+
   /** 日志记录器 */
   logger?: Logger;
 }
