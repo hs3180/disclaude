@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  create_side_group,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { create_side_group } from './tools/create-side-group.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,50 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2351: Context Offloading — side group for long-form content delivery
+  {
+    name: 'create_side_group',
+    description: `Create a side group for long-form content delivery.
+
+Creates a new Feishu group chat immediately, optionally registers it for
+automatic lifecycle management (auto-dissolution after expiry).
+
+After creating the side group, use send_text/send_card/send_file to deliver
+content to it, then reply in the main chat with a summary.
+
+## Parameters
+- **name**: Group display name (required)
+- **members**: Array of member open IDs to invite (required, non-empty)
+- **registerTempChat**: Register for lifecycle management (default: true)
+- **expiresAt**: ISO timestamp for auto-dissolution (optional, defaults to 24h)
+- **creatorChatId**: The originating chat ID (optional, for lifecycle notifications)
+
+## Example
+\`\`\`json
+{"name": "LiteLLM 配置方案", "members": ["ou_xxx"], "expiresAt": "2026-04-25T10:00:00Z"}
+\`\`\``,
+    parameters: z.object({
+      name: z.string().describe('Group display name'),
+      members: z.array(z.string()).describe('Array of member open IDs to invite (ou_xxxxx format)'),
+      registerTempChat: z.boolean().optional().describe('Register for lifecycle management (default: true)'),
+      expiresAt: z.string().optional().describe('ISO timestamp for auto-dissolution (optional, defaults to 24h)'),
+      creatorChatId: z.string().optional().describe('The originating chat ID (for lifecycle notifications)'),
+    }),
+    handler: async ({ name, members, registerTempChat, expiresAt, creatorChatId }: {
+      name: string;
+      members: string[];
+      registerTempChat?: boolean;
+      expiresAt?: string;
+      creatorChatId?: string;
+    }) => {
+      try {
+        const result = await create_side_group({ name, members, registerTempChat, expiresAt, creatorChatId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Side group creation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

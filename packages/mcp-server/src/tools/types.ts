@@ -81,3 +81,14 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for create_side_group tool.
+ * Issue #2351: Context Offloading — side group for long-form content.
+ */
+export interface CreateSideGroupResult {
+  success: boolean;
+  message: string;
+  chatId?: string;
+  error?: string;
+}
+
