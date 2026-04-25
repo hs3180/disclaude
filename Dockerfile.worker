@@ -1,7 +1,7 @@
 # =============================================================================
 # Disclaude Worker Node Dockerfile
 # =============================================================================
-# Multi-stage build for Worker Node - handles Pilot/Agent task execution.
+# Multi-stage build for Worker Node - handles Agent task execution.
 # Includes Python runtime for data analysis tasks.
 #
 # Build:
