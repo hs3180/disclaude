@@ -21,6 +21,8 @@ export type IpcRequestType =
   | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
+  // Group creation (Issue #2351: Context Offloading)
+  | 'createGroup'
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
@@ -64,6 +66,12 @@ export interface IpcRequestPayloads {
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
+  // Group creation (Issue #2351: Context Offloading)
+  createGroup: {
+    name: string;
+    description?: string;
+    members: string[];
+  };
   // Temporary chat lifecycle management (Issue #1703)
   // Issue #2291: triggerMode enum replaces passiveMode boolean
   registerTempChat: {
@@ -106,6 +114,11 @@ export interface IpcResponsePayloads {
   sendInteractive: {
     success: boolean;
     messageId?: string;
+  };
+  // Group creation (Issue #2351: Context Offloading)
+  createGroup: {
+    success: boolean;
+    chatId?: string;
   };
   // Temporary chat lifecycle management (Issue #1703)
   registerTempChat: {

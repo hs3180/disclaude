@@ -14,6 +14,7 @@ vi.mock('./tools/index.js', () => ({
   send_interactive: vi.fn(),
   send_file: vi.fn(),
   register_temp_chat: vi.fn(),
+  create_group: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));
 
@@ -29,13 +30,14 @@ vi.mock('./utils/card-validator.js', () => ({
 
 // Import after mocks are set up
 import { channelToolDefinitions } from './channel-mcp.js';
-import { send_text, send_card, send_interactive, send_file, register_temp_chat } from './tools/index.js';
+import { send_text, send_card, send_interactive, send_file, register_temp_chat, create_group } from './tools/index.js';
 
 const mocked_send_text = vi.mocked(send_text);
 const mocked_send_card = vi.mocked(send_card);
 const mocked_send_interactive = vi.mocked(send_interactive);
 const mocked_send_file = vi.mocked(send_file);
 const mocked_register_temp_chat = vi.mocked(register_temp_chat);
+const mocked_create_group = vi.mocked(create_group);
 
 // Valid-length chatId for tests (validator requires oc_ prefix + 32 chars = 35 min)
 const VALID_CHAT_ID = 'oc_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
@@ -302,5 +304,62 @@ describe('register_temp_chat handler', () => {
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('✅ Temporary chat registered');
+  });
+});
+
+// ============================================================================
+// create_group handler (Issue #2351: Context Offloading)
+// ============================================================================
+describe('create_group handler', () => {
+  const handler = getHandler('create_group');
+
+  it('should return success for valid group creation', async () => {
+    mocked_create_group.mockResolvedValue({
+      success: true,
+      chatId: 'oc_newgroup123',
+      message: '✅ Group created (chatId: oc_newgroup123, name: Test Group)',
+    });
+    const result = await handler({ name: 'Test Group' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('✅ Group created');
+  });
+
+  it('should return success with members', async () => {
+    mocked_create_group.mockResolvedValue({
+      success: true,
+      chatId: 'oc_newgroup456',
+      message: '✅ Group created (chatId: oc_newgroup456, name: Test)',
+    });
+    const result = await handler({ name: 'Test', members: ['ou_user1'] });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('✅ Group created');
+  });
+
+  it('should return isError: true when name is empty', async () => {
+    const result = await handler({ name: '' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Invalid name');
+  });
+
+  it('should return isError: true when creation fails', async () => {
+    mocked_create_group.mockResolvedValue({
+      success: false,
+      message: '❌ IPC service unavailable',
+    });
+    const result = await handler({ name: 'Test Group' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('IPC service unavailable');
+  });
+
+  it('should return isError: true when creation throws', async () => {
+    mocked_create_group.mockRejectedValue(new Error('Unexpected error'));
+    const result = await handler({ name: 'Test Group' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Unexpected error');
   });
 });

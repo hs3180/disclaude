@@ -252,6 +252,10 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #2351: Context Offloading — group creation for side groups
+      createGroup: async (name: string, opts?: { description?: string; members?: string[] }) => {
+        return await feishuChannel.createGroup(name, opts);
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);

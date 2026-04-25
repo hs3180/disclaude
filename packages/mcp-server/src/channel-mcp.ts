@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  create_group,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { create_group } from './tools/create-group.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -163,6 +165,24 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  // Issue #2351: Context Offloading — group creation for side groups
+  create_group: {
+    description: 'Create a new group chat.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+        description: { type: 'string', description: 'Optional group description' },
+        members: {
+          type: 'array',
+          items: { type: 'string', description: 'Open ID of user to add as member' },
+          description: 'Optional list of open_id strings to add as members',
+        },
+      },
+      required: ['name'],
+    },
+    handler: create_group,
   },
 };
 
@@ -411,6 +431,46 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #2351: Context Offloading — group creation for side groups
+  {
+    name: 'create_group',
+    description: `Create a new group chat and optionally add members.
+
+Use this to create a side group for delivering long-form content (code, reports, docs)
+while keeping the main conversation clean. After creating the group, use send_text,
+send_card, or send_file to deliver content to the new group's chatId.
+
+## Parameters
+- **name**: Group name (required)
+- **description**: Optional group description
+- **members**: Optional array of open_id strings to add as members
+
+## Example
+\`\`\`json
+{"name": "LiteLLM 配置方案", "description": "Generated configs and architecture docs", "members": ["ou_user1", "ou_user2"]}
+\`\`\``,
+    parameters: z.object({
+      name: z.string().describe('Group name'),
+      description: z.string().optional().describe('Optional group description'),
+      members: z.array(z.string()).optional().describe('Optional array of open_id strings to add as members'),
+    }),
+    handler: async ({ name, description, members }: {
+      name: string;
+      description?: string;
+      members?: string[];
+    }) => {
+      if (!name) {
+        return toolError('Invalid name: must be a non-empty string');
+      }
+
+      try {
+        const result = await create_group({ name, description, members });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Group creation failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

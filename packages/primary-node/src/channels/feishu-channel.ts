@@ -698,6 +698,56 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * Get bot info for IPC handlers.
    * Returns bot's open_id and app_id.
    */
+  /**
+   * Create a group chat and optionally add members.
+   *
+   * Issue #2351: Context Offloading — auto-create side group for long-form content.
+   * Uses the lark-oapi SDK's im.v1.chat.create and im.v1.chatMembers.create APIs.
+   *
+   * @param name - Group name
+   * @param opts - Optional parameters (description, members as open_id list)
+   * @returns The created group's chat ID
+   */
+  async createGroup(name: string, opts?: { description?: string; members?: string[] }): Promise<{ chatId: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    // Create the group
+    const createResult = await this.client.im.chat.create({
+      data: {
+        name,
+        description: opts?.description ?? '',
+        chat_mode: 'group',
+        chat_type: 'private',
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const chatId = (createResult as any)?.data?.chat_id;
+    if (!chatId) {
+      throw new Error('Failed to create group: no chat_id returned');
+    }
+
+    // Add members if specified
+    if (opts?.members && opts.members.length > 0) {
+      try {
+        await this.client.im.chatMembers.create({
+          path: { chat_id: chatId },
+          params: { member_id_type: 'open_id' },
+          data: {
+            id_list: opts.members,
+          },
+        });
+      } catch (memberErr) {
+        logger.warn({ err: memberErr, chatId, members: opts.members }, 'Failed to add members to group, group was created without members');
+      }
+    }
+
+    logger.info({ chatId, name, memberCount: opts?.members?.length ?? 0 }, 'Group created');
+    return { chatId };
+  }
+
   getBotInfo(): { openId: string; name?: string; avatarUrl?: string } {
     const botInfo = this.mentionDetector.getBotInfo();
     return {
