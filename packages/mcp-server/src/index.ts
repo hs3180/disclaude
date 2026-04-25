@@ -41,6 +41,9 @@ export { send_card } from './tools/send-card.js';
 // Tools - Send File
 export { send_file } from './tools/send-file.js';
 
+// Tools - Insert Docx Image (Issue #2278)
+export { insert_docx_image } from './tools/insert-docx-image.js';
+
 // Tools - Interactive Message
 export {
   send_interactive_message,

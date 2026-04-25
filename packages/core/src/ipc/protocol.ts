@@ -21,6 +21,8 @@ export type IpcRequestType =
   | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
+  // Docx image insertion (Issue #2278)
+  | 'insertDocxImage'
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
@@ -74,6 +76,13 @@ export interface IpcRequestPayloads {
     /** Issue #2291: Trigger mode enum ('mention' | 'always') */
     triggerMode?: 'mention' | 'always';
   };
+  // Docx image insertion (Issue #2278): insert image at specific position in Feishu document
+  insertDocxImage: {
+    documentId: string;
+    filePath: string;
+    /** 0-based index to insert the image block. Defaults to -1 (append to end). */
+    index?: number;
+  };
   listTempChats: Record<string, never>;
   markChatResponded: {
     chatId: string;
@@ -125,6 +134,12 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // Docx image insertion (Issue #2278)
+  insertDocxImage: {
+    success: boolean;
+    blockId?: string;
+    error?: string;
   };
 }
 

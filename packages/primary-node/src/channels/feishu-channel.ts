@@ -706,6 +706,102 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Insert an image into a Feishu document at a specific position.
+   * Issue #2278: Inline image insertion in Feishu documents.
+   *
+   * Three-step process:
+   * 1. Create empty image block (block_type: 27) at the specified index
+   * 2. Upload image file via Drive Media Upload API (parent_type: "docx_image")
+   * 3. Bind uploaded file to the image block via replace_image
+   *
+   * @param documentId - The Feishu document ID
+   * @param filePath - Absolute path to the image file
+   * @param index - 0-based index to insert (defaults to -1 = append to end)
+   * @returns The created image block ID
+   */
+  async insertDocxImage(
+    documentId: string,
+    filePath: string,
+    index?: number
+  ): Promise<{ success: boolean; blockId?: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const {client} = this;
+
+    try {
+      // Read file stats for size (required by Drive upload API)
+      const fileStats = fs.statSync(filePath);
+
+      // Step 1: Create empty image block at the specified index
+      // block_type: 27 is the image block type in Feishu docx API
+      // The image property only accepts align/caption/scale when creating
+      const createResp = await client.docx.documentBlockChildren.create({
+        path: { document_id: documentId, block_id: documentId },
+        params: { document_revision_id: -1 },
+        data: {
+          children: [{
+            block_type: 27,
+            image: {},
+          }],
+          index: index ?? -1,
+        },
+      });
+
+      const blockId = (createResp?.data?.children as { block_id?: string } | undefined)?.block_id;
+      if (!blockId) {
+        throw new Error('Failed to create image block: no block_id returned');
+      }
+
+      logger.info({ documentId, blockId, index }, 'Created empty image block');
+
+      // Step 2: Upload image file via Drive Media Upload API
+      // parent_type: "docx_image" for document inline images
+      // Response: { file_token?: string } | null (no .data wrapper)
+      const uploadResp = await client.drive.media.uploadAll({
+        data: {
+          parent_type: 'docx_image',
+          parent_node: documentId,
+          file_name: filePath.split('/').pop() || 'image.png',
+          size: fileStats.size,
+          file: fs.createReadStream(filePath),
+        },
+      });
+
+      const fileToken = uploadResp?.file_token;
+      if (!fileToken) {
+        throw new Error('Failed to upload image: no file_token returned');
+      }
+
+      logger.info({ documentId, fileToken, blockId }, 'Uploaded image file');
+
+      // Step 3: Bind uploaded file to the image block via batchUpdate with replace_image
+      // Uses documentBlock.batchUpdate (not update) to replace the empty image token
+      await client.docx.documentBlock.batchUpdate({
+        path: { document_id: documentId },
+        params: { document_revision_id: -1 },
+        data: {
+          requests: [{
+            replace_image: {
+              token: fileToken,
+            },
+            block_id: blockId,
+          }],
+        },
+      });
+
+      logger.info({ documentId, blockId, fileToken }, 'Bound image to block');
+
+      return { success: true, blockId };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, documentId, filePath, index }, `insertDocxImage failed: ${errMsg}`);
+      throw error;
+    }
+  }
+
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
 
   /**

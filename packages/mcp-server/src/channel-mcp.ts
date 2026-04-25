@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,69 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Inline image insertion in Feishu documents
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image into a Feishu document at a specific position.
+
+Use this when generating Feishu documents that contain images (charts, diagrams, illustrations).
+The image will be inserted as an inline block at the specified index position.
+
+## Three-Step Process (handled internally)
+1. Creates an empty image block (block_type: 27) at the specified index
+2. Uploads the image file via Drive Media Upload API
+3. Binds the uploaded file to the image block
+
+## Parameters
+- **documentId**: The Feishu document ID (from \`lark-cli docs +create\` or document URL) (required)
+- **filePath**: Path to the image file to insert (required)
+- **index**: 0-based block index to insert at. Defaults to -1 (append to end of document). (optional)
+
+## Supported Image Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, svg
+
+## File Size Limit
+20 MB maximum
+
+## Example
+\`\`\`json
+{
+  "documentId": "doxcnGxxxxxxx",
+  "filePath": "/path/to/chart.png",
+  "index": 3
+}
+\`\`\`
+
+## Typical Workflow
+1. Create document: \`lark-cli docs +create --markdown @report.md\`
+2. Get document ID from the URL or response
+3. Generate charts/images to local files
+4. Insert images at correct positions: \`insert_docx_image({ documentId, filePath, index })\``,
+    parameters: z.object({
+      documentId: z.string().describe('The Feishu document ID'),
+      filePath: z.string().describe('Path to the image file to insert'),
+      index: z.number().optional().describe('0-based block index to insert at. Defaults to -1 (append to end).'),
+    }),
+    handler: async ({ documentId, filePath, index }: {
+      documentId: string;
+      filePath: string;
+      index?: number;
+    }) => {
+      if (!documentId) {
+        return toolError('Invalid documentId: must be a non-empty string');
+      }
+      if (!filePath) {
+        return toolError('Invalid filePath: must be a non-empty string');
+      }
+
+      try {
+        const result = await insert_docx_image({ documentId, filePath, index });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];
