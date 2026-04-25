@@ -535,4 +535,279 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  describe('blocking mechanism', () => {
+    it('should skip execution when blocking task is already running', async () => {
+      let resolveExecution: () => void;
+      const executionPromise = new Promise<void>((resolve) => { resolveExecution = resolve; });
+
+      // Executor hangs until we resolve it — simulates a long-running task
+      mockExecutor.mockImplementationOnce(() => executionPromise);
+
+      const task = createTask({ id: 'block-1', blocking: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // Fire first execution — task starts running but doesn't complete
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('block-1')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Fire again while still running — should be skipped
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        // Executor called only once (second fire was skipped)
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Resolve the hanging execution
+      resolveExecution!();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('block-1')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should execute blocking task again after previous execution completes', async () => {
+      // First execution completes immediately
+      mockExecutor.mockResolvedValueOnce(undefined);
+
+      const task = createTask({ id: 'block-2', blocking: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // First execution
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // After completion, running state should be cleared
+      expect(scheduler.isTaskRunning('block-2')).toBe(false);
+
+      // Second execution should succeed
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+
+    it('should allow non-blocking tasks to run concurrently', async () => {
+      let resolveExec1: () => void;
+      const exec1Promise = new Promise<void>((resolve) => { resolveExec1 = resolve; });
+
+      // First call hangs, second resolves immediately
+      mockExecutor
+        .mockImplementationOnce(() => exec1Promise)
+        .mockResolvedValueOnce(undefined);
+
+      const task = createTask({ id: 'nonblock', blocking: false });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // First execution — starts running
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('nonblock')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second execution — non-blocking, should NOT be skipped
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+
+      resolveExec1!();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('nonblock')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should clear blocking state even when execution fails', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('boom'));
+
+      const task = createTask({ id: 'block-fail', blocking: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('block-fail')).toBe(false);
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('running task tracking during execution', () => {
+    it('should track running task during execution', async () => {
+      let resolveExecution: () => void;
+      const executionPromise = new Promise<void>((resolve) => { resolveExecution = resolve; });
+
+      mockExecutor.mockImplementationOnce(() => executionPromise);
+
+      const task = createTask({ id: 'track-1' });
+      scheduler.addTask(task);
+
+      expect(scheduler.isTaskRunning('track-1')).toBe(false);
+      expect(scheduler.isAnyTaskRunning()).toBe(false);
+      expect(scheduler.getRunningTaskIds()).toEqual([]);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('track-1')).toBe(true);
+        expect(scheduler.isAnyTaskRunning()).toBe(true);
+        expect(scheduler.getRunningTaskIds()).toContain('track-1');
+      }, { timeout: 2000 });
+
+      resolveExecution!();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('track-1')).toBe(false);
+        expect(scheduler.isAnyTaskRunning()).toBe(false);
+        expect(scheduler.getRunningTaskIds()).toEqual([]);
+      }, { timeout: 2000 });
+    });
+
+    it('should track multiple running tasks independently', async () => {
+      const resolvers: Array<() => void> = [];
+      const promises = [0, 1].map(() =>
+        new Promise<void>((resolve) => { resolvers.push(resolve); })
+      );
+
+      mockExecutor
+        .mockImplementationOnce(() => promises[0])
+        .mockImplementationOnce(() => promises[1]);
+
+      const task1 = createTask({ id: 'concurrent-1', chatId: 'oc_a' });
+      const task2 = createTask({ id: 'concurrent-2', chatId: 'oc_b' });
+      scheduler.addTask(task1);
+      scheduler.addTask(task2);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // Fire both tasks
+      void jobs[0].job.fireOnTick();
+      void jobs[1].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.getRunningTaskIds()).toHaveLength(2);
+        expect(scheduler.getRunningTaskIds()).toContain('concurrent-1');
+        expect(scheduler.getRunningTaskIds()).toContain('concurrent-2');
+      }, { timeout: 2000 });
+
+      // Resolve first task
+      resolvers[0]();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('concurrent-1')).toBe(false);
+        expect(scheduler.isTaskRunning('concurrent-2')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Resolve second task
+      resolvers[1]();
+      await vi.waitFor(() => {
+        expect(scheduler.isAnyTaskRunning()).toBe(false);
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('sendMessage failure during execution', () => {
+    it('should not execute task when start notification sendMessage fails', async () => {
+      // When sendMessage for start notification throws, the error is caught
+      // by executeTask's catch block. The executor is never reached.
+      vi.mocked(mockCallbacks.sendMessage)
+        .mockRejectedValueOnce(new Error('Feishu API down')) // start notification fails
+        .mockResolvedValueOnce(undefined);                    // error notification succeeds
+
+      const task = createTask({ id: 'msg-fail' });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait for the error notification to be sent
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+
+      // Executor should NOT be called since start notification failed first
+      expect(mockExecutor).not.toHaveBeenCalled();
+
+      // Second sendMessage call should be the error notification
+      const allCalls = vi.mocked(mockCallbacks.sendMessage).mock.calls;
+      expect(allCalls[1][1]).toContain('执行失败');
+    });
+
+    it('should clear running state even when start notification fails', async () => {
+      vi.mocked(mockCallbacks.sendMessage)
+        .mockRejectedValueOnce(new Error('API down'))
+        .mockResolvedValueOnce(undefined);
+
+      const task = createTask({ id: 'msg-fail-state' });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('msg-fail-state')).toBe(false);
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('buildScheduledTaskPrompt content', () => {
+    it('should include task name, anti-recursion rules, and original prompt', async () => {
+      const task = createTask({
+        id: 'prompt-check',
+        name: 'Nightly Tests',
+        prompt: 'Run all unit tests and report results',
+      });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      const promptArg = mockExecutor.mock.calls[0][1] as string;
+      expect(promptArg).toContain('Nightly Tests');
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('Do NOT create new scheduled tasks');
+      expect(promptArg).toContain('Do NOT modify existing scheduled tasks');
+      expect(promptArg).toContain('Focus on completing the task described below');
+      expect(promptArg).toContain('If you need to run something periodically, report this need to the user instead');
+      expect(promptArg).toContain('Run all unit tests and report results');
+    });
+  });
+
+  describe('reload edge cases', () => {
+    it('should handle reload when scheduler was not started', async () => {
+      // Reload without starting first — should not throw
+      vi.mocked(mockScheduleManager.listEnabled).mockResolvedValue([]);
+
+      await scheduler.reload();
+
+      expect(scheduler.isRunning()).toBe(true);
+      expect(scheduler.getActiveJobs()).toHaveLength(0);
+    });
+
+    it('should pick up newly enabled tasks after reload', async () => {
+      const task1 = createTask({ id: 'rl-1' });
+      vi.mocked(mockScheduleManager.listEnabled).mockResolvedValueOnce([task1]);
+
+      await scheduler.start();
+      expect(scheduler.getActiveJobs()).toHaveLength(1);
+
+      const task2 = createTask({ id: 'rl-2' });
+      vi.mocked(mockScheduleManager.listEnabled).mockResolvedValueOnce([task1, task2]);
+
+      await scheduler.reload();
+      expect(scheduler.getActiveJobs()).toHaveLength(2);
+    });
+  });
 });
