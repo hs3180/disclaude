@@ -123,8 +123,11 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Anthropic configuration (config file > env var)
+          // Issue #2768: Support custom Anthropic-compatible API endpoint
+          static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl || process.env.ANTHROPIC_BASE_URL || '';
+          static readonly ANTHROPIC_CUSTOM_HEADERS = fileConfigOnly.anthropic?.customHeaders;
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -359,6 +362,7 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      apiBaseUrl: this.ANTHROPIC_API_BASE_URL || undefined,
       provider: 'anthropic',
     };
   }
@@ -626,6 +630,16 @@ export function createDefaultRuntimeContext(
         // Pass through API key if available
         ...(Config.getAgentConfig().apiKey ? {
           ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
+        } : {}),
+        // Issue #2768: Pass custom Anthropic base URL if configured
+        ...(Config.ANTHROPIC_API_BASE_URL ? {
+          ANTHROPIC_BASE_URL: Config.ANTHROPIC_API_BASE_URL,
+        } : {}),
+        // Issue #2768: Pass custom headers if configured
+        ...(Config.ANTHROPIC_CUSTOM_HEADERS ? {
+          ANTHROPIC_CUSTOM_HEADERS: Object.entries(Config.ANTHROPIC_CUSTOM_HEADERS)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(','),
         } : {}),
       },
     }),

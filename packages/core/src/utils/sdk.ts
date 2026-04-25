@@ -101,6 +101,8 @@ export function buildSdkEnv(
   delete env.CLAUDECODE;
 
   // Set base URL if provided (for GLM or custom endpoints)
+  // Issue #2768: Also cleans up stale ANTHROPIC_CUSTOM_HEADERS when
+  // switching to a different endpoint to prevent header pollution.
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
   }
