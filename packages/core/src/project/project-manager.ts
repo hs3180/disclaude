@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -55,17 +56,21 @@ interface ProjectInstance {
  *
  * Lifecycle:
  * 1. Construct with `ProjectManagerOptions`
- * 2. Call `init()` (or `init(templatesConfig)`) to load templates
+ * 2. Templates are auto-discovered from `{packageDir}/templates/` unless
+ *    `templatesConfig` is explicitly provided
  * 3. Use `create()`, `use()`, `getActive()`, `reset()` to manage projects
  * 4. Call `createCwdProvider()` to get a CwdProvider for Agent injection
  *
- * Zero-config: if no templates are configured, behavior is identical to
- * the current system (all chatIds use workspace root as cwd).
+ * Zero-config: if no templates directory exists and no templatesConfig is
+ * provided, behavior is identical to the current system (all chatIds use
+ * workspace root as cwd).
+ *
+ * @see Issue #2286 — auto-discovery from package directory
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing templates/ subdirectory for auto-discovery */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,12 +87,17 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
 
-    this.init(options.templatesConfig);
+    // Auto-discover templates when templatesConfig is not explicitly provided
+    // @see Issue #2286 — auto-discovery from package directory
+    const templatesConfig = options.templatesConfig
+      ?? discoverTemplatesAsConfig(options.packageDir);
+
+    this.init(templatesConfig);
 
     // Restore persisted state after templates are loaded
     this.loadPersistedData();
@@ -103,7 +113,10 @@ export class ProjectManager {
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * Note: In the constructor, this is called with auto-discovered templates
+   * when `templatesConfig` is not explicitly provided in options.
+   *
+   * @param templatesConfig - Template configuration (from explicit config or auto-discovery)
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
