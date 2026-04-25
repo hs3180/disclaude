@@ -1,12 +1,13 @@
 /**
- * Primary Node - Main node with both communication and execution capabilities.
+ * Primary Node - Self-contained application node with communication and execution.
  *
- * This self-contained node can:
- * - Handle multiple communication channels (Feishu, REST, etc.)
- * - Execute Agent tasks locally
- * - Accept connections from Worker Nodes for horizontal scaling
+ * This node handles:
+ * - Multiple communication channels (Feishu, REST, etc.)
+ * - Agent task execution locally
+ * - Scheduled task execution
+ * - IPC for MCP Server connections
  *
- * Architecture (Refactored - Issue #435, Issue #695, Issue #1040):
+ * Architecture (Issue #2717: Worker Node concept removed):
  * ```
  * ┌─────────────────────────────────────────────────────────────┐
  * │                      Primary Node                           │
@@ -18,9 +19,9 @@
  * │  │   - Local execution setup                                  ││
  * │  └─────────────────────────────────────────────────────────┘│
  * │                                                             │
- * │  ┌───────────────┐ ┌───────────────┐ ┌───────────────────┐   │
- * │  │ExecNodeRegistry│ │FeedbackRouter│ │WebSocketServerSvc │   │
- * │  └───────────────┘ └───────────────┘ └───────────────────┘   │
+ * │  ┌───────────────┐ ┌───────────────┐                        │
+ * │  │CardActionRouter│ │FeedbackRouter│                        │
+ * │  └───────────────┘ └───────────────┘                        │
  * │                                                             │
  * │  ┌─────────────────────────────────────────────────────────┐│
  * │  │              SchedulerService + LocalExecution           ││
@@ -29,6 +30,7 @@
  * ```
  *
  * Issue #1040: Migrated to @disclaude/primary-node
+ * Issue #2717: Removed Worker Node / WebSocket server architecture
  */
 
 import * as path from 'path';
@@ -55,7 +57,6 @@ import {
   ChatStore,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from '@disclaude/worker-node';
-import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
@@ -121,9 +122,7 @@ export interface NodeCapabilities {
  * - Coordination between services
  *
  * Delegated concerns:
- * - ExecNodeRegistry: Execution node management
- * - FeedbackRouter: Feedback routing to channels
- * - WebSocketServerService: WebSocket/HTTP server management
+ * - CardActionRouter: Card interaction routing
  * - SchedulerService: Scheduler and file watcher management
  */
 export class PrimaryNode extends EventEmitter {
@@ -136,7 +135,6 @@ export class PrimaryNode extends EventEmitter {
   protected localExecEnabled: boolean;
 
   // Services
-  protected execNodeRegistry: ExecNodeRegistry;
   protected cardActionRouter: CardActionRouter;
   protected debugGroupService: DebugGroupService;
 
@@ -165,16 +163,6 @@ export class PrimaryNode extends EventEmitter {
     this.host = config.host || '0.0.0.0';
     this.localNodeId = config.nodeId || `primary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.localExecEnabled = config.enableLocalExec !== false;
-
-    // Initialize ExecNodeRegistry
-    this.execNodeRegistry = new ExecNodeRegistry({
-      localNodeId: this.localNodeId,
-      localExecEnabled: this.localExecEnabled,
-    });
-
-    // Forward registry events
-    this.execNodeRegistry.on('node:registered', (nodeId: string) => this.emit('worker:connected', nodeId));
-    this.execNodeRegistry.on('node:unregistered', (nodeId: string) => this.emit('worker:disconnected', nodeId));
 
     // Initialize CardActionRouter
     this.cardActionRouter = new CardActionRouter({
@@ -213,7 +201,7 @@ export class PrimaryNode extends EventEmitter {
   getCapabilities(): NodeCapabilities {
     return {
       communication: true,
-      execution: this.localExecEnabled || this.execNodeRegistry.hasAvailableNode(),
+      execution: this.localExecEnabled,
     };
   }
 
@@ -229,13 +217,6 @@ export class PrimaryNode extends EventEmitter {
    */
   isRunning(): boolean {
     return this.running;
-  }
-
-  /**
-   * Get the ExecNodeRegistry.
-   */
-  getExecNodeRegistry(): ExecNodeRegistry {
-    return this.execNodeRegistry;
   }
 
   /**

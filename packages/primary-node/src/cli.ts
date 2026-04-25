@@ -174,6 +174,7 @@ async function main(): Promise<void> {
   });
 
   // Create unified control handler context
+  // Issue #2717: getExecNodes returns only local node (no remote workers)
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
       reset: (chatId: string) => agentPool.reset(chatId),
@@ -181,7 +182,7 @@ async function main(): Promise<void> {
     },
     node: {
       nodeId: primaryNode.getNodeId(),
-      getExecNodes: () => primaryNode.getExecNodeRegistry().getNodes(),
+      getExecNodes: () => [],
       getDebugGroup: () => primaryNode.getDebugGroupService().getDebugGroup(),
       setDebugGroup: (chatId: string, name?: string) => primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
