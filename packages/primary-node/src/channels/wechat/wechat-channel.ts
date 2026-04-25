@@ -10,7 +10,6 @@
  *
  * Not yet implemented (future phases):
  * - Media handling (CDN upload) — Issue #1556 Phase 3.3
- * - Typing indicator — Issue #1556 Phase 3.2
  * - Thread send support via context_token — Issue #1556 Phase 3.4
  *
  * @module channels/wechat/wechat-channel
@@ -36,6 +35,7 @@ const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
  * - QR code authentication on start
  * - Text message sending
  * - Long-poll message listening
+ * - Typing indicator on incoming messages
  *
  * Extends BaseChannel for lifecycle management and handler registration.
  */
@@ -91,7 +91,15 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     }
 
     // Start message listener (Issue #1556 Phase 3.1)
+    // Typing indicator integration (Issue #1556 Phase 3.2)
     const processor: MessageProcessor = async (message: IncomingMessage) => {
+      // Send typing indicator before processing (non-fatal)
+      try {
+        await this.client?.sendTyping({ to: message.chatId });
+      } catch {
+        // Non-fatal: typing indicator failure should not block processing
+      }
+
       await this.emitMessage(message);
     };
 

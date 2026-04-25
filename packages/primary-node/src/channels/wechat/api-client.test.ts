@@ -2,6 +2,7 @@
  * Tests for WeChatApiClient (MVP).
  *
  * @see Issue #1473 - WeChat Channel MVP
+ * @see Issue #1556 - WeChat Channel Feature Enhancement
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -393,6 +394,75 @@ describe('WeChatApiClient', () => {
       client.setToken('bot-token');
       await expect(client.sendText({ to: 'user-1', content: 'test' }))
         .rejects.toThrow('Error code 999');
+    });
+  });
+
+  describe('sendTyping (Issue #1556 Phase 3.2)', () => {
+    it('should send typing indicator via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('ilink/bot/typing'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.to_user_id).toBe('user-123');
+    });
+
+    it('should not throw on API error (non-fatal)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Server Error'),
+      });
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await client.sendTyping({ to: 'user-123' });
+    });
+
+    it('should not throw on network error (non-fatal)', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await client.sendTyping({ to: 'user-123' });
+    });
+
+    it('should include auth headers', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders).toHaveProperty('Authorization', 'Bearer test-token');
+      expect(callHeaders).toHaveProperty('AuthorizationType', 'ilink_bot_token');
+    });
+
+    it('should include SKRouteTag when routeTag is set', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders).toHaveProperty('SKRouteTag', 'test-route');
     });
   });
 
