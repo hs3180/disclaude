@@ -248,7 +248,7 @@ export interface ChannelApiHandlersOptions {
 export function createChannelApiHandlers(
   channel: IChannel,
   options: ChannelApiHandlersOptions
-): Pick<ChannelApiHandlers, 'sendMessage' | 'sendCard' | 'uploadFile'> {
+): Pick<ChannelApiHandlers, 'sendMessage' | 'sendCard' | 'uploadFile' | 'uploadImage'> {
   const { logger, channelName } = options;
 
   return {
@@ -295,6 +295,22 @@ export function createChannelApiHandlers(
         fileName: filePath.split('/').pop() || 'file',
         fileSize: 0,    // synthetic — not available via sendMessage
       };
+    },
+
+    // Issue #1919: Upload image for card embedding
+    uploadImage: async (filePath: string) => {
+      // Only FeishuChannel supports uploadImage — check for the method
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (typeof (channel as any).uploadImage !== 'function') {
+        throw new Error('uploadImage not supported by this channel');
+      }
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return await (channel as any).uploadImage(filePath);
+      } catch (error) {
+        logger.error({ err: error, filePath, channel: channelName, handler: 'uploadImage' }, 'IPC handler failed');
+        throw error;
+      }
     },
   };
 }

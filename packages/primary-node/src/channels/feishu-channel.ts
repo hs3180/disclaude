@@ -630,6 +630,52 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * Issue #1919: This method uploads an image without sending any message,
+   * returning only the image_key for use in card elements (e.g., img tag).
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   * @throws Error if the client is not initialized, file is not an image, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Not an image file: ${fileName} (supported: ${imageExtensions.join(', ')})`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for card embedding');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName} (no image_key returned)`);
+    }
+
+    logger.info({ imageKey, fileName }, 'Image uploaded successfully for card embedding');
+    return { imageKey, fileName, fileSize };
+  }
+
+  /**
    * Get the capabilities of Feishu channel.
    */
   getCapabilities(): ChannelCapabilities {
@@ -646,6 +692,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }

@@ -21,6 +21,8 @@ export type IpcRequestType =
   | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
+  // Image upload for card embedding (Issue #1919)
+  | 'uploadImage'
   // Temporary chat lifecycle management (Issue #1703)
   | 'registerTempChat'
   | 'listTempChats'
@@ -49,6 +51,10 @@ export interface IpcRequestPayloads {
     chatId: string;
     filePath: string;
     threadId?: string;
+  };
+  // Image upload for card embedding (Issue #1919)
+  uploadImage: {
+    filePath: string;
   };
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {
@@ -97,6 +103,15 @@ export interface IpcResponsePayloads {
     success: boolean;
     fileKey?: string;
     fileType?: string;
+    fileName?: string;
+    fileSize?: number;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
+  };
+  // Image upload for card embedding (Issue #1919)
+  uploadImage: {
+    success: boolean;
+    imageKey?: string;
     fileName?: string;
     fileSize?: number;
     error?: string;
