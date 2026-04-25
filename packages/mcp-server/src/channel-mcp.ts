@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  create_side_group,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { create_side_group } from './tools/create-side-group.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,60 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2351: Context Offloading — create side group for long-form content
+  {
+    name: 'create_side_group',
+    description: `Create a side group for delivering long-form content.
+
+Automatically creates a Feishu group chat, invites members, sends content messages,
+and optionally registers the group as a temporary chat with lifecycle management.
+
+Use cases:
+- Deliver generated code/config to a dedicated group (keeps main chat clean)
+- Send research reports or analysis to a separate group
+- Voice mode artifact offloading (long content auto-routed to side group)
+
+## Parameters
+- **name**: Group display name (required, max 64 chars)
+- **members**: Array of member open IDs to invite, e.g. ["ou_xxx"] (required)
+- **description**: Optional group description
+- **messages**: Optional array of text messages to send after creation
+- **parentChatId**: Optional originating chat ID (for temp chat registration + lifecycle)
+- **expiresAt**: Optional ISO timestamp for group expiry (e.g. "2026-04-26T10:00:00Z")
+- **triggerMode**: Optional trigger mode for bot in new group: "mention" or "always" (default: "always")
+
+## Example
+\`\`\`json
+{
+  "name": "LiteLLM 配置方案",
+  "members": ["ou_xxx"],
+  "messages": ["## custom_callbacks.py", "print('hello')"],
+  "parentChatId": "oc_current_chat",
+  "expiresAt": "2026-04-26T10:00:00Z"
+}
+\`\`\``,
+    parameters: z.object({
+      name: z.string().describe('Group display name (max 64 chars)'),
+      members: z.array(z.string()).describe('Array of member open IDs to invite (e.g. ["ou_xxx"])'),
+      description: z.string().optional().describe('Optional group description'),
+      messages: z.array(z.string()).optional().describe('Optional array of text messages to send after creation'),
+      parentChatId: z.string().optional().describe('Optional originating chat ID (for temp chat registration)'),
+      expiresAt: z.string().optional().describe('Optional ISO timestamp for group expiry'),
+      triggerMode: z.enum(['mention', 'always']).optional().describe('Trigger mode for bot in new group (default: "always")'),
+    }),
+    handler: async ({ name, members, description, messages, parentChatId, expiresAt, triggerMode }: {
+      name: string;
+      members: string[];
+      description?: string;
+      messages?: string[];
+      parentChatId?: string;
+      expiresAt?: string;
+      triggerMode?: 'mention' | 'always';
+    }) => {
+      const result = await create_side_group({ name, members, description, messages, parentChatId, expiresAt, triggerMode });
+      return result.success ? toolSuccess(result.message) : toolError(result.message);
     },
   },
 ];

@@ -75,6 +75,8 @@ export interface ChannelApiHandlers {
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
+  /** Create a group chat and add members (Issue #2351) */
+  createGroup?: (name: string, members: string[], description?: string) => Promise<{ chatId: string }>;
 }
 
 /**
@@ -303,6 +305,34 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Context offloading — create side group (Issue #2351)
+        case 'createGroup': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.createGroup) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'createGroup not supported by this channel',
+            };
+          }
+          const { name, members, description } =
+            request.payload as IpcRequestPayloads['createGroup'];
+          try {
+            const result = await handlers.createGroup(name, members, description);
+            return { id: request.id, success: true, payload: { success: true, chatId: result.chatId } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

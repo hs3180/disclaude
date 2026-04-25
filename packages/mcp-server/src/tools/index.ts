@@ -12,6 +12,7 @@ export type {
   ActionPromptMap,
   SendInteractiveResult,
   RegisterTempChatResult,
+  CreateSideGroupResult,
 } from './types.js';
 
 // Shared utilities
@@ -34,6 +35,9 @@ export { send_file } from './send-file.js';
 
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
+
+// Context Offloading — create side group (Issue #2351)
+export { create_side_group } from './create-side-group.js';
 
 // Interactive Message
 export {

@@ -673,6 +673,61 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Create a group chat and add members via Lark SDK.
+   * Issue #2351: Context Offloading — auto-create side group for long-form content.
+   *
+   * @param name - Group display name (max 64 chars)
+   * @param members - Array of member open IDs to invite
+   * @param description - Optional group description
+   * @returns The newly created chat ID
+   */
+  async createGroup(name: string, members: string[], description?: string): Promise<{ chatId: string }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    // Truncate name to 64 characters at code point boundaries (consistent with schema.ts)
+    const truncatedName = Array.from(name).slice(0, 64).join('');
+
+    logger.info({ name: truncatedName, memberCount: members.length }, 'Creating group via Lark SDK');
+
+    // Create the group
+    const createResp = await this.client.im.chat.create({
+      data: {
+        name: truncatedName,
+        description: description || '',
+        chat_mode: 'group',
+        chat_type: 'public',
+      },
+    });
+
+    const chatId = createResp.data?.chat_id;
+    if (!chatId) {
+      throw new Error(`Failed to create group: no chat_id returned (code=${createResp.code}, msg=${createResp.msg})`);
+    }
+
+    logger.info({ chatId, name: truncatedName }, 'Group created successfully');
+
+    // Add members (if any provided)
+    if (members.length > 0) {
+      try {
+        await this.client.im.chatMembers.create({
+          path: { chat_id: chatId },
+          data: {
+            id_list: members,
+          },
+        });
+        logger.info({ chatId, memberCount: members.length }, 'Members added to group');
+      } catch (err) {
+        logger.warn({ err, chatId, members }, 'Failed to add members to group (group was created)');
+        // Don't throw — the group was created, just member invitation failed
+      }
+    }
+
+    return { chatId };
+  }
+
+  /**
    * Get the InteractionManager for this channel.
    */
   getInteractionManager(): InteractionManager {
