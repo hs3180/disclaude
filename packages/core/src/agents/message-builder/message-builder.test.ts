@@ -508,4 +508,78 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - discussion focus guidance (Issue #1228)', () => {
+    it('should include discussion guidance when buildDiscussionGuidance returns content', () => {
+      const options: MessageBuilderOptions = {
+        buildDiscussionGuidance: () => '\n\n## 🎯 Discussion Focus Mode\nTopic here',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'discussion-chat-1');
+
+      expect(result).toContain('Discussion Focus Mode');
+      expect(result).toContain('Topic here');
+    });
+
+    it('should not include discussion guidance when buildDiscussionGuidance returns undefined', () => {
+      const options: MessageBuilderOptions = {
+        buildDiscussionGuidance: () => undefined,
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'regular-chat-1');
+
+      expect(result).not.toContain('Discussion Focus Mode');
+    });
+
+    it('should not include discussion guidance when callback is not provided', () => {
+      const builder = new MessageBuilder();
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus Mode');
+    });
+
+    it('should place discussion guidance after other guidance sections', () => {
+      const options: MessageBuilderOptions = {
+        buildDiscussionGuidance: () => '\n\n## 🎯 Discussion Focus Mode\nTopic',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      const outputFormatIdx = result.indexOf('Output Format Requirements');
+      const discussionIdx = result.indexOf('Discussion Focus Mode');
+      const userMessageIdx = result.indexOf('--- User Message ---');
+      expect(discussionIdx).toBeGreaterThan(outputFormatIdx);
+      expect(userMessageIdx).toBeGreaterThan(discussionIdx);
+    });
+
+    it('should pass correct chatId to buildDiscussionGuidance callback', () => {
+      const buildDiscussionGuidance = vi.fn((_ctx) => undefined);
+      const options: MessageBuilderOptions = { buildDiscussionGuidance };
+      const builder = new MessageBuilder(options);
+
+      builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'target-chat-789');
+
+      expect(buildDiscussionGuidance).toHaveBeenCalled();
+      expect(buildDiscussionGuidance.mock.calls[0][0].chatId).toBe('target-chat-789');
+    });
+  });
 });

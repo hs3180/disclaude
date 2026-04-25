@@ -345,4 +345,33 @@ describe('ChatStore', () => {
       expect(chat!.passiveMode).toBe(false);
     });
   });
+
+  describe('getCachedTempChat (Issue #1228)', () => {
+    it('should return record synchronously from cache after initialization', async () => {
+      await store.registerTempChat('oc_cached_test', {
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        context: { type: 'discussion', topic: 'Should we adopt TypeScript?' },
+      });
+
+      const record = store.getCachedTempChat('oc_cached_test');
+      expect(record).not.toBeNull();
+      expect(record!.chatId).toBe('oc_cached_test');
+      expect(record!.context).toEqual({ type: 'discussion', topic: 'Should we adopt TypeScript?' });
+    });
+
+    it('should return null for non-existent chatId', async () => {
+      // Register any chat to trigger initialization
+      await store.registerTempChat('oc_init_trigger', {
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      const record = store.getCachedTempChat('oc_nonexistent');
+      expect(record).toBeNull();
+    });
+
+    it('should return null when store is not initialized', () => {
+      const freshStore = new ChatStore({ storeDir });
+      const record = freshStore.getCachedTempChat('any-chat');
+      expect(record).toBeNull();
+    });
+  });
 });

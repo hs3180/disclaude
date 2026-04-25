@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildDiscussionFocusGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,43 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildDiscussionFocusGuidance', () => {
+  it('should include the discussion focus mode header', () => {
+    const result = buildDiscussionFocusGuidance('Should we automate code formatting?');
+    expect(result).toContain('Discussion Focus Mode');
+  });
+
+  it('should include the initial topic as a north star', () => {
+    const topic = 'Should we adopt a monorepo structure?';
+    const result = buildDiscussionFocusGuidance(topic);
+    expect(result).toContain(topic);
+    expect(result).toContain('north star');
+  });
+
+  it('should include core principles for staying on topic', () => {
+    const result = buildDiscussionFocusGuidance('test topic');
+    expect(result).toContain('Stay on topic');
+    expect(result).toContain('Depth over breadth');
+    expect(result).toContain('Gently redirect');
+  });
+
+  it('should include boundary guidelines', () => {
+    const result = buildDiscussionFocusGuidance('test topic');
+    expect(result).toContain('Do NOT chase every interesting tangent');
+    expect(result).toContain('original question');
+  });
+
+  it('should handle multi-line topics', () => {
+    const topic = 'How should we handle\nmulti-line topics\nin discussions?';
+    const result = buildDiscussionFocusGuidance(topic);
+    expect(result).toContain(topic);
+  });
+
+  it('should include progress summarization guidance', () => {
+    const result = buildDiscussionFocusGuidance('test topic');
+    expect(result).toContain('Summarize progress');
   });
 });

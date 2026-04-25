@@ -20,6 +20,7 @@
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
  *   ├── Guidance sections (next-step, output format, location awareness)
+ *   │   └── buildDiscussionGuidance() - Discussion focus personality (Issue #1228)
  *   └── User message + attachments
  * ```
  *
@@ -133,6 +134,9 @@ export class MessageBuilder {
     // Channel-specific tools section
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
+    // Discussion focus guidance (Issue #1228: channel-specific lookup)
+    const discussionGuidance = this.options.buildDiscussionGuidance?.(ctx);
+
     // Core guidance sections (framework-agnostic)
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
@@ -164,6 +168,11 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+
+    // Issue #1228: Discussion focus guidance (injected after other guidance)
+    if (discussionGuidance) {
+      sections.push(discussionGuidance);
+    }
 
     const preamble = sections.join('\n');
 

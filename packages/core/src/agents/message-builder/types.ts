@@ -105,4 +105,20 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * Build discussion focus guidance for focused discussion chats.
+   *
+   * Issue #1228: When the agent is operating in a discussion chat,
+   * this callback returns the discussion focus guidance section to
+   * inject a personality that keeps the conversation on-topic.
+   *
+   * The callback receives the MessageBuilderContext (which includes chatId)
+   * and should look up whether this chatId is a discussion chat. If so,
+   * return the guidance string; otherwise return undefined.
+   *
+   * @param ctx - Message builder context with chatId
+   * @returns Discussion focus guidance string, or undefined if not a discussion chat
+   */
+  buildDiscussionGuidance?: (ctx: MessageBuilderContext) => string | undefined;
 }

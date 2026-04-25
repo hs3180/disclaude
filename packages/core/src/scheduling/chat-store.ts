@@ -220,6 +220,23 @@ export class ChatStore {
   }
 
   /**
+   * Get a temp chat record from the in-memory cache (synchronous).
+   *
+   * Issue #1228: Provides synchronous access for use in MessageBuilder
+   * callbacks where async is not available. Returns null if the store
+   * hasn't been initialized yet or the chat isn't cached.
+   *
+   * @param chatId - The chat ID to look up
+   * @returns The cached temp chat record, or null if not found
+   */
+  getCachedTempChat(chatId: string): TempChatRecord | null {
+    if (!this.initialized) {
+      return null;
+    }
+    return this.cache.get(chatId) ?? null;
+  }
+
+  /**
    * List all temp chat records.
    *
    * @returns Array of all temp chat records

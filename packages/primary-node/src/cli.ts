@@ -169,8 +169,11 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #1228: Pass ChatStore for discussion focus guidance lookup
   const agentPool = new PrimaryAgentPool({
-    messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    messageBuilderOptions: createFeishuMessageBuilderOptions({
+      chatStore: primaryNode.getChatStore(),
+    }),
   });
 
   // Create unified control handler context

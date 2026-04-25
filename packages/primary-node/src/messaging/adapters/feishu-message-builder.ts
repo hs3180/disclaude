@@ -10,7 +10,7 @@
  * @module messaging/adapters/feishu-message-builder
  */
 
-import { Config, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type MessageBuilderContext, type MessageBuilderOptions, type ChatStore, buildDiscussionFocusGuidance } from '@disclaude/core';
 
 /**
  * Build Feishu platform header.
@@ -179,6 +179,21 @@ function hasImageAnalyzerMcp(): boolean {
 }
 
 /**
+ * Options for creating Feishu-specific MessageBuilderOptions.
+ *
+ * Issue #1228: Extended to support discussion focus guidance via ChatStore lookup.
+ */
+export interface FeishuMessageBuilderCreateOptions {
+  /**
+   * ChatStore instance for looking up discussion context.
+   *
+   * When provided, the builder will check temp chat records for discussion
+   * context and inject discussion focus guidance when applicable.
+   */
+  chatStore?: ChatStore;
+}
+
+/**
  * Create Feishu-specific MessageBuilderOptions.
  *
  * Returns the options object with all Feishu channel section builders
@@ -186,14 +201,37 @@ function hasImageAnalyzerMcp(): boolean {
  *
  * Issue #1499: Moved from worker-node to primary-node. Use this function
  * when creating ChatAgent instances for Feishu channels.
+ * Issue #1228: Now accepts optional ChatStore for discussion focus guidance.
  *
+ * @param options - Optional configuration including ChatStore for discussion support
  * @returns MessageBuilderOptions with Feishu-specific callbacks
  */
-export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
-  return {
+export function createFeishuMessageBuilderOptions(
+  options: FeishuMessageBuilderCreateOptions = {}
+): MessageBuilderOptions {
+  const result: MessageBuilderOptions = {
     buildHeader: buildFeishuHeader,
     buildPostHistory: buildFeishuMentionSection,
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
   };
+
+  // Issue #1228: Discussion focus guidance via ChatStore lookup
+  if (options.chatStore) {
+    const {chatStore} = options;
+    result.buildDiscussionGuidance = (ctx: MessageBuilderContext): string | undefined => {
+      const record = chatStore.getCachedTempChat(ctx.chatId);
+      if (!record?.context) {
+        return undefined;
+      }
+      // Check if this is a discussion chat with a topic
+      const { type, topic } = record.context as { type?: string; topic?: string };
+      if (type === 'discussion' && typeof topic === 'string' && topic.length > 0) {
+        return buildDiscussionFocusGuidance(topic);
+      }
+      return undefined;
+    };
+  }
+
+  return result;
 }
