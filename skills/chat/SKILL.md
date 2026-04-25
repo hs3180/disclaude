@@ -283,3 +283,46 @@ User replies in the group naturally (types text). Consumer or this skill updates
 ### PR Scanner Polls
 
 PR Scanner reads `pr-123.json`, finds `response` with user's decision, executes `gh pr merge 123`.
+
+## Discussion Focus Mode
+
+Issue #1228: Temporary chats can operate in **discussion focus mode**, where the agent stays anchored to the original discussion topic.
+
+### How It Works
+
+When a chat is created with a `discussionTopic` in the context, the consuming agent should pass it to `MessageBuilder` via the `discussionTopic` field on `MessageData`. The MessageBuilder will inject a discussion-focus guidance section that:
+
+1. **Anchors** the agent to the original question
+2. **Detects drift** and gently redirects conversation back
+3. **Summarizes** progress periodically
+
+### Example: Discussion Chat
+
+```bash
+CHAT_ID="discuss-456" \
+CHAT_EXPIRES_AT="2026-04-26T10:00:00Z" \
+CHAT_GROUP_NAME="Discuss: Code formatting" \
+CHAT_MEMBERS='["ou_developer"]' \
+CHAT_CONTEXT='{"discussionTopic": "Should we automate code formatting?", "source": "start-discussion"}' \
+npx tsx skills/chat/create.ts
+```
+
+### Integration for Consumers
+
+When reading an active discussion chat, extract the topic from context:
+
+```typescript
+const chat = JSON.parse(fs.readFileSync('workspace/chats/discuss-456.json', 'utf-8'));
+const discussionTopic = chat.context?.discussionTopic;
+
+// Pass to MessageBuilder
+const enhancedContent = messageBuilder.buildEnhancedContent({
+  text: userInput,
+  messageId: 'msg-123',
+  discussionTopic,
+}, chatId);
+```
+
+### Discussion Personality Source
+
+The discussion personality content is defined in `skills/chat/discussion-soul.md` and implemented as `buildDiscussionFocusGuidance()` in the core MessageBuilder.

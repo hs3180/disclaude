@@ -508,4 +508,67 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - discussion focus', () => {
+    it('should include discussion focus when discussionTopic is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Should we automate code formatting?',
+      }, 'chat-456');
+
+      expect(result).toContain('Discussion Focus Mode');
+      expect(result).toContain('Should we automate code formatting?');
+    });
+
+    it('should not include discussion focus when no topic is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus Mode');
+    });
+
+    it('should not include discussion focus for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/command',
+        messageId: 'msg-123',
+        discussionTopic: 'Some topic',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Discussion Focus Mode');
+    });
+
+    it('should place discussion focus before other guidance sections', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Some topic',
+      }, 'chat-456');
+
+      const discussionIdx = result.indexOf('Discussion Focus Mode');
+      const nextStepIdx = result.indexOf('Next Steps After Response');
+      expect(nextStepIdx).toBeGreaterThan(discussionIdx);
+    });
+
+    it('should not affect regular messages without discussionTopic', () => {
+      const resultWithout = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      const resultWith = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        discussionTopic: 'Test topic',
+      }, 'chat-456');
+
+      // Result with discussion focus should be longer
+      expect(resultWith.length).toBeGreaterThan(resultWithout.length);
+      // Both should have core guidance
+      expect(resultWithout).toContain('Next Steps After Response');
+      expect(resultWith).toContain('Next Steps After Response');
+    });
+  });
 });

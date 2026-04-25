@@ -30,6 +30,17 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /**
+   * Discussion topic for focused conversation mode (Issue #1228).
+   *
+   * When provided, the agent is placed in discussion-focus mode:
+   * it anchors to this topic, detects drift, and gently redirects
+   * the conversation back to the original question.
+   *
+   * Set by the `start-discussion` skill or any consumer that needs
+   * focused, on-topic discussion behavior.
+   */
+  discussionTopic?: string;
 }
 
 /**
