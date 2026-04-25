@@ -185,6 +185,60 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, so in-memory singletons
+ * from the main process are inaccessible. Runtime environment variables are
+ * shared via a workspace file (`{workspace}/.runtime-env`) that both the
+ * main process and agent subprocess can read/write.
+ *
+ * This guidance tells the agent which runtime-env variables are currently
+ * available, what they are for, and how to use them.
+ *
+ * @param runtimeEnvVars - Currently available runtime-env variables (key → value)
+ * @returns Formatted runtime-env awareness section, or empty string if no vars
+ */
+export function buildRuntimeEnvGuidance(runtimeEnvVars?: Record<string, string>): string {
+  if (!runtimeEnvVars || Object.keys(runtimeEnvVars).length === 0) {
+    return '';
+  }
+
+  // Known variable descriptions for common runtime-env keys
+  const knownDescriptions: Record<string, string> = {
+    GH_TOKEN: 'GitHub App installation access token (auto-refreshed)',
+    GH_TOKEN_EXPIRES_AT: 'GitHub token expiration timestamp (ISO 8601)',
+  };
+
+  const varLines = Object.entries(runtimeEnvVars)
+    .map(([key, value]) => {
+      const desc = knownDescriptions[key];
+      // Mask sensitive values (tokens, keys, secrets)
+      const isSensitive = /token|key|secret|password|credential/i.test(key);
+      const displayValue = isSensitive ? '••••••••' : value;
+      return `- **\`${key}\`**: \`${displayValue}\`${desc ? ` — ${desc}` : ''}`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The following runtime environment variables are currently available in your session. These are shared between the main process and your agent subprocess via the workspace \`.runtime-env\` file.
+
+### Available Variables
+
+${varLines}
+
+### How to Use
+
+- **Reading**: These variables are already available in your subprocess environment. Use the Bash tool to access them (e.g., \`echo $GH_TOKEN\`) when needed.
+- **Writing**: You can update runtime-env variables using the Write tool to write to \`{workspace}/.runtime-env\` in KEY=VALUE format. Other processes and agents can then read the updated values.
+- **Refreshing**: Some variables (like GH_TOKEN) are auto-refreshed by background skills before expiration.`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

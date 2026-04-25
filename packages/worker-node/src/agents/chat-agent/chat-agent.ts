@@ -8,7 +8,7 @@
  * RestartManager, MessageBuilder.
  */
 
-import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, ConversationOrchestrator, RestartManager, loadRuntimeEnv, type StreamingUserMessage, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { ChatHistoryLoader } from './chat-history-loader.js';
 import { AgentLoopManager } from './agent-loop-manager.js';
@@ -87,8 +87,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
 
       const capabilities = this.callbacks.getCapabilities?.(chatId);
+      const runtimeEnvVars = loadRuntimeEnv(this.getWorkspaceDir());
       const enhancedContent = this.messageBuilder.buildEnhancedContent({
         text: userInput.content, messageId, senderOpenId,
+        runtimeEnvVars: Object.keys(runtimeEnvVars).length > 0 ? runtimeEnvVars : undefined,
       }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
@@ -149,8 +151,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     const sdkOptions = this.createSdkOptions({ disallowedTools: ['EnterPlanMode'], mcpServers });
     const capabilities = this.callbacks.getCapabilities?.(chatId);
+    const runtimeEnvVars = loadRuntimeEnv(this.getWorkspaceDir());
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId: messageId ?? `cli-${Date.now()}`, senderOpenId,
+      runtimeEnvVars: Object.keys(runtimeEnvVars).length > 0 ? runtimeEnvVars : undefined,
     }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
@@ -212,10 +216,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     const capabilities = this.callbacks.getCapabilities?.(chatId);
+    const runtimeEnvVars = loadRuntimeEnv(this.getWorkspaceDir());
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments,
       chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.historyLoader.getPersistedContext(),
+      runtimeEnvVars: Object.keys(runtimeEnvVars).length > 0 ? runtimeEnvVars : undefined,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

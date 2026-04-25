@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,62 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no vars are provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+    expect(buildRuntimeEnvGuidance({})).toBe('');
+  });
+
+  it('should return formatted section when vars are provided', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123', GH_TOKEN_EXPIRES_AT: '2026-03-20T12:00:00Z' });
+    expect(result).toContain('Runtime Environment Variables');
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should mask sensitive values', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_super_secret_value' });
+    expect(result).toContain('••••••••');
+    expect(result).not.toContain('ghs_super_secret_value');
+  });
+
+  it('should show non-sensitive values in plain text', () => {
+    const result = buildRuntimeEnvGuidance({ CUSTOM_CONFIG: 'my-value' });
+    expect(result).toContain('my-value');
+    expect(result).not.toContain('••••••••');
+  });
+
+  it('should include known variable descriptions', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc' });
+    expect(result).toContain('GitHub App installation access token');
+  });
+
+  it('should not include description for unknown variables', () => {
+    const result = buildRuntimeEnvGuidance({ MY_CUSTOM_VAR: 'value' });
+    expect(result).toContain('MY_CUSTOM_VAR');
+    // Should not have the known description separator for unknown vars
+    const line = result.split('\n').find(l => l.includes('MY_CUSTOM_VAR'));
+    expect(line).not.toContain('auto-refreshed');
+  });
+
+  it('should include usage instructions', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc' });
+    expect(result).toContain('How to Use');
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('Reading');
+    expect(result).toContain('Writing');
+  });
+
+  it('should handle mixed sensitive and non-sensitive vars', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_secret',
+      MY_SETTING: 'enabled',
+    });
+    expect(result).toContain('••••••••');
+    expect(result).toContain('enabled');
   });
 });
