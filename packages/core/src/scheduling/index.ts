@@ -58,10 +58,12 @@ export {
   type SchedulerOptions,
 } from './scheduler.js';
 
-// Schedule Executor (Issue #1382)
+// Schedule Executor (Issue #1382, #2513)
 export {
   createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
+  type TaskAgentInterface,
+  type TaskAgentFactory,
+  /** @deprecated Use TaskAgentInterface instead */ type ScheduleAgent,
+  /** @deprecated Use TaskAgentFactory instead */ type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
