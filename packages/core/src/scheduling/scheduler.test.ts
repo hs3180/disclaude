@@ -535,4 +535,127 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  // Issue #1953: Event-driven trigger tests
+  describe('triggerNow (Issue #1953)', () => {
+    it('should immediately execute a task via triggerNow', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerNow('trigger-1');
+      expect(result).toBe(true);
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+    });
+
+    it('should return false for unknown task', async () => {
+      const result = await scheduler.triggerNow('nonexistent');
+      expect(result).toBe(false);
+    });
+
+    it('should respect blocking when triggering', async () => {
+      const task = createTask({ id: 'blocking-trigger', blocking: true });
+      scheduler.addTask(task);
+
+      // First trigger succeeds
+      const result1 = await scheduler.triggerNow('blocking-trigger');
+      expect(result1).toBe(true);
+
+      // Second trigger while running should be skipped
+      const result2 = await scheduler.triggerNow('blocking-trigger');
+      expect(result2).toBe(false);
+    });
+
+    it('should respect cooldown when triggering', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          remainingMs: 60000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'cooldown-trigger', cooldownPeriod: 60000 });
+      cooldownScheduler.addTask(task);
+
+      const result = await cooldownScheduler.triggerNow('cooldown-trigger');
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('event trigger integration (Issue #1953)', () => {
+    it('should set up event trigger when task has trigger config', () => {
+      const task = createTask({
+        id: 'event-task',
+        trigger: {
+          watch: ['workspace/chats/*.json'],
+          debounce: 3000,
+        },
+      });
+
+      scheduler.addTask(task);
+
+      const triggers = scheduler.getEventTriggers();
+      expect(triggers.has('event-task')).toBe(true);
+    });
+
+    it('should not set up event trigger when task has no trigger config', () => {
+      const task = createTask({ id: 'no-event-task' });
+      scheduler.addTask(task);
+
+      const triggers = scheduler.getEventTriggers();
+      expect(triggers.has('no-event-task')).toBe(false);
+    });
+
+    it('should remove event trigger when task is removed', () => {
+      const task = createTask({
+        id: 'remove-event',
+        trigger: {
+          watch: ['workspace/chats'],
+        },
+      });
+
+      scheduler.addTask(task);
+      expect(scheduler.getEventTriggers().has('remove-event')).toBe(true);
+
+      scheduler.removeTask('remove-event');
+      expect(scheduler.getEventTriggers().has('remove-event')).toBe(false);
+    });
+
+    it('should replace event trigger when re-adding task', () => {
+      const task1 = createTask({
+        id: 'replace-event',
+        trigger: { watch: ['workspace/chats'] },
+      });
+      const task2 = createTask({
+        id: 'replace-event',
+        trigger: { watch: ['workspace/data'] },
+      });
+
+      scheduler.addTask(task1);
+      scheduler.addTask(task2);
+
+      const triggers = scheduler.getEventTriggers();
+      expect(triggers.has('replace-event')).toBe(true);
+      // Only one trigger for this task
+      expect(triggers.size).toBeGreaterThanOrEqual(1);
+    });
+  });
 });

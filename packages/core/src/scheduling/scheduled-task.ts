@@ -8,6 +8,30 @@
  */
 
 /**
+ * Event-driven trigger configuration for a scheduled task.
+ *
+ * When specified, the scheduler watches the given file paths and
+ * triggers the task immediately on change, without waiting for cron.
+ * Cron acts as a fallback for missed events.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ *
+ * @example
+ * ```yaml
+ * trigger:
+ *   watch:
+ *     - "workspace/chats/*.json"
+ *   debounce: 5000
+ * ```
+ */
+export interface ScheduleTriggerConfig {
+  /** File path(s) or glob(s) to watch for changes */
+  watch: string[];
+  /** Debounce interval in milliseconds (default: 5000) */
+  debounce?: number;
+}
+
+/**
  * Scheduled task definition.
  */
 export interface ScheduledTask {
@@ -41,4 +65,13 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Event-driven trigger configuration.
+   * When specified, the scheduler watches the given file paths and
+   * triggers the task immediately on change.
+   * Cron acts as a fallback for missed events.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  trigger?: ScheduleTriggerConfig;
 }

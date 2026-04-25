@@ -555,6 +555,145 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  describe('parseFile - trigger configuration (Issue #1953)', () => {
+    it('should parse trigger watch paths', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'trigger:',
+        '  - "workspace/chats/*.json"',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.trigger).toBeDefined();
+      expect(task!.trigger!.watch).toEqual(['workspace/chats/*.json']);
+    });
+
+    it('should parse trigger with multiple watch paths and debounce', async () => {
+      const content = [
+        '---',
+        'name: "Multi Watch"',
+        'cron: "0 */10 * * * *"',
+        'chatId: "oc_test"',
+        'trigger:',
+        '  - "workspace/chats/*.json"',
+        '  - "workspace/data/*.json"',
+        '  debounce: 3000',
+        '---',
+        '',
+        'Multi watch task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/multi-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.trigger).toBeDefined();
+      expect(task!.trigger!.watch).toEqual(['workspace/chats/*.json', 'workspace/data/*.json']);
+      expect(task!.trigger!.debounce).toBe(3000);
+    });
+
+    it('should default trigger to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-trigger.md`);
+      expect(task).not.toBeNull();
+      expect(task!.trigger).toBeUndefined();
+    });
+
+    it('should default debounce to undefined when not specified', async () => {
+      const content = [
+        '---',
+        'name: "No Debounce"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'trigger:',
+        '  - "workspace/chats"',
+        '---',
+        '',
+        'Task content.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-debounce.md`);
+      expect(task).not.toBeNull();
+      expect(task!.trigger).toBeDefined();
+      expect(task!.trigger!.debounce).toBeUndefined();
+    });
+  });
+
+  describe('writeTask - trigger configuration (Issue #1953)', () => {
+    it('should write trigger config to file', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-trigger-task',
+        name: 'Trigger Task',
+        cron: '0 */5 * * * *',
+        prompt: 'Task with trigger',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        trigger: {
+          watch: ['workspace/chats/*.json'],
+          debounce: 5000,
+        },
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('trigger:');
+      expect(writtenContent).toContain('"workspace/chats/*.json"');
+      expect(writtenContent).toContain('debounce: 5000');
+    });
+
+    it('should not write trigger when not configured', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-trigger',
+        name: 'No Trigger',
+        cron: '0 * * * *',
+        prompt: 'Task without trigger',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('trigger:');
+    });
+
+    it('should write multiple watch paths', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-multi-trigger',
+        name: 'Multi Trigger',
+        cron: '0 */5 * * * *',
+        prompt: 'Task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        trigger: {
+          watch: ['workspace/chats/*.json', 'workspace/data/*.json'],
+        },
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('"workspace/chats/*.json"');
+      expect(writtenContent).toContain('"workspace/data/*.json"');
+    });
+  });
 });
 
 // ============================================================================

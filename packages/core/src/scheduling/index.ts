@@ -5,17 +5,19 @@
  * - CooldownManager: Manages cooldown periods for scheduled tasks
  * - ChatStore: File-based storage for temporary chat lifecycle records (Issue #1703)
  * - ScheduledTask: Type definition for scheduled tasks
+ * - ScheduleTriggerConfig: Event-driven trigger configuration (Issue #1953)
+ * - EventTrigger: File watcher for event-driven schedule triggering (Issue #1953)
  * - ScheduleFileScanner: Scans and parses schedule markdown files
  * - ScheduleFileWatcher: Hot reload for schedule files
  * - ScheduleManager: Query operations for scheduled tasks
- * - Scheduler: Cron-based task execution (with dependency injection)
+ * - Scheduler: Cron-based and event-driven task execution (with dependency injection)
  * - ScheduleExecutor: Unified executor factory (Issue #1382)
  *
  * @module @disclaude/core/scheduling
  */
 
 // Types
-export { type ScheduledTask } from './scheduled-task.js';
+export { type ScheduledTask, type ScheduleTriggerConfig } from './scheduled-task.js';
 
 // Cooldown
 export {
@@ -31,6 +33,13 @@ export {
   type TempChatResponse,
   type RegisterTempChatOptions,
 } from './chat-store.js';
+
+// Event Trigger (Issue #1953: event-driven schedule trigger)
+export {
+  EventTrigger,
+  type OnTriggerCallback,
+  type EventTriggerOptions,
+} from './event-trigger.js';
 
 // File Scanner & Watcher
 export {

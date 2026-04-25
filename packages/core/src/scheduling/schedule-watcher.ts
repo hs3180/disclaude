@@ -70,6 +70,8 @@ function stripQuotes(value: string): string {
 
 /**
  * Parse YAML frontmatter from schedule content.
+ *
+ * Issue #1953: Added support for `trigger.watch` and `trigger.debounce` fields.
  */
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
@@ -85,8 +87,24 @@ function parseScheduleFrontmatter(content: string): {
   const [, frontmatterText] = match;
   const frontmatter: Record<string, unknown> = {};
 
+  // Issue #1953: Parse trigger.watch array and trigger.debounce
+  const triggerWatch: string[] = [];
+  let triggerDebounce: number | undefined;
+
   const lines = frontmatterText.split('\n');
   for (const line of lines) {
+    const trimmedLine = line.trim();
+
+    // Issue #1953: Handle YAML list items (lines like "- value" or "  - value")
+    // These don't have colons, so they must be checked before the colon-based parser.
+    if (trimmedLine.startsWith('- ')) {
+      const itemValue = trimmedLine.slice(2).trim();
+      if (itemValue.length > 0) {
+        triggerWatch.push(stripQuotes(itemValue));
+      }
+      continue;
+    }
+
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) { continue; }
 
@@ -110,7 +128,19 @@ function parseScheduleFrontmatter(content: string): {
       case 'cooldownPeriod':
         frontmatter[key] = parseInt(value, 10);
         break;
+      case 'debounce':
+        triggerDebounce = parseInt(value, 10);
+        break;
     }
+  }
+
+  // Issue #1953: Build trigger config if watch paths were found
+  if (triggerWatch.length > 0) {
+    const triggerConfig: Record<string, unknown> = { watch: triggerWatch };
+    if (triggerDebounce !== undefined && !isNaN(triggerDebounce)) {
+      triggerConfig.debounce = triggerDebounce;
+    }
+    frontmatter['trigger'] = triggerConfig;
   }
 
   return { frontmatter, contentStart: match[0].length };
@@ -216,6 +246,8 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        // Issue #1953: Event-driven trigger configuration
+        trigger: frontmatter['trigger'] as import('./scheduled-task.js').ScheduleTriggerConfig | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +299,16 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    // Issue #1953: Write trigger configuration
+    if (task.trigger && task.trigger.watch.length > 0) {
+      frontmatter.push('trigger:');
+      for (const watchPath of task.trigger.watch) {
+        frontmatter.push(`  - "${watchPath}"`);
+      }
+      if (task.trigger.debounce !== undefined) {
+        frontmatter.push(`  debounce: ${task.trigger.debounce}`);
+      }
     }
 
     frontmatter.push('---', '');

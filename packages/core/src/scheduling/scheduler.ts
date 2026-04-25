@@ -1,5 +1,5 @@
 /**
- * Scheduler - Executes scheduled tasks using cron.
+ * Scheduler - Executes scheduled tasks using cron and event triggers.
  *
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
@@ -15,10 +15,16 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1953: Added event-driven trigger support.
+ * - Tasks can be triggered immediately via triggerNow()
+ * - EventTrigger watches file paths and calls triggerNow()
+ * - Cron acts as fallback for missed events
+ *
  * Features:
  * - Dynamic task scheduling
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
+ * - Event-driven triggering with file watchers
  *
  * @module @disclaude/core/scheduling
  */
@@ -26,6 +32,7 @@
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
+import { EventTrigger } from './event-trigger.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
@@ -80,11 +87,12 @@ export interface SchedulerOptions {
 }
 
 /**
- * Scheduler - Manages cron-based task execution.
+ * Scheduler - Manages cron-based and event-driven task execution.
  *
  * Issue #711: Uses short-lived ScheduleAgents (max 24h lifetime).
  * Each execution creates a fresh agent, ensuring isolation.
  * Issue #1041: Uses dependency injection for task execution.
+ * Issue #1953: Added event-driven trigger support (triggerNow + EventTrigger).
  *
  * Usage:
  * ```typescript
@@ -103,10 +111,13 @@ export interface SchedulerOptions {
  * await scheduler.start();
  *
  * // Add a new task dynamically
- * await scheduler.addTask(task);
+ * scheduler.addTask(task);
+ *
+ * // Trigger a task immediately (event-driven)
+ * scheduler.triggerNow('schedule-my-task');
  *
  * // Stop scheduler
- * await scheduler.stop();
+ * scheduler.stop();
  * ```
  */
 export class Scheduler {
@@ -118,6 +129,8 @@ export class Scheduler {
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
+  /** Issue #1953: Active event triggers indexed by task ID */
+  private eventTriggers: Map<string, EventTrigger> = new Map();
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -130,6 +143,7 @@ export class Scheduler {
   /**
    * Start the scheduler.
    * Loads all enabled tasks and schedules them.
+   * Issue #1953: Also starts event triggers for tasks with trigger config.
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -142,18 +156,24 @@ export class Scheduler {
     // Load and schedule all enabled tasks
     const tasks = await this.scheduleManager.listEnabled();
     for (const task of tasks) {
-      await this.addTask(task);
+      this.addTask(task);
     }
+
+    // Issue #1953: Start event triggers for tasks with trigger config
+    await this.startEventTriggers();
 
     logger.info({ taskCount: this.activeJobs.size }, 'Scheduler started');
   }
 
   /**
    * Stop the scheduler.
-   * Stops all active cron jobs.
+   * Stops all active cron jobs and event triggers.
    */
   stop(): void {
     this.running = false;
+
+    // Stop event triggers
+    this.stopEventTriggers();
 
     for (const [taskId, entry] of this.activeJobs) {
       void entry.job.stop();
@@ -167,6 +187,7 @@ export class Scheduler {
   /**
    * Add a task to the scheduler.
    * Creates a cron job for the task.
+   * Issue #1953: Also sets up event trigger if trigger config is present.
    *
    * @param task - Task to add
    */
@@ -193,10 +214,16 @@ export class Scheduler {
     } catch (error) {
       logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
     }
+
+    // Issue #1953: Set up event trigger if configured
+    if (task.trigger && task.trigger.watch.length > 0) {
+      this.setupEventTrigger(task);
+    }
   }
 
   /**
    * Remove a task from the scheduler.
+   * Also removes associated event trigger.
    *
    * @param taskId - Task ID to remove
    */
@@ -207,6 +234,64 @@ export class Scheduler {
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
     }
+
+    // Issue #1953: Remove event trigger
+    const trigger = this.eventTriggers.get(taskId);
+    if (trigger) {
+      trigger.stop();
+      this.eventTriggers.delete(taskId);
+      logger.info({ taskId }, 'Removed event trigger');
+    }
+  }
+
+  /**
+   * Immediately trigger a task execution, bypassing the cron schedule.
+   *
+   * Issue #1953: Direct invocation method (Method D).
+   * This is the primary API for event-driven scheduling.
+   *
+   * Respects:
+   * - Blocking: skips if task is already running
+   * - Cooldown: skips if in cooldown period
+   *
+   * @param taskId - The task ID to trigger
+   * @returns true if the task was triggered, false if skipped
+   */
+  async triggerNow(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'triggerNow: task not found');
+      return false;
+    }
+
+    const {task} = entry;
+
+    // Check blocking
+    if (task.blocking && this.runningTasks.has(task.id)) {
+      logger.info(
+        { taskId: task.id, name: task.name },
+        'triggerNow: skipped - previous execution still running',
+      );
+      return false;
+    }
+
+    // Check cooldown
+    if (task.cooldownPeriod && this.cooldownManager) {
+      const isInCooldown = await this.cooldownManager.isInCooldown(task.id, task.cooldownPeriod);
+      if (isInCooldown) {
+        logger.info(
+          { taskId: task.id, name: task.name },
+          'triggerNow: skipped - in cooldown period',
+        );
+        return false;
+      }
+    }
+
+    logger.info({ taskId: task.id, name: task.name, source: 'event-trigger' }, 'Triggering task immediately');
+
+    // Execute in background (don't await to allow debounced triggers to return quickly)
+    void this.executeTask(task);
+    return true;
   }
 
   /**
@@ -237,7 +322,7 @@ ${task.prompt}`;
 
   /**
    * Execute a scheduled task.
-   * Called by cron job when the schedule triggers.
+   * Called by cron job when the schedule triggers or by triggerNow().
    *
    * Issue #711: Creates a short-lived ScheduleAgent for each execution.
    * Agent is disposed after execution to free resources.
@@ -323,6 +408,69 @@ ${task.prompt}`;
   }
 
   /**
+   * Issue #1953: Set up an EventTrigger for a task.
+   *
+   * @param task - Task with trigger configuration
+   */
+  private setupEventTrigger(task: ScheduledTask): void {
+    // Remove existing trigger if any
+    const existing = this.eventTriggers.get(task.id);
+    if (existing) {
+      existing.stop();
+    }
+
+    // Safe to use trigger config — caller guarantees it exists
+    const triggerConfig = task.trigger as import('./scheduled-task.js').ScheduleTriggerConfig;
+
+    const trigger = new EventTrigger({
+      taskId: task.id,
+      watchPaths: triggerConfig.watch,
+      debounce: triggerConfig.debounce,
+      onTrigger: (taskId) => {
+        void this.triggerNow(taskId);
+      },
+    });
+
+    this.eventTriggers.set(task.id, trigger);
+
+    // Start the trigger if scheduler is running
+    if (this.running) {
+      void trigger.start();
+    }
+
+    logger.info(
+      { taskId: task.id, watchPaths: triggerConfig.watch, debounce: triggerConfig.debounce },
+      'Event trigger configured for task',
+    );
+  }
+
+  /**
+   * Issue #1953: Start all configured event triggers.
+   */
+  private async startEventTriggers(): Promise<void> {
+    for (const [taskId, trigger] of this.eventTriggers) {
+      try {
+        await trigger.start();
+      } catch (error) {
+        logger.error(
+          { err: error, taskId },
+          'Failed to start event trigger — cron fallback will handle this task',
+        );
+      }
+    }
+  }
+
+  /**
+   * Issue #1953: Stop all event triggers.
+   */
+  private stopEventTriggers(): void {
+    for (const [taskId, trigger] of this.eventTriggers) {
+      trigger.stop();
+      logger.debug({ taskId }, 'Stopped event trigger');
+    }
+  }
+
+  /**
    * Reload all tasks from ScheduleManager.
    * Useful after external changes to the schedule storage.
    */
@@ -401,5 +549,12 @@ ${task.prompt}`;
   async clearCooldown(taskId: string): Promise<boolean> {
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
+  }
+
+  /**
+   * Issue #1953: Get active event triggers.
+   */
+  getEventTriggers(): Map<string, EventTrigger> {
+    return this.eventTriggers;
   }
 }
