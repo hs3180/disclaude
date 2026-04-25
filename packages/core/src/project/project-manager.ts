@@ -9,8 +9,8 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -64,8 +64,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing templates/ with CLAUDE.md files. Empty = skip FS ops. */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +82,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir ?? '';
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -162,9 +162,12 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
+   * When packageDir is configured, also creates the working directory and
+   * copies CLAUDE.md from the template (Sub-Issue D — #2226).
+   * When packageDir is empty, only creates the in-memory instance.
+   *
    * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
    *
    * @param chatId - Chat session requesting creation
@@ -205,6 +208,18 @@ export class ProjectManager {
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
+
+    // Filesystem instantiation (Sub-Issue D — #2226)
+    if (this.packageDir) {
+      const fsResult = this.instantiateFromTemplate(name, templateName);
+      if (!fsResult.ok) {
+        // Rollback in-memory state
+        this.instances.delete(name);
+        this.chatProjectMap.delete(chatId);
+        this.removeFromReverseIndex(name, chatId);
+        return { ok: false, error: fsResult.error };
+      }
+    }
 
     // Persist after mutation
     this.persist();
@@ -513,6 +528,104 @@ export class ProjectManager {
     // Avoid importing `path` to keep this module filesystem-free
     const ws = this.workspaceDir.replace(/\/+$/, '');
     return `${ws}/projects/${name}`;
+  }
+
+  // ───────────────────────────────────────────
+  // Filesystem Instantiation (Sub-Issue D — #2226)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate a project's working directory and copy CLAUDE.md from template.
+   *
+   * Steps:
+   * 1. Validate resolved path is within workspaceDir (path traversal defense-in-depth)
+   * 2. Create working directory with `mkdirSync({ recursive: true })`
+   * 3. Copy CLAUDE.md from template via `copyClaudeMd()`
+   * 4. On copy failure: rollback by removing the created directory
+   *
+   * @param name - Instance name
+   * @param templateName - Source template name
+   * @returns ProjectResult indicating success or failure
+   */
+  private instantiateFromTemplate(name: string, templateName: string): ProjectResult<void> {
+    const targetDir = this.resolveWorkingDir(name);
+
+    // Path traversal defense-in-depth: verify resolved path is within workspaceDir
+    const resolvedTarget = resolve(targetDir);
+    const resolvedWorkspace = resolve(this.workspaceDir);
+    if (
+      !resolvedTarget.startsWith(`${resolvedWorkspace}/`) &&
+      resolvedTarget !== resolvedWorkspace
+    ) {
+      return {
+        ok: false,
+        error: '工作目录路径不在工作空间内（路径遍历防护）',
+      };
+    }
+
+    // Create working directory
+    try {
+      mkdirSync(targetDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(templateName, targetDir);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory
+      try {
+        rmSync(targetDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup failure — best effort rollback
+      }
+      return copyResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from a template directory to the target working directory.
+   *
+   * Behavior:
+   * - packageDir not configured → skip (instance without CLAUDE.md, creation succeeds)
+   * - Template CLAUDE.md not found → error (triggers rollback in caller)
+   * - Template CLAUDE.md found → copy to `{targetDir}/CLAUDE.md`
+   *
+   * @param templateName - Source template name
+   * @param targetDir - Target working directory
+   * @returns ProjectResult indicating success or failure
+   */
+  private copyClaudeMd(templateName: string, targetDir: string): ProjectResult<void> {
+    // Skip if packageDir not configured
+    if (!this.packageDir) {
+      return { ok: true, data: undefined };
+    }
+
+    const sourcePath = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+
+    // Template CLAUDE.md must exist when packageDir is configured
+    if (!existsSync(sourcePath)) {
+      return {
+        ok: false,
+        error: `模板 "${templateName}" 的 CLAUDE.md 文件不存在`,
+      };
+    }
+
+    try {
+      copyFileSync(sourcePath, join(targetDir, 'CLAUDE.md'));
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
   }
 
   /**

@@ -186,8 +186,16 @@ export interface ProjectManagerOptions {
   /** Workspace root directory (parent of `projects/` instances dir) */
   workspaceDir: string;
 
-  /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
-  packageDir: string;
+  /**
+   * Package directory (contains `templates/` with built-in CLAUDE.md files).
+   *
+   * When set, `create()` will also instantiate the filesystem:
+   * - Create working directory `{workspaceDir}/projects/{name}/`
+   * - Copy CLAUDE.md from `{packageDir}/templates/{templateName}/CLAUDE.md`
+   *
+   * When omitted/empty, filesystem operations are skipped (in-memory only).
+   */
+  packageDir?: string;
 
   /** Template configuration from disclaude.config.yaml */
   templatesConfig: ProjectTemplatesConfig;
