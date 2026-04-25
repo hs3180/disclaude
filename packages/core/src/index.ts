@@ -288,3 +288,26 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module (Issue #2227 — Sub-Issue E: integration)
+export {
+  // Core class
+  ProjectManager,
+  // Types
+  type CwdProvider,
+  type InstanceInfo,
+  type ProjectContextConfig,
+  type ProjectManagerOptions,
+  type ProjectResult,
+  type ProjectTemplate,
+  type ProjectTemplatesConfig,
+  type PersistedInstance,
+  type ProjectsPersistData,
+  // Template discovery
+  discoverTemplates,
+  discoveryResultToConfig,
+  discoverTemplatesAsConfig,
+  type DiscoveryResult,
+  type DiscoveryError,
+  type DiscoveryOptions,
+} from './project/index.js';

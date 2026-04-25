@@ -24,6 +24,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectTemplateEntry,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
@@ -494,6 +495,20 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get project templates configuration from config file.
+   *
+   * Returns the `projectTemplates` section from disclaude.config.yaml.
+   * This can be combined with auto-discovered templates via `discoverTemplates()`
+   * for full template resolution.
+   *
+   * @see Issue #2227 (Sub-Issue E — config integration)
+   * @returns Project templates configuration, or undefined if not configured
+   */
+  static getProjectTemplatesConfig(): Record<string, ProjectTemplateEntry> | undefined {
+    return fileConfigOnly.projectTemplates;
   }
 }
 
