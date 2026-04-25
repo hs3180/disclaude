@@ -255,6 +255,26 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Project Templates Configuration (Issue #2227)
+# -----------------------------------------------------------------------------
+# Define project templates for per-chatId Agent context switching.
+# Templates are blueprints for creating isolated working directories.
+# Each instance gets its own cwd, and the Agent discovers CLAUDE.md there.
+#
+# When not configured, all chats use the workspace root as cwd (zero-config).
+# Templates can also be auto-discovered from {packageDir}/templates/.
+# @see Issue #1916 (unified ProjectContext system)
+# @see Issue #2286 (auto-discover templates from package directory)
+#
+# projectTemplates:
+#   research:
+#     displayName: "研究模式"
+#     description: "专注研究的独立空间"
+#   book-reader:
+#     displayName: "读书助手"
+#     description: "深度阅读和笔记管理"
+
 # =============================================================================
 # Notes
 # =============================================================================
