@@ -1077,4 +1077,180 @@ describe('BaseAgent', () => {
       expect(options.model).toBeUndefined();
     });
   });
+
+  describe('constructor - runtime context with getAcpClient returning undefined', () => {
+    it('should throw when runtime context has getAcpClient returning undefined', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+        getAcpClient: () => undefined as unknown as import('../sdk/acp/acp-client.js').AcpClient,
+      });
+
+      expect(() => new TestAgent({ apiKey: 'key', model: 'model' })).toThrow(
+        'ACP Client not available'
+      );
+    });
+
+    it('should throw when runtime context has getAcpClient returning null', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+        getAcpClient: () => null as unknown as import('../sdk/acp/acp-client.js').AcpClient,
+      });
+
+      expect(() => new TestAgent({ apiKey: 'key', model: 'model' })).toThrow(
+        'ACP Client not available'
+      );
+    });
+  });
+
+  describe('ensureClientConnected - error propagation', () => {
+    it('should propagate connection error to caller', async () => {
+      const connectError = new Error('Connection refused');
+      mockAcpClient.connect.mockImplementation(() => {
+        mockAcpClient.state = 'disconnected';
+        return Promise.reject(connectError);
+      });
+
+      const options = {
+        cwd: '/workspace',
+        permissionMode: 'bypassPermissions' as const,
+        settingSources: ['project'],
+      };
+
+      await expect(async () => {
+        for await (const _ of agent.testQueryOnce('test', options)) {
+          // should fail before yielding
+        }
+      }).rejects.toThrow('Connection refused');
+    });
+
+    it('should allow retry after connection failure', async () => {
+      let callCount = 0;
+      mockAcpClient.connect.mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          mockAcpClient.state = 'disconnected';
+          return Promise.reject(new Error('First attempt failed'));
+        }
+        mockAcpClient.state = 'connected';
+        return Promise.resolve({ protocolVersion: 1 });
+      });
+
+      mockAcpClient.sendPrompt.mockImplementation(async function* () {
+        yield createMockAcpMessage({ type: 'text', content: 'Success' });
+      });
+
+      const options = {
+        cwd: '/workspace',
+        permissionMode: 'bypassPermissions' as const,
+        settingSources: ['project'],
+      };
+
+      // First call should fail
+      await expect(async () => {
+        for await (const _ of agent.testQueryOnce('test', options)) {
+          // should fail
+        }
+      }).rejects.toThrow('First attempt failed');
+
+      // Second call should succeed after the failed promise is cleared
+      const results: IteratorYieldResult[] = [];
+      for await (const result of agent.testQueryOnce('test', options)) {
+        results.push(result);
+      }
+      expect(results).toHaveLength(1);
+      expect(results[0].parsed.content).toBe('Success');
+      expect(callCount).toBe(2);
+    });
+  });
+
+  describe('createSdkOptions - fallback paths', () => {
+    it('should use apiBaseUrl from config when provided', () => {
+      const glmAgent = new TestAgent({
+        apiKey: 'glm-key',
+        model: 'glm-4',
+        provider: 'glm',
+        apiBaseUrl: 'https://api.example.com/v1',
+        acpClient: mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient,
+      });
+
+      const options = glmAgent.testCreateSdkOptions();
+      expect(options.env?.ANTHROPIC_BASE_URL).toBe('https://api.example.com/v1');
+    });
+
+    it('should use runtime context globalEnv when set', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/runtime-ws',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({ MY_VAR: 'my_value', OTHER: 'other_val' }),
+        isAgentTeamsEnabled: () => false,
+        getAcpClient: () => mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
+      const options = ctxAgent.testCreateSdkOptions();
+      expect(options.env?.MY_VAR).toBe('my_value');
+      expect(options.env?.OTHER).toBe('other_val');
+    });
+
+    it('should use runtime context workspace dir for cwd', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/runtime-workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+        getAcpClient: () => mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
+      const options = ctxAgent.testCreateSdkOptions();
+      expect(options.cwd).toBe('/runtime-workspace');
+    });
+
+    it('should not include agent teams env when isAgentTeamsEnabled returns false', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+        getAcpClient: () => mockAcpClient as unknown as import('../sdk/acp/acp-client.js').AcpClient,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
+      const options = ctxAgent.testCreateSdkOptions();
+      expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBeUndefined();
+    });
+  });
+
+  describe('handleIteratorError - error details', () => {
+    it('should create error with correct message format for Error instances', () => {
+      const error = new Error('Network timeout');
+      const message = agent.testHandleIteratorError(error, 'query');
+      expect(message.content).toBe('❌ Error: Network timeout');
+      expect(message.role).toBe('assistant');
+      expect(message.messageType).toBe('error');
+    });
+
+    it('should handle null error gracefully', () => {
+      const message = agent.testHandleIteratorError(null, 'testOp');
+      expect(message.content).toContain('null');
+      expect(message.messageType).toBe('error');
+    });
+
+    it('should handle object error without message', () => {
+      const message = agent.testHandleIteratorError({ code: 500 }, 'testOp');
+      expect(message.content).toContain('[object Object]');
+      expect(message.messageType).toBe('error');
+    });
+  });
 });

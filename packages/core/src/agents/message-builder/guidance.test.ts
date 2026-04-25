@@ -20,6 +20,10 @@ describe('buildChatHistorySection', () => {
     expect(buildChatHistorySection(undefined)).toBe('');
   });
 
+  it('should return empty string when context is empty string', () => {
+    expect(buildChatHistorySection('')).toBe('');
+  });
+
   it('should return formatted section when context is provided', () => {
     const result = buildChatHistorySection('User: Hello\nAgent: Hi there');
     expect(result).toContain('Recent Chat History');
@@ -51,6 +55,10 @@ describe('buildPersistedHistorySection', () => {
     expect(buildPersistedHistorySection(undefined)).toBe('');
   });
 
+  it('should return empty string when context is empty string', () => {
+    expect(buildPersistedHistorySection('')).toBe('');
+  });
+
   it('should return formatted section when context is provided', () => {
     const result = buildPersistedHistorySection('Previous conversation...');
     expect(result).toContain('Previous Session Context');
@@ -79,6 +87,35 @@ describe('buildNextStepGuidance', () => {
     const result = buildNextStepGuidance(undefined);
     expect(result).toContain('actionPrompts');
     expect(result).toContain('interactive card');
+  });
+
+  it('should contain valid JSON structure in card template', () => {
+    const result = buildNextStepGuidance(true);
+    // Extract the JSON block from the template
+    const jsonMatch = result.match(/```json\n([\s\S]*?)\n```/);
+    expect(jsonMatch).not.toBeNull();
+    const parsed = JSON.parse(jsonMatch![1]);
+    expect(parsed.content).toBeDefined();
+    expect(parsed.content.config).toBeDefined();
+    expect(parsed.content.header).toBeDefined();
+    expect(parsed.content.elements).toBeInstanceOf(Array);
+    expect(parsed.format).toBe('card');
+    expect(parsed.actionPrompts).toBeDefined();
+    expect(parsed.actionPrompts.action1).toBeDefined();
+  });
+
+  it('should contain guidelines section in card template', () => {
+    const result = buildNextStepGuidance(true);
+    expect(result).toContain('Suggest 2-3 relevant next steps');
+    expect(result).toContain('actionPrompts');
+    expect(result).toContain('CRITICAL');
+  });
+
+  it('should contain simple list format in fallback', () => {
+    const result = buildNextStepGuidance(false);
+    expect(result).toContain('simple list');
+    expect(result).toContain('Suggest 2-3 relevant next steps');
+    expect(result).not.toContain('actionPrompts');
   });
 });
 

@@ -752,4 +752,69 @@ describe('handleIteratorError', () => {
       'custom-operation failed',
     );
   });
+
+  it('should create AppError with SDK category and retryable flag', () => {
+    const logger = createMockLogger();
+    const error = new Error('connection lost');
+
+    handleIteratorError('MyAgent', logger, error, 'query');
+
+    // Verify error was logged with formatted error info
+    const { calls } = (logger.error as ReturnType<typeof vi.fn>).mock;
+    const [[loggedArg]] = calls;
+    expect(loggedArg).toHaveProperty('err');
+    // The err field is a Record from formatError(AppError), containing message
+    const errObj = loggedArg.err as Record<string, unknown>;
+    expect(errObj.message).toContain('MyAgent query failed');
+    expect(errObj.category).toBe('SDK');
+    expect(errObj.retryable).toBe(true);
+  });
+
+  it('should wrap non-Error cause inside AppError', () => {
+    const logger = createMockLogger();
+    const error = 'plain string error';
+
+    const result = handleIteratorError('Agent', logger, error, 'test');
+
+    // Should still log the error properly
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(result.content).toBe('❌ Error: plain string error');
+  });
+});
+
+// ============================================================================
+// formatMessage - sessionId
+// ============================================================================
+
+describe('formatMessage - sessionId handling', () => {
+  it('should not include sessionId in AgentMessage output', () => {
+    const parsed = {
+      type: 'result',
+      content: 'Done',
+      sessionId: 'session-abc-123',
+    };
+
+    const result = formatMessage(parsed);
+
+    // formatMessage produces { content, role, messageType, metadata }
+    // sessionId is NOT mapped to the output AgentMessage
+    expect(result).toEqual({
+      content: 'Done',
+      role: 'assistant',
+      messageType: 'result',
+      metadata: undefined,
+    });
+  });
+
+  it('should preserve sessionId when it is in metadata', () => {
+    const parsed = {
+      type: 'tool_result',
+      content: 'output',
+      metadata: { sessionId: 'session-in-metadata' },
+    };
+
+    const result = formatMessage(parsed);
+
+    expect(result.metadata?.sessionId).toBe('session-in-metadata');
+  });
 });

@@ -508,4 +508,204 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - constructor edge cases', () => {
+    it('should handle explicit undefined options', () => {
+      const builder = new MessageBuilder(undefined);
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Hello');
+      expect(result).toContain('chat-456');
+    });
+  });
+
+  describe('buildEnhancedContent - skill command edge cases', () => {
+    it('should include sender open ID in skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        senderOpenId: 'ou_sender123',
+      }, 'chat-456');
+
+      expect(result).toContain('Sender Open ID');
+      expect(result).toContain('ou_sender123');
+    });
+
+    it('should omit skill extra when buildSkillCommandExtra is not provided', () => {
+      const builder = new MessageBuilder();
+      const result = builder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      // Should not contain any extra content from skill callbacks
+      expect(result).not.toContain('Skill execution context');
+      expect(result).toMatch(/^\/reset\n\n---\n/);
+    });
+
+    it('should include skill extra when buildSkillCommandExtra returns empty string', () => {
+      const options: MessageBuilderOptions = {
+        buildSkillCommandExtra: () => '',
+      };
+      const builder = new MessageBuilder(options);
+      const result = builder.buildEnhancedContent({
+        text: '/cmd',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      // Empty string extra should not add visible content
+      expect(result).toContain('/cmd');
+      expect(result).toContain('chat-456');
+    });
+  });
+
+  describe('buildEnhancedContent - channel extension edge cases', () => {
+    it('should omit header when buildHeader returns undefined', () => {
+      const options: MessageBuilderOptions = {
+        buildHeader: () => undefined as unknown as string,
+      };
+      const builder = new MessageBuilder(options);
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      // Undefined header should not crash and should not appear
+      expect(result).toContain('Hello');
+      expect(result).toContain('chat-456');
+    });
+
+    it('should omit post-history when buildPostHistory returns undefined', () => {
+      const options: MessageBuilderOptions = {
+        buildPostHistory: () => undefined as unknown as string,
+      };
+      const builder = new MessageBuilder(options);
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Hello');
+      expect(result).toContain('Output Format Requirements');
+    });
+
+    it('should include attachment extra when buildAttachmentExtra returns empty string', () => {
+      const options: MessageBuilderOptions = {
+        buildAttachmentExtra: () => '',
+      };
+      const builder = new MessageBuilder(options);
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: [{
+          id: 'att-1',
+          fileName: 'test.png',
+          mimeType: 'image/png',
+          localPath: '/tmp/test.png',
+          source: 'user' as const,
+          createdAt: Date.now(),
+        }],
+      }, 'chat-456');
+
+      expect(result).toContain('test.png');
+      expect(result).toContain('Attachments');
+    });
+  });
+
+  describe('buildEnhancedContent - attachment edge cases', () => {
+    it('should use unknown MIME type when mimeType is missing', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'mystery-file',
+        localPath: '/tmp/mystery',
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      expect(result).toContain('unknown');
+      expect(result).toContain('mystery-file');
+    });
+
+    it('should format zero-size attachment correctly', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'empty.txt',
+        mimeType: 'text/plain',
+        size: 0,
+        localPath: '/tmp/empty.txt',
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      // 0 bytes should not show size info (size is falsy)
+      expect(result).toContain('empty.txt');
+      expect(result).not.toContain('0.0 KB');
+    });
+
+    it('should format very large attachment size correctly', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'big.zip',
+        mimeType: 'application/zip',
+        size: 1073741824, // 1 GB
+        localPath: '/tmp/big.zip',
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      // 1073741824 / 1024 = 1048576.0 KB
+      expect(result).toContain('1048576.0 KB');
+    });
+
+    it('should handle empty attachments array as no attachments', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: [],
+      }, 'chat-456');
+
+      expect(result).not.toContain('Attachments');
+    });
+  });
+
+  describe('buildEnhancedContent - output format structure', () => {
+    it('should produce correct full output structure for regular message', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'User text',
+        messageId: 'msg-001',
+        senderOpenId: 'ou_abc',
+      }, 'chat-002');
+
+      // Verify key structural elements in order
+      expect(result).toContain('**Chat ID:** chat-002');
+      expect(result).toContain('**Message ID:** msg-001');
+      expect(result).toContain('**Sender Open ID:** ou_abc');
+      expect(result).toContain('--- User Message ---');
+      expect(result).toContain('User text');
+      expect(result).toContain('Next Steps After Response');
+      expect(result).toContain('Output Format Requirements');
+      expect(result).toContain('Location Awareness');
+    });
+  });
 });
