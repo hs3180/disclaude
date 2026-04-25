@@ -77,6 +77,7 @@ export abstract class BaseAgent implements Disposable {
   readonly apiKey: string;
   readonly model: string;
   readonly apiBaseUrl?: string;
+  readonly customHeaders?: Record<string, string>;
   readonly permissionMode: 'default' | 'bypassPermissions';
   readonly provider: AgentProvider;
 
@@ -91,6 +92,7 @@ export abstract class BaseAgent implements Disposable {
     this.apiKey = config.apiKey;
     this.model = config.model;
     this.apiBaseUrl = config.apiBaseUrl;
+    this.customHeaders = config.customHeaders;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
 
     // Get provider from config, fallback to runtime context
@@ -226,6 +228,7 @@ export abstract class BaseAgent implements Disposable {
       agentTeamsEnabled: this.isAgentTeamsEnabled(),
       apiKey: this.apiKey,
       apiBaseUrl: this.apiBaseUrl,
+      customHeaders: this.customHeaders,
       model: this.model,
     };
     return buildSdkOptions(ctx, extra);

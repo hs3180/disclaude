@@ -34,6 +34,29 @@ export interface AgentConfig {
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
   /**
+   * Custom Anthropic-compatible API base URL.
+   * When set, overrides ANTHROPIC_BASE_URL from environment or ~/.claude/settings.json.
+   * Useful for using third-party Anthropic-compatible API proxies (e.g., Zhipu GLM, Baidu Comate).
+   * @example "https://open.bigmodel.cn/api/anthropic"
+   * @see Issue #2768
+   */
+  apiBaseUrl?: string;
+  /**
+   * API key for Anthropic-compatible endpoint.
+   * When set, overrides ANTHROPIC_API_KEY from environment.
+   * Use this when your custom endpoint requires a different API key.
+   * @see Issue #2768
+   */
+  apiKey?: string;
+  /**
+   * Custom HTTP headers to send with API requests.
+   * These are set as ANTHROPIC_CUSTOM_HEADERS in the agent subprocess.
+   * Headers are merged with a comma separator (Claude SDK format).
+   * @example { "X-Custom-Auth": "token123" }
+   * @see Issue #2768
+   */
+  customHeaders?: Record<string, string>;
+  /**
    * Enable Claude Code Agent Teams mode.
    * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
    * This allows the agent to spawn and coordinate multiple teammate sessions.

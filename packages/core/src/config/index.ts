@@ -124,8 +124,13 @@ export class Config {
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
           // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Issue #2768: agent.apiKey in config takes precedence over ANTHROPIC_API_KEY env var
+          static readonly ANTHROPIC_API_KEY = fileConfigOnly.agent?.apiKey || process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+          // Issue #2768: agent.apiBaseUrl in config takes precedence
+          static readonly CLAUDE_API_BASE_URL = fileConfigOnly.agent?.apiBaseUrl || '';
+          // Issue #2768: Custom headers for Anthropic-compatible endpoints
+          static readonly CLAUDE_CUSTOM_HEADERS = fileConfigOnly.agent?.customHeaders || {};
 
           // Logging configuration
           static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
@@ -298,7 +303,7 @@ export class Config {
         });
       }
     } else if (this.ANTHROPIC_API_KEY) {
-      // Fallback to Anthropic (from environment variable)
+      // Fallback to Anthropic (from config or environment variable)
       if (!this.CLAUDE_MODEL) {
         errors.push({
           field: 'agent.model',
@@ -338,6 +343,7 @@ export class Config {
     apiKey: string;
     model: string;
     apiBaseUrl?: string;
+    customHeaders?: Record<string, string>;
     provider: 'anthropic' | 'glm';
   } {
     // Validate required configuration first
@@ -355,12 +361,31 @@ export class Config {
     }
 
     // Fallback to Anthropic
-    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
-    return {
+    // Issue #2768: Include custom apiBaseUrl and customHeaders when configured
+    const result: {
+      apiKey: string;
+      model: string;
+      apiBaseUrl?: string;
+      customHeaders?: Record<string, string>;
+      provider: 'anthropic' | 'glm';
+    } = {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
       provider: 'anthropic',
     };
+
+    if (this.CLAUDE_API_BASE_URL) {
+      result.apiBaseUrl = this.CLAUDE_API_BASE_URL;
+    }
+    if (Object.keys(this.CLAUDE_CUSTOM_HEADERS).length > 0) {
+      result.customHeaders = this.CLAUDE_CUSTOM_HEADERS;
+    }
+
+    logger.debug(
+      { provider: 'Anthropic', model: this.CLAUDE_MODEL, customEndpoint: !!this.CLAUDE_API_BASE_URL },
+      'Using Anthropic API configuration',
+    );
+    return result;
   }
 
   /**
@@ -626,6 +651,10 @@ export function createDefaultRuntimeContext(
         // Pass through API key if available
         ...(Config.getAgentConfig().apiKey ? {
           ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
+        } : {}),
+        // Issue #2768: Pass through custom API base URL and headers from config
+        ...(Config.getAgentConfig().apiBaseUrl ? {
+          ANTHROPIC_BASE_URL: Config.getAgentConfig().apiBaseUrl,
         } : {}),
       },
     }),

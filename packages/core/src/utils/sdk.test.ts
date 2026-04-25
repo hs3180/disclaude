@@ -197,5 +197,75 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    // Issue #2768: Custom headers for Anthropic-compatible endpoints
+    describe('customHeaders (Issue #2768)', () => {
+      it('should set ANTHROPIC_CUSTOM_HEADERS from customHeaders', () => {
+        const env = buildSdkEnv(
+          'sk-test-key',
+          undefined,
+          undefined,
+          true,
+          { 'X-Custom-Auth': 'token123' }
+        );
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('X-Custom-Auth=token123');
+      });
+
+      it('should set multiple custom headers as comma-separated', () => {
+        const env = buildSdkEnv(
+          'sk-test-key',
+          undefined,
+          undefined,
+          true,
+          { 'X-Auth': 'token', 'X-Request-Id': 'req-123' }
+        );
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Auth=token');
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain('X-Request-Id=req-123');
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain(',');
+      });
+
+      it('should clean up existing ANTHROPIC_CUSTOM_HEADERS when customHeaders is set', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'old_proxy_header=value');
+        vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'old_token');
+        const env = buildSdkEnv(
+          'sk-test-key',
+          undefined,
+          undefined,
+          true,
+          { 'X-New-Header': 'new_value' }
+        );
+        // Should have our custom header, not the old one
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('X-New-Header=new_value');
+        // Should clean up proxy-specific env vars
+        expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      });
+
+      it('should not modify ANTHROPIC_CUSTOM_HEADERS when customHeaders is not provided', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'existing=value');
+        const env = buildSdkEnv('sk-test-key');
+        // Should keep existing header as-is
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('existing=value');
+      });
+
+      it('should not modify headers when customHeaders is empty', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'existing=value');
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, {});
+        // Should keep existing header as-is when empty object passed
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('existing=value');
+      });
+
+      it('should combine apiBaseUrl and customHeaders for custom endpoint', () => {
+        const env = buildSdkEnv(
+          'sk-test-key',
+          'https://open.bigmodel.cn/api/anthropic',
+          undefined,
+          true,
+          { 'X-Api-Version': '2024-01-01' }
+        );
+        expect(env.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('X-Api-Version=2024-01-01');
+        expect(env.ANTHROPIC_API_KEY).toBe('sk-test-key');
+      });
+    });
   });
 });

@@ -42,6 +42,8 @@ export interface SdkBuildContext {
   agentTeamsEnabled: boolean;
   apiKey: string;
   apiBaseUrl?: string;
+  /** Custom HTTP headers for Anthropic-compatible endpoints (Issue #2768) */
+  customHeaders?: Record<string, string>;
   model: string;
 }
 
@@ -179,6 +181,7 @@ export function buildSdkOptions(
     ctx.apiBaseUrl,
     globalEnv,
     ctx.loggingConfig.sdkDebug,
+    ctx.customHeaders,
   );
 
   // Set model

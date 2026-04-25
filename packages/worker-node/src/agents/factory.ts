@@ -115,6 +115,8 @@ export class AgentFactory {
       model: options.model ?? defaultConfig.model,
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
+      // Issue #2768: Pass through custom headers from config
+      customHeaders: defaultConfig.customHeaders,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };
   }

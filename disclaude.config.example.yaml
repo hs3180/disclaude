@@ -48,6 +48,17 @@ agent:
   # Default: false
   # enableAgentTeams: true
 
+  # Custom Anthropic-compatible API endpoint configuration
+  # Use these when connecting to third-party Anthropic-compatible APIs
+  # (e.g., Zhipu GLM, Baidu Comate, or custom proxies).
+  # These settings take precedence over environment variables and ~/.claude/settings.json.
+  # @see Issue #2768
+  #
+  # apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+  # apiKey: "your_custom_api_key_here"
+  # customHeaders:
+  #   X-Custom-Header: "custom-value"
+
 # -----------------------------------------------------------------------------
 # Feishu/Lark Platform Configuration
 # -----------------------------------------------------------------------------

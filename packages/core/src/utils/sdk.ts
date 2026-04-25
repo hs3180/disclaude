@@ -56,17 +56,24 @@ export function extractText(message: AgentMessage): string {
  * Also, we must unset CLAUDECODE to allow SDK subprocess to run inside
  * another Claude Code session (nested session detection).
  *
+ * Issue #2768: When customHeaders or apiBaseUrl is provided from config,
+ * the config value takes precedence over environment variables and
+ * ~/.claude/settings.json. Proxy-specific headers like ANTHROPIC_CUSTOM_HEADERS
+ * are cleaned up when customHeaders is explicitly configured.
+ *
  * @param apiKey - API key for authentication
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param customHeaders - Optional custom HTTP headers for Anthropic-compatible endpoints
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  customHeaders?: Record<string, string>
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -103,6 +110,25 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Issue #2768: Handle custom headers for Anthropic-compatible endpoints.
+  // When customHeaders is explicitly configured, clean up proxy-specific
+  // environment variables from ~/.claude/settings.json or system env,
+  // then set ANTHROPIC_CUSTOM_HEADERS from the config value.
+  if (customHeaders && Object.keys(customHeaders).length > 0) {
+    // Clean up existing proxy-specific headers that may leak from
+    // ~/.claude/settings.json or ecosystem.config.cjs
+    delete env.ANTHROPIC_CUSTOM_HEADERS;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+
+    // Format custom headers as ANTHROPIC_CUSTOM_HEADERS (comma-separated key=value pairs)
+    // Claude SDK reads this format for custom HTTP headers
+    const headerParts = Object.entries(customHeaders)
+      .map(([key, value]) => `${key}=${value}`);
+    if (headerParts.length > 0) {
+      env.ANTHROPIC_CUSTOM_HEADERS = headerParts.join(',');
+    }
   }
 
   return env;
