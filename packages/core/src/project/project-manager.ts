@@ -9,7 +9,7 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   CwdProvider,
@@ -202,12 +202,26 @@ export class ProjectManager {
       createdAt: new Date().toISOString(),
     };
 
+    // Save previous binding for potential rollback
+    const previousBinding = this.chatProjectMap.get(chatId);
+
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state
+      this.instances.delete(name);
+      this.removeFromReverseIndex(name, chatId);
+      if (previousBinding) {
+        this.chatProjectMap.set(chatId, previousBinding);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -246,8 +260,21 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state
+      this.removeFromReverseIndex(name, chatId);
+      if (oldName && oldName !== name) {
+        this.addToReverseIndex(oldName, chatId);
+      }
+      if (oldName) {
+        this.chatProjectMap.set(chatId, oldName);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -277,8 +304,16 @@ export class ProjectManager {
       this.removeFromReverseIndex(boundName, chatId);
     }
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state
+      if (boundName) {
+        this.chatProjectMap.set(chatId, boundName);
+        this.addToReverseIndex(boundName, chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -287,6 +322,70 @@ export class ProjectManager {
         workingDir: this.workspaceDir,
       },
     };
+  }
+
+  /**
+   * Delete an instance and all its associated bindings.
+   *
+   * Removes the instance from both in-memory state and persisted disk storage.
+   * All chatId bindings pointing to this instance are cleaned up.
+   * Optionally removes the working directory from disk.
+   *
+   * @param name - Instance name to delete
+   * @param options - Optional flags:
+   *   - cleanupDir: If true, removes the instance's working directory from disk
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string, options?: { cleanupDir?: boolean }): ProjectResult<void> {
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Save state for potential rollback
+    const boundChatIds = this.getBoundChatIds(name);
+    const savedInstance: ProjectInstance = {
+      name: instance.name,
+      templateName: instance.templateName,
+      workingDir: instance.workingDir,
+      createdAt: instance.createdAt,
+    };
+
+    // Remove instance
+    this.instances.delete(name);
+
+    // Remove all bindings pointing to this instance
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Clean up reverse index entry
+    this.instanceChatIds.delete(name);
+
+    // Persist — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore instance, bindings, and reverse index
+      this.instances.set(name, savedInstance);
+      for (const chatId of boundChatIds) {
+        this.chatProjectMap.set(chatId, name);
+      }
+      this.instanceChatIds.set(name, new Set(boundChatIds));
+      return { ok: false, error: persistResult.error };
+    }
+
+    // Optional: cleanup working directory (non-fatal)
+    if (options?.cleanupDir) {
+      try {
+        if (existsSync(savedInstance.workingDir)) {
+          rmSync(savedInstance.workingDir, { recursive: true, force: true });
+        }
+      } catch {
+        // Directory cleanup failure is non-fatal — instance is already deleted from state
+      }
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ───────────────────────────────────────────
