@@ -117,11 +117,13 @@ function parseScheduleFrontmatter(content: string): {
 }
 
 /**
- * Generate task ID from file name.
+ * Generate task ID from a subdirectory name.
+ *
+ * Issue #2526: Schedules now live in subdirectories (schedules/<name>/SCHEDULE.md),
+ * so the task ID is derived from the directory name, not the file name.
  */
-function generateTaskId(fileName: string): string {
-  const baseName = path.basename(fileName, '.md');
-  return `schedule-${baseName}`;
+function generateTaskId(dirName: string): string {
+  return `schedule-${dirName}`;
 }
 
 // ============================================================================
@@ -155,7 +157,10 @@ export class ScheduleFileScanner {
   }
 
   /**
-   * Scan all .md files and return parsed tasks.
+   * Scan all subdirectories for SCHEDULE.md files and return parsed tasks.
+   *
+   * Issue #2526: Schedules are organized in subdirectories:
+   *   schedules/<schedule-name>/SCHEDULE.md
    */
   async scanAll(): Promise<ScheduleFileTask[]> {
     await this.ensureDir();
@@ -163,12 +168,12 @@ export class ScheduleFileScanner {
     const tasks: ScheduleFileTask[] = [];
 
     try {
-      const files = await fsPromises.readdir(this.schedulesDir);
-      const mdFiles = files.filter(f => f.endsWith('.md'));
+      const entries = await fsPromises.readdir(this.schedulesDir, { withFileTypes: true });
+      const subdirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
 
-      for (const file of mdFiles) {
-        const filePath = path.join(this.schedulesDir, file);
-        const task = await this.parseFile(filePath);
+      for (const dir of subdirs) {
+        const scheduleFile = path.join(this.schedulesDir, dir.name, 'SCHEDULE.md');
+        const task = await this.parseFile(scheduleFile);
         if (task) {
           tasks.push(task);
         }
@@ -201,10 +206,11 @@ export class ScheduleFileScanner {
       }
 
       const prompt = content.slice(contentStart).trim();
-      const fileName = path.basename(filePath);
+      // Issue #2526: Derive task ID from parent directory name (schedules/<name>/SCHEDULE.md)
+      const dirName = path.basename(path.dirname(filePath));
 
       const task: ScheduleFileTask = {
-        id: generateTaskId(fileName),
+        id: generateTaskId(dirName),
         name: frontmatter['name'] as string,
         cron: frontmatter['cron'] as string,
         chatId: frontmatter['chatId'] as string,
@@ -237,15 +243,19 @@ export class ScheduleFileScanner {
   }
 
   /**
-   * Write a task to a markdown file.
+   * Write a task to a SCHEDULE.md file in its subdirectory.
+   *
+   * Issue #2526: Tasks are written to schedules/<slug>/SCHEDULE.md.
    */
   async writeTask(task: ScheduledTask): Promise<string> {
     await this.ensureDir();
 
-    const fileName = task.id.startsWith('schedule-')
-      ? `${task.id.slice('schedule-'.length)}.md`
-      : `${task.id}.md`;
-    const filePath = path.join(this.schedulesDir, fileName);
+    const slug = task.id.startsWith('schedule-')
+      ? task.id.slice('schedule-'.length)
+      : task.id;
+    const scheduleDir = path.join(this.schedulesDir, slug);
+    await fsPromises.mkdir(scheduleDir, { recursive: true });
+    const filePath = path.join(scheduleDir, 'SCHEDULE.md');
 
     const frontmatter = [
       '---',
@@ -279,7 +289,9 @@ export class ScheduleFileScanner {
   }
 
   /**
-   * Delete a task file by task ID.
+   * Delete a task subdirectory by task ID.
+   *
+   * Issue #2526: Deletes the entire schedules/<slug>/ subdirectory.
    */
   async deleteTask(taskId: string): Promise<boolean> {
     if (!taskId.startsWith('schedule-')) {
@@ -287,11 +299,11 @@ export class ScheduleFileScanner {
     }
 
     const slug = taskId.slice('schedule-'.length);
-    const filePath = path.join(this.schedulesDir, `${slug}.md`);
+    const scheduleDir = path.join(this.schedulesDir, slug);
 
     try {
-      await fsPromises.unlink(filePath);
-      logger.info({ taskId, filePath }, 'Deleted schedule file');
+      await fsPromises.rm(scheduleDir, { recursive: true, force: true });
+      logger.info({ taskId, scheduleDir }, 'Deleted schedule directory');
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -302,13 +314,15 @@ export class ScheduleFileScanner {
   }
 
   /**
-   * Get the file path for a task ID.
+   * Get the SCHEDULE.md file path for a task ID.
+   *
+   * Issue #2526: Returns schedules/<slug>/SCHEDULE.md.
    */
   getFilePath(taskId: string): string {
     const slug = taskId.startsWith('schedule-')
       ? taskId.slice('schedule-'.length)
       : taskId;
-    return path.join(this.schedulesDir, `${slug}.md`);
+    return path.join(this.schedulesDir, slug, 'SCHEDULE.md');
   }
 }
 
@@ -349,6 +363,9 @@ export interface ScheduleFileWatcherOptions {
 
 /**
  * ScheduleFileWatcher - Watches schedule directory for changes.
+ *
+ * Issue #2526: Watches the schedules/ root directory with recursive mode
+ * to detect changes to SCHEDULE.md files in subdirectories.
  */
 export class ScheduleFileWatcher {
   private schedulesDir: string;
@@ -385,7 +402,7 @@ export class ScheduleFileWatcher {
     try {
       this.watcher = fs.watch(
         this.schedulesDir,
-        { persistent: true, recursive: false },
+        { persistent: true, recursive: true },
         (eventType, filename) => {
           this.handleFileEvent(eventType, filename);
         }
@@ -431,13 +448,22 @@ export class ScheduleFileWatcher {
 
   /**
    * Handle file system event with debouncing.
+   *
+   * Issue #2526: With recursive watching, filenames include subdirectory paths
+   * (e.g., "my-task/SCHEDULE.md"). We only care about SCHEDULE.md files.
    */
   private handleFileEvent(eventType: string, filename: string | null): void {
-    if (!filename || !filename.endsWith('.md')) {
+    if (!filename) {
       return;
     }
 
-    const filePath = path.join(this.schedulesDir, filename);
+    // Only process SCHEDULE.md files in subdirectories
+    const normalizedFilename = filename.replace(/\\/g, '/');
+    if (!normalizedFilename.endsWith('SCHEDULE.md')) {
+      return;
+    }
+
+    const filePath = path.join(this.schedulesDir, normalizedFilename);
     logger.debug({ eventType, filename }, 'File event received');
 
     const existingTimer = this.debounceTimers.get(filePath);
@@ -447,7 +473,7 @@ export class ScheduleFileWatcher {
 
     const timer = setTimeout(() => {
       this.debounceTimers.delete(filePath);
-      void this.processFileEvent(eventType, filePath, filename);
+      void this.processFileEvent(eventType, filePath, normalizedFilename);
     }, this.debounceMs);
 
     this.debounceTimers.set(filePath, timer);
@@ -455,9 +481,14 @@ export class ScheduleFileWatcher {
 
   /**
    * Process the file event after debouncing.
+   *
+   * Issue #2526: Derives task ID from the parent directory name.
    */
   private async processFileEvent(eventType: string, filePath: string, filename: string): Promise<void> {
-    const taskId = generateTaskId(filename);
+    // Derive schedule name from directory path (e.g., "my-task/SCHEDULE.md" → "my-task")
+    const parts = filename.replace(/\\/g, '/').split('/');
+    const dirName = parts.length > 1 ? parts[parts.length - 2] : parts[0].replace(/\.md$/, '');
+    const taskId = generateTaskId(dirName);
 
     try {
       if (eventType === 'rename') {

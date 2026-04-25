@@ -29,8 +29,8 @@ import {
   MAX_GROUP_NAME_LENGTH,
   truncateGroupName,
   type ChatFile,
-} from '../skills/chat/schema.js';
-import { acquireLock } from '../skills/chat/lock.js';
+} from '../../skills/chat/schema.js';
+import { acquireLock } from '../../skills/chat/lock.js';
 
 const execFileAsync = promisify(execFile);
 
