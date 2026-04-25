@@ -17,3 +17,6 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// ETA Recorder (Issue #1234)
+export { EtaRecorder, formatTaskRecord, type TaskRecordEntry } from './eta-recorder.js';

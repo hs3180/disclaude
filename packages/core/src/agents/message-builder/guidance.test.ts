@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildEtaGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,47 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildEtaGuidance', () => {
+  it('should include ETA task recording guidance', () => {
+    const result = buildEtaGuidance();
+    expect(result).toContain('Task Time Estimation & Recording');
+    expect(result).toContain('Estimate how long the task will take');
+  });
+
+  it('should reference default task records path', () => {
+    const result = buildEtaGuidance();
+    expect(result).toContain('.claude/task-records.md');
+    expect(result).toContain('.claude/eta-rules.md');
+  });
+
+  it('should include the task record Markdown format', () => {
+    const result = buildEtaGuidance();
+    expect(result).toContain('**类型**');
+    expect(result).toContain('**估计时间**');
+    expect(result).toContain('**估计依据**');
+    expect(result).toContain('**实际时间**');
+    expect(result).toContain('**复盘**');
+  });
+
+  it('should use custom paths when provided', () => {
+    const result = buildEtaGuidance('/custom/records.md', '/custom/rules.md');
+    expect(result).toContain('/custom/records.md');
+    expect(result).toContain('/custom/rules.md');
+    expect(result).not.toContain('.claude/task-records.md');
+  });
+
+  it('should emphasize unstructured Markdown', () => {
+    const result = buildEtaGuidance();
+    expect(result).toContain('unstructured Markdown');
+    expect(result).toContain('do NOT use structured data');
+  });
+
+  it('should include before/after task workflow', () => {
+    const result = buildEtaGuidance();
+    expect(result).toContain('Before Starting a Task');
+    expect(result).toContain('After Completing a Task');
   });
 });

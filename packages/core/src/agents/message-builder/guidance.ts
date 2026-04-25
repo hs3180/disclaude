@@ -218,3 +218,63 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the ETA task recording guidance section.
+ *
+ * Issue #1234: Provides in-prompt guidance for the agent to record
+ * task execution information in unstructured Markdown format.
+ *
+ * Design: Uses free-form Markdown storage (NOT structured data),
+ * as required by the owner's feedback on PR #1237.
+ *
+ * @param taskRecordsPath - Path to the task records file, or undefined to use default
+ * @param etaRulesPath - Path to the ETA rules file, or undefined to use default
+ * @returns Formatted ETA guidance section
+ */
+export function buildEtaGuidance(
+  taskRecordsPath?: string,
+  etaRulesPath?: string,
+): string {
+  const recordsPath = taskRecordsPath ?? '.claude/task-records.md';
+  const rulesPath = etaRulesPath ?? '.claude/eta-rules.md';
+
+  return `
+
+---
+
+## Task Time Estimation & Recording
+
+When you perform a significant task (bug fix, feature implementation, refactoring, etc.), follow this workflow:
+
+### Before Starting a Task
+
+1. Estimate how long the task will take
+2. Write down your estimation reasoning
+3. Reference \`${rulesPath}\` for historical estimation rules (if the file exists)
+
+### After Completing a Task
+
+Record the task execution info by **appending** to \`${recordsPath}\`:
+
+\`\`\`markdown
+## YYYY-MM-DD Task Title
+
+- **类型**: bugfix / feature / refactoring / test
+- **估计时间**: e.g., "30分钟"
+- **估计依据**: Why you estimated this time
+- **实际时间**: e.g., "45分钟"
+- **复盘**: What went well, what didn't, lessons learned
+
+---
+\`\`\`
+
+### Important Rules
+
+- Use **unstructured Markdown** — do NOT use structured data formats
+- Always include the estimation reasoning and retrospective
+- If \`${recordsPath}\` doesn't exist, create it with a \`# 任务记录\` header
+- If \`${rulesPath}\` doesn't exist, create it with initial estimation rules
+- Periodically update \`${rulesPath}\` based on patterns you notice from past tasks
+- Records are for learning — honest retrospectives are more valuable than perfect estimates`;
+}
