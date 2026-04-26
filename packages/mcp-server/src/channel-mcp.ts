@@ -17,6 +17,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
@@ -163,6 +165,17 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload a local image and return image_key for card embedding (Issue #1919)',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the local image file' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -411,6 +424,45 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #1919: Upload image and return image_key for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload a local image file and return the image_key for embedding in Feishu card messages.
+
+Use this when you need to embed images (charts, plots, diagrams) inside card messages.
+After uploading, use the returned image_key in the card JSON \`img\` element:
+\`\`\`json
+{ "tag": "img", "img_key": "img_v3_xxxx" }
+\`\`\`
+
+## Parameters
+- **filePath**: Path to the local image file (required)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10MB)
+
+## Example
+\`\`\`json
+{"filePath": "/workspace/charts/revenue.png"}
+\`\`\`
+
+Response includes \`image_key\` which you can use in send_card's img element.`,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the local image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      if (!filePath) {
+        return toolError('filePath is required');
+      }
+
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

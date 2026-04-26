@@ -646,8 +646,52 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
+  }
+
+  /**
+   * Upload an image file to Feishu and return the image_key.
+   *
+   * Issue #1919: Used by the upload_image MCP tool to obtain image_key
+   * for embedding images in Feishu card img elements.
+   *
+   * Unlike sendMessage({ type: 'file' }), this only uploads the image
+   * and returns the key without sending any message.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   * @throws Error if client not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const stats = fs.statSync(filePath);
+    const fileName = path.basename(filePath);
+
+    if (stats.size > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${stats.size} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize: stats.size }, 'Uploading image for card embedding');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName }, 'Image uploaded successfully');
+    return { imageKey, fileName, fileSize: stats.size };
   }
 
   // Delegate trigger mode methods to TriggerModeManager (Issue #2193: renamed from PassiveMode)

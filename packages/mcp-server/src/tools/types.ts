@@ -81,3 +81,19 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for upload_image tool.
+ * Issue #1919: Upload image and return image_key for card embedding.
+ */
+export interface UploadImageResult {
+  success: boolean;
+  message: string;
+  /** Feishu image_key for use in card img elements */
+  imageKey?: string;
+  fileName?: string;
+  fileSize?: number;
+  error?: string;
+  platformCode?: string | number;
+  platformMsg?: string;
+}
+
