@@ -18,6 +18,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  insert_docx_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -32,6 +33,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { insert_docx_image } from './tools/insert-docx-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -451,6 +453,58 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #2278: Insert image at specific position in Feishu document
+  {
+    name: 'insert_docx_image',
+    description: `Insert an image at a specific position in a Feishu document.
+
+This tool enables inline image insertion at any position within a document, solving the
+limitation of \`lark-cli docs +media-insert\` which can only append images to the end.
+
+## How it works
+Uses a three-step Feishu API process:
+1. Creates an empty image block at the specified index
+2. Uploads the image file via Drive Media API
+3. Binds the uploaded image to the empty block
+
+## Parameters
+- **documentId**: The Feishu document ID (from the document URL)
+- **imagePath**: Path to the image file (relative to workspace or absolute)
+- **index**: 0-based position to insert the image at (0 = beginning of document)
+
+## Important Notes
+- **index**: Use 0 to insert at the beginning. The index refers to the block position in the document.
+  To append at the end, use a large index value (e.g., 999) — it will be clamped to the end.
+- **imagePath**: Supports PNG, JPG, JPEG formats.
+- **documentId**: Can be extracted from the document URL. For example, from
+  \`https://xxx.feishu.cn/docx/abc123\`, the documentId is \`abc123\`.
+
+## Example
+\`\`\`json
+{
+  "documentId": "abc123def456",
+  "imagePath": "./charts/sales-chart.png",
+  "index": 5
+}
+\`\`\``,
+    parameters: z.object({
+      documentId: z.string().describe('The Feishu document ID'),
+      imagePath: z.string().describe('Path to the image file (relative to workspace or absolute)'),
+      index: z.number().int().min(0).describe('0-based position to insert the image at'),
+    }),
+    handler: async ({ documentId, imagePath, index }: {
+      documentId: string;
+      imagePath: string;
+      index: number;
+    }) => {
+      try {
+        const result = await insert_docx_image({ documentId, imagePath, index });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image insertion failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

@@ -46,3 +46,7 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Insert Image into Feishu Document (Issue #2278)
+export { insert_docx_image } from './insert-docx-image.js';
+export type { InsertDocxImageResult } from './insert-docx-image.js';
