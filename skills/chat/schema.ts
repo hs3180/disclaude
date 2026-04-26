@@ -187,7 +187,7 @@ export function validateChatFileData(data: unknown, filePath: string): ChatFile 
   }
 
   // Validate members format
-  const members = (obj.createGroup as Record<string, unknown>).members;
+  const members = (obj.createGroup as Record<string, unknown>).members as unknown[];
   for (const member of members) {
     if (typeof member !== 'string' || !MEMBER_ID_REGEX.test(member)) {
       throw new ValidationError(`Chat file '${filePath}' has invalid member ID '${member}'`);

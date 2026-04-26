@@ -163,7 +163,7 @@ async function main() {
       }
     } else if (chat.status === 'expired') {
       // Check if past retention period for cleanup
-      const expiredAt = (chat as Record<string, unknown>).expiredAt as string | undefined;
+      const expiredAt = chat.expiredAt;
       if (expiredAt && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(expiredAt)) {
         const retentionCutoff = new Date(Date.now() - retentionHours * 3600 * 1000).toISOString();
         if (expiredAt < retentionCutoff) {
@@ -172,7 +172,7 @@ async function main() {
       } else {
         // No expiredAt field — use expiresAt as fallback (older files)
         const retentionCutoff = new Date(Date.now() - retentionHours * 3600 * 1000).toISOString();
-        if (expires < retentionCutoff) {
+        if (chat.expiresAt < retentionCutoff) {
           cleanupFiles.push(filePath);
         }
       }
