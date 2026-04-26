@@ -120,6 +120,15 @@ export {
   BaseAgent,
 } from './agents/base-agent.js';
 
+// ChatAgent implementation (Issue #2717 Phase 1: migrated from @disclaude/worker-node)
+export { ChatAgent as ChatAgentImpl } from './agents/chat-agent/chat-agent.js';
+export type { ChatAgentCallbacks, ChatAgentConfig } from './agents/chat-agent/types.js';
+export { ChatHistoryLoader, type HistoryLoaderCallbacks } from './agents/chat-agent/chat-history-loader.js';
+export { AgentLoopManager, type LoopContext } from './agents/chat-agent/agent-loop-manager.js';
+
+// Agent Factory (Issue #2717 Phase 1: migrated from @disclaude/worker-node)
+export { AgentFactory, toChatAgentCallbacks, type AgentCreateOptions } from './agents/agent-factory.js';
+
 // Message Builder (Issue #1492: extracted from worker-node to core)
 export {
   MessageBuilder,

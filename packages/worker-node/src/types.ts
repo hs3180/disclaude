@@ -5,11 +5,13 @@
  * from the main application, allowing WorkerNode to remain in the package
  * without importing from src/.
  *
+ * Issue #2717 Phase 1: ChatAgentCallbacks re-exported from @disclaude/core.
+ *
  * @see Issue #1041 - Separate Worker Node code to @disclaude/worker-node
  */
 
 import type { Logger } from 'pino';
-import type { FileRef, FeishuCard, ChannelCapabilities } from '@disclaude/core';
+import type { FileRef } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgent Interface
@@ -102,30 +104,13 @@ export interface AgentPoolInterface {
 // Agent Factory Functions
 // ============================================================================
 
-/**
- * ChatAgentCallbacks - Callbacks for ChatAgent to send messages.
- *
- * Used when creating ChatAgent instances.
- */
-export interface ChatAgentCallbacks {
-  /** Send a text message */
-  sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
-  /** Send an interactive card */
-  sendCard: (chatId: string, card: FeishuCard, description?: string, parentMessageId?: string) => Promise<void>;
-  /** Send a file */
-  sendFile: (chatId: string, filePath: string) => Promise<void>;
-  /** Called when query completes */
-  onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
-  /** Get channel capabilities for a chat (Issue #582) */
-  getCapabilities?: (chatId: string) => ChannelCapabilities | undefined;
-  /** Get chat history for first message context (Issue #1230, #1863) */
-  getChatHistory?: (chatId: string) => Promise<string | undefined>;
-}
+// Issue #2717 Phase 1: Re-export ChatAgentCallbacks from @disclaude/core
+export type { ChatAgentCallbacks } from '@disclaude/core';
 
 /**
  * ChatAgentFactory - Factory function to create ChatAgent instances.
  */
-export type ChatAgentFactory = (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
+export type ChatAgentFactory = (chatId: string, callbacks: import('@disclaude/core').ChatAgentCallbacks) => ChatAgent;
 
 // ============================================================================
 // Scheduler Types

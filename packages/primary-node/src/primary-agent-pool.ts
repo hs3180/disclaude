@@ -11,8 +11,8 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
-import { AgentFactory, type ChatAgentCallbacks, type ChatAgentInterface } from '@disclaude/worker-node';
+import { type MessageBuilderOptions, AgentFactory, type ChatAgentCallbacks, type ChatAgent as ChatAgentInterface } from '@disclaude/core';
+import { createChannelMcpServer } from '@disclaude/mcp-server';
 
 /**
  * Options for PrimaryAgentPool initialization.
@@ -59,6 +59,7 @@ export class PrimaryAgentPool {
     if (!agent) {
       agent = AgentFactory.createAgent(chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        createChannelMcpServer,
       });
       this.agents.set(chatId, agent);
     }
