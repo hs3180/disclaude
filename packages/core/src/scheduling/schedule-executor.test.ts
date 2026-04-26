@@ -8,19 +8,19 @@
  * - Model override passing (Issue #1338)
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
+ * Issue #2513: Removed ScheduleAgent interface — uses structural typing.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
+  type ExecutorAgentFactory,
 } from './schedule-executor.js';
 import type { SchedulerCallbacks } from './scheduler.js';
 
 describe('createScheduleExecutor', () => {
-  let mockAgent: ScheduleAgent;
-  let mockAgentFactory: ScheduleAgentFactory;
+  let mockAgent: { executeOnce: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> };
+  let mockAgentFactory: ExecutorAgentFactory;
   let mockCallbacks: SchedulerCallbacks;
 
   beforeEach(() => {

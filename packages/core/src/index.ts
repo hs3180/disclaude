@@ -190,10 +190,9 @@ export {
   type OnFileAdded,
   type OnFileChanged,
   type OnFileRemoved,
-  // Issue #1382: Unified schedule executor
+  // Issue #1382: Unified schedule executor (Issue #2513: removed ScheduleAgent interface)
   createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
+  type ExecutorAgentFactory,
   type ScheduleExecutorOptions,
 } from './scheduling/index.js';
 

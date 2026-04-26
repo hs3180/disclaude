@@ -58,10 +58,9 @@ export {
   type SchedulerOptions,
 } from './scheduler.js';
 
-// Schedule Executor (Issue #1382)
+// Schedule Executor (Issue #1382, Issue #2513: removed ScheduleAgent interface)
 export {
   createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
+  type ExecutorAgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
