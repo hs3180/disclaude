@@ -218,3 +218,60 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Known runtime-env variable definitions with descriptions.
+ *
+ * Issue #1371: Helps the agent understand what runtime-env variables
+ * are available and how to use them.
+ */
+const RUNTIME_ENV_DEFINITIONS: Record<string, string> = {
+  GH_TOKEN: 'GitHub installation access token for API operations',
+  GH_TOKEN_EXPIRES_AT: 'GitHub token expiration timestamp (ISO 8601)',
+};
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Makes the agent aware of available runtime-env variables
+ * so it can proactively use them (e.g., GH_TOKEN for GitHub operations).
+ *
+ * The runtime-env mechanism shares state between the main process and
+ * agent subprocess via a workspace file (`.runtime-env`).
+ *
+ * @param vars - Currently loaded runtime-env variables, or undefined to skip
+ * @returns Formatted runtime-env awareness section, or empty string if no vars
+ */
+export function buildRuntimeEnvGuidance(vars?: Record<string, string>): string {
+  if (!vars || Object.keys(vars).length === 0) {
+    return '';
+  }
+
+  const varList = Object.entries(vars)
+    .map(([key, value]) => {
+      const desc = RUNTIME_ENV_DEFINITIONS[key];
+      const descText = desc ? ` — ${desc}` : '';
+      const displayValue = value.length > 20 ? `${value.slice(0, 20)}...` : value;
+      return `- \`${key}\`: \`${displayValue}\`${descText}`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The following runtime environment variables are available in the current session. You can use these for cross-process operations.
+
+### Available Variables
+
+${varList}
+
+### Usage
+
+- These variables are already loaded into your process environment — you can access them directly (e.g., via \`process.env.GH_TOKEN\`)
+- To update or add new variables, write to the \`.runtime-env\` file in the workspace directory using the Write tool
+- Format: \`KEY=VALUE\` per line
+- Changes are visible to the main process and other agents`;
+}

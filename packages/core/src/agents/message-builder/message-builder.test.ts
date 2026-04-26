@@ -85,6 +85,36 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    it('should include runtime-env guidance when runtimeEnvVars is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        runtimeEnvVars: { GH_TOKEN: 'ghs_test123' },
+      }, 'chat-456');
+
+      expect(result).toContain('Runtime Environment Variables');
+      expect(result).toContain('GH_TOKEN');
+    });
+
+    it('should not include runtime-env guidance when runtimeEnvVars is empty', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        runtimeEnvVars: {},
+      }, 'chat-456');
+
+      expect(result).not.toContain('Runtime Environment Variables');
+    });
+
+    it('should not include runtime-env guidance when runtimeEnvVars is not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Runtime Environment Variables');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',

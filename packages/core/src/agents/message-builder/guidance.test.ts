@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,58 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no vars are provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+    expect(buildRuntimeEnvGuidance({})).toBe('');
+  });
+
+  it('should include runtime environment section header', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_test123' });
+    expect(result).toContain('Runtime Environment Variables');
+  });
+
+  it('should list available variables with values', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_test123' });
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('ghs_test123');
+  });
+
+  it('should include description for known variables', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_test123' });
+    expect(result).toContain('GitHub installation access token');
+  });
+
+  it('should truncate long values', () => {
+    const longValue = 'a'.repeat(50);
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: longValue });
+    expect(result).toContain('aaaaaaaaaaaaaaaaaaaa...');
+    expect(result).not.toContain(longValue);
+  });
+
+  it('should include multiple variables', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_test123',
+      GH_TOKEN_EXPIRES_AT: '2026-03-20T12:00:00Z',
+    });
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+    expect(result).toContain('GitHub token expiration');
+  });
+
+  it('should include usage instructions', () => {
+    const result = buildRuntimeEnvGuidance({ SOME_VAR: 'value' });
+    expect(result).toContain('process.env');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should handle unknown variables without descriptions', () => {
+    const result = buildRuntimeEnvGuidance({ CUSTOM_VAR: 'custom_value' });
+    expect(result).toContain('CUSTOM_VAR');
+    expect(result).toContain('custom_value');
   });
 });

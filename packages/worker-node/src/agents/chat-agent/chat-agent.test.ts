@@ -16,6 +16,7 @@ vi.mock('@disclaude/core', () => ({
     })),
     getMcpServersConfig: vi.fn(() => null),
   },
+  loadRuntimeEnv: vi.fn(() => ({})),
   BaseAgent: vi.fn().mockImplementation(function(this: any) {
     this.createSdkOptions = vi.fn(() => ({ mcpServers: {} }));
     this.createQueryStream = vi.fn(() => ({
