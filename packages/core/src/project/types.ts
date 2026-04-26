@@ -35,8 +35,14 @@ export type ProjectResult<T> =
  * Template CLAUDE.md source: `{packageDir}/templates/{name}/CLAUDE.md`
  * Instance workingDir: `{workspace}/projects/{name}/`
  *
- * Only templates listed in `projectTemplates` config are available.
+ * Templates are auto-discovered from `{packageDir}/templates/` by default.
+ * If `templatesConfig` is explicitly provided, manual config takes precedence
+ * (auto-discovery is skipped).
+ *
  * The "default" project is always implicitly available (no template needed).
+ *
+ * @see template-discovery.ts for discovery rules
+ * @see Issue #2286 — auto-discovery from package directory
  */
 export interface ProjectTemplate {
   /** Template name (unique identifier, e.g. "research", "book-reader") */
@@ -60,6 +66,11 @@ export interface ProjectTemplate {
  *     displayName: "研究模式"
  *     description: "专注研究的独立空间"
  * ```
+ *
+ * If `projectTemplates` is not configured, templates are auto-discovered
+ * from `{packageDir}/templates/`. Explicit config overrides auto-discovery.
+ *
+ * @see Issue #2286
  */
 export type ProjectTemplatesConfig = Record<
   string,

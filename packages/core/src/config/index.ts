@@ -140,6 +140,9 @@ export class Config {
           // Agents configuration - loaded from package installation directory
           static readonly AGENTS_DIR = Config.getBuiltinDir('agents');
 
+          // Templates configuration - loaded from package installation directory
+          static readonly TEMPLATES_DIR = Config.getBuiltinDir('templates');
+
   /**
    * Get a built-in resource directory from package installation.
    * Shared resolution logic for skills, agents, and other bundled resources.
@@ -241,6 +244,17 @@ export class Config {
    */
   static getAgentsDir(): string {
     return this.AGENTS_DIR;
+  }
+
+  /**
+   * Get the templates directory for project template auto-discovery.
+   *
+   * @returns Absolute path to the templates directory
+   *
+   * @see Issue #2286
+   */
+  static getTemplatesDir(): string {
+    return this.TEMPLATES_DIR;
   }
 
   /**
