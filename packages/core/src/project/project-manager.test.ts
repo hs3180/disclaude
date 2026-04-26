@@ -859,6 +859,128 @@ describe('ProjectManager persistence round-trip', () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// delete()
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+
+  beforeEach(() => {
+    pm = new ProjectManager(createOptions());
+  });
+
+  it('should delete an instance and clean up bindings', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+    expect(pm.listInstances()).toHaveLength(1);
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+
+    // Instance should be gone
+    expect(pm.listInstances()).toHaveLength(0);
+
+    // Bindings should be cleaned up
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+  });
+
+  it('should return error for non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should persist deletion to disk', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    // Verify persisted state has no instances
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+    expect(data.instances).toEqual({});
+    expect(data.chatProjectMap).toEqual({});
+  });
+
+  it('should not affect other instances when deleting one', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    pm.delete('research-1');
+
+    // book-1 should still exist
+    const instances = pm.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('book-1');
+
+    // chat_2 should still be bound
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+
+    // chat_1 should fall back to default
+    expect(pm.getActive('chat_1').name).toBe('default');
+  });
+
+  it('should clean up multiple bindings for the deleted instance', () => {
+    pm.create('chat_1', 'research', 'shared-project');
+    pm.use('chat_2', 'shared-project');
+    pm.use('chat_3', 'shared-project');
+
+    pm.delete('shared-project');
+
+    // All three chatIds should be reset
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should survive deletion and reload round-trip', () => {
+    const opts = createOptions();
+    const { workspaceDir: ws } = opts;
+
+    // Phase 1: Create two instances
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'to-delete');
+    pm1.create('chat_2', 'book-reader', 'to-keep');
+
+    // Phase 2: Delete one
+    pm1.delete('to-delete');
+
+    // Phase 3: Reload — only to-keep should survive
+    const pm2 = new ProjectManager({ ...opts, workspaceDir: ws });
+    const instances = pm2.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('to-keep');
+    expect(pm2.getActive('chat_1').name).toBe('default');
+    expect(pm2.getActive('chat_2').name).toBe('to-keep');
+  });
+
+  it('should not delete "default" project', () => {
+    // "default" is implicit and not in instances, so delete should fail
+    const result = pm.delete('default');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should handle deleting instance with no bindings', () => {
+    pm.create('chat_1', 'research', 'orphan');
+    pm.reset('chat_1');
+
+    // orphan has no bindings
+    const instances = pm.listInstances();
+    expect(instances[0].chatIds).toEqual([]);
+
+    const result = pm.delete('orphan');
+    expect(result.ok).toBe(true);
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Edge Cases & Integration Scenarios
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -260,6 +260,54 @@ export class ProjectManager {
   }
 
   /**
+   * Delete an instance from memory and persisted state.
+   *
+   * Removes the instance, cleans up all associated chatId bindings,
+   * rebuilds reverse index, and persists the updated state.
+   * If persist fails, rolls back all in-memory changes.
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string): ProjectResult<void> {
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Snapshot bindings for rollback
+    const boundChatIds = this.getBoundChatIds(name);
+
+    // Remove all bindings pointing to this instance
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Remove reverse index entry
+    this.instanceChatIds.delete(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Persist the updated state
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore instance and bindings
+      this.instances.set(name, instance);
+      for (const chatId of boundChatIds) {
+        this.chatProjectMap.set(chatId, name);
+      }
+      // Rebuild reverse index for this instance
+      const restoredSet = new Set(boundChatIds);
+      this.instanceChatIds.set(name, restoredSet);
+
+      return persistResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
    * Reset a chatId's binding, reverting to default project.
    *
    * @param chatId - Chat session to reset
