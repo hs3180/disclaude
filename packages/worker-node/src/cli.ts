@@ -15,6 +15,7 @@ import {
   loadConfigFile,
   setLoadedConfig,
   applyGlobalEnv,
+  cleanupProxyEnvVars,
   createDefaultRuntimeContext,
   createLogger,
   Config,
@@ -125,6 +126,10 @@ async function main(): Promise<void> {
   // Apply config env vars to process.env so main-process components can access them
   // Must be called AFTER setLoadedConfig() to ensure config is available
   applyGlobalEnv();
+
+  // Clean up proxy-specific env vars when using custom Anthropic endpoint
+  // @see Issue #2768
+  cleanupProxyEnvVars();
 
   // Set runtime context for agents (Issue #1839)
   // Provides dependency injection for BaseAgent methods (getGlobalEnv, getWorkspaceDir, etc.)

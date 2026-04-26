@@ -71,6 +71,25 @@ export interface FeishuConfig {
 }
 
 /**
+ * Anthropic Claude API configuration section.
+ *
+ * Allows configuring a custom Anthropic-compatible API endpoint
+ * (e.g., third-party proxies like Zhipu GLM, Baidu Comate).
+ * Values here take priority over environment variables and
+ * ~/.claude/settings.json.
+ *
+ * @see Issue #2768
+ */
+export interface AnthropicConfig {
+  /** API key (overrides ANTHROPIC_API_KEY env var) */
+  apiKey?: string;
+  /** API base URL for custom endpoints (overrides ANTHROPIC_BASE_URL env var) */
+  apiBaseUrl?: string;
+  /** Custom headers to send with requests (replaces ANTHROPIC_CUSTOM_HEADERS env var) */
+  customHeaders?: string;
+}
+
+/**
  * GLM (Zhipu AI) API configuration section.
  *
  * When using GLM provider, both apiKey and model are REQUIRED.
@@ -330,6 +349,8 @@ export interface DisclaudeConfig {
   feishu?: FeishuConfig;
   /** Ruliu (如流) platform settings */
   ruliu?: RuliuConfig;
+  /** Anthropic Claude API settings (custom endpoint configuration) */
+  anthropic?: AnthropicConfig;
   /** GLM API settings */
   glm?: GlmConfig;
   /** Logging settings */

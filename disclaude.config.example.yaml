@@ -109,6 +109,30 @@ ruliu:
   webhookPath: "/webhook/ruliu"
 
 # -----------------------------------------------------------------------------
+# Anthropic Claude API Configuration
+# -----------------------------------------------------------------------------
+# Configure custom Anthropic-compatible API endpoints.
+# Values here take priority over environment variables and ~/.claude/settings.json.
+# @see Issue #2768
+#
+# Example — Use Zhipu GLM's Anthropic-compatible endpoint:
+# anthropic:
+#   apiKey: "your_anthropic_api_key_here"
+#   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+#   customHeaders: ""
+#
+# Example — Use Baidu Comate endpoint:
+# anthropic:
+#   apiKey: "your_comate_key"
+#   apiBaseUrl: "https://oneapi-comate.baidu-int.com/api/anthropic"
+#   customHeaders: "comate_custom_header=your-header-value"
+#
+# Example — Use a custom proxy with no extra headers:
+# anthropic:
+#   apiBaseUrl: "https://my-proxy.example.com/anthropic"
+#   customHeaders: ""  # Clears any inherited ANTHROPIC_CUSTOM_HEADERS
+
+# -----------------------------------------------------------------------------
 # GLM (Zhipu AI) API Configuration
 # -----------------------------------------------------------------------------
 glm:

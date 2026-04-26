@@ -92,6 +92,66 @@ export function applyGlobalEnv(): void {
 }
 
 /**
+ * Clean up proxy-specific environment variables from process.env.
+ *
+ * When using a custom Anthropic-compatible API endpoint (configured via
+ * disclaude.config.yaml's `anthropic` section), any proxy-specific env vars
+ * inherited from ~/.claude/settings.json or the shell environment (e.g.,
+ * ANTHROPIC_CUSTOM_HEADERS with comate-specific headers) should be removed
+ * to avoid conflicts.
+ *
+ * This function should be called AFTER applyGlobalEnv() during startup.
+ *
+ * @see Issue #2768
+ */
+export function cleanupProxyEnvVars(): void {
+  const preloaded = getPreloadedConfig();
+  const anthropicConfig = (preloaded && validateConfig(preloaded))
+    ? getConfigFromFile(preloaded).anthropic
+    : fileConfigOnly.anthropic;
+
+  // Only clean up when anthropic config section is explicitly provided
+  if (!anthropicConfig) {
+    return;
+  }
+
+  // Handle ANTHROPIC_CUSTOM_HEADERS:
+  // - If anthropic.customHeaders is explicitly set (even to empty string),
+  //   use that value, replacing any inherited env var
+  // - This allows users to explicitly clear headers by setting customHeaders: ""
+  if (anthropicConfig.customHeaders !== undefined) {
+    const oldHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS;
+    if (anthropicConfig.customHeaders === '') {
+      // Explicitly set to empty → remove the env var entirely
+      if (oldHeaders) {
+        delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+        logger.info(
+          { oldHeaders },
+          'Cleaned up ANTHROPIC_CUSTOM_HEADERS (set to empty in config)',
+        );
+      }
+    } else {
+      // Set to a custom value
+      process.env.ANTHROPIC_CUSTOM_HEADERS = anthropicConfig.customHeaders;
+      logger.info(
+        { customHeaders: `${anthropicConfig.customHeaders.substring(0, 50)  }...` },
+        'Set ANTHROPIC_CUSTOM_HEADERS from config',
+      );
+    }
+  }
+
+  // Apply ANTHROPIC_BASE_URL from config if provided
+  if (anthropicConfig.apiBaseUrl) {
+    const oldUrl = process.env.ANTHROPIC_BASE_URL || '(default)';
+    process.env.ANTHROPIC_BASE_URL = anthropicConfig.apiBaseUrl;
+    logger.info(
+      { oldUrl, newUrl: anthropicConfig.apiBaseUrl },
+      'Set ANTHROPIC_BASE_URL from config',
+    );
+  }
+}
+
+/**
  * Application configuration class with static properties.
  *
  * All configuration is read from disclaude.config.yaml file.
@@ -123,8 +183,11 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Anthropic Claude configuration (config file takes priority over env vars)
+          // Issue #2768: Support custom Anthropic-compatible API endpoint configuration
+          static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl || process.env.ANTHROPIC_BASE_URL || '';
+          static readonly ANTHROPIC_CUSTOM_HEADERS = fileConfigOnly.anthropic?.customHeaders ?? process.env.ANTHROPIC_CUSTOM_HEADERS;
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -355,10 +418,11 @@ export class Config {
     }
 
     // Fallback to Anthropic
-    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
+    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL, apiBaseUrl: this.ANTHROPIC_API_BASE_URL || '(default)' }, 'Using Anthropic API configuration');
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      apiBaseUrl: this.ANTHROPIC_API_BASE_URL || undefined,
       provider: 'anthropic',
     };
   }

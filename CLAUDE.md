@@ -652,10 +652,14 @@ env:
 
 ### Environment Variables (Fallback)
 
-Environment variables are **only** used as fallback for Anthropic API key:
+Environment variables are used as fallback when not set in `disclaude.config.yaml`:
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic Claude API key (fallback if not in config file) |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API key (fallback if `anthropic.apiKey` not in config) |
+| `ANTHROPIC_BASE_URL` | Custom API endpoint (fallback if `anthropic.apiBaseUrl` not in config) |
+| `ANTHROPIC_CUSTOM_HEADERS` | Custom request headers (fallback if `anthropic.customHeaders` not in config) |
+
+**Priority**: `disclaude.config.yaml` anthropic section > environment variables > `~/.claude/settings.json`
 
 **Note**: GLM configuration must be in `disclaude.config.yaml` - environment variables are not supported for GLM.

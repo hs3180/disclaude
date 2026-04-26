@@ -57,9 +57,14 @@ glm:
   # agent:
   #   provider: "anthropic"
   #   model: "claude-sonnet-4-20250514"
+  # anthropic:
+  #   apiKey: "sk-ant-..."
+  #   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"  # 自定义 Endpoint
 ```
 
 > 💡 如果同时配置了 `glm.apiKey` 和 `ANTHROPIC_API_KEY`，GLM 优先。
+
+> 💡 使用第三方 Anthropic 兼容 API（如智谱 GLM、百度 Comate）时，可通过 `anthropic.apiBaseUrl` 配置自定义 endpoint。详见 [配置示例](../disclaude.config.example.yaml)。
 
 ## 第 4 步：启动
 
