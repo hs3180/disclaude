@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildProgressReportingGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,43 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildProgressReportingGuidance', () => {
+  it('should return a non-empty string', () => {
+    const result = buildProgressReportingGuidance();
+    expect(result).toBeTruthy();
+    expect(result.length).toBeGreaterThan(100);
+  });
+
+  it('should contain progress reporting section header', () => {
+    const result = buildProgressReportingGuidance();
+    expect(result).toContain('Progress Reporting for Long Tasks');
+    expect(result).toContain('Issue #857');
+  });
+
+  it('should mention the get_task_status tool', () => {
+    const result = buildProgressReportingGuidance();
+    expect(result).toContain('get_task_status');
+  });
+
+  it('should include the progress card template', () => {
+    const result = buildProgressReportingGuidance();
+    expect(result).toContain('任务执行中');
+    expect(result).toContain('send_card');
+  });
+
+  it('should emphasize agent-driven decisions', () => {
+    const result = buildProgressReportingGuidance();
+    expect(result).toContain('You decide when to report');
+    expect(result).toContain('no fixed intervals');
+  });
+
+  it('should include reporting principles', () => {
+    const result = buildProgressReportingGuidance();
+    expect(result).toContain('Be helpful, not noisy');
+    expect(result).toContain('Report failures promptly');
+    expect(result).toContain('Report completion');
   });
 });

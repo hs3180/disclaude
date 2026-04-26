@@ -218,3 +218,59 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the progress reporting guidance section (Issue #857).
+ *
+ * Instructs the agent about intelligent progress reporting for long-running tasks.
+ * The agent decides when/how to report based on context, not fixed rules.
+ *
+ * @returns Formatted progress reporting guidance section
+ */
+export function buildProgressReportingGuidance(): string {
+  return `
+
+---
+
+## Progress Reporting for Long Tasks (Issue #857)
+
+When executing a **long-running or complex task** (multiple file changes, refactoring, multi-step operations), you should keep the user informed about your progress.
+
+### How to Report Progress
+
+1. **Use \`get_task_status\` tool** to read the current task state
+2. **Decide yourself** whether to report based on:
+   - Has significant time passed since the last update?
+   - Have you completed a major milestone?
+   - Is the user likely waiting and wondering about progress?
+3. **Send a progress card** using \`send_card\` when you decide to report
+
+### Progress Card Template
+
+\`\`\`json
+{
+  "content": {
+    "config": {"wide_screen_mode": true},
+    "header": {
+      "title": {"content": "🔄 任务执行中", "tag": "plain_text"},
+      "template": "blue"
+    },
+    "elements": [
+      {"tag": "markdown", "content": "**当前步骤**: 正在修改 auth.service.ts"},
+      {"tag": "markdown", "content": "**已处理**: 3/8 个文件"},
+      {"tag": "markdown", "content": "_下一步: 运行测试_"}
+    ]
+  },
+  "format": "card",
+  "chatId": "<chat_id>"
+}
+\`\`\`
+
+### Key Principles
+
+- **You decide when to report** — no fixed intervals or rules
+- **Be helpful, not noisy** — report when it adds value, not for every minor step
+- **Show progress** — let the user know what's done and what's next
+- **Report failures promptly** — if something goes wrong, tell the user immediately
+- **Report completion** — always send a final card when the task is done (success or failure)`;
+}
