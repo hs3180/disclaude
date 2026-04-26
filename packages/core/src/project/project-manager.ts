@@ -6,11 +6,12 @@
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — persistence layer)
+ * @see Issue #2226 (Sub-Issue D — filesystem operations)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, rmSync, copyFileSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -51,7 +52,7 @@ interface ProjectInstance {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * Manages project templates, instances, and chatId bindings in pure memory.
+ * Manages project templates, instances, and chatId bindings in memory + on disk.
  *
  * Lifecycle:
  * 1. Construct with `ProjectManagerOptions`
@@ -64,8 +65,7 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  private readonly packageDir: string | undefined;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +82,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -162,9 +162,9 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
+   * Creates the working directory and copies CLAUDE.md from the template.
    * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
    *
    * @param chatId - Chat session requesting creation
@@ -221,6 +221,22 @@ export class ProjectManager {
         this.chatProjectMap.delete(chatId);
       }
       return { ok: false, error: persistResult.error };
+    }
+
+    // Filesystem operations (Sub-Issue D — #2226)
+    const fsResult = this.instantiateFromTemplate(name, templateName);
+    if (!fsResult.ok) {
+      // Rollback in-memory state
+      this.instances.delete(name);
+      this.removeFromReverseIndex(name, chatId);
+      if (previousBinding) {
+        this.chatProjectMap.set(chatId, previousBinding);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      // Re-persist to remove the failed instance from disk
+      this.persist();
+      return { ok: false, error: fsResult.error };
     }
 
     return {
@@ -678,6 +694,91 @@ export class ProjectManager {
       return false;
     }
     return true;
+  }
+
+  // ───────────────────────────────────────────
+  // Filesystem Operations (Sub-Issue D — #2226)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate filesystem artifacts for a project instance.
+   *
+   * Creates the working directory and copies CLAUDE.md from the template.
+   * On failure, any created directory is cleaned up (rollback).
+   *
+   * @param name - Instance name (already validated)
+   * @param templateName - Template name (already validated as existing)
+   * @returns ProjectResult indicating success or failure
+   */
+  private instantiateFromTemplate(name: string, templateName: string): ProjectResult<void> {
+    const workingDir = this.resolveWorkingDir(name);
+
+    // Path traversal protection: verify resolved path is within workspaceDir
+    const resolvedPath = resolve(workingDir);
+    const resolvedWorkspace = resolve(this.workspaceDir);
+    if (!resolvedPath.startsWith(resolvedWorkspace + sep) && resolvedPath !== resolvedWorkspace) {
+      return { ok: false, error: '工作目录路径不在 workspaceDir 内（路径遍历防护）' };
+    }
+
+    // Create working directory
+    try {
+      mkdirSync(workingDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(workingDir, templateName);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory
+      try {
+        rmSync(workingDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup failure — best effort
+      }
+      return copyResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from the template directory to the instance working directory.
+   *
+   * - If `packageDir` is not configured → skip (instance has no CLAUDE.md, but creation succeeds)
+   * - If template CLAUDE.md doesn't exist → return error
+   *
+   * @param workingDir - Target instance working directory
+   * @param templateName - Template name to copy CLAUDE.md from
+   * @returns ProjectResult indicating success or failure
+   */
+  private copyClaudeMd(workingDir: string, templateName: string): ProjectResult<void> {
+    // Skip if packageDir not configured
+    if (!this.packageDir) {
+      return { ok: true, data: undefined };
+    }
+
+    const claudeMdSource = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+    const claudeMdTarget = join(workingDir, 'CLAUDE.md');
+
+    // Check if template CLAUDE.md exists
+    if (!existsSync(claudeMdSource)) {
+      return { ok: false, error: `模板 CLAUDE.md 不存在: ${claudeMdSource}` };
+    }
+
+    try {
+      copyFileSync(claudeMdSource, claudeMdTarget);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ───────────────────────────────────────────
