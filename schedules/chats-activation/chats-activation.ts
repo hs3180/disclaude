@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * schedules/chats-activation.ts — Auto-activate pending chats via lark-cli.
+ * schedules/chats-activation/chats-activation.ts — Auto-activate pending chats via lark-cli.
  *
  * Reads all pending chats from workspace/chats/, creates groups via lark-cli,
  * updates status to active. Marks expired or failed chats appropriately.

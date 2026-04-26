@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Use vi.hoisted to define mock functions that can be referenced in vi.mock factory
-const { mockMkdir, mockWriteFile, mockReadFile, mockReaddir, mockStat, mockUnlink, mockAccess, mockFsWatch } = vi.hoisted(() => {
+const { mockMkdir, mockWriteFile, mockReadFile, mockReaddir, mockStat, mockUnlink, mockRm, mockAccess, mockFsWatch } = vi.hoisted(() => {
   const watchClose = vi.fn();
   return {
     mockMkdir: vi.fn().mockResolvedValue(undefined),
@@ -23,6 +23,7 @@ const { mockMkdir, mockWriteFile, mockReadFile, mockReaddir, mockStat, mockUnlin
       birthtime: new Date('2026-01-01'),
     }),
     mockUnlink: vi.fn().mockResolvedValue(undefined),
+    mockRm: vi.fn().mockResolvedValue(undefined),
     mockAccess: vi.fn().mockResolvedValue(undefined),
     mockFsWatch: vi.fn().mockReturnValue({
       on: vi.fn().mockReturnThis(),
@@ -39,6 +40,7 @@ vi.mock('fs/promises', () => ({
     readdir: mockReaddir,
     stat: mockStat,
     unlink: mockUnlink,
+    rm: mockRm,
     access: mockAccess,
   },
   mkdir: mockMkdir,
@@ -47,6 +49,7 @@ vi.mock('fs/promises', () => ({
   readdir: mockReaddir,
   stat: mockStat,
   unlink: mockUnlink,
+  rm: mockRm,
   access: mockAccess,
 }));
 
@@ -113,7 +116,7 @@ describe('ScheduleFileScanner', () => {
       const content = makeScheduleContent();
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/daily-report.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/daily-report/SCHEDULE.md`, 'daily-report');
 
       expect(task).not.toBeNull();
       expect(task!.id).toBe('schedule-daily-report');
@@ -130,7 +133,7 @@ describe('ScheduleFileScanner', () => {
       const contentNoName = content.replace(/name: ".*"\n/, '');
       mockReadFile.mockResolvedValue(contentNoName);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/invalid.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/invalid/SCHEDULE.md`, 'invalid');
       expect(task).toBeNull();
     });
 
@@ -139,7 +142,7 @@ describe('ScheduleFileScanner', () => {
       const contentNoCron = content.replace(/cron: ".*"\n/, '');
       mockReadFile.mockResolvedValue(contentNoCron);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/invalid.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/invalid/SCHEDULE.md`, 'invalid');
       expect(task).toBeNull();
     });
 
@@ -148,21 +151,21 @@ describe('ScheduleFileScanner', () => {
       const contentNoChatId = content.replace(/chatId: ".*"\n/, '');
       mockReadFile.mockResolvedValue(contentNoChatId);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/invalid.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/invalid/SCHEDULE.md`, 'invalid');
       expect(task).toBeNull();
     });
 
     it('should return null when file read fails', async () => {
       mockReadFile.mockRejectedValue(new Error('Permission denied'));
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/missing.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/missing/SCHEDULE.md`, 'missing');
       expect(task).toBeNull();
     });
 
     it('should handle file without frontmatter gracefully', async () => {
       mockReadFile.mockResolvedValue('Just some content without frontmatter');
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/no-frontmatter.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-frontmatter/SCHEDULE.md`, 'no-frontmatter');
       expect(task).toBeNull();
     });
 
@@ -184,8 +187,9 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/custom-task.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/custom-task/SCHEDULE.md`, 'custom-task');
       expect(task).not.toBeNull();
+      expect(task!.id).toBe('schedule-custom-task');
       expect(task!.enabled).toBe(false);
       expect(task!.blocking).toBe(false);
       expect(task!.cooldownPeriod).toBe(3600000);
@@ -207,7 +211,7 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/coding-task.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/coding-task/SCHEDULE.md`, 'coding-task');
       expect(task).not.toBeNull();
       expect(task!.model).toBe('claude-sonnet-4-20250514');
     });
@@ -215,7 +219,7 @@ describe('ScheduleFileScanner', () => {
     it('should default model to undefined when not specified', async () => {
       mockReadFile.mockResolvedValue(makeScheduleContent());
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/no-model.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-model/SCHEDULE.md`, 'no-model');
       expect(task).not.toBeNull();
       expect(task!.model).toBeUndefined();
     });
@@ -234,7 +238,7 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/fast-task.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/fast-task/SCHEDULE.md`, 'fast-task');
       expect(task).not.toBeNull();
       expect(task!.model).toBe('glm-4.7');
     });
@@ -253,7 +257,7 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/unquoted-model.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/unquoted-model/SCHEDULE.md`, 'unquoted-model');
       expect(task).not.toBeNull();
       expect(task!.model).toBe('glm-4.7');
     });
@@ -272,7 +276,7 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/nested-quote.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/nested-quote/SCHEDULE.md`, 'nested-quote');
       expect(task).not.toBeNull();
       // Matched outer double quotes should be stripped, leaving inner single quotes intact
       expect(task!.model).toBe("'glm'");
@@ -291,7 +295,7 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/unquoted.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/unquoted/SCHEDULE.md`, 'unquoted');
       expect(task).not.toBeNull();
       expect(task!.name).toBe('Unquoted Name');
       expect(task!.cron).toBe('0 9 * * *');
@@ -311,7 +315,7 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/quoted.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/quoted/SCHEDULE.md`, 'quoted');
       expect(task).not.toBeNull();
       expect(task!.name).toBe('Quoted Name');
       expect(task!.cron).toBe('0 9 * * *');
@@ -330,7 +334,7 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/default-enabled.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/default-enabled/SCHEDULE.md`, 'default-enabled');
       expect(task).not.toBeNull();
       expect(task!.enabled).toBe(true);
     });
@@ -342,16 +346,34 @@ describe('ScheduleFileScanner', () => {
         birthtime: new Date('2026-01-01T00:00:00Z'),
       } as Awaited<ReturnType<typeof import('fs/promises').stat>>);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/test.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/test/SCHEDULE.md`, 'test');
       expect(task).not.toBeNull();
-      expect(task!.sourceFile).toBe(`${MOCK_DIR}/test.md`);
+      expect(task!.sourceFile).toBe(`${MOCK_DIR}/test/SCHEDULE.md`);
       expect(task!.fileMtime).toEqual(new Date('2026-03-20T12:00:00Z'));
+    });
+
+    it('should derive dirName from file path when not provided (Issue #2526)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/inferred-name/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.id).toBe('schedule-inferred-name');
     });
   });
 
   describe('scanAll', () => {
-    it('should scan all .md files in the directory', async () => {
-      mockReaddir.mockResolvedValue(['daily-report.md', 'weekly-summary.md', 'notes.txt']);
+    it('should scan all subdirectories for SCHEDULE.md files', async () => {
+      // Issue #2526: readdir with withFileTypes returns directory entries
+      const dirEntry = (name: string, isDir: boolean) => ({
+        name,
+        isDirectory: () => isDir,
+        isFile: () => !isDir,
+      });
+      mockReaddir.mockResolvedValue([
+        dirEntry('daily-report', true),
+        dirEntry('weekly-summary', true),
+        dirEntry('readme.txt', false),
+      ]);
       mockReadFile.mockResolvedValue(makeScheduleContent());
 
       const tasks = await scanner.scanAll();
@@ -366,8 +388,13 @@ describe('ScheduleFileScanner', () => {
       expect(tasks).toEqual([]);
     });
 
-    it('should skip files that fail to parse', async () => {
-      mockReaddir.mockResolvedValue(['valid.md', 'invalid.md']);
+    it('should skip subdirectories that fail to parse', async () => {
+      const dirEntry = (name: string) => ({
+        name,
+        isDirectory: () => true,
+        isFile: () => false,
+      });
+      mockReaddir.mockResolvedValue([dirEntry('valid'), dirEntry('invalid')]);
       mockReadFile
         .mockResolvedValueOnce(makeScheduleContent())
         .mockResolvedValueOnce('no frontmatter');
@@ -384,7 +411,7 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('writeTask', () => {
-    it('should write a task with schedule- prefix stripped from filename', async () => {
+    it('should write a task with schedule- prefix stripped into subdirectory', async () => {
       const task: ScheduledTask = {
         id: 'schedule-daily-report',
         name: 'Daily Report',
@@ -397,7 +424,7 @@ describe('ScheduleFileScanner', () => {
       };
 
       const filePath = await scanner.writeTask(task);
-      expect(filePath).toBe(`${MOCK_DIR}/daily-report.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
       expect(mockWriteFile).toHaveBeenCalledTimes(1);
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
@@ -405,6 +432,22 @@ describe('ScheduleFileScanner', () => {
       expect(writtenContent).toContain('cron: "0 9 * * *"');
       expect(writtenContent).toContain('chatId: oc_test');
       expect(writtenContent).toContain('Execute daily report');
+    });
+
+    it('should create subdirectory before writing', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-daily-report',
+        name: 'Daily Report',
+        cron: '0 9 * * *',
+        prompt: 'Execute daily report',
+        chatId: 'oc_test',
+        enabled: true,
+        blocking: true,
+        createdAt: '2026-01-01T00:00:00Z',
+      };
+
+      await scanner.writeTask(task);
+      expect(mockMkdir).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report`, { recursive: true });
     });
 
     it('should write optional fields when present', async () => {
@@ -476,7 +519,7 @@ describe('ScheduleFileScanner', () => {
       };
 
       const filePath = await scanner.writeTask(task);
-      expect(filePath).toBe(`${MOCK_DIR}/my-task.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/my-task/SCHEDULE.md`);
     });
 
     it('should call ensureDir before writing', async () => {
@@ -496,41 +539,41 @@ describe('ScheduleFileScanner', () => {
   });
 
   describe('deleteTask', () => {
-    it('should delete a task file and return true', async () => {
+    it('should delete a task directory and return true', async () => {
       const result = await scanner.deleteTask('schedule-daily-report');
       expect(result).toBe(true);
-      expect(mockUnlink).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report.md`);
+      expect(mockRm).toHaveBeenCalledWith(`${MOCK_DIR}/daily-report`, { recursive: true, force: true });
     });
 
     it('should return false for task IDs without schedule- prefix', async () => {
       const result = await scanner.deleteTask('not-a-schedule-id');
       expect(result).toBe(false);
-      expect(mockUnlink).not.toHaveBeenCalled();
+      expect(mockRm).not.toHaveBeenCalled();
     });
 
-    it('should return false when file does not exist (ENOENT)', async () => {
-      mockUnlink.mockRejectedValue({ code: 'ENOENT' } as NodeJS.ErrnoException);
+    it('should return false when directory does not exist (ENOENT)', async () => {
+      mockRm.mockRejectedValue({ code: 'ENOENT' } as NodeJS.ErrnoException);
 
       const result = await scanner.deleteTask('schedule-nonexistent');
       expect(result).toBe(false);
     });
 
     it('should throw on non-ENOENT errors', async () => {
-      mockUnlink.mockRejectedValue(new Error('Permission denied'));
+      mockRm.mockRejectedValue(new Error('Permission denied'));
 
       await expect(scanner.deleteTask('schedule-test')).rejects.toThrow('Permission denied');
     });
   });
 
   describe('getFilePath', () => {
-    it('should strip schedule- prefix from task ID', () => {
+    it('should return SCHEDULE.md path inside subdirectory', () => {
       const filePath = scanner.getFilePath('schedule-daily-report');
-      expect(filePath).toBe(`${MOCK_DIR}/daily-report.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/daily-report/SCHEDULE.md`);
     });
 
     it('should use task ID as-is without schedule- prefix', () => {
       const filePath = scanner.getFilePath('my-task');
-      expect(filePath).toBe(`${MOCK_DIR}/my-task.md`);
+      expect(filePath).toBe(`${MOCK_DIR}/my-task/SCHEDULE.md`);
     });
   });
 
@@ -549,7 +592,7 @@ describe('ScheduleFileScanner', () => {
 
       mockReadFile.mockResolvedValue(content);
 
-      const task = await scanner.parseFile(`${MOCK_DIR}/empty-model.md`);
+      const task = await scanner.parseFile(`${MOCK_DIR}/empty-model/SCHEDULE.md`, 'empty-model');
       expect(task).not.toBeNull();
       expect(task!.model).toBe('');
       // Covers line 224-225: empty model warning branch
@@ -622,7 +665,7 @@ describe('ScheduleFileWatcher', () => {
 
       expect(mockFsWatch).toHaveBeenCalledWith(
         MOCK_DIR,
-        { persistent: true, recursive: false },
+        { persistent: true, recursive: true },
         expect.any(Function)
       );
       expect(watcher.isRunning()).toBe(true);
@@ -690,7 +733,7 @@ describe('ScheduleFileWatcher', () => {
 
       // Trigger a file event to create a debounce timer
       const [[,,debounceCallback]] = mockFsWatch.mock.calls;
-      debounceCallback('rename', 'test.md');
+      debounceCallback('rename', 'test/SCHEDULE.md');
 
       // Stop should clear timers
       watcher.stop();
@@ -715,17 +758,24 @@ describe('ScheduleFileWatcher', () => {
       expect(onFileChanged).not.toHaveBeenCalled();
     });
 
-    it('should ignore non-.md files', () => {
+    it('should ignore non-SCHEDULE.md files', () => {
       eventCallback('change', 'notes.txt');
       vi.advanceTimersByTime(20);
 
       expect(onFileChanged).not.toHaveBeenCalled();
     });
 
+    it('should ignore plain .md files that are not SCHEDULE.md', () => {
+      eventCallback('change', 'daily-report.md');
+      vi.advanceTimersByTime(20);
+
+      expect(onFileChanged).not.toHaveBeenCalled();
+    });
+
     it('should debounce rapid file events', () => {
-      eventCallback('change', 'test.md');
-      eventCallback('change', 'test.md');
-      eventCallback('change', 'test.md');
+      eventCallback('change', 'test/SCHEDULE.md');
+      eventCallback('change', 'test/SCHEDULE.md');
+      eventCallback('change', 'test/SCHEDULE.md');
 
       vi.advanceTimersByTime(20);
 
@@ -737,7 +787,7 @@ describe('ScheduleFileWatcher', () => {
       mockAccess.mockResolvedValue(undefined);
       mockReadFile.mockResolvedValue(makeScheduleContent());
 
-      eventCallback('rename', 'daily-report.md');
+      eventCallback('rename', 'daily-report/SCHEDULE.md');
       vi.advanceTimersByTime(20);
       // Wait for async processFileEvent to complete
       await vi.runAllTimersAsync();
@@ -749,20 +799,20 @@ describe('ScheduleFileWatcher', () => {
     it('should handle file rename event when file is removed', async () => {
       mockAccess.mockRejectedValue({ code: 'ENOENT' });
 
-      eventCallback('rename', 'daily-report.md');
+      eventCallback('rename', 'daily-report/SCHEDULE.md');
       vi.advanceTimersByTime(20);
       await vi.runAllTimersAsync();
 
       expect(onFileRemoved).toHaveBeenCalledWith(
         'schedule-daily-report',
-        `${MOCK_DIR}/daily-report.md`
+        `${MOCK_DIR}/daily-report/SCHEDULE.md`
       );
     });
 
     it('should handle file change event', async () => {
       mockReadFile.mockResolvedValue(makeScheduleContent({ name: 'Updated Task' }));
 
-      eventCallback('change', 'daily-report.md');
+      eventCallback('change', 'daily-report/SCHEDULE.md');
       vi.advanceTimersByTime(20);
       await vi.runAllTimersAsync();
 
@@ -773,7 +823,7 @@ describe('ScheduleFileWatcher', () => {
     it('should not call onFileChanged when changed file fails to parse', async () => {
       mockReadFile.mockResolvedValue('no frontmatter content');
 
-      eventCallback('change', 'bad-file.md');
+      eventCallback('change', 'bad-file/SCHEDULE.md');
       vi.advanceTimersByTime(20);
       await vi.runAllTimersAsync();
 
@@ -784,7 +834,7 @@ describe('ScheduleFileWatcher', () => {
       mockAccess.mockResolvedValue(undefined);
       mockReadFile.mockResolvedValue('invalid content without frontmatter');
 
-      eventCallback('rename', 'invalid.md');
+      eventCallback('rename', 'invalid/SCHEDULE.md');
       vi.advanceTimersByTime(20);
       await vi.runAllTimersAsync();
 
@@ -796,7 +846,7 @@ describe('ScheduleFileWatcher', () => {
       // access() throws non-ENOENT error → fileExists returns false → treated as removal
       mockAccess.mockRejectedValue(new Error('Unexpected error'));
 
-      eventCallback('rename', 'error-file.md');
+      eventCallback('rename', 'error-file/SCHEDULE.md');
       vi.advanceTimersByTime(20);
       await vi.runAllTimersAsync();
 
@@ -804,14 +854,14 @@ describe('ScheduleFileWatcher', () => {
       // This verifies the error doesn't crash the watcher
       expect(onFileRemoved).toHaveBeenCalledWith(
         'schedule-error-file',
-        `${MOCK_DIR}/error-file.md`
+        `${MOCK_DIR}/error-file/SCHEDULE.md`
       );
     });
 
     it('should handle change event errors gracefully', async () => {
       mockReadFile.mockRejectedValue(new Error('Read error'));
 
-      eventCallback('change', 'error-file.md');
+      eventCallback('change', 'error-file/SCHEDULE.md');
       vi.advanceTimersByTime(20);
       await vi.runAllTimersAsync();
 
@@ -823,8 +873,8 @@ describe('ScheduleFileWatcher', () => {
       mockAccess.mockResolvedValue(undefined);
       mockReadFile.mockResolvedValue(makeScheduleContent());
 
-      eventCallback('rename', 'task1.md');
-      eventCallback('rename', 'task2.md');
+      eventCallback('rename', 'task1/SCHEDULE.md');
+      eventCallback('rename', 'task2/SCHEDULE.md');
 
       vi.advanceTimersByTime(20);
       await vi.runAllTimersAsync();
