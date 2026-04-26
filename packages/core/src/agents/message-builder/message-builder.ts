@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteGuidance,
 } from './guidance.js';
 
 /**
@@ -137,6 +138,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const tasteGuidance = buildTasteGuidance(this.options.tasteRules ?? []);
 
     // Compose all sections
     const sections: string[] = [];
@@ -164,6 +166,10 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+
+    if (tasteGuidance) {
+      sections.push(tasteGuidance);
+    }
 
     const preamble = sections.join('\n');
 

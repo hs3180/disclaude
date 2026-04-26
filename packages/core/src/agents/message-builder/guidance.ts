@@ -218,3 +218,36 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the user taste (preference) section for Agent context injection.
+ *
+ * Issue #2335: Auto-summarize user taste to avoid repeated corrections.
+ * Injects learned user preferences into the agent prompt so the agent
+ * automatically follows them without needing repeated corrections.
+ *
+ * @param tasteRules - Array of taste rule strings to inject, or empty array to skip
+ * @returns Formatted taste guidance section, or empty string if no rules
+ */
+export function buildTasteGuidance(tasteRules: string[]): string {
+  if (!tasteRules || tasteRules.length === 0) {
+    return '';
+  }
+
+  const ruleList = tasteRules
+    .map((rule, index) => `${index + 1}. ${rule}`)
+    .join('\n');
+
+  return `
+
+---
+
+## User Preferences (Auto-learned)
+
+The following preferences have been learned from this user's past interactions. **Follow these preferences automatically** without needing the user to repeat them:
+
+${ruleList}
+
+When following these preferences, you may briefly acknowledge: "（基于你的偏好：xxx）" so the user knows their preference is being applied.
+`;
+}

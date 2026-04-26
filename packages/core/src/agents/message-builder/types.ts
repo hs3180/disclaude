@@ -105,4 +105,15 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * User taste (preference) rules for Agent context injection.
+   * Issue #2335: Auto-summarize user taste to avoid repeated corrections.
+   *
+   * When provided, a "User Preferences (Auto-learned)" section is
+   * injected into the agent prompt before the user message.
+   *
+   * Example: ['Use const/let, never var', 'Reply concisely']
+   */
+  tasteRules?: string[];
 }
