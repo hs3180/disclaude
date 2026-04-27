@@ -65,6 +65,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private channel?: MessageChannel;
   private isSessionActive = false;
 
+  // Issue #2926: Flag to signal stop request for immediate iterator interruption
+  private stopRequested = false;
+
   // Managers for separated concerns
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
@@ -708,6 +711,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.queryHandle = handle;
     this.isSessionActive = true;
 
+    // Issue #2926: Clear stopRequested for the new session
+    this.stopRequested = false;
+
     // Process SDK messages in background
     this.processIterator(iterator).catch(async (err) => {
       this.logger.error({
@@ -754,6 +760,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     try {
       for await (const { parsed } of iterator) {
+        // Issue #2926: Check for stop/reset signals at each iteration.
+        // Without these checks, the for-await loop continues processing
+        // buffered SDK messages even after /stop or /reset is requested.
+        if (!this.isSessionActive) {
+          this.logger.info({ chatId, messageCount }, 'Iterator interrupted: session reset requested');
+          break;
+        }
+        if (this.stopRequested) {
+          this.logger.info({ chatId, messageCount }, 'Iterator interrupted: stop requested');
+          break;
+        }
+
         messageCount++;
         this.logger.debug(
           { chatId, messageCount, type: parsed.type },
@@ -802,8 +820,29 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Check if this was an explicit close (reset cleared the session)
     const wasExplicitClose = !this.isSessionActive;
 
+    // Issue #2926: Handle stop request - restart immediately without backoff
+    const wasStopRequested = this.stopRequested;
+    this.stopRequested = false;
+
     if (wasExplicitClose) {
       this.logger.info({ chatId }, 'Agent loop completed (explicit close)');
+      return;
+    }
+
+    if (wasStopRequested) {
+      this.logger.info({ chatId }, 'Agent loop stopped, restarting immediately for continued conversation');
+
+      // Close the old channel to clean up resources before starting a new loop
+      if (this.channel) {
+        this.channel.close();
+        this.channel = undefined;
+      }
+
+      // Record success to avoid counting stop as an error for restart manager
+      this.restartManager.recordSuccess(chatId);
+
+      // Restart the agent loop immediately (no backoff)
+      this.startAgentLoop();
       return;
     }
 
@@ -875,6 +914,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Mark session as inactive BEFORE closing to signal explicit close
     this.isSessionActive = false;
+
+    // Issue #2926: Clear stopRequested to prevent stale stop from affecting new session
+    this.stopRequested = false;
 
     // Close channel and query
     if (this.channel) {
@@ -957,6 +999,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.logger.info({ chatId: this.boundChatId }, 'Stopping current query');
 
+    // Issue #2926: Set stop flag so processIterator breaks out immediately
+    this.stopRequested = true;
+
     // Cancel the current query (not close, to allow continuation)
     this.queryHandle.cancel();
     this.queryHandle = undefined;
@@ -990,6 +1035,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Mark session as inactive
     this.isSessionActive = false;
+
+    // Issue #2926: Clear stop flag
+    this.stopRequested = false;
 
     // Close channel and query
     if (this.channel) {
