@@ -114,7 +114,7 @@ export type {
 // Provider 导出
 // ============================================================================
 
-export { ClaudeSDKProvider } from './providers/index.js';
+export { ClaudeSDKProvider, extractStartupDetail, createStderrCapture, type ErrorWithStderr } from './providers/index.js';
 
 // ============================================================================
 // 工厂函数导出

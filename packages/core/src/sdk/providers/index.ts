@@ -2,4 +2,4 @@
  * SDK Providers 模块导出
  */
 
-export { ClaudeSDKProvider } from './claude/index.js';
+export { ClaudeSDKProvider, extractStartupDetail, createStderrCapture, type ErrorWithStderr } from './claude/index.js';

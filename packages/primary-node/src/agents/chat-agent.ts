@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, extractStartupDetail, type ErrorWithStderr, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -44,6 +44,18 @@ type UserInput = AgentUserInput;
 
 // Re-export types for backward compatibility
 export type { ChatAgentCallbacks, ChatAgentConfig, MessageData } from './types.js';
+
+/**
+ * Maximum time (ms) after which a failure is still considered a "startup" failure.
+ *
+ * Issue #2920: If the subprocess exits within this window having produced zero
+ * messages, the error is treated as a startup/configuration failure that should
+ * NOT trigger the restart/circuit-breaker mechanism.
+ *
+ * Set to 5000ms to account for MCP server initialization with network timeouts
+ * that may exceed 3 seconds.
+ */
+const STARTUP_FAILURE_WINDOW_MS = 5000;
 
 /**
  * ChatAgent - Platform-agnostic direct chat abstraction with Streaming Input.
@@ -754,6 +766,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
     let messageCount = 0;
+    const startTime = Date.now();
 
     try {
       for await (const { parsed } of iterator) {
@@ -784,10 +797,52 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
     } catch (error) {
       iteratorError = error as Error;
+      const elapsedMs = Date.now() - startTime;
+
+      // Issue #2920: Distinguish startup failures from runtime errors.
+      // Startup failures: 0 messages received, fast exit (< 5s) → likely
+      // a configuration or initialization error (MCP config, auth, etc.)
+      // that won't be fixed by restarting.
+      // Runtime errors: some messages already received or long-running →
+      // keep existing retry/circuit-breaker behavior.
+      const isStartupFailure = messageCount === 0 && elapsedMs < STARTUP_FAILURE_WINDOW_MS;
+      const capturedStderr = (iteratorError as ErrorWithStderr).stderr;
+
+      if (isStartupFailure) {
+        // Extract actionable detail from stderr for startup failures
+        const detail = extractStartupDetail(capturedStderr ?? '', iteratorError.message);
+        this.logger.error({
+          err: iteratorError,
+          chatId,
+          messageCount,
+          elapsedMs,
+          stderr: capturedStderr,
+          startupDetail: detail,
+        }, 'Agent startup failure detected');
+
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        await this.callbacks.sendMessage(chatId, `❌ Agent 启动失败: ${detail}`, threadRoot);
+
+        if (this.callbacks.onDone) {
+          await this.callbacks.onDone(chatId, threadRoot);
+        }
+
+        // Issue #2920: Startup failures should NOT trigger retry/circuit breaker.
+        // The root cause is a configuration error that won't be fixed by restarting.
+        // Mark session as inactive and return immediately.
+        this.isSessionActive = false;
+        this.logger.info(
+          { chatId, detail, elapsedMs },
+          'Agent startup failed — skipping restart (configuration error)'
+        );
+        return;
+      }
+
       this.logger.error({
         err: iteratorError,
         chatId,
         messageCount,
+        elapsedMs,
         errorMessage: iteratorError.message,
         errorStack: iteratorError.stack,
         errorName: iteratorError.constructor.name,
