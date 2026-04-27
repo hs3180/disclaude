@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectTemplateConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -444,6 +445,19 @@ export class Config {
    */
   static getDebugConfig(): DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
+  }
+
+  /**
+   * Get project templates configuration from config file.
+   *
+   * Returns the `projectTemplates` section from disclaude.config.yaml,
+   * which can be passed to `ProjectManager` constructor or `init()`.
+   *
+   * @see Issue #1916, #2227
+   * @returns Project templates configuration or undefined
+   */
+  static getProjectTemplatesConfig(): Record<string, ProjectTemplateConfig> | undefined {
+    return fileConfigOnly.projectTemplates;
   }
 
   /**
