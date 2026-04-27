@@ -4,23 +4,40 @@
  * Verifies conversion of unified AgentQueryOptions to Claude SDK format.
  *
  * Issue #1617: Phase 2 - SDK providers test coverage.
+ * Issue #2913: Model fallback for SDK auxiliary calls.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Mock Config module before importing the module under test.
+// adaptOptions falls back to Config.getAgentConfig().model when
+// options.model is not explicitly set (Issue #2913).
+vi.mock('../../../config/index.js', () => ({
+  Config: {
+    getAgentConfig: vi.fn(() => ({
+      model: 'glm-5.1',
+      apiKey: 'test-key',
+      provider: 'glm',
+    })),
+  },
+}));
+
 import { adaptOptions, adaptInput } from './options-adapter.js';
+import { Config } from '../../../config/index.js';
 
 describe('adaptOptions', () => {
-  it('should return empty options for minimal input', () => {
+  it('should fallback to configured model when options.model is not set', () => {
     const result = adaptOptions({
       settingSources: ['project'],
     });
 
     expect(result.settingSources).toEqual(['project']);
     expect(result.cwd).toBeUndefined();
-    expect(result.model).toBeUndefined();
+    // Issue #2913: When options.model is not set, fallback to configured model
+    expect(result.model).toBe('glm-5.1');
   });
 
-  it('should pass through cwd and model', () => {
+  it('should prefer explicit model over fallback', () => {
     const result = adaptOptions({
       settingSources: ['project'],
       cwd: '/workspace',
@@ -31,13 +48,28 @@ describe('adaptOptions', () => {
     expect(result.model).toBe('claude-sonnet-4-20250514');
   });
 
-  it('should pass through permission mode', () => {
+  it('should use fallback model when Config returns one', () => {
     const result = adaptOptions({
       settingSources: ['project'],
       permissionMode: 'bypassPermissions',
     });
 
     expect(result.permissionMode).toBe('bypassPermissions');
+    expect(result.model).toBe('glm-5.1');
+  });
+
+  it('should not set model when neither explicit nor configured model exists', () => {
+    vi.mocked(Config.getAgentConfig).mockReturnValueOnce({
+      model: '',
+      apiKey: 'test-key',
+      provider: 'glm',
+    });
+
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.model).toBeUndefined();
   });
 
   it('should pass through allowedTools and disallowedTools', () => {

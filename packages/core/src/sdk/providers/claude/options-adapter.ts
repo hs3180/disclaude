@@ -6,6 +6,7 @@
 
 import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { Config } from '../../../config/index.js';
 
 /**
  * 适配统一选项为 Claude SDK 选项
@@ -21,8 +22,18 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.cwd = options.cwd;
   }
 
+  // Set model - use configured model as fallback when not explicitly provided.
+  // This ensures SDK auxiliary calls (title generation, summarization) use
+  // the configured model instead of falling back to SDK default
+  // (e.g. claude-haiku-4-5-20251001) which custom proxies may not recognise.
+  // Issue #2913
   if (options.model) {
     sdkOptions.model = options.model;
+  } else {
+    const configuredModel = Config.getAgentConfig().model;
+    if (configuredModel) {
+      sdkOptions.model = configuredModel;
+    }
   }
 
   // 权限模式 - 直接传递，使用原始 SDK 格式
