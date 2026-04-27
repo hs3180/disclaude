@@ -197,5 +197,25 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    it('should set ANTHROPIC_CUSTOM_HEADERS for non-Anthropic provider with apiBaseUrl', () => {
+      const env = buildSdkEnv('sk-glm-key', 'https://open.bigmodel.cn/api/anthropic', undefined, true, 'glm');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(JSON.stringify({ 'x-api-key': 'sk-glm-key' }));
+    });
+
+    it('should NOT set ANTHROPIC_CUSTOM_HEADERS for anthropic provider', () => {
+      const env = buildSdkEnv('sk-anthropic-key', 'https://api.example.com', undefined, true, 'anthropic');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should NOT set ANTHROPIC_CUSTOM_HEADERS for non-Anthropic provider without apiBaseUrl', () => {
+      const env = buildSdkEnv('sk-glm-key', undefined, undefined, true, 'glm');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should default provider to anthropic when not specified', () => {
+      const env = buildSdkEnv('sk-test-key', 'https://api.example.com');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
   });
 });
