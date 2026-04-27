@@ -8,7 +8,6 @@
  */
 import path from 'path';
 import { existsSync } from 'fs';
-import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -26,7 +25,6 @@ import type {
   SessionTimeoutConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
-import { AcpClient, AcpStdioTransport } from '../sdk/acp/index.js';
 
 // Re-export sub-modules
 export * from './types.js';
@@ -498,88 +496,6 @@ export class Config {
 }
 
 // ============================================================================
-// ACP Command Resolution (Issue #2349)
-// ============================================================================
-
-/**
- * Resolved ACP command result.
- */
-interface ResolvedAcpCommand {
-  command: string;
-  args: string[];
-}
-
-/**
- * Detect the correct command for spawning an ACP-compatible agent process.
- *
- * Resolution order:
- * 0. `agent.acpCommand` config override — user-specified command (highest priority)
- * 1. `claude-agent-acp` — dedicated ACP binary (preferred, always correct)
- * 2. `claude --agent-acp` — CLI flag (only if the installed version supports it)
- *
- * @param configOverride - Optional user-specified ACP command from config (agent.acpCommand)
- * @returns The resolved command and args
- * @throws Error with actionable message if no valid command is found
- */
-export function resolveAcpCommand(configOverride?: string): ResolvedAcpCommand {
-  // Strategy 0: User-specified command from config (agent.acpCommand)
-  if (configOverride) {
-    logger.debug({ command: configOverride }, 'Resolved ACP command from config override');
-    return { command: configOverride, args: [] };
-  }
-
-  // Strategy 1: Try `claude-agent-acp` (dedicated binary)
-  if (commandExists('claude-agent-acp')) {
-    logger.debug('Resolved ACP command: claude-agent-acp');
-    return { command: 'claude-agent-acp', args: [] };
-  }
-
-  // Strategy 2: Try `claude --agent-acp` (CLI flag)
-  // Verify the flag is actually supported by checking `claude --help`
-  if (commandExists('claude') && claudeSupportsAgentAcp()) {
-    logger.debug('Resolved ACP command: claude --agent-acp');
-    return { command: 'claude', args: ['--agent-acp'] };
-  }
-
-  // No valid command found — throw with actionable error
-  throw new Error(
-    'No ACP-compatible agent command found. '
-    + 'Install one of:\n'
-    + '  1. claude-agent-acp (npm install -g @zed-industries/claude-agent-acp)\n'
-    + '  2. Or set agent.acpCommand in disclaude.config.yaml\n'
-    + '  3. Or upgrade Claude CLI to a version that supports --agent-acp\n'
-    + 'See Issue #2349 for details.',
-  );
-}
-
-/**
- * Check if a command exists in PATH.
- */
-function commandExists(cmd: string): boolean {
-  try {
-    execFileSync('which', [cmd], { stdio: 'pipe', timeout: 3000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if the installed `claude` CLI supports `--agent-acp` flag.
- */
-function claudeSupportsAgentAcp(): boolean {
-  try {
-    const helpOutput = execFileSync('claude', ['--help'], {
-      stdio: 'pipe',
-      timeout: 5000,
-    }).toString();
-    return helpOutput.includes('--agent-acp');
-  } catch {
-    return false;
-  }
-}
-
-// ============================================================================
 // Runtime Context Factory (Issue #1839)
 // ============================================================================
 
@@ -610,36 +526,12 @@ function claudeSupportsAgentAcp(): boolean {
 export function createDefaultRuntimeContext(
   overrides?: Partial<AgentRuntimeContext>,
 ): AgentRuntimeContext {
-  // Create shared ACP Client instance (lazy-connect on first use)
-  // Issue #2311: ACP Client replaces SDK Provider for agent execution
-  // Issue #2349: Auto-detect correct ACP command (config override > claude-agent-acp > claude --agent-acp)
-  const acpCommandOverride = fileConfigOnly.agent?.acpCommand;
-  const { command: acpCommand, args: acpArgs } = resolveAcpCommand(acpCommandOverride);
-  logger.info({ command: acpCommand, args: acpArgs }, 'Resolved ACP transport command');
-
-  const acpClient = new AcpClient({
-    transport: new AcpStdioTransport({
-      command: acpCommand,
-      args: acpArgs,
-      env: {
-        ...process.env as Record<string, string>,
-        // Pass through API key if available
-        ...(Config.getAgentConfig().apiKey ? {
-          ANTHROPIC_API_KEY: Config.getAgentConfig().apiKey,
-        } : {}),
-      },
-    }),
-    // Auto-approve all permission requests in bot mode
-    // (permissionMode: bypassPermissions handles this at SDK level)
-  });
-
   const ctx: AgentRuntimeContext = {
     getWorkspaceDir: () => Config.getWorkspaceDir(),
     getAgentConfig: () => Config.getAgentConfig(),
     getLoggingConfig: () => Config.getLoggingConfig(),
     getGlobalEnv: () => Config.getGlobalEnv(),
     isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
-    getAcpClient: () => acpClient,
     ...overrides,
   };
   setRuntimeContext(ctx);

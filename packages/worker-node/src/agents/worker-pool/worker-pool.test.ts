@@ -23,7 +23,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Mock AgentFactory
 vi.mock('../factory.js', () => ({
   AgentFactory: {
-    createAgent: vi.fn(),
+    createTaskAgent: vi.fn(),
   },
 }));
 
@@ -249,7 +249,7 @@ describe('WorkerPool', () => {
   describe('submit', () => {
     it('should enqueue a task', () => {
       // Mock the agent factory to prevent actual execution
-      mockAgentFactory.createAgent.mockReturnValue({
+      mockAgentFactory.createTaskAgent.mockReturnValue({
         executeOnce: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn(),
       } as any);
@@ -270,7 +270,7 @@ describe('WorkerPool', () => {
       const onEvent = vi.fn();
       pool.onEvent(onEvent);
 
-      mockAgentFactory.createAgent.mockReturnValue({
+      mockAgentFactory.createTaskAgent.mockReturnValue({
         executeOnce: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn(),
       } as any);
@@ -291,7 +291,7 @@ describe('WorkerPool', () => {
 
   describe('submitBatch', () => {
     it('should submit multiple tasks', () => {
-      mockAgentFactory.createAgent.mockReturnValue({
+      mockAgentFactory.createTaskAgent.mockReturnValue({
         executeOnce: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn(),
       } as any);
@@ -349,7 +349,7 @@ describe('WorkerPool', () => {
     it('should return tasks that exceed worker capacity', () => {
       // Use slow mock so tasks stay in the queue
       const slowPromise = new Promise(() => {}); // never resolves
-      mockAgentFactory.createAgent.mockReturnValue({
+      mockAgentFactory.createTaskAgent.mockReturnValue({
         executeOnce: vi.fn().mockReturnValue(slowPromise),
         dispose: vi.fn(),
       } as any);
@@ -386,7 +386,7 @@ describe('WorkerPool', () => {
         resolveExecution = resolve;
       });
 
-      mockAgentFactory.createAgent.mockReturnValue({
+      mockAgentFactory.createTaskAgent.mockReturnValue({
         executeOnce: vi.fn().mockReturnValue(executionPromise),
         dispose: vi.fn(),
       } as any);
@@ -416,7 +416,7 @@ describe('WorkerPool', () => {
     it('should increase when tasks exceed worker capacity', () => {
       // Use slow mock to keep tasks active
       const slowPromise = new Promise(() => {});
-      mockAgentFactory.createAgent.mockReturnValue({
+      mockAgentFactory.createTaskAgent.mockReturnValue({
         executeOnce: vi.fn().mockReturnValue(slowPromise),
         dispose: vi.fn(),
       } as any);
@@ -445,7 +445,7 @@ describe('WorkerPool', () => {
     it('should cancel a pending task that exceeds worker capacity', () => {
       // Use slow mock so tasks remain in the queue
       const slowPromise = new Promise(() => {});
-      mockAgentFactory.createAgent.mockReturnValue({
+      mockAgentFactory.createTaskAgent.mockReturnValue({
         executeOnce: vi.fn().mockReturnValue(slowPromise),
         dispose: vi.fn(),
       } as any);

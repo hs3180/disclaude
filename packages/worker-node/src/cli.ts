@@ -152,8 +152,11 @@ async function main(): Promise<void> {
   // For CLI mode, we provide minimal implementations
   const dependencies: WorkerNodeDependencies = {
     getWorkspaceDir: () => Config.getWorkspaceDir(),
-    createAgent: () => {
-      throw new Error('Agent creation not available in standalone worker mode');
+    createChatAgent: () => {
+      throw new Error('ChatAgent not available in standalone worker mode');
+    },
+    createScheduleAgent: () => {
+      throw new Error('ScheduleAgent not available in standalone worker mode');
     },
     logger,
   };

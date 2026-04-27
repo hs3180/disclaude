@@ -23,7 +23,8 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 // Mock AgentFactory
 vi.mock('./factory.js', () => ({
   AgentFactory: {
-    createAgent: vi.fn(),
+    createTaskAgent: vi.fn(),
+    createScheduleAgent: vi.fn(),
   },
 }));
 
@@ -68,7 +69,7 @@ describe('SubagentManager', () => {
   describe('spawn', () => {
     it('should spawn a task agent and track it', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -88,7 +89,7 @@ describe('SubagentManager', () => {
 
     it('should spawn a schedule agent and track it', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createScheduleAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'schedule',
@@ -108,7 +109,7 @@ describe('SubagentManager', () => {
     it('should set status to failed when agent execution throws', async () => {
       const mockAgent = createMockAgent();
       mockAgent.executeOnce.mockRejectedValue(new Error('Agent crashed'));
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -124,7 +125,7 @@ describe('SubagentManager', () => {
 
     it('should dispose agent after execution', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       await manager.spawn({
         type: 'task',
@@ -140,7 +141,7 @@ describe('SubagentManager', () => {
     it('should still dispose agent when execution fails', async () => {
       const mockAgent = createMockAgent();
       mockAgent.executeOnce.mockRejectedValue(new Error('fail'));
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       await manager.spawn({
         type: 'task',
@@ -155,7 +156,7 @@ describe('SubagentManager', () => {
 
     it('should use default isolation mode "none"', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -170,7 +171,7 @@ describe('SubagentManager', () => {
 
     it('should notify status callbacks on completion', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const statusCallback = vi.fn();
       manager.onStatusChange(statusCallback);
@@ -210,7 +211,7 @@ describe('SubagentManager', () => {
 
       // Spawn an agent to trigger status change — callback should NOT fire
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       await manager.spawn({
         type: 'task',
@@ -231,7 +232,7 @@ describe('SubagentManager', () => {
 
     it('should return handle after spawn', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -252,7 +253,7 @@ describe('SubagentManager', () => {
 
     it('should return current status', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -273,7 +274,7 @@ describe('SubagentManager', () => {
 
     it('should return all subagents', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       await manager.spawn({
         type: 'task',
@@ -295,7 +296,7 @@ describe('SubagentManager', () => {
 
     it('should filter by status', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       await manager.spawn({
         type: 'task',
@@ -313,7 +314,7 @@ describe('SubagentManager', () => {
   describe('listRunning', () => {
     it('should return only running subagents', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       await manager.spawn({
         type: 'task',
@@ -335,7 +336,7 @@ describe('SubagentManager', () => {
 
     it('should stop a tracked subagent', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -363,7 +364,7 @@ describe('SubagentManager', () => {
     it('should remove old completed subagents', async () => {
       vi.useFakeTimers();
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -384,7 +385,7 @@ describe('SubagentManager', () => {
 
     it('should keep recent subagents', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -401,7 +402,7 @@ describe('SubagentManager', () => {
 
     it('should use default maxAge of 1 hour', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       const handle = await manager.spawn({
         type: 'task',
@@ -421,7 +422,7 @@ describe('SubagentManager', () => {
   describe('dispose', () => {
     it('should clear all state', async () => {
       const mockAgent = createMockAgent();
-      mockAgentFactory.createAgent.mockReturnValue(mockAgent as any);
+      mockAgentFactory.createTaskAgent.mockReturnValue(mockAgent as any);
 
       await manager.spawn({
         type: 'task',
