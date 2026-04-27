@@ -26,7 +26,7 @@ import type {
   ControlHandler,
   FeishuApiHandlers,
 } from '@disclaude/core';
-import type { ChatAgentCallbacks, ChatAgentInterface } from '@disclaude/worker-node';
+import type { ChatAgentCallbacks, ChatAgent } from '@disclaude/worker-node';
 import type { Logger } from 'pino';
 import { ChannelManager } from './channel-manager.js';
 
@@ -61,7 +61,7 @@ export interface IPrimaryNodeForSetup {
 export interface ChannelSetupContext {
   /** Agent pool for creating chat agents */
   agentPool: {
-    getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgentInterface;
+    getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
   };
   /** Unified control handler for all channels */
   controlHandler: ControlHandler;

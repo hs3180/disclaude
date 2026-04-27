@@ -1,7 +1,7 @@
 /**
- * Type definitions for ChatAgent.
+ * Type definitions for ChatAgent agent.
  *
- * Extracted for better separation of concerns (Issue #697).
+ * Extracted from pilot.ts for better separation of concerns (Issue #697).
  * Issue #1492: MessageData moved to core package, re-exported here for backward compatibility.
  */
 

@@ -294,7 +294,7 @@ describe('SessionManager', () => {
     });
   });
 
-  describe('PilotSession', () => {
+  describe('ChatAgentSession', () => {
     it('should have correct createdAt timestamp', () => {
       const before = Date.now();
       const handle = createMockHandle();

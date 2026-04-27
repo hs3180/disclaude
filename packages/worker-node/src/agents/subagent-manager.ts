@@ -7,6 +7,8 @@
  *
  * Issue #1501: Simplified - 'skill' type removed (skills now handled via
  * ChatAgent.executeOnce() or .md-defined subagents in .claude/agents/).
+ *
+ * Features:
  * - Unified spawn API with consistent options
  * - Lifecycle management (start, stop, status)
  * - Optional worktree isolation
@@ -153,8 +155,8 @@ export type SubagentStatusCallback = (handle: SubagentHandle) => void;
  * Manager for spawning and tracking subagents.
  *
  * Provides a unified interface for creating subagents of different types:
- * - **schedule**: For scheduled task execution (uses AgentFactory.createAgent)
- * - **task**: For one-time task execution (uses AgentFactory.createAgent)
+ * - **schedule**: For scheduled task execution (uses AgentFactory.createScheduleAgent)
+ * - **task**: For one-time task execution (uses AgentFactory.createTaskAgent)
  *
  * Issue #1501: 'skill' type removed from this manager.
  *
@@ -268,7 +270,7 @@ export class SubagentManager {
     }
 
     // Create agent using factory
-    const agent = AgentFactory.createAgent(
+    const agent = AgentFactory.createScheduleAgent(
       options.chatId,
       options.callbacks
     );
@@ -322,7 +324,7 @@ export class SubagentManager {
     }
 
     // Create agent using factory
-    const agent = AgentFactory.createAgent(
+    const agent = AgentFactory.createTaskAgent(
       options.chatId,
       options.callbacks
     );

@@ -50,6 +50,14 @@
     "pm2:status": "pm2 status",
     "pm2:delete": "pm2 delete disclaude-primary",
     "pm2:monit": "pm2 monit",
+    "launchd:generate": "node scripts/launchd.mjs generate",
+    "launchd:install": "node scripts/launchd.mjs install",
+    "launchd:uninstall": "node scripts/launchd.mjs uninstall",
+    "launchd:start": "node scripts/launchd.mjs start",
+    "launchd:stop": "node scripts/launchd.mjs stop",
+    "launchd:restart": "node scripts/launchd.mjs restart",
+    "launchd:logs": "node scripts/launchd.mjs logs",
+    "launchd:status": "node scripts/launchd.mjs status",
     "prepare": "husky"
   },
   "devDependencies": {

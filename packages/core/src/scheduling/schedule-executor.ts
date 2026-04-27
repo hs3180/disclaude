@@ -82,7 +82,7 @@ export interface ScheduleExecutorOptions {
  * // In Primary Node or Worker Node:
  * const executor = createScheduleExecutor({
  *   agentFactory: (chatId, callbacks) => {
- *     return AgentFactory.createAgent(chatId, callbacks);
+ *     return AgentFactory.createScheduleAgent(chatId, callbacks);
  *   },
  *   callbacks: { sendMessage: async (chatId, msg) => { ... } },
  * });

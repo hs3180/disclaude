@@ -124,6 +124,8 @@ export type {
   AgentUserInput as UserInput,
   AgentProvider,
   BaseAgentConfig,
+  AgentConfig,
+  AgentFactoryInterface,
 } from '@disclaude/core';
 
 export {

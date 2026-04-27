@@ -12,7 +12,7 @@
  */
 
 import { type MessageBuilderOptions } from '@disclaude/core';
-import { AgentFactory, type ChatAgentCallbacks, type ChatAgentInterface } from '@disclaude/worker-node';
+import { AgentFactory, type ChatAgentCallbacks, type ChatAgent } from '@disclaude/worker-node';
 
 /**
  * Options for PrimaryAgentPool initialization.
@@ -40,7 +40,7 @@ export interface PrimaryAgentPoolOptions {
  * support for enhanced prompts with context.
  */
 export class PrimaryAgentPool {
-  private readonly agents = new Map<string, ChatAgentInterface>();
+  private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
@@ -54,10 +54,10 @@ export class PrimaryAgentPool {
    * @param callbacks - Callbacks for sending messages (required for new agents)
    * @returns ChatAgent instance
    */
-  getOrCreateChatAgent(chatId: string, callbacks: ChatAgentCallbacks): ChatAgentInterface {
+  getOrCreateChatAgent(chatId: string, callbacks: ChatAgentCallbacks): ChatAgent {
     let agent = this.agents.get(chatId);
     if (!agent) {
-      agent = AgentFactory.createAgent(chatId, callbacks, {
+      agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
       });
       this.agents.set(chatId, agent);

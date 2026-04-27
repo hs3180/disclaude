@@ -1,7 +1,5 @@
 /**
  * Tests for AgentFactory (packages/worker-node/src/agents/factory.ts)
- *
- * Issue #2345 Phase 5: Tests updated to use unified createAgent() method.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -85,64 +83,147 @@ describe('AgentFactory', () => {
     });
   });
 
-  describe('createAgent', () => {
-    it('should create a ChatAgent with chatId and callbacks', () => {
+  describe('createChatAgent', () => {
+    it('should create a ChatAgent for "pilot" name with new pattern', () => {
       mockChatAgent.mockReturnValue({});
-      const agent = AgentFactory.createAgent('chat-123', mockCallbacks);
+      const agent = AgentFactory.createChatAgent('pilot', 'chat-123', mockCallbacks);
 
       expect(agent).toBeDefined();
       expect(mockChatAgent).toHaveBeenCalledTimes(1);
 
-      const [[agentConfig]] = mockChatAgent.mock.calls;
-      expect(agentConfig.chatId).toBe('chat-123');
-      expect(agentConfig.callbacks).toBe(mockCallbacks);
-      expect(agentConfig.apiKey).toBe('default-key');
-      expect(agentConfig.model).toBe('default-model');
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.chatId).toBe('chat-123');
+      expect(pilotConfig.callbacks).toBe(mockCallbacks);
+      expect(pilotConfig.apiKey).toBe('default-key');
+      expect(pilotConfig.model).toBe('default-model');
+    });
+
+    it('should create a ChatAgent for "pilot" name with legacy pattern', () => {
+      mockChatAgent.mockReturnValue({});
+      const agent = AgentFactory.createChatAgent('pilot', mockCallbacks);
+
+      expect(agent).toBeDefined();
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.chatId).toBe('default');
+      expect(pilotConfig.callbacks).toBe(mockCallbacks);
     });
 
     it('should apply custom options overrides', () => {
       mockChatAgent.mockReturnValue({});
-      AgentFactory.createAgent('chat-123', mockCallbacks, {
+      AgentFactory.createChatAgent('pilot', 'chat-123', mockCallbacks, {
         apiKey: 'custom-key',
         model: 'custom-model',
-        provider: 'glm',
+        provider: 'openai',
         apiBaseUrl: 'https://custom.api.com',
       });
 
-      const [[agentConfig]] = mockChatAgent.mock.calls;
-      expect(agentConfig.apiKey).toBe('custom-key');
-      expect(agentConfig.model).toBe('custom-model');
-      expect(agentConfig.provider).toBe('glm');
-      expect(agentConfig.apiBaseUrl).toBe('https://custom.api.com');
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.apiKey).toBe('custom-key');
+      expect(pilotConfig.model).toBe('custom-model');
+      expect(pilotConfig.provider).toBe('openai');
+      expect(pilotConfig.apiBaseUrl).toBe('https://custom.api.com');
     });
 
     it('should pass messageBuilderOptions to ChatAgent config', () => {
       mockChatAgent.mockReturnValue({});
       const mcpOptions = { buildHeader: vi.fn(() => 'Header') };
-      AgentFactory.createAgent('chat-123', mockCallbacks, {
+      AgentFactory.createChatAgent('pilot', 'chat-123', mockCallbacks, {
         messageBuilderOptions: mcpOptions,
       });
 
-      const [[agentConfig]] = mockChatAgent.mock.calls;
-      expect(agentConfig.messageBuilderOptions).toBe(mcpOptions);
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
+    });
+
+    it('should throw for unknown agent name', () => {
+      expect(() => AgentFactory.createChatAgent('unknown', 'chat-123', mockCallbacks))
+        .toThrow('Unknown ChatAgent: unknown');
     });
 
     it('should use default permission mode', () => {
       mockChatAgent.mockReturnValue({});
-      AgentFactory.createAgent('chat-123', mockCallbacks);
+      AgentFactory.createChatAgent('pilot', 'chat-123', mockCallbacks);
 
-      const [[agentConfig]] = mockChatAgent.mock.calls;
-      expect(agentConfig.permissionMode).toBe('bypassPermissions');
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.permissionMode).toBe('bypassPermissions');
     });
 
     it('should allow overriding permission mode', () => {
       mockChatAgent.mockReturnValue({});
-      AgentFactory.createAgent('chat-123', mockCallbacks, {
+      AgentFactory.createChatAgent('pilot', 'chat-123', mockCallbacks, {
         permissionMode: 'default',
       });
 
-      const [[agentConfig]] = mockChatAgent.mock.calls;
-      expect(agentConfig.permissionMode).toBe('default');
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.permissionMode).toBe('default');
+    });
+  });
+
+  describe('createScheduleAgent', () => {
+    it('should create a ChatAgent for scheduled tasks', () => {
+      mockChatAgent.mockReturnValue({});
+      const agent = AgentFactory.createScheduleAgent('chat-123', mockCallbacks);
+
+      expect(agent).toBeDefined();
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.chatId).toBe('chat-123');
+      expect(pilotConfig.callbacks).toBe(mockCallbacks);
+    });
+
+    it('should apply custom options', () => {
+      mockChatAgent.mockReturnValue({});
+      AgentFactory.createScheduleAgent('chat-123', mockCallbacks, {
+        model: 'schedule-model',
+      });
+
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.model).toBe('schedule-model');
+    });
+
+    it('should pass messageBuilderOptions', () => {
+      mockChatAgent.mockReturnValue({});
+      const mcpOptions = { buildHeader: vi.fn(() => 'Header') };
+      AgentFactory.createScheduleAgent('chat-123', mockCallbacks, {
+        messageBuilderOptions: mcpOptions,
+      });
+
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
+    });
+  });
+
+  describe('createTaskAgent', () => {
+    it('should create a ChatAgent for task execution', () => {
+      mockChatAgent.mockReturnValue({});
+      const agent = AgentFactory.createTaskAgent('chat-123', mockCallbacks);
+
+      expect(agent).toBeDefined();
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.chatId).toBe('chat-123');
+      expect(pilotConfig.callbacks).toBe(mockCallbacks);
+    });
+
+    it('should apply custom options', () => {
+      mockChatAgent.mockReturnValue({});
+      AgentFactory.createTaskAgent('chat-123', mockCallbacks, {
+        model: 'task-model',
+        provider: 'anthropic',
+      });
+
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.model).toBe('task-model');
+      expect(pilotConfig.provider).toBe('anthropic');
+    });
+
+    it('should pass messageBuilderOptions', () => {
+      mockChatAgent.mockReturnValue({});
+      const mcpOptions = { buildHeader: vi.fn(() => 'Header') };
+      AgentFactory.createTaskAgent('chat-123', mockCallbacks, {
+        messageBuilderOptions: mcpOptions,
+      });
+
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
     });
   });
 
@@ -158,15 +239,15 @@ describe('AgentFactory', () => {
       mockChatAgent.mockReturnValue({});
 
       // Override only apiKey, rest should use defaults
-      AgentFactory.createAgent('chat-123', mockCallbacks, {
+      AgentFactory.createScheduleAgent('chat-123', mockCallbacks, {
         apiKey: 'override-key',
       });
 
-      const [[agentConfig]] = mockChatAgent.mock.calls;
-      expect(agentConfig.apiKey).toBe('override-key');
-      expect(agentConfig.model).toBe('default-model');
-      expect(agentConfig.provider).toBe('anthropic');
-      expect(agentConfig.apiBaseUrl).toBe('https://api.example.com');
+      const [[pilotConfig]] = mockChatAgent.mock.calls;
+      expect(pilotConfig.apiKey).toBe('override-key');
+      expect(pilotConfig.model).toBe('default-model');
+      expect(pilotConfig.provider).toBe('anthropic');
+      expect(pilotConfig.apiBaseUrl).toBe('https://api.example.com');
     });
   });
 });
