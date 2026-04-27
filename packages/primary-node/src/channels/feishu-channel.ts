@@ -6,7 +6,8 @@
  *
  * Issue #694: Refactored to use modular components.
  * Migrated to @disclaude/primary-node (Issue #1040)
- * Issue #1351: WsConnectionManager for health detection & auto-reconnect.
+ * Issue #1351: WsConnectionManager for auto-reconnect.
+ * Issue #2905: Removed custom health check, rely on SDK keepalive.
  */
 
 import * as fs from 'node:fs';
@@ -151,7 +152,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private appSecret: string;
   private client?: lark.Client;
 
-  /** WebSocket connection manager for health detection & auto-reconnect (Issue #1351) */
+  /** WebSocket connection manager for auto-reconnect (Issue #1351, #2905) */
   private wsConnectionManager?: WsConnectionManager;
 
   // Modular components
@@ -227,11 +228,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Initialize message handler
     this.feishuMessageHandler.initialize(this.client);
 
-    // Create event dispatcher — each handler records message receipt as the
-    // sole liveness signal for WsConnectionManager (Issue #1666).
+    // Create event dispatcher
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
-        this.recordWsActivity();
         try {
           await this.feishuMessageHandler.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
@@ -243,7 +242,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'card.action.trigger': async (data: unknown) => {
-        this.recordWsActivity();
         try {
           await this.feishuMessageHandler.handleCardAction(data as FeishuCardActionEventData);
         } catch (error) {
@@ -255,11 +253,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.message.message_read_v1': () => {
-        this.recordWsActivity();
         // No action needed for read receipts
       },
       'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
-        this.recordWsActivity();
         try {
           await this.welcomeHandler.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
         } catch (error) {
@@ -271,7 +267,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.chat.member.added_v1': async (data: unknown) => {
-        this.recordWsActivity();
         try {
           await this.welcomeHandler.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
         } catch (error) {
@@ -304,13 +299,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Listen for connection state events
     this.wsConnectionManager.on('stateChange', (state) => {
       logger.info({ wsState: state }, 'WebSocket connection state changed');
-    });
-
-    this.wsConnectionManager.on('deadConnection', (elapsedMs) => {
-      logger.warn(
-        { elapsedMs },
-        'Dead WebSocket connection detected, initiating reconnect',
-      );
     });
 
     this.wsConnectionManager.on('reconnected', (attempt) => {
@@ -622,9 +610,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   protected checkHealth(): boolean {
-    // Use WsConnectionManager's health check (Issue #1351)
+    // Use WsConnectionManager's connection state (Issue #1351, #2905)
     if (this.wsConnectionManager) {
-      return this.wsConnectionManager.isHealthy();
+      return this.wsConnectionManager.state === 'connected';
     }
     return false;
   }
@@ -704,20 +692,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
-  }
-
-  // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
-
-  /**
-   * Record that an event was received from the server.
-   *
-   * This is the sole liveness signal for WsConnectionManager (Issue #1666).
-   * Called from every event handler in the EventDispatcher for all
-   * incoming server messages. WsConnectionManager uses this to detect
-   * dead connections (no message within 130s → reconnect).
-   */
-  private recordWsActivity(): void {
-    this.wsConnectionManager?.recordMessageReceived();
   }
 
   /**
