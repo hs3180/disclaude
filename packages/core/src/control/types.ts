@@ -9,18 +9,6 @@ import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
 
 /**
- * 执行节点信息
- */
-export interface ExecNodeInfo {
-  nodeId: string;
-  name: string;
-  status: 'connected' | 'disconnected';
-  activeChats: number;
-  connectedAt?: Date;
-  isLocal?: boolean;
-}
-
-/**
  * Debug 组信息
  */
 export interface DebugGroup {
@@ -43,7 +31,6 @@ export interface ControlHandlerContext {
   /** 节点相关能力 */
   node: {
     nodeId: string;
-    getExecNodes(): ExecNodeInfo[];
     getDebugGroup(): DebugGroup | null;
     setDebugGroup(chatId: string, name?: string): void;
     clearDebugGroup(): DebugGroup | null;

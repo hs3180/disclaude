@@ -21,7 +21,6 @@ function createMockContext(): ControlHandlerContext {
     },
     node: {
       nodeId: 'test-node',
-      getExecNodes: vi.fn().mockReturnValue([]),
       getDebugGroup: vi.fn().mockReturnValue(null),
       setDebugGroup: vi.fn(),
       clearDebugGroup: vi.fn().mockReturnValue(null),

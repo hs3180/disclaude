@@ -307,6 +307,5 @@ export {
   type ControlHandlerContext,
   type CommandHandler,
   type CommandDefinition,
-  type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
