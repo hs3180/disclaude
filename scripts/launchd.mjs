@@ -227,24 +227,54 @@ function cmdStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Public API (exported for testing)
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
-
-const commands = {
-  generate: cmdGenerate,
-  install: cmdInstall,
-  uninstall: cmdUninstall,
-  start: cmdStart,
-  stop: cmdStop,
-  restart: cmdRestart,
-  logs: cmdLogs,
-  status: cmdStatus,
+export {
+  getNodePath,
+  run,
+  ensureLaunchAgentsDir,
+  generatePlist,
+  loadPlist,
+  unloadPlist,
+  build,
+  cmdGenerate,
+  cmdInstall,
+  cmdUninstall,
+  cmdStart,
+  cmdStop,
+  cmdRestart,
+  cmdLogs,
+  cmdStatus,
+  LABEL,
+  PLIST_PATH,
+  LAUNCHAGENTS_DIR,
+  CLI_ENTRY,
+  PROJECT_ROOT,
+  STDOUT_LOG,
+  STDERR_LOG,
 };
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+// ---------------------------------------------------------------------------
+// Main (only runs when executed directly, not when imported)
+// ---------------------------------------------------------------------------
+
+function main() {
+  const command = process.argv[2];
+
+  const commands = {
+    generate: cmdGenerate,
+    install: cmdInstall,
+    uninstall: cmdUninstall,
+    start: cmdStart,
+    stop: cmdStop,
+    restart: cmdRestart,
+    logs: cmdLogs,
+    status: cmdStatus,
+  };
+
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -256,7 +286,16 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
+    process.exit(1);
+  }
+
+  commands[command]();
 }
 
-commands[command]();
+// Detect direct execution vs import
+const __filename = fileURLToPath(import.meta.url);
+const isDirectRun = resolve(process.argv[1] || '') === __filename;
+
+if (isDirectRun) {
+  main();
+}
