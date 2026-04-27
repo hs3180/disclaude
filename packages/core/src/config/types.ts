@@ -77,6 +77,24 @@ export interface GlmConfig {
 }
 
 /**
+ * Anthropic (Claude) API configuration section.
+ *
+ * When configured, takes priority over ANTHROPIC_API_KEY environment variable
+ * and ~/.claude/settings.json, providing disclaude with its own independent
+ * endpoint configuration.
+ *
+ * @see Issue #2768
+ */
+export interface AnthropicConfig {
+  /** API key (overrides ANTHROPIC_API_KEY env var) */
+  apiKey?: string;
+  /** API base URL for custom/compatible endpoints (e.g., "https://open.bigmodel.cn/api/anthropic") */
+  apiBaseUrl?: string;
+  /** Custom HTTP headers to send with API requests (e.g., {"X-Custom-Auth": "value"}) */
+  customHeaders?: Record<string, string>;
+}
+
+/**
  * Ruliu reply mode.
  * Controls how the bot responds to messages.
  */
@@ -323,6 +341,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** Anthropic (Claude) API settings (takes priority over env vars) */
+  anthropic?: AnthropicConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

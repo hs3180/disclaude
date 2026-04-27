@@ -57,9 +57,14 @@ glm:
   # agent:
   #   provider: "anthropic"
   #   model: "claude-sonnet-4-20250514"
+  # anthropic:
+  #   apiKey: "sk-ant-your-key-here"              # 或设置 ANTHROPIC_API_KEY 环境变量
+  #   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"  # 自定义端点（可选）
 ```
 
 > 💡 如果同时配置了 `glm.apiKey` 和 `ANTHROPIC_API_KEY`，GLM 优先。
+>
+> 💡 `anthropic.apiKey` 优先级高于 `ANTHROPIC_API_KEY` 环境变量，配置后不会受 `~/.claude/settings.json` 影响。
 
 ## 第 4 步：启动
 

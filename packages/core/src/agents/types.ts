@@ -245,8 +245,10 @@ export interface BaseAgentConfig {
   model: string;
   /** API provider (anthropic or glm) */
   provider?: AgentProvider;
-  /** Optional API base URL (e.g., for GLM) */
+  /** Optional API base URL (e.g., for GLM or custom Anthropic-compatible endpoints) */
   apiBaseUrl?: string;
+  /** Custom HTTP headers for API requests (e.g., proxy-specific auth headers) */
+  customHeaders?: Record<string, string>;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
 }

@@ -119,6 +119,31 @@ glm:
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
 
 # -----------------------------------------------------------------------------
+# Anthropic (Claude) API Configuration
+# -----------------------------------------------------------------------------
+# Optional: Configure custom Anthropic-compatible API endpoint.
+# When set, takes priority over ANTHROPIC_API_KEY environment variable
+# and ~/.claude/settings.json, providing disclaude with its own independent
+# endpoint configuration.
+#
+# anthropic:
+#   # API key (overrides ANTHROPIC_API_KEY env var)
+#   apiKey: "sk-ant-your-key-here"
+#
+#   # Custom API base URL for compatible endpoints
+#   # Examples:
+#   #   Zhipu GLM: https://open.bigmodel.cn/api/anthropic
+#   #   Baidu Comate: https://oneapi-comate.baidu-int.com
+#   #   Azure: https://your-resource.openai.azure.com
+#   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+#
+#   # Custom HTTP headers for proxy-specific authentication
+#   # These headers will be sent with every API request
+#   customHeaders:
+#     X-Custom-Auth: "your-proxy-auth-token"
+#     X-Api-Version: "2024-01-01"
+
+# -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
 logging:

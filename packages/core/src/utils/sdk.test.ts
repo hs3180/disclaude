@@ -197,5 +197,29 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    it('should serialize customHeaders as JSON in ANTHROPIC_CUSTOM_HEADERS', () => {
+      const headers = { 'X-Custom-Auth': 'token-123', 'X-Api-Version': '2024-01' };
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, headers);
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('{"X-Custom-Auth":"token-123","X-Api-Version":"2024-01"}');
+    });
+
+    it('should not set ANTHROPIC_CUSTOM_HEADERS when customHeaders is empty', () => {
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, {});
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should not set ANTHROPIC_CUSTOM_HEADERS when customHeaders is undefined', () => {
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined);
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should combine apiBaseUrl and customHeaders together', () => {
+      const headers = { 'X-Proxy-Auth': 'proxy-token' };
+      const env = buildSdkEnv('sk-test-key', 'https://custom.api.com', undefined, true, headers);
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://custom.api.com');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('{"X-Proxy-Auth":"proxy-token"}');
+      expect(env.ANTHROPIC_API_KEY).toBe('sk-test-key');
+    });
   });
 });

@@ -96,6 +96,8 @@ export interface AgentCreateOptions {
   apiBaseUrl?: string;
   /** Override permission mode */
   permissionMode?: 'default' | 'bypassPermissions';
+  /** Override custom HTTP headers */
+  customHeaders?: Record<string, string>;
   /**
    * Channel-specific MessageBuilder options.
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
@@ -127,6 +129,7 @@ export class AgentFactory {
       model: options.model ?? defaultConfig.model,
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
+      customHeaders: defaultConfig.customHeaders,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };
   }

@@ -60,13 +60,15 @@ export function extractText(message: AgentMessage): string {
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param customHeaders - Optional custom HTTP headers (serialized to ANTHROPIC_CUSTOM_HEADERS)
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  customHeaders?: Record<string, string>
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -103,6 +105,12 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Set custom headers if provided (serialized as JSON string for ANTHROPIC_CUSTOM_HEADERS)
+  // Issue #2768: Support custom Anthropic-compatible API endpoint headers
+  if (customHeaders && Object.keys(customHeaders).length > 0) {
+    env.ANTHROPIC_CUSTOM_HEADERS = JSON.stringify(customHeaders);
   }
 
   return env;

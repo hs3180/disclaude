@@ -121,8 +121,11 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Anthropic Claude configuration (config file takes priority over env)
+          // Issue #2768: Support custom Anthropic-compatible API endpoints via config
+          static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl || '';
+          static readonly ANTHROPIC_CUSTOM_HEADERS = fileConfigOnly.anthropic?.customHeaders;
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -296,7 +299,7 @@ export class Config {
         });
       }
     } else if (this.ANTHROPIC_API_KEY) {
-      // Fallback to Anthropic (from environment variable)
+      // Fallback to Anthropic (from config file or environment variable)
       if (!this.CLAUDE_MODEL) {
         errors.push({
           field: 'agent.model',
@@ -307,7 +310,7 @@ export class Config {
       // No provider configured at all
       errors.push({
         field: 'apiKey',
-        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
+        message: 'No API key configured. Set glm.apiKey or anthropic.apiKey in disclaude.config.yaml, or ANTHROPIC_API_KEY environment variable',
       });
     }
 
@@ -336,6 +339,7 @@ export class Config {
     apiKey: string;
     model: string;
     apiBaseUrl?: string;
+    customHeaders?: Record<string, string>;
     provider: 'anthropic' | 'glm';
   } {
     // Validate required configuration first
@@ -357,6 +361,8 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      apiBaseUrl: this.ANTHROPIC_API_BASE_URL || undefined,
+      customHeaders: this.ANTHROPIC_CUSTOM_HEADERS,
       provider: 'anthropic',
     };
   }
