@@ -40,6 +40,35 @@ describe('adaptOptions', () => {
     expect(result.permissionMode).toBe('bypassPermissions');
   });
 
+  it('should set allowDangerouslySkipPermissions when using bypassPermissions (Issue #2943)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      permissionMode: 'bypassPermissions',
+    });
+
+    expect(result.permissionMode).toBe('bypassPermissions');
+    expect(result.allowDangerouslySkipPermissions).toBe(true);
+  });
+
+  it('should NOT set allowDangerouslySkipPermissions for default permission mode', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      permissionMode: 'default',
+    });
+
+    expect(result.permissionMode).toBe('default');
+    expect(result.allowDangerouslySkipPermissions).toBeUndefined();
+  });
+
+  it('should NOT set allowDangerouslySkipPermissions when no permission mode specified', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.permissionMode).toBeUndefined();
+    expect(result.allowDangerouslySkipPermissions).toBeUndefined();
+  });
+
   it('should pass through allowedTools and disallowedTools', () => {
     const result = adaptOptions({
       settingSources: ['project'],
