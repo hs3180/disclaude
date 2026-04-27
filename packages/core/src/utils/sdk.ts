@@ -60,13 +60,20 @@ export function extractText(message: AgentMessage): string {
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param customHeaders - Optional custom HTTP headers for API requests.
+ *   Serialized as JSON and set to ANTHROPIC_CUSTOM_HEADERS.
+ *   When explicitly set (even to empty object), overrides any existing
+ *   ANTHROPIC_CUSTOM_HEADERS from process.env to prevent proxy-specific
+ *   headers from leaking between providers.
+ * @see Issue #2768
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  customHeaders?: Record<string, string> | null
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -78,7 +85,7 @@ export function buildSdkEnv(
     : `${nodeBinDir}:${originalPath}`;
 
   // Priority (highest to lowest):
-  // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG)
+  // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG, CUSTOM_HEADERS)
   // 2. process.env (system environment)
   // 3. extraEnv (caller-provided defaults)
   // This ensures system env vars can't be accidentally overridden by extraEnv,
@@ -103,6 +110,20 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Handle custom headers for Anthropic-compatible API providers.
+  // When customHeaders is explicitly configured (non-null), it overrides
+  // any process.env ANTHROPIC_CUSTOM_HEADERS to prevent proxy-specific
+  // headers from leaking. When null, existing env var is preserved.
+  // @see Issue #2768
+  if (customHeaders !== undefined && customHeaders !== null) {
+    if (Object.keys(customHeaders).length > 0) {
+      env.ANTHROPIC_CUSTOM_HEADERS = JSON.stringify(customHeaders);
+    } else {
+      // Explicitly clear to prevent stale proxy headers
+      delete env.ANTHROPIC_CUSTOM_HEADERS;
+    }
   }
 
   return env;

@@ -127,6 +127,7 @@ export class AgentFactory {
       model: options.model ?? defaultConfig.model,
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
+      customHeaders: defaultConfig.customHeaders,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };
   }

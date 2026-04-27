@@ -49,6 +49,32 @@ agent:
   # enableAgentTeams: true
 
 # -----------------------------------------------------------------------------
+# Anthropic API Configuration
+# -----------------------------------------------------------------------------
+# Configure Anthropic-compatible API endpoints directly in config.
+# This takes priority over ~/.claude/settings.json and environment variables.
+#
+# Supported providers:
+#   - Anthropic (direct):  https://api.anthropic.com
+#   - Zhipu GLM (Anthropic-compatible): https://open.bigmodel.cn/api/anthropic
+#   - Baidu Comate: (provider-specific URL)
+#
+# @see Issue #2768
+# anthropic:
+#   # API key (overrides ANTHROPIC_API_KEY env var)
+#   apiKey: "sk-ant-your-key-here"
+#
+#   # Custom API base URL for Anthropic-compatible endpoints
+#   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+#
+#   # Custom HTTP headers (e.g., for provider-specific auth)
+#   # Serialized as JSON and passed via ANTHROPIC_CUSTOM_HEADERS
+#   # When configured, any existing ANTHROPIC_CUSTOM_HEADERS from
+#   # ~/.claude/settings.json are automatically cleaned up.
+#   # customHeaders:
+#   #   comate_custom_header: "your-header-value"
+
+# -----------------------------------------------------------------------------
 # Feishu/Lark Platform Configuration
 # -----------------------------------------------------------------------------
 feishu:

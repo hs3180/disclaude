@@ -494,6 +494,16 @@ describe('validateRequiredConfig', () => {
     expect(result.valid).toBe(false);
     expect(result.errors.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('should accept config with anthropic section (apiKey + model)', () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    const result = validateRequiredConfig({
+      anthropic: { apiKey: 'sk-from-config', apiBaseUrl: 'https://example.com' },
+      agent: { model: 'claude-sonnet-4-20250514' },
+    } as any);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
 });
 
 describe('setLoadedConfig / getPreloadedConfig', () => {

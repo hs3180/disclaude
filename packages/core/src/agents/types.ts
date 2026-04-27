@@ -245,8 +245,15 @@ export interface BaseAgentConfig {
   model: string;
   /** API provider (anthropic or glm) */
   provider?: AgentProvider;
-  /** Optional API base URL (e.g., for GLM) */
+  /** Optional API base URL (e.g., for GLM or Anthropic-compatible endpoints) */
   apiBaseUrl?: string;
+  /**
+   * Optional custom HTTP headers for API requests.
+   * Used only by Anthropic provider. Serialized as JSON and passed
+   * to the SDK subprocess via ANTHROPIC_CUSTOM_HEADERS env var.
+   * @see Issue #2768
+   */
+  customHeaders?: Record<string, string>;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
 }
@@ -336,8 +343,8 @@ export interface AgentRuntimeContext {
   // Config-related methods
   /** Get the workspace directory path */
   getWorkspaceDir(): string;
-  /** Get agent configuration (API key, model, provider) */
-  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider };
+  /** Get agent configuration (API key, model, provider, optional custom headers) */
+  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider; customHeaders?: Record<string, string> };
   /** Get logging configuration */
   getLoggingConfig(): { sdkDebug: boolean };
   /** Get global environment variables */

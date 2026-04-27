@@ -197,5 +197,43 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    it('should set ANTHROPIC_CUSTOM_HEADERS when customHeaders is provided', () => {
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, { 'X-Custom': 'value' });
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('{"X-Custom":"value"}');
+    });
+
+    it('should clear ANTHROPIC_CUSTOM_HEADERS when customHeaders is empty object', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', '{"old":"header"}');
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, {});
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should preserve existing ANTHROPIC_CUSTOM_HEADERS when customHeaders is undefined', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', '{"existing":"header"}');
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined);
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('{"existing":"header"}');
+    });
+
+    it('should preserve existing ANTHROPIC_CUSTOM_HEADERS when customHeaders is null', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', '{"existing":"header"}');
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, null);
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('{"existing":"header"}');
+    });
+
+    it('should serialize multiple custom headers as JSON', () => {
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, {
+        'X-Api-Key': 'abc123',
+        'X-Provider': 'comate',
+      });
+      const parsed = JSON.parse(env.ANTHROPIC_CUSTOM_HEADERS!);
+      expect(parsed).toEqual({ 'X-Api-Key': 'abc123', 'X-Provider': 'comate' });
+    });
+
+    it('should override existing ANTHROPIC_CUSTOM_HEADERS with config value', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', '{"stale":"value"}');
+      const env = buildSdkEnv('sk-test-key', undefined, undefined, true, { 'X-New': 'fresh' });
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('{"X-New":"fresh"}');
+    });
   });
 });

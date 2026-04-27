@@ -99,6 +99,7 @@ export abstract class BaseAgent implements Disposable {
   readonly apiKey: string;
   readonly model: string;
   readonly apiBaseUrl?: string;
+  readonly customHeaders?: Record<string, string>;
   readonly permissionMode: 'default' | 'bypassPermissions';
   readonly provider: AgentProvider;
 
@@ -110,6 +111,7 @@ export abstract class BaseAgent implements Disposable {
     this.apiKey = config.apiKey;
     this.model = config.model;
     this.apiBaseUrl = config.apiBaseUrl;
+    this.customHeaders = config.customHeaders;
     this.permissionMode = config.permissionMode ?? 'bypassPermissions';
 
     // Get provider from config, fallback to runtime context
@@ -184,7 +186,8 @@ export abstract class BaseAgent implements Disposable {
       this.apiKey,
       this.apiBaseUrl,
       globalEnv,
-      loggingConfig.sdkDebug
+      loggingConfig.sdkDebug,
+      this.getCustomHeaders()
     );
 
     // Set model
@@ -239,6 +242,20 @@ export abstract class BaseAgent implements Disposable {
       return getRuntimeContext().isAgentTeamsEnabled();
     }
     return false;
+  }
+
+  /**
+   * Get custom HTTP headers for API requests.
+   * Returns null when not explicitly configured (to distinguish from "no headers"),
+   * which allows buildSdkEnv to preserve existing ANTHROPIC_CUSTOM_HEADERS from env.
+   * Returns empty object when explicitly configured as empty (to clear stale headers).
+   * @see Issue #2768
+   */
+  protected getCustomHeaders(): Record<string, string> | null {
+    if (this.customHeaders !== undefined) {
+      return this.customHeaders;
+    }
+    return null;
   }
 
   /**

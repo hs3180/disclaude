@@ -62,6 +62,32 @@ export interface FeishuConfig {
 }
 
 /**
+ * Anthropic API configuration section.
+ *
+ * Allows configuring Anthropic-compatible API endpoints (e.g., Baidu Comate,
+ * Zhipu GLM Anthropic-compatible API, or direct Anthropic access) directly
+ * in disclaude.config.yaml instead of relying on ~/.claude/settings.json or
+ * environment variables.
+ *
+ * Priority: config file > process.env > ~/.claude/settings.json
+ *
+ * @see Issue #2768
+ */
+export interface AnthropicConfig {
+  /** API key (overrides ANTHROPIC_API_KEY env var) */
+  apiKey?: string;
+  /** API base URL for Anthropic-compatible endpoints */
+  apiBaseUrl?: string;
+  /**
+   * Custom HTTP headers to send with API requests.
+   * Serialized as JSON and set to ANTHROPIC_CUSTOM_HEADERS env var.
+   * Provider-specific headers (e.g., Baidu Comate's comate_custom_header)
+   * should be configured here.
+   */
+  customHeaders?: Record<string, string>;
+}
+
+/**
  * GLM (Zhipu AI) API configuration section.
  *
  * When using GLM provider, both apiKey and model are REQUIRED.
@@ -321,6 +347,8 @@ export interface DisclaudeConfig {
   feishu?: FeishuConfig;
   /** Ruliu (如流) platform settings */
   ruliu?: RuliuConfig;
+  /** Anthropic API settings */
+  anthropic?: AnthropicConfig;
   /** GLM API settings */
   glm?: GlmConfig;
   /** Logging settings */

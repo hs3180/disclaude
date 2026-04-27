@@ -73,11 +73,12 @@ vi.mock('../sdk/index.js', () => ({
 
 // Mock buildSdkEnv to return a simple env object
 vi.mock('../utils/sdk.js', () => ({
-  buildSdkEnv: (apiKey: string, apiBaseUrl: string | undefined, globalEnv: Record<string, string>, sdkDebug: boolean) => ({
+  buildSdkEnv: (apiKey: string, apiBaseUrl: string | undefined, globalEnv: Record<string, string>, sdkDebug: boolean, customHeaders?: Record<string, string> | null) => ({
     ANTHROPIC_API_KEY: apiKey,
     ...(apiBaseUrl ? { ANTHROPIC_BASE_URL: apiBaseUrl } : {}),
     ...globalEnv,
     ...(sdkDebug ? { SDK_DEBUG: 'true' } : {}),
+    ...(customHeaders && Object.keys(customHeaders).length > 0 ? { ANTHROPIC_CUSTOM_HEADERS: JSON.stringify(customHeaders) } : {}),
   }),
 }));
 
