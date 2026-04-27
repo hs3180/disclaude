@@ -23,7 +23,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, rmSync, chmodSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -41,8 +41,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
 const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 
-const STDOUT_LOG = '/tmp/disclaude-stdout.log';
-const STDERR_LOG = '/tmp/disclaude-stderr.log';
+const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
+const STDOUT_LOG = resolve(LOG_DIR, 'disclaude-stdout.log');
+const STDERR_LOG = resolve(LOG_DIR, 'disclaude-stderr.log');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -69,6 +70,19 @@ function run(cmd, opts = {}) {
 function ensureLaunchAgentsDir() {
   if (!existsSync(LAUNCHAGENTS_DIR)) {
     mkdirSync(LAUNCHAGENTS_DIR, { recursive: true });
+  }
+}
+
+/**
+ * Ensure the log directory exists with restrictive permissions (0o700)
+ * to prevent information leakage from log files that may contain sensitive data.
+ */
+function ensureLogDir() {
+  if (!existsSync(LOG_DIR)) {
+    mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    // Ensure existing directory has correct permissions
+    chmodSync(LOG_DIR, 0o700);
   }
 }
 
@@ -122,6 +136,7 @@ function generatePlist() {
 `;
 
   ensureLaunchAgentsDir();
+  ensureLogDir();
   writeFileSync(PLIST_PATH, plist, 'utf-8');
   console.log(`Plist generated: ${PLIST_PATH}`);
   console.log(`  Node: ${nodePath}`);

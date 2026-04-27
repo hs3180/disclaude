@@ -463,9 +463,9 @@ console.log('[DEBUG]', { context });
 
 ```bash
 npm run launchd:logs          # View recent logs (stdout + stderr)
-tail -100 /tmp/disclaude-stdout.log   # stdout directly
-tail -100 /tmp/disclaude-stderr.log   # stderr directly
-tail -f /tmp/disclaude-stdout.log     # Live tail (Ctrl+C to exit)
+tail -100 ~/Library/Logs/disclaude/disclaude-stdout.log   # stdout directly
+tail -100 ~/Library/Logs/disclaude/disclaude-stderr.log   # stderr directly
+tail -f ~/Library/Logs/disclaude/disclaude-stdout.log     # Live tail (Ctrl+C to exit)
 ```
 
 **PM2 (Linux):**
