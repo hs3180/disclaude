@@ -60,13 +60,18 @@ export function extractText(message: AgentMessage): string {
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param provider - API provider name (default: 'anthropic'). When using a
+ *   non-Anthropic provider (e.g., 'glm'), sets ANTHROPIC_CUSTOM_HEADERS to
+ *   force x-api-key header for third-party Anthropic-compatible APIs.
+ *   @see Issue #2916
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  provider: string = 'anthropic'
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -103,6 +108,18 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Issue #2916: Force x-api-key header for non-Anthropic providers.
+  // Claude Code CLI 2.1.104+ may use Authorization: Bearer instead of
+  // x-api-key for authentication, which breaks third-party Anthropic-compatible
+  // APIs (e.g., GLM/Zhipu AI) that only accept x-api-key header.
+  // By setting ANTHROPIC_CUSTOM_HEADERS, we ensure the API key is always sent
+  // via x-api-key header regardless of CLI auth behavior changes.
+  if (provider !== 'anthropic' && apiBaseUrl) {
+    env.ANTHROPIC_CUSTOM_HEADERS = JSON.stringify({
+      'x-api-key': apiKey,
+    });
   }
 
   return env;
