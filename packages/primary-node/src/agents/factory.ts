@@ -1,34 +1,24 @@
 /**
- * AgentFactory - Factory for creating Agent instances with unified configuration.
+ * AgentFactory - Factory for creating ChatAgent instances with unified configuration.
  *
- * Implements AgentFactoryInterface from #282 Phase 3 for unified agent creation.
- * All agent creation goes through the type-specific methods:
- * - createChatAgent: Create chat agents (pilot) - long-lived, stored in AgentPool
- * - createScheduleAgent: Create schedule agents - short-lived, max 24h lifetime
- * - createTaskAgent: Create task agents - short-lived, disposed after task
- *
- * Issue #711: Agent Lifecycle Management Strategy
- * Issue #1501: Simplified to ChatAgent-only (ChatAgent). SkillAgent and Subagent removed.
- *
- * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
- * |----------------|----------------|--------------|------------------|
- * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool        |
- * | ScheduleAgent  | ❌ No          | 24 hours     | None (temporary) |
- * | TaskAgent      | ❌ No          | Task finish  | None (temporary) |
+ * Issue #2941: Removed intermediate abstractions (ScheduleAgent, TaskAgent).
+ * All agents are ChatAgent — the single agent type. Factory methods:
+ * - createChatAgent: Create long-lived ChatAgent for AgentPool (by name)
+ * - createAgent: Create short-lived ChatAgent for task execution (by chatId)
  *
  * Uses unified configuration types from Issue #327.
  *
  * @example
  * ```typescript
- * // Create a ChatAgent (ChatAgent) - long-lived, store in AgentPool
+ * // Create a ChatAgent - long-lived, store in AgentPool
  * const pilot = AgentFactory.createChatAgent('pilot', 'chat-123', callbacks);
  *
- * // Create a ScheduleAgent - short-lived, dispose after execution
- * const scheduleAgent = AgentFactory.createScheduleAgent('chat-123', callbacks);
+ * // Create a short-lived ChatAgent - dispose after execution
+ * const agent = AgentFactory.createAgent('chat-123', callbacks);
  * try {
- *   await scheduleAgent.executeOnce(chatId, prompt);
+ *   await agent.executeOnce(chatId, prompt);
  * } finally {
- *   scheduleAgent.dispose();
+ *   agent.dispose();
  * }
  * ```
  *
@@ -52,11 +42,6 @@ import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
  * provides no-op implementations for sendCard, sendFile, and onDone to
  * satisfy the ChatAgentCallbacks interface.
  *
- * ⚠️ Scheduled task scenarios only require sendMessage capability.
- * sendCard, sendFile, and onDone are all no-op implementations.
- * If scheduled tasks need to send cards/files in the future,
- * the SchedulerCallbacks interface needs to be extended.
- *
  * Issue #1412: Removes duplicate empty implementations from Primary Node.
  * Issue #1446: Documents limitation of callback conversion.
  *
@@ -69,7 +54,7 @@ import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
  *   sendMessage: async (chatId, msg) => { ... }
  * };
  * const pilotCallbacks = toChatAgentCallbacks(schedulerCallbacks);
- * const agent = AgentFactory.createScheduleAgent(chatId, pilotCallbacks);
+ * const agent = AgentFactory.createAgent(chatId, pilotCallbacks);
  * ```
  */
 export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCallbacks {
@@ -107,10 +92,12 @@ export interface AgentCreateOptions {
 }
 
 /**
- * Factory for creating Agent instances with unified configuration.
+ * Factory for creating ChatAgent instances with unified configuration.
  *
- * This class implements AgentFactoryInterface with type-specific factory methods.
- * Issue #1501: Simplified to only create ChatAgent (ChatAgent) instances.
+ * Issue #2941: Simplified — there is only one agent type (ChatAgent).
+ * The former createScheduleAgent/createTaskAgent methods have been
+ * merged into a single createAgent() method since they had identical
+ * implementations.
  *
  * Each method fetches default configuration from Config.getAgentConfig()
  * and allows optional overrides.
@@ -135,14 +122,14 @@ export class AgentFactory {
   }
 
   // ============================================================================
-  // AgentFactoryInterface Implementation
+  // Long-lived ChatAgent Creation (stored in AgentPool)
   // ============================================================================
 
   /**
    * Create a ChatAgent instance by name.
    *
    * Issue #644: ChatAgent now requires chatId binding at creation time.
-   * Issue #711: ChatAgents are long-lived and should be stored in AgentPool.
+   * ChatAgents created here are long-lived and should be stored in AgentPool.
    *
    * @param name - Agent name ('pilot')
    * @param args - Additional arguments:
@@ -153,7 +140,6 @@ export class AgentFactory {
    *
    * @example
    * ```typescript
-   * // Issue #644: New pattern with chatId binding
    * const pilot = AgentFactory.createChatAgent('pilot', 'chat-123', {
    *   sendMessage: async (chatId, text) => { ... },
    *   sendCard: async (chatId, card) => { ... },
@@ -197,15 +183,16 @@ export class AgentFactory {
   }
 
   // ============================================================================
-  // Issue #711: Short-lived Agent Creation Methods
+  // Short-lived ChatAgent Creation (for scheduled/one-shot tasks)
   // ============================================================================
 
   /**
-   * Create a ScheduleAgent for executing scheduled tasks.
+   * Create a short-lived ChatAgent instance for task execution.
    *
-   * Issue #711: ScheduleAgents are short-lived and should NOT be stored in AgentPool.
-   * - Maximum lifetime: 24 hours
-   * - Caller is responsible for disposing after execution
+   * Issue #2941: Replaces the former createScheduleAgent() and createTaskAgent().
+   * Those methods had identical implementations — both just created a ChatAgent.
+   * This unified method creates a short-lived ChatAgent that the caller must
+   * dispose after execution.
    *
    * @param chatId - Chat ID for message delivery
    * @param callbacks - Callbacks for sending messages
@@ -214,7 +201,7 @@ export class AgentFactory {
    *
    * @example
    * ```typescript
-   * const agent = AgentFactory.createScheduleAgent('chat-123', callbacks);
+   * const agent = AgentFactory.createAgent('chat-123', callbacks);
    * try {
    *   await agent.executeOnce(chatId, prompt);
    * } finally {
@@ -222,7 +209,7 @@ export class AgentFactory {
    * }
    * ```
    */
-  static createScheduleAgent(
+  static createAgent(
     chatId: string,
     callbacks: ChatAgentCallbacks,
     options: AgentCreateOptions = {}
@@ -239,40 +226,26 @@ export class AgentFactory {
   }
 
   /**
-   * Create a TaskAgent for executing one-time tasks.
-   *
-   * Issue #711: TaskAgents are short-lived and should NOT be stored in AgentPool.
-   * - Maximum lifetime: Until task completion
-   * - Caller is responsible for disposing after execution
-   *
-   * @param chatId - Chat ID for message delivery
-   * @param callbacks - Callbacks for sending messages
-   * @param options - Optional configuration overrides
-   * @returns ChatAgent instance (caller must dispose)
-   *
-   * @example
-   * ```typescript
-   * const agent = AgentFactory.createTaskAgent('chat-123', callbacks);
-   * try {
-   *   await agent.executeOnce(chatId, prompt);
-   * } finally {
-   *   agent.dispose();
-   * }
-   * ```
+   * @deprecated Use createAgent() instead. Issue #2941.
+   * Kept for backward compatibility.
+   */
+  static createScheduleAgent(
+    chatId: string,
+    callbacks: ChatAgentCallbacks,
+    options: AgentCreateOptions = {}
+  ): ChatAgent {
+    return AgentFactory.createAgent(chatId, callbacks, options);
+  }
+
+  /**
+   * @deprecated Use createAgent() instead. Issue #2941.
+   * Kept for backward compatibility.
    */
   static createTaskAgent(
     chatId: string,
     callbacks: ChatAgentCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
-    const baseConfig = this.getBaseConfig(options);
-    const config: ChatAgentConfig = {
-      ...baseConfig,
-      chatId,
-      callbacks,
-      messageBuilderOptions: options.messageBuilderOptions,
-    };
-
-    return new ChatAgent(config);
+    return AgentFactory.createAgent(chatId, callbacks, options);
   }
 }
