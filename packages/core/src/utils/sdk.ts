@@ -56,17 +56,25 @@ export function extractText(message: AgentMessage): string {
  * Also, we must unset CLAUDECODE to allow SDK subprocess to run inside
  * another Claude Code session (nested session detection).
  *
+ * For non-Anthropic providers (e.g., GLM), the Claude Code CLI may use
+ * `Authorization: Bearer` instead of `x-api-key` for authentication.
+ * Third-party Anthropic-compatible APIs typically only accept `x-api-key`.
+ * We set `ANTHROPIC_CUSTOM_HEADERS` to force `x-api-key` header for these
+ * providers, ensuring compatibility regardless of CLI auth behavior.
+ *
  * @param apiKey - API key for authentication
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param provider - API provider ('anthropic' or 'glm', default: 'anthropic')
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  provider: string = 'anthropic'
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -103,6 +111,15 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Force x-api-key header for non-Anthropic providers with custom endpoints.
+  // The CLI may use Authorization: Bearer for auth, but third-party APIs
+  // (like GLM/Zhipu AI) typically only accept x-api-key header.
+  // ANTHROPIC_CUSTOM_HEADERS is a newline-separated list of HTTP headers
+  // that the CLI adds to every API request.
+  if (provider !== 'anthropic' && apiBaseUrl) {
+    env.ANTHROPIC_CUSTOM_HEADERS = `x-api-key: ${apiKey}`;
   }
 
   return env;

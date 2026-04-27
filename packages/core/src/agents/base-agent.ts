@@ -184,7 +184,8 @@ export abstract class BaseAgent implements Disposable {
       this.apiKey,
       this.apiBaseUrl,
       globalEnv,
-      loggingConfig.sdkDebug
+      loggingConfig.sdkDebug,
+      this.provider
     );
 
     // Set model
