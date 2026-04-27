@@ -333,6 +333,13 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project template configuration for per-chatId Agent context switching (Issue #1916, #2227) */
+  projectTemplates?: Record<string, {
+    /** Human-readable display name */
+    displayName?: string;
+    /** Template description for /project list display */
+    description?: string;
+  }>;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
