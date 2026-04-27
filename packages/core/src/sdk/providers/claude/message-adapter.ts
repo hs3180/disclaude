@@ -41,12 +41,12 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
       type SdkContentBlock = { type: string; [key: string]: unknown };
 
       // 提取工具使用块
-      const toolBlocks = apiMessage.content.filter(
+      const toolBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
         (block: SdkContentBlock) => block.type === 'tool_use'
       );
 
       // 提取文本块
-      const textBlocks = apiMessage.content.filter(
+      const textBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
         (block: SdkContentBlock) => block.type === 'text' && 'text' in block
       );
 

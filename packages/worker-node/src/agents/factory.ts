@@ -35,7 +35,7 @@
  * @module agents/factory
  */
 
-import { Config, type ChatAgent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
 import { ChatAgent, type ChatAgentConfig, type ChatAgentCallbacks } from './chat-agent/index.js';
 
 // ============================================================================

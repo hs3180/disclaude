@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -48,7 +48,7 @@ export type { ChatAgentCallbacks, ChatAgentConfig, MessageData } from './types.j
  * Issue #644: Each ChatAgent instance is bound to a single chatId.
  * No session management needed - each ChatAgent = one chatId.
  */
-export class ChatAgent extends BaseAgent implements ChatAgent {
+export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /** Agent type identifier (Issue #282) */
   readonly type = 'chat' as const;
 

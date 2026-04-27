@@ -7,6 +7,10 @@
 import { describe, it, expect } from 'vitest';
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 
+// Test helper: SDK message types require fields (parent_tool_use_id, uuid, etc.)
+// that are optional in practice. Cast test fixtures to bypass strict type checking.
+const asMsg = (m: object) => m as any;
+
 describe('adaptSDKMessage', () => {
   describe('assistant messages', () => {
     it('should handle text-only content', () => {
@@ -21,7 +25,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('Hello, world!');
       expect(result.role).toBe('assistant');
@@ -41,7 +45,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('tool_use');
       expect(result.content).toContain('Running: ls -la');
       expect(result.content).toContain('Listing files');
@@ -60,7 +64,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.content).toContain('Editing: /src/app.ts');
       expect(result.metadata?.toolName).toBe('Edit');
     });
@@ -76,7 +80,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.content).toContain('Reading: /src/app.ts');
     });
 
@@ -91,7 +95,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.content).toContain('Writing: /src/new.ts');
     });
 
@@ -106,7 +110,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.content).toContain('Searching for "TODO"');
     });
 
@@ -121,7 +125,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.content).toContain('Finding files: **/*.ts');
     });
 
@@ -136,7 +140,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.content).toContain('CustomTool');
       expect(result.content).toContain('key');
     });
@@ -152,7 +156,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.content).toContain('Bash');
     });
 
@@ -165,7 +169,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -179,7 +183,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -194,7 +198,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.metadata?.sessionId).toBe('sess-abc');
     });
   });
@@ -207,7 +211,7 @@ describe('adaptSDKMessage', () => {
         elapsed_time_seconds: 5.3,
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('tool_progress');
       expect(result.content).toContain('Running Bash');
       expect(result.content).toContain('5.3s');
@@ -220,7 +224,7 @@ describe('adaptSDKMessage', () => {
         type: 'tool_progress' as const,
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -233,7 +237,7 @@ describe('adaptSDKMessage', () => {
         summary: 'Files modified successfully',
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('tool_result');
       expect(result.content).toContain('Files modified successfully');
     });
@@ -243,7 +247,7 @@ describe('adaptSDKMessage', () => {
         type: 'tool_use_summary' as const,
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -262,7 +266,7 @@ describe('adaptSDKMessage', () => {
         },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('result');
       expect(result.content).toContain('Complete');
       expect(result.content).toContain('$0.0523');
@@ -278,7 +282,7 @@ describe('adaptSDKMessage', () => {
         subtype: 'success',
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('result');
       expect(result.content).toBe('✅ Complete');
     });
@@ -290,7 +294,7 @@ describe('adaptSDKMessage', () => {
         errors: ['API rate limit exceeded', 'Timeout'],
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('error');
       expect(result.content).toContain('API rate limit exceeded');
       expect(result.content).toContain('Timeout');
@@ -302,7 +306,7 @@ describe('adaptSDKMessage', () => {
         subtype: 'unknown',
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -316,7 +320,7 @@ describe('adaptSDKMessage', () => {
         status: 'compacting',
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('status');
       expect(result.content).toContain('Compacting');
       expect(result.role).toBe('system');
@@ -328,7 +332,7 @@ describe('adaptSDKMessage', () => {
         subtype: 'other',
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -341,7 +345,7 @@ describe('adaptSDKMessage', () => {
         message: { role: 'user', content: 'hello' },
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
       expect(result.role).toBe('user');
@@ -352,7 +356,7 @@ describe('adaptSDKMessage', () => {
         type: 'stream_event' as const,
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
@@ -362,7 +366,7 @@ describe('adaptSDKMessage', () => {
         type: 'unknown_type' as const,
       };
 
-      const result = adaptSDKMessage(message);
+      const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });

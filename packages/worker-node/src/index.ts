@@ -30,7 +30,7 @@ export type {
   WorkerNodeDependencies,
   AgentPoolInterface,
   ChatAgentCallbacks,
-  ChatAgent,
+  ChatAgent as ChatAgentInterface,
   ChatAgentFactory,
   SchedulerInterface,
   ScheduleFileWatcherInterface,
@@ -124,7 +124,6 @@ export type {
   AgentUserInput as UserInput,
   AgentProvider,
   BaseAgentConfig,
-  ChatAgentConfig,
   AgentConfig,
   AgentFactoryInterface,
 } from '@disclaude/core';
