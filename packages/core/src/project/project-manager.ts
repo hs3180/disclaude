@@ -4,9 +4,13 @@
  * Manages project templates, instances, and chatId bindings in memory,
  * with atomic persistence to `{workspace}/.disclaude/projects.json`.
  *
+ * Templates are auto-discovered from `{packageDir}/templates/` when no explicit
+ * `templatesConfig` is provided. Config entries override discovered metadata.
+ *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — persistence layer)
  * @see Issue #1916 (parent — unified ProjectContext system)
+ * @see Issue #2286 — Template auto-discovery integration
  */
 
 import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -21,6 +25,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -55,17 +60,17 @@ interface ProjectInstance {
  *
  * Lifecycle:
  * 1. Construct with `ProjectManagerOptions`
- * 2. Call `init()` (or `init(templatesConfig)`) to load templates
+ * 2. Templates are auto-discovered from `{packageDir}/templates/` on construction
  * 3. Use `create()`, `use()`, `getActive()`, `reset()` to manage projects
  * 4. Call `createCwdProvider()` to get a CwdProvider for Agent injection
  *
- * Zero-config: if no templates are configured, behavior is identical to
+ * Zero-config: if no templates directory exists, behavior is identical to
  * the current system (all chatIds use workspace root as cwd).
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory used for template auto-discovery */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +87,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -98,26 +103,43 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Initialize (or re-initialize) templates from config.
+   * Initialize (or re-initialize) templates.
+   *
+   * Template loading strategy:
+   * 1. Auto-discover templates from `{packageDir}/templates/` (filesystem scan)
+   * 2. Merge with optional config-provided templatesConfig (config overrides)
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @param templatesConfig - Optional template overrides from disclaude.config.yaml.
+   *   When provided, entries override displayName/description of discovered templates
+   *   with the same name. Config-only entries (not on disk) are also included.
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
 
-    if (!templatesConfig) {
-      return;
-    }
+    // Step 1: Auto-discover templates from package templates directory
+    const discovered = discoverTemplatesAsConfig(this.packageDir);
 
-    for (const [name, meta] of Object.entries(templatesConfig)) {
+    // Step 2: Load discovered templates
+    for (const [name, meta] of Object.entries(discovered)) {
       this.templates.set(name, {
         name,
         displayName: meta.displayName,
         description: meta.description,
       });
+    }
+
+    // Step 3: Merge config overrides (config takes priority over discovery)
+    if (templatesConfig) {
+      for (const [name, meta] of Object.entries(templatesConfig)) {
+        this.templates.set(name, {
+          name,
+          displayName: meta.displayName,
+          description: meta.description,
+        });
+      }
     }
   }
 

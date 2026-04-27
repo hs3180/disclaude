@@ -35,7 +35,9 @@ export type ProjectResult<T> =
  * Template CLAUDE.md source: `{packageDir}/templates/{name}/CLAUDE.md`
  * Instance workingDir: `{workspace}/projects/{name}/`
  *
- * Only templates listed in `projectTemplates` config are available.
+ * Templates are auto-discovered from `{packageDir}/templates/` subdirectories
+ * containing a `CLAUDE.md` file. Config-provided `projectTemplates` entries
+ * override discovered metadata (displayName, description) for the same name.
  * The "default" project is always implicitly available (no template needed).
  */
 export interface ProjectTemplate {
@@ -53,6 +55,9 @@ export interface ProjectTemplate {
  * Configuration format for projectTemplates in disclaude.config.yaml.
  *
  * Key = template name, Value = optional display metadata.
+ *
+ * This is optional — templates are auto-discovered from `{packageDir}/templates/`.
+ * When provided, config entries override discovered metadata for the same name.
  *
  * ```yaml
  * projectTemplates:
@@ -181,6 +186,7 @@ export interface ProjectsPersistData {
  * Options for constructing a ProjectManager instance.
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #2286 — Auto-discovery integration
  */
 export interface ProjectManagerOptions {
   /** Workspace root directory (parent of `projects/` instances dir) */
@@ -189,6 +195,14 @@ export interface ProjectManagerOptions {
   /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
   packageDir: string;
 
-  /** Template configuration from disclaude.config.yaml */
-  templatesConfig: ProjectTemplatesConfig;
+  /**
+   * Optional template configuration from disclaude.config.yaml.
+   *
+   * When omitted, templates are auto-discovered from `{packageDir}/templates/`.
+   * When provided, config entries are merged with discovered templates:
+   * - Discovered templates provide the base set
+   * - Config entries override displayName/description for matching names
+   * - Config-only entries (not on disk) are still included
+   */
+  templatesConfig?: ProjectTemplatesConfig;
 }
