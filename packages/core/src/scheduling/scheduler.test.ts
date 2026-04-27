@@ -535,4 +535,143 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  describe('triggerTask (Issue #1953: event-driven trigger)', () => {
+    it('should trigger a task immediately by ID', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+      expect(scheduler.getActiveJobs()).toHaveLength(1);
+
+      const result = scheduler.triggerTask('trigger-1');
+      expect(result).toBe(true);
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should return false for unknown task ID', () => {
+      const result = scheduler.triggerTask('nonexistent');
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should go through the same execution pipeline as cron', async () => {
+      const task = createTask({ id: 'trigger-2', name: 'Event Task' });
+      scheduler.addTask(task);
+
+      scheduler.triggerTask('trigger-2');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Should send start message
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+
+      // Should wrap prompt with anti-recursion instructions
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('Event Task');
+    });
+
+    it('should respect blocking mechanism on trigger', async () => {
+      // Make executor hang (simulate long-running task)
+      mockExecutor.mockImplementationOnce(() => new Promise(() => {}));
+
+      const task = createTask({ id: 'blocking-trigger', blocking: true });
+      scheduler.addTask(task);
+
+      // First trigger starts execution
+      scheduler.triggerTask('blocking-trigger');
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-trigger')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger should be skipped (blocked)
+      scheduler.triggerTask('blocking-trigger');
+
+      // Executor should still only be called once
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should respect cooldown period on trigger', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date('2026-01-01T12:00:00'),
+          cooldownEndsAt: new Date('2026-01-01T13:00:00'),
+          remainingMs: 3600000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'cd-trigger', cooldownPeriod: 3600000 });
+      cooldownScheduler.addTask(task);
+
+      cooldownScheduler.triggerTask('cd-trigger');
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('冷静期'),
+        );
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('event-driven triggers with workspaceDir (Issue #1953)', () => {
+    it('should not create EventTriggerManager without workspaceDir', () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+      });
+      expect(s).toBeInstanceOf(Scheduler);
+    });
+
+    it('should accept workspaceDir option', () => {
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: '/tmp/workspace',
+      });
+      expect(s).toBeInstanceOf(Scheduler);
+    });
+
+    it('should register event triggers for tasks with watch config', () => {
+      const task = createTask({
+        id: 'watch-task',
+        watch: [{ path: 'chats/*.json', debounce: 5000 }],
+      });
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        workspaceDir: '/tmp/workspace',
+      });
+
+      s.addTask(task);
+      // Should have both a cron job and event trigger registered
+      expect(s.getActiveJobs()).toHaveLength(1);
+    });
+  });
 });

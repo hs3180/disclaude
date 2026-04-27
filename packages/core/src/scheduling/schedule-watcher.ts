@@ -29,7 +29,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import type { ScheduledTask, ScheduleWatchEntry } from './scheduled-task.js';
 
 const logger = createLogger('ScheduleWatcher');
 
@@ -70,6 +70,10 @@ function stripQuotes(value: string): string {
 
 /**
  * Parse YAML frontmatter from schedule content.
+ *
+ * Supports simple key-value pairs and multi-line list fields (e.g., `watch:`).
+ *
+ * Issue #1953: Added support for `watch` field parsing.
  */
 function parseScheduleFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
@@ -86,12 +90,83 @@ function parseScheduleFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
 
   const lines = frontmatterText.split('\n');
+  let currentListKey: string | null = null;
+  let currentWatchEntries: ScheduleWatchEntry[] = [];
+  let currentWatchEntry: Partial<ScheduleWatchEntry> | null = null;
+
   for (const line of lines) {
-    const colonIndex = line.indexOf(':');
+    const trimmedLine = line.trim();
+
+    // Skip empty lines
+    if (!trimmedLine) {
+      continue;
+    }
+
+    // Check if this is a list item start (e.g., "  - path: ...")
+    const listItemMatch = trimmedLine.match(/^-\s+(\w+):\s*(.*)/);
+
+    if (listItemMatch) {
+      // If we were collecting a previous watch entry, save it
+      if (currentWatchEntry && currentListKey === 'watch') {
+        currentWatchEntries.push(currentWatchEntry as ScheduleWatchEntry);
+      }
+
+      const [, itemKey, itemValueRaw] = listItemMatch;
+      const itemValue = itemValueRaw.trim();
+
+      if (currentListKey === 'watch') {
+        currentWatchEntry = {};
+        if (itemKey === 'path') {
+          currentWatchEntry.path = stripQuotes(itemValue);
+        } else if (itemKey === 'debounce') {
+          currentWatchEntry.debounce = parseInt(itemValue, 10);
+        }
+      }
+      continue;
+    }
+
+    // Check if this is a sub-key of the current list item (e.g., "    debounce: 5000")
+    const subKeyMatch = trimmedLine.match(/^(\w+):\s*(.*)/);
+
+    if (subKeyMatch && currentListKey === 'watch' && currentWatchEntry) {
+      const [, subKey, subValueRaw] = subKeyMatch;
+      const subValue = subValueRaw.trim();
+
+      if (subKey === 'path') {
+        currentWatchEntry.path = stripQuotes(subValue);
+      } else if (subKey === 'debounce') {
+        currentWatchEntry.debounce = parseInt(subValue, 10);
+      }
+      continue;
+    }
+
+    // If we were in a list block and encounter a non-list line, finalize the list
+    if (currentListKey === 'watch') {
+      if (currentWatchEntry) {
+        currentWatchEntries.push(currentWatchEntry as ScheduleWatchEntry);
+        currentWatchEntry = null;
+      }
+      if (currentWatchEntries.length > 0) {
+        frontmatter['watch'] = currentWatchEntries;
+      }
+      currentListKey = null;
+      currentWatchEntries = [];
+    }
+
+    // Regular key-value parsing
+    const colonIndex = trimmedLine.indexOf(':');
     if (colonIndex === -1) { continue; }
 
-    const key = line.slice(0, colonIndex).trim();
-    const value = line.slice(colonIndex + 1).trim();
+    const key = trimmedLine.slice(0, colonIndex).trim();
+    const value = trimmedLine.slice(colonIndex + 1).trim();
+
+    // Check if this key starts a list block
+    if (key === 'watch' && !value) {
+      currentListKey = 'watch';
+      currentWatchEntries = [];
+      currentWatchEntry = null;
+      continue;
+    }
 
     switch (key) {
       case 'name':
@@ -110,6 +185,16 @@ function parseScheduleFrontmatter(content: string): {
       case 'cooldownPeriod':
         frontmatter[key] = parseInt(value, 10);
         break;
+    }
+  }
+
+  // Finalize any remaining list block at end of frontmatter
+  if (currentListKey === 'watch') {
+    if (currentWatchEntry) {
+      currentWatchEntries.push(currentWatchEntry as ScheduleWatchEntry);
+    }
+    if (currentWatchEntries.length > 0) {
+      frontmatter['watch'] = currentWatchEntries;
     }
   }
 
@@ -216,6 +301,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watch: frontmatter['watch'] as ScheduleWatchEntry[] | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -267,6 +353,17 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+
+    // Issue #1953: Write watch entries
+    if (task.watch && task.watch.length > 0) {
+      frontmatter.push('watch:');
+      for (const entry of task.watch) {
+        frontmatter.push(`  - path: "${entry.path}"`);
+        if (entry.debounce !== undefined) {
+          frontmatter.push(`    debounce: ${entry.debounce}`);
+        }
+      }
     }
 
     frontmatter.push('---', '');

@@ -8,6 +8,18 @@
  */
 
 /**
+ * Configuration for a single watch path in event-driven triggers.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ */
+export interface ScheduleWatchEntry {
+  /** File path or glob pattern to watch (relative to workspace or absolute) */
+  path: string;
+  /** Debounce interval in milliseconds for this watch entry (default: 2000) */
+  debounce?: number;
+}
+
+/**
  * Scheduled task definition.
  */
 export interface ScheduledTask {
@@ -41,4 +53,20 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Event-driven trigger configuration.
+   * When specified, file changes in the listed paths will immediately trigger
+   * the schedule, bypassing the cron wait. Cron serves as a fallback.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * Example frontmatter:
+   * ```yaml
+   * watch:
+   *   - path: "workspace/chats/*.json"
+   *     debounce: 5000
+   *   - path: "workspace/schedules/"
+   * ```
+   */
+  watch?: ScheduleWatchEntry[];
 }

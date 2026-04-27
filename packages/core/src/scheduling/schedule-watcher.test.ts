@@ -555,6 +555,102 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  describe('watch field parsing (Issue #1953)', () => {
+    it('should parse watch entries from frontmatter', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  - path: "workspace/chats/*.json"',
+        '    debounce: 5000',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+      mockStat.mockResolvedValue({ mtime: new Date(), birthtime: new Date() });
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeDefined();
+      expect(task!.watch).toHaveLength(1);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![0].debounce).toBe(5000);
+    });
+
+    it('should parse multiple watch entries', async () => {
+      const content = [
+        '---',
+        'name: "Multi Watch"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  - path: "workspace/chats/*.json"',
+        '  - path: "workspace/schedules/"',
+        '    debounce: 3000',
+        '---',
+        '',
+        'Multi watch task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+      mockStat.mockResolvedValue({ mtime: new Date(), birthtime: new Date() });
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/multi-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toHaveLength(2);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![0].debounce).toBeUndefined();
+      expect(task!.watch![1].path).toBe('workspace/schedules/');
+      expect(task!.watch![1].debounce).toBe(3000);
+    });
+
+    it('should not set watch when not present in frontmatter', async () => {
+      const content = [
+        '---',
+        'name: "No Watch"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        '---',
+        '',
+        'No watch task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+      mockStat.mockResolvedValue({ mtime: new Date(), birthtime: new Date() });
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toBeUndefined();
+    });
+
+    it('should handle watch with only path (no debounce)', async () => {
+      const content = [
+        '---',
+        'name: "Simple Watch"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'watch:',
+        '  - path: "workspace/chats/*.json"',
+        '---',
+        '',
+        'Simple watch.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+      mockStat.mockResolvedValue({ mtime: new Date(), birthtime: new Date() });
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/simple-watch.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watch).toHaveLength(1);
+      expect(task!.watch![0].path).toBe('workspace/chats/*.json');
+      expect(task!.watch![0].debounce).toBeUndefined();
+    });
+  });
 });
 
 // ============================================================================
