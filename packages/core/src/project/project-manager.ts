@@ -289,6 +289,41 @@ export class ProjectManager {
     };
   }
 
+  /**
+   * Delete an instance and clean up all associated bindings.
+   *
+   * Removes the instance from memory and persists the updated state to disk.
+   * All chatId bindings pointing to this instance are also removed.
+   * Working directory on disk is NOT deleted (use explicit cleanup separately).
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string): ProjectResult<void> {
+    if (!this.instances.has(name)) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Collect all chatIds bound to this instance
+    const boundChatIds = this.getBoundChatIds(name);
+
+    // Remove instance
+    this.instances.delete(name);
+
+    // Clean up all associated bindings
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Clean up reverse index
+    this.instanceChatIds.delete(name);
+
+    // Persist after mutation
+    this.persist();
+
+    return { ok: true, data: undefined };
+  }
+
   // ───────────────────────────────────────────
   // Query Methods
   // ───────────────────────────────────────────
