@@ -245,8 +245,10 @@ export interface BaseAgentConfig {
   model: string;
   /** API provider (anthropic or glm) */
   provider?: AgentProvider;
-  /** Optional API base URL (e.g., for GLM) */
+  /** Optional API base URL (e.g., for GLM or custom Anthropic endpoint) */
   apiBaseUrl?: string;
+  /** Optional custom HTTP headers for API requests */
+  customHeaders?: Record<string, string>;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
 }
@@ -336,8 +338,8 @@ export interface AgentRuntimeContext {
   // Config-related methods
   /** Get the workspace directory path */
   getWorkspaceDir(): string;
-  /** Get agent configuration (API key, model, provider) */
-  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider };
+  /** Get agent configuration (API key, model, provider, customHeaders) */
+  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; customHeaders?: Record<string, string>; provider: AgentProvider };
   /** Get logging configuration */
   getLoggingConfig(): { sdkDebug: boolean };
   /** Get global environment variables */

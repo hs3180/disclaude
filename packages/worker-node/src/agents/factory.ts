@@ -94,6 +94,8 @@ export interface AgentCreateOptions {
   provider?: AgentProvider;
   /** Override API base URL */
   apiBaseUrl?: string;
+  /** Override custom HTTP headers */
+  customHeaders?: Record<string, string>;
   /** Override permission mode */
   permissionMode?: 'default' | 'bypassPermissions';
   /**
@@ -127,6 +129,7 @@ export class AgentFactory {
       model: options.model ?? defaultConfig.model,
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
+      customHeaders: options.customHeaders ?? defaultConfig.customHeaders,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };
   }

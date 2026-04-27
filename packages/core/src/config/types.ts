@@ -77,6 +77,23 @@ export interface GlmConfig {
 }
 
 /**
+ * Anthropic API configuration section.
+ *
+ * When configured, these values take priority over environment variables
+ * and ~/.claude/settings.json, solving the endpoint leakage problem.
+ *
+ * @see Issue #2768
+ */
+export interface AnthropicConfig {
+  /** API key (overrides ANTHROPIC_API_KEY env var) */
+  apiKey?: string;
+  /** API base URL for custom/compatible endpoints (e.g., https://open.bigmodel.cn/api/anthropic) */
+  apiBaseUrl?: string;
+  /** Custom HTTP headers for API requests (overrides ANTHROPIC_CUSTOM_HEADERS env var) */
+  customHeaders?: Record<string, string>;
+}
+
+/**
  * Ruliu reply mode.
  * Controls how the bot responds to messages.
  */
@@ -323,6 +340,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** Anthropic API settings (overrides env vars and ~/.claude/settings.json) */
+  anthropic?: AnthropicConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

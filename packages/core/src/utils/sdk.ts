@@ -60,13 +60,15 @@ export function extractText(message: AgentMessage): string {
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param customHeaders - Optional custom HTTP headers for API requests
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  customHeaders?: Record<string, string>
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -103,6 +105,22 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Handle custom headers for non-Anthropic providers (Issue #2768)
+  // When customHeaders is explicitly provided:
+  //   - Non-empty object: set ANTHROPIC_CUSTOM_HEADERS as comma-separated key=value pairs
+  //   - Empty object {}: clear any stale ANTHROPIC_CUSTOM_HEADERS from process.env
+  // When undefined/null: preserve existing env var (backward compatible)
+  if (customHeaders !== undefined && customHeaders !== null) {
+    if (Object.keys(customHeaders).length > 0) {
+      env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(customHeaders)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(',');
+    } else {
+      // Empty customHeaders means "explicitly clear any stale headers"
+      delete env.ANTHROPIC_CUSTOM_HEADERS;
+    }
   }
 
   return env;

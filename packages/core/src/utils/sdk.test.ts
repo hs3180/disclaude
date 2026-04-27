@@ -197,5 +197,41 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    describe('customHeaders (Issue #2768)', () => {
+      it('should set ANTHROPIC_CUSTOM_HEADERS when customHeaders is provided', () => {
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, {
+          'X-Custom-Auth': 'my-value',
+          'X-Api-Version': '2024-01-01',
+        });
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('X-Custom-Auth=my-value,X-Api-Version=2024-01-01');
+      });
+
+      it('should clear ANTHROPIC_CUSTOM_HEADERS when empty object is provided', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'stale_header=old_value');
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, {});
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+      });
+
+      it('should preserve existing ANTHROPIC_CUSTOM_HEADERS when customHeaders is undefined', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'existing=value');
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined);
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('existing=value');
+      });
+
+      it('should preserve existing ANTHROPIC_CUSTOM_HEADERS when customHeaders is not provided', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'existing=value');
+        const env = buildSdkEnv('sk-test-key');
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('existing=value');
+      });
+
+      it('should override existing ANTHROPIC_CUSTOM_HEADERS when customHeaders is provided', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'stale=old');
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, {
+          'new-header': 'new-value',
+        });
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('new-header=new-value');
+      });
+    });
   });
 });

@@ -121,8 +121,10 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Anthropic Claude configuration (config file > env var)
+          static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl || '';
+          static readonly ANTHROPIC_CUSTOM_HEADERS = fileConfigOnly.anthropic?.customHeaders;
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -278,7 +280,7 @@ export class Config {
       if (!this.ANTHROPIC_API_KEY) {
         errors.push({
           field: 'ANTHROPIC_API_KEY',
-          message: 'ANTHROPIC_API_KEY environment variable is required when agent.provider is "anthropic"',
+          message: 'ANTHROPIC_API_KEY is required when agent.provider is "anthropic" (set anthropic.apiKey in config or ANTHROPIC_API_KEY env var)',
         });
       }
       if (!this.CLAUDE_MODEL) {
@@ -336,6 +338,7 @@ export class Config {
     apiKey: string;
     model: string;
     apiBaseUrl?: string;
+    customHeaders?: Record<string, string>;
     provider: 'anthropic' | 'glm';
   } {
     // Validate required configuration first
@@ -357,6 +360,8 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      apiBaseUrl: this.ANTHROPIC_API_BASE_URL || undefined,
+      customHeaders: this.ANTHROPIC_CUSTOM_HEADERS,
       provider: 'anthropic',
     };
   }
