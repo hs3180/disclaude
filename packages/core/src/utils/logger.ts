@@ -352,6 +352,19 @@ export function setLogLevel(level: LogLevel): void {
 /**
  * Check if a log level is enabled
  *
+ * A level is enabled when its severity is **at least as high** as the
+ * logger's current threshold.  Pino assigns numeric values where higher
+ * means more severe: trace=10, debug=20, info=30, warn=40, error=50, fatal=60.
+ *
+ * The comparison must be `queried >= threshold` (not the inverse) so that
+ * querying a *less* severe level than the current threshold correctly
+ * returns `false`.
+ *
+ * @example
+ * // Logger set to 'info' (threshold=30):
+ * isLevelEnabled('warn')   // 40 >= 30 → true
+ * isLevelEnabled('debug')  // 20 >= 30 → false
+ *
  * @param level - Log level to check
  * @returns true if the level is enabled
  */

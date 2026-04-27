@@ -308,6 +308,77 @@ describe('logger', () => {
       const result = isLevelEnabled('info');
       expect(typeof result).toBe('boolean');
     });
+
+    it('should return true for all levels when set to trace', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger({ level: 'trace' });
+
+      // trace is the lowest level — everything should be enabled
+      expect(isLevelEnabled('trace')).toBe(true);
+      expect(isLevelEnabled('debug')).toBe(true);
+      expect(isLevelEnabled('info')).toBe(true);
+      expect(isLevelEnabled('warn')).toBe(true);
+      expect(isLevelEnabled('error')).toBe(true);
+      expect(isLevelEnabled('fatal')).toBe(true);
+    });
+
+    it('should return true only for fatal when set to fatal', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger({ level: 'fatal' });
+
+      // fatal is the highest level — only fatal itself should be enabled
+      expect(isLevelEnabled('trace')).toBe(false);
+      expect(isLevelEnabled('debug')).toBe(false);
+      expect(isLevelEnabled('info')).toBe(false);
+      expect(isLevelEnabled('warn')).toBe(false);
+      expect(isLevelEnabled('error')).toBe(false);
+      expect(isLevelEnabled('fatal')).toBe(true);
+    });
+
+    it('should reflect changes after setLogLevel', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger({ level: 'error' });
+
+      // Initially: only error and fatal are enabled
+      expect(isLevelEnabled('debug')).toBe(false);
+      expect(isLevelEnabled('info')).toBe(false);
+      expect(isLevelEnabled('warn')).toBe(false);
+      expect(isLevelEnabled('error')).toBe(true);
+      expect(isLevelEnabled('fatal')).toBe(true);
+
+      // Lower the threshold to debug
+      setLogLevel('debug');
+
+      // Now everything should be enabled
+      expect(isLevelEnabled('trace')).toBe(false); // trace < debug
+      expect(isLevelEnabled('debug')).toBe(true);
+      expect(isLevelEnabled('info')).toBe(true);
+      expect(isLevelEnabled('warn')).toBe(true);
+      expect(isLevelEnabled('error')).toBe(true);
+      expect(isLevelEnabled('fatal')).toBe(true);
+    });
+
+    it('should return correct results for each boundary level', async () => {
+      process.env.NODE_ENV = 'test';
+
+      // Pino numeric values: trace=10, debug=20, info=30, warn=40, error=50, fatal=60
+      const levels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const;
+      const values: Record<string, number> = {
+        trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60,
+      };
+
+      for (const threshold of levels) {
+        resetLogger();
+        await initLogger({ level: threshold });
+        const thresholdVal = values[threshold];
+
+        for (const query of levels) {
+          const queryVal = values[query];
+          const expected = queryVal >= thresholdVal;
+          expect(isLevelEnabled(query)).toBe(expected);
+        }
+      }
+    });
   });
 
   describe('flushLogger', () => {
