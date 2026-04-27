@@ -31,6 +31,7 @@ export * from './config/index.js';
 export {
   // Provider
   ClaudeSDKProvider,
+  extractStartupDetail,
   // Factory functions
   getProvider,
   registerProvider,
