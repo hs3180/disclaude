@@ -21,7 +21,7 @@ import {
   type ChannelApiHandlers,
   type FeishuCard,
 } from '@disclaude/core';
-import type { ChatAgentCallbacks } from '@disclaude/worker-node';
+import type { ChatAgentCallbacks } from '../agents/types.js';
 import type { Logger } from 'pino';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
 
@@ -182,7 +182,7 @@ export function createDefaultMessageHandler(
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
+      void agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

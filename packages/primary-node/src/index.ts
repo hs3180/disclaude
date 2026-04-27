@@ -8,9 +8,10 @@
  * - PrimaryNode implementation
  * - Platform adapters
  * - IPC server
- * - WebSocket server
+ * - Agent factory and ChatAgent (Issue #2717)
  *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
+ * @see Issue #2717 - Migrate ChatAgent/AgentFactory from worker-node
  */
 
 // Re-export types from @disclaude/core
@@ -179,6 +180,11 @@ export {
 
 // Agent pool (Issue #1040)
 export { PrimaryAgentPool, type PrimaryAgentPoolOptions } from './primary-agent-pool.js';
+
+// Agents (Issue #2717: migrated from @disclaude/worker-node)
+export { AgentFactory, toChatAgentCallbacks, type AgentCreateOptions } from './agents/factory.js';
+export { ChatAgent } from './agents/chat-agent.js';
+export type { ChatAgentCallbacks, ChatAgentConfig } from './agents/types.js';
 
 // Channel Lifecycle Manager (Issue #1594 Phase 2)
 export {

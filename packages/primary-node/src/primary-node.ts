@@ -54,7 +54,7 @@ import {
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
 } from '@disclaude/core';
-import { AgentFactory, toChatAgentCallbacks } from '@disclaude/worker-node';
+import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { ExecNodeRegistry } from './exec-node-registry.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
