@@ -40,14 +40,34 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
       // 定义 SDK 内容块类型（包含 tool_use）
       type SdkContentBlock = { type: string; [key: string]: unknown };
 
+      /**
+       * Runtime type guard: validate that a value is a valid SdkContentBlock.
+       *
+       * The SDK types `apiMessage.content` as a broad union that doesn't directly
+       * expose the block shape, so we need to validate at runtime before casting.
+       * This replaces the previous `as unknown[] as SdkContentBlock[]` double
+       * assertion which bypassed type safety entirely.
+       */
+      function isSdkContentBlock(val: unknown): val is SdkContentBlock {
+        return (
+          typeof val === 'object' &&
+          val !== null &&
+          'type' in val &&
+          typeof (val as { type: unknown }).type === 'string'
+        );
+      }
+
+      // Guarded content blocks — safe cast after runtime validation
+      const contentBlocks = apiMessage.content.filter(isSdkContentBlock);
+
       // 提取工具使用块
-      const toolBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
-        (block: SdkContentBlock) => block.type === 'tool_use'
+      const toolBlocks = contentBlocks.filter(
+        (block) => block.type === 'tool_use'
       );
 
       // 提取文本块
-      const textBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
-        (block: SdkContentBlock) => block.type === 'text' && 'text' in block
+      const textBlocks = contentBlocks.filter(
+        (block) => block.type === 'text' && 'text' in block
       );
 
       // 构建内容

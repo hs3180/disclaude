@@ -201,6 +201,31 @@ describe('adaptSDKMessage', () => {
       const result = adaptSDKMessage(asMsg(message));
       expect(result.metadata?.sessionId).toBe('sess-abc');
     });
+
+    it('should safely skip non-conforming content blocks via runtime guard', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            42,
+            null,
+            'invalid',
+            { type: 'text', text: 'valid text' },
+            { notType: 'missing type field' },
+            { type: 'tool_use', name: 'Bash', input: { command: 'echo' } },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      // Runtime guard should filter out 42, null, 'invalid', and { notType: ... }
+      // Only the valid text and tool_use blocks should remain
+      expect(result.type).toBe('tool_use');
+      expect(result.content).toContain('valid text');
+      expect(result.content).toContain('Running: echo');
+      expect(result.metadata?.toolName).toBe('Bash');
+    });
   });
 
   describe('tool_progress messages', () => {
