@@ -69,8 +69,6 @@ export interface ChannelApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
-  /** Register a temp chat for lifecycle tracking (Issue #1703) */
-  registerTempChat?: (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => Promise<{ success: boolean; expiresAt?: string }>;
   /** List all tracked temp chats (Issue #1703) */
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
@@ -230,33 +228,6 @@ export function createInteractiveMessageHandler(
         }
 
         // Temporary chat lifecycle management (Issue #1703)
-        case 'registerTempChat': {
-          const handlers = channelHandlersContainer?.handlers;
-          if (!handlers) {
-            return {
-              id: request.id,
-              success: false,
-              error: 'Channel API handlers not available',
-            };
-          }
-          if (!handlers.registerTempChat) {
-            return {
-              id: request.id,
-              success: false,
-              error: 'registerTempChat not supported by this channel',
-            };
-          }
-          const { chatId, expiresAt, creatorChatId, context, triggerMode } =
-            request.payload as IpcRequestPayloads['registerTempChat'];
-          try {
-            const result = await handlers.registerTempChat(chatId, { expiresAt, creatorChatId, context, triggerMode });
-            return { id: request.id, success: true, payload: { success: result.success, chatId, expiresAt: result.expiresAt } };
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            return { id: request.id, success: false, error: errorMessage };
-          }
-        }
-
         case 'listTempChats': {
           const handlers = channelHandlersContainer?.handlers;
           if (!handlers) {

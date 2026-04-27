@@ -611,41 +611,6 @@ export class UnixSocketIpcClient {
   // ============================================================================
 
   /**
-   * Register a temporary chat for lifecycle tracking via IPC.
-   * Issue #1703: Temp chat lifecycle management.
-   * Issue #2291: Added triggerMode enum parameter.
-   *
-   * @param chatId - The chat ID to track
-   * @param expiresAt - Optional ISO timestamp for expiry (defaults to 24h)
-   * @param creatorChatId - Optional originating chat ID
-   * @param context - Optional arbitrary context data
-   * @param mode - Optional trigger mode configuration
-   */
-  async registerTempChat(
-    chatId: string,
-    expiresAt?: string,
-    creatorChatId?: string,
-    context?: Record<string, unknown>,
-    mode?: { triggerMode?: 'mention' | 'always' }
-  ): Promise<{ success: boolean; chatId?: string; expiresAt?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
-    try {
-      return await this.request('registerTempChat', { chatId, expiresAt, creatorChatId, context, ...mode });
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      logger.error({ err: error, chatId }, 'registerTempChat failed');
-
-      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
-      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
-        errorType = 'ipc_unavailable';
-      } else if (err.message.startsWith('IPC_TIMEOUT')) {
-        errorType = 'ipc_timeout';
-      }
-
-      return { success: false, error: err.message, errorType };
-    }
-  }
-
-  /**
    * List all tracked temporary chats via IPC.
    * Issue #1703: Temp chat lifecycle management.
    */
