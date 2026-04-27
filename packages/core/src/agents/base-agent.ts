@@ -397,7 +397,7 @@ export abstract class BaseAgent implements Disposable {
     this.logger.error({ err: formatError(agentError) }, `${operation} failed`);
 
     return {
-      content: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+      content: `Error: ${error instanceof Error ? error.message : String(error)}`,
       role: 'assistant',
       messageType: 'error',
     };

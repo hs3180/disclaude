@@ -2,7 +2,7 @@
  * MessageChannel - Producer-consumer pattern for SDK message streaming.
  *
  * Provides an AsyncGenerator that yields StreamingUserMessages as they are pushed.
- * This enables the ChatAgent agent to forward user messages to the SDK's streaming
+ * This enables the ChatAgent to forward user messages to the SDK's streaming
  * input without using streamInput() directly.
  *
  * Usage:
