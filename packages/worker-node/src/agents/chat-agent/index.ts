@@ -32,7 +32,7 @@
  * - Error handling
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, loadRuntimeEnv, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -328,11 +328,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Get capabilities for message building
       const capabilities = this.callbacks.getCapabilities?.(chatId);
 
+      // Issue #1371: Load runtime-env vars for agent awareness
+      const runtimeEnvVars = loadRuntimeEnv(this.getWorkspaceDir());
+
       // Build the user message using MessageBuilder (Issue #697)
       const enhancedContent = this.messageBuilder.buildEnhancedContent({
         text: userInput.content,
         messageId,
         senderOpenId,
+        runtimeEnvVars,
       }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
@@ -451,11 +455,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
+    // Issue #1371: Load runtime-env vars for agent awareness
+    const runtimeEnvVars = loadRuntimeEnv(this.getWorkspaceDir());
+
     // Build enhanced content using MessageBuilder (Issue #697)
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text,
       messageId: messageId ?? `cli-${Date.now()}`,
       senderOpenId,
+      runtimeEnvVars,
     }, chatId, capabilities);
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
@@ -563,11 +571,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
+    // Issue #1371: Load runtime-env vars for agent awareness
+    const runtimeEnvVars = loadRuntimeEnv(this.getWorkspaceDir());
+
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
+      runtimeEnvVars,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

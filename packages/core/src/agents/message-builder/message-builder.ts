@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 /**
@@ -137,6 +138,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const runtimeEnvGuidance = buildRuntimeEnvGuidance(msg.runtimeEnvVars);
 
     // Compose all sections
     const sections: string[] = [];
@@ -164,6 +166,9 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+    if (runtimeEnvGuidance) {
+      sections.push(runtimeEnvGuidance);
+    }
 
     const preamble = sections.join('\n');
 

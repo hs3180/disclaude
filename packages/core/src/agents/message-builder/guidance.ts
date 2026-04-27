@@ -185,6 +185,80 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Known runtime-env variable descriptions.
+ *
+ * Maps variable names to human-readable descriptions so the agent
+ * understands the purpose of each shared environment variable.
+ */
+const RUNTIME_ENV_DESCRIPTIONS: Record<string, string> = {
+  GH_TOKEN: 'GitHub App installation access token for API operations',
+  GH_TOKEN_EXPIRES_AT: 'ISO timestamp when the GitHub token expires',
+};
+
+/**
+ * Pattern matching keys that contain sensitive values.
+ * These values are masked in the guidance to avoid leaking secrets
+ * into the agent prompt.
+ */
+const SENSITIVE_KEY_PATTERN = /token|key|secret|password|credential/i;
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess where in-memory
+ * singletons from the main process are inaccessible. Runtime-env
+ * variables are shared via `{workspace}/.runtime-env`, but the agent
+ * doesn't know which variables are available. This guidance lists
+ * available variables so the agent can proactively use them.
+ *
+ * @param runtimeEnvVars - Runtime environment variables, or undefined to skip
+ * @returns Formatted runtime-env guidance section, or empty string if no vars
+ */
+export function buildRuntimeEnvGuidance(runtimeEnvVars?: Record<string, string>): string {
+  if (!runtimeEnvVars || Object.keys(runtimeEnvVars).length === 0) {
+    return '';
+  }
+
+  const entries = Object.entries(runtimeEnvVars);
+
+  const varList = entries
+    .map(([key, value]) => {
+      const description = RUNTIME_ENV_DESCRIPTIONS[key];
+      const isSensitive = SENSITIVE_KEY_PATTERN.test(key);
+
+      let displayValue: string;
+      if (isSensitive) {
+        displayValue = '••••••••';
+      } else if (value.length > 40) {
+        displayValue = `${value.slice(0, 37)}...`;
+      } else {
+        displayValue = value;
+      }
+
+      const descPart = description ? ` — ${description}` : '';
+      return `- \`${key}\` = \`${displayValue}\`${descPart}`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The following shared environment variables are available in your session. These are set by the main process (e.g., skills, MCP servers) and can be used for cross-process state sharing.
+
+### Available Variables
+
+${varList}
+
+### Usage
+
+- **Read**: These variables are already merged into your process environment. You can use them directly (e.g., use \`GH_TOKEN\` for GitHub API operations via \`gh\` CLI).
+- **Write**: To share state back to the main process, write KEY=VALUE lines to the \`.runtime-env\` file in your working directory using the Write tool.`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
