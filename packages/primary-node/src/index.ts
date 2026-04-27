@@ -50,13 +50,7 @@ export type {
   IpcConfig,
 
   // WebSocket message types
-  PromptMessage,
-  CommandMessage,
-  RegisterMessage,
-  FeedbackMessage,
   CardActionMessage,
-  CardContextMessage,
-  ExecNodeInfo,
 } from '@disclaude/core';
 
 // Re-export constants and utilities from @disclaude/core
@@ -85,27 +79,8 @@ export {
   type IpcUnavailableReason,
 } from './ipc/index.js';
 
-// Node services (Issue #1040)
-export {
-  ExecNodeRegistry,
-  type ConnectedExecNode,
-  type ExecNodeRegistryConfig,
-} from './exec-node-registry.js';
-
-export {
-  ExecNodeManager,
-  type ConnectedExecNode as ManagedExecNode,
-} from './exec-node-manager.js';
-
 // Note: ChannelManager is now internal to PrimaryNode (Issue #1594).
 // Access it via primaryNode.getChannelManager() instead of direct import.
-
-export {
-  WebSocketServerService,
-  type WebSocketServerServiceConfig,
-  type IFileStorageService,
-  type FileTransferAPIHandler,
-} from './websocket-server-service.js';
 
 // Platform adapters (Issue #1040)
 export {
