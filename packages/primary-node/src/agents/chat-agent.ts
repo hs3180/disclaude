@@ -68,6 +68,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private channel?: MessageChannel;
   private isSessionActive = false;
 
+  // Issue #2926: AbortController for immediate stop/reset of running Agent loop
+  private abortController: AbortController | null = null;
+
   // Managers for separated concerns
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
@@ -699,6 +702,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       'Starting SDK query with message channel'
     );
 
+    // Issue #2926: Create fresh AbortController for this agent loop
+    this.abortController = new AbortController();
+
     // Create message channel
     this.channel = new MessageChannel();
 
@@ -757,6 +763,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     try {
       for await (const { parsed } of iterator) {
+        // Issue #2926: Check abort signal at the start of each iteration.
+        // When /stop or /reset is received, we break immediately instead of
+        // continuing to process buffered SDK messages.
+        if (this.abortController?.signal.aborted) {
+          this.logger.info(
+            { chatId, messageCount, type: parsed.type },
+            'Aborting processIterator: stop/reset signal received'
+          );
+          break;
+        }
+
         messageCount++;
         this.logger.debug(
           { chatId, messageCount, type: parsed.type },
@@ -876,6 +893,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.logger.info({ chatId: this.boundChatId, keepContext }, 'Resetting ChatAgent session');
 
+    // Issue #2926: Abort the running agent loop first so processIterator
+    // breaks out of its for-await loop immediately, rather than continuing
+    // to process buffered SDK messages.
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+
     // Mark session as inactive BEFORE closing to signal explicit close
     this.isSessionActive = false;
 
@@ -960,6 +985,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.logger.info({ chatId: this.boundChatId }, 'Stopping current query');
 
+    // Issue #2926: Abort the running iterator so processIterator breaks
+    // immediately instead of continuing to process buffered messages.
+    if (this.abortController) {
+      this.abortController.abort();
+      // Note: A new AbortController will be created when the agent loop
+      // restarts (via processIterator → startAgentLoop).
+    }
+
     // Cancel the current query (not close, to allow continuation)
     this.queryHandle.cancel();
     this.queryHandle = undefined;
@@ -993,6 +1026,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Mark session as inactive
     this.isSessionActive = false;
+
+    // Issue #2926: Abort any running agent loop
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
 
     // Close channel and query
     if (this.channel) {
