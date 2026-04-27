@@ -61,6 +61,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // Issue #2920: Pass through stderr callback for capturing subprocess diagnostics
+  if (options.stderr) {
+    sdkOptions.stderr = options.stderr;
+  }
+
   return sdkOptions;
 }
 

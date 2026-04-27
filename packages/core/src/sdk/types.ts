@@ -192,6 +192,14 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * Callback for stderr output from the subprocess.
+   * Useful for capturing diagnostic information from CLI startup failures.
+   *
+   * Issue #2920: Capturing stderr enables better error diagnosis
+   * when the CLI subprocess fails during startup (e.g., MCP config errors).
+   */
+  stderr?: (data: string) => void;
 }
 
 // ============================================================================
