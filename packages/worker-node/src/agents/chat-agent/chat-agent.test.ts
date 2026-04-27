@@ -285,4 +285,132 @@ describe('ChatAgent', () => {
       expect(p.hasActiveSession()).toBe(true);
     });
   });
+
+  describe('Issue #2926: abort mechanism for immediate stop/reset', () => {
+    it('should break out of iterator when reset() is called during processing', async () => {
+      // Create an agent with a mock that yields many messages
+      const agent = new ChatAgent({
+        chatId: 'oc_abort_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Create an iterator that yields messages with a delay
+      async function* slowIterator() {
+        for (let i = 1; i <= 20; i++) {
+          yield { parsed: { type: 'text', content: `msg-${i}` } };
+          // Small delay to allow reset() to be called mid-stream
+          await new Promise<void>(r => setTimeout(r, 10));
+        }
+      }
+
+      // Override createQueryStream on the instance
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: slowIterator(),
+      });
+
+      // Start the session by sending a message
+      void agent.processMessage('oc_abort_test', 'hello', 'msg_1');
+
+      // Wait a bit for some messages to process, then reset
+      await new Promise<void>(r => setTimeout(r, 50));
+      agent.reset();
+
+      // Wait for processIterator to complete
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // The agent should have stopped - verify session is not active
+      expect(agent.hasActiveSession()).toBe(false);
+    });
+
+    it('should break out of iterator when stop() is called during processing', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_stop_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* slowIterator() {
+        for (let i = 1; i <= 20; i++) {
+          yield { parsed: { type: 'text', content: `msg-${i}` } };
+          await new Promise<void>(r => setTimeout(r, 10));
+        }
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: slowIterator(),
+      });
+
+      void agent.processMessage('oc_stop_test', 'hello', 'msg_1');
+
+      // Wait then stop
+      await new Promise<void>(r => setTimeout(r, 50));
+      const stopped = agent.stop();
+
+      expect(stopped).toBe(true);
+    });
+
+    it('should abort AbortController on reset()', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_reset_abort_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Start a session to create AbortController
+      void agent.processMessage('oc_reset_abort_test', 'hello', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(true);
+
+      // The abortController should exist
+      const ac = (agent as any).abortController as AbortController;
+      expect(ac).not.toBeNull();
+      expect(ac.signal.aborted).toBe(false);
+
+      // Reset should abort it
+      agent.reset();
+      expect(ac.signal.aborted).toBe(true);
+      expect((agent as any).abortController).toBeNull();
+    });
+
+    it('should abort AbortController on stop()', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_stop_abort_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      void agent.processMessage('oc_stop_abort_test', 'hello', 'msg_1');
+      const ac = (agent as any).abortController as AbortController;
+
+      agent.stop();
+      expect(ac.signal.aborted).toBe(true);
+    });
+
+    it('should abort AbortController on shutdown()', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_shutdown_abort_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      void agent.processMessage('oc_shutdown_abort_test', 'hello', 'msg_1');
+      const ac = (agent as any).abortController as AbortController;
+
+      await agent.shutdown();
+      expect(ac.signal.aborted).toBe(true);
+      expect((agent as any).abortController).toBeNull();
+    });
+  });
 });
