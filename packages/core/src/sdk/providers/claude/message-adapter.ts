@@ -2,6 +2,11 @@
  * Claude SDK 消息适配器
  *
  * 将 Claude SDK 的 SDKMessage 转换为统一的 AgentMessage 类型。
+ *
+ * Issue #2890: Enhanced to handle additional message types:
+ * - thinking blocks (extended thinking responses from Claude)
+ * - auth_status messages (authentication errors/status)
+ * - Improved result message handling (total_cost_usd, duration_ms)
  */
 
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -37,7 +42,7 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      // 定义 SDK 内容块类型（包含 tool_use）
+      // 定义 SDK 内容块类型（包含 tool_use, thinking）
       type SdkContentBlock = { type: string; [key: string]: unknown };
 
       // 提取工具使用块
@@ -49,6 +54,18 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
       const textBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
         (block: SdkContentBlock) => block.type === 'text' && 'text' in block
       );
+
+      // Issue #2890: 提取 thinking 块（extended thinking）
+      const thinkingBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
+        (block: SdkContentBlock) => block.type === 'thinking' && 'thinking' in block
+      );
+
+      // Issue #2890: 提取 usage 信息
+      if (apiMessage.usage) {
+        const usage = apiMessage.usage as { input_tokens?: number; output_tokens?: number };
+        if (usage.input_tokens !== undefined) {metadata.inputTokens = usage.input_tokens;}
+        if (usage.output_tokens !== undefined) {metadata.outputTokens = usage.output_tokens;}
+      }
 
       // 构建内容
       const contentParts: string[] = [];
@@ -70,6 +87,20 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
 
       if (textParts.length > 0) {
         contentParts.push(textParts.join(''));
+      }
+
+      // Issue #2890: 处理 thinking（如果只有 thinking 块没有文本，标记为 status 类型）
+      if (thinkingBlocks.length > 0 && textParts.length === 0 && toolBlocks.length === 0) {
+        const thinkingContent = thinkingBlocks
+          .map((block: SdkContentBlock) => String((block as unknown as { thinking: string }).thinking))
+          .join('\n');
+        return {
+          type: 'status' as const,
+          content: `💭 ${thinkingContent.slice(0, 200)}${thinkingContent.length > 200 ? '...' : ''}`,
+          role: 'assistant',
+          metadata,
+          raw: message,
+        };
       }
 
       return {
@@ -125,32 +156,30 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
       if (message.subtype === 'success') {
         let statsText = '✅ Complete';
 
+        // Issue #2890: Use total_cost_usd (SDK v0.2.x field name)
+        if ('total_cost_usd' in message && typeof message.total_cost_usd === 'number') {
+          metadata.costUsd = message.total_cost_usd;
+          statsText += ` | Cost: $${message.total_cost_usd.toFixed(4)}`;
+        }
+
+        // Issue #2890: Use duration_ms for elapsed time
+        if ('duration_ms' in message && typeof message.duration_ms === 'number') {
+          metadata.elapsedMs = message.duration_ms;
+          const durationSec = (message.duration_ms / 1000).toFixed(1);
+          statsText += ` | Time: ${durationSec}s`;
+        }
+
         if ('usage' in message && message.usage) {
           const usage = message.usage as {
-            total_cost?: number;
-            total_tokens?: number;
             input_tokens?: number;
             output_tokens?: number;
           };
 
-          const parts: string[] = [];
-
-          if (usage.total_cost !== undefined) {
-            metadata.costUsd = usage.total_cost;
-            parts.push(`Cost: $${usage.total_cost.toFixed(4)}`);
-          }
-          if (usage.total_tokens !== undefined) {
-            parts.push(`Tokens: ${(usage.total_tokens / 1000).toFixed(1)}k`);
-          }
           if (usage.input_tokens !== undefined) {
             metadata.inputTokens = usage.input_tokens;
           }
           if (usage.output_tokens !== undefined) {
             metadata.outputTokens = usage.output_tokens;
-          }
-
-          if (parts.length > 0) {
-            statsText += ` | ${parts.join(' | ')}`;
           }
         }
 
@@ -163,11 +192,24 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      if (message.subtype === 'error_during_execution' && 'errors' in message) {
+      // Issue #2890: Handle all error subtypes
+      if ('is_error' in message && message.is_error && 'errors' in message) {
         const errors = message.errors as string[];
         return {
           type: 'error',
           content: `❌ Error: ${errors.join(', ')}`,
+          role: 'assistant',
+          metadata,
+          raw: message,
+        };
+      }
+
+      // Handle other result subtypes (error_max_turns, error_max_budget_usd)
+      if ('is_error' in message && message.is_error) {
+        const subtype = message.subtype as string;
+        return {
+          type: 'error',
+          content: `❌ Error: ${subtype.replace(/_/g, ' ')}`,
           role: 'assistant',
           metadata,
           raw: message,
@@ -207,6 +249,25 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
     case 'user':
     case 'stream_event':
     default:
+      // Issue #2890: Handle auth_status messages
+      if (message.type === 'auth_status') {
+        if ('error' in message && message.error) {
+          return {
+            type: 'error',
+            content: `🔐 Authentication error: ${message.error as string}`,
+            role: 'assistant',
+            metadata,
+            raw: message,
+          };
+        }
+        // Ignore non-error auth status messages
+        return {
+          type: 'text',
+          content: '',
+          role: 'assistant',
+          raw: message,
+        };
+      }
       // 忽略用户消息回显和流事件
       return {
         type: 'text',
