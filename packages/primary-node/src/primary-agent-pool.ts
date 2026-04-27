@@ -12,7 +12,9 @@
  */
 
 import { type MessageBuilderOptions } from '@disclaude/core';
-import { AgentFactory, type ChatAgentCallbacks, type ChatAgent } from '@disclaude/worker-node';
+import { AgentFactory } from './agents/factory.js';
+import type { ChatAgentCallbacks } from './agents/types.js';
+import type { ChatAgent } from './agents/chat-agent.js';
 
 /**
  * Options for PrimaryAgentPool initialization.
