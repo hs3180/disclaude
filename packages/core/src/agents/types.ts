@@ -90,7 +90,7 @@ export interface UserInput {
  * ChatAgent implements this interface and serves as the universal agent for all scenarios:
  * - Long-lived conversation (via handleInput + processMessage)
  * - One-shot task execution (via executeOnce) - replaces former SkillAgent/Subagent
- * - Scheduled tasks (via createScheduleAgent factory method)
+ * - Scheduled tasks (via AgentFactory.createAgent)
  *
  * @example
  * ```typescript
@@ -405,20 +405,20 @@ export function clearRuntimeContext(): void {
 }
 
 // ============================================================================
-// Agent Factory Types (Issue #1501: Simplified)
+// Agent Factory Types (Issue #2513: Unified)
 // ============================================================================
 
 /**
  * Factory for creating Agent instances.
  *
  * Issue #711: Agent Lifecycle Management Strategy
- * Issue #1501: Simplified to only create ChatAgent (ChatAgent) instances
+ * Issue #1501: Simplified to only create ChatAgent instances
+ * Issue #2513: Unified createScheduleAgent/createTaskAgent → createAgent
  *
- * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
- * |----------------|----------------|--------------|------------------|
- * | ChatAgent      | ✅ Yes         | Unlimited    | AgentPool        |
- * | ScheduleAgent  | ❌ No          | 24 hours     | None (temporary) |
- * | TaskAgent      | ❌ No          | Task finish  | None (temporary) |
+ * | Method          | chatId Binding | Max Lifetime    | Storage Location |
+ * |-----------------|----------------|-----------------|------------------|
+ * | createChatAgent | ✅ Yes         | Unlimited       | AgentPool        |
+ * | createAgent     | ✅ Yes         | Caller-decides  | None (temporary) |
  *
  * Note: SkillAgent and Subagent have been removed (Issue #1501).
  * - Skills are now handled via ChatAgent.executeOnce() or .md-defined subagents
@@ -431,12 +431,12 @@ export function clearRuntimeContext(): void {
  * // Create ChatAgent (long-lived, store in AgentPool)
  * const pilot = factory.createChatAgent('pilot', callbacks);
  *
- * // Create ScheduleAgent (short-lived, dispose after execution)
- * const scheduleAgent = factory.createScheduleAgent(chatId, callbacks);
+ * // Create a short-lived agent for task execution
+ * const agent = factory.createAgent(chatId, callbacks);
  * try {
- *   await scheduleAgent.executeOnce(chatId, prompt);
+ *   await agent.executeOnce(chatId, prompt);
  * } finally {
- *   scheduleAgent.dispose();
+ *   agent.dispose();
  * }
  * ```
  */
@@ -448,15 +448,9 @@ export interface AgentFactoryInterface {
   createChatAgent(name: string, ...args: unknown[]): ChatAgent;
 
   /**
-   * Create a ScheduleAgent instance.
-   * Short-lived, caller must dispose after execution.
-   * Maximum lifetime: 24 hours.
+   * Create a short-lived Agent instance.
+   * Caller must dispose after execution.
+   * Issue #2513: Unified method replacing createScheduleAgent/createTaskAgent.
    */
-  createScheduleAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
-
-  /**
-   * Create a TaskAgent instance.
-   * Short-lived, caller must dispose after task completion.
-   */
-  createTaskAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
+  createAgent(chatId: string, callbacks: unknown, options?: unknown): ChatAgent;
 }

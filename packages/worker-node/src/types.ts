@@ -200,9 +200,9 @@ export interface WorkerNodeDependencies {
   /** Factory to create ChatAgent instances (for AgentPool) */
   createChatAgent: ChatAgentFactory;
 
-  /** Factory to create ScheduleAgent instances (for Scheduler).
-   *  Uses ChatAgentFactory signature since ChatAgent satisfies ScheduleAgent. */
-  createScheduleAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
+  /** Factory to create agent instances (for Scheduler).
+   *  Issue #2513: Unified method replacing createScheduleAgent. */
+  createAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
 
   /** Logger instance */
   logger: Logger;

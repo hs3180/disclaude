@@ -155,8 +155,8 @@ async function main(): Promise<void> {
     createChatAgent: () => {
       throw new Error('ChatAgent not available in standalone worker mode');
     },
-    createScheduleAgent: () => {
-      throw new Error('ScheduleAgent not available in standalone worker mode');
+    createAgent: () => {
+      throw new Error('Agent not available in standalone worker mode');
     },
     logger,
   };

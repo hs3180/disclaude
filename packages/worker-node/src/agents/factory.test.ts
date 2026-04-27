@@ -159,71 +159,38 @@ describe('AgentFactory', () => {
     });
   });
 
-  describe('createScheduleAgent', () => {
-    it('should create a ChatAgent for scheduled tasks', () => {
-      mockChatAgent.mockReturnValue({});
-      const agent = AgentFactory.createScheduleAgent('chat-123', mockCallbacks);
-
-      expect(agent).toBeDefined();
-      const [[pilotConfig]] = mockChatAgent.mock.calls;
-      expect(pilotConfig.chatId).toBe('chat-123');
-      expect(pilotConfig.callbacks).toBe(mockCallbacks);
-    });
-
-    it('should apply custom options', () => {
-      mockChatAgent.mockReturnValue({});
-      AgentFactory.createScheduleAgent('chat-123', mockCallbacks, {
-        model: 'schedule-model',
-      });
-
-      const [[pilotConfig]] = mockChatAgent.mock.calls;
-      expect(pilotConfig.model).toBe('schedule-model');
-    });
-
-    it('should pass messageBuilderOptions', () => {
-      mockChatAgent.mockReturnValue({});
-      const mcpOptions = { buildHeader: vi.fn(() => 'Header') };
-      AgentFactory.createScheduleAgent('chat-123', mockCallbacks, {
-        messageBuilderOptions: mcpOptions,
-      });
-
-      const [[pilotConfig]] = mockChatAgent.mock.calls;
-      expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
-    });
-  });
-
-  describe('createTaskAgent', () => {
+  describe('createAgent', () => {
     it('should create a ChatAgent for task execution', () => {
       mockChatAgent.mockReturnValue({});
-      const agent = AgentFactory.createTaskAgent('chat-123', mockCallbacks);
+      const agent = AgentFactory.createAgent('chat-123', mockCallbacks);
 
       expect(agent).toBeDefined();
-      const [[pilotConfig]] = mockChatAgent.mock.calls;
-      expect(pilotConfig.chatId).toBe('chat-123');
-      expect(pilotConfig.callbacks).toBe(mockCallbacks);
+      const [[agentConfig]] = mockChatAgent.mock.calls;
+      expect(agentConfig.chatId).toBe('chat-123');
+      expect(agentConfig.callbacks).toBe(mockCallbacks);
     });
 
     it('should apply custom options', () => {
       mockChatAgent.mockReturnValue({});
-      AgentFactory.createTaskAgent('chat-123', mockCallbacks, {
-        model: 'task-model',
+      AgentFactory.createAgent('chat-123', mockCallbacks, {
+        model: 'custom-model',
         provider: 'anthropic',
       });
 
-      const [[pilotConfig]] = mockChatAgent.mock.calls;
-      expect(pilotConfig.model).toBe('task-model');
-      expect(pilotConfig.provider).toBe('anthropic');
+      const [[agentConfig]] = mockChatAgent.mock.calls;
+      expect(agentConfig.model).toBe('custom-model');
+      expect(agentConfig.provider).toBe('anthropic');
     });
 
     it('should pass messageBuilderOptions', () => {
       mockChatAgent.mockReturnValue({});
       const mcpOptions = { buildHeader: vi.fn(() => 'Header') };
-      AgentFactory.createTaskAgent('chat-123', mockCallbacks, {
+      AgentFactory.createAgent('chat-123', mockCallbacks, {
         messageBuilderOptions: mcpOptions,
       });
 
-      const [[pilotConfig]] = mockChatAgent.mock.calls;
-      expect(pilotConfig.messageBuilderOptions).toBe(mcpOptions);
+      const [[agentConfig]] = mockChatAgent.mock.calls;
+      expect(agentConfig.messageBuilderOptions).toBe(mcpOptions);
     });
   });
 
@@ -239,15 +206,15 @@ describe('AgentFactory', () => {
       mockChatAgent.mockReturnValue({});
 
       // Override only apiKey, rest should use defaults
-      AgentFactory.createScheduleAgent('chat-123', mockCallbacks, {
+      AgentFactory.createAgent('chat-123', mockCallbacks, {
         apiKey: 'override-key',
       });
 
-      const [[pilotConfig]] = mockChatAgent.mock.calls;
-      expect(pilotConfig.apiKey).toBe('override-key');
-      expect(pilotConfig.model).toBe('default-model');
-      expect(pilotConfig.provider).toBe('anthropic');
-      expect(pilotConfig.apiBaseUrl).toBe('https://api.example.com');
+      const [[agentConfig]] = mockChatAgent.mock.calls;
+      expect(agentConfig.apiKey).toBe('override-key');
+      expect(agentConfig.model).toBe('default-model');
+      expect(agentConfig.provider).toBe('anthropic');
+      expect(agentConfig.apiBaseUrl).toBe('https://api.example.com');
     });
   });
 });

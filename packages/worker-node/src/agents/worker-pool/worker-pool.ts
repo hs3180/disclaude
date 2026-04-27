@@ -430,7 +430,7 @@ export class WorkerPool {
 
     try {
       // Create agent for task execution
-      const agent = AgentFactory.createTaskAgent(task.chatId, this.callbacks);
+      const agent = AgentFactory.createAgent(task.chatId, this.callbacks);
 
       // Execute task
       await agent.executeOnce(
