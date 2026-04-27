@@ -646,6 +646,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }
@@ -704,6 +705,52 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       openId: botInfo?.open_id || '',
       name: 'Bot',
     };
+  }
+
+  /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * This method uploads an image file via the Feishu `im.image.create` API
+   * and returns the `image_key` for use in card `img` elements.
+   *
+   * Issue #1919: MCP tool support for image upload and card inline embedding.
+   *
+   * @param filePath - Absolute path to the image file
+   * @returns Object containing imageKey, fileName, and fileSize
+   * @throws Error if client is not initialized or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Unsupported image format: ${ext}. Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ filePath, fileName, fileSize }, 'Uploading image for image_key');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded successfully');
+    return { imageKey, fileName, fileSize };
   }
 
   // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────

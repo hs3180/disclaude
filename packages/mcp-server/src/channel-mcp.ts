@@ -16,6 +16,7 @@ import {
   send_interactive,
   send_file,
   register_temp_chat,
+  upload_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -30,6 +31,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { register_temp_chat } from './tools/register-temp-chat.js';
+export { upload_image } from './tools/upload-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -437,6 +439,54 @@ Use this after creating a group chat that should be temporary.
       // register_temp_chat handles all errors internally and returns { success, message }
       const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
       return toolSuccess(result.message);
+    },
+  },
+  // Issue #1919: Upload image and return image_key for card embedding
+  {
+    name: 'upload_image',
+    description: `Upload an image file and return an \`image_key\` for use in card messages.
+
+Use this tool when you need to embed an image inside a card message (e.g., charts, diagrams).
+The returned \`image_key\` can be used in the card JSON's \`img\` element.
+
+## Typical Workflow
+1. Generate image (e.g., chart via Python/Matplotlib)
+2. Call \`upload_image\` with the image file path
+3. Use the returned \`image_key\` in \`send_card\`'s \`img\` element
+
+## Parameters
+- **filePath**: Path to the image file (string)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10MB)
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\`
+
+## Card Usage Example
+After getting \`image_key\`, use it in a card:
+\`\`\`json
+{
+  "card": {
+    "elements": [
+      { "tag": "img", "img_key": "img_v3_xxx" }
+    ]
+  },
+  "chatId": "oc_xxx"
+}
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the image file to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   },
 ];

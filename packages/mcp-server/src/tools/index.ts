@@ -12,6 +12,7 @@ export type {
   ActionPromptMap,
   SendInteractiveResult,
   RegisterTempChatResult,
+  UploadImageResult,
 } from './types.js';
 
 // Shared utilities
@@ -34,6 +35,9 @@ export { send_file } from './send-file.js';
 
 // Temp chat lifecycle management (Issue #1703)
 export { register_temp_chat } from './register-temp-chat.js';
+
+// Image upload for card embedding (Issue #1919)
+export { upload_image } from './upload-image.js';
 
 // Interactive Message
 export {

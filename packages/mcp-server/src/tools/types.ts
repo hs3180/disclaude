@@ -81,3 +81,16 @@ export interface RegisterTempChatResult {
   error?: string;
 }
 
+/**
+ * Result type for upload_image tool.
+ * Issue #1919: MCP tool support for image upload and card inline embedding.
+ */
+export interface UploadImageResult {
+  success: boolean;
+  message: string;
+  imageKey?: string;
+  fileName?: string;
+  fileSize?: number;
+  error?: string;
+}
+
