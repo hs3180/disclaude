@@ -5,6 +5,7 @@
  * against file-based schedule storage.
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
+ * Issue #2526: Updated to reflect subdirectory + SCHEDULE.md structure.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -26,10 +27,11 @@ afterEach(async () => {
 
 /**
  * Write a schedule markdown file with YAML frontmatter.
- * The scanner generates task ID as `schedule-${fileNameWithoutExt}`.
+ * Issue #2526: Writes to `schedules/<slug>/SCHEDULE.md` subdirectory.
+ * The scanner generates task ID as `schedule-${directoryName}`.
  */
 async function writeScheduleFile(
-  fileName: string,
+  dirName: string,
   options: {
     name?: string;
     cron?: string;
@@ -75,12 +77,14 @@ ${prompt}
 
 Schedule: \`${cron}\`
 `;
-  await fs.writeFile(path.join(tempDir, 'schedules', fileName), content, 'utf-8');
+  const scheduleDir = path.join(tempDir, 'schedules', dirName);
+  await fs.mkdir(scheduleDir, { recursive: true });
+  await fs.writeFile(path.join(scheduleDir, 'SCHEDULE.md'), content, 'utf-8');
 }
 
-/** Derive the task ID from the filename (matches ScheduleFileScanner behavior) */
-function taskId(fileName: string): string {
-  return `schedule-${fileName.replace(/\.md$/, '')}`;
+/** Derive the task ID from the directory name (matches ScheduleFileScanner behavior) */
+function taskId(dirName: string): string {
+  return `schedule-${dirName}`;
 }
 
 describe('ScheduleManager', () => {
@@ -108,7 +112,7 @@ describe('ScheduleManager', () => {
     });
 
     it('should return task by ID when it exists', async () => {
-      await writeScheduleFile('daily-report.md', {
+      await writeScheduleFile('daily-report', {
         name: 'Daily Report',
         cron: '0 9 * * *',
         prompt: 'Generate daily report',
@@ -116,7 +120,7 @@ describe('ScheduleManager', () => {
         enabled: true,
       });
 
-      const result = await manager.get(taskId('daily-report.md'));
+      const result = await manager.get(taskId('daily-report'));
       expect(result).toBeDefined();
       expect(result!.id).toBe('schedule-daily-report');
       expect(result!.name).toBe('Daily Report');
@@ -128,7 +132,7 @@ describe('ScheduleManager', () => {
     });
 
     it('should return task with optional fields', async () => {
-      await writeScheduleFile('full-task.md', {
+      await writeScheduleFile('full-task', {
         name: 'Full Task',
         cron: '0 */2 * * *',
         prompt: 'Check status',
@@ -141,7 +145,7 @@ describe('ScheduleManager', () => {
         lastExecutedAt: '2026-03-01T09:00:00Z',
       });
 
-      const result = await manager.get(taskId('full-task.md'));
+      const result = await manager.get(taskId('full-task'));
       expect(result).toBeDefined();
       expect(result!.createdBy).toBe('user-123');
       expect(result!.blocking).toBe(true);
@@ -158,20 +162,20 @@ describe('ScheduleManager', () => {
     });
 
     it('should return only tasks for the specified chat', async () => {
-      await writeScheduleFile('chat1-task1.md', {
+      await writeScheduleFile('chat1-task1', {
         name: 'Chat1 Task1',
         cron: '0 9 * * *',
         prompt: 'Task for chat 1',
         chatId: 'oc_chat1',
       });
-      await writeScheduleFile('chat1-task2.md', {
+      await writeScheduleFile('chat1-task2', {
         name: 'Chat1 Task2',
         cron: '0 18 * * *',
         prompt: 'Another task for chat 1',
         chatId: 'oc_chat1',
         enabled: false,
       });
-      await writeScheduleFile('chat2-task1.md', {
+      await writeScheduleFile('chat2-task1', {
         name: 'Chat2 Task1',
         cron: '0 12 * * *',
         prompt: 'Task for chat 2',
@@ -184,17 +188,17 @@ describe('ScheduleManager', () => {
 
       const chat2Tasks = await manager.listByChatId('oc_chat2');
       expect(chat2Tasks).toHaveLength(1);
-      expect(chat2Tasks[0].id).toBe(taskId('chat2-task1.md'));
+      expect(chat2Tasks[0].id).toBe(taskId('chat2-task1'));
     });
 
     it('should return both enabled and disabled tasks', async () => {
-      await writeScheduleFile('enabled.md', {
+      await writeScheduleFile('enabled', {
         name: 'Enabled',
         cron: '0 9 * * *',
         prompt: 'Run',
         chatId: 'oc_chat',
       });
-      await writeScheduleFile('disabled.md', {
+      await writeScheduleFile('disabled', {
         name: 'Disabled',
         cron: '0 10 * * *',
         prompt: 'Skip',
@@ -214,20 +218,20 @@ describe('ScheduleManager', () => {
     });
 
     it('should return only enabled tasks', async () => {
-      await writeScheduleFile('enabled1.md', {
+      await writeScheduleFile('enabled1', {
         name: 'Enabled 1',
         cron: '0 9 * * *',
         prompt: 'Run 1',
         chatId: 'oc_chat',
       });
-      await writeScheduleFile('disabled1.md', {
+      await writeScheduleFile('disabled1', {
         name: 'Disabled',
         cron: '0 10 * * *',
         prompt: 'Skip',
         chatId: 'oc_chat',
         enabled: false,
       });
-      await writeScheduleFile('enabled2.md', {
+      await writeScheduleFile('enabled2', {
         name: 'Enabled 2',
         cron: '0 18 * * *',
         prompt: 'Run 2',
@@ -237,8 +241,8 @@ describe('ScheduleManager', () => {
       const result = await manager.listEnabled();
       expect(result).toHaveLength(2);
       expect(result.every(t => t.enabled)).toBe(true);
-      expect(result.map(t => t.id)).toContain(taskId('enabled1.md'));
-      expect(result.map(t => t.id)).toContain(taskId('enabled2.md'));
+      expect(result.map(t => t.id)).toContain(taskId('enabled1'));
+      expect(result.map(t => t.id)).toContain(taskId('enabled2'));
     });
   });
 
@@ -249,13 +253,13 @@ describe('ScheduleManager', () => {
     });
 
     it('should return all tasks regardless of enabled status', async () => {
-      await writeScheduleFile('task-a.md', {
+      await writeScheduleFile('task-a', {
         name: 'Task A',
         cron: '0 9 * * *',
         prompt: 'Run A',
         chatId: 'oc_chat1',
       });
-      await writeScheduleFile('task-b.md', {
+      await writeScheduleFile('task-b', {
         name: 'Task B',
         cron: '0 10 * * *',
         prompt: 'Run B',
@@ -272,7 +276,7 @@ describe('ScheduleManager', () => {
       expect(await manager.listAll()).toHaveLength(0);
 
       // Add a file
-      await writeScheduleFile('new-task.md', {
+      await writeScheduleFile('new-task', {
         name: 'New Task',
         cron: '0 9 * * *',
         prompt: 'Run new',
@@ -282,7 +286,7 @@ describe('ScheduleManager', () => {
       // Should see the new file
       const result = await manager.listAll();
       expect(result).toHaveLength(1);
-      expect(result[0].id).toBe(taskId('new-task.md'));
+      expect(result[0].id).toBe(taskId('new-task'));
       expect(result[0].name).toBe('New Task');
     });
   });
@@ -293,12 +297,21 @@ describe('ScheduleManager', () => {
       expect(result).toEqual([]);
     });
 
-    it('should handle directory with non-markdown files gracefully', async () => {
+    it('should handle directory with non-SCHEDULE.md files gracefully', async () => {
+      // Write a plain file in the schedules root (not a subdirectory)
       await fs.writeFile(
         path.join(tempDir, 'schedules', 'readme.txt'),
         'This is not a schedule file',
         'utf-8'
       );
+
+      const result = await manager.listAll();
+      expect(result).toEqual([]);
+    });
+
+    it('should handle subdirectory without SCHEDULE.md gracefully', async () => {
+      // Create a subdirectory without SCHEDULE.md
+      await fs.mkdir(path.join(tempDir, 'schedules', 'empty-dir'), { recursive: true });
 
       const result = await manager.listAll();
       expect(result).toEqual([]);
@@ -311,8 +324,10 @@ invalid yaml content [[[broken
 
 # Bad Schedule
 `;
+      const scheduleDir = path.join(tempDir, 'schedules', 'bad');
+      await fs.mkdir(scheduleDir, { recursive: true });
       await fs.writeFile(
-        path.join(tempDir, 'schedules', 'bad.md'),
+        path.join(scheduleDir, 'SCHEDULE.md'),
         malformedContent,
         'utf-8'
       );

@@ -2,7 +2,8 @@
  * Schedule Manager - Query operations for scheduled tasks.
  *
  * Manages scheduled tasks that are triggered by cron expressions.
- * Tasks are persisted as markdown files in the schedules/ directory.
+ * Tasks are persisted as markdown files in subdirectories under schedules/.
+ * Each schedule lives in `schedules/<name>/SCHEDULE.md`.
  *
  * Features:
  * - Query operations for scheduled tasks (list, get)
@@ -14,6 +15,7 @@
  * Users create schedule files manually, and ScheduleFileWatcher auto-loads them.
  *
  * Issue #1041: Migrated from @disclaude/worker-node to @disclaude/core.
+ * Issue #2526: Reorganized from flat files to subdirectory + SCHEDULE.md structure.
  *
  * @module @disclaude/core/scheduling
  */
