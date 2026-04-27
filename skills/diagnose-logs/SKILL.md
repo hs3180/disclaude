@@ -1,6 +1,6 @@
 ---
 name: diagnose-logs
-description: "Diagnose disclaude service logs — analyze errors, warnings, WebSocket health, ACP client issues, and agent behavior from launchd log files. Use when user says keywords like 'diagnose logs', 'check logs', 'debug service', 'what went wrong', 'service health', 'log analysis', '查看日志', '诊断日志'."
+description: "Diagnose disclaude service logs — analyze errors, warnings, WebSocket health, and agent behavior from launchd log files. Use when user says keywords like 'diagnose logs', 'check logs', 'debug service', 'what went wrong', 'service health', 'log analysis', '查看日志', '诊断日志'."
 argument-hint: "[--last 30m] [--errors] [--ws] [--agent] [--context Name]"
 disable-model-invocation: true
 allowed-tools: Bash, Read, Grep, Glob
@@ -55,7 +55,7 @@ Check `$ARGUMENTS` for filters:
 | `--last 30m` | Only analyze last 30 minutes of logs |
 | `--errors` | Jump to Step 3 (errors only) |
 | `--ws` | Jump to Step 5 (WebSocket health) |
-| `--agent` | Jump to Step 6 (agent/AcpClient health) |
+| `--agent` | Jump to Step 6 (agent/ChatAgent health) |
 | `--context Name` | Filter to a specific context/module |
 
 For `--last`, compute the cutoff timestamp:
@@ -119,16 +119,13 @@ echo "=== Reconnect attempts ===" && grep '^{' /tmp/disclaude-stdout.log | jq -c
 grep '^{' /tmp/disclaude-stdout.log | jq -r 'select(.msg | test("Reconnected successfully")) | .time' | head -20
 ```
 
-### Step 6: Agent / AcpClient Health
+### Step 6: Agent / ChatAgent Health
 
 ```bash
-# ACP client errors and reconnects
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.context == "AcpClient") | {time, level, msg, reason}'
-
 # ChatAgent errors
 grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.context == "ChatAgent" and .level == "error") | {time, msg, chatId, err: .err.message, messageCount}'
 
-# ACP subprocess spawn events
+# Subprocess spawn events
 grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.msg | test("subprocess spawning")) | {time, context, command, ANTHROPIC_BASE_URL}'
 
 # Timeout patterns
@@ -161,8 +158,8 @@ After collecting data, produce a structured report:
 **WebSocket**: {reconnect count} reconnects in {timespan}, {success rate}% success rate.
 Pattern: [describe — e.g., "Dead connection every ~3 minutes due to 130s idle timeout"]
 
-### [If ACP/Agent issues found]
-**AcpClient**: {count} timeouts, {count} transport closures.
+### [If Agent issues found]
+**ChatAgent**: {count} errors, {count} timeouts.
 Affected chats: {list of chatId prefixes}
 Root cause hint: [e.g., "GLM proxy not responding within timeout"]
 
