@@ -68,3 +68,10 @@ export {
 } from './card-builders/interactive-card-builder.js';
 
 export { extractCardTextContent } from './card-builders/card-text-extractor.js';
+
+// Card Image Resolver — Issue #2951
+export {
+  isLocalImagePath,
+  findLocalImagePaths,
+  resolveCardImagePaths,
+} from './card-image-resolver.js';

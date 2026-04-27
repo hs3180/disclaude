@@ -27,6 +27,7 @@ import {
   attachmentManager,
 } from '@disclaude/core';
 import { InteractionManager, WelcomeService, createFeishuClient } from '../platforms/feishu/index.js';
+import { resolveCardImagePaths } from '../platforms/feishu/card-image-resolver.js';
 import {
   TriggerModeManager,
   MentionDetector,
@@ -434,9 +435,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
 
       case 'card': {
+        const cardObj = (message.card || {}) as Record<string, unknown>;
+
+        // Issue #2951: Auto-resolve local image paths in card to Feishu image_keys
+        if (cardObj && typeof cardObj === 'object') {
+          await resolveCardImagePaths(cardObj, client);
+        }
+
         const messageId = await sendFeishuMessage(
           'interactive',
-          JSON.stringify(message.card || {}),
+          JSON.stringify(cardObj),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
         return messageId;
