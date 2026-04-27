@@ -6,6 +6,10 @@
 
 import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { isNonAnthropicEndpoint, createNonAnthropicToolServer } from './non-anthropic-tools.js';
+import { createLogger } from '../../../utils/logger.js';
+
+const logger = createLogger('OptionsAdapter');
 
 /**
  * 适配统一选项为 Claude SDK 选项
@@ -43,9 +47,9 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   }
 
   // MCP 服务器
-  if (options.mcpServers) {
-    sdkOptions.mcpServers = adaptMcpServers(options.mcpServers);
-  }
+  const existingMcpServers = options.mcpServers
+    ? adaptMcpServers(options.mcpServers)
+    : {};
 
   // 环境变量
   if (options.env) {
@@ -59,6 +63,32 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     if (options.env.ANTHROPIC_BASE_URL) {
       sdkOptions.apiBaseUrl = options.env.ANTHROPIC_BASE_URL;
     }
+  }
+
+  // Issue #2948: Non-Anthropic endpoint compatibility
+  // When using a non-Anthropic API endpoint (e.g., GLM/ZhiPu), the Claude Agent SDK's
+  // built-in tools are embedded in the system prompt (XML format), but non-Anthropic
+  // providers only recognize the `tools` API parameter. MCP tools are sent via the
+  // `tools` API parameter, so we disable built-in tools and register equivalent
+  // MCP inline tools instead.
+  const baseUrl = sdkOptions.apiBaseUrl as string | undefined;
+  if (baseUrl && isNonAnthropicEndpoint(baseUrl)) {
+    logger.info(
+      { baseUrl },
+      'Non-Anthropic endpoint detected — enabling system tools via MCP for compatibility'
+    );
+
+    // Disable built-in tools (which embed in system prompt and won't work)
+    sdkOptions.tools = [];
+
+    // Add system tools as MCP inline tools (which go through tools API parameter)
+    const cwd = (options.cwd || process.cwd()) as string;
+    const systemToolServer = createNonAnthropicToolServer(cwd);
+    existingMcpServers['system-tools-compat'] = systemToolServer;
+  }
+
+  if (Object.keys(existingMcpServers).length > 0) {
+    sdkOptions.mcpServers = existingMcpServers;
   }
 
   return sdkOptions;

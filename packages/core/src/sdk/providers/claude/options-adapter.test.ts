@@ -105,6 +105,77 @@ describe('adaptOptions', () => {
       env: { PORT: '3000' },
     });
   });
+
+  it('should NOT add system tools for Anthropic endpoint', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      cwd: '/workspace',
+      env: {
+        ANTHROPIC_API_KEY: 'sk-123',
+        ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+      },
+    });
+
+    expect(result.tools).toBeUndefined();
+    expect(result.mcpServers).toBeUndefined();
+  });
+
+  it('should add system tools MCP server for non-Anthropic endpoint', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      cwd: '/workspace',
+      env: {
+        ANTHROPIC_API_KEY: 'sk-123',
+        ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
+      },
+    });
+
+    // Should disable built-in tools
+    expect(result.tools).toEqual([]);
+
+    // Should add system-tools-compat MCP server
+    expect(result.mcpServers).toBeDefined();
+    const mcpServers = result.mcpServers as Record<string, unknown>;
+    expect(mcpServers['system-tools-compat']).toBeDefined();
+  });
+
+  it('should preserve existing MCP servers when adding system tools', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      cwd: '/workspace',
+      env: {
+        ANTHROPIC_API_KEY: 'sk-123',
+        ANTHROPIC_BASE_URL: 'https://my-custom-api.example.com',
+      },
+      mcpServers: {
+        'my-server': {
+          type: 'stdio',
+          name: 'my-server',
+          command: 'npx',
+          args: ['-y', 'my-mcp-server'],
+        },
+      },
+    });
+
+    expect(result.tools).toEqual([]);
+    const mcpServers = result.mcpServers as Record<string, unknown>;
+    expect(mcpServers['my-server']).toBeDefined();
+    expect(mcpServers['system-tools-compat']).toBeDefined();
+  });
+
+  it('should use process.cwd() when cwd option is not set', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      env: {
+        ANTHROPIC_API_KEY: 'sk-123',
+        ANTHROPIC_BASE_URL: 'https://custom-api.example.com',
+      },
+    });
+
+    expect(result.tools).toEqual([]);
+    const mcpServers = result.mcpServers as Record<string, unknown>;
+    expect(mcpServers['system-tools-compat']).toBeDefined();
+  });
 });
 
 describe('adaptInput', () => {
