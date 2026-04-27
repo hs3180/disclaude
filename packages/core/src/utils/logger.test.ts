@@ -460,4 +460,97 @@ describe('logger', () => {
       }
     });
   });
+
+  describe('launchd mode', () => {
+    const originalLaunchd = process.env.DISCLAUDE_LAUNCHD;
+    const originalLogDir = process.env.DISCLAUDE_LOG_DIR;
+    const originalLogDirEnv = process.env.LOG_DIR;
+
+    afterEach(() => {
+      // Restore env vars
+      if (originalLaunchd !== undefined) {
+        process.env.DISCLAUDE_LAUNCHD = originalLaunchd;
+      } else {
+        delete process.env.DISCLAUDE_LAUNCHD;
+      }
+      if (originalLogDir !== undefined) {
+        process.env.DISCLAUDE_LOG_DIR = originalLogDir;
+      } else {
+        delete process.env.DISCLAUDE_LOG_DIR;
+      }
+      if (originalLogDirEnv !== undefined) {
+        process.env.LOG_DIR = originalLogDirEnv;
+      } else {
+        delete process.env.LOG_DIR;
+      }
+    });
+
+    it('should create logger with pino-roll transport when DISCLAUDE_LAUNCHD=1', () => {
+      resetLogger();
+      process.env.NODE_ENV = 'test';
+      process.env.DISCLAUDE_LAUNCHD = '1';
+      process.env.DISCLAUDE_LOG_DIR = '/tmp/test-logs-launchd';
+
+      // createLogger should not throw even with launchd mode + transport
+      const logger = createLogger('LaunchdTest');
+
+      expect(logger).toBeDefined();
+      expect(logger.bindings()).toEqual(
+        expect.objectContaining({ context: 'LaunchdTest' }),
+      );
+    });
+
+    it('should not use launchd transport when DISCLAUDE_LAUNCHD is not set', () => {
+      resetLogger();
+      process.env.NODE_ENV = 'test';
+      delete process.env.DISCLAUDE_LAUNCHD;
+
+      const logger = createLogger('NonLaunchd');
+
+      expect(logger).toBeDefined();
+      // No transport should be configured
+      expect(logger.bindings()).toEqual(
+        expect.objectContaining({ context: 'NonLaunchd' }),
+      );
+    });
+
+    it('should create logger via getRootLogger with launchd transport', () => {
+      resetLogger();
+      process.env.NODE_ENV = 'test';
+      process.env.DISCLAUDE_LAUNCHD = '1';
+      process.env.DISCLAUDE_LOG_DIR = '/tmp/test-logs-launchd-root';
+
+      const logger = getRootLogger();
+
+      expect(logger).toBeDefined();
+      expect(typeof logger.info).toBe('function');
+    });
+
+    it('should fall back to ~/Library/Logs/disclaude when DISCLAUDE_LOG_DIR is not set', () => {
+      resetLogger();
+      process.env.NODE_ENV = 'test';
+      process.env.DISCLAUDE_LAUNCHD = '1';
+      delete process.env.DISCLAUDE_LOG_DIR;
+      delete process.env.LOG_DIR;
+
+      // Should not throw — uses default ~/Library/Logs/disclaude
+      const logger = createLogger('LaunchdDefault');
+
+      expect(logger).toBeDefined();
+    });
+
+    it('should write log messages without error in launchd mode', () => {
+      resetLogger();
+      process.env.NODE_ENV = 'test';
+      process.env.DISCLAUDE_LAUNCHD = '1';
+      process.env.DISCLAUDE_LOG_DIR = '/tmp/test-logs-launchd-write';
+
+      const logger = createLogger('LaunchdWrite');
+
+      expect(() => {
+        logger.info('Launchd mode log message');
+        logger.error({ err: new Error('test') }, 'Launchd error');
+      }).not.toThrow();
+    });
+  });
 });

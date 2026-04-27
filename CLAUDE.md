@@ -462,10 +462,10 @@ console.log('[DEBUG]', { context });
 **launchd (macOS):**
 
 ```bash
-npm run launchd:logs          # View recent logs (stdout + stderr)
-tail -100 /tmp/disclaude-stdout.log   # stdout directly
-tail -100 /tmp/disclaude-stderr.log   # stderr directly
-tail -f /tmp/disclaude-stdout.log     # Live tail (Ctrl+C to exit)
+npm run launchd:logs                                    # View recent logs (via launchd.mjs)
+tail -100 ~/Library/Logs/disclaude/disclaude-combined.log  # Combined log directly
+tail -f ~/Library/Logs/disclaude/disclaude-combined.log    # Live tail (Ctrl+C to exit)
+ls ~/Library/Logs/disclaude/                             # List rotated log files
 ```
 
 **PM2 (Linux):**

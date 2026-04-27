@@ -12,10 +12,12 @@ Diagnose the disclaude launchd service by analyzing pino JSON logs.
 
 ## Log Locations
 
-- **stdout**: `/tmp/disclaude-stdout.log` (all structured JSON logs)
-- **stderr**: `/tmp/disclaude-stderr.log` (typically empty)
+- **Combined**: `~/Library/Logs/disclaude/disclaude-combined.log` (all structured JSON logs with pino-roll rotation)
+- **Rotated**: `~/Library/Logs/disclaude/disclaude-combined.*.log.gz` (rotated and compressed by pino-roll)
 
 Log format is one JSON object per line with fields: `level`, `time`, `context`, `msg`, plus arbitrary data. **Note**: Some non-JSON lines (e.g., `✓ Scheduler started`) from `console.log` may be mixed in — all commands below handle this gracefully.
+
+Log directory permissions are 0o700 (owner-only) to prevent information leakage.
 
 ## Diagnostic Workflow
 
@@ -26,23 +28,30 @@ Run these steps **in order**. Use the Bash tool for every command. After each st
 ### Step 1: Quick Health Overview
 
 ```bash
+# Resolve log file path (uses ~/Library/Logs/disclaude/ on launchd, ./logs/ otherwise)
+LOG_FILE="${DISCLAUDE_LOG_DIR:-$HOME/Library/Logs/disclaude}/disclaude-combined.log"
+echo "Log file: $LOG_FILE"
+
 # Total lines and file size
-wc -l /tmp/disclaude-stdout.log
-ls -lh /tmp/disclaude-stdout.log
+wc -l "$LOG_FILE"
+ls -lh "$LOG_FILE"
 
 # Time range covered
-echo "=== First entry ===" && grep '^{' /tmp/disclaude-stdout.log | head -1 | jq -r '.time'
-echo "=== Last entry ===" && grep '^{' /tmp/disclaude-stdout.log | tail -1 | jq -r '.time'
+echo "=== First entry ===" && grep '^{' "$LOG_FILE" | head -1 | jq -r '.time'
+echo "=== Last entry ===" && grep '^{' "$LOG_FILE" | tail -1 | jq -r '.time'
 
 # Error and warning counts (fast: grep -c is ~10x faster than jq for counting)
 echo "=== Level distribution ==="
-grep -c '"level":"error"' /tmp/disclaude-stdout.log | xargs -I{} echo "  error: {}"
-grep -c '"level":"warn"' /tmp/disclaude-stdout.log | xargs -I{} echo "  warn: {}"
-grep -c '"level":"info"' /tmp/disclaude-stdout.log | xargs -I{} echo "  info: {}"
-grep -c '"level":"debug"' /tmp/disclaude-stdout.log | xargs -I{} echo "  debug: {}"
+grep -c '"level":"error"' "$LOG_FILE" | xargs -I{} echo "  error: {}"
+grep -c '"level":"warn"' "$LOG_FILE" | xargs -I{} echo "  warn: {}"
+grep -c '"level":"info"' "$LOG_FILE" | xargs -I{} echo "  info: {}"
+grep -c '"level":"debug"' "$LOG_FILE" | xargs -I{} echo "  debug: {}"
 
 # Active contexts (modules)
-echo "=== Top contexts ===" && grep '^{' /tmp/disclaude-stdout.log | jq -r '.context' | sort | uniq -c | sort -rn | head -15
+echo "=== Top contexts ===" && grep '^{' "$LOG_FILE" | jq -r '.context' | sort | uniq -c | sort -rn | head -15
+
+# Rotated files
+ls -lh "${DISCLAUDE_LOG_DIR:-$HOME/Library/Logs/disclaude}/" 2>/dev/null | head -10
 ```
 
 ### Step 2: Parse Arguments
@@ -65,77 +74,77 @@ cutoff=$(date -u -v-${MINUTES}M +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || python3 -
 
 Then pipe all subsequent commands through:
 ```bash
-grep '^{' /tmp/disclaude-stdout.log | jq -c "select(.time >= \"$cutoff\")"
+grep '^{' "$LOG_FILE" | jq -c "select(.time >= \"$cutoff\")"
 ```
 
 For `--context`, filter with:
 ```bash
-grep '^{' /tmp/disclaude-stdout.log | jq -c "select(.context == \"$CONTEXT_NAME\")"
+grep '^{' "$LOG_FILE" | jq -c "select(.context == \"$CONTEXT_NAME\")"
 ```
 
 ### Step 3: Error Analysis
 
 ```bash
 # All errors with context and message
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.level == "error") | {time, context, msg, err: .err.message, chatId}'
+grep '^{' "$LOG_FILE" | jq -c 'select(.level == "error") | {time, context, msg, err: .err.message, chatId}'
 
 # Group errors by type (msg)
-grep '^{' /tmp/disclaude-stdout.log | jq -r 'select(.level == "error") | .msg' | sort | uniq -c | sort -rn
+grep '^{' "$LOG_FILE" | jq -r 'select(.level == "error") | .msg' | sort | uniq -c | sort -rn
 
 # Group errors by context
-grep '^{' /tmp/disclaude-stdout.log | jq -r 'select(.level == "error") | .context' | sort | uniq -c | sort -rn
+grep '^{' "$LOG_FILE" | jq -r 'select(.level == "error") | .context' | sort | uniq -c | sort -rn
 
 # Extract unique error messages
-grep '^{' /tmp/disclaude-stdout.log | jq -r 'select(.level == "error") | "\(.context): \(.err.message // .msg)"' | sort -u
+grep '^{' "$LOG_FILE" | jq -r 'select(.level == "error") | "\(.context): \(.err.message // .msg)"' | sort -u
 ```
 
 ### Step 4: Warning Patterns
 
 ```bash
 # Warning frequency over time (grouped by 10-minute buckets)
-grep '^{' /tmp/disclaude-stdout.log | jq -r 'select(.level == "warn") | .time[:16]' | sort | uniq -c
+grep '^{' "$LOG_FILE" | jq -r 'select(.level == "warn") | .time[:16]' | sort | uniq -c
 
 # Top warning messages
-grep '^{' /tmp/disclaude-stdout.log | jq -r 'select(.level == "warn") | .msg' | sort | uniq -c | sort -rn | head -10
+grep '^{' "$LOG_FILE" | jq -r 'select(.level == "warn") | .msg' | sort | uniq -c | sort -rn | head -10
 
 # Dead connection detection pattern (common issue)
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.msg | test("Dead connection|dead.*connection"; "i")) | {time, context, elapsedMs, timeoutMs}'
+grep '^{' "$LOG_FILE" | jq -c 'select(.msg | test("Dead connection|dead.*connection"; "i")) | {time, context, elapsedMs, timeoutMs}'
 ```
 
 ### Step 5: WebSocket Connection Health
 
 ```bash
 # Connection state transitions
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.context == "WsConnectionManager" or .context == "FeishuChannel") | select(.msg | test("state changed|reconnect|established|closed|ready")) | {time, context, msg, oldState, newState, attempt}'
+grep '^{' "$LOG_FILE" | jq -c 'select(.context == "WsConnectionManager" or .context == "FeishuChannel") | select(.msg | test("state changed|reconnect|established|closed|ready")) | {time, context, msg, oldState, newState, attempt}'
 
 # Reconnect attempts and outcomes
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.msg | test("reconnect"; "i")) | {time, context, msg, attempt, reconnectAttempt}'
+grep '^{' "$LOG_FILE" | jq -c 'select(.msg | test("reconnect"; "i")) | {time, context, msg, attempt, reconnectAttempt}'
 
 # Reconnect success rate
-echo "=== Successful reconnects ===" && grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.msg | test("Reconnected successfully"))' | wc -l
-echo "=== Reconnect attempts ===" && grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.msg | test("Scheduling reconnect attempt"))' | wc -l
+echo "=== Successful reconnects ===" && grep '^{' "$LOG_FILE" | jq -c 'select(.msg | test("Reconnected successfully"))' | wc -l
+echo "=== Reconnect attempts ===" && grep '^{' "$LOG_FILE" | jq -c 'select(.msg | test("Scheduling reconnect attempt"))' | wc -l
 
 # Time between reconnects (detect loops)
-grep '^{' /tmp/disclaude-stdout.log | jq -r 'select(.msg | test("Reconnected successfully")) | .time' | head -20
+grep '^{' "$LOG_FILE" | jq -r 'select(.msg | test("Reconnected successfully")) | .time' | head -20
 ```
 
 ### Step 6: Agent / AcpClient Health
 
 ```bash
 # ACP client errors and reconnects
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.context == "AcpClient") | {time, level, msg, reason}'
+grep '^{' "$LOG_FILE" | jq -c 'select(.context == "AcpClient") | {time, level, msg, reason}'
 
 # ChatAgent errors
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.context == "ChatAgent" and .level == "error") | {time, msg, chatId, err: .err.message, messageCount}'
+grep '^{' "$LOG_FILE" | jq -c 'select(.context == "ChatAgent" and .level == "error") | {time, msg, chatId, err: .err.message, messageCount}'
 
 # ACP subprocess spawn events
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.msg | test("subprocess spawning")) | {time, context, command, ANTHROPIC_BASE_URL}'
+grep '^{' "$LOG_FILE" | jq -c 'select(.msg | test("subprocess spawning")) | {time, context, command, ANTHROPIC_BASE_URL}'
 
 # Timeout patterns
-grep '^{' /tmp/disclaude-stdout.log | jq -c 'select(.msg | test("timeout"; "i")) | {time, context, msg, reason}'
+grep '^{' "$LOG_FILE" | jq -c 'select(.msg | test("timeout"; "i")) | {time, context, msg, reason}'
 
 # Queries per chatId (load distribution)
-grep '^{' /tmp/disclaude-stdout.log | jq -r 'select(.context == "ChatAgent") | .chatId // "cli"' | sort | uniq -c | sort -rn | head -10
+grep '^{' "$LOG_FILE" | jq -r 'select(.context == "ChatAgent") | .chatId // "cli"' | sort | uniq -c | sort -rn | head -10
 ```
 
 ### Step 7: Synthesize Diagnosis

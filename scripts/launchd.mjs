@@ -23,7 +23,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, rmSync, chmodSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -41,8 +41,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
 const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 
-const STDOUT_LOG = '/tmp/disclaude-stdout.log';
-const STDERR_LOG = '/tmp/disclaude-stderr.log';
+/**
+ * Log directory for launchd-managed logs.
+ *
+ * Uses ~/Library/Logs/disclaude/ instead of /tmp/ to:
+ * - Avoid macOS 3-day auto-cleanup of /tmp (log loss)
+ * - Enable restrictive permissions (0o700) to prevent information leakage
+ * - Follow macOS conventions for application logs
+ *
+ * @see Issue #2898 — log security
+ * @see Issue #2934 — pino-roll log rotation
+ */
+const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
+const COMBINED_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,12 +83,35 @@ function ensureLaunchAgentsDir() {
   }
 }
 
+/**
+ * Ensure log directory exists with secure permissions.
+ *
+ * Creates ~/Library/Logs/disclaude/ with 0o700 (owner-only rwx)
+ * to prevent information leakage from log files.
+ *
+ * @see Issue #2898 — log security
+ */
+function ensureLogDir() {
+  if (!existsSync(LOG_DIR)) {
+    mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+  }
+  // Ensure correct permissions on existing directories (upgrade scenario)
+  try {
+    chmodSync(LOG_DIR, 0o700);
+  } catch {
+    // chmod may fail on some platforms; non-fatal
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plist generation
 // ---------------------------------------------------------------------------
 
 function generatePlist() {
   const nodePath = getNodePath();
+
+  // Ensure log directory exists with secure permissions
+  ensureLogDir();
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -102,11 +136,17 @@ function generatePlist() {
   <key>KeepAlive</key>
   <true/>
 
+  <!--
+    StandardOutPath/StandardErrorPath redirect to /dev/null.
+    Logging is handled by pino file transport + pino-roll rotation
+    via DISCLAUDE_LAUNCHD=1 and DISCLAUDE_LOG_DIR env vars.
+    @see Issue #2934 — pino-roll for launchd log rotation
+  -->
   <key>StandardOutPath</key>
-  <string>${STDOUT_LOG}</string>
+  <string>/dev/null</string>
 
   <key>StandardErrorPath</key>
-  <string>${STDERR_LOG}</string>
+  <string>/dev/null</string>
 
   <key>EnvironmentVariables</key>
   <dict>
@@ -116,6 +156,10 @@ function generatePlist() {
     <string>${homedir()}</string>
     <key>NODE_ENV</key>
     <string>production</string>
+    <key>DISCLAUDE_LAUNCHD</key>
+    <string>1</string>
+    <key>DISCLAUDE_LOG_DIR</key>
+    <string>${LOG_DIR}</string>
   </dict>
 </dict>
 </plist>
@@ -127,8 +171,7 @@ function generatePlist() {
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${CLI_ENTRY}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
-  console.log(`  Stdout: ${STDOUT_LOG}`);
-  console.log(`  Stderr: ${STDERR_LOG}`);
+  console.log(`  Log dir: ${LOG_DIR} (pino-roll rotation: 10M × 30 files)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,13 +246,25 @@ function cmdRestart() {
 function cmdLogs() {
   const lines = process.argv.find(a => a.startsWith('--lines='));
   const n = lines ? lines.split('=')[1] : '100';
-  console.log(`=== stdout (last ${n} lines) ===`);
+
+  // pino-roll writes to disclaude-combined.log (latest) + rotated files
+  // The latest log is always the un-numbered file
+  console.log(`=== Combined log: ${COMBINED_LOG} (last ${n} lines) ===`);
+  if (existsSync(COMBINED_LOG)) {
+    try {
+      run(`tail -n ${n} ${COMBINED_LOG}`, { silent: true });
+    } catch {}
+  } else {
+    console.log(`  (log file not found — service may not have started yet)`);
+  }
+
+  // Show rotated files info
   try {
-    run(`tail -n ${n} ${STDOUT_LOG}`, { silent: true });
-  } catch {}
-  console.log(`\n=== stderr (last ${n} lines) ===`);
-  try {
-    run(`tail -n ${n} ${STDERR_LOG}`, { silent: true });
+    const rotatedFiles = execSync(`ls -lh ${LOG_DIR}/disclaude-combined* 2>/dev/null || true`, { encoding: 'utf-8' }).trim();
+    if (rotatedFiles) {
+      console.log(`\n=== Rotated log files ===`);
+      console.log(rotatedFiles);
+    }
   } catch {}
 }
 
@@ -218,11 +273,12 @@ function cmdStatus() {
   if (result) {
     console.log(result.trim());
     console.log(`\nPlist: ${PLIST_PATH}`);
-    console.log(`Stdout: ${STDOUT_LOG}`);
-    console.log(`Stderr: ${STDERR_LOG}`);
+    console.log(`Log dir: ${LOG_DIR}`);
+    console.log(`Combined: ${COMBINED_LOG}`);
   } else {
     console.log('Service is NOT loaded.');
     console.log(`Plist: ${PLIST_PATH} (${existsSync(PLIST_PATH) ? 'exists' : 'not found'})`);
+    console.log(`Log dir: ${LOG_DIR}`);
   }
 }
 

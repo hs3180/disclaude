@@ -17,6 +17,7 @@ import pino, { Logger, Level, LoggerOptions } from 'pino';
 export type { Logger } from 'pino';
 import path from 'path';
 import fs from 'fs';
+import { homedir } from 'os';
 
 /**
  * Log levels supported by Pino
@@ -75,6 +76,16 @@ export function resetLogger(): void {
  */
 function isDevelopment(): boolean {
   return process.env.NODE_ENV !== 'production';
+}
+
+/**
+ * Detect if running under launchd (macOS service)
+ *
+ * Set by launchd plist via DISCLAUDE_LAUNCHD=1 environment variable.
+ * When true, file logging with pino-roll is activated.
+ */
+function isLaunchd(): boolean {
+  return process.env.DISCLAUDE_LAUNCHD === '1';
 }
 
 /**
@@ -153,6 +164,68 @@ function getProductionConfig(): LoggerOptions {
 }
 
 /**
+ * Resolve the log directory path.
+ *
+ * Priority:
+ * 1. LOG_DIR environment variable (explicit override)
+ * 2. DISCLAUDE_LOG_DIR (set by launchd plist)
+ * 3. Provided logDir parameter (from LoggerConfig)
+ * 4. Default: './logs'
+ */
+function resolveLogDir(configLogDir?: string): string {
+  return process.env.LOG_DIR || process.env.DISCLAUDE_LOG_DIR || configLogDir || './logs';
+}
+
+/**
+ * Ensure log directory exists with secure permissions.
+ *
+ * Creates the directory with 0o700 (owner-only rwx) to prevent
+ * information leakage from log files containing sensitive data.
+ *
+ * @see Issue #2898 — log security
+ */
+function ensureLogDir(logDir: string): string {
+  const logsPath = path.resolve(logDir);
+
+  if (!fs.existsSync(logsPath)) {
+    fs.mkdirSync(logsPath, { recursive: true, mode: 0o700 });
+  }
+
+  // Ensure correct permissions on existing directories (upgrade scenario)
+  try {
+    fs.chmodSync(logsPath, 0o700);
+  } catch {
+    // chmod may fail on some platforms; non-fatal
+  }
+
+  return logsPath;
+}
+
+/**
+ * Create a pino transport configuration for pino-roll file rotation.
+ *
+ * Uses pino's built-in transport (worker thread) mechanism for
+ * non-blocking file writes with automatic rotation.
+ *
+ * @param logDir - Directory for log files
+ * @returns Pino transport options for file rotation
+ */
+function createRollingFileTransport(logDir: string) {
+  const logsPath = ensureLogDir(logDir);
+  const logFile = path.join(logsPath, 'disclaude-combined');
+
+  return {
+    target: 'pino-roll',
+    options: {
+      file: logFile,
+      size: '10M',
+      limit: { count: 30 },
+      compress: true,
+    },
+  };
+}
+
+/**
  * Setup file logging with rotation
  *
  * Note: Dynamic import of pino-roll to avoid build issues
@@ -162,11 +235,8 @@ async function setupFileLogging(
 ): Promise<NodeJS.WritableStream> {
   try {
     // Create logs directory if it doesn't exist
-    const logsPath = path.resolve(process.cwd(), logDir);
-
-    if (!fs.existsSync(logsPath)) {
-      fs.mkdirSync(logsPath, { recursive: true });
-    }
+    const resolvedDir = resolveLogDir(logDir);
+    const logsPath = ensureLogDir(resolvedDir);
 
     // Dynamic import of pino-roll (no types available)
     const pinoRoll = (await import('pino-roll')) as unknown as (file: string, options: unknown) => NodeJS.WritableStream;
@@ -228,7 +298,7 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
   }
 
   const isDev = isDevelopment();
-  const logDir = config.logDir ?? process.env.LOG_DIR ?? './logs';
+  const logDir = resolveLogDir(config.logDir);
 
   // Get base configuration
   let options: LoggerOptions = isDev ? getDevelopmentConfig() : getProductionConfig();
@@ -309,8 +379,21 @@ export function createLogger(
   if (!rootLogger) {
     // Synchronous initialization for immediate use
     const isDev = isDevelopment();
-    const options = isDev ? getDevelopmentConfig() : getProductionConfig();
-    rootLogger = pino(options, process.stdout);
+    let options: LoggerOptions = isDev ? getDevelopmentConfig() : getProductionConfig();
+
+    // When running under launchd, set up pino transport for file rotation
+    // This replaces the launchd StandardOutPath/StandardErrorPath mechanism.
+    // @see Issue #2934 — pino-roll for launchd log rotation
+    if (isLaunchd()) {
+      const logDir = process.env.DISCLAUDE_LOG_DIR || path.resolve(homedir(), 'Library/Logs/disclaude');
+      const fileTransport = createRollingFileTransport(logDir);
+      options = {
+        ...options,
+        transport: fileTransport,
+      };
+    }
+
+    rootLogger = pino(options);
   }
 
   // Create child logger with context
@@ -332,8 +415,18 @@ export function createLogger(
 export function getRootLogger(): Logger {
   if (!rootLogger) {
     const isDev = isDevelopment();
-    const options = isDev ? getDevelopmentConfig() : getProductionConfig();
-    rootLogger = pino(options, process.stdout);
+    let options: LoggerOptions = isDev ? getDevelopmentConfig() : getProductionConfig();
+
+    if (isLaunchd()) {
+      const logDir = process.env.DISCLAUDE_LOG_DIR || path.resolve(homedir(), 'Library/Logs/disclaude');
+      const fileTransport = createRollingFileTransport(logDir);
+      options = {
+        ...options,
+        transport: fileTransport,
+      };
+    }
+
+    rootLogger = pino(options);
   }
   return rootLogger;
 }
