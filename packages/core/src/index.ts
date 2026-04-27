@@ -195,6 +195,16 @@ export {
   type TempChatRecord,
   type TempChatResponse,
   type RegisterTempChatOptions,
+  // Issue #2947: Bot group chat mapping
+  BotChatMappingStore,
+  makeMappingKey,
+  parseGroupNameToKey,
+  purposeFromKey,
+  type MappingPurpose,
+  type MappingEntry,
+  type MappingTable,
+  type RebuildResult,
+  type BotChatMappingStoreOptions,
   // Issue #1041: Full schedule module migrated from worker-node
   ScheduleFileScanner,
   ScheduleFileWatcher,
