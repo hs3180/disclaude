@@ -44,7 +44,7 @@ export interface StreamingMessageContent {
 }
 
 /**
- * 流式用户消息（用于 MessageChannel 和 Pilot）
+ * 流式用户消息（用于 MessageChannel 和 ChatAgent）
  *
  * 这是 SDKUserMessage 的统一抽象，与具体 SDK 无关。
  */

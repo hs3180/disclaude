@@ -13,7 +13,7 @@
  * @module agents/worker-pool/types
  */
 
-import type { PilotCallbacks } from '../pilot/index.js';
+import type { ChatAgentCallbacks } from '../chat-agent/index.js';
 import {
   type BaseTaskOptions,
   type TaskStatus,
@@ -38,7 +38,7 @@ export interface TaskOptions extends BaseTaskOptions {
   /** Chat ID for message delivery */
   chatId: string;
   /** Callbacks for sending messages */
-  callbacks: PilotCallbacks;
+  callbacks: ChatAgentCallbacks;
   /** Metadata for task tracking */
   metadata?: Record<string, unknown>;
   /** Sender OpenId for context */

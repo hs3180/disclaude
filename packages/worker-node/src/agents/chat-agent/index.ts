@@ -1,21 +1,21 @@
 /**
- * Pilot - Platform-agnostic direct chat abstraction with Streaming Input.
+ * ChatAgent - Platform-agnostic direct chat abstraction with Streaming Input.
  *
  * Issue #644: Refactored to ensure complete isolation between chat sessions.
- * Each Pilot instance is bound to a single chatId at construction time.
+ * Each ChatAgent instance is bound to a single chatId at construction time.
  *
  * Issue #697: Extracted types and message builder to separate modules.
  *
  * Key Features:
  * - Streaming Input Mode: Uses SDK's streamInput() for real-time message delivery
- * - Single chatId binding: Each Pilot serves exactly one chatId
+ * - Single chatId binding: Each ChatAgent serves exactly one chatId
  * - Persistent Context: Session context persists until manual reset (/reset) or shutdown
  *
  * Architecture (Issue #644):
  * ```
  * AgentPool
- *     └── Map<chatId, Pilot>
- *             └── Each Pilot handles ONE chatId only
+ *     └── Map<chatId, ChatAgent>
+ *             └── Each ChatAgent handles ONE chatId only
  *                     └── Single Query + Channel pair
  * ```
  *
@@ -23,7 +23,7 @@
  * - ConversationOrchestrator: Thread root and context tracking
  * - RestartManager: Restart policy and circuit breaker
  * - MessageBuilder: Enhanced content building (Issue #697)
- * - Pilot: Orchestration, callbacks, and main logic flow
+ * - ChatAgent: Orchestration, callbacks, and main logic flow
  *
  * Extends BaseAgent to inherit:
  * - SDK configuration building
@@ -34,31 +34,31 @@
 
 import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
-import type { PilotCallbacks, PilotConfig } from './types.js';
+import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
 
 // Re-export types for backward compatibility
-export type { PilotCallbacks, PilotConfig, MessageData } from './types.js';
+export type { ChatAgentCallbacks, ChatAgentConfig, MessageData } from './types.js';
 
 /**
- * Pilot - Platform-agnostic direct chat abstraction with Streaming Input.
+ * ChatAgent - Platform-agnostic direct chat abstraction with Streaming Input.
  *
- * Issue #644: Each Pilot instance is bound to a single chatId.
- * No session management needed - each Pilot = one chatId.
+ * Issue #644: Each ChatAgent instance is bound to a single chatId.
+ * No session management needed - each ChatAgent = one chatId.
  */
-export class Pilot extends BaseAgent implements ChatAgent {
+export class ChatAgent extends BaseAgent implements ChatAgent {
   /** Agent type identifier (Issue #282) */
   readonly type = 'chat' as const;
 
   /** Agent name for logging */
-  readonly name = 'Pilot';
+  readonly name = 'ChatAgent';
 
-  /** The chatId this Pilot is bound to (Issue #644) */
+  /** The chatId this ChatAgent is bound to (Issue #644) */
   private readonly boundChatId: string;
 
-  private readonly callbacks: PilotCallbacks;
+  private readonly callbacks: ChatAgentCallbacks;
 
   // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
   private queryHandle?: QueryHandle;
@@ -82,7 +82,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
   private firstMessageHistoryLoaded = false;
   private firstMessageHistoryLoadPromise?: Promise<void>;
 
-  constructor(config: PilotConfig) {
+  constructor(config: ChatAgentConfig) {
     super(config);
 
     // Issue #644: Bind chatId at construction time
@@ -103,15 +103,15 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
 
-    this.logger.info({ chatId: this.boundChatId }, 'Pilot created for chatId');
+    this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');
   }
 
   protected getAgentName(): string {
-    return 'Pilot';
+    return 'ChatAgent';
   }
 
   /**
-   * Get the chatId this Pilot is bound to.
+   * Get the chatId this ChatAgent is bound to.
    */
   getChatId(): string {
     return this.boundChatId;
@@ -122,7 +122,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    *
    * This method loads recent chat history from the file-based message logs
    * to restore context after service restart. The history is loaded once
-   * and cached for the lifetime of this Pilot instance.
+   * and cached for the lifetime of this ChatAgent instance.
    *
    * @returns Promise that resolves when history is loaded
    */
@@ -283,13 +283,13 @@ export class Pilot extends BaseAgent implements ChatAgent {
   /**
    * Start the agent session (ChatAgent interface).
    *
-   * Called once before processing any messages. For Pilot, this is a no-op
+   * Called once before processing any messages. For ChatAgent, this is a no-op
    * since sessions are created on-demand via processMessage().
    *
    * @returns Promise that resolves when started
    */
   start(): Promise<void> {
-    this.logger.debug({ chatId: this.boundChatId }, 'Pilot start() called - session is created on-demand');
+    this.logger.debug({ chatId: this.boundChatId }, 'ChatAgent start() called - session is created on-demand');
     return Promise.resolve();
   }
 
@@ -420,7 +420,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
         { boundChatId: this.boundChatId, receivedChatId: chatId },
         'executeOnce called with wrong chatId'
       );
-      throw new Error(`Pilot bound to ${this.boundChatId} cannot execute for ${chatId}`);
+      throw new Error(`ChatAgent bound to ${this.boundChatId} cannot execute for ${chatId}`);
     }
 
     this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');
@@ -855,7 +855,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
   /**
    * Reset the agent session (ChatAgent interface).
    *
-   * Clears conversation history and state for this Pilot's bound chatId.
+   * Clears conversation history and state for this ChatAgent's bound chatId.
    * By default, does NOT reload history context after reset, giving a clean session.
    *
    * @param chatId - Optional chat ID (must match bound chatId if provided)
@@ -871,7 +871,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
       return;
     }
 
-    this.logger.info({ chatId: this.boundChatId, keepContext }, 'Resetting Pilot session');
+    this.logger.info({ chatId: this.boundChatId, keepContext }, 'Resetting ChatAgent session');
 
     // Mark session as inactive BEFORE closing to signal explicit close
     this.isSessionActive = false;
@@ -915,14 +915,14 @@ export class Pilot extends BaseAgent implements ChatAgent {
   }
 
   /**
-   * Get the number of active sessions (always 0 or 1 for bound Pilot).
+   * Get the number of active sessions (always 0 or 1 for bound ChatAgent).
    */
   getActiveSessionCount(): number {
     return this.isSessionActive ? 1 : 0;
   }
 
   /**
-   * Check if this Pilot has an active session.
+   * Check if this ChatAgent has an active session.
    */
   hasActiveSession(): boolean {
     return this.isSessionActive;
@@ -986,7 +986,7 @@ export class Pilot extends BaseAgent implements ChatAgent {
    */
   async shutdown(): Promise<void> {
     await Promise.resolve(); // No-op to satisfy linter
-    this.logger.info({ chatId: this.boundChatId }, 'Shutting down Pilot');
+    this.logger.info({ chatId: this.boundChatId }, 'Shutting down ChatAgent');
 
     // Mark session as inactive
     this.isSessionActive = false;
@@ -1007,6 +1007,6 @@ export class Pilot extends BaseAgent implements ChatAgent {
     // Clear restart states
     this.restartManager.clearAll();
 
-    this.logger.info({ chatId: this.boundChatId }, 'Pilot shutdown complete');
+    this.logger.info({ chatId: this.boundChatId }, 'ChatAgent shutdown complete');
   }
 }

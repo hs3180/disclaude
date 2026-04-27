@@ -29,7 +29,7 @@ export { WorkerNode, type WorkerNodeOptions } from './worker-node.js';
 export type {
   WorkerNodeDependencies,
   AgentPoolInterface,
-  PilotCallbacks,
+  ChatAgentCallbacks,
   ChatAgent,
   ChatAgentFactory,
   SchedulerInterface,
@@ -83,11 +83,11 @@ export {
 
 export type { AgentMessage } from '@disclaude/core';
 
-// Agents module (Issue #1041 - AgentFactory and Pilot)
-export { AgentFactory, type AgentCreateOptions, toPilotCallbacks } from './agents/factory.js';
-export { Pilot, type PilotConfig } from './agents/pilot/index.js';
-// Note: PilotCallbacks is already exported from ./types.js above
-// PilotConfig now includes optional messageBuilderOptions (Issue #1499)
+// Agents module (Issue #1041 - AgentFactory and ChatAgent)
+export { AgentFactory, type AgentCreateOptions, toChatAgentCallbacks } from './agents/factory.js';
+export { ChatAgent, type ChatAgentConfig } from './agents/chat-agent/index.js';
+// Note: ChatAgentCallbacks is already exported from ./types.js above
+// ChatAgentConfig now includes optional messageBuilderOptions (Issue #1499)
 
 // Conversation module (Issue #1041 - now re-exported from core)
 export {

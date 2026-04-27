@@ -304,7 +304,7 @@ export abstract class BaseAgent implements Disposable {
   /**
    * Execute a streaming query.
    *
-   * For conversational agents (Pilot) that use dynamic input generators.
+   * For conversational agents (ChatAgent) that use dynamic input generators.
    * Input is an AsyncGenerator that yields user messages on demand.
    *
    * This method creates a query and returns both the QueryHandle

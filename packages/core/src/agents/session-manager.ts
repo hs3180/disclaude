@@ -1,14 +1,14 @@
 /**
- * SessionManager - Manages QueryHandle and MessageChannel lifecycle for Pilot.
+ * SessionManager - Manages QueryHandle and MessageChannel lifecycle for ChatAgent.
  *
- * Extracts session management concerns from Pilot to improve separation of concerns:
+ * Extracts session management concerns from ChatAgent to improve separation of concerns:
  * - QueryHandle instance management (agent interaction)
  * - MessageChannel management (conversation flow)
  * - Session lifecycle (create, get, delete, reset)
  *
  * Architecture:
  * ```
- * Pilot → SessionManager → { QueryHandle, MessageChannel }
+ * ChatAgent → SessionManager → { QueryHandle, MessageChannel }
  *                     ↓
  *              Per-chatId session tracking
  * ```
@@ -21,7 +21,7 @@ import type { Logger } from '../utils/logger.js';
 /**
  * Represents an active session for a chatId.
  */
-export interface PilotSession {
+export interface ChatAgentSession {
   /** The QueryHandle for SDK interaction */
   handle: QueryHandle;
   /** The MessageChannel for streaming input */
@@ -39,7 +39,7 @@ export interface SessionManagerConfig {
 }
 
 /**
- * SessionManager - Manages Pilot session lifecycle.
+ * SessionManager - Manages ChatAgent session lifecycle.
  *
  * Each chatId gets its own session containing a QueryHandle and MessageChannel.
  * This class handles:
@@ -50,7 +50,7 @@ export interface SessionManagerConfig {
  */
 export class SessionManager {
   private readonly logger: Logger;
-  private readonly sessions = new Map<string, PilotSession>();
+  private readonly sessions = new Map<string, ChatAgentSession>();
 
   constructor(config: SessionManagerConfig) {
     this.logger = config.logger;
@@ -67,7 +67,7 @@ export class SessionManager {
    * Get an existing session for the chatId.
    * Returns undefined if no session exists.
    */
-  get(chatId: string): PilotSession | undefined {
+  get(chatId: string): ChatAgentSession | undefined {
     return this.sessions.get(chatId);
   }
 
@@ -93,8 +93,8 @@ export class SessionManager {
    * @param channel - The MessageChannel instance
    * @returns The created session
    */
-  create(chatId: string, handle: QueryHandle, channel: MessageChannel): PilotSession {
-    const session: PilotSession = {
+  create(chatId: string, handle: QueryHandle, channel: MessageChannel): ChatAgentSession {
+    const session: ChatAgentSession = {
       handle,
       channel,
       createdAt: new Date(),

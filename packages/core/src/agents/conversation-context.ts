@@ -1,7 +1,7 @@
 /**
- * ConversationContext - Manages conversation context for Pilot.
+ * ConversationContext - Manages conversation context for ChatAgent.
  *
- * Extracts context management concerns from Pilot:
+ * Extracts context management concerns from ChatAgent:
  * - Thread root tracking (for reply chains)
  * - Message metadata (chatId, messageId, senderOpenId)
  *

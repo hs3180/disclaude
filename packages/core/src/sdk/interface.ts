@@ -56,7 +56,7 @@ export interface IAgentSDKProvider {
   /**
    * 流式查询（动态输入）
    *
-   * 用于对话型 Agent（Pilot），接受动态输入流，
+   * 用于对话型 Agent（ChatAgent），接受动态输入流，
    * 支持会话持久化和多轮对话。
    *
    * @param input - 输入异步生成器

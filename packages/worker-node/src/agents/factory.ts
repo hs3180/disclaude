@@ -8,7 +8,7 @@
  * - createTaskAgent: Create task agents - short-lived, disposed after task
  *
  * Issue #711: Agent Lifecycle Management Strategy
- * Issue #1501: Simplified to ChatAgent-only (Pilot). SkillAgent and Subagent removed.
+ * Issue #1501: Simplified to ChatAgent-only (ChatAgent). SkillAgent and Subagent removed.
  *
  * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
  * |----------------|----------------|--------------|------------------|
@@ -20,7 +20,7 @@
  *
  * @example
  * ```typescript
- * // Create a Pilot (ChatAgent) - long-lived, store in AgentPool
+ * // Create a ChatAgent (ChatAgent) - long-lived, store in AgentPool
  * const pilot = AgentFactory.createChatAgent('pilot', 'chat-123', callbacks);
  *
  * // Create a ScheduleAgent - short-lived, dispose after execution
@@ -36,18 +36,18 @@
  */
 
 import { Config, type ChatAgent, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
-import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
+import { ChatAgent, type ChatAgentConfig, type ChatAgentCallbacks } from './chat-agent/index.js';
 
 // ============================================================================
-// Issue #1412: Helper function for converting SchedulerCallbacks to PilotCallbacks
+// Issue #1412: Helper function for converting SchedulerCallbacks to ChatAgentCallbacks
 // ============================================================================
 
 /**
- * Convert SchedulerCallbacks to PilotCallbacks with no-op implementations.
+ * Convert SchedulerCallbacks to ChatAgentCallbacks with no-op implementations.
  *
  * Scheduled tasks typically only need sendMessage capability. This helper
  * provides no-op implementations for sendCard, sendFile, and onDone to
- * satisfy the PilotCallbacks interface.
+ * satisfy the ChatAgentCallbacks interface.
  *
  * ⚠️ Scheduled task scenarios only require sendMessage capability.
  * sendCard, sendFile, and onDone are all no-op implementations.
@@ -58,18 +58,18 @@ import { Pilot, type PilotConfig, type PilotCallbacks } from './pilot/index.js';
  * Issue #1446: Documents limitation of callback conversion.
  *
  * @param callbacks - SchedulerCallbacks with sendMessage method
- * @returns PilotCallbacks with functional sendMessage and no-op other methods
+ * @returns ChatAgentCallbacks with functional sendMessage and no-op other methods
  *
  * @example
  * ```typescript
  * const schedulerCallbacks: SchedulerCallbacks = {
  *   sendMessage: async (chatId, msg) => { ... }
  * };
- * const pilotCallbacks = toPilotCallbacks(schedulerCallbacks);
+ * const pilotCallbacks = toChatAgentCallbacks(schedulerCallbacks);
  * const agent = AgentFactory.createScheduleAgent(chatId, pilotCallbacks);
  * ```
  */
-export function toPilotCallbacks(callbacks: SchedulerCallbacks): PilotCallbacks {
+export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCallbacks {
   return {
     sendMessage: callbacks.sendMessage,
     // No-op: Card sending not typically needed for scheduled tasks
@@ -107,7 +107,7 @@ export interface AgentCreateOptions {
  * Factory for creating Agent instances with unified configuration.
  *
  * This class implements AgentFactoryInterface with type-specific factory methods.
- * Issue #1501: Simplified to only create ChatAgent (Pilot) instances.
+ * Issue #1501: Simplified to only create ChatAgent (ChatAgent) instances.
  *
  * Each method fetches default configuration from Config.getAgentConfig()
  * and allows optional overrides.
@@ -138,13 +138,13 @@ export class AgentFactory {
   /**
    * Create a ChatAgent instance by name.
    *
-   * Issue #644: Pilot now requires chatId binding at creation time.
+   * Issue #644: ChatAgent now requires chatId binding at creation time.
    * Issue #711: ChatAgents are long-lived and should be stored in AgentPool.
    *
    * @param name - Agent name ('pilot')
    * @param args - Additional arguments:
-   *   - args[0]: chatId | PilotCallbacks - ChatId string OR callbacks object (legacy)
-   *   - args[1]: PilotCallbacks | AgentCreateOptions - Callbacks OR options
+   *   - args[0]: chatId | ChatAgentCallbacks - ChatId string OR callbacks object (legacy)
+   *   - args[1]: ChatAgentCallbacks | AgentCreateOptions - Callbacks OR options
    *   - args[2]: AgentCreateOptions - Optional configuration overrides (when chatId provided)
    * @returns ChatAgent instance
    *
@@ -162,33 +162,33 @@ export class AgentFactory {
     if (name === 'pilot') {
       // Issue #644: Support both new (chatId, callbacks, options) and legacy (callbacks, options) patterns
       let chatId: string;
-      let callbacks: PilotCallbacks;
+      let callbacks: ChatAgentCallbacks;
       let options: AgentCreateOptions;
 
       if (typeof args[0] === 'string') {
         // New pattern: createChatAgent('pilot', chatId, callbacks, options)
-        const [id, cb, opt] = args as [string, PilotCallbacks, AgentCreateOptions?];
+        const [id, cb, opt] = args as [string, ChatAgentCallbacks, AgentCreateOptions?];
         chatId = id;
         callbacks = cb;
         options = opt || {};
       } else {
         // Legacy pattern: createChatAgent('pilot', callbacks, options)
         // This is deprecated but kept for backward compatibility
-        const [cb, opt] = args as [PilotCallbacks, AgentCreateOptions?];
+        const [cb, opt] = args as [ChatAgentCallbacks, AgentCreateOptions?];
         chatId = 'default';
         callbacks = cb;
         options = opt || {};
       }
 
       const baseConfig = this.getBaseConfig(options);
-      const config: PilotConfig = {
+      const config: ChatAgentConfig = {
         ...baseConfig,
         chatId,
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
       };
 
-      return new Pilot(config);
+      return new ChatAgent(config);
     }
     throw new Error(`Unknown ChatAgent: ${name}`);
   }
@@ -221,18 +221,18 @@ export class AgentFactory {
    */
   static createScheduleAgent(
     chatId: string,
-    callbacks: PilotCallbacks,
+    callbacks: ChatAgentCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
     const baseConfig = this.getBaseConfig(options);
-    const config: PilotConfig = {
+    const config: ChatAgentConfig = {
       ...baseConfig,
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
     };
 
-    return new Pilot(config);
+    return new ChatAgent(config);
   }
 
   /**
@@ -259,17 +259,17 @@ export class AgentFactory {
    */
   static createTaskAgent(
     chatId: string,
-    callbacks: PilotCallbacks,
+    callbacks: ChatAgentCallbacks,
     options: AgentCreateOptions = {}
   ): ChatAgent {
     const baseConfig = this.getBaseConfig(options);
-    const config: PilotConfig = {
+    const config: ChatAgentConfig = {
       ...baseConfig,
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
     };
 
-    return new Pilot(config);
+    return new ChatAgent(config);
   }
 }

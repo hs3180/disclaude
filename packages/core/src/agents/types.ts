@@ -3,14 +3,14 @@
  *
  * This module defines the core interfaces for the Agent architecture (Issue #1501):
  *
- * Simplified Architecture (Pilot-only):
- * - Pilot is the single Agent implementation in code
+ * Simplified Architecture (ChatAgent-only):
+ * - ChatAgent is the single Agent implementation in code
  * - Subagent functionality is defined via .md files in .claude/agents/
  * - Managed by Claude Code's native subagent mechanism (Issue #1410)
  *
  * Key Design Principles (Issue #1501):
- * 1. **Pilot as the only Agent implementation** - Single code-level Agent type
- * 2. **SkillAgent removed** - Skills handled via Pilot or .md-defined subagents
+ * 1. **ChatAgent as the only Agent implementation** - Single code-level Agent type
+ * 2. **SkillAgent removed** - Skills handled via ChatAgent or .md-defined subagents
  * 3. **Subagent via .md files** - Defined in .claude/agents/, managed by Claude Code
  *
  * @module agents/types
@@ -30,7 +30,7 @@ import type { AgentMessage, FileRef } from '../types/index.js';
  *
  * @example
  * ```typescript
- * const agent = new Pilot(config);
+ * const agent = new ChatAgent(config);
  * try {
  *   await agent.start();
  *   // use agent...
@@ -87,14 +87,14 @@ export interface UserInput {
  * ChatAgent - Continuous conversation agent with streaming input/output.
  *
  * This is the **only** agent interface in the simplified architecture (Issue #1501).
- * Pilot implements this interface and serves as the universal agent for all scenarios:
+ * ChatAgent implements this interface and serves as the universal agent for all scenarios:
  * - Long-lived conversation (via handleInput + processMessage)
  * - One-shot task execution (via executeOnce) - replaces former SkillAgent/Subagent
  * - Scheduled tasks (via createScheduleAgent factory method)
  *
  * @example
  * ```typescript
- * const chatAgent: ChatAgent = new Pilot(config);
+ * const chatAgent: ChatAgent = new ChatAgent(config);
  * await chatAgent.start();
  *
  * // Process user messages
@@ -252,7 +252,7 @@ export interface BaseAgentConfig {
 }
 
 /**
- * Configuration for ChatAgent (Pilot).
+ * Configuration for ChatAgent (ChatAgent).
  *
  * Extends BaseAgentConfig with platform-specific callbacks
  * for streaming conversation support.
@@ -412,7 +412,7 @@ export function clearRuntimeContext(): void {
  * Factory for creating Agent instances.
  *
  * Issue #711: Agent Lifecycle Management Strategy
- * Issue #1501: Simplified to only create ChatAgent (Pilot) instances
+ * Issue #1501: Simplified to only create ChatAgent (ChatAgent) instances
  *
  * | Agent Type     | chatId Binding | Max Lifetime | Storage Location |
  * |----------------|----------------|--------------|------------------|
@@ -421,7 +421,7 @@ export function clearRuntimeContext(): void {
  * | TaskAgent      | ❌ No          | Task finish  | None (temporary) |
  *
  * Note: SkillAgent and Subagent have been removed (Issue #1501).
- * - Skills are now handled via Pilot.executeOnce() or .md-defined subagents
+ * - Skills are now handled via ChatAgent.executeOnce() or .md-defined subagents
  * - Subagents are defined via .claude/agents/*.md files (Issue #1410)
  *
  * @example

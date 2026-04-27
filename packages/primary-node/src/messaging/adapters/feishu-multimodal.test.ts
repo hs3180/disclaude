@@ -1,5 +1,5 @@
 /**
- * Tests for multimodal message handling in Pilot agent.
+ * Tests for multimodal message handling in ChatAgent agent.
  *
  * Issue #808: Test native multimodal model support in disclaude.
  *
