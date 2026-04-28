@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData, isStartupFailure, extractStartupDetail, SDKQueryError } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -760,6 +760,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
     let messageCount = 0;
+    // Issue #2920: Track session start time for startup failure detection
+    const sessionStartTime = Date.now();
 
     try {
       for await (const { parsed } of iterator) {
@@ -801,15 +803,38 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
     } catch (error) {
       iteratorError = error as Error;
+      const elapsedMs = Date.now() - sessionStartTime;
+
       this.logger.error({
         err: iteratorError,
         chatId,
         messageCount,
+        elapsedMs,
+        isStartup: isStartupFailure(iteratorError, messageCount, elapsedMs),
         errorMessage: iteratorError.message,
         errorStack: iteratorError.stack,
         errorName: iteratorError.constructor.name,
         errorCause: iteratorError.cause,
+        // Issue #2920: Include stderr in error log for diagnostics
+        stderr: iteratorError instanceof SDKQueryError ? iteratorError.stderr.slice(-500) : undefined,
       }, 'Iterator error');
+
+      // Issue #2920: Detect startup failures and show actionable error messages
+      if (isStartupFailure(iteratorError, messageCount, elapsedMs)) {
+        const detail = extractStartupDetail(iteratorError);
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        this.logger.error(
+          { chatId, detail, stderr: iteratorError instanceof SDKQueryError ? iteratorError.stderr.slice(-500) : undefined },
+          'Agent startup failure detected — skipping restart'
+        );
+        await this.callbacks.sendMessage(
+          chatId,
+          `❌ Agent 启动失败: ${detail}\n\n请检查配置后发送 /reset 重置会话。`,
+          threadRoot,
+        );
+        this.isSessionActive = false;
+        return;
+      }
 
       const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);

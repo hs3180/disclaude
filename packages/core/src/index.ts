@@ -41,6 +41,10 @@ export {
   clearProviderCache,
   isProviderAvailable,
   type ProviderType,
+  // Issue #2920: Startup diagnostic utilities
+  SDKQueryError,
+  extractStartupDetail,
+  isStartupFailure,
 } from './sdk/index.js';
 
 // Export SDK types with Sdk prefix to avoid conflicts with extended types

@@ -18,6 +18,7 @@ import type {
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 import { adaptOptions, adaptInput } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
+import { createStderrCollector, SDKQueryError } from './startup-diagnostic.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -51,7 +52,13 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       throw new Error('Provider has been disposed');
     }
 
+    // Issue #2920: Capture stderr for startup diagnostics
+    const stderrCollector = createStderrCollector();
+
     const sdkOptions = adaptOptions(options);
+    // Inject stderr callback (SDK-specific option, not part of AgentQueryOptions)
+    (sdkOptions as Record<string, unknown>).stderr = stderrCollector.callback;
+
     const adaptedInput = adaptInput(input);
 
     const queryResult = query({
@@ -59,8 +66,17 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       options: sdkOptions as Parameters<typeof query>[0]['options'],
     });
 
-    for await (const message of queryResult) {
-      yield adaptSDKMessage(message);
+    try {
+      for await (const message of queryResult) {
+        yield adaptSDKMessage(message);
+      }
+    } catch (error) {
+      const originalError = error instanceof Error ? error : new Error(String(error));
+      logger.error({
+        err: originalError,
+        stderr: stderrCollector.getOutput().slice(-500),
+      }, 'queryOnce error with stderr');
+      throw new SDKQueryError(originalError, stderrCollector.getOutput());
     }
   }
 
@@ -72,7 +88,12 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       throw new Error('Provider has been disposed');
     }
 
+    // Issue #2920: Capture stderr for startup diagnostics
+    const stderrCollector = createStderrCollector();
+
     const sdkOptions = adaptOptions(options);
+    // Inject stderr callback (SDK-specific option, not part of AgentQueryOptions)
+    (sdkOptions as Record<string, unknown>).stderr = stderrCollector.callback;
 
     // 创建输入适配器生成器
     // IMPORTANT: Use manual iteration instead of `for await...of` to avoid blocking on input
@@ -109,8 +130,13 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           yield adaptSDKMessage(message);
         }
       } catch (error) {
-        logger.error({ err: error, messageCount }, 'adaptIterator error');
-        throw error;
+        const originalError = error instanceof Error ? error : new Error(String(error));
+        logger.error({
+          err: originalError,
+          messageCount,
+          stderr: stderrCollector.getOutput().slice(-500),
+        }, 'adaptIterator error with stderr');
+        throw new SDKQueryError(originalError, stderrCollector.getOutput());
       }
     }
 

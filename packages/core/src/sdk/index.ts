@@ -116,6 +116,9 @@ export type {
 
 export { ClaudeSDKProvider } from './providers/index.js';
 
+// Issue #2920: Startup diagnostic utilities for subprocess error handling
+export { SDKQueryError, extractStartupDetail, isStartupFailure } from './providers/index.js';
+
 // ============================================================================
 // 工厂函数导出
 // ============================================================================

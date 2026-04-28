@@ -12,6 +12,22 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Issue #2920: Define SDKQueryError mock class outside the factory
+// so tests can reference it directly
+class MockSDKQueryError extends Error {
+  stderr: string;
+  originalError: Error;
+  exitCode: number | null;
+  constructor(originalError: Error, stderr: string) {
+    super(originalError.message);
+    this.name = 'SDKQueryError';
+    this.stderr = stderr;
+    this.originalError = originalError;
+    const m = originalError.message.match(/exited with code (\d+)/);
+    this.exitCode = m ? parseInt(m[1]) : null;
+  }
+}
+
 // Mock all @disclaude/core dependencies
 vi.mock('@disclaude/core', () => ({
   Config: {
@@ -58,6 +74,26 @@ vi.mock('@disclaude/core', () => ({
     deleteThreadRoot: vi.fn(),
     clearAll: vi.fn(),
   })),
+  // Issue #2920: Mock startup diagnostic utilities
+  SDKQueryError: MockSDKQueryError,
+  isStartupFailure: vi.fn((error: any, messageCount: number, elapsedMs: number) => {
+    if (!error) {return false;}
+    if (messageCount > 0) {return false;}
+    if (elapsedMs < 3000) {return true;}
+    if (error.message?.toLowerCase().includes('exited with code')) {return true;}
+    return false;
+  }),
+  extractStartupDetail: vi.fn((error: any) => {
+    const stderr = error.stderr || '';
+    if (stderr.includes('MCP server') && stderr.includes('failed to initialize')) {
+      const m = stderr.match(/MCP server "([^"]+)"/);
+      return `MCP server "${m?.[1] ?? 'unknown'}" 初始化失败`;
+    }
+    if (stderr.includes('401') || stderr.includes('authentication')) {
+      return 'API 认证失败 (401): 令牌已过期或验证不正确';
+    }
+    return error.message || 'Unknown error';
+  }),
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({
@@ -343,6 +379,135 @@ describe('ChatAgent (primary-node)', () => {
       await agent.shutdown();
       expect(ac.signal.aborted).toBe(true);
       expect((agent as any).abortController).toBeNull();
+    });
+  });
+
+  describe('Issue #2920: startup failure detection', () => {
+    it('should show actionable error for startup failures without retrying', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_fail',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Create an iterator that immediately throws (simulating startup failure)
+      const startupError = new MockSDKQueryError(
+        new Error('Claude Code process exited with code 1'),
+        'Error: MCP server "bad-server" failed to initialize: command is empty'
+      );
+
+      async function* failingIterator() {
+        throw startupError;
+      }
+
+      // Override createQueryStream to return a failing iterator
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: failingIterator(),
+      });
+
+      // Start session by sending a message
+      void agent.processMessage('oc_startup_fail', 'hello', 'msg_1');
+
+      // Wait for processIterator to handle the error
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // Verify session was deactivated
+      expect(agent.hasActiveSession()).toBe(false);
+
+      // Verify the error message sent to user contains actionable info
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_fail',
+        expect.stringContaining('Agent 启动失败'),
+        'thread-root-123',
+      );
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_fail',
+        expect.stringContaining('MCP server'),
+        'thread-root-123',
+      );
+
+      // Verify it did NOT attempt restart (no "正在重新连接" message)
+      const calls = callbacks.sendMessage.mock.calls.map((c: any) => c[1]);
+      const hasRestartMessage = calls.some((msg: string) =>
+        msg.includes('正在重新连接')
+      );
+      expect(hasRestartMessage).toBe(false);
+    });
+
+    it('should show actionable error for auth failure at startup', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_auth_fail',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      const authError = new MockSDKQueryError(
+        new Error('Claude Code process exited with code 1'),
+        'Error: 401 authentication failed: token expired'
+      );
+
+      async function* failingIterator() {
+        throw authError;
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: failingIterator(),
+      });
+
+      void agent.processMessage('oc_auth_fail', 'hello', 'msg_1');
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      expect(agent.hasActiveSession()).toBe(false);
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_auth_fail',
+        expect.stringContaining('API 认证失败'),
+        'thread-root-123',
+      );
+    });
+
+    it('should still use restart mechanism for runtime errors (non-startup)', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_runtime_err',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Create an iterator that yields some messages then throws
+      // This simulates a RUNTIME error (not startup), since messages were received
+      async function* runtimeErrorIterator() {
+        yield { parsed: { type: 'text', content: 'some response' } };
+        yield { parsed: { type: 'text', content: 'more response' } };
+        throw new Error('Connection reset by peer');
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: runtimeErrorIterator(),
+      });
+
+      void agent.processMessage('oc_runtime_err', 'hello', 'msg_1');
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // Verify the old-style error message is used (not startup failure message)
+      const calls = callbacks.sendMessage.mock.calls.map((c: any) => c[1]);
+      const hasStartupFailMessage = calls.some((msg: string) =>
+        msg.includes('Agent 启动失败')
+      );
+      expect(hasStartupFailMessage).toBe(false);
+
+      // Should have the regular session error message
+      const hasSessionError = calls.some((msg: string) =>
+        msg.includes('Session error')
+      );
+      expect(hasSessionError).toBe(true);
     });
   });
 });
