@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  CaffeinateConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -415,6 +416,20 @@ export class Config {
       pretty: this.LOG_PRETTY,
       rotate: this.LOG_ROTATE,
       sdkDebug: this.SDK_DEBUG,
+    };
+  }
+
+  /**
+   * Get caffeinate configuration for macOS sleep prevention.
+   * Default is enabled (true) on macOS.
+   * @see Issue #2975
+   *
+   * @returns Caffeinate configuration with defaults
+   */
+  static getCaffeinateConfig(): CaffeinateConfig & { enabled: boolean } {
+    const config = fileConfigOnly.caffeinate;
+    return {
+      enabled: config?.enabled ?? true,
     };
   }
 

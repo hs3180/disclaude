@@ -140,6 +140,18 @@ logging:
   rotate: false
 
 # -----------------------------------------------------------------------------
+# Caffeinate Configuration (macOS only)
+# -----------------------------------------------------------------------------
+# Prevents macOS from sleeping while the service is running.
+# Uses the built-in `caffeinate -s` command to keep the system awake,
+# ensuring WebSocket connections and scheduled tasks remain uninterrupted.
+# Only effective on macOS — silently ignored on Linux and other platforms.
+caffeinate:
+  # Enable/disable sleep prevention
+  # Default: true (on macOS)
+  enabled: true
+
+# -----------------------------------------------------------------------------
 # Channels Configuration (Communication Channels)
 # -----------------------------------------------------------------------------
 # Channels are communication pathways between users and the agent.

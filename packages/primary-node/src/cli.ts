@@ -31,6 +31,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { spawnCaffeinate } from './caffeinate.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -237,6 +238,20 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  // Start caffeinate on macOS to prevent system sleep (Issue #2975).
+  // When running via launchd, the plist already wraps with caffeinate -s,
+  // but this also covers PM2 and direct CLI invocations.
+  const caffeinateConfig = Config.getCaffeinateConfig();
+  let caffeinateProcess: ReturnType<typeof spawnCaffeinate> = null;
+  if (caffeinateConfig.enabled) {
+    caffeinateProcess = spawnCaffeinate();
+    if (caffeinateProcess) {
+      logger.info('caffeinate -s spawned: system sleep prevention active');
+    }
+  } else {
+    logger.debug('caffeinate disabled by configuration');
+  }
 
   try {
     // Start PrimaryNode

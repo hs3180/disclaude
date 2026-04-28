@@ -136,6 +136,16 @@ export interface LoggingConfig {
 }
 
 /**
+ * Caffeinate configuration section (macOS only).
+ * Controls caffeinate behavior to prevent system sleep during service runtime.
+ * @see Issue #2975
+ */
+export interface CaffeinateConfig {
+  /** Enable/disable caffeinate sleep prevention (default: true on macOS) */
+  enabled?: boolean;
+}
+
+/**
  * MCP server configuration (for external MCP servers like Playwright).
  * Matches the format used in .mcp.json files.
  */
@@ -325,6 +335,8 @@ export interface DisclaudeConfig {
   glm?: GlmConfig;
   /** Logging settings */
   logging?: LoggingConfig;
+  /** Caffeinate sleep prevention settings (macOS only, Issue #2975) */
+  caffeinate?: CaffeinateConfig;
   /** Tool configuration */
   tools?: ToolsConfig;
   /** Transport configuration */

@@ -25,7 +25,7 @@
 import { execSync } from 'node:child_process';
 import { writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
@@ -76,8 +76,43 @@ function ensureLaunchAgentsDir() {
 // Plist generation
 // ---------------------------------------------------------------------------
 
+/**
+ * Check whether caffeinate is available on this system.
+ * Only meaningful on macOS; always returns false on other platforms.
+ *
+ * @returns {boolean} true if caffeinate command is available
+ */
+function isCaffeinateAvailable() {
+  if (platform() !== 'darwin') return false;
+  try {
+    execSync('which caffeinate', { encoding: 'utf-8', stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function generatePlist() {
   const nodePath = getNodePath();
+  const useCaffeinate = isCaffeinateAvailable();
+
+  // Build ProgramArguments — wrap with caffeinate -s on macOS to prevent
+  // system sleep while the service is running (Issue #2975).
+  // caffeinate -s prevents sleep even when the display is off; the process
+  // exits automatically when the parent (launchd-managed) process dies.
+  const programArgs = useCaffeinate
+    ? `  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-s</string>
+    <string>${nodePath}</string>
+    <string>${CLI_ENTRY}</string>
+    <string>start</string>
+  </array>`
+    : `  <array>
+    <string>${nodePath}</string>
+    <string>${CLI_ENTRY}</string>
+    <string>start</string>
+  </array>`;
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -87,11 +122,7 @@ function generatePlist() {
   <string>${LABEL}</string>
 
   <key>ProgramArguments</key>
-  <array>
-    <string>${nodePath}</string>
-    <string>${CLI_ENTRY}</string>
-    <string>start</string>
-  </array>
+${programArgs}
 
   <key>WorkingDirectory</key>
   <string>${PROJECT_ROOT}</string>
@@ -129,6 +160,9 @@ function generatePlist() {
   console.log(`  CWD: ${PROJECT_ROOT}`);
   console.log(`  Stdout: ${STDOUT_LOG}`);
   console.log(`  Stderr: ${STDERR_LOG}`);
+  if (useCaffeinate) {
+    console.log('  Caffeinate: enabled (caffeinate -s)');
+  }
 }
 
 // ---------------------------------------------------------------------------
