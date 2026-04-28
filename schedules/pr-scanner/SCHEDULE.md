@@ -1,96 +1,143 @@
 ---
-name: "PR Scanner (Serial)"
-cron: "0 */15 * * * *"
+name: "PR Scanner"
+cron: "*/30 * * * *"
 enabled: true
 blocking: true
 chatId: "oc_71e5f41a029f3a120988b7ecb76df314"
 ---
 
-# PR Scanner - 串行扫描模式
+# PR Scanner — 映射表驱动扫描
 
-定期扫描仓库的 open PR，串行处理，为每个 PR 创建讨论群聊。
+定期扫描仓库的 open PR，通过映射表 (`workspace/bot-chat-mapping.json`) 追踪已创建的讨论群，为新 PR 创建群聊并发送审查卡片，对已合并/已关闭 PR 发送通知。
 
 ## 配置
 
 - **仓库**: hs3180/disclaude
-- **扫描间隔**: 每 15 分钟
-- **讨论超时**: 60 分钟
+- **扫描间隔**: 每 30 分钟
+- **并发上限**: 最多同时 review 3 个 PR（通过映射表中 `purpose: 'pr-review'` 的条目数判断）
 
-## 执行步骤
+## 核心数据结构
 
-### 1. 检查是否有正在处理的 PR
-
-**重要**: 由于 schedule 是无状态的，需要通过 GitHub Label 判断当前状态。
-
-```bash
-# 检查是否有带 pr-scanner:pending label 的 PR
-gh pr list --repo hs3180/disclaude --state open \
-  --label "pr-scanner:pending" \
-  --json number,title
-```
-
-如果返回结果不为空，说明有 PR 正在等待用户反馈，**退出本次执行**。
-
-### 2. 获取 open PR 列表
-
-```bash
-gh pr list --repo hs3180/disclaude --state open \
-  --json number,title,author,labels,mergeable,statusCheckRollup,updatedAt
-```
-
-### 3. 过滤已处理的 PR
-
-排除以下 PR：
-- 已有 `pr-scanner:processed` label 的 PR
-- 已被 review/approve 的 PR（暂不处理）
-
-### 4. 选择第一个未处理的 PR
-
-取过滤后的第一个 PR 作为处理对象。
-
-### 5. 获取 PR 详细信息
-
-```bash
-gh pr view {number} --repo hs3180/disclaude \
-  --json title,body,author,headRefName,baseRefName,mergeable,statusCheckRollup,additions,deletions,changedFiles
-```
-
-### 6. 创建群聊讨论 PR ⚡ 核心改动
-
-使用 `start_group_discussion` 工具为该 PR 创建专门的讨论群聊：
+映射文件路径: `workspace/bot-chat-mapping.json`（由 `BotChatMappingStore` 管理）
 
 ```json
 {
-  "topic": "PR #{number} 讨论: {title}",
-  "members": [],
-  "context": "## 🔔 新 PR 检测到\n\n**PR #{number}**: {title}\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | {author} |\n| 🌿 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 🔍 CI 检查 | {ciStatus} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |\n\n### 📋 描述\n{description 前300字符}\n\n---\n🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})\n\n请在群聊中讨论后决定处理方式。",
-  "timeout": 60
+  "pr-123": { "chatId": "oc_xxx", "createdAt": "2026-04-28T10:00:00Z", "purpose": "pr-review" },
+  "pr-456": { "chatId": "oc_yyy", "createdAt": "2026-04-28T11:00:00Z", "purpose": "pr-review" }
 }
 ```
 
-**注意**：
-- `members` 留空，表示只邀请当前用户
-- 群聊名称格式：`PR #{number} 讨论: {PR标题}`
-- 讨论超时：60 分钟
+- **Key 格式**: `pr-{number}`（可通过 `purposeFromKey()` 推断 purpose）
+- **群名格式**: `PR #{number} · {title前30字}`（可通过 `parseGroupNameToKey()` 解析 key）
 
-### 7. 在群聊中发送交互式卡片
+## 执行步骤
 
-群聊创建后，使用 `send_message` 发送操作选项卡片：
+### 1. 读取映射表
 
-**卡片内容**（format: "card"）：
+```bash
+cat workspace/bot-chat-mapping.json 2>/dev/null || echo "{}"
+```
+
+解析映射表中所有 `purpose: 'pr-review'` 的条目，提取已有的 PR number 列表和对应的 chatId。
+
+**如果没有映射文件或文件为空**，视为空映射表（首次运行场景）。
+
+### 2. 获取 Open PR 列表
+
+```bash
+gh pr list --repo hs3180/disclaude --state open \
+  --json number,title,author,headRefName
+```
+
+### 3. 过滤与分类
+
+将获取到的 PR 分为两类：
+
+- **新 PR**：PR number 不在映射表中（`pr-{number}` key 不存在）
+- **已有群的 PR**：PR number 在映射表中存在
+
+### 4. 处理已有群的 PR — 状态变更检测
+
+对每个已有群的 PR，检查 PR 是否已关闭/已合并：
+
+```bash
+gh pr view {number} --repo hs3180/disclaude \
+  --json state,mergedAt,closedAt
+```
+
+**如果 PR 已 merged**：
+1. 在讨论群发送合并通知卡片（见下方卡片模板）
+2. **不要**自动解散群或删除映射（解散必须用户主动触发）
+
+**如果 PR 已 closed (not merged)**：
+1. 在讨论群发送关闭通知卡片（见下方卡片模板）
+2. **不要**自动解散群或删除映射
+
+**如果 PR 仍 open**：跳过，无需操作。
+
+### 5. 处理新 PR — 创建讨论群
+
+**并发检查**：统计映射表中 `purpose: 'pr-review'` 的条目数，如果 ≥ 3，跳过新 PR 创建，下一轮扫描再处理。
+
+对每个新 PR（按 number 升序）：
+
+#### 5a. 获取 PR 详细信息
+
+```bash
+gh pr view {number} --repo hs3180/disclaude \
+  --json title,body,author,headRefName,baseRefName,additions,deletions,changedFiles,mergeable,statusCheckRollup
+```
+
+#### 5b. 创建讨论群
+
+使用 `lark-cli` 创建群聊：
+
+```bash
+lark-cli im chat create \
+  --name "PR #{number} · {title前30字}" \
+  --description "PR #{number} 审查讨论群"
+```
+
+从返回结果中提取 `chatId`。
+
+**如果创建失败**：记录错误，跳过此 PR，继续处理下一个。
+
+#### 5c. 写入映射表
+
+将新映射条目写入 `workspace/bot-chat-mapping.json`：
+
+```json
+{
+  "pr-{number}": {
+    "chatId": "{新建群的chatId}",
+    "createdAt": "{ISO时间戳}",
+    "purpose": "pr-review"
+  }
+}
+```
+
+**注意**：保留映射表中已有的所有条目，仅追加新条目。使用原子写入（先写临时文件再重命名）。
+
+#### 5d. 发送 PR 审查卡片
+
+使用 `send_interactive` 向新创建的讨论群发送 PR 详情 + 操作按钮卡片。
+
+**卡片内容**：
 ```json
 {
   "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "🎯 请选择处理方式", "tag": "plain_text"}, "template": "blue"},
+  "header": {"title": {"content": "PR Review #{number}", "tag": "plain_text"}, "template": "blue"},
   "elements": [
+    {"tag": "markdown", "content": "**{title}**\n\n| 属性 | 值 |\n|------|-----|\n| 👤 作者 | @{author} |\n| 🔀 分支 | {headRef} → {baseRef} |\n| 📊 合并状态 | {mergeable ? '✅ 可合并' : '⚠️ 有冲突'} |\n| 📈 变更 | +{additions} -{deletions} ({changedFiles} files) |"},
+    {"tag": "markdown", "content": "### 📋 描述\n{body前500字符}"},
+    {"tag": "hr"},
     {"tag": "action", "actions": [
-      {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge", "type": "primary"},
-      {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes", "type": "default"},
-      {"tag": "button", "text": {"content": "❌ 关闭", "tag": "plain_text"}, "value": "close", "type": "danger"},
-      {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later", "type": "default"}
+      {"tag": "button", "text": {"content": "✅ Approve", "tag": "plain_text"}, "value": "approve_{number}", "type": "primary"},
+      {"tag": "button", "text": {"content": "💬 Review", "tag": "plain_text"}, "value": "review_{number}", "type": "default"},
+      {"tag": "button", "text": {"content": "❌ Close", "tag": "plain_text"}, "value": "close_{number}", "type": "danger"}
     ]},
     {"tag": "note", "elements": [
-      {"tag": "plain_text", "content": "讨论完成后请选择操作"}
+      {"tag": "plain_text", "content": "🔗 [查看 PR](https://github.com/hs3180/disclaude/pull/{number})"}
     ]}
   ]
 }
@@ -99,49 +146,77 @@ gh pr view {number} --repo hs3180/disclaude \
 **actionPrompts**：
 ```json
 {
-  "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n3. 报告执行结果\n4. 添加 processed label 并移除 pending label",
-  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请询问用户需要修改的具体内容，然后使用 `gh pr comment` 添加评论。",
-  "close": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。",
-  "later": "[用户操作] 用户选择稍后处理 PR #{number}。请移除 pending label，下次扫描时会重新处理。"
+  "approve_{number}": "[用户操作] 用户批准 PR #{number}。请执行：1. 检查 CI 状态 2. `gh pr review {number} --repo hs3180/disclaude --approve` 3. 报告结果",
+  "review_{number}": "[用户操作] 用户请求深入审查 PR #{number}。请使用 `gh pr diff {number}` 查看变更，进行 code review，将审查结果发送到当前群聊。",
+  "close_{number}": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。"
 }
 ```
 
-### 8. 添加 pending label
+### 6. PR 状态变更通知卡片模板
 
-```bash
-gh pr edit {number} --repo hs3180/disclaude --add-label "pr-scanner:pending"
+**Merged 通知**：
+```json
+{
+  "config": {"wide_screen_mode": true},
+  "header": {"title": {"content": "✅ PR #{number} has been merged", "tag": "plain_text"}, "template": "green"},
+  "elements": [
+    {"tag": "markdown", "content": "**{title}** 已成功合并到 `{baseRef}`。"},
+    {"tag": "hr"},
+    {"tag": "action", "actions": [
+      {"tag": "button", "text": {"content": "解散群", "tag": "plain_text"}, "value": "disband_{number}", "type": "danger"}
+    ]}
+  ]
+}
 ```
 
-## 状态管理
-
-### Label 定义
-
-| Label | 含义 |
-|-------|------|
-| `pr-scanner:processed` | 已通过 scanner 处理完成 |
-| `pr-scanner:pending` | 正在等待用户反馈 |
-
-### 状态转换
-
+**Closed 通知**：
+```json
+{
+  "config": {"wide_screen_mode": true},
+  "header": {"title": {"content": "❌ PR #{number} has been closed", "tag": "plain_text"}, "template": "red"},
+  "elements": [
+    {"tag": "markdown", "content": "**{title}** 已被关闭（未合并）。"},
+    {"tag": "hr"},
+    {"tag": "action", "actions": [
+      {"tag": "button", "text": {"content": "解散群", "tag": "plain_text"}, "value": "disband_{number}", "type": "danger"}
+    ]}
+  ]
+}
 ```
-新 PR → 创建讨论群聊 → 添加 pending label → 等待群聊讨论结论 → 执行动作 → 添加 processed label → 移除 pending label
+
+**disband actionPrompts**：
+```json
+{
+  "disband_{number}": "[用户操作] 用户请求解散 PR #{number} 的讨论群。请：1. 确认解散意图（二次确认） 2. 执行 `lark-cli im chat disband --chat_id {chatId}` 3. 从 workspace/bot-chat-mapping.json 中删除 pr-{number} 条目 4. 报告结果"
+}
 ```
 
 ## 错误处理
 
-- 如果 `gh` 命令失败，记录错误并发送错误通知
-- 如果创建群聊失败，回退到在固定 chatId 中发送消息
-- 如果添加 label 失败，记录错误但不影响流程
+| 场景 | 处理 |
+|------|------|
+| `gh pr list` 失败 | 记录错误，退出本次执行 |
+| `gh pr view` 失败 | 跳过该 PR，继续处理下一个 |
+| 映射文件读取失败 | 视为空映射表 |
+| 映射文件写入失败 | 记录错误，群已创建但映射丢失（可通过群名重建） |
+| 群创建失败 | 记录错误，跳过该 PR |
+| 卡片发送失败 | 记录错误，群已创建（下次扫描不会重复创建） |
 
-## 注意事项
+## 设计原则
 
-1. **群聊讨论**: 为每个 PR 创建独立群聊，便于深入讨论
-2. **串行处理**: 一次只处理一个 PR，避免并发问题
-3. **无状态设计**: 所有状态通过 GitHub Label 管理，不依赖内存或文件
-4. **用户驱动**: 等待群聊讨论结论后才执行动作，不自动合并或关闭
+1. **映射表是缓存**：所有数据可从飞书 API 重建（`lark-cli im chats list --as bot` + 群名规则匹配）
+2. **用户驱动解散**：Bot 不自主解散群，所有解散操作必须由用户点击卡片按钮触发
+3. **幂等操作**：重复扫描不会重复创建群或重复发送卡片（通过映射表过滤）
+4. **无 GitHub Label 依赖**：所有状态通过映射表管理，不使用 `pr-scanner:pending` / `pr-scanner:processed` 等 label
 
 ## 依赖
 
-- gh CLI
-- GitHub Labels: `pr-scanner:processed`, `pr-scanner:pending`
-- MCP Tool: `start_group_discussion` (Issue #1155)
+- `gh` CLI — GitHub PR 操作
+- `lark-cli` — 飞书群聊创建/解散
+- `send_interactive` MCP 工具 — 发送交互式卡片
+- `workspace/bot-chat-mapping.json` — PR↔群映射表（BotChatMappingStore 格式）
+
+## 关联
+
+- Parent: #2945
+- Depends on: #2947 (BotChatMappingStore), #2946 (移除 register_temp_chat)
