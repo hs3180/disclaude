@@ -60,13 +60,16 @@ export function extractText(message: AgentMessage): string {
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param options - Additional options
+ * @param options.resolvedBaseUrl - Override base URL (e.g., proxy URL for tool compat)
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  options?: { resolvedBaseUrl?: string }
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -100,9 +103,11 @@ export function buildSdkEnv(
   // Must use delete to completely remove the key, not just set to undefined.
   delete env.CLAUDECODE;
 
-  // Set base URL if provided (for GLM or custom endpoints)
-  if (apiBaseUrl) {
-    env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  // Set base URL: prefer resolvedBaseUrl (proxy) over apiBaseUrl (direct)
+  // resolvedBaseUrl is used by the tool compatibility proxy (Issue #2943)
+  const effectiveBaseUrl = options?.resolvedBaseUrl ?? apiBaseUrl;
+  if (effectiveBaseUrl) {
+    env.ANTHROPIC_BASE_URL = effectiveBaseUrl;
   }
 
   return env;

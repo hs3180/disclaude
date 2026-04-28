@@ -65,17 +65,33 @@ const mockSdkProvider = {
   queryStream: vi.fn(),
 };
 
-// Mock the SDK module
+// Mock the SDK module (includes tool compat proxy exports)
 vi.mock('../sdk/index.js', () => ({
   getProvider: () => mockSdkProvider,
   IAgentSDKProvider: class {},
+  startToolCompatProxy: vi.fn().mockResolvedValue({
+    proxyUrl: 'http://127.0.0.1:12345',
+    targetUrl: 'https://example.com/api',
+    stopped: false,
+  }),
+  stopToolCompatProxy: vi.fn(),
+  getActiveProxy: vi.fn().mockReturnValue(null),
+  injectToolDefinitions: vi.fn(),
+  SYSTEM_TOOL_DEFINITIONS: [],
 }));
 
 // Mock buildSdkEnv to return a simple env object
 vi.mock('../utils/sdk.js', () => ({
-  buildSdkEnv: (apiKey: string, apiBaseUrl: string | undefined, globalEnv: Record<string, string>, sdkDebug: boolean) => ({
+  buildSdkEnv: (
+    apiKey: string,
+    apiBaseUrl: string | undefined,
+    globalEnv: Record<string, string>,
+    sdkDebug: boolean,
+    options?: { resolvedBaseUrl?: string }
+  ) => ({
     ANTHROPIC_API_KEY: apiKey,
-    ...(apiBaseUrl ? { ANTHROPIC_BASE_URL: apiBaseUrl } : {}),
+    ...(options?.resolvedBaseUrl ? { ANTHROPIC_BASE_URL: options.resolvedBaseUrl } : {}),
+    ...(apiBaseUrl && !options?.resolvedBaseUrl ? { ANTHROPIC_BASE_URL: apiBaseUrl } : {}),
     ...globalEnv,
     ...(sdkDebug ? { SDK_DEBUG: 'true' } : {}),
   }),

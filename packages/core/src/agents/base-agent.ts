@@ -27,6 +27,7 @@ import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
+import { startToolCompatProxy, getActiveProxy } from '../sdk/tool-compat-proxy.js';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -106,6 +107,14 @@ export abstract class BaseAgent implements Disposable {
   protected initialized = false;
   protected sdkProvider: IAgentSDKProvider;
 
+  /**
+   * Tool compatibility proxy URL for third-party endpoints.
+   * When set, ANTHROPIC_BASE_URL points to this proxy instead of the
+   * direct endpoint, enabling system tool injection via `tools` API parameter.
+   * @see Issue #2943
+   */
+  private toolCompatProxyUrl?: string;
+
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model;
@@ -122,6 +131,56 @@ export abstract class BaseAgent implements Disposable {
 
     // Get SDK provider instance
     this.sdkProvider = getProvider();
+
+    // Issue #2943/#2948: Handle third-party endpoint tool compatibility
+    if (this.provider !== 'anthropic' && this.apiBaseUrl) {
+      this.logger.warn(
+        { provider: this.provider, apiBaseUrl: this.apiBaseUrl },
+        'Third-party API endpoint detected — starting tool compatibility proxy ' +
+        'to inject system tool definitions via `tools` API parameter. ' +
+        'See: https://github.com/hs3180/disclaude/issues/2943'
+      );
+
+      // Start tool compatibility proxy (fire-and-forget, async)
+      this.startToolCompatProxy().catch((err) => {
+        this.logger.error(
+          { err, provider: this.provider, apiBaseUrl: this.apiBaseUrl },
+          'Failed to start tool compatibility proxy — system tools will be unavailable'
+        );
+      });
+    }
+  }
+
+  /**
+   * Start the tool compatibility proxy for third-party endpoints.
+   *
+   * When a non-Anthropic provider is configured with apiBaseUrl, the Claude Agent SDK's
+   * system prompt tool definitions (XML format) are not recognized by the endpoint.
+   * This proxy intercepts API requests and injects tool definitions via the `tools` API
+   * parameter, which all Anthropic-compatible endpoints support.
+   *
+   * The proxy is a singleton — shared across all agent instances in the process.
+   *
+   * @see Issue #2943
+   */
+  private async startToolCompatProxy(): Promise<void> {
+    if (!this.apiBaseUrl) {
+      return;
+    }
+
+    // Reuse existing proxy if available
+    const existing = getActiveProxy();
+    if (existing && existing.targetUrl === this.apiBaseUrl) {
+      this.toolCompatProxyUrl = existing.proxyUrl;
+      this.logger.debug(
+        { proxyUrl: existing.proxyUrl },
+        'Reusing existing tool compatibility proxy'
+      );
+      return;
+    }
+
+    const proxy = await startToolCompatProxy(this.apiBaseUrl);
+    this.toolCompatProxyUrl = proxy.proxyUrl;
   }
 
   /**
@@ -184,7 +243,8 @@ export abstract class BaseAgent implements Disposable {
       this.apiKey,
       this.apiBaseUrl,
       globalEnv,
-      loggingConfig.sdkDebug
+      loggingConfig.sdkDebug,
+      { resolvedBaseUrl: this.toolCompatProxyUrl }
     );
 
     // Set model

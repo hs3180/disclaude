@@ -131,3 +131,15 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// Tool Compatibility Proxy Export (Issue #2943)
+// ============================================================================
+
+export {
+  startToolCompatProxy,
+  stopToolCompatProxy,
+  getActiveProxy,
+  injectToolDefinitions,
+  SYSTEM_TOOL_DEFINITIONS,
+} from './tool-compat-proxy.js';
