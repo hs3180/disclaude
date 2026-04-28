@@ -166,12 +166,8 @@ export class PrimaryNode extends EventEmitter {
     this.localNodeId = config.nodeId || `primary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.localExecEnabled = config.enableLocalExec !== false;
 
-    // Initialize CardActionRouter
-    this.cardActionRouter = new CardActionRouter({
-      // eslint-disable-next-line require-await
-      sendToRemoteNode: async () => false, // Override in subclass
-      isNodeConnected: () => false,
-    });
+    // Initialize CardActionRouter (Issue #2939: removed remote node stubs)
+    this.cardActionRouter = new CardActionRouter();
 
     // Initialize DebugGroupService
     this.debugGroupService = getDebugGroupService();
