@@ -51,7 +51,7 @@ describe('adaptOptions', () => {
     expect(result.disallowedTools).toEqual(['tool3']);
   });
 
-  it('should extract API key and base URL from env', () => {
+  it('should pass env through without extracting apiKey/apiBaseUrl (SDK uses env vars)', () => {
     const result = adaptOptions({
       settingSources: ['project'],
       env: {
@@ -61,8 +61,9 @@ describe('adaptOptions', () => {
       },
     });
 
-    expect(result.apiKey).toBe('sk-123');
-    expect(result.apiBaseUrl).toBe('https://api.example.com');
+    // apiKey and apiBaseUrl are NOT SDK Options fields — auth flows via env only
+    expect(result.apiKey).toBeUndefined();
+    expect(result.apiBaseUrl).toBeUndefined();
     expect(result.env).toEqual({
       ANTHROPIC_API_KEY: 'sk-123',
       ANTHROPIC_BASE_URL: 'https://api.example.com',

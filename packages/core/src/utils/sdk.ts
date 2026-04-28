@@ -100,6 +100,20 @@ export function buildSdkEnv(
   // Must use delete to completely remove the key, not just set to undefined.
   delete env.CLAUDECODE;
 
+  // CRITICAL: Remove OAuth/token env vars to prevent auth interference.
+  // The Anthropic SDK's auth priority is: authToken (Authorization: Bearer) > apiKey (x-api-key).
+  // If ANTHROPIC_AUTH_TOKEN is present (e.g., from a previous OAuth login or system config),
+  // the SDK will use Bearer auth instead of x-api-key, breaking non-Anthropic API endpoints
+  // (e.g., GLM/ZhiPu) that only support x-api-key header authentication.
+  // See: https://github.com/hs3180/disclaude/issues/2916
+  delete env.ANTHROPIC_AUTH_TOKEN;
+
+  // Remove stored OAuth tokens that the CLI may use to override env-based auth.
+  // The CLI checks for stored tokens (e.g., from `claude auth login`) before falling back
+  // to ANTHROPIC_API_KEY. When using custom endpoints (GLM, etc.), we must ensure
+  // the CLI uses the provided API key via x-api-key, not a stored OAuth token.
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
+
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;

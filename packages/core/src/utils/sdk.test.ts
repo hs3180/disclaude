@@ -181,6 +181,20 @@ describe('SDK Utilities', () => {
       expect(env.CLAUDECODE).toBeUndefined();
     });
 
+    it('should remove ANTHROPIC_AUTH_TOKEN to prevent Bearer auth override', () => {
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'some-oauth-token');
+      const env = buildSdkEnv('sk-test-key');
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      // API key should still be set correctly
+      expect(env.ANTHROPIC_API_KEY).toBe('sk-test-key');
+    });
+
+    it('should remove CLAUDE_CODE_OAUTH_TOKEN to prevent stored OAuth interference', () => {
+      vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'stored-oauth-token');
+      const env = buildSdkEnv('sk-test-key');
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    });
+
     it('should set DEBUG_CLAUDE_AGENT_SDK when sdkDebug is true (default)', () => {
       const env = buildSdkEnv('sk-test-key');
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBeDefined();

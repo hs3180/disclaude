@@ -48,17 +48,12 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   }
 
   // 环境变量
+  // Auth is handled via env vars (ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL) passed
+  // to the CLI subprocess. The Claude Agent SDK's Options type does NOT have
+  // apiKey or apiBaseUrl fields — auth flows through env vars only.
+  // buildSdkEnv() in utils/sdk.ts is responsible for setting these correctly.
   if (options.env) {
     sdkOptions.env = options.env;
-
-    // CRITICAL: Extract API key and base URL from env and pass as direct options
-    // The SDK requires these as direct options, not just env vars
-    if (options.env.ANTHROPIC_API_KEY) {
-      sdkOptions.apiKey = options.env.ANTHROPIC_API_KEY;
-    }
-    if (options.env.ANTHROPIC_BASE_URL) {
-      sdkOptions.apiBaseUrl = options.env.ANTHROPIC_BASE_URL;
-    }
   }
 
   return sdkOptions;
