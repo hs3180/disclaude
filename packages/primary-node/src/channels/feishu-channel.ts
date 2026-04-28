@@ -37,6 +37,7 @@ import {
   WsConnectionManager,
 } from './feishu/index.js';
 import { VIDEO_EXTENSIONS, extractVideoCover } from '../utils/video-cover-extractor.js';
+import { resolveCardImagePaths } from '../utils/card-image-resolver.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -434,9 +435,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
 
       case 'card': {
+        // Issue #2951: Auto-translate local image paths in card JSON to Feishu image_keys
+        const cardObj = message.card || {};
+        if (typeof cardObj === 'object' && cardObj !== null) {
+          try {
+            await resolveCardImagePaths(cardObj as Record<string, unknown>, client);
+          } catch (error) {
+            logger.warn({ err: error, chatId: message.chatId }, 'Failed to resolve card image paths, sending card as-is');
+          }
+        }
+
         const messageId = await sendFeishuMessage(
           'interactive',
-          JSON.stringify(message.card || {}),
+          JSON.stringify(cardObj),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
         return messageId;
