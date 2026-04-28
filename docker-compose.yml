@@ -2,11 +2,11 @@
 # Disclaude Docker Compose Configuration
 # =============================================================================
 #
-# Architecture: Multi-node distributed system
+# Architecture: Single-node application
 # - Primary Node: Handles Feishu WebSocket connections + Agent execution + MCP
-# - Worker Node: Handles Pilot/Agent task execution (optional, for scaling)
 #
-# Note: MCP functionality is built into Primary/Worker nodes, no separate deployment needed.
+# Note: MCP functionality is built into Primary node, no separate deployment needed.
+# For multi-instance scaling, deploy multiple independent application instances.
 #
 # Usage:
 #   cp disclaude.config.example.yaml disclaude.config.yaml
@@ -22,9 +22,6 @@
 #
 #   # Stop
 #   docker compose down
-#
-#   # Start with worker node (for scaling)
-#   docker compose --profile worker up -d
 #
 # =============================================================================
 
@@ -83,72 +80,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # ===========================================================================
-  # Worker Node (Exec only)
-  # ===========================================================================
-  # Optional execution node for scaling - connects to Primary via WebSocket
-  # Use --profile worker to start: docker compose --profile worker up -d
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-      args:
-        APK_MIRROR: ${APK_MIRROR:-dl-cdn.alpinelinux.org}
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-        DOCKER_IMAGE_PREFIX: ${DOCKER_IMAGE_PREFIX:-}
-    image: disclaude:worker
-    container_name: disclaude-worker
-    restart: unless-stopped
-
-    # Command: run Worker Node with PM2
-    # PM2 provides process management and logging support
-    command: ["pm2-runtime", "start", "ecosystem.worker.config.json"]
-
-    # Network mode: host for local connection to primary node
-    network_mode: host
-
-    environment:
-      - NODE_ENV=production
-      - TZ=Asia/Shanghai
-      - DISCLAUDE_MODE=worker
-      - COMM_URL=${COMM_URL:-ws://localhost:3001}
-
-    volumes:
-      - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
-      - ./workspace:/app/workspace
-
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 8G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "node.*cli.js"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-    # Worker is optional - only starts with --profile worker
-    profiles:
-      - worker
-
-    # Depends on primary node
-    depends_on:
-      primary:
-        condition: service_healthy
 
   # ===========================================================================
   # Test Primary Node (optional)

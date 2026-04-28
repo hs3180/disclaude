@@ -75,9 +75,6 @@ export type {
   FeedbackMessage,
   CardActionMessage,
   CardContextMessage,
-  FeishuApiAction,
-  FeishuApiRequestMessage,
-  FeishuApiResponseMessage,
 } from './websocket-messages.js';
 
 // Channel types (Issue #1040)

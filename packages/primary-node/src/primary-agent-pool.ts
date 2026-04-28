@@ -2,11 +2,11 @@
  * PrimaryAgentPool - Agent pool for Primary Node.
  *
  * Manages ChatAgent instances for each chatId, using AgentFactory
- * from @disclaude/worker-node to create ChatAgent instances.
+ * from @disclaude/primary-node to create ChatAgent instances.
  *
  * Issue #1499: Accepts optional MessageBuilderOptions for channel-specific
  * message building (e.g., Feishu sections). This decouples Feishu-specific
- * logic from worker-node.
+ * logic from the core agent runtime.
  *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
