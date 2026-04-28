@@ -75,9 +75,6 @@ export type {
   FeedbackMessage,
   CardActionMessage,
   CardContextMessage,
-  FeishuApiAction,
-  FeishuApiRequestMessage,
-  FeishuApiResponseMessage,
 } from './websocket-messages.js';
 
 // Channel types (Issue #1040)
@@ -127,11 +124,6 @@ export type {
 } from './primary-node.js';
 
 export { getNodeCapabilities } from './primary-node.js';
-
-// Worker Node types (Issue #1041)
-export type { WorkerNodeConfig } from './worker-node.js';
-
-export { getWorkerNodeCapabilities } from './worker-node.js';
 
 // Adapter types (Issue #1040)
 export type {
