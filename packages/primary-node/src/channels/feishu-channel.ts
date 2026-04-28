@@ -646,6 +646,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_card',
         'send_interactive',
         'send_file',
+        'upload_image',
       ],
     };
   }
@@ -677,6 +678,52 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    */
   getInteractionManager(): InteractionManager {
     return this.interactionManager;
+  }
+
+  /**
+   * Upload an image to Feishu and return the image_key for card embedding.
+   *
+   * Issue #1919 Phase 1: Provides standalone image upload capability so agents
+   * can obtain image_key for use in card `img` elements via send_card.
+   *
+   * Reuses the same `im.image.create` API already used for image message sending,
+   * but returns the image_key instead of sending a message.
+   *
+   * @param filePath - Local file path of the image to upload
+   * @returns Object containing imageKey, fileName, and fileSize
+   * @throws Error if the client is not initialized, file not found, or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Not an image file: ${fileName} (supported formats: ${imageExtensions.join(', ')})`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName} — no image_key returned`);
+    }
+
+    logger.info({ imageKey, fileName, fileSize }, 'Image uploaded for card embedding');
+    return { imageKey, fileName, fileSize };
   }
 
   /**

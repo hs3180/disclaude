@@ -69,5 +69,19 @@ export interface SendInteractiveResult {
   error?: string;
 }
 
+/**
+ * Result type for upload_image tool (Issue #1919 Phase 1).
+ */
+export interface UploadImageResult {
+  success: boolean;
+  message: string;
+  /** Feishu image_key for use in card img elements */
+  imageKey?: string;
+  fileName?: string;
+  fileSize?: number;
+  sizeMB?: string;
+  error?: string;
+}
+
 
 

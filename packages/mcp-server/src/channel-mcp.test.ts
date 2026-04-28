@@ -13,6 +13,7 @@ vi.mock('./tools/index.js', () => ({
   send_card: vi.fn(),
   send_interactive: vi.fn(),
   send_file: vi.fn(),
+  upload_image: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));
 
@@ -40,12 +41,13 @@ vi.mock('@disclaude/core', () => ({
 
 // Import after mocks are set up
 import { channelToolDefinitions } from './channel-mcp.js';
-import { send_text, send_card, send_interactive, send_file } from './tools/index.js';
+import { send_text, send_card, send_interactive, send_file, upload_image } from './tools/index.js';
 
 const mocked_send_text = vi.mocked(send_text);
 const mocked_send_card = vi.mocked(send_card);
 const mocked_send_interactive = vi.mocked(send_interactive);
 const mocked_send_file = vi.mocked(send_file);
+const mocked_upload_image = vi.mocked(upload_image);
 
 // Valid-length chatId for tests (validator requires oc_ prefix + 32 chars = 35 min)
 const VALID_CHAT_ID = 'oc_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
@@ -294,5 +296,47 @@ describe('send_file handler', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Failed to upload file via IPC');
+  });
+});
+
+// ============================================================================
+// upload_image handler (Issue #1919 Phase 1)
+// ============================================================================
+describe('upload_image handler', () => {
+  const handler = getHandler('upload_image');
+
+  it('should return success without isError on successful upload', async () => {
+    mocked_upload_image.mockResolvedValue({
+      success: true,
+      message: '✅ Image uploaded: chart.png (0.05 MB)\nimage_key: img_xxx',
+      imageKey: 'img_xxx',
+      fileName: 'chart.png',
+      fileSize: 50000,
+      sizeMB: '0.05',
+    });
+    const result = await handler({ filePath: '/tmp/chart.png' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('img_xxx');
+  });
+
+  it('should return isError: true when upload fails', async () => {
+    mocked_upload_image.mockResolvedValue({
+      success: false,
+      message: '❌ Failed to upload image: IPC not available',
+      error: 'IPC not available',
+    });
+    const result = await handler({ filePath: '/tmp/chart.png' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('IPC not available');
+  });
+
+  it('should return isError: true when upload throws', async () => {
+    mocked_upload_image.mockRejectedValue(new Error('Network error'));
+    const result = await handler({ filePath: '/tmp/chart.png' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Network error');
   });
 });

@@ -23,7 +23,9 @@ export type IpcRequestType =
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Image upload for card embedding (Issue #1919 Phase 1)
+  | 'uploadImage';
 
 /**
  * IPC request payload types.
@@ -73,6 +75,11 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Image upload for card embedding (Issue #1919 Phase 1)
+  uploadImage: {
+    /** Local file path of the image to upload */
+    filePath: string;
+  };
 }
 
 /**
@@ -110,6 +117,16 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // Image upload for card embedding (Issue #1919 Phase 1)
+  uploadImage: {
+    success: boolean;
+    /** Feishu image_key for use in card img elements */
+    imageKey?: string;
+    fileName?: string;
+    fileSize?: number;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
   };
 }
 

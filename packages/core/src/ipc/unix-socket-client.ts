@@ -660,6 +660,36 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Image upload for card embedding (Issue #1919 Phase 1)
+  // ============================================================================
+
+  /**
+   * Upload an image via IPC and return the image_key for card embedding.
+   * Issue #1919: Phase 1 — upload_image MCP tool.
+   *
+   * @param filePath - Local file path of the image to upload
+   */
+  async uploadImage(
+    filePath: string
+  ): Promise<{ success: boolean; imageKey?: string; fileName?: string; fileSize?: number; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('uploadImage', { filePath });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, filePath }, 'uploadImage failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

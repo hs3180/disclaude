@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -28,6 +29,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -147,6 +149,17 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image and return the image_key for embedding in card messages.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Local file path of the image to upload' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -395,6 +408,38 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'upload_image',
+    description: `Upload an image file and return the image_key for embedding in card messages.
+
+Use this tool when you need to embed a locally-generated image (e.g., a chart or plot) into a card message.
+After uploading, use the returned image_key in the \`img\` element of \`send_card\`.
+
+## Parameters
+- **filePath**: Local file path of the image to upload (string)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10MB)
+
+## Example Workflow
+1. Generate a chart image (e.g., using Python/Matplotlib)
+2. Call \`upload_image\` with the image path
+3. Use the returned \`image_key\` in \`send_card\`:
+   \`\`\`json
+   {"card": {"elements": [{"tag": "img", "img_key": "<image_key>"}]}, "chatId": "oc_xxx"}
+   \`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Local file path of the image to upload'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
