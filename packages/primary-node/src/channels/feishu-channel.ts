@@ -37,6 +37,7 @@ import {
   WsConnectionManager,
 } from './feishu/index.js';
 import { VIDEO_EXTENSIONS, extractVideoCover } from '../utils/video-cover-extractor.js';
+import { translateCardImagePaths } from '../utils/card-image-translator.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -434,9 +435,30 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
 
       case 'card': {
+        // Issue #2951: Auto-translate local image paths in card to Feishu image_keys
+        let cardToSend = message.card || {};
+        if (this.client) {
+          const translation = await translateCardImagePaths(
+            cardToSend as Record<string, unknown>,
+            this.client,
+          );
+          if (translation.translated > 0 || translation.failed > 0) {
+            logger.info(
+              {
+                chatId: message.chatId,
+                translated: translation.translated,
+                failed: translation.failed,
+                failures: translation.failures,
+              },
+              'Card image path translation completed',
+            );
+            cardToSend = translation.card;
+          }
+        }
+
         const messageId = await sendFeishuMessage(
           'interactive',
-          JSON.stringify(message.card || {}),
+          JSON.stringify(cardToSend),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
         return messageId;
