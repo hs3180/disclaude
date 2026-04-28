@@ -118,7 +118,7 @@ createdAt: 2026-03-23T00:00:00Z
 
 ## 使用说明
 
-1. 复制此文件到 `workspace/schedules/deep-task.md`
+1. 复制此文件到 `workspace/schedules/deep-task/SCHEDULE.md`
 2. 将 `chatId` 替换为实际的飞书群聊 ID
 3. 设置 `enabled: true`
 4. 在 `workspace/tasks/` 下创建任务目录和 `task.md` 文件
