@@ -115,6 +115,20 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * options when creating ChatAgent instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * SDK message inactivity timeout in milliseconds.
+   *
+   * If no SDK message is received within this duration during an active
+   * agent loop, the session is considered hung and will be terminated
+   * with an error notification to the user. The query is then cancelled
+   * and the existing restart/circuit-breaker logic takes over.
+   *
+   * Default: 300000 (5 minutes). Set to 0 to disable.
+   *
+   * Issue #2993: Session inactivity timeout detection.
+   */
+  sessionInactivityTimeoutMs?: number;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)
