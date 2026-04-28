@@ -22,7 +22,6 @@ export type IpcRequestType =
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
-  | 'registerTempChat'
   | 'listTempChats'
   | 'markChatResponded';
 
@@ -65,15 +64,6 @@ export interface IpcRequestPayloads {
     actionPrompts?: Record<string, string>;
   };
   // Temporary chat lifecycle management (Issue #1703)
-  // Issue #2291: triggerMode enum replaces passiveMode boolean
-  registerTempChat: {
-    chatId: string;
-    expiresAt?: string;
-    creatorChatId?: string;
-    context?: Record<string, unknown>;
-    /** Issue #2291: Trigger mode enum ('mention' | 'always') */
-    triggerMode?: 'mention' | 'always';
-  };
   listTempChats: Record<string, never>;
   markChatResponded: {
     chatId: string;
@@ -108,11 +98,6 @@ export interface IpcResponsePayloads {
     messageId?: string;
   };
   // Temporary chat lifecycle management (Issue #1703)
-  registerTempChat: {
-    success: boolean;
-    chatId?: string;
-    expiresAt?: string;
-  };
   listTempChats: {
     success: boolean;
     chats?: Array<{

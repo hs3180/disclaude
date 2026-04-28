@@ -219,23 +219,6 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         return { messageId, actionPrompts: resolvedActionPrompts };
       },
       // Issue #1703: Temp chat lifecycle management handlers
-      // Issue #2291: triggerMode enum parameter
-      registerTempChat: async (chatId: string, opts?: { expiresAt?: string; creatorChatId?: string; context?: Record<string, unknown>; triggerMode?: 'mention' | 'always' }) => {
-        const store = context.primaryNode.getChatStore();
-        await store.registerTempChat(chatId, {
-          expiresAt: opts?.expiresAt,
-          creatorChatId: opts?.creatorChatId,
-          context: opts?.context,
-          triggerMode: opts?.triggerMode,
-        });
-        // Issue #2291: Apply trigger mode to TriggerModeManager immediately
-        if (opts?.triggerMode === 'always') {
-          feishuChannel.setTriggerEnabled(chatId, true);
-          context.logger.info({ chatId, triggerMode: opts?.triggerMode }, 'Trigger mode enabled via declarative config');
-        }
-        const record = await store.getTempChat(chatId);
-        return { success: true, expiresAt: record?.expiresAt };
-      },
       listTempChats: async () => {
         const chatStore = context.primaryNode.getChatStore();
         const records = await chatStore.listTempChats();

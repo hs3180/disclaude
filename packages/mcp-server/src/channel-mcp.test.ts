@@ -13,7 +13,6 @@ vi.mock('./tools/index.js', () => ({
   send_card: vi.fn(),
   send_interactive: vi.fn(),
   send_file: vi.fn(),
-  register_temp_chat: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));
 
@@ -41,13 +40,12 @@ vi.mock('@disclaude/core', () => ({
 
 // Import after mocks are set up
 import { channelToolDefinitions } from './channel-mcp.js';
-import { send_text, send_card, send_interactive, send_file, register_temp_chat } from './tools/index.js';
+import { send_text, send_card, send_interactive, send_file } from './tools/index.js';
 
 const mocked_send_text = vi.mocked(send_text);
 const mocked_send_card = vi.mocked(send_card);
 const mocked_send_interactive = vi.mocked(send_interactive);
 const mocked_send_file = vi.mocked(send_file);
-const mocked_register_temp_chat = vi.mocked(register_temp_chat);
 
 // Valid-length chatId for tests (validator requires oc_ prefix + 32 chars = 35 min)
 const VALID_CHAT_ID = 'oc_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
@@ -296,23 +294,5 @@ describe('send_file handler', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Failed to upload file via IPC');
-  });
-});
-
-// ============================================================================
-// register_temp_chat handler
-// ============================================================================
-describe('register_temp_chat handler', () => {
-  const handler = getHandler('register_temp_chat');
-
-  it('should return success for valid registration', async () => {
-    mocked_register_temp_chat.mockResolvedValue({
-      success: true,
-      message: '✅ Temporary chat registered',
-    });
-    const result = await handler({ chatId: VALID_CHAT_ID });
-
-    expect(result.isError).toBeUndefined();
-    expect(result.content[0].text).toContain('✅ Temporary chat registered');
   });
 });
