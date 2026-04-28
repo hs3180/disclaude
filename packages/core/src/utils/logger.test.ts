@@ -308,6 +308,30 @@ describe('logger', () => {
       const result = isLevelEnabled('info');
       expect(typeof result).toBe('boolean');
     });
+
+    /**
+     * Regression test: comparison direction must be
+     * `pino.levels.values[level] >= logger.levelVal`.
+     * The original bug inverted this to `logger.levelVal >= pino.levels.values[level]`,
+     * which incorrectly reported less-severe levels as enabled.
+     *
+     * @see https://github.com/hs3180/disclaude/issues/2895
+     */
+    it('regression: should not report less-severe levels as enabled (comparison direction)', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger({ level: 'error' }); // levelVal = 50
+
+      // trace (10), debug (20), info (30), warn (40) are all < error (50)
+      // An inverted comparison would wrongly return true for these.
+      expect(isLevelEnabled('trace')).toBe(false);
+      expect(isLevelEnabled('debug')).toBe(false);
+      expect(isLevelEnabled('info')).toBe(false);
+      expect(isLevelEnabled('warn')).toBe(false);
+
+      // error (50) and fatal (60) are >= error (50) → enabled
+      expect(isLevelEnabled('error')).toBe(true);
+      expect(isLevelEnabled('fatal')).toBe(true);
+    });
   });
 
   describe('flushLogger', () => {

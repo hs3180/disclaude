@@ -350,10 +350,32 @@ export function setLogLevel(level: LogLevel): void {
 }
 
 /**
- * Check if a log level is enabled
+ * Check if a log level is enabled.
+ *
+ * Returns `true` when the requested `level` is at least as severe as the
+ * logger's current threshold — i.e. the level's numeric value is **greater
+ * than or equal to** the logger's `levelVal`.
+ *
+ * ### Why the comparison direction matters
+ *
+ * Pino's level values increase with severity (trace=10, debug=20, info=30,
+ * warn=40, error=50, fatal=60).  The logger's `levelVal` represents the
+ * **minimum** severity that will be emitted.  Therefore a level is "enabled"
+ * when its value meets or exceeds that threshold:
+ *
+ * ```
+ * pino.levels.values[level] >= logger.levelVal   ← correct
+ * logger.levelVal >= pino.levels.values[level]    ← WRONG (inverted)
+ * ```
+ *
+ * The original implementation had the comparison inverted, which would
+ * incorrectly report *less* severe levels as enabled.  This was fixed in
+ * PR #2889 and separated into its own commit per #2895.
  *
  * @param level - Log level to check
- * @returns true if the level is enabled
+ * @returns `true` if the level is at least as severe as the current threshold
+ *
+ * @see {@link https://github.com/hs3180/disclaude/issues/2895 Issue #2895}
  */
 export function isLevelEnabled(level: LogLevel): boolean {
   const logger = getRootLogger();
