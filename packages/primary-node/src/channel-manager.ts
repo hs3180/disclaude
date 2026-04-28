@@ -6,7 +6,7 @@
  * - Message broadcasting to all channels
  * - Channel lifecycle management (start/stop)
  *
- * Part of the PrimaryNode/WorkerNode architecture.
+ * Part of the PrimaryNode architecture.
  *
  * @module @disclaude/primary-node
  */

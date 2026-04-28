@@ -1,7 +1,7 @@
 /**
  * Tests for ChannelManager.
  *
- * Part of the PrimaryNode/WorkerNode architecture.
+ * Part of the PrimaryNode architecture.
  */
 
  

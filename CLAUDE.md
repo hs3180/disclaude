@@ -346,13 +346,13 @@ General rules:
 
 ```bash
 # 1. Make code changes
-vim packages/worker-node/src/agents/chat-agent/chat-agent.ts
+vim packages/primary-node/src/agents/chat-agent.ts
 
 # 2. Build
 npm run build
 
 # 3. Test with CLI (instant feedback)
-disclaude --prompt "Read packages/worker-node/src/agents/chat-agent/chat-agent.ts and summarize it"
+disclaude --prompt "Read packages/primary-node/src/agents/chat-agent.ts and summarize it"
 disclaude --prompt "List all TypeScript files in src/"
 disclaude --prompt "Run npm run type-check"
 
@@ -408,7 +408,7 @@ Current implementation uses in-memory sessions:
 ### 5. Tool Configuration
 
 Tools are configured via `disallowedTools` in the agent classes:
-- **ChatAgent** (`packages/worker-node/src/agents/chat-agent/`): Uses `disallowedTools: ['EnterPlanMode']`
+- **ChatAgent** (`packages/primary-node/src/agents/chat-agent.ts`): Uses `disallowedTools: ['EnterPlanMode']`
 - **BaseAgent**: Provides `createSdkOptions()` for SDK configuration
 
 To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.processMessage()` or `ChatAgent.executeOnce()`.
@@ -484,7 +484,7 @@ npm run pm2:logs:out    # Output logs only (nostream)
 
 ### Tool Not Working
 
-1. Check if tool is in `disallowedTools` array in `packages/worker-node/src/agents/chat-agent/`
+1. Check if tool is in `disallowedTools` array in `packages/primary-node/src/agents/chat-agent.ts`
 2. Verify MCP server is configured in `disclaude.config.yaml` or built-in
 3. Check SDK version compatibility
 
