@@ -117,24 +117,6 @@ export interface PrimaryNodeConfig extends BaseNodeConfig {
 }
 
 /**
- * Information about a connected execution node.
- */
-export interface ExecNodeInfo {
-  /** Node identifier */
-  nodeId: string;
-  /** Display name */
-  name: string;
-  /** Connection status */
-  status: 'connected' | 'disconnected';
-  /** Number of active chats assigned to this node */
-  activeChats: number;
-  /** Connection timestamp */
-  connectedAt: Date;
-  /** Whether this is a local execution capability */
-  isLocal: boolean;
-}
-
-/**
  * Get capabilities for a node type.
  */
 export function getNodeCapabilities(type: NodeType): NodeCapabilities {

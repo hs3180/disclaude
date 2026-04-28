@@ -70,8 +70,6 @@ export type {
 export type {
   PromptMessage,
   CommandMessage,
-  RegisterMessage,
-  ExecNodeInfo,
   FeedbackMessage,
   CardActionMessage,
   CardContextMessage,
@@ -120,7 +118,6 @@ export type {
   RestChannelConfig,
   FileStorageConfig,
   PrimaryNodeConfig,
-  ExecNodeInfo as PrimaryNodeExecInfo,
 } from './primary-node.js';
 
 export { getNodeCapabilities } from './primary-node.js';

@@ -11,7 +11,6 @@ describe('handleStop', () => {
     },
     node: {
       nodeId: 'test-node',
-      getExecNodes: vi.fn(() => []),
       getDebugGroup: vi.fn(() => null),
       setDebugGroup: vi.fn(),
       clearDebugGroup: vi.fn().mockReturnValue(null),

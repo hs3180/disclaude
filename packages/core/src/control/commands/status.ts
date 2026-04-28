@@ -3,29 +3,23 @@ import type { ControlHandlerContext, CommandHandler } from '../types.js';
 
 /**
  * /status 命令处理
+ *
+ * Worker Node architecture has been removed (#2717).
+ * Status now shows only the local node information.
  */
 export const handleStatus: CommandHandler = (
   _command: ControlCommand,
   context: ControlHandlerContext
 ): ControlResponse => {
   const { node } = context;
-  const nodes = node.getExecNodes();
-  const nodeCount = nodes.length;
-  const localNodeId = node.nodeId;
-
-  const nodeLines = nodes.length > 0
-    ? nodes.map((n) => `  - ${n.isLocal ? '🏠' : '☁️'} ${n.name} (${n.nodeId})`).join('\n')
-    : '  (无远程节点)';
 
   return {
     success: true,
     message: [
       '📊 **服务状态**',
       '',
-      `**节点 ID**: ${localNodeId}`,
-      `**连接节点数**: ${nodeCount}`,
-      '**执行节点**:',
-      nodeLines,
+      `**节点 ID**: ${node.nodeId}`,
+      '**执行节点**: 🏠 本地单节点模式',
     ].join('\n'),
   };
 };

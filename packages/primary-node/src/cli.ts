@@ -181,9 +181,6 @@ async function main(): Promise<void> {
     },
     node: {
       nodeId: primaryNode.getNodeId(),
-      // Issue #2717 Phase 2: Worker Node removed; returns empty array.
-      // Full type cleanup in Phase 4.
-      getExecNodes: () => [],
       getDebugGroup: () => primaryNode.getDebugGroupService().getDebugGroup(),
       setDebugGroup: (chatId: string, name?: string) => primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),

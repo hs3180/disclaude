@@ -21,7 +21,6 @@ export type {
   NodeCapabilities,
   BaseNodeConfig,
   PrimaryNodeConfig,
-  PrimaryNodeExecInfo,
   RestChannelConfig,
   FileStorageConfig,
 
