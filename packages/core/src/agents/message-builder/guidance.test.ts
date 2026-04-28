@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteContextSection,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,39 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildTasteContextSection', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildTasteContextSection()).toBe('');
+    expect(buildTasteContextSection(undefined)).toBe('');
+  });
+
+  it('should return empty string when context is empty string', () => {
+    expect(buildTasteContextSection('')).toBe('');
+  });
+
+  it('should include User Preferences heading when context is provided', () => {
+    const result = buildTasteContextSection('使用 const/let');
+    expect(result).toContain('User Preferences');
+    expect(result).toContain('Auto-learned');
+  });
+
+  it('should include the taste context content', () => {
+    const tasteContent = '**代码风格**:\n- 使用 const/let，禁止 var';
+    const result = buildTasteContextSection(tasteContent);
+    expect(result).toContain('使用 const/let');
+    expect(result).toContain('禁止 var');
+  });
+
+  it('should include instruction to follow preferences strictly', () => {
+    const result = buildTasteContextSection('some taste');
+    expect(result).toContain('Follow them strictly');
+  });
+
+  it('should mention override behavior', () => {
+    const result = buildTasteContextSection('some taste');
+    expect(result).toContain('explicitly overrides');
   });
 });

@@ -149,6 +149,7 @@ export {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteContextSection,
   type MessageData,
   type MessageBuilderContext,
   type MessageBuilderOptions,
@@ -309,3 +310,16 @@ export {
   type ExecNodeInfo,
   type DebugGroup,
 } from './control/index.js';
+
+// Taste module (Issue #2335: user preference persistence and injection)
+export {
+  TasteManager,
+  TASTE_CATEGORIES,
+  TASTE_CATEGORY_LABELS,
+  type TasteCategory,
+  type TasteSource,
+  type TasteRule,
+  type TastePersistData,
+  type TasteManagerOptions,
+  type TasteResult,
+} from './taste/index.js';

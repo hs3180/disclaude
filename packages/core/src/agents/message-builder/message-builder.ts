@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildTasteContextSection,
 } from './guidance.js';
 
 /**
@@ -138,6 +139,9 @@ export class MessageBuilder {
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
+    // User taste context (Issue #2335)
+    const tasteContextSection = buildTasteContextSection(msg.tasteContext);
+
     // Compose all sections
     const sections: string[] = [];
 
@@ -159,6 +163,10 @@ export class MessageBuilder {
 
     if (toolsSection) {
       sections.push(`\n---\n\n## Tools\n${toolsSection}`);
+    }
+
+    if (tasteContextSection) {
+      sections.push(tasteContextSection);
     }
 
     sections.push(nextStepGuidance);
