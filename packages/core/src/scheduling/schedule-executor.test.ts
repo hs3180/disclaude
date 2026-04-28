@@ -8,7 +8,7 @@
  * - Model override passing (Issue #1338)
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
- * Issue #2941: Updated to use ChatAgent directly (no ScheduleAgent abstraction).
+ * Issue #2941: Uses ChatAgent directly (single agent type).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

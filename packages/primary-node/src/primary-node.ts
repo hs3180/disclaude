@@ -443,7 +443,6 @@ export class PrimaryNode extends EventEmitter {
 
     // Issue #1382: Use unified createScheduleExecutor
     // Issue #1412: Use toChatAgentCallbacks helper to convert SchedulerCallbacks to ChatAgentCallbacks
-    // Issue #2941: Use createAgent() instead of createScheduleAgent()
     // Issue #1338: Pass model override for per-task model selection
     const executor = createScheduleExecutor({
       agentFactory: (chatId, callbacks, model) => {

@@ -61,6 +61,6 @@ export {
 // Schedule Executor (Issue #1382, Issue #2941: ChatAgent-only)
 export {
   createScheduleExecutor,
-  type AgentFactory as ScheduleAgentFactory,
+  type AgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';

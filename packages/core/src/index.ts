@@ -90,8 +90,6 @@ export {
   type BaseAgentConfig,
   type ChatAgentConfig,
   type AgentConfig,
-  /** @deprecated Use ChatAgent directly (Issue #2941) */
-  type AgentFactoryInterface,
   // Type guards
   isChatAgent,
   isDisposable,
@@ -213,9 +211,9 @@ export {
   type OnFileChanged,
   type OnFileRemoved,
   // Issue #1382: Unified schedule executor
-  // Issue #2941: ScheduleAgent removed (use ChatAgent directly)
+  // Issue #2941: ChatAgent-only (removed ScheduleAgentFactory alias)
   createScheduleExecutor,
-  type ScheduleAgentFactory,
+  type AgentFactory,
   type ScheduleExecutorOptions,
 } from './scheduling/index.js';
 

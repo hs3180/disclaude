@@ -2,8 +2,7 @@
  * Schedule Executor Factory - Creates TaskExecutor for scheduled task execution.
  *
  * Issue #1382: Unified executor implementation for both Primary Node and Worker Node.
- * Issue #2941: Removed ScheduleAgent/ScheduleAgentFactory abstractions.
- *   Now uses ChatAgent directly since it is the only agent type.
+ * Issue #2941: Uses ChatAgent directly since it is the only agent type.
  *
  * This module provides a factory function to create TaskExecutor instances
  * that can be used with the Scheduler. The executor uses a provided agent
@@ -29,7 +28,7 @@ import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
 /**
  * Factory function type for creating short-lived ChatAgent instances.
  *
- * Issue #2941: Replaces the former ScheduleAgentFactory. Since ChatAgent
+ * Issue #2941: Since ChatAgent
  * is the only agent type, this directly returns a ChatAgent instance.
  *
  * @param chatId - Chat ID for message delivery

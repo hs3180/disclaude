@@ -1,8 +1,7 @@
 /**
  * AgentFactory - Factory for creating ChatAgent instances with unified configuration.
  *
- * Issue #2941: Removed intermediate abstractions (ScheduleAgent, TaskAgent).
- * All agents are ChatAgent — the single agent type. Factory methods:
+ * Issue #2941: All agents are ChatAgent — the single agent type. Factory methods:
  * - createChatAgent: Create long-lived ChatAgent for AgentPool (by name)
  * - createAgent: Create short-lived ChatAgent for task execution (by chatId)
  *
@@ -95,9 +94,6 @@ export interface AgentCreateOptions {
  * Factory for creating ChatAgent instances with unified configuration.
  *
  * Issue #2941: Simplified — there is only one agent type (ChatAgent).
- * The former createScheduleAgent/createTaskAgent methods have been
- * merged into a single createAgent() method since they had identical
- * implementations.
  *
  * Each method fetches default configuration from Config.getAgentConfig()
  * and allows optional overrides.
@@ -189,9 +185,7 @@ export class AgentFactory {
   /**
    * Create a short-lived ChatAgent instance for task execution.
    *
-   * Issue #2941: Replaces the former createScheduleAgent() and createTaskAgent().
-   * Those methods had identical implementations — both just created a ChatAgent.
-   * This unified method creates a short-lived ChatAgent that the caller must
+   * Issue #2941: Creates a short-lived ChatAgent that the caller must
    * dispose after execution.
    *
    * @param chatId - Chat ID for message delivery
@@ -225,27 +219,4 @@ export class AgentFactory {
     return new ChatAgent(config);
   }
 
-  /**
-   * @deprecated Use createAgent() instead. Issue #2941.
-   * Kept for backward compatibility.
-   */
-  static createScheduleAgent(
-    chatId: string,
-    callbacks: ChatAgentCallbacks,
-    options: AgentCreateOptions = {}
-  ): ChatAgent {
-    return AgentFactory.createAgent(chatId, callbacks, options);
-  }
-
-  /**
-   * @deprecated Use createAgent() instead. Issue #2941.
-   * Kept for backward compatibility.
-   */
-  static createTaskAgent(
-    chatId: string,
-    callbacks: ChatAgentCallbacks,
-    options: AgentCreateOptions = {}
-  ): ChatAgent {
-    return AgentFactory.createAgent(chatId, callbacks, options);
-  }
 }
