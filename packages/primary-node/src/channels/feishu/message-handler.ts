@@ -84,6 +84,19 @@ export interface MessageCallbacks {
 }
 
 /**
+ * Map Feishu message type to the resource type accepted by the message-resource API.
+ *
+ * The API only accepts "image" or "file":
+ * - "image" for image messages
+ * - "file" for file, audio, and video (media) messages
+ *
+ * @see https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get
+ */
+function mapResourceType(messageType: string): 'image' | 'file' {
+  return messageType === 'image' ? 'image' : 'file';
+}
+
+/**
  * Result of resolving a quoted/replied message.
  *
  * @property text - Formatted quoted message text for display in the prompt
@@ -608,7 +621,7 @@ export class MessageHandler {
 
         const response = await this.client.im.messageResource.get({
           path: { message_id: messageId, file_key: fileKey },
-          params: { type: messageType },
+          params: { type: mapResourceType(messageType) },
         });
         await response.writeFile(localPath);
 
@@ -734,7 +747,7 @@ export class MessageHandler {
 
           const response = await this.client.im.messageResource.get({
             path: { message_id, file_key: fileKey },
-            params: { type: message_type },
+            params: { type: mapResourceType(message_type) },
           });
           await response.writeFile(localPath);
 
