@@ -11,6 +11,41 @@ import type {
   UserInput,
 } from '../../types.js';
 
+// ============================================================================
+// Runtime type guards
+// ============================================================================
+
+/**
+ * Minimal representation of an SDK content block.
+ *
+ * The Anthropic SDK types `apiMessage.content` as `Array<BetaContentBlock>`,
+ * a discriminated union with many variants (text, tool_use, thinking, etc.).
+ * This interface captures only the fields we inspect at runtime.
+ */
+interface SdkContentBlock {
+  type: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Runtime type guard that validates whether a value is a valid SDK content block.
+ *
+ * We cannot rely on TypeScript's discriminated union narrowing here because
+ * the codebase defines a local `SdkContentBlock` catch-all type rather than
+ * importing each variant from the SDK.  The guard ensures every item we
+ * process actually has a `type` string property at runtime, making the
+ * narrowing sound without resorting to double type assertions like
+ * `as unknown[] as T`.
+ */
+export function isSdkContentBlock(value: unknown): value is SdkContentBlock {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'type' in value &&
+    typeof (value as SdkContentBlock).type === 'string'
+  );
+}
+
 /**
  * 适配 Claude SDK 消息为统一的 AgentMessage
  *
@@ -37,17 +72,15 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      // 定义 SDK 内容块类型（包含 tool_use）
-      type SdkContentBlock = { type: string; [key: string]: unknown };
-
-      // 提取工具使用块
-      const toolBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
-        (block: SdkContentBlock) => block.type === 'tool_use'
+      // 提取工具使用块 — 使用 runtime guard 替代 double type assertion
+      const toolBlocks = apiMessage.content.filter(
+        (block: unknown): block is SdkContentBlock => isSdkContentBlock(block) && block.type === 'tool_use'
       );
 
       // 提取文本块
-      const textBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
-        (block: SdkContentBlock) => block.type === 'text' && 'text' in block
+      const textBlocks = apiMessage.content.filter(
+        (block: unknown): block is SdkContentBlock & { text: string } =>
+          isSdkContentBlock(block) && block.type === 'text' && 'text' in block
       );
 
       // 构建内容
@@ -63,10 +96,8 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         }
       }
 
-      // 处理文本
-      const textParts = textBlocks
-        .filter((block: SdkContentBlock) => 'text' in block)
-        .map((block: SdkContentBlock) => String((block as unknown as { text: string }).text));
+      // 处理文本（textBlocks 已通过 guard 确认包含 text 字段）
+      const textParts = textBlocks.map((block: SdkContentBlock & { text: string }) => String(block.text));
 
       if (textParts.length > 0) {
         contentParts.push(textParts.join(''));

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
+import { adaptSDKMessage, adaptUserInput, isSdkContentBlock } from './message-adapter.js';
 
 // Test helper: SDK message types require fields (parent_tool_use_id, uuid, etc.)
 // that are optional in practice. Cast test fixtures to bypass strict type checking.
@@ -201,6 +201,30 @@ describe('adaptSDKMessage', () => {
       const result = adaptSDKMessage(asMsg(message));
       expect(result.metadata?.sessionId).toBe('sess-abc');
     });
+
+    it('should gracefully skip invalid content blocks (runtime guard)', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'valid text' },
+            null as unknown as object,
+            42 as unknown as object,
+            'string-value' as unknown as object,
+            {} as unknown as object,
+            { type: 123 } as unknown as object,
+            { type: 'tool_use', name: 'Bash', input: { command: 'ls' } },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      // Runtime guard should filter out null, number, string, empty object, and non-string type
+      expect(result.content).toContain('valid text');
+      expect(result.content).toContain('Running: ls');
+      expect(result.type).toBe('tool_use');
+    });
   });
 
   describe('tool_progress messages', () => {
@@ -370,6 +394,36 @@ describe('adaptSDKMessage', () => {
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
     });
+  });
+});
+
+describe('isSdkContentBlock', () => {
+  it('should accept objects with a string type property', () => {
+    expect(isSdkContentBlock({ type: 'text', text: 'hi' })).toBe(true);
+    expect(isSdkContentBlock({ type: 'tool_use', name: 'Bash', input: {} })).toBe(true);
+    expect(isSdkContentBlock({ type: 'thinking', thinking: '...' })).toBe(true);
+  });
+
+  it('should reject null', () => {
+    expect(isSdkContentBlock(null)).toBe(false);
+  });
+
+  it('should reject non-object primitives', () => {
+    expect(isSdkContentBlock(undefined)).toBe(false);
+    expect(isSdkContentBlock(42)).toBe(false);
+    expect(isSdkContentBlock('string')).toBe(false);
+    expect(isSdkContentBlock(true)).toBe(false);
+  });
+
+  it('should reject objects without a type property', () => {
+    expect(isSdkContentBlock({})).toBe(false);
+    expect(isSdkContentBlock({ text: 'no type field' })).toBe(false);
+  });
+
+  it('should reject objects with non-string type', () => {
+    expect(isSdkContentBlock({ type: 123 })).toBe(false);
+    expect(isSdkContentBlock({ type: null })).toBe(false);
+    expect(isSdkContentBlock({ type: undefined })).toBe(false);
   });
 });
 
