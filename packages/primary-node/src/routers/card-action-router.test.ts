@@ -1,21 +1,17 @@
 /**
  * Tests for CardActionRouter.
  *
- * Issue #1629: Verify resolvedPrompt is passed through when routing
- * card actions to remote Worker Nodes.
+ * Issue #2939: Simplified to single-node mode — removed remote node routing tests.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { CardActionRouter } from './card-action-router.js';
-import type { CardActionMessage } from '@disclaude/core';
 
 describe('CardActionRouter', () => {
   let router: CardActionRouter;
-  let sendToRemoteNode: ReturnType<typeof vi.fn>;
-  let isNodeConnected: ReturnType<typeof vi.fn>;
 
-  const baseMessage: CardActionMessage = {
-    type: 'card_action',
+  const baseMessage = {
+    type: 'card_action' as const,
     chatId: 'chat-1',
     cardMessageId: 'card-msg-1',
     actionType: 'button',
@@ -24,12 +20,7 @@ describe('CardActionRouter', () => {
   };
 
   beforeEach(() => {
-    sendToRemoteNode = vi.fn().mockResolvedValue(true);
-    isNodeConnected = vi.fn().mockReturnValue(true);
-    router = new CardActionRouter({
-      sendToRemoteNode,
-      isNodeConnected,
-    });
+    router = new CardActionRouter();
   });
 
   afterEach(() => {
@@ -38,13 +29,13 @@ describe('CardActionRouter', () => {
 
   describe('registerChatContext / unregisterChatContext', () => {
     it('should register a chat context', () => {
-      router.registerChatContext('chat-1', 'node-1', true);
+      router.registerChatContext('chat-1', 'node-1');
       const ctx = router.getChatContext('chat-1');
-      expect(ctx).toEqual({ status: 'active', context: { nodeId: 'node-1', isRemote: true } });
+      expect(ctx).toEqual({ status: 'active', context: { nodeId: 'node-1' } });
     });
 
     it('should unregister a chat context', () => {
-      router.registerChatContext('chat-1', 'node-1', true);
+      router.registerChatContext('chat-1', 'node-1');
       router.unregisterChatContext('chat-1');
       const ctx = router.getChatContext('chat-1');
       expect(ctx).toEqual({ status: 'not_found' });
@@ -55,41 +46,10 @@ describe('CardActionRouter', () => {
     it('should return { routed: false } when no context is registered', async () => {
       const result = await router.routeCardAction(baseMessage);
       expect(result).toEqual({ routed: false });
-      expect(sendToRemoteNode).not.toHaveBeenCalled();
     });
 
-    it('should return { routed: false } for local node (no routing needed)', async () => {
-      router.registerChatContext('chat-1', 'node-1', false);
-      const result = await router.routeCardAction(baseMessage);
-      expect(result).toEqual({ routed: false });
-      expect(sendToRemoteNode).not.toHaveBeenCalled();
-    });
-
-    it('should return { routed: true } when card action is routed to remote node', async () => {
-      router.registerChatContext('chat-1', 'node-1', true);
-      const result = await router.routeCardAction(baseMessage);
-      expect(result).toEqual({ routed: true });
-      expect(sendToRemoteNode).toHaveBeenCalledWith('node-1', baseMessage);
-    });
-
-    it('should return { routed: false } when remote node is disconnected', async () => {
-      router.registerChatContext('chat-1', 'node-1', true);
-      isNodeConnected.mockReturnValue(false);
-      const result = await router.routeCardAction(baseMessage);
-      expect(result).toEqual({ routed: false });
-      expect(sendToRemoteNode).not.toHaveBeenCalled();
-    });
-
-    it('should return { routed: false } when sendToRemoteNode fails', async () => {
-      router.registerChatContext('chat-1', 'node-1', true);
-      sendToRemoteNode.mockResolvedValue(false);
-      const result = await router.routeCardAction(baseMessage);
-      expect(result).toEqual({ routed: false });
-    });
-
-    it('should return { routed: false } when sendToRemoteNode throws', async () => {
-      router.registerChatContext('chat-1', 'node-1', true);
-      sendToRemoteNode.mockRejectedValue(new Error('Network error'));
+    it('should return { routed: false } for registered context (local-only mode)', async () => {
+      router.registerChatContext('chat-1', 'node-1');
       const result = await router.routeCardAction(baseMessage);
       expect(result).toEqual({ routed: false });
     });
@@ -98,62 +58,49 @@ describe('CardActionRouter', () => {
   describe('maxAge expiry', () => {
     it('should return { routed: false, expired: true } when context has expired', async () => {
       // Create router with very short maxAge (1ms)
-      const expiredRouter = new CardActionRouter({
-        sendToRemoteNode,
-        isNodeConnected,
-        maxAge: 1,
-      });
+      const expiredRouter = new CardActionRouter({ maxAge: 1 });
 
-      expiredRouter.registerChatContext('chat-expired', 'node-1', true);
+      expiredRouter.registerChatContext('chat-expired', 'node-1');
       // Wait for entry to expire
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      const expiredMessage: CardActionMessage = { ...baseMessage, chatId: 'chat-expired' };
+      const expiredMessage = { ...baseMessage, chatId: 'chat-expired' };
       const result = await expiredRouter.routeCardAction(expiredMessage);
       expect(result).toEqual({ routed: false, expired: true });
-      expect(sendToRemoteNode).not.toHaveBeenCalled();
 
       expiredRouter.dispose();
     });
 
     it('should distinguish between expired and not_found contexts (#2247)', async () => {
-      const expiredRouter = new CardActionRouter({
-        sendToRemoteNode,
-        isNodeConnected,
-        maxAge: 1,
-      });
+      const expiredRouter = new CardActionRouter({ maxAge: 1 });
 
       // Not registered at all
       const notFound = expiredRouter.getChatContext('chat-never');
       expect(notFound).toEqual({ status: 'not_found' });
 
       // Register and let expire
-      expiredRouter.registerChatContext('chat-expired', 'node-1', true);
+      expiredRouter.registerChatContext('chat-expired', 'node-1');
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       const expired = expiredRouter.getChatContext('chat-expired');
       expect(expired).toEqual({ status: 'expired' });
 
       // Active context
-      const activeRouter = new CardActionRouter({
-        sendToRemoteNode,
-        isNodeConnected,
-        maxAge: 60 * 60 * 1000, // 1 hour
-      });
-      activeRouter.registerChatContext('chat-active', 'node-1', true);
+      const activeRouter = new CardActionRouter({ maxAge: 60 * 60 * 1000 }); // 1 hour
+      activeRouter.registerChatContext('chat-active', 'node-1');
       const active = activeRouter.getChatContext('chat-active');
-      expect(active).toEqual({ status: 'active', context: { nodeId: 'node-1', isRemote: true } });
+      expect(active).toEqual({ status: 'active', context: { nodeId: 'node-1' } });
 
       expiredRouter.dispose();
       activeRouter.dispose();
     });
 
     it('should provide getActiveChatContext convenience method (#2247)', () => {
-      router.registerChatContext('chat-1', 'node-1', true);
+      router.registerChatContext('chat-1', 'node-1');
 
-      // Active context returns the context object
+      // Active context returns the nodeId
       const active = router.getActiveChatContext('chat-1');
-      expect(active).toEqual({ nodeId: 'node-1', isRemote: true });
+      expect(active).toBe('node-1');
 
       // Unregistered returns undefined
       router.unregisterChatContext('chat-1');
@@ -161,80 +108,30 @@ describe('CardActionRouter', () => {
       expect(gone).toBeUndefined();
     });
 
-    it('should route to different nodes for different chatIds', async () => {
-      router.registerChatContext('chat-a', 'node-a', true);
-      router.registerChatContext('chat-b', 'node-b', true);
+    it('should track contexts for different chatIds independently', async () => {
+      router.registerChatContext('chat-a', 'node-a');
+      router.registerChatContext('chat-b', 'node-b');
 
-      const messageA: CardActionMessage = { ...baseMessage, chatId: 'chat-a' };
-      const messageB: CardActionMessage = { ...baseMessage, chatId: 'chat-b' };
+      const messageA = { ...baseMessage, chatId: 'chat-a' };
+      const messageB = { ...baseMessage, chatId: 'chat-b' };
 
-      await router.routeCardAction(messageA);
-      await router.routeCardAction(messageB);
+      const resultA = await router.routeCardAction(messageA);
+      const resultB = await router.routeCardAction(messageB);
 
-      expect(sendToRemoteNode).toHaveBeenCalledTimes(2);
-      expect(sendToRemoteNode).toHaveBeenCalledWith('node-a', messageA);
-      expect(sendToRemoteNode).toHaveBeenCalledWith('node-b', messageB);
+      // Both should return routed: false (local-only mode)
+      expect(resultA).toEqual({ routed: false });
+      expect(resultB).toEqual({ routed: false });
     });
   });
 
-  describe('Issue #1629: resolvedPrompt passthrough', () => {
-    it('should pass resolvedPrompt through to remote node', async () => {
-      router.registerChatContext('chat-1', 'node-1', true);
+  describe('dispose', () => {
+    it('should clear all contexts on dispose', () => {
+      router.registerChatContext('chat-1', 'node-1');
+      router.registerChatContext('chat-2', 'node-2');
+      router.dispose();
 
-      const messageWithPrompt: CardActionMessage = {
-        ...baseMessage,
-        resolvedPrompt: 'User wants to proceed with deployment to production',
-      };
-
-      const result = await router.routeCardAction(messageWithPrompt);
-      expect(result).toEqual({ routed: true });
-      expect(sendToRemoteNode).toHaveBeenCalledWith('node-1', messageWithPrompt);
-      // Verify the message passed to remote node contains resolvedPrompt
-      const sentMessage = sendToRemoteNode.mock.calls[0][1] as CardActionMessage;
-      expect(sentMessage.resolvedPrompt).toBe('User wants to proceed with deployment to production');
-    });
-
-    it('should pass message without resolvedPrompt when not set', async () => {
-      router.registerChatContext('chat-1', 'node-1', true);
-
-      const result = await router.routeCardAction(baseMessage);
-      expect(result).toEqual({ routed: true });
-      const sentMessage = sendToRemoteNode.mock.calls[0][1] as CardActionMessage;
-      expect(sentMessage.resolvedPrompt).toBeUndefined();
-    });
-
-    it('should forward full CardActionMessage including action details', async () => {
-      router.registerChatContext('chat-1', 'node-1', true);
-
-      const fullMessage: CardActionMessage = {
-        ...baseMessage,
-        userId: 'user-123',
-        resolvedPrompt: 'Custom prompt with {{actionText}} replacement',
-        action: {
-          type: 'button',
-          value: 'confirm',
-          text: 'Confirm',
-          trigger: 'button',
-        },
-      };
-
-      await router.routeCardAction(fullMessage);
-      expect(sendToRemoteNode).toHaveBeenCalledWith('node-1', fullMessage);
-    });
-
-    it('should pass empty string resolvedPrompt as-is to remote node', async () => {
-      router.registerChatContext('chat-1', 'node-1', true);
-
-      const messageWithEmptyPrompt: CardActionMessage = {
-        ...baseMessage,
-        resolvedPrompt: '',
-      };
-
-      const result = await router.routeCardAction(messageWithEmptyPrompt);
-      expect(result).toEqual({ routed: true });
-      const sentMessage = sendToRemoteNode.mock.calls[0][1] as CardActionMessage;
-      // Empty string is truthy for the field but falsy for || fallback in Worker Node
-      expect(sentMessage.resolvedPrompt).toBe('');
+      expect(router.getChatContext('chat-1')).toEqual({ status: 'not_found' });
+      expect(router.getChatContext('chat-2')).toEqual({ status: 'not_found' });
     });
   });
 });

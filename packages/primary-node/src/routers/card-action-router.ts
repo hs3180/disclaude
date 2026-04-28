@@ -1,17 +1,19 @@
 /**
- * CardActionRouter - Routes card action callbacks to Worker Nodes.
+ * CardActionRouter - Tracks card action context for expiry detection.
  *
- * When a Worker Node sends a card, Primary Node records the chatId -> nodeId mapping.
- * When a card action callback is received, Primary Node looks up the mapping
- * and forwards the action to the appropriate Worker Node.
+ * When a card is sent, Primary Node records the chatId -> nodeId mapping.
+ * When a card action callback is received, Primary Node checks if the context
+ * is still active, expired, or not found, allowing callers to provide
+ * appropriate user feedback.
  *
  * Issue #935: WebSocket bidirectional communication for card actions.
  * Issue #1040: Migrated to @disclaude/primary-node
+ * Issue #2939: Removed remote node stubs (sendToRemoteNode, isRemote).
  *
  * @module routers/card-action-router
  */
 
-import { createLogger, type CardActionMessage } from '@disclaude/core';
+import { createLogger } from '@disclaude/core';
 
 const logger = createLogger('CardActionRouter');
 
@@ -23,8 +25,6 @@ interface CardContextEntry {
   nodeId: string;
   /** Timestamp when the entry was created */
   createdAt: number;
-  /** Whether the node is a remote Worker Node (not local) */
-  isRemote: boolean;
 }
 
 /**
@@ -35,7 +35,7 @@ export interface ChatContextResult {
   /** The lookup status */
   status: 'active' | 'expired' | 'not_found';
   /** Context data, only present when status is 'active' */
-  context?: { nodeId: string; isRemote: boolean };
+  context?: { nodeId: string };
 }
 
 /**
@@ -44,12 +44,15 @@ export interface ChatContextResult {
  * has expired (#2247 Problem 7).
  */
 export interface RouteCardActionResult {
-  /** Whether the action was successfully routed to a remote node */
+  /**
+   * Whether the card context was found and is still active.
+   * Always false in single-node mode — no remote routing.
+   */
   routed: boolean;
   /**
    * Whether the card context has expired.
    * When true, the caller should notify the user that their operation
-   * has timed out, rather than falling through to local emit.
+   * has timed out.
    */
   expired?: boolean;
 }
@@ -60,35 +63,22 @@ export interface RouteCardActionResult {
 export interface CardActionRouterConfig {
   /** Maximum age of context entries in milliseconds (default: 24 hours) */
   maxAge?: number;
-  /** Callback to send card action to a remote node */
-  sendToRemoteNode: (nodeId: string, message: CardActionMessage) => Promise<boolean>;
-  /** Callback to check if a node is connected */
-  isNodeConnected: (nodeId: string) => boolean;
 }
 
 /**
- * CardActionRouter - Routes card action callbacks to the appropriate node.
+ * CardActionRouter - Tracks card action context for expiry detection.
  *
  * This class manages the mapping between chatId and the node that handles
- * card interactions for that chat. When a Worker Node sends a card, it
- * registers the chat context. When a card action is received, the router
- * forwards it to the appropriate node.
+ * card interactions for that chat. When a node sends a card, it registers
+ * the chat context. When a card action is received, the router checks
+ * whether the context is still active, expired, or not found.
  *
  * @example
  * ```typescript
- * const router = new CardActionRouter({
- *   sendToRemoteNode: async (nodeId, message) => {
- *     // Send via WebSocket
- *     return true;
- *   },
- *   isNodeConnected: (nodeId) => {
- *     // Check if node is connected
- *     return true;
- *   },
- * });
+ * const router = new CardActionRouter();
  *
- * // When Worker Node sends a card
- * router.registerChatContext(chatId, nodeId, true);
+ * // When node sends a card
+ * router.registerChatContext(chatId, nodeId);
  *
  * // When card action is received
  * const result = await router.routeCardAction({
@@ -98,24 +88,20 @@ export interface CardActionRouterConfig {
  *   actionType: 'button',
  *   actionValue: 'confirm',
  * });
- * // result.routed: boolean — whether the action was sent to a remote node
+ * // result.routed: boolean — always false in single-node mode
  * // result.expired: boolean | undefined — whether the card context has expired (#2247)
  * ```
  */
 export class CardActionRouter {
   private readonly maxAge: number;
-  private readonly sendToRemoteNode: (nodeId: string, message: CardActionMessage) => Promise<boolean>;
-  private readonly isNodeConnected: (nodeId: string) => boolean;
   private readonly contextMap = new Map<string, CardContextEntry>();
 
   // Cleanup interval (1 hour)
   private readonly cleanupInterval = 60 * 60 * 1000;
   private cleanupTimer?: ReturnType<typeof setInterval>;
 
-  constructor(config: CardActionRouterConfig) {
+  constructor(config: CardActionRouterConfig = {}) {
     this.maxAge = config.maxAge ?? 24 * 60 * 60 * 1000; // Default: 24 hours
-    this.sendToRemoteNode = config.sendToRemoteNode;
-    this.isNodeConnected = config.isNodeConnected;
 
     // Start periodic cleanup
     this.startCleanupTimer();
@@ -129,16 +115,14 @@ export class CardActionRouter {
    *
    * @param chatId - Chat ID where the card was sent
    * @param nodeId - Node ID that sent the card
-   * @param isRemote - Whether the node is a remote Worker Node
    */
-  registerChatContext(chatId: string, nodeId: string, isRemote: boolean): void {
+  registerChatContext(chatId: string, nodeId: string): void {
     this.contextMap.set(chatId, {
       nodeId,
       createdAt: Date.now(),
-      isRemote,
     });
 
-    logger.debug({ chatId, nodeId, isRemote }, 'Chat context registered for card routing');
+    logger.debug({ chatId, nodeId }, 'Chat context registered for card routing');
   }
 
   /**
@@ -176,7 +160,7 @@ export class CardActionRouter {
       return { status: 'expired' };
     }
 
-    return { status: 'active', context: { nodeId: entry.nodeId, isRemote: entry.isRemote } };
+    return { status: 'active', context: { nodeId: entry.nodeId } };
   }
 
   /**
@@ -184,23 +168,28 @@ export class CardActionRouter {
    * Convenience method for callers that only need a boolean check.
    *
    * @param chatId - Chat ID to look up
-   * @returns Node ID and whether it's remote, or undefined if not active
+   * @returns Node ID if active, or undefined if not active
    */
-  getActiveChatContext(chatId: string): { nodeId: string; isRemote: boolean } | undefined {
+  getActiveChatContext(chatId: string): string | undefined {
     const result = this.getChatContext(chatId);
-    return result.status === 'active' ? result.context : undefined;
+    return result.status === 'active' ? result.context?.nodeId : undefined;
   }
 
   /**
-   * Route a card action to the appropriate node.
+   * Check card action context status.
    *
    * Returns a result object that distinguishes between routing outcomes,
    * allowing callers to provide appropriate user feedback (#2247).
    *
-   * @param message - Card action message to route
+   * Note: Kept as async for API backward compatibility. Previously this method
+   * performed remote node routing via `sendToRemoteNode`; now it only checks
+   * context status in single-node mode (#2939).
+   *
+   * @param message - Card action message to check
    * @returns RouteCardActionResult with routed status and optional expired flag
    */
-  async routeCardAction(message: CardActionMessage): Promise<RouteCardActionResult> {
+  // eslint-disable-next-line require-await
+  async routeCardAction(message: { chatId: string }): Promise<RouteCardActionResult> {
     const { chatId } = message;
     const contextResult = this.getChatContext(chatId);
 
@@ -217,40 +206,9 @@ export class CardActionRouter {
       return { routed: false };
     }
 
-    // status is 'active', context is guaranteed to be present
-    const context = contextResult.context as { nodeId: string; isRemote: boolean };
-
-    const { nodeId, isRemote } = context;
-
-    if (!isRemote) {
-      // Local node, no routing needed
-      logger.debug({ chatId, nodeId }, 'Card context is local, no routing needed');
-      return { routed: false };
-    }
-
-    // Check if remote node is still connected
-    if (!this.isNodeConnected(nodeId)) {
-      logger.warn({ chatId, nodeId }, 'Remote node not connected, falling back to local handler');
-      this.contextMap.delete(chatId);
-      return { routed: false };
-    }
-
-    // Route to remote node
-    logger.info({ chatId, nodeId, actionType: message.actionType }, 'Routing card action to remote node');
-
-    try {
-      const sent = await this.sendToRemoteNode(nodeId, message);
-      if (sent) {
-        logger.debug({ chatId, nodeId }, 'Card action routed successfully');
-        return { routed: true };
-      } else {
-        logger.warn({ chatId, nodeId }, 'Failed to route card action');
-        return { routed: false };
-      }
-    } catch (error) {
-      logger.error({ err: error, chatId, nodeId }, 'Error routing card action');
-      return { routed: false };
-    }
+    // status is 'active' — in single-node mode, no remote routing needed
+    logger.debug({ chatId, nodeId: contextResult.context?.nodeId }, 'Card context is active, local-only mode');
+    return { routed: false };
   }
 
   /**
