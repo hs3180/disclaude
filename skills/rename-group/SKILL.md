@@ -65,9 +65,7 @@ Use the Chat ID as `RENAME_CHAT_ID`.
 
 ## Architecture
 
-Group operations (rename, create, dissolve) use **lark-cli** to call Feishu API directly — NOT through IPC Channel. This follows the same pattern as:
-- `chats-activation.ts` (group creation via lark-cli)
-- `chat-timeout.ts` (group dissolution via lark-cli)
+Group operations (rename, create, dissolve) use **lark-cli** to call Feishu API directly — NOT through IPC Channel.
 
 ## Safety Guarantees
 
