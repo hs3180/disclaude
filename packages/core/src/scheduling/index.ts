@@ -4,6 +4,7 @@
  * This module provides:
  * - CooldownManager: Manages cooldown periods for scheduled tasks
  * - ChatStore: File-based storage for temporary chat lifecycle records (Issue #1703)
+ * - BotChatMappingStore: Context-to-chatId mapping for bot groups (Issue #2947)
  * - ScheduledTask: Type definition for scheduled tasks
  * - ScheduleFileScanner: Scans and parses schedule markdown files
  * - ScheduleFileWatcher: Hot reload for schedule files
@@ -31,6 +32,19 @@ export {
   type TempChatResponse,
   type RegisterTempChatOptions,
 } from './chat-store.js';
+
+// Bot Chat Mapping (Issue #2947: context-to-chatId mapping)
+export {
+  BotChatMappingStore,
+  makeMappingKey,
+  parseGroupNameToKey,
+  purposeFromKey,
+  type MappingPurpose,
+  type MappingEntry,
+  type MappingTable,
+  type RebuildResult,
+  type BotChatMappingStoreOptions,
+} from './bot-chat-mapping.js';
 
 // File Scanner & Watcher
 export {
