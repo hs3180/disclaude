@@ -48,6 +48,17 @@ agent:
   # Default: false
   # enableAgentTeams: true
 
+  # HTTP request timeout for SDK subprocess API calls (in milliseconds)
+  # Passes ANTHROPIC_TIMEOUT to the SDK subprocess to prevent indefinite hangs
+  # when the API endpoint (e.g., LiteLLM proxy) becomes unresponsive.
+  # Only affects the initial HTTP connection timeout — streaming hangs after
+  # connection establishment are handled by the inactivity timeout.
+  # Set to 0 to disable (uses Anthropic SDK default of 600000ms / 10 min).
+  # Recommended: 300000 (5 minutes) for proxy setups (LiteLLM, etc.)
+  # Default: 0 (disabled, uses SDK default)
+  # @see https://github.com/hs3180/disclaude/issues/2992
+  # apiTimeoutMs: 300000
+
 # -----------------------------------------------------------------------------
 # Feishu/Lark Platform Configuration
 # -----------------------------------------------------------------------------

@@ -60,13 +60,16 @@ export function extractText(message: AgentMessage): string {
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param apiTimeoutMs - HTTP request timeout in ms for SDK subprocess (Issue #2992).
+ *   Set to 0 or undefined to use the Anthropic SDK default (600000ms / 10 min).
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  apiTimeoutMs?: number
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -78,7 +81,7 @@ export function buildSdkEnv(
     : `${nodeBinDir}:${originalPath}`;
 
   // Priority (highest to lowest):
-  // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG)
+  // 1. Our forced values (API_KEY, PATH, BASE_URL, DEBUG, TIMEOUT)
   // 2. process.env (system environment)
   // 3. extraEnv (caller-provided defaults)
   // This ensures system env vars can't be accidentally overridden by extraEnv,
@@ -103,6 +106,16 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Issue #2992: Set HTTP request timeout for SDK subprocess.
+  // The Anthropic SDK reads ANTHROPIC_TIMEOUT to configure its HTTP client timeout.
+  // This prevents the SDK subprocess from hanging indefinitely when the API
+  // endpoint (e.g., LiteLLM proxy) becomes unresponsive during the initial
+  // connection phase. Streaming hangs after connection establishment are handled
+  // separately by the inactivity timeout in ChatAgent.processIterator().
+  if (apiTimeoutMs && apiTimeoutMs > 0) {
+    env.ANTHROPIC_TIMEOUT = String(apiTimeoutMs);
   }
 
   return env;

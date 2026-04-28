@@ -40,6 +40,25 @@ export interface AgentConfig {
    * @see https://code.claude.com/docs/en/agent-teams
    */
   enableAgentTeams?: boolean;
+  /**
+   * HTTP request timeout for SDK subprocess API calls (in milliseconds).
+   *
+   * When set, passes ANTHROPIC_TIMEOUT to the SDK subprocess, which configures
+   * the underlying Anthropic client's HTTP timeout. This prevents the SDK
+   * subprocess from hanging indefinitely when the API endpoint (e.g., LiteLLM
+   * proxy) becomes unresponsive.
+   *
+   * Only affects the initial HTTP connection timeout — streaming hangs after
+   * connection establishment are handled separately by the inactivity timeout
+   * (see ChatAgent.sessionInactivityTimeoutMs).
+   *
+   * Set to 0 to disable (uses the Anthropic SDK default of 600000ms / 10 min).
+   *
+   * Recommended: 300000 (5 minutes) for proxy setups (LiteLLM, etc.)
+   *
+   * @see Issue #2992
+   */
+  apiTimeoutMs?: number;
 }
 
 /**

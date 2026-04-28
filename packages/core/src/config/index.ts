@@ -337,9 +337,12 @@ export class Config {
     model: string;
     apiBaseUrl?: string;
     provider: 'anthropic' | 'glm';
+    apiTimeoutMs?: number;
   } {
     // Validate required configuration first
     this.validateRequiredConfig();
+
+    const agentTimeout = fileConfigOnly.agent?.apiTimeoutMs;
 
     // Prefer GLM if configured
     if (this.GLM_API_KEY) {
@@ -349,6 +352,7 @@ export class Config {
         model: this.GLM_MODEL,
         apiBaseUrl: this.GLM_API_BASE_URL,
         provider: 'glm',
+        ...(agentTimeout !== undefined && agentTimeout !== null && { apiTimeoutMs: agentTimeout }),
       };
     }
 
@@ -358,6 +362,7 @@ export class Config {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
       provider: 'anthropic',
+      ...(agentTimeout !== undefined && agentTimeout !== null && { apiTimeoutMs: agentTimeout }),
     };
   }
 

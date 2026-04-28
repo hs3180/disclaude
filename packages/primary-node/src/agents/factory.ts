@@ -118,6 +118,7 @@ export class AgentFactory {
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
+      apiTimeoutMs: defaultConfig.apiTimeoutMs,
     };
   }
 

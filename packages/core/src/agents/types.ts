@@ -249,6 +249,13 @@ export interface BaseAgentConfig {
   apiBaseUrl?: string;
   /** Permission mode for tool execution */
   permissionMode?: 'default' | 'bypassPermissions';
+  /**
+   * HTTP request timeout for SDK subprocess API calls (in milliseconds).
+   * When set, passes ANTHROPIC_TIMEOUT to the SDK subprocess.
+   * Set to 0 to disable (uses SDK default of 600000ms / 10 min).
+   * @see Issue #2992
+   */
+  apiTimeoutMs?: number;
 }
 
 /**
@@ -337,7 +344,7 @@ export interface AgentRuntimeContext {
   /** Get the workspace directory path */
   getWorkspaceDir(): string;
   /** Get agent configuration (API key, model, provider) */
-  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider };
+  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider; apiTimeoutMs?: number };
   /** Get logging configuration */
   getLoggingConfig(): { sdkDebug: boolean };
   /** Get global environment variables */
