@@ -5,7 +5,7 @@
  * - POST /mcp — Client sends JSON-RPC requests, server responds inline
  *
  * This is the modern MCP transport, replacing the legacy SSE transport.
- * Supported by ACP v0.23.1+ with `"mcpCapabilities":{"http":true}`.
+ * Clients declare HTTP capability via `"mcpCapabilities":{"http":true"}`.
  *
  * @module mcp-server/http-server
  */
