@@ -14,7 +14,7 @@
 #   ./tests/integration/run-all-tests.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout (overrides per-script defaults)
 #   --port PORT         REST API port (default: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
 #   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
@@ -29,7 +29,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
-TIMEOUT="${TIMEOUT:-60}"
+TIMEOUT_EXPLICIT=false
 MAX_RETRIES="${MAX_RETRIES:-2}"
 INTER_SUITE_DELAY="${INTER_SUITE_DELAY:-5}"
 RETRY_INITIAL_DELAY="${RETRY_INITIAL_DELAY:-5}"
@@ -40,11 +40,13 @@ parse_common_args "$@"
 register_cleanup
 
 # Additional args for tag/test filtering (passthrough to sub-scripts)
+# Also detect if --timeout was explicitly set by the user
 FILTER_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --retries) MAX_RETRIES="$2"; shift 2 ;;
         --delay) INTER_SUITE_DELAY="$2"; shift 2 ;;
+        --timeout) TIMEOUT="$2"; TIMEOUT_EXPLICIT=true; shift 2 ;;
         --tag|--name) FILTER_ARGS+=("$1" "$2"); shift 2 ;;
         *) shift ;;
     esac
@@ -77,7 +79,11 @@ show_test_plan_body() {
     echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    if [ "$TIMEOUT_EXPLICIT" = true ]; then
+        echo "  - Timeout: ${TIMEOUT}s (explicit override for all suites)"
+    else
+        echo "  - Timeout: per-script defaults (120s for AI tests, 30s for fast tests)"
+    fi
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s (rate limit avoidance)"
     echo "  - Retry Backoff: ${RETRY_INITIAL_DELAY}s × ${RETRY_BACKOFF}^attempt"
@@ -101,7 +107,12 @@ run_test_script() {
     local args=()
 
     args+=("--port" "$REST_PORT")
-    args+=("--timeout" "$TIMEOUT")
+    # Only pass --timeout if explicitly set by user; otherwise let each
+    # test script use its own default (e.g. 120s for multi-turn tool calls,
+    # 30s for fast health checks) — fixes #3003.
+    if [ "$TIMEOUT_EXPLICIT" = true ]; then
+        args+=("--timeout" "$TIMEOUT")
+    fi
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
@@ -178,7 +189,11 @@ main() {
 
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    if [ "$TIMEOUT_EXPLICIT" = true ]; then
+        echo "  - Timeout: ${TIMEOUT}s (explicit override for all suites)"
+    else
+        echo "  - Timeout: per-script defaults (120s for AI tests, 30s for fast tests)"
+    fi
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s"
     echo ""
