@@ -11,7 +11,6 @@ export type {
   MessageSentCallback,
   ActionPromptMap,
   SendInteractiveResult,
-  RegisterTempChatResult,
 } from './types.js';
 
 // Shared utilities
@@ -31,9 +30,6 @@ export { send_card } from './send-card.js';
 
 // Send File
 export { send_file } from './send-file.js';
-
-// Temp chat lifecycle management (Issue #1703)
-export { register_temp_chat } from './register-temp-chat.js';
 
 // Interactive Message
 export {
