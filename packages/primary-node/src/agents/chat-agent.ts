@@ -78,6 +78,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // SDK message inactivity timeout (Issue #2993)
+  private readonly sessionInactivityTimeoutMs: number;
+
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
   private historyLoaded = false;
@@ -108,6 +111,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+
+    // Issue #2993: SDK message inactivity timeout (default 5 minutes, 0 to disable)
+    this.sessionInactivityTimeoutMs = config.sessionInactivityTimeoutMs ?? 300_000;
 
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');
   }
@@ -753,6 +759,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * - Limit consecutive restarts (max 3 by default)
    * - Apply exponential backoff between restarts
    * - Open circuit breaker after max restarts exceeded
+   *
+   * Issue #2993: Added inactivity watchdog that detects when no SDK message
+   * is received within the configured timeout. On timeout, the user is notified
+   * immediately and the query is cancelled to break the for-await loop.
    */
   private async processIterator(
     iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
@@ -761,7 +771,55 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let iteratorError: Error | null = null;
     let messageCount = 0;
 
+    // Issue #2993: Inactivity watchdog state
+    let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+    let inactivityTimedOut = false;
+
+    const clearInactivityTimer = () => {
+      if (inactivityTimer !== undefined) {
+        clearTimeout(inactivityTimer);
+        inactivityTimer = undefined;
+      }
+    };
+
+    const resetInactivityTimer = () => {
+      clearInactivityTimer();
+      if (this.sessionInactivityTimeoutMs > 0) {
+        inactivityTimer = setTimeout(() => {
+          inactivityTimedOut = true;
+          this.logger.warn(
+            { chatId, messageCount, timeoutMs: this.sessionInactivityTimeoutMs },
+            'Session inactivity timeout: no SDK message received within timeout period'
+          );
+
+          // Notify user immediately — do not wait for the iterator to unwind
+          this.callbacks.sendMessage(
+            chatId,
+            '⚠️ Agent 会话因长时间无响应而终止。\n\n'
+            + '可能原因：API 代理连接挂起或网络中断。\n'
+            + '建议：发送 /reset 重置会话后重试。',
+          ).catch((notifyErr) => {
+            this.logger.error({ err: notifyErr, chatId }, 'Failed to send inactivity timeout notification');
+          });
+
+          // Cancel the query to break the for-await loop
+          if (this.queryHandle) {
+            this.logger.info({ chatId }, 'Inactivity timeout: cancelling query handle');
+            this.queryHandle.cancel();
+            this.queryHandle = undefined;
+          }
+        }, this.sessionInactivityTimeoutMs);
+
+        // Allow Node.js to exit even if timer is pending
+        if (inactivityTimer.unref) {
+          inactivityTimer.unref();
+        }
+      }
+    };
+
     try {
+      resetInactivityTimer();
+
       for await (const { parsed } of iterator) {
         // Issue #2926: Check abort signal at the start of each iteration.
         // When /stop or /reset is received, we break immediately instead of
@@ -775,6 +833,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
 
         messageCount++;
+        resetInactivityTimer();
+
         this.logger.debug(
           { chatId, messageCount, type: parsed.type },
           'SDK message received'
@@ -805,18 +865,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         err: iteratorError,
         chatId,
         messageCount,
+        inactivityTimedOut,
         errorMessage: iteratorError.message,
         errorStack: iteratorError.stack,
         errorName: iteratorError.constructor.name,
         errorCause: iteratorError.cause,
       }, 'Iterator error');
 
-      const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
+      // Issue #2993: Skip redundant error notification if inactivity timeout
+      // already sent one. The user already knows the session is hung.
+      if (!inactivityTimedOut) {
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
+      }
 
       if (this.callbacks.onDone) {
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
         await this.callbacks.onDone(chatId, threadRoot);
       }
+    } finally {
+      clearInactivityTimer();
     }
 
     // Check if this was an explicit close (reset cleared the session)
@@ -830,8 +898,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Iterator ended without explicit close - this is unexpected
     this.isSessionActive = false;
 
-    // Use RestartManager to decide if we should restart
-    const errorMessage = iteratorError?.message ?? 'Unknown error';
+    // Issue #2993: Use a descriptive error message when inactivity timeout fired
+    // but the iterator ended without throwing (e.g., cancel() just closed it).
+    const errorMessage = inactivityTimedOut
+      ? `Session inactivity timeout: no SDK message in ${this.sessionInactivityTimeoutMs}ms`
+      : (iteratorError?.message ?? 'Unknown error');
     const decision = this.restartManager.shouldRestart(chatId, errorMessage);
 
     if (!decision.allowed) {
@@ -841,11 +912,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         'Restart blocked by circuit breaker'
       );
 
-      const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-      const blockMessage = decision.reason === 'max_restarts_exceeded'
-        ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
-        : `🚫 会话已暂停，请发送 /reset 重置。\n\n原因: ${decision.reason}`;
-      await this.callbacks.sendMessage(chatId, blockMessage, threadRoot);
+      // Issue #2993: Skip redundant notification if inactivity timeout already sent one
+      if (!inactivityTimedOut) {
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const blockMessage = decision.reason === 'max_restarts_exceeded'
+          ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
+          : `🚫 会话已暂停，请发送 /reset 重置。\n\n原因: ${decision.reason}`;
+        await this.callbacks.sendMessage(chatId, blockMessage, threadRoot);
+      }
       return;
     }
 
@@ -862,9 +936,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Notify user about the restart
     const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-    const restartMessage = iteratorError
-      ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
-      : '⚠️ 会话意外断开，正在重新连接...';
+    const restartMessage = inactivityTimedOut
+      ? '⚠️ 会话因无响应被终止，正在重新连接...'
+      : (iteratorError
+        ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
+        : '⚠️ 会话意外断开，正在重新连接...');
     await this.callbacks.sendMessage(chatId, restartMessage, threadRoot);
 
     // Restart the agent loop to preserve context for future messages
