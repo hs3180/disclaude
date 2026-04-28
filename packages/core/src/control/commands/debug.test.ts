@@ -13,7 +13,6 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
     agentPool: { reset: vi.fn(), stop: vi.fn().mockReturnValue(true) },
     node: {
       nodeId: 'node-1',
-      getExecNodes: vi.fn().mockReturnValue([]),
       getDebugGroup: vi.fn().mockReturnValue(null),
       setDebugGroup: vi.fn(),
       clearDebugGroup: vi.fn().mockReturnValue(null),
@@ -40,7 +39,6 @@ describe('handleDebug', () => {
     const context = createMockContext({
       node: {
         nodeId: 'node-1',
-        getExecNodes: vi.fn().mockReturnValue([]),
         getDebugGroup: vi.fn().mockReturnValue(previousGroup),
         setDebugGroup: vi.fn(),
         clearDebugGroup: mockClearDebugGroup,
@@ -61,7 +59,6 @@ describe('handleDebug', () => {
     const context = createMockContext({
       node: {
         nodeId: 'node-1',
-        getExecNodes: vi.fn().mockReturnValue([]),
         getDebugGroup: vi.fn().mockReturnValue(existingGroup),
         setDebugGroup: vi.fn(),
         clearDebugGroup: mockClearDebugGroup,
