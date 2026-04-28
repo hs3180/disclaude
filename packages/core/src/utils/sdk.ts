@@ -103,6 +103,16 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+
+    // Clean up conflicting auth env vars when using custom endpoints.
+    // ANTHROPIC_AUTH_TOKEN is an OAuth/Bearer token that can conflict with
+    // API key auth when using third-party Anthropic-compatible endpoints.
+    // ANTHROPIC_CUSTOM_HEADERS may contain proxy-specific headers (e.g.
+    // comate_custom_header for Baidu Comate) that should not be sent to
+    // the custom endpoint.
+    // @see Issue #2768
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.ANTHROPIC_CUSTOM_HEADERS;
   }
 
   return env;

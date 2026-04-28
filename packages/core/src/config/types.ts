@@ -34,6 +34,22 @@ export interface AgentConfig {
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
   /**
+   * Anthropic API key for authentication.
+   * Alternative to ANTHROPIC_API_KEY environment variable.
+   * Takes priority over env var when both are set.
+   * @see Issue #2768
+   */
+  apiKey?: string;
+  /**
+   * Custom Anthropic-compatible API endpoint URL.
+   * When set, automatically cleans up ANTHROPIC_AUTH_TOKEN and
+   * ANTHROPIC_CUSTOM_HEADERS from SDK subprocess to prevent conflicts.
+   * @example "https://open.bigmodel.cn/api/anthropic"
+   * @example "https://oneapi-comate.baidu-int.com/api/anthropic"
+   * @see Issue #2768
+   */
+  apiBaseUrl?: string;
+  /**
    * Enable Claude Code Agent Teams mode.
    * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
    * This allows the agent to spawn and coordinate multiple teammate sessions.

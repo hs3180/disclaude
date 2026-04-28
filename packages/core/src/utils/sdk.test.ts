@@ -197,5 +197,40 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    it('should remove ANTHROPIC_AUTH_TOKEN when apiBaseUrl is set', () => {
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'some-oauth-token');
+      const env = buildSdkEnv('sk-test-key', 'https://custom.api.com');
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    });
+
+    it('should remove ANTHROPIC_CUSTOM_HEADERS when apiBaseUrl is set', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'comate_custom_header=value');
+      const env = buildSdkEnv('sk-test-key', 'https://custom.api.com');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should NOT remove ANTHROPIC_AUTH_TOKEN when apiBaseUrl is not set', () => {
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'some-oauth-token');
+      const env = buildSdkEnv('sk-test-key');
+      // When using default Anthropic endpoint, keep existing auth tokens
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe('some-oauth-token');
+    });
+
+    it('should NOT remove ANTHROPIC_CUSTOM_HEADERS when apiBaseUrl is not set', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'comate_custom_header=value');
+      const env = buildSdkEnv('sk-test-key');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('comate_custom_header=value');
+    });
+
+    it('should clean up both auth env vars when using custom endpoint', () => {
+      vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'oauth-token');
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'x-custom=value');
+      const env = buildSdkEnv('sk-test-key', 'https://open.bigmodel.cn/api/anthropic');
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+      expect(env.ANTHROPIC_API_KEY).toBe('sk-test-key');
+    });
   });
 });

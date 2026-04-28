@@ -48,6 +48,17 @@ agent:
   # Default: false
   # enableAgentTeams: true
 
+  # Anthropic API key (alternative to ANTHROPIC_API_KEY environment variable)
+  # When set, takes priority over the env var.
+  # @see Issue #2768
+  # apiKey: "sk-ant-..."
+
+  # Custom Anthropic-compatible API endpoint URL.
+  # When set, ANTHROPIC_AUTH_TOKEN and ANTHROPIC_CUSTOM_HEADERS are
+  # automatically removed from the SDK subprocess to prevent auth conflicts.
+  # @see Issue #2768
+  # apiBaseUrl: "https://your-proxy.example.com/api/anthropic"
+
 # -----------------------------------------------------------------------------
 # Feishu/Lark Platform Configuration
 # -----------------------------------------------------------------------------
