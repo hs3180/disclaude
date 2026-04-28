@@ -15,7 +15,6 @@ import {
   send_card,
   send_interactive,
   send_file,
-  register_temp_chat,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -29,7 +28,6 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
-export { register_temp_chat } from './tools/register-temp-chat.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -398,45 +396,6 @@ For display-only cards, use send_card instead.
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    },
-  },
-  // Issue #1703: Temp chat lifecycle management
-  // Issue #2291: triggerMode enum parameter
-  {
-    name: 'register_temp_chat',
-    description: `Register a temporary chat for automatic lifecycle management.
-
-The Primary Node will track the chat and automatically dissolve it when it expires.
-Use this after creating a group chat that should be temporary.
-
-## Parameters
-- **chatId**: The chat ID to track (required)
-- **expiresAt**: ISO timestamp for expiry (optional, defaults to 24h)
-- **creatorChatId**: The originating chat ID (optional, for notifications)
-- **context**: Arbitrary context data (optional, for consumer identification)
-- **triggerMode**: Set to \`"always"\` to make the bot respond to all messages without @mention. Set to \`"mention"\` for mention-only mode (default). (optional, Issue #2291)
-
-## Example
-\`\`\`json
-{"chatId": "oc_xxx", "expiresAt": "2026-03-28T10:00:00.000Z", "triggerMode": "always", "context": {"prNumber": 123}}
-\`\`\``,
-    parameters: z.object({
-      chatId: z.string().describe('The chat ID to track'),
-      expiresAt: z.string().optional().describe('ISO timestamp for expiry (defaults to 24h)'),
-      creatorChatId: z.string().optional().describe('The originating chat ID'),
-      context: z.record(z.string(), z.unknown()).optional().describe('Arbitrary context data'),
-      triggerMode: z.enum(['mention', 'always']).optional().describe('Trigger mode: "mention" = only @mentions (default), "always" = respond to all messages (Issue #2291)'),
-    }),
-    handler: async ({ chatId, expiresAt, creatorChatId, context, triggerMode }: {
-      chatId: string;
-      expiresAt?: string;
-      creatorChatId?: string;
-      context?: Record<string, unknown>;
-      triggerMode?: 'mention' | 'always';
-    }) => {
-      // register_temp_chat handles all errors internally and returns { success, message }
-      const result = await register_temp_chat({ chatId, expiresAt, creatorChatId, context, triggerMode });
-      return toolSuccess(result.message);
     },
   },
 ];
