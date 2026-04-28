@@ -252,7 +252,7 @@ export interface BaseAgentConfig {
 }
 
 /**
- * Configuration for ChatAgent (ChatAgent).
+ * Configuration for the ChatAgent implementation.
  *
  * Extends BaseAgentConfig with platform-specific callbacks
  * for streaming conversation support.
