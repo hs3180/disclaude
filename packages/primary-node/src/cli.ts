@@ -31,6 +31,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { startCaffeinate, stopCaffeinate, type CaffeinateHandle } from './utils/caffeinate.js';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -213,6 +214,10 @@ async function main(): Promise<void> {
     await lifecycleManager.createAndWireByType(type, config);
   }
 
+  // Start caffeinate on macOS to prevent system sleep (Issue #2975)
+  // Must be started after initial setup but before the main event loop
+  const caffeinateHandle: CaffeinateHandle = startCaffeinate();
+
   // Handle graceful shutdown
   let isShuttingDown = false;
   const shutdown = async (): Promise<void> => {
@@ -221,6 +226,7 @@ async function main(): Promise<void> {
     logger.info('Shutting down Primary Node...');
 
     try {
+      stopCaffeinate(caffeinateHandle);
       agentPool.disposeAll();
       await lifecycleManager.stopAll();
       await primaryNode.stop();
