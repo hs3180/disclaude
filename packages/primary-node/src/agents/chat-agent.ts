@@ -71,6 +71,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // Issue #2926: AbortController for immediate stop/reset of running Agent loop
   private abortController: AbortController | null = null;
 
+  // Issue #2993: Session activity timeout — detect hung SDK iterator
+  private readonly sessionActivityTimeoutMs: number;
+  private activityTimer: ReturnType<typeof setInterval> | null = null;
+  private lastSdkActivityAt = 0;
+
   // Managers for separated concerns
   private readonly conversationOrchestrator: ConversationOrchestrator;
   private readonly restartManager: RestartManager;
@@ -103,6 +108,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       initialBackoffMs: 5000,  // Start with 5 seconds
       maxBackoffMs: 60000,     // Max 1 minute
     });
+
+    // Issue #2993: Session activity timeout (default: 5 minutes)
+    this.sessionActivityTimeoutMs = config.sessionActivityTimeoutMs ?? 300000;
 
     // Initialize message builder with channel-specific options (Issue #697, #1492, #1499)
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
@@ -631,6 +639,92 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     return true;
   }
 
+  // ─── Issue #2993: Session Activity Monitor ─────────────────────────────
+
+  /**
+   * Start the session activity monitor.
+   *
+   * Periodically checks whether the SDK iterator has produced any messages
+   * within the configured timeout. If not, the session is considered hung,
+   * the user is notified, and the stuck query is cancelled.
+   *
+   * @param chatId - The chat ID being monitored
+   */
+  private startActivityMonitor(chatId: string): void {
+    this.stopActivityMonitor();
+
+    if (this.sessionActivityTimeoutMs <= 0) {return;}
+
+    this.lastSdkActivityAt = Date.now();
+
+    // Check at half the timeout interval (or every 30 s, whichever is smaller)
+    const checkIntervalMs = Math.min(this.sessionActivityTimeoutMs / 2, 30_000);
+
+    this.activityTimer = setInterval(() => {
+      const elapsed = Date.now() - this.lastSdkActivityAt;
+      if (elapsed >= this.sessionActivityTimeoutMs) {
+        this.logger.error(
+          { chatId, elapsedMs: elapsed, thresholdMs: this.sessionActivityTimeoutMs },
+          'Session activity timeout: no SDK message received within threshold',
+        );
+
+        // Stop the monitor so it doesn't fire again
+        this.stopActivityMonitor();
+
+        // Notify user
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        this.callbacks.sendMessage(
+          chatId,
+          `⚠️ Agent 会话可能已挂起 — 已超过 ${Math.round(this.sessionActivityTimeoutMs / 60_000)} 分钟未收到响应。\n\n建议操作：\n• 发送 /reset 重置会话\n• 重新发送您的消息\n\n如果问题持续出现，请联系管理员。`,
+          threadRoot,
+        ).catch((notifyErr: unknown) => {
+          this.logger.error({ err: notifyErr, chatId }, 'Failed to send activity timeout notification');
+        });
+
+        // Cancel the stuck query and abort the loop so processIterator can exit
+        if (this.queryHandle) {
+          this.queryHandle.cancel();
+          this.queryHandle = undefined;
+        }
+        if (this.abortController) {
+          this.abortController.abort();
+        }
+        this.isSessionActive = false;
+      }
+    }, checkIntervalMs);
+
+    // Allow Node.js to exit even if timer is active
+    if (this.activityTimer.unref) {
+      this.activityTimer.unref();
+    }
+
+    this.logger.debug(
+      { chatId, timeoutMs: this.sessionActivityTimeoutMs, checkIntervalMs },
+      'Session activity monitor started',
+    );
+  }
+
+  /**
+   * Stop the session activity monitor.
+   */
+  private stopActivityMonitor(): void {
+    if (this.activityTimer) {
+      clearInterval(this.activityTimer);
+      this.activityTimer = null;
+      this.logger.debug('Session activity monitor stopped');
+    }
+  }
+
+  /**
+   * Refresh the activity timestamp.
+   *
+   * Called each time a message is received from the SDK iterator to indicate
+   * the session is still alive.
+   */
+  private refreshActivity(): void {
+    this.lastSdkActivityAt = Date.now();
+  }
+
   /**
    * Start the Agent loop for this chatId.
    *
@@ -761,6 +855,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let iteratorError: Error | null = null;
     let messageCount = 0;
 
+    // Issue #2993: Start activity monitor to detect hung sessions
+    this.startActivityMonitor(chatId);
+
     try {
       for await (const { parsed } of iterator) {
         // Issue #2926: Check abort signal at the start of each iteration.
@@ -773,6 +870,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
           break;
         }
+
+        // Issue #2993: Refresh activity timestamp on each SDK message
+        this.refreshActivity();
 
         messageCount++;
         this.logger.debug(
@@ -818,6 +918,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         await this.callbacks.onDone(chatId, threadRoot);
       }
     }
+
+    // Issue #2993: Stop activity monitor — the iterator has ended
+    this.stopActivityMonitor();
 
     // Check if this was an explicit close (reset cleared the session)
     const wasExplicitClose = !this.isSessionActive;
@@ -892,6 +995,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     this.logger.info({ chatId: this.boundChatId, keepContext }, 'Resetting ChatAgent session');
+
+    // Issue #2993: Stop activity monitor
+    this.stopActivityMonitor();
 
     // Issue #2926: Abort the running agent loop first so processIterator
     // breaks out of its for-await loop immediately, rather than continuing
@@ -1026,6 +1132,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Mark session as inactive
     this.isSessionActive = false;
+
+    // Issue #2993: Stop activity monitor
+    this.stopActivityMonitor();
 
     // Issue #2926: Abort any running agent loop
     if (this.abortController) {

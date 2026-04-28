@@ -115,6 +115,20 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * options when creating ChatAgent instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Session activity timeout in milliseconds.
+   *
+   * If no SDK message is received within this period while the agent
+   * loop is running, the session is considered hung and the user is
+   * notified. Set to 0 to disable.
+   *
+   * Issue #2993: Detect and notify users when Agent Session hangs
+   * (e.g., SDK subprocess stuck, LiteLLM proxy connection hanging).
+   *
+   * Default: 300000 (5 minutes)
+   */
+  sessionActivityTimeoutMs?: number;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)
