@@ -37,6 +37,19 @@ import type { MentionDetector } from './mention-detector.js';
 const logger = createLogger('MessageHandler');
 
 /**
+ * Map Feishu message type to resource download API type parameter.
+ *
+ * Feishu API only accepts "image" or "file":
+ * - "image" for images
+ * - "file" for files, audio, and video
+ *
+ * @see https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get
+ */
+function mapResourceType(messageType: string): 'image' | 'file' {
+  return messageType === 'image' ? 'image' : 'file';
+}
+
+/**
  * Callback interface for emitting messages and control events.
  */
 export interface MessageCallbacks {
@@ -608,7 +621,7 @@ export class MessageHandler {
 
         const response = await this.client.im.messageResource.get({
           path: { message_id: messageId, file_key: fileKey },
-          params: { type: messageType },
+          params: { type: mapResourceType(messageType) },
         });
         await response.writeFile(localPath);
 
@@ -734,7 +747,7 @@ export class MessageHandler {
 
           const response = await this.client.im.messageResource.get({
             path: { message_id, file_key: fileKey },
-            params: { type: message_type },
+            params: { type: mapResourceType(message_type) },
           });
           await response.writeFile(localPath);
 
