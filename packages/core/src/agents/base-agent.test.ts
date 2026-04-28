@@ -86,6 +86,29 @@ vi.mock('../config/runtime-env.js', () => ({
   loadRuntimeEnv: () => ({}),
 }));
 
+// Mock Config module (used by BaseAgent for getWorkspaceDir, getGlobalEnv)
+vi.mock('../config/index.js', () => ({
+  Config: {
+    getWorkspaceDir: () => '/test/workspace',
+    getGlobalEnv: () => ({}),
+  },
+}));
+
+// Spy for logger.warn to test Issue #2948 third-party endpoint warning
+const mockLoggerWarn = vi.hoisted(() => vi.fn());
+const mockLoggerDebug = vi.hoisted(() => vi.fn());
+const mockLoggerInfo = vi.hoisted(() => vi.fn());
+const mockLoggerError = vi.hoisted(() => vi.fn());
+
+vi.mock('../utils/logger.js', () => ({
+  createLogger: () => ({
+    warn: mockLoggerWarn,
+    debug: mockLoggerDebug,
+    info: mockLoggerInfo,
+    error: mockLoggerError,
+  }),
+}));
+
 describe('BaseAgent', () => {
   let agent: TestAgent;
   let config: BaseAgentConfig;
@@ -140,6 +163,50 @@ describe('BaseAgent', () => {
 
       const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
       expect(ctxAgent.provider).toBe('glm');
+    });
+
+    it('should warn about system tool compatibility for non-Anthropic providers with apiBaseUrl', () => {
+      // Issue #2948: Third-party endpoints don't parse system-prompt-embedded tool definitions
+      mockLoggerWarn.mockClear();
+
+      new TestAgent({
+        apiKey: 'glm-key',
+        model: 'glm-5.1',
+        provider: 'glm',
+        apiBaseUrl: 'https://open.bigmodel.cn/api/anthropic',
+      });
+
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'glm',
+          apiBaseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        }),
+        expect.stringContaining('Third-party API endpoint detected'),
+      );
+    });
+
+    it('should NOT warn when using Anthropic provider', () => {
+      mockLoggerWarn.mockClear();
+
+      new TestAgent({
+        apiKey: 'anthropic-key',
+        model: 'claude-3-5-sonnet-20241022',
+        provider: 'anthropic',
+      });
+
+      expect(mockLoggerWarn).not.toHaveBeenCalled();
+    });
+
+    it('should NOT warn when non-Anthropic provider without apiBaseUrl', () => {
+      mockLoggerWarn.mockClear();
+
+      new TestAgent({
+        apiKey: 'glm-key',
+        model: 'glm-5.1',
+        provider: 'glm',
+      });
+
+      expect(mockLoggerWarn).not.toHaveBeenCalled();
     });
   });
 

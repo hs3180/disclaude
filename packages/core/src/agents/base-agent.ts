@@ -122,6 +122,20 @@ export abstract class BaseAgent implements Disposable {
 
     // Get SDK provider instance
     this.sdkProvider = getProvider();
+
+    // Issue #2948: Warn about system tool compatibility with third-party endpoints
+    // Claude Agent SDK embeds tool definitions in system prompt (XML format),
+    // but third-party endpoints (e.g., GLM) only recognize the `tools` API parameter.
+    // This causes Bash/Read/Write/Edit/Glob/Grep system tools to be unavailable.
+    if (this.provider !== 'anthropic' && this.apiBaseUrl) {
+      this.logger.warn(
+        { provider: this.provider, apiBaseUrl: this.apiBaseUrl },
+        'Third-party API endpoint detected — system tools (Bash/Read/Write/Edit/Glob/Grep) ' +
+        'may not be available. The Claude Agent SDK embeds tool definitions in the system ' +
+        'prompt, which third-party endpoints may not parse. Only MCP tools are guaranteed ' +
+        'to work. See: https://github.com/hs3180/disclaude/issues/2948'
+      );
+    }
   }
 
   /**

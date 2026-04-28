@@ -111,9 +111,33 @@ ruliu:
 # -----------------------------------------------------------------------------
 # GLM (Zhipu AI) API Configuration
 # -----------------------------------------------------------------------------
+#
+# ⚠️ Known Limitation: System Tool Compatibility (Issue #2948)
+#
+# When using GLM (or any third-party Claude-compatible endpoint), the built-in
+# system tools (Bash, Read, Write, Edit, Glob, Grep) may NOT be available.
+#
+# Root Cause: The Claude Agent SDK embeds tool definitions in the system prompt
+# (XML format). Anthropic's native API supports both system-prompt-embedded and
+# API-parameter tools, but GLM only recognizes the `tools` API parameter.
+#
+# Impact:
+#   - ❌ System tools (Bash, Read, Write, Edit, Glob, Grep) — unavailable
+#   - ✅ MCP tools (Playwright, channel-mcp, etc.) — work normally
+#
+# Workaround: Use Anthropic API for full system tool support, or rely on
+# MCP tools for third-party endpoints.
+#
+# See: https://github.com/hs3180/disclaude/issues/2948
+#
+# -----------------------------------------------------------------------------
 glm:
   # GLM API key from https://open.bigmodel.cn/
   apiKey: "your_glm_api_key_here"
+
+  # Model identifier — REQUIRED when apiKey is set
+  # Examples: glm-4, glm-4.7, glm-5.1
+  # model: "glm-4.7"
 
   # API base URL (usually no need to change)
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
