@@ -3,31 +3,39 @@
  *
  * Verifies the createScheduleExecutor factory function:
  * - Creates executor from agent factory and callbacks
- * - Executor creates and disposes agents properly
+ * - Executor creates and disposes ChatAgents properly
  * - Error handling and cleanup on failure
  * - Model override passing (Issue #1338)
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
+ * Issue #2941: Updated to use ChatAgent directly (no ScheduleAgent abstraction).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   createScheduleExecutor,
-  type ScheduleAgent,
-  type ScheduleAgentFactory,
+  type AgentFactory,
 } from './schedule-executor.js';
+import type { ChatAgent } from '../agents/types.js';
 import type { SchedulerCallbacks } from './scheduler.js';
 
 describe('createScheduleExecutor', () => {
-  let mockAgent: ScheduleAgent;
-  let mockAgentFactory: ScheduleAgentFactory;
+  let mockAgent: ChatAgent;
+  let mockAgentFactory: AgentFactory;
   let mockCallbacks: SchedulerCallbacks;
 
   beforeEach(() => {
     mockAgent = {
+      type: 'chat',
+      name: 'test-agent',
+      start: vi.fn().mockResolvedValue(undefined),
+      handleInput: vi.fn(),
+      processMessage: vi.fn(),
       executeOnce: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn(),
+      stop: vi.fn().mockReturnValue(false),
       dispose: vi.fn(),
-    };
+    } as unknown as ChatAgent;
 
     mockAgentFactory = vi.fn().mockReturnValue(mockAgent);
 

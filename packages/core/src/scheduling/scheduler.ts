@@ -4,9 +4,9 @@
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
  *
- * Issue #711: Uses short-lived ScheduleAgents instead of AgentPool.
- * - Each task execution creates a new ScheduleAgent
- * - Agent is disposed after execution completes
+ * Issue #711: Uses short-lived ChatAgents instead of AgentPool.
+ * - Each task execution creates a new ChatAgent via injected executor
+ * - ChatAgent is disposed after execution completes
  * - No persistent agent state between executions
  *
  * Issue #1041: Refactored to use dependency injection for agent execution.
@@ -82,8 +82,8 @@ export interface SchedulerOptions {
 /**
  * Scheduler - Manages cron-based task execution.
  *
- * Issue #711: Uses short-lived ScheduleAgents (max 24h lifetime).
- * Each execution creates a fresh agent, ensuring isolation.
+ * Issue #711: Uses short-lived ChatAgents (max 24h lifetime).
+ * Each execution creates a fresh ChatAgent, ensuring isolation.
  * Issue #1041: Uses dependency injection for task execution.
  *
  * Usage:
@@ -239,8 +239,8 @@ ${task.prompt}`;
    * Execute a scheduled task.
    * Called by cron job when the schedule triggers.
    *
-   * Issue #711: Creates a short-lived ScheduleAgent for each execution.
-   * Agent is disposed after execution to free resources.
+   * Issue #711: Creates a short-lived ChatAgent for each execution.
+   * ChatAgent is disposed after execution to free resources.
    * Issue #869: Added cooldown period check before execution.
    * Issue #1041: Uses injected executor function.
    *
