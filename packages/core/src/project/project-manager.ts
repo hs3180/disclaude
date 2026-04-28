@@ -11,6 +11,7 @@
 
 import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -64,8 +65,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing `templates/` with built-in CLAUDE.md files */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,12 +83,16 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
 
-    this.init(options.templatesConfig);
+    // Auto-discover templates when no explicit config is provided
+    const resolvedConfig = options.templatesConfig
+      ?? discoverTemplatesAsConfig(options.packageDir);
+
+    this.init(resolvedConfig);
 
     // Restore persisted state after templates are loaded
     this.loadPersistedData();
@@ -103,7 +108,7 @@ export class ProjectManager {
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @param templatesConfig - Template configuration (from auto-discovery or disclaude.config.yaml)
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
@@ -494,6 +499,17 @@ export class ProjectManager {
    */
   getPersistPath(): string {
     return this.persistPath;
+  }
+
+  /**
+   * Get the package directory path.
+   *
+   * Used for resolving template CLAUDE.md files at instantiation time.
+   *
+   * @returns Absolute path to the package directory
+   */
+  getPackageDir(): string {
+    return this.packageDir;
   }
 
   // ───────────────────────────────────────────

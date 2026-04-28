@@ -84,9 +84,72 @@ describe('ProjectManager constructor', () => {
     expect(pm.listTemplates()).toHaveLength(0);
   });
 
-  it('should construct with undefined templates config', () => {
+  it('should auto-discover templates when templatesConfig is not provided', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+
+    // Create a template directory with CLAUDE.md
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# Research');
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('research');
+  });
+
+  it('should return empty templates when templatesConfig is undefined and no templates dir', () => {
     const pm = new ProjectManager(createOptions({ templatesConfig: undefined }));
+    // packageDir points to a temp dir without templates/ subdirectory
     expect(pm.listTemplates()).toHaveLength(0);
+  });
+
+  it('should prefer explicit templatesConfig over auto-discovery', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+
+    // Create a template directory with CLAUDE.md
+    const templateDir = join(packageDir, 'templates', 'auto-discovered');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# Auto Discovered');
+
+    // Provide explicit config that overrides discovery
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      templatesConfig: {
+        manual: { displayName: 'Manual Template' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('manual');
+    expect(templates[0].displayName).toBe('Manual Template');
+  });
+
+  it('should auto-discover templates with metadata from frontmatter', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(
+      join(templateDir, 'CLAUDE.md'),
+      '---\ndisplayName: "研究模式"\ndescription: 专注研究\n---\n\n# Research',
+    );
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('research');
+    expect(templates[0].displayName).toBe('研究模式');
+    expect(templates[0].description).toBe('专注研究');
   });
 });
 
