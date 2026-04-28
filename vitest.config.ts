@@ -63,11 +63,18 @@ export default defineConfig({
         'tsconfig.json',
         'ecosystem.config.cjs',
         '**/workspace/**',
-        // Entry point files - hard to test in unit tests
-        'src/runners/**',
-        // Integration-test only modules (require complex setup)
-        'src/mcp/feishu-mcp-server.ts',
-        'src/nodes/**',
+        // Entry point files — hard to test in unit tests
+        'packages/*/src/cli.ts',
+        // Main orchestrator classes — require full integration setup
+        'packages/primary-node/src/primary-node.ts',
+        'packages/primary-node/src/primary-agent-pool.ts',
+        // MCP server entry points — require running server for testing
+        'packages/mcp-server/src/feishu-mcp-server.ts',
+        'packages/mcp-server/src/http-server.ts',
+        'packages/mcp-server/src/sse-server.ts',
+        'packages/mcp-server/src/mcp-jsonrpc.ts',
+        // Deprecated: worker-node package being removed (#2717)
+        'packages/worker-node/**',
       ],
       thresholds: {
         lines: 70,
@@ -75,6 +82,9 @@ export default defineConfig({
         branches: 70,
         statements: 70,
       },
+      // Note: root src/ directory was removed during monorepo migration (#1040).
+      // The 'src/**/*.ts' pattern is kept for forward compatibility but currently
+      // only 'packages/**/*.ts' matches files.
       include: ['src/**/*.ts', 'packages/**/*.ts'],
     },
     setupFiles: ['./tests/setup.ts'],
