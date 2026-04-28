@@ -46,7 +46,10 @@ export {
   getNodeBinDir,
   extractText,
   buildSdkEnv,
+  checkGlmApiHealth,
+  runGlmStartupCheck,
 } from './sdk.js';
+export type { GlmHealthCheckResult } from './sdk.js';
 
 // Output Adapter (Issue #1040)
 export type { OutputAdapter, MessageMetadata, FeishuOutputAdapterOptions } from './output-adapter.js';

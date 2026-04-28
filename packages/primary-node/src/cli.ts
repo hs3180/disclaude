@@ -25,6 +25,7 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  runGlmStartupCheck,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -161,6 +162,16 @@ async function main(): Promise<void> {
       { provider: agentConfig.apiBaseUrl ? 'glm' : 'anthropic', model: agentConfig.model },
       'Agent configuration loaded'
     );
+
+    // Run GLM API health check at startup to detect auth issues early
+    // @see Issue #2916
+    if (agentConfig.apiBaseUrl && agentConfig.provider === 'glm') {
+      await runGlmStartupCheck(
+        agentConfig.apiKey,
+        agentConfig.apiBaseUrl,
+        agentConfig.model,
+      );
+    }
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error('Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.');

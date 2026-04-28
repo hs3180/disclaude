@@ -2,6 +2,18 @@
  * Claude SDK 选项适配器
  *
  * 将统一的 AgentQueryOptions 转换为 Claude SDK 特定的选项格式。
+ *
+ * IMPORTANT: SDK version compatibility with GLM API
+ * The Claude Code CLI bundles its own HTTP client that sends the API key
+ * via the `x-api-key` header. SDK version 0.2.104+ (CLI 2.1.104) changed
+ * the authentication behavior, causing 401 errors with GLM's
+ * Anthropic-compatible API which only accepts `x-api-key` header.
+ * @see https://github.com/hs3180/disclaude/issues/2916
+ *
+ * The SDK reads ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL from the env
+ * option — these are the ONLY mechanism for passing auth credentials.
+ * The SDK Options type does not have `apiKey` or `apiBaseUrl` fields;
+ * setting them on the options object has no effect (dead code removed).
  */
 
 import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
@@ -48,17 +60,12 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   }
 
   // 环境变量
+  // The SDK reads ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL from env.
+  // These are the ONLY mechanism for passing auth credentials to the CLI.
+  // @see Issue #2916 — do NOT add apiKey/apiBaseUrl as SDK options;
+  // they are not part of the SDK Options type and are silently ignored.
   if (options.env) {
     sdkOptions.env = options.env;
-
-    // CRITICAL: Extract API key and base URL from env and pass as direct options
-    // The SDK requires these as direct options, not just env vars
-    if (options.env.ANTHROPIC_API_KEY) {
-      sdkOptions.apiKey = options.env.ANTHROPIC_API_KEY;
-    }
-    if (options.env.ANTHROPIC_BASE_URL) {
-      sdkOptions.apiBaseUrl = options.env.ANTHROPIC_BASE_URL;
-    }
   }
 
   return sdkOptions;

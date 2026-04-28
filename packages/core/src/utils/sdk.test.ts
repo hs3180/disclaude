@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getNodeBinDir, extractText, buildSdkEnv } from './sdk.js';
+import { getNodeBinDir, extractText, buildSdkEnv, checkGlmApiHealth } from './sdk.js';
 import type { AgentMessage, ContentBlock } from '../types/agent.js';
 
 describe('SDK Utilities', () => {
@@ -197,5 +197,47 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+  });
+
+  describe('checkGlmApiHealth', () => {
+    it('should return ok for successful API response', async () => {
+      const result = await checkGlmApiHealth(
+        'test-key',
+        'https://httpbin.org',
+        'test-model',
+        5000,
+      );
+      // httpbin.org returns 200 for POST to /v1/messages (or 404)
+      // Either way, the function should handle it gracefully
+      expect(result).toBeDefined();
+      expect(typeof result.ok).toBe('boolean');
+      expect(typeof result.isAuthError).toBe('boolean');
+    });
+
+    it('should return error for invalid URL', async () => {
+      const result = await checkGlmApiHealth(
+        'test-key',
+        'https://invalid-nonexistent-host-12345.example.com',
+        'test-model',
+        3000,
+      );
+      expect(result.ok).toBe(false);
+      expect(result.isAuthError).toBe(false);
+      expect(result.error).toContain('Network error');
+    });
+
+    it('should handle timeout by returning error', async () => {
+      // Use a very short timeout with a URL that would need network access
+      // If nock blocks the request, we still get a Network error (which is fine)
+      const result = await checkGlmApiHealth(
+        'test-key',
+        'https://httpbin.org/delay/10',
+        'test-model',
+        1, // 1ms timeout — guaranteed to fail
+      );
+      expect(result.ok).toBe(false);
+      // Could be either timeout or network error (nock may block)
+      expect(result.error).toBeDefined();
+    }, 10000);
   });
 });

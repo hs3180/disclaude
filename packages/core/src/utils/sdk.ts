@@ -1,11 +1,18 @@
 /**
  * Shared utilities for Agent SDK integration.
+ *
+ * Includes GLM API health check for early authentication failure detection.
+ * @see https://github.com/hs3180/disclaude/issues/2916
  */
 
+import { request } from 'https';
 import type {
   AgentMessage,
   ContentBlock,
 } from '../types/agent.js';
+import { createLogger } from './logger.js';
+
+const logger = createLogger('SDKUtils');
 
 /**
  * Get directory containing node executable.
@@ -106,4 +113,185 @@ export function buildSdkEnv(
   }
 
   return env;
+}
+
+/**
+ * Result of GLM API health check.
+ */
+export interface GlmHealthCheckResult {
+  /** Whether the health check passed */
+  ok: boolean;
+  /** HTTP status code (if a response was received) */
+  status?: number;
+  /** Error message if the check failed */
+  error?: string;
+  /** Whether the error appears to be an authentication issue */
+  isAuthError: boolean;
+}
+
+/**
+ * Validate GLM API key by sending a minimal request.
+ *
+ * This pre-flight check detects authentication issues early (at startup)
+ * instead of failing silently during agent execution. It sends a tiny
+ * request to the /v1/messages endpoint using the `x-api-key` header
+ * (which is what the Anthropic SDK uses internally).
+ *
+ * @param apiKey - GLM API key to validate
+ * @param apiBaseUrl - GLM API base URL (e.g., https://open.bigmodel.cn/api/anthropic)
+ * @param model - GLM model name (e.g., glm-5-turbo)
+ * @param timeoutMs - Request timeout in milliseconds (default: 10000)
+ * @returns Health check result with status and error details
+ *
+ * @example
+ * ```typescript
+ * const result = await checkGlmApiHealth('key123', 'https://open.bigmodel.cn/api/anthropic', 'glm-5-turbo');
+ * if (!result.ok) {
+ *   console.error(`GLM API health check failed: ${result.error}`);
+ * }
+ * ```
+ *
+ * @see https://github.com/hs3180/disclaude/issues/2916
+ */
+export function checkGlmApiHealth(
+  apiKey: string,
+  apiBaseUrl: string,
+  model: string,
+  timeoutMs: number = 10000,
+): Promise<GlmHealthCheckResult> {
+  return new Promise((resolve) => {
+    try {
+      const url = new URL(`${apiBaseUrl}/v1/messages`);
+      const body = JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+
+      const req = request(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          timeout: timeoutMs,
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+          res.on('end', () => {
+            const status = res.statusCode ?? 0;
+            if (status >= 200 && status < 300) {
+              resolve({ ok: true, status, isAuthError: false });
+            } else if (status === 401 || status === 403) {
+              // Authentication/authorization failure
+              let errorMsg = '';
+              try {
+                const parsed = JSON.parse(data);
+                errorMsg = parsed.error?.message || parsed.message || data;
+              } catch {
+                errorMsg = data || `HTTP ${status}`;
+              }
+              resolve({
+                ok: false,
+                status,
+                error: `Authentication failed (HTTP ${status}): ${errorMsg}`,
+                isAuthError: true,
+              });
+            } else {
+              // Other errors (rate limit, server error, etc.)
+              // Non-auth errors don't block startup
+              resolve({
+                ok: true, // Allow startup for transient errors
+                status,
+                error: `Non-auth error (HTTP ${status}): ${data.slice(0, 200)}`,
+                isAuthError: false,
+              });
+            }
+          });
+        },
+      );
+
+      req.on('error', (err) => {
+        resolve({
+          ok: false,
+          error: `Network error: ${err.message}`,
+          isAuthError: false,
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({
+          ok: false,
+          error: `Request timed out after ${timeoutMs}ms`,
+          isAuthError: false,
+        });
+      });
+
+      req.write(body);
+      req.end();
+    } catch (err) {
+      resolve({
+        ok: false,
+        error: `Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+        isAuthError: false,
+      });
+    }
+  });
+}
+
+/**
+ * Run GLM API health check and log the result.
+ *
+ * This is intended to be called at startup to provide early warning
+ * about authentication issues. It does NOT throw on failure — it only
+ * logs warnings/errors for diagnostic purposes.
+ *
+ * @param apiKey - GLM API key
+ * @param apiBaseUrl - GLM API base URL
+ * @param model - GLM model name
+ *
+ * @see https://github.com/hs3180/disclaude/issues/2916
+ */
+export async function runGlmStartupCheck(
+  apiKey: string,
+  apiBaseUrl: string,
+  model: string,
+): Promise<void> {
+  logger.info(
+    { apiBaseUrl, model, keyPrefix: `${apiKey.slice(0, 8)  }...` },
+    'Running GLM API health check',
+  );
+
+  const result = await checkGlmApiHealth(apiKey, apiBaseUrl, model);
+
+  if (result.ok) {
+    if (result.error) {
+      // Non-auth error (e.g., rate limit) — warn but don't block
+      logger.warn({ status: result.status, error: result.error }, 'GLM API health check: non-critical issue');
+    } else {
+      logger.info({ status: result.status }, 'GLM API health check passed');
+    }
+  } else if (result.isAuthError) {
+    logger.error(
+      {
+        status: result.status,
+        error: result.error,
+        hint: 'Verify glm.apiKey and glm.apiBaseUrl in disclaude.config.yaml. ' +
+              'GLM API expects x-api-key header — some Claude Code CLI versions may ' +
+              'use Authorization: Bearer instead, causing 401 errors. ' +
+              'See Issue #2916 for SDK version compatibility details.',
+      },
+      'GLM API health check FAILED: authentication error',
+    );
+  } else {
+    logger.warn(
+      { error: result.error },
+      'GLM API health check failed (network/connectivity issue)',
+    );
+  }
 }

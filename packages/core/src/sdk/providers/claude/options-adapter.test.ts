@@ -51,7 +51,7 @@ describe('adaptOptions', () => {
     expect(result.disallowedTools).toEqual(['tool3']);
   });
 
-  it('should extract API key and base URL from env', () => {
+  it('should pass through env vars including ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL', () => {
     const result = adaptOptions({
       settingSources: ['project'],
       env: {
@@ -61,8 +61,8 @@ describe('adaptOptions', () => {
       },
     });
 
-    expect(result.apiKey).toBe('sk-123');
-    expect(result.apiBaseUrl).toBe('https://api.example.com');
+    // SDK reads auth from env — apiKey/apiBaseUrl are NOT extracted as SDK options
+    // @see Issue #2916
     expect(result.env).toEqual({
       ANTHROPIC_API_KEY: 'sk-123',
       ANTHROPIC_BASE_URL: 'https://api.example.com',
@@ -70,7 +70,7 @@ describe('adaptOptions', () => {
     });
   });
 
-  it('should pass through env without extracting when no API key', () => {
+  it('should pass through env without API key', () => {
     const result = adaptOptions({
       settingSources: ['project'],
       env: {
@@ -78,8 +78,9 @@ describe('adaptOptions', () => {
       },
     });
 
-    expect(result.apiKey).toBeUndefined();
-    expect(result.apiBaseUrl).toBeUndefined();
+    expect(result.env).toEqual({
+      OTHER_VAR: 'value',
+    });
   });
 
   it('should adapt stdio MCP servers', () => {
