@@ -10,6 +10,7 @@
  * - ScheduleManager: Query operations for scheduled tasks
  * - Scheduler: Cron-based task execution (with dependency injection)
  * - ScheduleExecutor: Unified executor factory (Issue #1382)
+ * - BotChatMapping: Bot↔Feishu Chat ID mapping table (Issue #2947)
  *
  * @module @disclaude/core/scheduling
  */
@@ -64,3 +65,12 @@ export {
   type AgentFactory as ScheduleAgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
+
+// Bot Chat Mapping (Issue #2947: Bot↔ChatId mapping table)
+export {
+  BotChatMapping,
+  type BotChatMappingOptions,
+  type BotChatMappingEntry,
+  type BotChatMappingTable,
+  type RebuildResult,
+} from './bot-chat-mapping.js';

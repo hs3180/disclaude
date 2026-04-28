@@ -217,6 +217,12 @@ export {
   createScheduleExecutor,
   type ScheduleAgentFactory,
   type ScheduleExecutorOptions,
+  // Issue #2947: Bot↔ChatId mapping table
+  BotChatMapping,
+  type BotChatMappingOptions,
+  type BotChatMappingEntry,
+  type BotChatMappingTable,
+  type RebuildResult,
 } from './scheduling/index.js';
 
 // Task module (Issue #1041 - migrated from worker-node)
