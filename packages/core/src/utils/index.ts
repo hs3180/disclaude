@@ -83,3 +83,14 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Network Diagnostics (Issue #2992)
+export type {
+  TcpConnectionInfo,
+  NetworkDiagnostics,
+} from './network-diagnostics.js';
+export {
+  captureTcpConnections,
+  captureProcessInfo,
+  formatDiagnostics,
+} from './network-diagnostics.js';

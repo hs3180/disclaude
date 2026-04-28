@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData, captureTcpConnections, formatDiagnostics, type NetworkDiagnostics } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -70,6 +70,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   // Issue #2926: AbortController for immediate stop/reset of running Agent loop
   private abortController: AbortController | null = null;
+
+  // Issue #2992: Session activity timeout monitoring
+  private readonly sessionActivityTimeoutMs: number;
+  private readonly requestTimeoutMs: number;
+  private lastSdkActivityAt: number = 0;
+  private activityMonitorTimer: ReturnType<typeof setInterval> | null = null;
+  private activityMonitorAborted = false;
 
   // Managers for separated concerns
   private readonly conversationOrchestrator: ConversationOrchestrator;
@@ -109,6 +116,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
 
+    // Issue #2992: Session activity timeout configuration
+    this.sessionActivityTimeoutMs = config.sessionActivityTimeoutMs ?? 300000; // 5 min default
+    this.requestTimeoutMs = config.requestTimeoutMs ?? 300000; // 5 min default
+
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');
   }
 
@@ -121,6 +132,170 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   getChatId(): string {
     return this.boundChatId;
+  }
+
+  // ============================================================================
+  // Issue #2992: Session Activity Monitor
+  // ============================================================================
+
+  /**
+   * Start monitoring SDK activity for this session.
+   *
+   * Periodically checks if the SDK subprocess has produced any messages.
+   * If no activity is detected for `sessionActivityTimeoutMs` milliseconds,
+   * captures network diagnostics and triggers recovery.
+   *
+   * @param chatId - The chatId being monitored
+   */
+  private startActivityMonitor(chatId: string): void {
+    // Don't start monitor if timeout is disabled
+    if (this.sessionActivityTimeoutMs <= 0) {
+      return;
+    }
+
+    this.stopActivityMonitor(); // Clear any existing monitor
+    this.lastSdkActivityAt = Date.now();
+    this.activityMonitorAborted = false;
+
+    // Check interval: check every 30 seconds, or every timeoutMs/2 if > 60s
+    const checkIntervalMs = Math.min(30000, this.sessionActivityTimeoutMs / 2);
+
+    this.activityMonitorTimer = setInterval(() => {
+      if (this.activityMonitorAborted || !this.isSessionActive) {
+        this.stopActivityMonitor();
+        return;
+      }
+
+      const elapsed = Date.now() - this.lastSdkActivityAt;
+      if (elapsed >= this.sessionActivityTimeoutMs) {
+        this.logger.warn(
+          { chatId, elapsedMs: elapsed, timeoutMs: this.sessionActivityTimeoutMs },
+          'Session activity timeout: no SDK messages received'
+        );
+
+        // Capture network diagnostics before recovery
+        const diagnostics = this.captureHangDiagnostics(chatId);
+
+        // Stop monitor — we're about to recover
+        this.stopActivityMonitor();
+
+        // Trigger recovery (fire-and-forget: errors are logged internally)
+        void this.handleSessionHang(chatId, diagnostics);
+      }
+    }, checkIntervalMs);
+
+    this.logger.debug(
+      { chatId, timeoutMs: this.sessionActivityTimeoutMs, checkIntervalMs },
+      'Activity monitor started'
+    );
+  }
+
+  /**
+   * Stop the activity monitor.
+   */
+  private stopActivityMonitor(): void {
+    if (this.activityMonitorTimer) {
+      clearInterval(this.activityMonitorTimer);
+      this.activityMonitorTimer = null;
+    }
+    this.activityMonitorAborted = true;
+  }
+
+  /**
+   * Refresh the activity timestamp (called when SDK message is received).
+   */
+  private refreshActivity(): void {
+    this.lastSdkActivityAt = Date.now();
+  }
+
+  /**
+   * Capture diagnostic information when a session hang is detected.
+   *
+   * @param chatId - The chatId that hung
+   * @returns Network diagnostics snapshot
+   */
+  private captureHangDiagnostics(chatId: string): NetworkDiagnostics {
+    // Try to extract the API host from the base URL for filtering
+    let targetHost: string | undefined;
+    if (this.apiBaseUrl) {
+      try {
+        const url = new URL(this.apiBaseUrl);
+        targetHost = `${url.hostname}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`;
+      } catch {
+        targetHost = undefined;
+      }
+    }
+
+    const diagnostics = captureTcpConnections(targetHost);
+
+    this.logger.warn(
+      { chatId, diagnostics: formatDiagnostics(diagnostics) },
+      'Network diagnostics captured for hung session'
+    );
+
+    return diagnostics;
+  }
+
+  /**
+   * Handle a detected session hang.
+   *
+   * 1. Cancels the stuck query
+   * 2. Notifies the user with recovery suggestions
+   * 3. Aborts the agent loop for recovery
+   *
+   * @param chatId - The chatId that hung
+   * @param diagnostics - Captured network diagnostics
+   */
+  private async handleSessionHang(chatId: string, diagnostics: NetworkDiagnostics): Promise<void> {
+    this.logger.error(
+      {
+        chatId,
+        timeoutMs: this.sessionActivityTimeoutMs,
+        apiConnections: diagnostics.apiConnections.length,
+        diagnosticError: diagnostics.error,
+      },
+      'Session hang detected: cancelling stuck query and notifying user'
+    );
+
+    // Cancel the stuck query
+    if (this.queryHandle) {
+      this.queryHandle.cancel();
+      this.queryHandle = undefined;
+    }
+
+    // Abort the agent loop
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+
+    // Mark session as inactive
+    this.isSessionActive = false;
+
+    // Notify the user
+    const connectionInfo = diagnostics.apiConnections.length > 0
+      ? `\n\n📊 诊断信息: ${diagnostics.apiConnections.length} 个 TCP 连接到 API 端点`
+      : '';
+
+    try {
+      await this.callbacks.sendMessage(
+        chatId,
+        `⚠️ Agent 会话可能已挂起 — 已超过 ${Math.round(this.sessionActivityTimeoutMs / 60000)} 分钟未收到响应。` +
+        '\n\n已自动取消挂起的请求。' +
+        '\n\n建议操作：' +
+        '\n• 发送 /reset 重置会话' +
+        '\n• 重新发送您的消息' +
+        `\n\n如果问题持续出现，请联系管理员。${ 
+        connectionInfo}`
+      );
+    } catch (notifyErr) {
+      this.logger.error({ err: notifyErr, chatId }, 'Failed to send session hang notification');
+    }
+
+    // Call onDone callback if available
+    if (this.callbacks.onDone) {
+      const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+      await this.callbacks.onDone(chatId, threadRoot);
+    }
   }
 
   /**
@@ -454,6 +629,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       mcpServers,
     });
 
+    // Issue #2992: Set HTTP request timeout for SDK subprocess connections.
+    if (this.requestTimeoutMs > 0 && sdkOptions.env) {
+      sdkOptions.env.ANTHROPIC_TIMEOUT = String(this.requestTimeoutMs);
+    }
+
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
@@ -697,6 +877,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       mcpServers,
     });
 
+    // Issue #2992: Set HTTP request timeout for SDK subprocess connections.
+    // This is passed as ANTHROPIC_TIMEOUT env var to the subprocess.
+    if (this.requestTimeoutMs > 0 && sdkOptions.env) {
+      sdkOptions.env.ANTHROPIC_TIMEOUT = String(this.requestTimeoutMs);
+    }
+
     this.logger.info(
       { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
       'Starting SDK query with message channel'
@@ -716,6 +902,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.queryHandle = handle;
     this.isSessionActive = true;
+
+    // Issue #2992: Start activity monitor for this session
+    this.startActivityMonitor(chatId);
 
     // Process SDK messages in background
     this.processIterator(iterator).catch(async (err) => {
@@ -775,6 +964,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         }
 
         messageCount++;
+
+        // Issue #2992: Refresh activity timestamp on each SDK message
+        this.refreshActivity();
+
         this.logger.debug(
           { chatId, messageCount, type: parsed.type },
           'SDK message received'
@@ -811,6 +1004,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         errorCause: iteratorError.cause,
       }, 'Iterator error');
 
+      // Issue #2992: Capture network diagnostics on iterator error
+      const diagnostics = this.captureHangDiagnostics(chatId);
+      this.logger.warn(
+        { chatId, diagnostics: formatDiagnostics(diagnostics) },
+        'Network diagnostics captured after iterator error'
+      );
+
       const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
       await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
 
@@ -821,6 +1021,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Check if this was an explicit close (reset cleared the session)
     const wasExplicitClose = !this.isSessionActive;
+
+    // Issue #2992: Stop activity monitor when iterator ends
+    this.stopActivityMonitor();
 
     if (wasExplicitClose) {
       this.logger.info({ chatId }, 'Agent loop completed (explicit close)');
@@ -892,6 +1095,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     this.logger.info({ chatId: this.boundChatId, keepContext }, 'Resetting ChatAgent session');
+
+    // Issue #2992: Stop activity monitor on reset
+    this.stopActivityMonitor();
 
     // Issue #2926: Abort the running agent loop first so processIterator
     // breaks out of its for-await loop immediately, rather than continuing
@@ -1023,6 +1229,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   async shutdown(): Promise<void> {
     await Promise.resolve(); // No-op to satisfy linter
     this.logger.info({ chatId: this.boundChatId }, 'Shutting down ChatAgent');
+
+    // Issue #2992: Stop activity monitor on shutdown
+    this.stopActivityMonitor();
 
     // Mark session as inactive
     this.isSessionActive = false;

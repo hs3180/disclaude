@@ -22,7 +22,7 @@ vi.mock('@disclaude/core', () => ({
     getMcpServersConfig: vi.fn(() => null),
   },
   BaseAgent: vi.fn().mockImplementation(function(this: any) {
-    this.createSdkOptions = vi.fn(() => ({ mcpServers: {} }));
+    this.createSdkOptions = vi.fn(() => ({ mcpServers: {}, env: {} }));
     this.createQueryStream = vi.fn(() => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
       iterator: (async function* () { /* empty */ })(),
@@ -31,6 +31,7 @@ vi.mock('@disclaude/core', () => ({
       yield { parsed: { type: 'result', content: 'done' } };
     })());
     this.dispose = vi.fn();
+    this.apiBaseUrl = undefined;
     this.logger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -58,6 +59,12 @@ vi.mock('@disclaude/core', () => ({
     deleteThreadRoot: vi.fn(),
     clearAll: vi.fn(),
   })),
+  // Issue #2992: Mock network diagnostics
+  captureTcpConnections: vi.fn(() => ({
+    timestamp: '2026-04-28T22:00:00.000Z',
+    apiConnections: [],
+  })),
+  formatDiagnostics: vi.fn(() => 'Mock diagnostics'),
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({
@@ -343,6 +350,203 @@ describe('ChatAgent (primary-node)', () => {
       await agent.shutdown();
       expect(ac.signal.aborted).toBe(true);
       expect((agent as any).abortController).toBeNull();
+    });
+  });
+
+  describe('Issue #2992: session activity timeout and network diagnostics', () => {
+    it('should use default sessionActivityTimeoutMs of 300000ms (5 min)', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_timeout_default',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      // Access private property via any cast
+      expect((agent as any).sessionActivityTimeoutMs).toBe(300000);
+    });
+
+    it('should use custom sessionActivityTimeoutMs when configured', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_timeout_custom',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        sessionActivityTimeoutMs: 60000,
+      });
+      expect((agent as any).sessionActivityTimeoutMs).toBe(60000);
+    });
+
+    it('should use default requestTimeoutMs of 300000ms (5 min)', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_req_timeout_default',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      expect((agent as any).requestTimeoutMs).toBe(300000);
+    });
+
+    it('should stop activity monitor on reset()', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_monitor_reset',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Start a session to create activity monitor
+      void agent.processMessage('oc_monitor_reset', 'hello', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(true);
+
+      // Verify monitor timer exists
+      expect((agent as any).activityMonitorTimer).not.toBeNull();
+
+      // Reset should stop the monitor
+      agent.reset();
+      expect((agent as any).activityMonitorTimer).toBeNull();
+    });
+
+    it('should stop activity monitor on shutdown()', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_monitor_shutdown',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      void agent.processMessage('oc_monitor_shutdown', 'hello', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(true);
+
+      await agent.shutdown();
+      expect((agent as any).activityMonitorTimer).toBeNull();
+    });
+
+    it('should not start activity monitor when sessionActivityTimeoutMs is 0', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_monitor_disabled',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        sessionActivityTimeoutMs: 0,
+      });
+
+      void agent.processMessage('oc_monitor_disabled', 'hello', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(true);
+
+      // Monitor should not be started when timeout is 0
+      expect((agent as any).activityMonitorTimer).toBeNull();
+    });
+
+    it('should detect hang when SDK iterator produces no messages for too long', async () => {
+      vi.useFakeTimers();
+
+      const agent = new ChatAgent({
+        chatId: 'oc_hang_detect',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        sessionActivityTimeoutMs: 1000, // 1 second for fast test
+        requestTimeoutMs: 1000,
+      });
+
+      // Override createQueryStream to return an iterator that never yields
+      const hangIterator = (async function* () {
+        // Never yields — simulates a hung connection
+        await new Promise(() => {}); // Never resolves
+      })();
+
+      const cancelFn = vi.fn();
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: cancelFn },
+        iterator: hangIterator,
+      });
+
+      // Start the session
+      void agent.processMessage('oc_hang_detect', 'hello', 'msg_1');
+      expect(agent.hasActiveSession()).toBe(true);
+
+      // Advance time past the timeout (1s + check interval)
+      vi.advanceTimersByTime(1500);
+
+      // Allow promises to resolve
+      await vi.runAllTimersAsync();
+
+      // Should have detected the hang and cancelled the query
+      expect(cancelFn).toHaveBeenCalled();
+
+      // Should have notified the user
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_hang_detect',
+        expect.stringContaining('挂起'),
+      );
+
+      // Session should be inactive
+      expect(agent.hasActiveSession()).toBe(false);
+
+      vi.useRealTimers();
+    });
+
+    it('should NOT trigger timeout when messages arrive regularly', async () => {
+      vi.useFakeTimers();
+
+      const agent = new ChatAgent({
+        chatId: 'oc_active_session',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        sessionActivityTimeoutMs: 5000, // 5 second timeout
+      });
+
+      // Create an iterator that yields a few messages quickly, then ends
+      const fastIterator = (async function* () {
+        yield { parsed: { type: 'text', content: 'msg-1' } };
+        yield { parsed: { type: 'text', content: 'msg-2' } };
+        yield { parsed: { type: 'result', content: 'done' } };
+      })();
+
+      const cancelFn = vi.fn();
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: cancelFn },
+        iterator: fastIterator,
+      });
+
+      void agent.processMessage('oc_active_session', 'hello', 'msg_1');
+
+      // Wait for the iterator to complete (it's synchronous so should finish quickly)
+      await vi.runAllTimersAsync();
+
+      // The iterator completed normally — no hang should be detected
+      expect(cancelFn).not.toHaveBeenCalled();
+
+      // Should NOT have sent hang notification
+      const hangCall = callbacks.sendMessage.mock.calls.find(
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('挂起')
+      );
+      expect(hangCall).toBeUndefined();
+
+      vi.useRealTimers();
+    });
+
+    it('should set ANTHROPIC_TIMEOUT in SDK env when requestTimeoutMs > 0', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_sdk_timeout',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        requestTimeoutMs: 120000,
+      });
+
+      // Verify the requestTimeoutMs was stored
+      expect((agent as any).requestTimeoutMs).toBe(120000);
     });
   });
 });

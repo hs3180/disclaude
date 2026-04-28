@@ -115,6 +115,35 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * options when creating ChatAgent instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Session activity timeout in milliseconds.
+   *
+   * Issue #2992: When the SDK subprocess hangs (e.g., TCP connection to
+   * LiteLLM proxy frozen), no SDK messages are received. This timeout
+   * detects such hangs by monitoring the time since the last SDK message.
+   *
+   * When triggered:
+   * 1. Captures network diagnostics (TCP connection state) for debugging
+   * 2. Cancels the stuck query
+   * 3. Notifies the user with recovery suggestions
+   * 4. Aborts the agent loop for recovery
+   *
+   * Default: 300000 (5 minutes). Set to 0 to disable.
+   */
+  sessionActivityTimeoutMs?: number;
+
+  /**
+   * HTTP request timeout in milliseconds for SDK subprocess API calls.
+   *
+   * Issue #2992: Passed as ANTHROPIC_TIMEOUT env var to the SDK subprocess.
+   * Sets the HTTP client timeout for API requests. When the LiteLLM proxy
+   * stops responding but keeps the TCP connection open, this timeout ensures
+   * the HTTP client eventually aborts the request.
+   *
+   * Default: 300000 (5 minutes). Set to 0 to disable.
+   */
+  requestTimeoutMs?: number;
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

@@ -56,17 +56,22 @@ export function extractText(message: AgentMessage): string {
  * Also, we must unset CLAUDECODE to allow SDK subprocess to run inside
  * another Claude Code session (nested session detection).
  *
+ * Issue #2992: Added requestTimeoutMs parameter to set HTTP request timeout
+ * for SDK subprocess connections via ANTHROPIC_TIMEOUT env var.
+ *
  * @param apiKey - API key for authentication
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param requestTimeoutMs - Optional HTTP request timeout in milliseconds (default: 300000 = 5 min)
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  requestTimeoutMs: number = 300000
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -103,6 +108,17 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Issue #2992: Set HTTP request timeout for SDK subprocess connections.
+  // This env var is read by the Anthropic SDK client inside the SDK subprocess.
+  // Default: 300000ms (5 minutes) — prevents indefinite hangs when the API
+  // proxy (e.g., LiteLLM) stops responding but keeps the TCP connection open.
+  // The SDK's default timeout is 600000ms (10 min), which is too long for
+  // streaming connections that may hang at the TCP level.
+  // Set to 0 to disable (not recommended).
+  if (requestTimeoutMs > 0) {
+    env.ANTHROPIC_TIMEOUT = String(requestTimeoutMs);
   }
 
   return env;
