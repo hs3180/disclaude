@@ -172,6 +172,8 @@ export class BotChatMappingStore {
   private cache: MappingTable = {};
   /** Whether the store has been initialized */
   private initialized = false;
+  /** Cached initialization promise to prevent concurrent init */
+  private initPromise: Promise<void> | null = null;
 
   constructor(options: BotChatMappingStoreOptions) {
     this.filePath = options.filePath;
@@ -182,11 +184,20 @@ export class BotChatMappingStore {
 
   /**
    * Ensure the mapping file is loaded into memory.
+   * Uses cached promise pattern to prevent concurrent initialization.
    * Creates an empty file if it doesn't exist.
    */
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) { return; }
+    // Reuse the same promise for all concurrent callers
+    this.initPromise = this.initPromise ?? this._init();
+    await this.initPromise;
+  }
 
+  /**
+   * Internal initialization logic.
+   */
+  private async _init(): Promise<void> {
     try {
       const dir = path.dirname(this.filePath);
       await fsPromises.mkdir(dir, { recursive: true });
@@ -223,16 +234,20 @@ export class BotChatMappingStore {
 
   /**
    * Persist the in-memory cache to disk.
+   * Throws on failure so callers can detect persistence issues.
    */
   private async persist(): Promise<void> {
+    const content = `${JSON.stringify(this.cache, null, 2)  }\n`;
+    // Atomic write: write to temp then rename
+    const tmpFile = `${this.filePath}.${Date.now()}.tmp`;
     try {
-      const content = `${JSON.stringify(this.cache, null, 2)  }\n`;
-      // Atomic write: write to temp then rename
-      const tmpFile = `${this.filePath}.${Date.now()}.tmp`;
       await fsPromises.writeFile(tmpFile, content, 'utf-8');
       await fsPromises.rename(tmpFile, this.filePath);
     } catch (error) {
+      // Clean up temp file on failure
+      try { await fsPromises.unlink(tmpFile); } catch {}
       logger.error({ err: error }, 'Failed to persist mapping file');
+      throw error;
     }
   }
 
@@ -267,7 +282,7 @@ export class BotChatMappingStore {
    * @param entry - Partial entry data (chatId required, purpose and createdAt optional)
    * @returns The full entry that was stored
    */
-  async set(key: string, entry: Omit<MappingEntry, 'createdAt'> & { createdAt?: string }): Promise<MappingEntry> {
+  async set(key: string, entry: Omit<MappingEntry, 'createdAt'> & { createdAt?: string }): Promise<MappingEntry & { persisted: boolean }> {
     await this.ensureInitialized();
 
     const fullEntry: MappingEntry = {
@@ -277,10 +292,15 @@ export class BotChatMappingStore {
     };
 
     this.cache[key] = fullEntry;
-    await this.persist();
+    let persisted = true;
+    try {
+      await this.persist();
+    } catch {
+      persisted = false;
+    }
 
-    logger.debug({ key, chatId: fullEntry.chatId }, 'Mapping entry set');
-    return fullEntry;
+    logger.debug({ key, chatId: fullEntry.chatId, persisted }, 'Mapping entry set');
+    return { ...fullEntry, persisted };
   }
 
   /**
@@ -297,7 +317,11 @@ export class BotChatMappingStore {
     }
 
     delete this.cache[key];
-    await this.persist();
+    try {
+      await this.persist();
+    } catch (error) {
+      logger.error({ err: error, key }, 'Failed to persist after deletion');
+    }
 
     logger.debug({ key }, 'Mapping entry deleted');
     return true;
@@ -334,12 +358,19 @@ export class BotChatMappingStore {
    * and rebuild the mapping table.
    *
    * Groups whose names don't match any known pattern are skipped.
-   * Existing mappings not found in the scan are removed (group was dissolved).
+   *
+   * By default, this is **append-only**: existing mappings not found in the scan
+   * are kept (the scan may be incomplete due to network issues or pagination).
+   * Pass `{ removeStale: true }` to remove mappings not found in the scan.
    *
    * @param groups - Array of group objects from Feishu API ({ chatId, name })
+   * @param options.removeStale - If true, remove mappings not present in the scan (default: false)
    * @returns Rebuild statistics
    */
-  async rebuildFromGroupList(groups: Array<{ chatId: string; name: string }>): Promise<RebuildResult> {
+  async rebuildFromGroupList(
+    groups: Array<{ chatId: string; name: string }>,
+    options: { removeStale?: boolean } = {},
+  ): Promise<RebuildResult> {
     await this.ensureInitialized();
 
     const result: RebuildResult = { scanned: 0, added: 0, kept: 0, removed: 0 };
@@ -378,18 +409,20 @@ export class BotChatMappingStore {
       }
     }
 
-    // Remove mappings whose key wasn't found in the scan
-    for (const key of Object.keys(this.cache)) {
-      if (!scannedKeys.has(key)) {
-        delete this.cache[key];
-        result.removed++;
+    // Only remove mappings not found in scan when explicitly requested
+    if (options.removeStale) {
+      for (const key of Object.keys(this.cache)) {
+        if (!scannedKeys.has(key)) {
+          delete this.cache[key];
+          result.removed++;
+        }
       }
     }
 
     await this.persist();
 
     logger.info(
-      { scanned: result.scanned, added: result.added, kept: result.kept, removed: result.removed },
+      { scanned: result.scanned, added: result.added, kept: result.kept, removed: result.removed, removeStale: options.removeStale ?? false },
       'Mapping rebuild completed',
     );
 
@@ -412,7 +445,11 @@ export class BotChatMappingStore {
   async clear(): Promise<void> {
     await this.ensureInitialized();
     this.cache = {};
-    await this.persist();
+    try {
+      await this.persist();
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to persist after clear');
+    }
     logger.info('All mapping entries cleared');
   }
 }

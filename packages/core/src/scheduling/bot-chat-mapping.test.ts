@@ -279,7 +279,7 @@ describe('BotChatMappingStore', () => {
       expect(entry!.chatId).toBe('oc_new');
     });
 
-    it('should remove mappings not found in scan', async () => {
+    it('should keep mappings not found in scan by default (append-only)', async () => {
       await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
       await store.set('pr-789', { chatId: 'oc_yyy', purpose: 'pr-review' });
 
@@ -288,6 +288,29 @@ describe('BotChatMappingStore', () => {
       ];
 
       const result = await store.rebuildFromGroupList(groups);
+
+      expect(result.scanned).toBe(1);
+      expect(result.kept).toBe(1);
+      expect(result.removed).toBe(0);
+
+      // pr-789 should be kept (append-only mode)
+      const entry789 = await store.get('pr-789');
+      expect(entry789).not.toBeNull();
+
+      // pr-123 should still exist
+      const keptEntry = await store.get('pr-123');
+      expect(keptEntry).not.toBeNull();
+    });
+
+    it('should remove mappings not found in scan when removeStale is true', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+      await store.set('pr-789', { chatId: 'oc_yyy', purpose: 'pr-review' });
+
+      const groups = [
+        { chatId: 'oc_xxx', name: 'PR #123 · Fix authentication bug' },
+      ];
+
+      const result = await store.rebuildFromGroupList(groups, { removeStale: true });
 
       expect(result.scanned).toBe(1);
       expect(result.kept).toBe(1);
@@ -318,13 +341,29 @@ describe('BotChatMappingStore', () => {
       expect(entry).not.toBeNull();
     });
 
-    it('should handle empty group list', async () => {
+    it('should handle empty group list (append-only, keeps existing)', async () => {
       await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
 
       const result = await store.rebuildFromGroupList([]);
 
       expect(result.scanned).toBe(0);
+      expect(result.removed).toBe(0);
+
+      // Existing mapping should still exist
+      const entry = await store.get('pr-123');
+      expect(entry).not.toBeNull();
+    });
+
+    it('should remove all mappings on empty group list when removeStale is true', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+
+      const result = await store.rebuildFromGroupList([], { removeStale: true });
+
+      expect(result.scanned).toBe(0);
       expect(result.removed).toBe(1);
+
+      const entry = await store.get('pr-123');
+      expect(entry).toBeNull();
     });
 
     it('should persist after rebuild', async () => {
