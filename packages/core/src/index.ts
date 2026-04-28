@@ -225,7 +225,7 @@ export {
   // Issue #1382: Unified schedule executor
   // Issue #2941: ScheduleAgent removed (use ChatAgent directly)
   createScheduleExecutor,
-  type ScheduleAgentFactory,
+  type AgentFactory,
   type ScheduleExecutorOptions,
 } from './scheduling/index.js';
 

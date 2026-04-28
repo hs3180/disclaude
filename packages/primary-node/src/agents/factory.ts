@@ -95,9 +95,7 @@ export interface AgentCreateOptions {
  * Factory for creating ChatAgent instances with unified configuration.
  *
  * Issue #2941: Simplified — there is only one agent type (ChatAgent).
- * The former createScheduleAgent/createTaskAgent methods have been
- * merged into a single createAgent() method since they had identical
- * implementations.
+ * createAgent() is the unified method for short-lived ChatAgent creation.
  *
  * Each method fetches default configuration from Config.getAgentConfig()
  * and allows optional overrides.
@@ -223,29 +221,5 @@ export class AgentFactory {
     };
 
     return new ChatAgent(config);
-  }
-
-  /**
-   * @deprecated Use createAgent() instead. Issue #2941.
-   * Kept for backward compatibility.
-   */
-  static createScheduleAgent(
-    chatId: string,
-    callbacks: ChatAgentCallbacks,
-    options: AgentCreateOptions = {}
-  ): ChatAgent {
-    return AgentFactory.createAgent(chatId, callbacks, options);
-  }
-
-  /**
-   * @deprecated Use createAgent() instead. Issue #2941.
-   * Kept for backward compatibility.
-   */
-  static createTaskAgent(
-    chatId: string,
-    callbacks: ChatAgentCallbacks,
-    options: AgentCreateOptions = {}
-  ): ChatAgent {
-    return AgentFactory.createAgent(chatId, callbacks, options);
   }
 }
