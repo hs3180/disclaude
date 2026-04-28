@@ -41,8 +41,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
 const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 
-const STDOUT_LOG = '/tmp/disclaude-stdout.log';
-const STDERR_LOG = '/tmp/disclaude-stderr.log';
+// Log directory for pino file transport with pino-roll rotation.
+// Uses ~/Library/Logs/disclaude/ instead of /tmp for security (#2898)
+// and to avoid macOS 3-day /tmp auto-cleanup.
+const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
+const COMBINED_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,6 +82,11 @@ function ensureLaunchAgentsDir() {
 function generatePlist() {
   const nodePath = getNodePath();
 
+  // Ensure log directory exists so pino-roll can write to it immediately
+  if (!existsSync(LOG_DIR)) {
+    mkdirSync(LOG_DIR, { recursive: true });
+  }
+
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -102,14 +110,16 @@ function generatePlist() {
   <key>KeepAlive</key>
   <true/>
 
-  <key>StandardOutPath</key>
-  <string>${STDOUT_LOG}</string>
-
-  <key>StandardErrorPath</key>
-  <string>${STDERR_LOG}</string>
+  <!-- No StandardOutPath/StandardErrorPath: logs go through pino file
+       transport with pino-roll rotation (10M/file, 30 files, compressed).
+       See Issue #2934 and #2898. -->
 
   <key>EnvironmentVariables</key>
   <dict>
+    <key>DISCLAUDE_LAUNCHD</key>
+    <string>1</string>
+    <key>LOG_DIR</key>
+    <string>${LOG_DIR}</string>
     <key>PATH</key>
     <string>${process.env.PATH}</string>
     <key>HOME</key>
@@ -127,8 +137,7 @@ function generatePlist() {
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${CLI_ENTRY}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
-  console.log(`  Stdout: ${STDOUT_LOG}`);
-  console.log(`  Stderr: ${STDERR_LOG}`);
+  console.log(`  Log dir: ${LOG_DIR} (pino-roll: 10M/file, 30 files, compressed)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,14 +212,15 @@ function cmdRestart() {
 function cmdLogs() {
   const lines = process.argv.find(a => a.startsWith('--lines='));
   const n = lines ? lines.split('=')[1] : '100';
-  console.log(`=== stdout (last ${n} lines) ===`);
-  try {
-    run(`tail -n ${n} ${STDOUT_LOG}`, { silent: true });
-  } catch {}
-  console.log(`\n=== stderr (last ${n} lines) ===`);
-  try {
-    run(`tail -n ${n} ${STDERR_LOG}`, { silent: true });
-  } catch {}
+  console.log(`=== combined log (last ${n} lines) ===`);
+  if (existsSync(COMBINED_LOG)) {
+    try {
+      run(`tail -n ${n} ${COMBINED_LOG}`, { silent: true });
+    } catch {}
+  } else {
+    console.log(`Log file not found: ${COMBINED_LOG}`);
+    console.log('Service may not be running yet.');
+  }
 }
 
 function cmdStatus() {
@@ -218,11 +228,14 @@ function cmdStatus() {
   if (result) {
     console.log(result.trim());
     console.log(`\nPlist: ${PLIST_PATH}`);
-    console.log(`Stdout: ${STDOUT_LOG}`);
-    console.log(`Stderr: ${STDERR_LOG}`);
+    console.log(`Log dir: ${LOG_DIR}`);
+    if (existsSync(COMBINED_LOG)) {
+      console.log(`Combined log: ${COMBINED_LOG}`);
+    }
   } else {
     console.log('Service is NOT loaded.');
     console.log(`Plist: ${PLIST_PATH} (${existsSync(PLIST_PATH) ? 'exists' : 'not found'})`);
+    console.log(`Log dir: ${LOG_DIR} (${existsSync(LOG_DIR) ? 'exists' : 'not found'})`);
   }
 }
 

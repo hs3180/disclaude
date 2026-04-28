@@ -21,6 +21,7 @@ import {
   applyGlobalEnv,
   createDefaultRuntimeContext,
   createLogger,
+  initLogger,
   Config,
   type DisclaudeConfigWithChannels,
   createControlHandler,
@@ -96,6 +97,14 @@ Examples:
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const options = parseArgs(args);
+
+  // Initialize pino-roll file transport for launchd mode.
+  // When DISCLAUDE_LAUNCHD=1 is set (by launchd plist), this upgrades
+  // the basic file stream (created by createLogger) to pino-roll with
+  // log rotation (10M/file, 30 files, compressed). See Issue #2934.
+  if (process.env.DISCLAUDE_LAUNCHD === '1') {
+    await initLogger({ fileLogging: true });
+  }
 
   if (options.command === 'help' || args.length === 0) {
     printUsage();

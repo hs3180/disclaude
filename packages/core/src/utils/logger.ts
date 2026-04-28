@@ -17,6 +17,7 @@ import pino, { Logger, Level, LoggerOptions } from 'pino';
 export type { Logger } from 'pino';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 /**
  * Log levels supported by Pino
@@ -75,6 +76,41 @@ export function resetLogger(): void {
  */
 function isDevelopment(): boolean {
   return process.env.NODE_ENV !== 'production';
+}
+
+/**
+ * Detect if running under macOS launchd
+ *
+ * When DISCLAUDE_LAUNCHD=1 is set (by the launchd plist), the process
+ * should write logs to files via pino instead of relying on launchd's
+ * StandardOutPath/StandardErrorPath raw file redirection.
+ * This enables pino-roll log rotation and secure log file locations.
+ */
+function isLaunchd(): boolean {
+  return process.env.DISCLAUDE_LAUNCHD === '1';
+}
+
+/**
+ * Get the default log directory for launchd mode.
+ * Uses ~/Library/Logs/disclaude/ which is secure (not world-readable like /tmp)
+ * and not subject to macOS's 3-day /tmp auto-cleanup.
+ */
+function getLaunchdLogDir(): string {
+  return process.env.LOG_DIR || path.resolve(os.homedir(), 'Library/Logs/disclaude');
+}
+
+/**
+ * Create a synchronous file write stream for launchd mode.
+ *
+ * Used by createLogger() and getRootLogger() to capture early logs
+ * (during module import) before initLogger() can set up pino-roll rotation.
+ * The stream is appended to avoid overwriting existing logs.
+ */
+function createLaunchdFileStream(): NodeJS.WritableStream {
+  const logDir = getLaunchdLogDir();
+  fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, 'disclaude-combined.log');
+  return fs.createWriteStream(logFile, { flags: 'a' });
 }
 
 /**
@@ -223,12 +259,16 @@ function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
  * ```
  */
 export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
-  if (rootLogger) {
+  // In launchd mode, always reset root logger to upgrade from basic
+  // file stream to pino-roll with rotation. This is needed because
+  // createLogger() (synchronous) creates a basic file stream for early
+  // module-scope logging, but initLogger() (async) upgrades to pino-roll.
+  if (rootLogger && !isLaunchd()) {
     return rootLogger;
   }
 
   const isDev = isDevelopment();
-  const logDir = config.logDir ?? process.env.LOG_DIR ?? './logs';
+  const logDir = config.logDir ?? (isLaunchd() ? getLaunchdLogDir() : process.env.LOG_DIR ?? './logs');
 
   // Get base configuration
   let options: LoggerOptions = isDev ? getDevelopmentConfig() : getProductionConfig();
@@ -270,7 +310,7 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
     }
   }
 
-  // Create root logger with stream
+  // Create root logger with stream (replaces any existing logger)
   rootLogger = pino(options, logStream);
 
   return rootLogger;
@@ -310,7 +350,10 @@ export function createLogger(
     // Synchronous initialization for immediate use
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
-    rootLogger = pino(options, process.stdout);
+    const stream = isLaunchd() && !isDev && process.env.NODE_ENV !== 'test'
+      ? createLaunchdFileStream()
+      : process.stdout;
+    rootLogger = pino(options, stream);
   }
 
   // Create child logger with context
@@ -333,7 +376,10 @@ export function getRootLogger(): Logger {
   if (!rootLogger) {
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
-    rootLogger = pino(options, process.stdout);
+    const stream = isLaunchd() && !isDev && process.env.NODE_ENV !== 'test'
+      ? createLaunchdFileStream()
+      : process.stdout;
+    rootLogger = pino(options, stream);
   }
   return rootLogger;
 }

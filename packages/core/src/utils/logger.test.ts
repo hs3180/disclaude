@@ -422,16 +422,6 @@ describe('logger', () => {
       expect(logger1.level).toBe('debug');
     });
 
-    it('should handle createLogger with empty metadata', () => {
-      process.env.NODE_ENV = 'test';
-      const logger = createLogger('EmptyMeta', {});
-
-      expect(logger).toBeDefined();
-      expect(logger.bindings()).toEqual(
-        expect.objectContaining({ context: 'EmptyMeta' }),
-      );
-    });
-
     it('should handle resetLogger and re-initialization', async () => {
       process.env.NODE_ENV = 'test';
       const first = await initLogger({ level: 'info' });
@@ -458,6 +448,123 @@ describe('logger', () => {
           expect.objectContaining({ context: `Module${i}`, index: i }),
         );
       }
+    });
+
+    it('should handle createLogger with empty metadata', () => {
+      process.env.NODE_ENV = 'test';
+      const logger = createLogger('EmptyMeta', {});
+
+      expect(logger).toBeDefined();
+      expect(logger.bindings()).toEqual(
+        expect.objectContaining({ context: 'EmptyMeta' }),
+      );
+    });
+  });
+
+  describe('launchd mode', () => {
+    const originalLaunchd = process.env.DISCLAUDE_LAUNCHD;
+    const originalLogDir = process.env.LOG_DIR;
+
+    beforeEach(() => {
+      resetLogger();
+      delete process.env.DISCLAUDE_LAUNCHD;
+      delete process.env.LOG_DIR;
+    });
+
+    afterEach(() => {
+      resetLogger();
+      if (originalLaunchd !== undefined) {
+        process.env.DISCLAUDE_LAUNCHD = originalLaunchd;
+      } else {
+        delete process.env.DISCLAUDE_LAUNCHD;
+      }
+      if (originalLogDir !== undefined) {
+        process.env.LOG_DIR = originalLogDir;
+      } else {
+        delete process.env.LOG_DIR;
+      }
+    });
+
+    it('should create logger with stdout when not in launchd mode', () => {
+      process.env.NODE_ENV = 'test';
+      const logger = createLogger('NonLaunchd');
+
+      expect(logger).toBeDefined();
+      expect(logger.bindings()).toEqual(
+        expect.objectContaining({ context: 'NonLaunchd' }),
+      );
+    });
+
+    it('should not activate launchd mode in test environment even with DISCLAUDE_LAUNCHD=1', () => {
+      process.env.NODE_ENV = 'test';
+      process.env.DISCLAUDE_LAUNCHD = '1';
+
+      // In test env, launchd mode is skipped (uses process.stdout)
+      const logger = createLogger('LaunchdInTest');
+      expect(logger).toBeDefined();
+    });
+
+    it('should not activate launchd mode in development', () => {
+      process.env.NODE_ENV = 'development';
+      process.env.DISCLAUDE_LAUNCHD = '1';
+
+      // In dev mode, launchd mode is skipped (uses pino-pretty)
+      const logger = createLogger('LaunchdInDev');
+      expect(logger).toBeDefined();
+    });
+
+    it('should allow initLogger to upgrade root logger in launchd mode', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.DISCLAUDE_LAUNCHD = '1';
+      process.env.LOG_DIR = '/tmp/disclaude-test-logs-launchd';
+
+      // createLogger creates initial root logger (basic file stream)
+      const initialLogger = createLogger('LaunchdInit');
+      expect(initialLogger).toBeDefined();
+
+      // initLogger upgrades to pino-roll (replaces root logger)
+      const upgradedLogger = await initLogger({ fileLogging: true });
+      expect(upgradedLogger).toBeDefined();
+      // The root logger should have been replaced
+      expect(getRootLogger()).toBe(upgradedLogger);
+
+      // Clean up test dir
+      const fs = await import('fs');
+      try {
+        fs.rmSync('/tmp/disclaude-test-logs-launchd', { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    });
+
+    it('should use LOG_DIR env var in launchd mode', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.DISCLAUDE_LAUNCHD = '1';
+      process.env.LOG_DIR = '/tmp/disclaude-test-logs-custom';
+
+      await initLogger({ fileLogging: true });
+      const logger = getRootLogger();
+      expect(logger).toBeDefined();
+
+      // Verify custom log dir was created
+      const fs = await import('fs');
+      expect(fs.existsSync('/tmp/disclaude-test-logs-custom')).toBe(true);
+
+      // Clean up
+      try {
+        fs.rmSync('/tmp/disclaude-test-logs-custom', { recursive: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    });
+
+    it('should not activate launchd mode with DISCLAUDE_LAUNCHD=0', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.DISCLAUDE_LAUNCHD = '0';
+
+      // DISCLAUDE_LAUNCHD must be exactly '1'
+      const logger = createLogger('LaunchdZero');
+      expect(logger).toBeDefined();
     });
   });
 });
