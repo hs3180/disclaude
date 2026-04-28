@@ -45,10 +45,10 @@ const STDOUT_LOG = '/tmp/disclaude-stdout.log';
 const STDERR_LOG = '/tmp/disclaude-stderr.log';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers (exported for testability — Issue #2894)
 // ---------------------------------------------------------------------------
 
-function getNodePath() {
+export function getNodePath() {
   try {
     return execSync('which node', { encoding: 'utf-8' }).trim();
   } catch {
@@ -57,7 +57,7 @@ function getNodePath() {
   }
 }
 
-function run(cmd, opts = {}) {
+export function run(cmd, opts = {}) {
   try {
     return execSync(cmd, { encoding: 'utf-8', stdio: opts.silent ? 'pipe' : 'inherit', ...opts });
   } catch (e) {
@@ -66,17 +66,17 @@ function run(cmd, opts = {}) {
   }
 }
 
-function ensureLaunchAgentsDir() {
+export function ensureLaunchAgentsDir() {
   if (!existsSync(LAUNCHAGENTS_DIR)) {
     mkdirSync(LAUNCHAGENTS_DIR, { recursive: true });
   }
 }
 
 // ---------------------------------------------------------------------------
-// Plist generation
+// Plist generation (exported for testability — Issue #2894)
 // ---------------------------------------------------------------------------
 
-function generatePlist() {
+export function generatePlist() {
   const nodePath = getNodePath();
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -227,24 +227,40 @@ function cmdStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Main (only auto-execute when run directly, not when imported for testing)
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
+const __filename = fileURLToPath(import.meta.url);
 
-const commands = {
-  generate: cmdGenerate,
-  install: cmdInstall,
-  uninstall: cmdUninstall,
-  start: cmdStart,
-  stop: cmdStop,
-  restart: cmdRestart,
-  logs: cmdLogs,
-  status: cmdStatus,
+export {
+  LABEL,
+  PLIST_FILENAME,
+  PLIST_PATH,
+  LAUNCHAGENTS_DIR,
+  CLI_ENTRY,
+  PROJECT_ROOT,
+  STDOUT_LOG,
+  STDERR_LOG,
 };
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+const isDirectRun = process.argv[1] && resolve(process.argv[1]) === __filename;
+
+if (isDirectRun) {
+  const command = process.argv[2];
+
+  const commands = {
+    generate: cmdGenerate,
+    install: cmdInstall,
+    uninstall: cmdUninstall,
+    start: cmdStart,
+    stop: cmdStop,
+    restart: cmdRestart,
+    logs: cmdLogs,
+    status: cmdStatus,
+  };
+
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -256,7 +272,8 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
-}
+    process.exit(1);
+  }
 
-commands[command]();
+  commands[command]();
+}
