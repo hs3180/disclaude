@@ -2,6 +2,11 @@
  * Claude SDK Provider 实现
  *
  * 实现 IAgentSDKProvider 接口，封装 Claude Agent SDK 的功能。
+ *
+ * Issue #2890: Updated to use vibe coding compliance presets via adaptOptions():
+ * - systemPrompt: { type: 'preset', preset: 'claude_code' }
+ * - tools: { type: 'preset', preset: 'claude_code' }
+ * - allowDangerouslySkipPermissions for bypassPermissions mode
  */
 
 import { query, tool, createSdkMcpServer, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -29,7 +34,7 @@ const logger = createLogger('ClaudeSDKProvider');
  */
 export class ClaudeSDKProvider implements IAgentSDKProvider {
   readonly name = 'claude';
-  readonly version = '0.2.19';
+  readonly version = '0.2.119'; // Issue #2890: Updated to match SDK version
 
   private disposed = false;
 
@@ -122,8 +127,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           }
         },
         cancel: () => {
-          if ('cancel' in queryResult && typeof queryResult.cancel === 'function') {
-            queryResult.cancel();
+          // Issue #2890: Use interrupt() for graceful cancellation (SDK v0.2.x)
+          if ('interrupt' in queryResult && typeof queryResult.interrupt === 'function') {
+            queryResult.interrupt().catch(() => {});
+          } else if ('close' in queryResult && typeof queryResult.close === 'function') {
+            queryResult.close();
           }
         },
         sessionId: undefined,

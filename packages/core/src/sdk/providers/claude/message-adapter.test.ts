@@ -258,9 +258,11 @@ describe('adaptSDKMessage', () => {
       const message = {
         type: 'result' as const,
         subtype: 'success',
+        is_error: false,
+        total_cost_usd: 0.0523,
+        duration_ms: 5000,
+        duration_api_ms: 3000,
         usage: {
-          total_cost: 0.0523,
-          total_tokens: 15000,
           input_tokens: 10000,
           output_tokens: 5000,
         },
@@ -270,8 +272,9 @@ describe('adaptSDKMessage', () => {
       expect(result.type).toBe('result');
       expect(result.content).toContain('Complete');
       expect(result.content).toContain('$0.0523');
-      expect(result.content).toContain('15.0k');
+      expect(result.content).toContain('5.0s');
       expect(result.metadata?.costUsd).toBe(0.0523);
+      expect(result.metadata?.elapsedMs).toBe(5000);
       expect(result.metadata?.inputTokens).toBe(10000);
       expect(result.metadata?.outputTokens).toBe(5000);
     });
@@ -291,6 +294,7 @@ describe('adaptSDKMessage', () => {
       const message = {
         type: 'result' as const,
         subtype: 'error_during_execution',
+        is_error: true,
         errors: ['API rate limit exceeded', 'Timeout'],
       };
 

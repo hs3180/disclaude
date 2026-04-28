@@ -2,6 +2,11 @@
  * Claude SDK 选项适配器
  *
  * 将统一的 AgentQueryOptions 转换为 Claude SDK 特定的选项格式。
+ *
+ * Issue #2890: Added vibe coding compliance presets:
+ * - systemPrompt: { type: 'preset', preset: 'claude_code' }
+ * - tools: { type: 'preset', preset: 'claude_code' }
+ * - allowDangerouslySkipPermissions for bypassPermissions mode
  */
 
 import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
@@ -10,11 +15,20 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 /**
  * 适配统一选项为 Claude SDK 选项
  *
+ * Issue #2890: Now sets systemPrompt and tools presets for vibe coding compliance.
+ * This ensures Claude Code's default system prompt and full tool set are loaded,
+ * providing the complete Claude Code experience (Read, Write, Edit, Bash, etc.).
+ *
  * @param options - 统一的查询选项
  * @returns Claude SDK 选项对象
  */
 export function adaptOptions(options: AgentQueryOptions): Record<string, unknown> {
   const sdkOptions: Record<string, unknown> = {};
+
+  // Issue #2890: Vibe coding compliance presets
+  // These ensure the SDK uses Claude Code's full capabilities
+  sdkOptions.systemPrompt = { type: 'preset', preset: 'claude_code' };
+  sdkOptions.tools = { type: 'preset', preset: 'claude_code' };
 
   // 基本选项
   if (options.cwd) {
@@ -25,9 +39,12 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.model = options.model;
   }
 
-  // 权限模式 - 直接传递，使用原始 SDK 格式
+  // 权限模式 - Issue #2890: handle bypassPermissions properly
   if (options.permissionMode) {
     sdkOptions.permissionMode = options.permissionMode;
+    if (options.permissionMode === 'bypassPermissions') {
+      sdkOptions.allowDangerouslySkipPermissions = true;
+    }
   }
 
   // 设置来源（必填）
