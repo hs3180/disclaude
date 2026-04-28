@@ -55,3 +55,11 @@ export {
   type ActionPromptMap,
 } from './interactive-message-builder.js';
 
+export {
+  buildPrDetailCard,
+  buildPrMergedNotificationCard,
+  buildPrClosedNotificationCard,
+  type PrDetailCardParams,
+  type PrReviewCardPayload,
+} from './pr-review-card-builder.js';
+
