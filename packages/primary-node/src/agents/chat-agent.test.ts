@@ -104,6 +104,36 @@ describe('ChatAgent (primary-node)', () => {
     it('should have name "ChatAgent"', () => {
       expect(chatAgent.name).toBe('ChatAgent');
     });
+
+    it('should default sessionInactivityTimeoutMs to 0 (disabled) when not specified (Issue #3066)', () => {
+      // Issue #3066: The inactivity timeout is disabled by default because it
+      // produced false positives during normal long-running operations.
+      // Verify by creating a ChatAgent without the config and checking that
+      // the private field evaluates to 0 (no timer will be set in processIterator).
+      const agent = new ChatAgent({
+        chatId: 'oc_timeout_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+      });
+      // Access the private field for testing purposes
+      expect((agent as any).sessionInactivityTimeoutMs).toBe(0);
+    });
+
+    it('should allow sessionInactivityTimeoutMs to be configured explicitly', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_timeout_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        sessionInactivityTimeoutMs: 300_000,
+      });
+      expect((agent as any).sessionInactivityTimeoutMs).toBe(300_000);
+    });
   });
 
   describe('getChatId', () => {
