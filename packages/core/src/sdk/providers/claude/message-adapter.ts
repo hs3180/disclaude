@@ -5,10 +5,12 @@
  */
 
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { BetaContentBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages.js';
 import type {
   AgentMessage,
   AgentMessageMetadata,
   UserInput,
+  TextContentBlock,
 } from '../../types.js';
 
 /**
@@ -37,17 +39,19 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      // 定义 SDK 内容块类型（包含 tool_use）
-      type SdkContentBlock = { type: string; [key: string]: unknown };
+      const content = apiMessage.content as BetaContentBlock[];
 
-      // 提取工具使用块
-      const toolBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
-        (block: SdkContentBlock) => block.type === 'tool_use'
+      // 提取工具使用块 — BetaContentBlock 是可辨识联合类型，
+      // block.type === 'tool_use' 时 TypeScript 自动收窄为 BetaToolUseBlock
+      const toolBlocks = content.filter(
+        (block): block is Extract<BetaContentBlock, { type: 'tool_use' }> =>
+          block.type === 'tool_use' && 'name' in block && 'input' in block
       );
 
-      // 提取文本块
-      const textBlocks = (apiMessage.content as unknown[] as SdkContentBlock[]).filter(
-        (block: SdkContentBlock) => block.type === 'text' && 'text' in block
+      // 提取文本块 — block.type === 'text' 时 TypeScript 自动收窄为 BetaTextBlock
+      const textBlocks = content.filter(
+        (block): block is Extract<BetaContentBlock, { type: 'text'; text: string }> =>
+          block.type === 'text' && 'text' in block
       );
 
       // 构建内容
@@ -56,17 +60,13 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
       // 处理工具使用
       if (toolBlocks.length > 0) {
         const [block] = toolBlocks; // 取第一个工具使用
-        if ('name' in block && 'input' in block) {
-          metadata.toolName = block.name as string;
-          metadata.toolInput = block.input;
-          contentParts.push(formatToolInput(block.name as string, block.input as Record<string, unknown>));
-        }
+        metadata.toolName = block.name;
+        metadata.toolInput = block.input;
+        contentParts.push(formatToolInput(block.name, block.input as Record<string, unknown>));
       }
 
       // 处理文本
-      const textParts = textBlocks
-        .filter((block: SdkContentBlock) => 'text' in block)
-        .map((block: SdkContentBlock) => String((block as unknown as { text: string }).text));
+      const textParts = textBlocks.map((block) => block.text);
 
       if (textParts.length > 0) {
         contentParts.push(textParts.join(''));
@@ -224,11 +224,24 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
  * @returns Claude SDK SDKUserMessage
  */
 export function adaptUserInput(input: UserInput): SDKUserMessage {
+  // UserInput.content: `string | ContentBlock[]`
+  // MessageParam.content: `string | Array<ContentBlockParam>`
+  //
+  // Runtime guard: string values pass through directly. For ContentBlock[]
+  // we extract text from text blocks — ImageContentBlock has no equivalent
+  // in the SDK's ContentBlockParam union, so non-text blocks are dropped.
+  const content = typeof input.content === 'string'
+    ? input.content
+    : input.content
+        .filter((block): block is TextContentBlock => block.type === 'text')
+        .map(block => block.text)
+        .join('\n');
+
   return {
     type: 'user',
     message: {
       role: 'user',
-      content: input.content as unknown as string,
+      content,
     },
     parent_tool_use_id: null,
     session_id: '',
