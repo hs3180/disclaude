@@ -33,7 +33,9 @@ _COMMON_SH_LOADED=1
 REST_PORT="${REST_PORT:-3099}"
 HOST="${HOST:-127.0.0.1}"
 API_URL="http://${HOST}:${REST_PORT}"
-# Timeout for API requests - increased to 60s for AI processing
+# Connect timeout: how long to wait for TCP connection (short, for quick failure detection)
+CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-10}"
+# Request timeout: how long to wait for the full response (generous for AI processing)
 TIMEOUT="${TIMEOUT:-30}"
 # Default to test config file for integration tests (no MCP servers)
 CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
@@ -264,14 +266,14 @@ make_request() {
             -H "Content-Type: application/json" \
             ${headers:+-H "$headers"} \
             -d "$body" \
-            --connect-timeout "$TIMEOUT" \
+            --connect-timeout "$CONNECT_TIMEOUT" \
             --max-time "$TIMEOUT" 2>&1)
     else
         response=$(curl -s -w "\n%{http_code}" \
             -X "$method" \
             "${API_URL}${path}" \
             ${headers:+-H "$headers"} \
-            --connect-timeout "$TIMEOUT" \
+            --connect-timeout "$CONNECT_TIMEOUT" \
             --max-time "$TIMEOUT" 2>&1)
     fi
 
@@ -309,7 +311,7 @@ make_request_with_error() {
             -H "Content-Type: application/json" \
             ${headers:+-H "$headers"} \
             -d "$body" \
-            --connect-timeout "$TIMEOUT" \
+            --connect-timeout "$CONNECT_TIMEOUT" \
             --max-time "$TIMEOUT" \
             -o "$curl_error_file" 2>&1)
         curl_exit_code=$?
@@ -318,7 +320,7 @@ make_request_with_error() {
             -X "$method" \
             "${API_URL}${path}" \
             ${headers:+-H "$headers"} \
-            --connect-timeout "$TIMEOUT" \
+            --connect-timeout "$CONNECT_TIMEOUT" \
             --max-time "$TIMEOUT" \
             -o "$curl_error_file" 2>&1)
         curl_exit_code=$?
@@ -352,7 +354,7 @@ make_request_with_error() {
                 ;;
             28)
                 error_type="CONNECTION_TIMEOUT"
-                error_msg="Connection timed out after ${TIMEOUT}s"
+                error_msg="Connection timed out after ${TIMEOUT}s (connect: ${CONNECT_TIMEOUT}s, request: ${TIMEOUT}s)"
                 ;;
             35)
                 error_type="SSL_ERROR"
