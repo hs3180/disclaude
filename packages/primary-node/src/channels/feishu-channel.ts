@@ -37,6 +37,7 @@ import {
   WsConnectionManager,
 } from './feishu/index.js';
 import { VIDEO_EXTENSIONS, extractVideoCover } from '../utils/video-cover-extractor.js';
+import { resolveCardImages } from '../utils/card-image-resolver.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -434,9 +435,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
 
       case 'card': {
+        // Issue #2951: Auto-resolve local image paths in card JSON to Feishu image_keys
+        const resolvedCard = await resolveCardImages(client, message.card || {});
         const messageId = await sendFeishuMessage(
           'interactive',
-          JSON.stringify(message.card || {}),
+          JSON.stringify(resolvedCard),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
         return messageId;
