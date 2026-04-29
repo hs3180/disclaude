@@ -227,11 +227,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Initialize message handler
     this.feishuMessageHandler.initialize(this.client);
 
-    // Create event dispatcher — each handler records message receipt as the
-    // sole liveness signal for WsConnectionManager (Issue #1666).
+    // Create event dispatcher for handling Feishu events.
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
-        this.recordWsActivity();
         try {
           await this.feishuMessageHandler.handleMessageReceive(data as FeishuEventData);
         } catch (error) {
@@ -243,7 +241,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'card.action.trigger': async (data: unknown) => {
-        this.recordWsActivity();
         try {
           await this.feishuMessageHandler.handleCardAction(data as FeishuCardActionEventData);
         } catch (error) {
@@ -255,11 +252,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.message.message_read_v1': () => {
-        this.recordWsActivity();
         // No action needed for read receipts
       },
       'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
-        this.recordWsActivity();
         try {
           await this.welcomeHandler.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
         } catch (error) {
@@ -271,7 +266,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
       },
       'im.chat.member.added_v1': async (data: unknown) => {
-        this.recordWsActivity();
         try {
           await this.welcomeHandler.handleChatMemberAdded(data as FeishuChatMemberAddedEventData);
         } catch (error) {
@@ -304,13 +298,6 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     // Listen for connection state events
     this.wsConnectionManager.on('stateChange', (state) => {
       logger.info({ wsState: state }, 'WebSocket connection state changed');
-    });
-
-    this.wsConnectionManager.on('deadConnection', (elapsedMs) => {
-      logger.warn(
-        { elapsedMs },
-        'Dead WebSocket connection detected, initiating reconnect',
-      );
     });
 
     this.wsConnectionManager.on('reconnected', (attempt) => {
@@ -706,19 +693,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
-  // ─── WebSocket health monitoring (Issue #1351, #1666) ────────────────
-
-  /**
-   * Record that an event was received from the server.
-   *
-   * This is the sole liveness signal for WsConnectionManager (Issue #1666).
-   * Called from every event handler in the EventDispatcher for all
-   * incoming server messages. WsConnectionManager uses this to detect
-   * dead connections (no message within 130s → reconnect).
-   */
-  private recordWsActivity(): void {
-    this.wsConnectionManager?.recordMessageReceived();
-  }
+  // ─── WebSocket monitoring (Issue #1351, #2905) ───────────────────────
 
   /**
    * Send a text message directly via Feishu API client, bypassing all routing/queue logic.

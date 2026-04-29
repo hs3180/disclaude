@@ -31,7 +31,7 @@ export { MessageHandler, type MessageCallbacks } from './message-handler.js';
 // Message Logger
 export { MessageLogger, messageLogger } from './message-logger.js';
 
-// WebSocket Connection Manager (Issue #1351, #1666)
+// WebSocket Connection Manager (Issue #1351, #1666, #2905)
 export {
   WsConnectionManager,
   calculateReconnectDelay,
