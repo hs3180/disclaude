@@ -10,7 +10,7 @@
  * is correctly applied to the primary-node ChatAgent.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock all @disclaude/core dependencies
 vi.mock('@disclaude/core', () => ({
@@ -343,6 +343,9 @@ describe('ChatAgent (primary-node)', () => {
       await agent.shutdown();
       expect(ac.signal.aborted).toBe(true);
       expect((agent as any).abortController).toBeNull();
+    });
+  });
+});
 
 // ============================================================================
 // Inactivity Timeout Tests (Issue #2993)
@@ -676,3 +679,6 @@ describe('ChatAgent - session inactivity timeout (Issue #2993)', () => {
       // Timer should never have been set
       expect(timerSet).toBe(false);
       expect(sendMessage).not.toHaveBeenCalledWith('TIMEOUT');
+    });
+  });
+});
