@@ -2,7 +2,6 @@
  * Unit tests for ChatStore
  *
  * Issue #1703: Phase 1 — Core data layer for temporary chat management.
- * Issue #2946: registerTempChat() removed; tests refactored to seed data via file loading.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -41,7 +40,6 @@ describe('ChatStore', () => {
 
   /**
    * Helper: create a ChatStore pre-loaded with records by simulating file loading.
-   * This replaces the removed registerTempChat() method for test setup.
    */
   async function createStoreWithRecords(records: TempChatRecord[]): Promise<ChatStore> {
     if (records.length > 0) {

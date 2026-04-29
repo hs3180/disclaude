@@ -75,9 +75,7 @@ export interface ChatStoreOptions {
  * Pure data storage utility, similar to CooldownManager.
  * All operations are atomic: read → modify → write per-record.
  *
- * Issue #2946: registerTempChat() removed — the new design (#2945) does not
- * need client-initiated registration. Records are created externally and
- * loaded from disk on initialization.
+ * Records are created externally and loaded from disk on initialization.
  *
  * Usage:
  * ```typescript
