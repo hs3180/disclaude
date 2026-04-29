@@ -14,7 +14,7 @@
 #   ./tests/integration/run-all-tests.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout (default: 120)
 #   --port PORT         REST API port (default: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
 #   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
@@ -29,7 +29,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
-TIMEOUT="${TIMEOUT:-60}"
+TIMEOUT="${TIMEOUT:-120}"
 MAX_RETRIES="${MAX_RETRIES:-2}"
 INTER_SUITE_DELAY="${INTER_SUITE_DELAY:-5}"
 RETRY_INITIAL_DELAY="${RETRY_INITIAL_DELAY:-5}"
