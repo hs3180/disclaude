@@ -13,6 +13,9 @@ export type {
   SendInteractiveResult,
 } from './types.js';
 
+// Upload Image type
+export type { UploadImageResult } from './upload-image.js';
+
 // Shared utilities
 export { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 export { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
@@ -30,6 +33,9 @@ export { send_card } from './send-card.js';
 
 // Send File
 export { send_file } from './send-file.js';
+
+// Upload Image (Issue #1919)
+export { upload_image } from './upload-image.js';
 
 // Interactive Message
 export {

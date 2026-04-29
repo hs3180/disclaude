@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -28,6 +29,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -147,6 +149,22 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: `Upload a local image and return the image_key for use in card elements.
+
+Use this when you need to embed an image in a card message (e.g., charts, diagrams, photos).
+The returned image_key can be used in the card JSON \`img\` element.
+
+For sending an image as a standalone message, use send_file instead.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Path to the local image file (jpg, png, gif, webp, etc.)' },
+      },
+      required: ['filePath'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -395,6 +413,43 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'upload_image',
+    description: `Upload a local image and return the image_key for use in card elements.
+
+Use this when you need to embed an image in a card message (e.g., charts, diagrams, photos).
+The returned image_key can be used in the card JSON \`img\` element.
+
+For sending an image as a standalone message, use send_file instead.
+
+## Parameters
+- **filePath**: Path to the local image file (string)
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10 MB)
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png"}
+\`\`\`
+
+## Response
+Returns \`image_key\` which you can use in cards:
+\`\`\`json
+{ "tag": "img", "img_key": "img_v3_xxx" }
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Path to the local image file (jpg, png, gif, webp, etc.)'),
+    }),
+    handler: async ({ filePath }: { filePath: string }) => {
+      try {
+        const result = await upload_image({ filePath });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
