@@ -21,6 +21,7 @@ import {
   applyGlobalEnv,
   createDefaultRuntimeContext,
   createLogger,
+  initLogger,
   Config,
   type DisclaudeConfigWithChannels,
   createControlHandler,
@@ -101,6 +102,11 @@ async function main(): Promise<void> {
     printUsage();
     process.exit(0);
   }
+
+  // Issue #2934: Initialize logger with file rotation support.
+  // When LOG_TO_FILE=true (set by launchd), this upgrades the sync file
+  // logger (created at module level) to pino-roll with rotation.
+  await initLogger();
 
   // Load configuration if provided
   if (options.configPath) {
