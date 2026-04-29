@@ -12,6 +12,7 @@
  */
 
 import pino, { Logger, Level, LoggerOptions } from 'pino';
+import { PassThrough } from 'node:stream';
 
 // Re-export Logger type for consumers
 export type { Logger } from 'pino';
@@ -61,12 +62,30 @@ const SENSITIVE_FIELDS = [
 let rootLogger: Logger | null = null;
 
 /**
+ * PassThrough stream for upgrading from sync file logging to pino-roll.
+ *
+ * Issue #2934: When LOG_TO_FILE=true, createLogger() creates a sync file
+ * logger at module level. initLogger() later upgrades the stream to pino-roll
+ * (async). The PassThrough acts as a proxy — all child loggers write to it,
+ * and it pipes to the current destination (file initially, pino-roll after upgrade).
+ */
+let logPassthrough: PassThrough | null = null;
+// pino.destination() returns SonicBoom, pino-roll returns WritableStream
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let currentLogDest: any = null;
+
+/**
  * Reset the root logger instance.
  * This is primarily useful for testing.
  *
  * @internal
  */
 export function resetLogger(): void {
+  if (logPassthrough) {
+    logPassthrough.destroy();
+    logPassthrough = null;
+    currentLogDest = null;
+  }
   rootLogger = null;
 }
 
@@ -211,6 +230,10 @@ function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
  * This function creates the singleton root logger instance with
  * environment-specific configuration.
  *
+ * Issue #2934: Supports upgrading a sync file logger (created by createLogger()
+ * at module level) to pino-roll with rotation. The PassThrough stream proxy
+ * ensures all child loggers seamlessly switch to the rotated destination.
+ *
  * @param config - Optional logger configuration
  * @returns The root logger instance
  *
@@ -223,10 +246,6 @@ function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
  * ```
  */
 export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
-  if (rootLogger) {
-    return rootLogger;
-  }
-
   const isDev = isDevelopment();
   const logDir = config.logDir ?? process.env.LOG_DIR ?? './logs';
 
@@ -259,10 +278,35 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
     };
   }
 
+  // Determine if file logging should be enabled
+  const shouldFileLog = (config.fileLogging ?? !isDev) && process.env.NODE_ENV !== 'test';
+
+  if (rootLogger) {
+    // Root logger already exists (created by createLogger() at module level).
+    // Issue #2934: If LOG_TO_FILE is set and we have a PassThrough stream,
+    // upgrade the destination from plain file to pino-roll with rotation.
+    if (shouldFileLog && logPassthrough && currentLogDest) {
+      try {
+        const rollStream = await setupFileLogging(logDir);
+        // Swap destination: unpipe old, pipe new
+        logPassthrough.unpipe(currentLogDest);
+        logPassthrough.pipe(rollStream);
+        // Update log level in case it changed
+        if (config.level) {
+          rootLogger.level = config.level;
+        }
+        currentLogDest = rollStream;
+      } catch (error) {
+        console.warn('Failed to upgrade to pino-roll:', error);
+      }
+    }
+    return rootLogger;
+  }
+
   // Setup file logging for production or if explicitly requested
   let logStream: NodeJS.WritableStream = process.stdout;
 
-  if ((config.fileLogging ?? !isDev) && process.env.NODE_ENV !== 'test') {
+  if (shouldFileLog) {
     try {
       logStream = await setupFileLogging(logDir);
     } catch (error) {
@@ -281,6 +325,10 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
  *
  * Child loggers inherit the parent's configuration and automatically
  * include the context field in all log entries.
+ *
+ * Issue #2934: When LOG_TO_FILE=true env var is set, the root logger is
+ * created with a PassThrough stream writing to a file. Later, initLogger()
+ * upgrades the destination to pino-roll with rotation.
  *
  * @param context - Module/component name (e.g., 'FeishuBot', 'AgentClient')
  * @param metadata - Additional metadata to include in all logs
@@ -307,10 +355,33 @@ export function createLogger(
 ): Logger {
   // Ensure root logger is initialized
   if (!rootLogger) {
-    // Synchronous initialization for immediate use
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
-    rootLogger = pino(options, process.stdout);
+
+    // Issue #2934: When LOG_TO_FILE=true, set up a PassThrough stream
+    // that initially pipes to a plain file. This is synchronous (works at
+    // module level). initLogger() later upgrades to pino-roll (async).
+    if (process.env.LOG_TO_FILE === 'true' && process.env.NODE_ENV !== 'test') {
+      const logDir = process.env.LOG_DIR ?? './logs';
+      const logsPath = path.resolve(process.cwd(), logDir);
+
+      // Ensure log directory exists
+      if (!fs.existsSync(logsPath)) {
+        fs.mkdirSync(logsPath, { recursive: true });
+      }
+
+      const logFile = path.join(logsPath, 'disclaude-combined.log');
+
+      // Create PassThrough proxy for later upgrade to pino-roll
+      logPassthrough = new PassThrough();
+      currentLogDest = pino.destination({ dest: logFile, sync: false, mkdir: true });
+      logPassthrough.pipe(currentLogDest);
+
+      rootLogger = pino(options, logPassthrough);
+    } else {
+      // Default: sync initialization writing to stdout
+      rootLogger = pino(options, process.stdout);
+    }
   }
 
   // Create child logger with context
@@ -326,6 +397,7 @@ export function createLogger(
  * Get the root logger instance
  *
  * Returns the existing root logger or initializes it if needed.
+ * Issue #2934: Respects LOG_TO_FILE env var for file-based logging.
  *
  * @returns The root logger instance
  */
@@ -333,7 +405,25 @@ export function getRootLogger(): Logger {
   if (!rootLogger) {
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
-    rootLogger = pino(options, process.stdout);
+
+    // Issue #2934: Same LOG_TO_FILE handling as createLogger()
+    if (process.env.LOG_TO_FILE === 'true' && process.env.NODE_ENV !== 'test') {
+      const logDir = process.env.LOG_DIR ?? './logs';
+      const logsPath = path.resolve(process.cwd(), logDir);
+
+      if (!fs.existsSync(logsPath)) {
+        fs.mkdirSync(logsPath, { recursive: true });
+      }
+
+      const logFile = path.join(logsPath, 'disclaude-combined.log');
+      logPassthrough = new PassThrough();
+      currentLogDest = pino.destination({ dest: logFile, sync: false, mkdir: true });
+      logPassthrough.pipe(currentLogDest);
+
+      rootLogger = pino(options, logPassthrough);
+    } else {
+      rootLogger = pino(options, process.stdout);
+    }
   }
   return rootLogger;
 }
