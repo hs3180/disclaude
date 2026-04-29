@@ -100,6 +100,20 @@ export function buildSdkEnv(
   // Must use delete to completely remove the key, not just set to undefined.
   delete env.CLAUDECODE;
 
+  // Clean up known proxy-specific environment variables that should not
+  // leak into the SDK subprocess when switching API providers.
+  // These headers are tied to specific proxies (e.g., Baidu Comate) and
+  // can cause authentication errors or unexpected behavior with other providers.
+  // @see Issue #2768
+  const PROXY_SPECIFIC_ENV_VARS = [
+    'ANTHROPIC_CUSTOM_HEADERS',   // Proxy-specific custom headers (e.g., Baidu Comate comate_custom_header)
+  ];
+  for (const key of PROXY_SPECIFIC_ENV_VARS) {
+    if (key in env) {
+      delete env[key];
+    }
+  }
+
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;

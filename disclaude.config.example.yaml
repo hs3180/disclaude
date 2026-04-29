@@ -119,6 +119,25 @@ glm:
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
 
 # -----------------------------------------------------------------------------
+# Anthropic API Configuration (Issue #2768)
+# -----------------------------------------------------------------------------
+# Configure Anthropic-compatible API endpoints directly in the config file.
+# This takes precedence over environment variables and ~/.claude/settings.json
+# (User Scope), providing isolation from user's personal Claude Code config.
+#
+# When set, ANTHROPIC_CUSTOM_HEADERS is automatically cleaned from the SDK
+# subprocess environment to prevent proxy-specific headers from leaking.
+#
+# Examples:
+#   Direct Anthropic:    (leave apiBaseUrl empty or omit)
+#   Baidu Comate:        apiBaseUrl: "https://oneapi-comate.baidu-int.com"
+#   Custom proxy:        apiBaseUrl: "https://your-proxy.example.com"
+#
+# anthropic:
+#   apiKey: "your_anthropic_api_key_here"
+#   apiBaseUrl: "https://api.anthropic.com"
+
+# -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
 logging:

@@ -77,6 +77,34 @@ export interface GlmConfig {
 }
 
 /**
+ * Anthropic API configuration section.
+ *
+ * Allows configuring Anthropic-compatible API endpoints through the
+ * config file instead of relying solely on environment variables or
+ * User Scope (~/.claude/settings.json).
+ *
+ * This is useful when:
+ * - Using Anthropic-compatible proxies (e.g., Baidu Comate, custom gateways)
+ * - Switching between different API providers without modifying global env
+ * - Isolating disclaude's API config from user's personal Claude Code settings
+ *
+ * @see Issue #2768
+ */
+export interface AnthropicConfig {
+  /** API key (overrides ANTHROPIC_API_KEY env var) */
+  apiKey?: string;
+  /**
+   * Custom API base URL for Anthropic-compatible endpoints.
+   * Examples:
+   *   - Direct Anthropic: "https://api.anthropic.com" (default, usually no need to set)
+   *   - Baidu Comate: "https://oneapi-comate.baidu-int.com"
+   *   - Custom proxy: "https://your-proxy.example.com"
+   * Overrides ANTHROPIC_BASE_URL env var.
+   */
+  apiBaseUrl?: string;
+}
+
+/**
  * Ruliu reply mode.
  * Controls how the bot responds to messages.
  */
@@ -323,6 +351,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** Anthropic API settings (Issue #2768) */
+  anthropic?: AnthropicConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

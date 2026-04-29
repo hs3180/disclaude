@@ -197,5 +197,25 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    it('should remove ANTHROPIC_CUSTOM_HEADERS from environment (Issue #2768)', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'comate_custom_header=value');
+      const env = buildSdkEnv('sk-test-key');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should remove ANTHROPIC_CUSTOM_HEADERS even when present in process.env', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'x-custom-header=token123');
+      const env = buildSdkEnv('sk-test-key');
+      expect('ANTHROPIC_CUSTOM_HEADERS' in env).toBe(false);
+    });
+
+    it('should remove ANTHROPIC_CUSTOM_HEADERS and CLAUDECODE simultaneously', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'comate=value');
+      vi.stubEnv('CLAUDECODE', '1');
+      const env = buildSdkEnv('sk-test-key');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+      expect(env.CLAUDECODE).toBeUndefined();
+    });
   });
 });

@@ -121,8 +121,9 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Anthropic configuration (config file > env var, Issue #2768)
+          static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -357,6 +358,7 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      apiBaseUrl: this.ANTHROPIC_API_BASE_URL || undefined,
       provider: 'anthropic',
     };
   }
