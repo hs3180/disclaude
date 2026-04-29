@@ -1,9 +1,9 @@
 /**
  * Tests for IPC module - using InMemoryIpcTransport (Issue #2352).
  *
- * Follows the ACP MockTransport pattern:
- * - `IIpcServerTransport` / `IIpcClientTransport` interfaces in production code
- * - `InMemoryIpcTransport` implementations in this test file
+ * Uses dependency-injected transport for isolated testing:
+ * - `IIpcServerTransport` / `IIpcClientTransport` interfaces defined in production code
+ * - `InMemoryIpcTransport` implementations in this test file (no real sockets)
  * - `UnixSocketIpcServer` / `UnixSocketIpcClient` accept optional transport injection
  *
  * Benefits:
