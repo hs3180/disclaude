@@ -32,6 +32,12 @@ agent:
   # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)
   model: "glm-4.7"
 
+  # Fast/lightweight model for scheduled tasks and simple operations
+  # When configured, short-lived agents (scheduled tasks, one-shot tasks) use this model
+  # instead of the main model. Falls back to `model` if not configured.
+  # @see Issue #3059
+  # fastModel: "glm-4-flash"
+
   # Permission mode for SDK tools
   # Options: default (ask user), bypassPermissions (auto-approve)
   # Default: default for CLI, bypassPermissions for bot

@@ -329,34 +329,40 @@ export class Config {
    * Get agent configuration based on available API keys.
    * Prefers GLM if configured, otherwise falls back to Anthropic.
    *
-   * @returns Agent configuration with API key and model
+   * @returns Agent configuration with API key, model, and optional fastModel
    * @throws Error if no API key is configured or model is missing
    */
   static getAgentConfig(): {
     apiKey: string;
     model: string;
+    fastModel?: string;
     apiBaseUrl?: string;
     provider: 'anthropic' | 'glm';
   } {
     // Validate required configuration first
     this.validateRequiredConfig();
 
+    // Read fastModel from config file (same for all providers)
+    const fastModel = fileConfigOnly.agent?.fastModel;
+
     // Prefer GLM if configured
     if (this.GLM_API_KEY) {
-      logger.debug({ provider: 'GLM', model: this.GLM_MODEL }, 'Using GLM API configuration');
+      logger.debug({ provider: 'GLM', model: this.GLM_MODEL, fastModel: fastModel || '(not set)' }, 'Using GLM API configuration');
       return {
         apiKey: this.GLM_API_KEY,
         model: this.GLM_MODEL,
+        fastModel,
         apiBaseUrl: this.GLM_API_BASE_URL,
         provider: 'glm',
       };
     }
 
     // Fallback to Anthropic
-    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
+    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL, fastModel: fastModel || '(not set)' }, 'Using Anthropic API configuration');
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      fastModel,
       provider: 'anthropic',
     };
   }

@@ -336,8 +336,8 @@ export interface AgentRuntimeContext {
   // Config-related methods
   /** Get the workspace directory path */
   getWorkspaceDir(): string;
-  /** Get agent configuration (API key, model, provider) */
-  getAgentConfig(): { apiKey: string; model: string; apiBaseUrl?: string; provider: AgentProvider };
+  /** Get agent configuration (API key, model, fastModel, provider) */
+  getAgentConfig(): { apiKey: string; model: string; fastModel?: string; apiBaseUrl?: string; provider: AgentProvider };
   /** Get logging configuration */
   getLoggingConfig(): { sdkDebug: boolean };
   /** Get global environment variables */

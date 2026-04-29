@@ -34,6 +34,13 @@ export interface AgentConfig {
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
   /**
+   * Fast/lightweight model for scheduled tasks and simple operations.
+   * Uses the same provider as the main model.
+   * Falls back to `model` if not configured.
+   * @see Issue #3059
+   */
+  fastModel?: string;
+  /**
    * Enable Claude Code Agent Teams mode.
    * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
    * This allows the agent to spawn and coordinate multiple teammate sessions.

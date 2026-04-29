@@ -31,7 +31,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         checkIntervalMinutes: 10,
       },
     },
-    agent: { provider: 'glm' as const, enableAgentTeams: true },
+    agent: { provider: 'glm' as const, enableAgentTeams: true, fastModel: 'glm-4-flash' },
     glm: {
       apiKey: 'test-glm-key',
       model: 'glm-4',
@@ -84,6 +84,11 @@ describe('Config', () => {
       expect(config.apiKey).toBe('test-glm-key');
       expect(config.model).toBe('glm-4');
       expect(config.apiBaseUrl).toBe('https://api.test.com');
+    });
+
+    it('should return fastModel when configured', () => {
+      const config = Config.getAgentConfig();
+      expect(config.fastModel).toBe('glm-4-flash');
     });
 
       });
