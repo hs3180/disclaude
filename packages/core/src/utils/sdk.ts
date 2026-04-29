@@ -56,11 +56,16 @@ export function extractText(message: AgentMessage): string {
  * Also, we must unset CLAUDECODE to allow SDK subprocess to run inside
  * another Claude Code session (nested session detection).
  *
+ * Proxy-specific env vars (ANTHROPIC_CUSTOM_HEADERS, ANTHROPIC_AUTH_TOKEN)
+ * are cleaned from the subprocess environment to prevent leakage from
+ * ~/.claude/settings.json or other sources.
+ *
  * @param apiKey - API key for authentication
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
  * @returns Environment object for SDK options
+ * @see Issue #2768
  */
 export function buildSdkEnv(
   apiKey: string,
@@ -103,6 +108,21 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Clean up proxy-specific env vars that may have leaked from
+  // ~/.claude/settings.json or other sources. When disclaude has its own
+  // endpoint configuration, these stale values should not be passed to the
+  // SDK subprocess.
+  // We always remove ANTHROPIC_CUSTOM_HEADERS from process.env inheritance,
+  // but preserve it if explicitly set via extraEnv (e.g., anthropic.customHeaders).
+  // @see Issue #2768
+  const hasExplicitCustomHeaders = extraEnv?.ANTHROPIC_CUSTOM_HEADERS !== undefined;
+  if (!hasExplicitCustomHeaders) {
+    delete env.ANTHROPIC_CUSTOM_HEADERS;
+  } else {
+    // Restore the explicit value from extraEnv (process.env spread may have overridden it)
+    env.ANTHROPIC_CUSTOM_HEADERS = extraEnv.ANTHROPIC_CUSTOM_HEADERS;
   }
 
   return env;

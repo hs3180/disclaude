@@ -197,5 +197,17 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    it('should remove ANTHROPIC_CUSTOM_HEADERS when not explicitly set via extraEnv', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'comate_custom_header=xxx');
+      const env = buildSdkEnv('sk-test-key');
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    });
+
+    it('should preserve ANTHROPIC_CUSTOM_HEADERS when explicitly set via extraEnv', () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'comate_custom_header=xxx');
+      const env = buildSdkEnv('sk-test-key', undefined, { ANTHROPIC_CUSTOM_HEADERS: 'my_header=value' });
+      expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('my_header=value');
+    });
   });
 });

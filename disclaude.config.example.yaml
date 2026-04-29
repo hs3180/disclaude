@@ -119,6 +119,34 @@ glm:
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
 
 # -----------------------------------------------------------------------------
+# Anthropic API Configuration
+# -----------------------------------------------------------------------------
+# Configure this section to use a custom Anthropic-compatible API endpoint.
+# Values here take priority over ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL
+# environment variables, ensuring disclaude has its own isolated endpoint
+# configuration independent of ~/.claude/settings.json.
+#
+# This is especially useful when:
+# - Using Anthropic-compatible proxies (e.g., OneAPI, OpenRouter)
+# - Multiple Claude Code instances on the same machine need different configs
+# - Avoiding ~/.claude/settings.json pollution from other tools
+#
+# @see Issue #2768
+# anthropic:
+#   # API key (overrides ANTHROPIC_API_KEY env var)
+#   apiKey: "your_anthropic_api_key_here"
+#
+#   # Custom API base URL for compatible endpoints
+#   # Examples:
+#   #   OpenRouter: https://openrouter.ai/api/v1
+#   #   OneAPI:     https://your-oneapi.example.com/v1
+#   apiBaseUrl: "https://api.anthropic.com"
+#
+#   # Custom HTTP headers (e.g., for proxy authentication)
+#   # When set, this replaces any ANTHROPIC_CUSTOM_HEADERS from environment
+#   customHeaders: ""
+
+# -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
 logging:

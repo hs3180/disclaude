@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  AnthropicConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -76,6 +77,29 @@ export function applyGlobalEnv(): void {
     }
   }
 
+  // Apply Anthropic config overrides to process.env (Issue #2768)
+  // These config values take priority over existing env vars to ensure
+  // disclaude has its own isolated endpoint configuration.
+  const anthropicEnv: Record<string, string> = {};
+  if (Config.ANTHROPIC_API_KEY) {
+    anthropicEnv.ANTHROPIC_API_KEY = Config.ANTHROPIC_API_KEY;
+  }
+  if (Config.ANTHROPIC_BASE_URL) {
+    anthropicEnv.ANTHROPIC_BASE_URL = Config.ANTHROPIC_BASE_URL;
+  }
+  if (Config.ANTHROPIC_CUSTOM_HEADERS) {
+    anthropicEnv.ANTHROPIC_CUSTOM_HEADERS = Config.ANTHROPIC_CUSTOM_HEADERS;
+  }
+
+  for (const [key, value] of Object.entries(anthropicEnv)) {
+    if (process.env[key] !== value) {
+      process.env[key] = value;
+      applied++;
+    } else {
+      skipped++;
+    }
+  }
+
   if (applied > 0) {
     logger.info(
       { applied, skipped, keys: Object.keys(env) },
@@ -121,8 +145,12 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+  // Anthropic configuration (config file takes priority over env vars)
+  // @see Issue #2768
+  private static readonly ANTHROPIC_CONFIG: AnthropicConfig = fileConfigOnly.anthropic || {};
+          static readonly ANTHROPIC_API_KEY = Config.ANTHROPIC_CONFIG.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          static readonly ANTHROPIC_BASE_URL = Config.ANTHROPIC_CONFIG.apiBaseUrl || '';
+          static readonly ANTHROPIC_CUSTOM_HEADERS = Config.ANTHROPIC_CONFIG.customHeaders || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -277,8 +305,8 @@ export class Config {
       // User explicitly chose Anthropic - only validate Anthropic config
       if (!this.ANTHROPIC_API_KEY) {
         errors.push({
-          field: 'ANTHROPIC_API_KEY',
-          message: 'ANTHROPIC_API_KEY environment variable is required when agent.provider is "anthropic"',
+          field: 'anthropic.apiKey',
+          message: 'anthropic.apiKey (in config) or ANTHROPIC_API_KEY (env var) is required when agent.provider is "anthropic"',
         });
       }
       if (!this.CLAUDE_MODEL) {
@@ -296,7 +324,7 @@ export class Config {
         });
       }
     } else if (this.ANTHROPIC_API_KEY) {
-      // Fallback to Anthropic (from environment variable)
+      // Fallback to Anthropic (from config file or environment variable)
       if (!this.CLAUDE_MODEL) {
         errors.push({
           field: 'agent.model',
@@ -307,7 +335,7 @@ export class Config {
       // No provider configured at all
       errors.push({
         field: 'apiKey',
-        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
+        message: 'No API key configured. Set anthropic.apiKey or glm.apiKey in disclaude.config.yaml, or set ANTHROPIC_API_KEY environment variable',
       });
     }
 
@@ -357,6 +385,7 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      apiBaseUrl: this.ANTHROPIC_BASE_URL || undefined,
       provider: 'anthropic',
     };
   }
