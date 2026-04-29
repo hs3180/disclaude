@@ -28,6 +28,15 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 权限模式 - 直接传递，使用原始 SDK 格式
   if (options.permissionMode) {
     sdkOptions.permissionMode = options.permissionMode;
+
+    // Issue #2943: The SDK requires allowDangerouslySkipPermissions: true when
+    // using bypassPermissions mode. Without it, the SDK subprocess won't pass
+    // --allow-dangerously-skip-permissions to the CLI, so system tools (Bash,
+    // Read, Write, Edit, Glob, Grep) are blocked by the permission system and
+    // effectively unavailable — only MCP tools remain.
+    if (options.permissionMode === 'bypassPermissions') {
+      sdkOptions.allowDangerouslySkipPermissions = true;
+    }
   }
 
   // 设置来源（必填）
