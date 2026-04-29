@@ -76,25 +76,48 @@ function ensureLaunchAgentsDir() {
 // Plist generation
 // ---------------------------------------------------------------------------
 
-function generatePlist() {
-  const nodePath = getNodePath();
+/**
+ * Generate plist XML content as a pure function (no side effects).
+ *
+ * @param {object} opts
+ * @param {string} opts.nodePath   - Absolute path to the node binary
+ * @param {string} opts.cliEntry   - Absolute path to the CLI entry script
+ * @param {string} opts.projectRoot - Project root directory
+ * @param {string} opts.label      - LaunchAgent label string
+ * @param {string} opts.stdoutLog  - Path to stdout log file
+ * @param {string} opts.stderrLog  - Path to stderr log file
+ * @param {string} opts.pathEnv    - Value for PATH environment variable
+ * @param {string} opts.homeEnv    - Value for HOME environment variable
+ * @returns {string} Complete plist XML string
+ */
+export function generatePlistContent(opts) {
+  const {
+    nodePath,
+    cliEntry,
+    projectRoot,
+    label = LABEL,
+    stdoutLog = STDOUT_LOG,
+    stderrLog = STDERR_LOG,
+    pathEnv = process.env.PATH,
+    homeEnv = homedir(),
+  } = opts;
 
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${LABEL}</string>
+  <string>${label}</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>${nodePath}</string>
-    <string>${CLI_ENTRY}</string>
+    <string>${cliEntry}</string>
     <string>start</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>${PROJECT_ROOT}</string>
+  <string>${projectRoot}</string>
 
   <key>RunAtLoad</key>
   <true/>
@@ -103,23 +126,32 @@ function generatePlist() {
   <true/>
 
   <key>StandardOutPath</key>
-  <string>${STDOUT_LOG}</string>
+  <string>${stdoutLog}</string>
 
   <key>StandardErrorPath</key>
-  <string>${STDERR_LOG}</string>
+  <string>${stderrLog}</string>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>${process.env.PATH}</string>
+    <string>${pathEnv}</string>
     <key>HOME</key>
-    <string>${homedir()}</string>
+    <string>${homeEnv}</string>
     <key>NODE_ENV</key>
     <string>production</string>
   </dict>
 </dict>
 </plist>
 `;
+}
+
+function generatePlist() {
+  const nodePath = getNodePath();
+  const plist = generatePlistContent({
+    nodePath,
+    cliEntry: CLI_ENTRY,
+    projectRoot: PROJECT_ROOT,
+  });
 
   ensureLaunchAgentsDir();
   writeFileSync(PLIST_PATH, plist, 'utf-8');
@@ -227,24 +259,39 @@ function cmdStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// Exports (for testing)
+// ---------------------------------------------------------------------------
+
+export { LABEL, PLIST_FILENAME, STDOUT_LOG, STDERR_LOG, CLI_ENTRY, PROJECT_ROOT };
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
+/**
+ * Check whether this module is being run directly via `node scripts/launchd.mjs`.
+ * Guards against executing CLI logic when imported by tests.
+ */
+const isMain =
+  typeof process.argv[1] === 'string' &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-const commands = {
-  generate: cmdGenerate,
-  install: cmdInstall,
-  uninstall: cmdUninstall,
-  start: cmdStart,
-  stop: cmdStop,
-  restart: cmdRestart,
-  logs: cmdLogs,
-  status: cmdStatus,
-};
+if (isMain) {
+  const command = process.argv[2];
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+  const commands = {
+    generate: cmdGenerate,
+    install: cmdInstall,
+    uninstall: cmdUninstall,
+    start: cmdStart,
+    stop: cmdStop,
+    restart: cmdRestart,
+    logs: cmdLogs,
+    status: cmdStatus,
+  };
+
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -256,7 +303,8 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
-}
+    process.exit(1);
+  }
 
-commands[command]();
+  commands[command]();
+}
