@@ -50,7 +50,7 @@ describe('ChatStore', () => {
       );
       vi.mocked(fsPromises.readdir).mockResolvedValue(filenames as any);
       vi.mocked(fsPromises.readFile).mockImplementation((filePath: unknown) => {
-        const pathStr = filePath.toString();
+        const pathStr = (filePath as string).toString();
         for (const record of records) {
           const safeId = record.chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
           if (pathStr.includes(safeId)) {
