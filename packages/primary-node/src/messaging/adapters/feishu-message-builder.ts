@@ -162,6 +162,63 @@ If your model supports native multimodal input, you can also use the Read tool t
 }
 
 /**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: When user message contains Feishu doc/wiki links,
+ * instruct the Agent to use lark-cli instead of webReader.
+ */
+function buildFeishuDocLinkGuidance(ctx: MessageBuilderContext): string {
+  const { msg } = ctx;
+
+  // Only inject guidance when the message contains Feishu doc/wiki links
+  if (!containsFeishuDocLink(msg.text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+When the user message contains a Feishu document or wiki link, do **NOT** use webReader — it cannot access authenticated Feishu pages. Instead, use \`lark-cli\` to read the document:
+
+**Recommended two-step flow:**
+1. First, get the document outline:
+   \`\`\`
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope outline --max-depth 3
+   \`\`\`
+2. Then read the relevant sections:
+   \`\`\`
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope section --start-block-id <heading_id> --doc-format markdown
+   \`\`\`
+
+**Quick read (entire document):**
+\`\`\`
+lark-cli docs +fetch --api-version v2 --doc "<URL>" --doc-format markdown
+\`\`\`
+
+**Search by keyword:**
+\`\`\`
+lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope keyword --keyword "搜索关键词"
+\`\`\`
+
+**Note:** The \`--doc\` parameter accepts both full URLs and document tokens. Supports both \`/wiki/\` and \`/docx/\` URL patterns.`;
+}
+
+/**
+ * Check if a text string contains Feishu document or wiki links.
+ *
+ * Matches patterns like:
+ * - https://xxx.feishu.cn/wiki/xxx
+ * - https://xxx.feishu.cn/docx/xxx
+ * - https://xxx.feishu.cn/sheets/xxx
+ */
+function containsFeishuDocLink(text: string): boolean {
+  // Match Feishu document URLs (wiki, docx, sheets, minutes, slides, base)
+  const feishuDocPattern = /https?:\/\/[a-z0-9-]+\.feishu\.cn\/(wiki|docx|sheets|minutes|slides|base)\/[A-Za-z0-9]+/i;
+  return feishuDocPattern.test(text);
+}
+
+/**
  * Check if image analyzer MCP is configured.
  *
  * Issue #809: Detects image analyzer MCP server configuration.
@@ -189,10 +246,24 @@ function hasImageAnalyzerMcp(): boolean {
  *
  * @returns MessageBuilderOptions with Feishu-specific callbacks
  */
+/**
+ * Combined post-history section builder.
+ *
+ * Issue #3035: Merges the mention section and Feishu doc link guidance
+ * into a single buildPostHistory callback so both are injected
+ * after history sections.
+ */
+function buildFeishuPostHistory(ctx: MessageBuilderContext): string {
+  const mentionSection = buildFeishuMentionSection(ctx);
+  const docLinkGuidance = buildFeishuDocLinkGuidance(ctx);
+
+  return [mentionSection, docLinkGuidance].filter(Boolean).join('');
+}
+
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
   return {
     buildHeader: buildFeishuHeader,
-    buildPostHistory: buildFeishuMentionSection,
+    buildPostHistory: buildFeishuPostHistory,
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
   };

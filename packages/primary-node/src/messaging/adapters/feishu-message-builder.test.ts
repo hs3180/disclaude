@@ -337,4 +337,91 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).not.toContain('@ Mention the User');
     });
   });
+
+  describe('Feishu document link handling guidance (Issue #3035)', () => {
+    it('should include lark-cli guidance when message contains a Feishu wiki link', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '请帮我看看这个文档 https://xxx.feishu.cn/wiki/YgJMw6RRkifisVkPVR8cKnWLnmb',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Feishu Document Link Handling');
+      expect(result).toContain('lark-cli docs +fetch');
+      expect(result).toContain('do **NOT** use webReader');
+      expect(result).toContain('--scope outline');
+      expect(result).toContain('--scope section');
+      expect(result).toContain('--scope keyword');
+    });
+
+    it('should include lark-cli guidance when message contains a Feishu docx link', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '检查这个 https://example.feishu.cn/docx/ABC123xyz 文档',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Feishu Document Link Handling');
+      expect(result).toContain('lark-cli docs +fetch');
+    });
+
+    it('should include lark-cli guidance when message contains a Feishu sheets link', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '这个表格 https://company.feishu.cn/sheets/sheet12345 有问题',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Feishu Document Link Handling');
+    });
+
+    it('should NOT include lark-cli guidance for regular messages without Feishu doc links', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '你好，请帮我写一个函数',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Feishu Document Link Handling');
+      expect(result).not.toContain('lark-cli');
+    });
+
+    it('should NOT include lark-cli guidance for non-document Feishu URLs', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '请看 https://xxx.feishu.cn/chat/xxx 这个链接',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Feishu Document Link Handling');
+    });
+
+    it('should include both mention section and doc link guidance when both are relevant', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '看看这个 https://xxx.feishu.cn/wiki/ABC123 文档',
+        messageId: 'msg-123',
+        senderOpenId: 'user-456',
+      }, 'chat-123');
+
+      expect(result).toContain('@ Mention the User');
+      expect(result).toContain('user-456');
+      expect(result).toContain('Feishu Document Link Handling');
+    });
+
+    it('should NOT include doc link guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/help https://xxx.feishu.cn/wiki/ABC123',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Feishu Document Link Handling');
+    });
+
+    it('should handle multiple Feishu doc links in one message', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '看下 https://xxx.feishu.cn/wiki/ABC 和 https://xxx.feishu.cn/docx/DEF 两个文档',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Feishu Document Link Handling');
+      // Should only include the guidance section once
+      const matchCount = (result.match(/Feishu Document Link Handling/g) || []).length;
+      expect(matchCount).toBe(1);
+    });
+  });
 });
