@@ -14,6 +14,40 @@ import type {
 } from '../../types.js';
 
 /**
+ * Runtime type guard for BetaContentBlock.
+ *
+ * Validates that an unknown value is a non-null object with a `type` string property,
+ * which is the minimum contract required by the downstream filter logic
+ * (discriminated-union narrowing on `block.type`).
+ *
+ * NOTE: This does NOT validate every field of every BetaContentBlock variant.
+ * Instead, per-variant property checks ('name', 'input', 'text') are performed
+ * in the `.filter()` callbacks below, which serve as fine-grained runtime guards.
+ */
+function isContentBlock(value: unknown): value is BetaContentBlock {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'type' in value &&
+    typeof (value as { type: unknown }).type === 'string'
+  );
+}
+
+/**
+ * Validates and narrows `content` to `BetaContentBlock[]`.
+ *
+ * Returns the typed array when every element passes `isContentBlock()`,
+ * or `undefined` when the value is not a valid content-block array.
+ */
+function toContentBlockArray(content: unknown): BetaContentBlock[] | undefined {
+  if (!Array.isArray(content)) {return undefined;}
+  // Fast-path: empty array is always valid
+  if (content.length === 0) {return content as BetaContentBlock[];}
+  if (!content.every(isContentBlock)) {return undefined;}
+  return content;
+}
+
+/**
  * 适配 Claude SDK 消息为统一的 AgentMessage
  *
  * @param message - Claude SDK 消息
@@ -30,7 +64,8 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
   switch (message.type) {
     case 'assistant': {
       const apiMessage = message.message;
-      if (!apiMessage || !Array.isArray(apiMessage.content)) {
+      const content = apiMessage ? toContentBlockArray(apiMessage.content) : undefined;
+      if (!content) {
         return {
           type: 'text',
           content: '',
@@ -38,8 +73,6 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
           raw: message,
         };
       }
-
-      const content = apiMessage.content as BetaContentBlock[];
 
       // 提取工具使用块 — BetaContentBlock 是可辨识联合类型，
       // block.type === 'tool_use' 时 TypeScript 自动收窄为 BetaToolUseBlock

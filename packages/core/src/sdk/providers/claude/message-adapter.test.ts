@@ -203,6 +203,91 @@ describe('adaptSDKMessage', () => {
     });
   });
 
+  describe('runtime type guard — content block validation', () => {
+    it('should gracefully handle content with non-object elements', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [42, 'string', null],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+    });
+
+    it('should gracefully handle content with objects missing type property', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [{ name: 'no-type-field' }],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+    });
+
+    it('should gracefully handle content with non-string type property', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [{ type: 123 }],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+    });
+
+    it('should accept mixed valid blocks while gracefully handling invalid ones via filter', () => {
+      // This tests the toContentBlockArray guard: it should reject arrays
+      // where not every element is a valid content block.
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'valid' },
+            { notAType: true },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      // The second element lacks 'type' string → toContentBlockArray returns undefined
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+    });
+
+    it('should handle null message.message', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: null,
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+    });
+
+    it('should handle undefined message.message', () => {
+      const message = {
+        type: 'assistant' as const,
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+    });
+  });
+
   describe('tool_progress messages', () => {
     it('should format tool progress with elapsed time', () => {
       const message = {
