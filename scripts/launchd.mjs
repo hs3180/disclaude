@@ -25,7 +25,7 @@
 import { execSync } from 'node:child_process';
 import { writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,11 @@ const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 const STDOUT_LOG = '/tmp/disclaude-stdout.log';
 const STDERR_LOG = '/tmp/disclaude-stderr.log';
 
+const CAFFEINATE_PATH = '/usr/bin/caffeinate';
+
+// CLI flag: --no-caffeinate disables sleep prevention
+const noCaffeinate = process.argv.includes('--no-caffeinate');
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -55,6 +60,24 @@ function getNodePath() {
     console.error('Error: node not found in PATH');
     process.exit(1);
   }
+}
+
+/**
+ * Returns the caffeinate binary path if available and not disabled.
+ * Caffeinate prevents macOS from sleeping while the service runs.
+ * @returns {string|null} Path to caffeinate, or null if unavailable/disabled
+ */
+function getCaffeinatePath() {
+  if (noCaffeinate) {
+    return null;
+  }
+  if (platform() !== 'darwin') {
+    return null;
+  }
+  if (!existsSync(CAFFEINATE_PATH)) {
+    return null;
+  }
+  return CAFFEINATE_PATH;
 }
 
 function run(cmd, opts = {}) {
@@ -78,6 +101,27 @@ function ensureLaunchAgentsDir() {
 
 function generatePlist() {
   const nodePath = getNodePath();
+  const caffeinatePath = getCaffeinatePath();
+
+  // Build program arguments — optionally wrap with caffeinate -s to prevent
+  // macOS from sleeping while the service is running (Issue #2975).
+  // caffeinate stays alive as long as the child process runs; when the node
+  // process exits, caffeinate exits too, and launchd handles restart via KeepAlive.
+  const argEntries = caffeinatePath
+    ? [
+        `<string>${caffeinatePath}</string>`,
+        '<string>-s</string>',
+        '<string>--</string>',
+        `<string>${nodePath}</string>`,
+        `<string>${CLI_ENTRY}</string>`,
+        '<string>start</string>',
+      ]
+    : [
+        `<string>${nodePath}</string>`,
+        `<string>${CLI_ENTRY}</string>`,
+        '<string>start</string>',
+      ];
+  const programArgs = argEntries.map(s => `    ${s}`).join('\n');
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -88,9 +132,7 @@ function generatePlist() {
 
   <key>ProgramArguments</key>
   <array>
-    <string>${nodePath}</string>
-    <string>${CLI_ENTRY}</string>
-    <string>start</string>
+${programArgs}
   </array>
 
   <key>WorkingDirectory</key>
@@ -129,6 +171,7 @@ function generatePlist() {
   console.log(`  CWD: ${PROJECT_ROOT}`);
   console.log(`  Stdout: ${STDOUT_LOG}`);
   console.log(`  Stderr: ${STDERR_LOG}`);
+  console.log(`  Caffeinate: ${caffeinatePath ? 'enabled (-s)' : 'disabled'}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +287,7 @@ const commands = {
 };
 
 if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+  console.log(`Usage: node scripts/launchd.mjs <command> [options]
 
 Commands:
   generate    Generate plist file
@@ -255,6 +298,9 @@ Commands:
   restart     Build + unload + load
   logs        Tail log files [--lines=N]
   status      Show service status
+
+Options:
+  --no-caffeinate   Disable caffeinate sleep prevention in generated plist
 `);
   process.exit(1);
 }
