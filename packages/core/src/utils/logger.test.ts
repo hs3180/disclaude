@@ -283,7 +283,7 @@ describe('logger', () => {
       process.env.NODE_ENV = 'test';
       await initLogger({ level: 'info' });
 
-      // warn (40) >= info levelVal (30) → true; error/fatal also true
+      // Pino severity: warn(40) >= info(30), error(50) >= info(30), fatal(60) >= info(30)
       expect(isLevelEnabled('warn')).toBe(true);
       expect(isLevelEnabled('error')).toBe(true);
       expect(isLevelEnabled('fatal')).toBe(true);
@@ -293,7 +293,7 @@ describe('logger', () => {
       process.env.NODE_ENV = 'test';
       await initLogger({ level: 'warn' });
 
-      // debug (20) < warn levelVal (40) → false; trace/info also false
+      // Pino severity: debug(20) < warn(40), trace(10) < warn(40), info(30) < warn(40)
       expect(isLevelEnabled('debug')).toBe(false);
       expect(isLevelEnabled('trace')).toBe(false);
       expect(isLevelEnabled('info')).toBe(false);
@@ -307,6 +307,44 @@ describe('logger', () => {
       // Should not throw
       const result = isLevelEnabled('info');
       expect(typeof result).toBe('boolean');
+    });
+
+    it('should correctly classify all levels at trace threshold', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger({ level: 'trace' });
+
+      // At trace (10), everything is enabled: trace(10) >= 10
+      expect(isLevelEnabled('trace')).toBe(true);
+      expect(isLevelEnabled('debug')).toBe(true);
+      expect(isLevelEnabled('info')).toBe(true);
+      expect(isLevelEnabled('warn')).toBe(true);
+      expect(isLevelEnabled('error')).toBe(true);
+      expect(isLevelEnabled('fatal')).toBe(true);
+    });
+
+    it('should correctly classify all levels at fatal threshold', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger({ level: 'fatal' });
+
+      // At fatal (60), only fatal is enabled: fatal(60) >= 60
+      expect(isLevelEnabled('trace')).toBe(false);
+      expect(isLevelEnabled('debug')).toBe(false);
+      expect(isLevelEnabled('info')).toBe(false);
+      expect(isLevelEnabled('warn')).toBe(false);
+      expect(isLevelEnabled('error')).toBe(false);
+      expect(isLevelEnabled('fatal')).toBe(true);
+    });
+
+    it('should reflect runtime level changes via setLogLevel', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger({ level: 'error' });
+
+      expect(isLevelEnabled('info')).toBe(false);
+      expect(isLevelEnabled('error')).toBe(true);
+
+      setLogLevel('debug');
+      expect(isLevelEnabled('info')).toBe(true);
+      expect(isLevelEnabled('debug')).toBe(true);
     });
   });
 
