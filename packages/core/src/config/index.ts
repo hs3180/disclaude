@@ -24,6 +24,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import type { ProjectTemplatesConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -444,6 +445,17 @@ export class Config {
    */
   static getDebugConfig(): DebugConfig {
     return fileConfigOnly.messaging?.debug || {};
+  }
+
+  /**
+   * Get project templates configuration.
+   * Returns template configuration for ProjectManager initialization.
+   * @see Issue #2227 (Sub-Issue E — config integration)
+   *
+   * @returns ProjectTemplatesConfig or undefined if not configured
+   */
+  static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
+    return fileConfigOnly.projectTemplates;
   }
 
   /**
