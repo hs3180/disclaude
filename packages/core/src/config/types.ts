@@ -40,6 +40,22 @@ export interface AgentConfig {
    * @see https://code.claude.com/docs/en/agent-teams
    */
   enableAgentTeams?: boolean;
+  /**
+   * Session inactivity timeout in milliseconds.
+   *
+   * If no SDK message is received within this duration during an active
+   * agent loop, the session is considered hung and will be terminated
+   * with an error notification to the user.
+   *
+   * Default: 300000 (5 minutes). Set to 0 to disable.
+   *
+   * This detects hung TCP connections to the LLM API proxy (e.g., LiteLLM)
+   * where the connection remains ESTABLISHED but no data flows.
+   *
+   * @see Issue #2992 — root cause analysis of 8-hour session hang
+   * @see Issue #2993 — inactivity watchdog implementation
+   */
+  sessionInactivityTimeoutMs?: number;
 }
 
 /**

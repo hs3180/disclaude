@@ -457,6 +457,23 @@ export class Config {
   }
 
   /**
+   * Get session inactivity timeout in milliseconds.
+   *
+   * If no SDK message is received within this duration during an active
+   * agent loop, the session is considered hung and will be terminated.
+   *
+   * Default: 300000 (5 minutes). Set to 0 to disable.
+   *
+   * @see Issue #2992 — root cause analysis of 8-hour session hang
+   * @see Issue #2993 — inactivity watchdog implementation
+   *
+   * @returns Timeout in milliseconds, or undefined if not configured
+   */
+  static getSessionInactivityTimeoutMs(): number | undefined {
+    return fileConfigOnly.agent?.sessionInactivityTimeoutMs;
+  }
+
+  /**
    * Get session restoration configuration.
    * Controls how chat history is loaded when agent starts or resets.
    * @see Issue #1213

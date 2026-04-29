@@ -787,8 +787,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       if (this.sessionInactivityTimeoutMs > 0) {
         inactivityTimer = setTimeout(() => {
           inactivityTimedOut = true;
+
+          // Issue #2992: Log diagnostic information to help identify root cause
+          const memUsage = process.memoryUsage();
+          const diagInfo = {
+            chatId,
+            messageCount,
+            timeoutMs: this.sessionInactivityTimeoutMs,
+            memoryRssMb: Math.round(memUsage.rss / 1024 / 1024),
+            memoryHeapUsedMb: Math.round(memUsage.heapUsed / 1024 / 1024),
+            uptimeSeconds: Math.round(process.uptime()),
+            pid: process.pid,
+          };
+
           this.logger.warn(
-            { chatId, messageCount, timeoutMs: this.sessionInactivityTimeoutMs },
+            diagInfo,
             'Session inactivity timeout: no SDK message received within timeout period'
           );
 

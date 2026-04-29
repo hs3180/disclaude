@@ -175,6 +175,7 @@ export class AgentFactory {
         chatId,
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
+        sessionInactivityTimeoutMs: Config.getSessionInactivityTimeoutMs(),
       };
 
       return new ChatAgent(config);
@@ -220,6 +221,7 @@ export class AgentFactory {
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
+      sessionInactivityTimeoutMs: Config.getSessionInactivityTimeoutMs(),
     };
 
     return new ChatAgent(config);
