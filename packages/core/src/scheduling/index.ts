@@ -30,7 +30,6 @@ export {
   type ChatStoreOptions,
   type TempChatRecord,
   type TempChatResponse,
-  type RegisterTempChatOptions,
 } from './chat-store.js';
 
 // Bot Chat Mapping (Issue #2947: context-to-chatId mapping)

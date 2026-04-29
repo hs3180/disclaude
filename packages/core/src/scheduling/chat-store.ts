@@ -60,21 +60,6 @@ export interface TempChatRecord {
   triggerMode?: TriggerMode;
 }
 
-/**
- * Options for registering a temporary chat.
- */
-export interface RegisterTempChatOptions {
-  /** ISO timestamp for expiry (defaults to 24h from now) */
-  expiresAt?: string;
-  /** The chat ID where the creation request originated */
-  creatorChatId?: string;
-  /** Arbitrary context data */
-  context?: Record<string, unknown>;
-  /**
-   * Trigger mode configuration (Issue #2291).
-   */
-  triggerMode?: TriggerMode;
-}
 
 /**
  * ChatStore options.
@@ -90,12 +75,13 @@ export interface ChatStoreOptions {
  * Pure data storage utility, similar to CooldownManager.
  * All operations are atomic: read → modify → write per-record.
  *
+ * Issue #2946: registerTempChat() removed — the new design (#2945) does not
+ * need client-initiated registration. Records are created externally and
+ * loaded from disk on initialization.
+ *
  * Usage:
  * ```typescript
  * const store = new ChatStore({ storeDir: './workspace/schedules/.temp-chats' });
- *
- * // Register a temp chat
- * await store.registerTempChat('oc_xxx', { expiresAt: '...' });
  *
  * // Check for expired chats
  * const expired = await store.getExpiredTempChats();
@@ -169,43 +155,6 @@ export class ChatStore {
     // Sanitize chat ID for filename
     const safeId = chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
     return path.join(this.storeDir, `${safeId}.json`);
-  }
-
-  /**
-   * Register a temporary chat record.
-   *
-   * @param chatId - The chat ID to track
-   * @param opts - Registration options (expiry, creator, context)
-   */
-  async registerTempChat(chatId: string, opts: RegisterTempChatOptions = {}): Promise<void> {
-    await this.ensureInitialized();
-
-    const now = new Date();
-    const expiresAt = opts.expiresAt
-      ? new Date(opts.expiresAt).toISOString()
-      : new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(); // default 24h
-
-    const record: TempChatRecord = {
-      chatId,
-      createdAt: now.toISOString(),
-      expiresAt,
-      creatorChatId: opts.creatorChatId,
-      context: opts.context,
-      // Issue #2291: triggerMode enum
-      triggerMode: opts.triggerMode,
-    };
-
-    // Update memory cache
-    this.cache.set(chatId, record);
-
-    // Persist to file (atomic per-record)
-    try {
-      const filePath = this.getFilePath(chatId);
-      await fsPromises.writeFile(filePath, JSON.stringify(record, null, 2), 'utf-8');
-      logger.debug({ chatId, expiresAt }, 'Temp chat registered');
-    } catch (error) {
-      logger.error({ err: error, chatId }, 'Failed to persist temp chat record');
-    }
   }
 
   /**
