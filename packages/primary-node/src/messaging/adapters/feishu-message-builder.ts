@@ -179,6 +179,55 @@ function hasImageAnalyzerMcp(): boolean {
 }
 
 /**
+ * Regex pattern matching Feishu document and wiki URLs.
+ *
+ * Matches URLs like:
+ * - https://xxx.feishu.cn/wiki/YgJMw6RRkifisVkPVR8cKnWLnmb
+ * - https://xxx.feishu.cn/docx/abc123def456
+ * - https://open.feishu.cn/open-apis/docx/...
+ */
+const FEISHU_DOC_URL_PATTERN = /https?:\/\/[a-zA-Z0-9-]+\.feishu\.cn\/(wiki|docx|open-apis\/docx)\/[a-zA-Z0-9]+/i;
+
+/**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: When the user's message contains Feishu document or wiki
+ * links, instructs the Agent to use `lark-cli docs +fetch` instead of
+ * webReader (which cannot access authenticated Feishu pages).
+ */
+function buildFeishuDocLinkGuidance(ctx: MessageBuilderContext): string {
+  const { msg } = ctx;
+  const text = msg.text || '';
+
+  if (!FEISHU_DOC_URL_PATTERN.test(text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+When the user message contains a Feishu document or wiki link, do NOT use webReader (it cannot access authenticated Feishu pages). Instead, use \`lark-cli\` to read the document:
+
+**Recommended two-step flow:**
+1. First, get the document outline:
+   \`\`\`
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope outline --max-depth 3
+   \`\`\`
+2. Then read the relevant sections:
+   \`\`\`
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope section --start-block-id <heading_id> --doc-format markdown
+   \`\`\`
+
+**Quick read (entire document):**
+\`\`\`
+lark-cli docs +fetch --api-version v2 --doc "<URL>" --doc-format markdown
+\`\`\`
+
+**Note:** The \`--doc\` parameter accepts both full URLs and document tokens. Supports both Wiki (\`/wiki/\`) and Document (\`/docx/\`) URL types.`;
+}
+
+/**
  * Create Feishu-specific MessageBuilderOptions.
  *
  * Returns the options object with all Feishu channel section builders
@@ -186,13 +235,16 @@ function hasImageAnalyzerMcp(): boolean {
  *
  * Issue #1499: Moved from worker-node to primary-node. Use this function
  * when creating ChatAgent instances for Feishu channels.
+ * Issue #3035: Composes mention section with Feishu doc link guidance.
  *
  * @returns MessageBuilderOptions with Feishu-specific callbacks
  */
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
   return {
     buildHeader: buildFeishuHeader,
-    buildPostHistory: buildFeishuMentionSection,
+    buildPostHistory: (ctx) => {
+      return buildFeishuMentionSection(ctx) + buildFeishuDocLinkGuidance(ctx);
+    },
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
   };
