@@ -25,6 +25,8 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  startGlmProxy,
+  stopGlmProxy,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -161,6 +163,14 @@ async function main(): Promise<void> {
       { provider: agentConfig.apiBaseUrl ? 'glm' : 'anthropic', model: agentConfig.model },
       'Agent configuration loaded'
     );
+
+    // Issue #2916: Start GLM auth proxy when using GLM provider.
+    // Claude Code CLI ≥ 2.1.104 sends Authorization: Bearer but GLM API expects x-api-key.
+    // The proxy transparently translates the header so agents don't need any changes.
+    if (agentConfig.apiBaseUrl) {
+      await startGlmProxy(agentConfig.apiBaseUrl);
+      console.log('✓ GLM auth proxy started (Authorization → x-api-key translation)');
+    }
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error('Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.');
@@ -224,6 +234,7 @@ async function main(): Promise<void> {
       agentPool.disposeAll();
       await lifecycleManager.stopAll();
       await primaryNode.stop();
+      await stopGlmProxy();  // Issue #2916: Stop GLM auth proxy
       logger.info('Primary Node stopped');
       process.exit(0);
     } catch (error) {

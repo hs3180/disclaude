@@ -48,6 +48,15 @@ export {
   buildSdkEnv,
 } from './sdk.js';
 
+// GLM Auth Proxy (Issue #2916)
+export {
+  startGlmProxy,
+  stopGlmProxy,
+  getGlmProxy,
+  getGlmProxyUrl,
+} from './glm-auth-proxy.js';
+export type { GlmAuthProxy } from './glm-auth-proxy.js';
+
 // Output Adapter (Issue #1040)
 export type { OutputAdapter, MessageMetadata, FeishuOutputAdapterOptions } from './output-adapter.js';
 export {

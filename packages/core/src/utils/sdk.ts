@@ -6,6 +6,7 @@ import type {
   AgentMessage,
   ContentBlock,
 } from '../types/agent.js';
+import { getGlmProxyUrl } from './glm-auth-proxy.js';
 
 /**
  * Get directory containing node executable.
@@ -101,8 +102,11 @@ export function buildSdkEnv(
   delete env.CLAUDECODE;
 
   // Set base URL if provided (for GLM or custom endpoints)
+  // If the GLM auth proxy is running, route through it to translate
+  // Authorization: Bearer → x-api-key (Issue #2916)
   if (apiBaseUrl) {
-    env.ANTHROPIC_BASE_URL = apiBaseUrl;
+    const proxyUrl = getGlmProxyUrl();
+    env.ANTHROPIC_BASE_URL = proxyUrl ?? apiBaseUrl;
   }
 
   return env;
