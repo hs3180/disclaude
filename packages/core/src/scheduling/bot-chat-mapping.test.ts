@@ -224,6 +224,44 @@ describe('BotChatMappingStore', () => {
     });
   });
 
+  // ---- getByChatId ----
+
+  describe('getByChatId', () => {
+    it('should return empty array when no mappings match the chatId', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+
+      const result = await store.getByChatId('oc_nonexistent');
+      expect(result).toEqual([]);
+    });
+
+    it('should return matching entries for a given chatId', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+      await store.set('pr-456', { chatId: 'oc_yyy', purpose: 'pr-review' });
+
+      const result = await store.getByChatId('oc_xxx');
+      expect(result).toHaveLength(1);
+      expect(result[0][0]).toBe('pr-123');
+      expect(result[0][1].chatId).toBe('oc_xxx');
+    });
+
+    it('should return multiple entries if they share the same chatId', async () => {
+      await store.set('pr-123', { chatId: 'oc_shared', purpose: 'pr-review' });
+      await store.set('discussion-1', { chatId: 'oc_shared', purpose: 'discussion' });
+
+      const result = await store.getByChatId('oc_shared');
+      expect(result).toHaveLength(2);
+
+      const keys = result.map(([key]) => key);
+      expect(keys).toContain('pr-123');
+      expect(keys).toContain('discussion-1');
+    });
+
+    it('should return empty array for empty store', async () => {
+      const result = await store.getByChatId('oc_any');
+      expect(result).toEqual([]);
+    });
+  });
+
   // ---- rebuildFromGroupList ----
 
   describe('rebuildFromGroupList', () => {

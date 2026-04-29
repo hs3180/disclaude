@@ -348,6 +348,20 @@ export class BotChatMappingStore {
     return Object.entries(this.cache).filter(([, entry]) => entry.purpose === purpose);
   }
 
+  /**
+   * Look up all mapping entries that reference a given chatId.
+   *
+   * This reverse lookup is needed for disband operations where the
+   * current chat's chatId is known but the mapping key is not.
+   *
+   * @param chatId - The Feishu group chat ID to search for
+   * @returns Array of [key, entry] tuples whose chatId matches
+   */
+  async getByChatId(chatId: string): Promise<Array<[string, MappingEntry]>> {
+    await this.ensureInitialized();
+    return Object.entries(this.cache).filter(([, entry]) => entry.chatId === chatId);
+  }
+
   // ---- Rebuild ----
 
   /**
