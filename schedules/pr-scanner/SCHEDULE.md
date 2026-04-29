@@ -3,7 +3,7 @@ name: "PR Scanner"
 cron: "*/30 * * * *"
 enabled: true
 blocking: true
-chatId: "oc_71e5f41a029f3a120988b7ecb76df314"
+chatId: "{controlChannelChatId}"
 ---
 
 # PR Scanner — 映射表驱动扫描
@@ -128,7 +128,7 @@ lark-cli im chat create \
 ## 设计原则
 
 1. **映射表是缓存**：所有数据可从飞书 API 重建（`lark-cli im chats list --as bot` + 群名规则匹配）
-2. **用户驱动解散**：Bot 不自主解散群，所有解散操作必须由用户点击卡片按钮触发
+2. **用户驱动解散**：Bot 不自主解散群，所有解散操作必须由用户主动触发
 3. **幂等操作**：重复扫描不会重复创建群（通过映射表过滤）
 4. **无 GitHub Label 依赖**：所有状态通过映射表管理，不使用 `pr-scanner:pending` / `pr-scanner:processed` 等 label
 
