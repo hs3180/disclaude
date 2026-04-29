@@ -73,24 +73,29 @@ gh pr view {number} --repo hs3180/disclaude \
 - 群聊名称格式：`PR #{number} 讨论: {PR标题}`
 - 讨论超时：60 分钟
 
-### 7. 在群聊中发送交互式卡片
+### 7. 在群聊中发送 PR 详情交互卡片
 
-群聊创建后，使用 `send_message` 发送操作选项卡片：
+群聊创建后，使用 `send_message` 发送 PR 详情卡片（含操作按钮）。
 
 **卡片内容**（format: "card"）：
 ```json
 {
   "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "🎯 请选择处理方式", "tag": "plain_text"}, "template": "blue"},
+  "header": {"title": {"content": "🔍 PR Review #{number}", "tag": "plain_text"}, "template": "blue"},
   "elements": [
+    {"tag": "markdown", "content": "📝 **标题**: {title}\n👤 **作者**: @{author}\n🔀 **分支**: {headRef} → {baseRef}\n📏 **变更**: +{additions} -{deletions} ({changedFiles} files)"},
+    {"tag": "hr"},
+    {"tag": "markdown", "content": "**📊 CI 检查**: {ciStatus}\n**合并状态**: {mergeable ? '✅ 可合并' : '⚠️ 有冲突'}"},
+    {"tag": "hr"},
+    {"tag": "markdown", "content": "📋 **变更摘要**:\n{agent 根据 gh pr diff 生成的变更摘要}"},
+    {"tag": "hr"},
     {"tag": "action", "actions": [
-      {"tag": "button", "text": {"content": "✅ 合并", "tag": "plain_text"}, "value": "merge", "type": "primary"},
-      {"tag": "button", "text": {"content": "🔄 请求修改", "tag": "plain_text"}, "value": "request_changes", "type": "default"},
-      {"tag": "button", "text": {"content": "❌ 关闭", "tag": "plain_text"}, "value": "close", "type": "danger"},
-      {"tag": "button", "text": {"content": "⏳ 稍后", "tag": "plain_text"}, "value": "later", "type": "default"}
+      {"tag": "button", "text": {"content": "✅ Approve", "tag": "plain_text"}, "value": "approve", "type": "primary"},
+      {"tag": "button", "text": {"content": "💬 Review", "tag": "plain_text"}, "value": "deep_review", "type": "default"},
+      {"tag": "button", "text": {"content": "❌ Close", "tag": "plain_text"}, "value": "close", "type": "danger"}
     ]},
     {"tag": "note", "elements": [
-      {"tag": "plain_text", "content": "讨论完成后请选择操作"}
+      {"tag": "plain_text", "content": "🔗 查看完整 PR: https://github.com/hs3180/disclaude/pull/{number}"}
     ]}
   ]
 }
@@ -99,12 +104,71 @@ gh pr view {number} --repo hs3180/disclaude \
 **actionPrompts**：
 ```json
 {
-  "merge": "[用户操作] 用户批准合并 PR #{number}。请执行以下步骤：\n1. 检查 CI 状态是否通过\n2. 执行 `gh pr merge {number} --repo hs3180/disclaude --merge --delete-branch`\n3. 报告执行结果\n4. 添加 processed label 并移除 pending label",
-  "request_changes": "[用户操作] 用户请求修改 PR #{number}。请询问用户需要修改的具体内容，然后使用 `gh pr comment` 添加评论。",
-  "close": "[用户操作] 用户关闭 PR #{number}。请执行 `gh pr close {number} --repo hs3180/disclaude` 并报告结果。",
-  "later": "[用户操作] 用户选择稍后处理 PR #{number}。请移除 pending label，下次扫描时会重新处理。"
+  "approve": "[用户操作] 用户批准 PR #{number}。请执行以下步骤：\n1. 执行 `gh pr review {number} --repo hs3180/disclaude --approve --body 'Approved via PR Scanner'`\n2. 更新映射表状态为 reviewed\n3. 发送确认消息到当前群聊\n4. 添加 processed label 并移除 pending label",
+  "deep_review": "[用户操作] 用户请求深度 Review PR #{number}。请执行以下步骤：\n1. 执行 `gh pr diff {number} --repo hs3180/disclaude` 获取完整 diff\n2. 分析代码质量、潜在问题、测试覆盖\n3. 将 Review 结果以结构化形式发回讨论群\n4. 不要执行任何 PR 操作，仅提供分析报告",
+  "close": "[用户操作] 用户关闭 PR #{number}。请执行以下步骤：\n1. 执行 `gh pr close {number} --repo hs3180/disclaude`\n2. 更新映射表\n3. 发送解散提示卡片到当前群聊"
 }
 ```
+
+### 7.1 PR 状态变更通知卡片（可选）
+
+当检测到 PR 已 merged 或 closed 时，发送状态变更通知卡片：
+
+**Merged 通知卡片**：
+```json
+{
+  "config": {"wide_screen_mode": true},
+  "header": {"title": {"content": "✅ PR #{number} 已合并", "tag": "plain_text"}, "template": "turquoise"},
+  "elements": [
+    {"tag": "markdown", "content": "**{title}** 已成功合并到 {baseRef} 分支。"},
+    {"tag": "hr"},
+    {"tag": "action", "actions": [
+      {"tag": "button", "text": {"content": "解散群", "tag": "plain_text"}, "value": "disband", "type": "danger"}
+    ]}
+  ]
+}
+```
+
+**Closed 通知卡片**：
+```json
+{
+  "config": {"wide_screen_mode": true},
+  "header": {"title": {"content": "❌ PR #{number} 已关闭", "tag": "plain_text"}, "template": "red"},
+  "elements": [
+    {"tag": "markdown", "content": "**{title}** 已关闭，未合并。"},
+    {"tag": "hr"},
+    {"tag": "action", "actions": [
+      {"tag": "button", "text": {"content": "解散群", "tag": "plain_text"}, "value": "disband", "type": "danger"}
+    ]}
+  ]
+}
+```
+
+**状态变更 actionPrompts**：
+```json
+{
+  "disband": "[用户操作] 用户请求解散 PR #{number} 的讨论群。请执行以下步骤：\n1. 从映射表中删除 pr-{number} 条目\n2. 发送解散确认卡片\n3. 添加 processed label 并移除 pending label"
+}
+```
+
+### 7.2 解散确认卡片
+
+用户点击解散群按钮后发送的确认卡片：
+
+```json
+{
+  "config": {"wide_screen_mode": true},
+  "header": {"title": {"content": "👋 讨论结束", "tag": "plain_text"}, "template": "grey"},
+  "elements": [
+    {"tag": "markdown", "content": "PR #{number} 的讨论已结束，本群将在超时后自动解散。\n\n感谢参与讨论！"},
+    {"tag": "note", "elements": [
+      {"tag": "plain_text", "content": "映射表条目已清理，群聊将在超时后由系统自动解散。"}
+    ]}
+  ]
+}
+```
+
+> **注意**: 卡片模板中的 `{number}`, `{title}` 等占位符需在运行时替换为实际 PR 数据。`{ciStatus}` 应根据 `statusCheckRollup` 生成对应的 ✅/❌ 状态。`变更摘要` 由 Agent 调用 `gh pr diff` 后总结生成，不要直接输出原始 diff。
 
 ### 8. 添加 pending label
 
