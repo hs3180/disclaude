@@ -598,6 +598,129 @@ describe('ProjectManager createCwdProvider()', () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// delete() (Sub-Issue C)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should delete an existing instance', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    expect(pm.listInstances()).toHaveLength(1);
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.name).toBe('my-research');
+      expect(result.data.templateName).toBe('research');
+      expect(result.data.workingDir).toBe(join(workspaceDir, 'projects/my-research'));
+    }
+
+    expect(pm.listInstances()).toHaveLength(0);
+  });
+
+  it('should reject deleting non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should clean up all chatId bindings when deleting instance', () => {
+    pm.create('chat_1', 'research', 'shared-project');
+    pm.use('chat_2', 'shared-project');
+    pm.use('chat_3', 'shared-project');
+
+    pm.delete('shared-project');
+
+    // All previously bound chatIds should revert to default
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should not affect other instances when deleting one', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    pm.delete('research-1');
+
+    // book-1 should still exist
+    expect(pm.listInstances()).toHaveLength(1);
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+  });
+
+  it('should auto-persist after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+
+    expect(data.instances['my-research']).toBeUndefined();
+    expect(data.chatProjectMap['chat_1']).toBeUndefined();
+  });
+
+  it('should persist deletion of bindings in projects.json', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+    pm.use('chat_3', 'my-research');
+
+    pm.delete('my-research');
+
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+
+    expect(Object.keys(data.instances)).toHaveLength(0);
+    expect(Object.keys(data.chatProjectMap)).toHaveLength(0);
+  });
+
+  it('should survive delete → reload round-trip', () => {
+    const opts = createOptions();
+    const { workspaceDir: ws } = opts;
+
+    // Create two instances
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'research-1');
+    pm1.create('chat_2', 'book-reader', 'book-1');
+    pm1.use('chat_3', 'research-1');
+
+    // Delete one
+    pm1.delete('research-1');
+
+    // Reload — only book-1 should survive
+    const pm2 = new ProjectManager({ ...opts, workspaceDir: ws });
+    const instances = pm2.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('book-1');
+
+    // chat_3 should be default (binding was cleaned up)
+    expect(pm2.getActive('chat_3').name).toBe('default');
+    // chat_2 should still be book-1
+    expect(pm2.getActive('chat_2').name).toBe('book-1');
+  });
+
+  it('should allow re-creating an instance with the same name after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    const result = pm.create('chat_2', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+    expect(pm.getActive('chat_2').name).toBe('my-research');
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Persistence (Sub-Issue C)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
