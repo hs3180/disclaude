@@ -25,6 +25,8 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  startGlmToolProxy,
+  stopGlmToolProxy,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -161,6 +163,23 @@ async function main(): Promise<void> {
       { provider: agentConfig.apiBaseUrl ? 'glm' : 'anthropic', model: agentConfig.model },
       'Agent configuration loaded'
     );
+
+    // Start GLM tool extract proxy for third-party endpoints (Issue #2948)
+    // The proxy extracts tool definitions from the system prompt XML and
+    // converts them to the `tools` API parameter for GLM compatibility.
+    if (agentConfig.apiBaseUrl) {
+      try {
+        const proxy = await startGlmToolProxy(agentConfig.apiBaseUrl);
+        logger.info(
+          { port: proxy.getPort(), target: agentConfig.apiBaseUrl },
+          'GLM tool extract proxy started — SDK requests will be routed through proxy',
+        );
+      } catch (proxyError) {
+        logger.error({ err: proxyError }, 'Failed to start GLM tool extract proxy');
+        console.error('Warning: GLM tool extract proxy failed to start. System tools may not work correctly.');
+        // Continue without proxy — degraded but functional for non-tool operations
+      }
+    }
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error('Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.');
@@ -223,6 +242,7 @@ async function main(): Promise<void> {
     try {
       agentPool.disposeAll();
       await lifecycleManager.stopAll();
+      await stopGlmToolProxy();
       await primaryNode.stop();
       logger.info('Primary Node stopped');
       process.exit(0);

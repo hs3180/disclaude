@@ -6,6 +6,7 @@ import type {
   AgentMessage,
   ContentBlock,
 } from '../types/agent.js';
+import { getGlmToolProxyUrl } from './glm-tool-extract-proxy.js';
 
 /**
  * Get directory containing node executable.
@@ -101,8 +102,12 @@ export function buildSdkEnv(
   delete env.CLAUDECODE;
 
   // Set base URL if provided (for GLM or custom endpoints)
+  // When the GLM tool extract proxy is running, use the proxy URL instead
+  // of the raw API URL so that tool definitions are extracted and auth
+  // headers are translated (Issue #2948).
   if (apiBaseUrl) {
-    env.ANTHROPIC_BASE_URL = apiBaseUrl;
+    const proxyUrl = getGlmToolProxyUrl();
+    env.ANTHROPIC_BASE_URL = proxyUrl ?? apiBaseUrl;
   }
 
   return env;

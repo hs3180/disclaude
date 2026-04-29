@@ -83,3 +83,14 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// GLM Tool Extract Proxy (Issue #2948)
+export {
+  GlmToolExtractProxy,
+  startGlmToolProxy,
+  stopGlmToolProxy,
+  getGlmToolProxy,
+  getGlmToolProxyUrl,
+  extractToolsFromSystemPrompt,
+  transformRequestBody,
+} from './glm-tool-extract-proxy.js';
