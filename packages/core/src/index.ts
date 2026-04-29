@@ -134,6 +134,15 @@ export {
   AgentPool,
 } from './agents/agent-pool.js';
 
+// Startup diagnostic (Issue #2920)
+export {
+  analyzeStartupFailure,
+  formatStartupFailureMessage,
+  STARTUP_FAILURE_WINDOW_MS,
+  type StartupFailureCategory,
+  type StartupFailureDetail,
+} from './agents/startup-diagnostic.js';
+
 // Base Agent
 export {
   type SdkOptionsExtra,

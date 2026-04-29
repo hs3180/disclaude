@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, analyzeStartupFailure, formatStartupFailureMessage, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -771,6 +771,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let iteratorError: Error | null = null;
     let messageCount = 0;
 
+    // Issue #2920: Track iterator start time for startup failure detection
+    const iteratorStartTime = Date.now();
+
     // Issue #2993: Inactivity watchdog state
     let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
     let inactivityTimedOut = false;
@@ -861,11 +864,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
     } catch (error) {
       iteratorError = error as Error;
+
+      // Issue #2920: Analyze startup failure
+      const elapsedMs = Date.now() - iteratorStartTime;
+      const diagnostic = analyzeStartupFailure(error, messageCount, elapsedMs);
+
       this.logger.error({
         err: iteratorError,
         chatId,
         messageCount,
         inactivityTimedOut,
+        elapsedMs,
+        isStartupFailure: diagnostic.isStartupFailure,
+        startupCategory: diagnostic.category,
         errorMessage: iteratorError.message,
         errorStack: iteratorError.stack,
         errorName: iteratorError.constructor.name,
@@ -876,7 +887,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // already sent one. The user already knows the session is hung.
       if (!inactivityTimedOut) {
         const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-        await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
+        // Issue #2920: Use enhanced error message for startup failures
+        const userMessage = diagnostic.isStartupFailure
+          ? formatStartupFailureMessage(diagnostic)
+          : `❌ Session error: ${iteratorError.message}`;
+        await this.callbacks.sendMessage(chatId, userMessage, threadRoot);
       }
 
       if (this.callbacks.onDone) {
@@ -897,6 +912,30 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Iterator ended without explicit close - this is unexpected
     this.isSessionActive = false;
+
+    // Issue #2920: Check for startup failure — skip retry if detected.
+    // Startup failures (config errors, auth errors) won't be resolved by retrying.
+    if (iteratorError) {
+      const elapsedMs = Date.now() - iteratorStartTime;
+      const diagnostic = analyzeStartupFailure(iteratorError, messageCount, elapsedMs);
+
+      if (diagnostic.isStartupFailure) {
+        this.logger.warn(
+          {
+            chatId,
+            category: diagnostic.category,
+            messageCount,
+            elapsedMs,
+            error: iteratorError.message,
+          },
+          'Startup failure detected — skipping restart (error is likely persistent)'
+        );
+
+        // Session is already marked inactive; no restart, no circuit breaker.
+        // The user has already received a diagnostic message in the catch block above.
+        return;
+      }
+    }
 
     // Issue #2993: Use a descriptive error message when inactivity timeout fired
     // but the iterator ended without throwing (e.g., cancel() just closed it).
