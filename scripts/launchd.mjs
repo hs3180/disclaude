@@ -23,7 +23,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, rmSync, chmodSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -41,8 +41,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
 const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 
-const STDOUT_LOG = '/tmp/disclaude-stdout.log';
-const STDERR_LOG = '/tmp/disclaude-stderr.log';
+// Log directory: ~/Library/Logs/disclaude with pino-roll rotation
+const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
+const STDERR_LOG = resolve(LOG_DIR, 'disclaude-stderr.log');
+const COMBINED_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,12 +74,33 @@ function ensureLaunchAgentsDir() {
   }
 }
 
+/**
+ * Ensure log directory exists with restrictive permissions (0o700).
+ * Prevents information leakage from log files containing API keys.
+ * @see Issue #2898
+ */
+function ensureLogDir() {
+  if (!existsSync(LOG_DIR)) {
+    mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    // Ensure correct permissions on existing directory (e.g. after upgrade)
+    try {
+      chmodSync(LOG_DIR, 0o700);
+    } catch {
+      // May fail if directory is not owned by current user; ignore silently
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plist generation
 // ---------------------------------------------------------------------------
 
 function generatePlist() {
   const nodePath = getNodePath();
+
+  // Ensure log directory with secure permissions before generating plist
+  ensureLogDir();
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -102,9 +125,6 @@ function generatePlist() {
   <key>KeepAlive</key>
   <true/>
 
-  <key>StandardOutPath</key>
-  <string>${STDOUT_LOG}</string>
-
   <key>StandardErrorPath</key>
   <string>${STDERR_LOG}</string>
 
@@ -116,6 +136,8 @@ function generatePlist() {
     <string>${homedir()}</string>
     <key>NODE_ENV</key>
     <string>production</string>
+    <key>LOG_DIR</key>
+    <string>${LOG_DIR}</string>
   </dict>
 </dict>
 </plist>
@@ -127,8 +149,8 @@ function generatePlist() {
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${CLI_ENTRY}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
-  console.log(`  Stdout: ${STDOUT_LOG}`);
-  console.log(`  Stderr: ${STDERR_LOG}`);
+  console.log(`  Logs (pino-roll): ${COMBINED_LOG} (rotated 10M × 30, gzip)`);
+  console.log(`  Stderr (safety): ${STDERR_LOG}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,14 +225,18 @@ function cmdRestart() {
 function cmdLogs() {
   const lines = process.argv.find(a => a.startsWith('--lines='));
   const n = lines ? lines.split('=')[1] : '100';
-  console.log(`=== stdout (last ${n} lines) ===`);
+  console.log(`=== combined (pino-roll, last ${n} lines) ===`);
   try {
-    run(`tail -n ${n} ${STDOUT_LOG}`, { silent: true });
-  } catch {}
+    run(`tail -n ${n} ${COMBINED_LOG}`, { silent: true });
+  } catch {
+    console.log('(no combined log found — service may not have started yet)');
+  }
   console.log(`\n=== stderr (last ${n} lines) ===`);
   try {
     run(`tail -n ${n} ${STDERR_LOG}`, { silent: true });
-  } catch {}
+  } catch {
+    console.log('(no stderr log found)');
+  }
 }
 
 function cmdStatus() {
@@ -218,8 +244,8 @@ function cmdStatus() {
   if (result) {
     console.log(result.trim());
     console.log(`\nPlist: ${PLIST_PATH}`);
-    console.log(`Stdout: ${STDOUT_LOG}`);
-    console.log(`Stderr: ${STDERR_LOG}`);
+    console.log(`Logs (pino-roll): ${COMBINED_LOG} (rotated 10M × 30, gzip)`);
+    console.log(`Stderr (safety): ${STDERR_LOG}`);
   } else {
     console.log('Service is NOT loaded.');
     console.log(`Plist: ${PLIST_PATH} (${existsSync(PLIST_PATH) ? 'exists' : 'not found'})`);
@@ -255,6 +281,10 @@ Commands:
   restart     Build + unload + load
   logs        Tail log files [--lines=N]
   status      Show service status
+
+Log rotation:
+  Logs use pino-roll: 10MB per file, 30 files, gzip compressed.
+  Log directory: ~/Library/Logs/disclaude/ (mode 700)
 `);
   process.exit(1);
 }

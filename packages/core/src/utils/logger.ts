@@ -11,7 +11,7 @@
  * @module utils/logger
  */
 
-import pino, { Logger, Level, LoggerOptions } from 'pino';
+import pino, { Logger, Level, LoggerOptions, DestinationStream } from 'pino';
 
 // Re-export Logger type for consumers
 export type { Logger } from 'pino';
@@ -75,6 +75,43 @@ export function resetLogger(): void {
  */
 function isDevelopment(): boolean {
   return process.env.NODE_ENV !== 'production';
+}
+
+/**
+ * Create a pino-roll transport stream for file logging with rotation.
+ *
+ * Uses pino.transport() for synchronous, worker-thread-based file writing.
+ * Falls back to process.stdout on any error.
+ *
+ * @see Issue #2934
+ */
+function createRollTransport(logDir: string): DestinationStream {
+  try {
+    const logFile = path.join(logDir, 'disclaude-combined.log');
+
+    // Ensure log directory exists with secure permissions
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
+    }
+
+    // pino.transport() is synchronous — creates a worker thread internally
+    const transport = pino.transport({
+      target: 'pino-roll',
+      options: {
+        file: logFile,
+        size: '10M',
+        limit: { count: 30 },
+        compress: true,
+        mkdir: true,
+      },
+    });
+
+    return transport;
+  } catch (error) {
+    // If pino-roll transport fails, fall back to stdout
+    console.warn('Failed to setup pino-roll transport, falling back to stdout:', error);
+    return process.stdout;
+  }
 }
 
 /**
@@ -310,7 +347,16 @@ export function createLogger(
     // Synchronous initialization for immediate use
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
-    rootLogger = pino(options, process.stdout);
+
+    // In production with LOG_DIR, use pino-roll for automatic log rotation.
+    // @see Issue #2934
+    if (!isDev && process.env.LOG_DIR && process.env.NODE_ENV !== 'test') {
+      const logDir = path.resolve(process.cwd(), process.env.LOG_DIR);
+      const stream = createRollTransport(logDir);
+      rootLogger = pino(options, stream);
+    } else {
+      rootLogger = pino(options, process.stdout);
+    }
   }
 
   // Create child logger with context
@@ -333,7 +379,16 @@ export function getRootLogger(): Logger {
   if (!rootLogger) {
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
-    rootLogger = pino(options, process.stdout);
+
+    // In production with LOG_DIR, use pino-roll for automatic log rotation.
+    // @see Issue #2934
+    if (!isDev && process.env.LOG_DIR && process.env.NODE_ENV !== 'test') {
+      const logDir = path.resolve(process.cwd(), process.env.LOG_DIR);
+      const stream = createRollTransport(logDir);
+      rootLogger = pino(options, stream);
+    } else {
+      rootLogger = pino(options, process.stdout);
+    }
   }
   return rootLogger;
 }
