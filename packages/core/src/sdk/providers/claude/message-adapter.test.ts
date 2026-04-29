@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
+import { adaptSDKMessage, adaptUserInput, parseXmlToolUse } from './message-adapter.js';
 
 // Test helper: SDK message types require fields (parent_tool_use_id, uuid, etc.)
 // that are optional in practice. Cast test fixtures to bypass strict type checking.
@@ -397,5 +397,162 @@ describe('adaptUserInput', () => {
     const result = adaptUserInput(input);
     expect(result.type).toBe('user');
     expect(result.message.content).toBeDefined();
+  });
+});
+
+// ============================================================================
+// XML tool_use parsing tests — third-party endpoint compatibility (Issue #2943)
+// ============================================================================
+
+describe('parseXmlToolUse', () => {
+  it('should return null for empty or non-XML text', () => {
+    expect(parseXmlToolUse('')).toBeNull();
+    expect(parseXmlToolUse('Hello, world!')).toBeNull();
+    expect(parseXmlToolUse('No tools here')).toBeNull();
+  });
+
+  it('should return null for malformed XML without proper closing tag', () => {
+    expect(parseXmlToolUse('<tool_use><name>Bash</name>')).toBeNull();
+  });
+
+  it('should return null for tool_use without name', () => {
+    expect(parseXmlToolUse('<tool_use><input>{"a":1}</input></tool_use>')).toBeNull();
+  });
+
+  it('should parse <tool_name> format (SDK system prompt style)', () => {
+    const xml = '<tool_use>\n  <tool_name>Bash</tool_name>\n  <tool_input>{"command": "ls -la"}</tool_input>\n</tool_use>';
+
+    const result = parseXmlToolUse(xml);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Bash');
+    expect(result!.input).toEqual({ command: 'ls -la' });
+  });
+
+  it('should parse <name> format (function calling style)', () => {
+    const xml = '<tool_use>\n  <name>Read</name>\n  <input>{"file_path": "/src/app.ts"}</input>\n</tool_use>';
+
+    const result = parseXmlToolUse(xml);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Read');
+    expect(result!.input).toEqual({ file_path: '/src/app.ts' });
+  });
+
+  it('should parse <tool_use> with id attribute', () => {
+    const xml = '<tool_use id="toolu_01ABC">\n  <name>Edit</name>\n  <input>{"file_path": "/src/app.ts", "old_string": "foo", "new_string": "bar"}</input>\n</tool_use>';
+
+    const result = parseXmlToolUse(xml);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Edit');
+    expect(result!.input).toEqual({ file_path: '/src/app.ts', old_string: 'foo', new_string: 'bar' });
+  });
+
+  it('should extract remaining text after the tool_use block', () => {
+    const xml = '<tool_use>\n  <name>Bash</name>\n  <input>{"command": "npm test"}</input>\n</tool_use>\n\nRunning the test suite now.';
+
+    const result = parseXmlToolUse(xml);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Bash');
+    expect(result!.remainingText).toContain('Running the test suite now');
+  });
+
+  it('should handle non-JSON input with key=value fallback', () => {
+    const xml = '<tool_use>\n  <name>Bash</name>\n  <input>command=ls -la</input>\n</tool_use>';
+
+    const result = parseXmlToolUse(xml);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Bash');
+    expect(result!.input).toEqual({ command: 'ls -la' });
+  });
+
+  it('should handle empty input', () => {
+    const xml = '<tool_use>\n  <name>Bash</name>\n  <input></input>\n</tool_use>';
+
+    const result = parseXmlToolUse(xml);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Bash');
+    // Empty input → raw fallback with empty string
+    expect(result!.input).toBeDefined();
+  });
+
+  it('should handle missing input tags', () => {
+    const xml = '<tool_use>\n  <name>Bash</name>\n</tool_use>';
+
+    const result = parseXmlToolUse(xml);
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Bash');
+    expect(result!.input).toEqual({});
+  });
+});
+
+describe('adaptSDKMessage - XML tool_use fallback', () => {
+  it('should detect XML tool_use in text content when no structured tool_use exists', () => {
+    const message = {
+      type: 'assistant' as const,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: '<tool_use>\n  <name>Bash</name>\n  <input>{"command": "ls -la"}</input>\n</tool_use>' },
+        ],
+      },
+    };
+
+    const result = adaptSDKMessage(asMsg(message));
+    expect(result.type).toBe('tool_use');
+    expect(result.metadata?.toolName).toBe('Bash');
+    expect(result.metadata?.toolInput).toEqual({ command: 'ls -la' });
+    expect(result.content).toContain('Running: ls -la');
+  });
+
+  it('should prefer structured tool_use over XML fallback', () => {
+    const message = {
+      type: 'assistant' as const,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', name: 'Read', input: { file_path: '/real.ts' } },
+          { type: 'text', text: '<tool_use><name>Bash</name><input>{"command":"fake"}</input></tool_use>' },
+        ],
+      },
+    };
+
+    const result = adaptSDKMessage(asMsg(message));
+    expect(result.type).toBe('tool_use');
+    // Structured tool_use takes priority
+    expect(result.metadata?.toolName).toBe('Read');
+    expect(result.metadata?.toolInput).toEqual({ file_path: '/real.ts' });
+  });
+
+  it('should return text type when content has no tool_use of any form', () => {
+    const message = {
+      type: 'assistant' as const,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'I can help with that. Let me explain...' },
+        ],
+      },
+    };
+
+    const result = adaptSDKMessage(asMsg(message));
+    expect(result.type).toBe('text');
+    expect(result.metadata?.toolName).toBeUndefined();
+  });
+
+  it('should handle XML tool_use with remaining text', () => {
+    const message = {
+      type: 'assistant' as const,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: '<tool_use>\n  <name>Grep</name>\n  <input>{"pattern": "TODO"}</input>\n</tool_use>\n\nSearching for TODO items in the codebase.' },
+        ],
+      },
+    };
+
+    const result = adaptSDKMessage(asMsg(message));
+    expect(result.type).toBe('tool_use');
+    expect(result.metadata?.toolName).toBe('Grep');
+    expect(result.content).toContain('Searching for "TODO"');
+    expect(result.content).toContain('Searching for TODO items');
   });
 });
