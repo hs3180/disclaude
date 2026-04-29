@@ -119,19 +119,13 @@ function parseScheduleFrontmatter(content: string): {
 /**
  * Generate task ID from file path.
  *
- * Supports two layouts:
- * 1. **Subdirectory** (preferred): `schedules/<slug>/SCHEDULE.md` → `schedule-<slug>`
- * 2. **Flat file** (legacy):        `schedules/<name>.md`        → `schedule-<name>`
+ * Expects the subdirectory layout: `schedules/<slug>/SCHEDULE.md` → `schedule-<slug>`
  *
  * Issue #2526: Subdirectory layout mirrors the skills/ convention.
  */
 function generateTaskId(filePath: string): string {
-  const baseName = path.basename(filePath, '.md');
-  if (baseName === 'SCHEDULE') {
-    const dirName = path.basename(path.dirname(filePath));
-    return `schedule-${dirName}`;
-  }
-  return `schedule-${baseName}`;
+  const dirName = path.basename(path.dirname(filePath));
+  return `schedule-${dirName}`;
 }
 
 // ============================================================================
@@ -184,6 +178,15 @@ export class ScheduleFileScanner {
         }
 
         const scheduleFile = path.join(this.schedulesDir, entry.name, 'SCHEDULE.md');
+
+        // Skip subdirectories that don't contain a SCHEDULE.md
+        // to avoid misleading error-level logs from parseFile()
+        try {
+          await fsPromises.access(scheduleFile);
+        } catch {
+          continue;
+        }
+
         const task = await this.parseFile(scheduleFile);
         if (task) {
           tasks.push(task);

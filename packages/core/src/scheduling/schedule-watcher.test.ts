@@ -396,6 +396,24 @@ describe('ScheduleFileScanner', () => {
       expect(tasks).toHaveLength(1);
     });
 
+    it('should skip subdirectories without SCHEDULE.md gracefully (Issue #2526 review)', async () => {
+      mockReaddir.mockResolvedValue([
+        { name: 'has-schedule', isDirectory: () => true },
+        { name: 'no-schedule', isDirectory: () => true },
+      ]);
+      // First access call succeeds (has-schedule), second fails (no-schedule)
+      mockAccess
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce({ code: 'ENOENT' } as NodeJS.ErrnoException);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const tasks = await scanner.scanAll();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].id).toBe('schedule-has-schedule');
+      // parseFile should only be called once (for has-schedule)
+      expect(mockReadFile).toHaveBeenCalledTimes(1);
+    });
+
     it('should throw on non-ENOENT errors during scan', async () => {
       mockReaddir.mockRejectedValue(new Error('Permission denied'));
 
