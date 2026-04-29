@@ -6,6 +6,93 @@ import type {
   AgentMessage,
   ContentBlock,
 } from '../types/agent.js';
+import { GLMProxyManager } from '../sdk/glm-proxy.js';
+import { createLogger } from './logger.js';
+
+const sdkLogger = createLogger('sdk-utils');
+
+// ---------------------------------------------------------------------------
+// GLM Proxy singleton state (Issue #2948)
+// ---------------------------------------------------------------------------
+
+/**
+ * Cached GLM proxy URL.
+ * Once the proxy is started, this stores the local proxy URL (e.g. http://127.0.0.1:49152).
+ * All subsequent `buildSdkEnv()` calls will use this URL instead of the raw GLM endpoint.
+ */
+let glmProxyUrl: string | null = null;
+
+/**
+ * Whether GLM proxy initialization is in progress (prevents double-start).
+ */
+let glmProxyInitializing = false;
+
+/**
+ * Initialize the GLM API proxy for a non-Anthropic endpoint.
+ *
+ * Call this once during application startup when the provider is GLM.
+ * The proxy intercepts SDK subprocess requests, extracts tool definitions
+ * from the system prompt XML, and converts them to the `tools` API parameter.
+ *
+ * @param targetBaseUrl - The actual GLM API base URL to forward to
+ * @returns The proxy URL (e.g. http://127.0.0.1:49152)
+ *
+ * @see Issue #2948 - GLM endpoint tool compatibility
+ */
+export async function initGLMProxy(targetBaseUrl: string): Promise<string> {
+  if (glmProxyUrl) {return glmProxyUrl;}
+  if (glmProxyInitializing) {
+    // Wait for the other in-flight init to complete
+    return new Promise((resolve) => {
+      const interval = setInterval(() => {
+        if (glmProxyUrl) {
+          clearInterval(interval);
+          resolve(glmProxyUrl);
+        }
+      }, 50);
+    });
+  }
+
+  glmProxyInitializing = true;
+  try {
+    const proxy = GLMProxyManager.getInstance({ targetBaseUrl });
+    glmProxyUrl = await proxy.start();
+    sdkLogger.info({ proxyUrl: glmProxyUrl, target: targetBaseUrl }, 'GLM proxy initialized');
+    return glmProxyUrl;
+  } finally {
+    glmProxyInitializing = false;
+  }
+}
+
+/**
+ * Get the cached GLM proxy URL (if initialized).
+ *
+ * @returns The proxy URL or null if not initialized
+ */
+export function getGLMProxyUrl(): string | null {
+  return glmProxyUrl;
+}
+
+/**
+ * Stop the GLM proxy (for graceful shutdown).
+ */
+export async function stopGLMProxy(): Promise<void> {
+  if (glmProxyUrl) {
+    const proxy = GLMProxyManager.getInstance({ targetBaseUrl: '' });
+    await proxy.stop();
+    glmProxyUrl = null;
+    GLMProxyManager.resetInstance();
+    sdkLogger.info('GLM proxy stopped');
+  }
+}
+
+/**
+ * Reset GLM proxy state (for testing only).
+ */
+export function resetGLMProxyState(): void {
+  glmProxyUrl = null;
+  glmProxyInitializing = false;
+}
 
 /**
  * Get directory containing node executable.
@@ -101,8 +188,9 @@ export function buildSdkEnv(
   delete env.CLAUDECODE;
 
   // Set base URL if provided (for GLM or custom endpoints)
+  // Issue #2948: Use GLM proxy URL when available to transform tool definitions
   if (apiBaseUrl) {
-    env.ANTHROPIC_BASE_URL = apiBaseUrl;
+    env.ANTHROPIC_BASE_URL = glmProxyUrl ?? apiBaseUrl;
   }
 
   return env;

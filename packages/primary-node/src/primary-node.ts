@@ -53,6 +53,9 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #2948: GLM proxy for tool compatibility
+  initGLMProxy,
+  stopGLMProxy,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
@@ -271,6 +274,32 @@ export class PrimaryNode extends EventEmitter {
   }
 
   // ============================================================================
+  // GLM Proxy (Issue #2948)
+  // ============================================================================
+
+  /**
+   * Initialize the GLM API proxy if the provider is GLM.
+   *
+   * The proxy intercepts SDK subprocess API requests and transforms tool
+   * definitions from system prompt XML format to the `tools` API parameter,
+   * enabling GLM (and other non-Anthropic Claude-compatible endpoints) to
+   * correctly process tool calls.
+   *
+   * @see Issue #2948
+   */
+  protected async initGLMProxyIfNeeded(): Promise<void> {
+    try {
+      const agentConfig = Config.getAgentConfig();
+      if (agentConfig.provider === 'glm' && agentConfig.apiBaseUrl) {
+        logger.info({ target: agentConfig.apiBaseUrl }, 'Initializing GLM proxy');
+        await initGLMProxy(agentConfig.apiBaseUrl);
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to initialize GLM proxy (non-fatal)');
+    }
+  }
+
+  // ============================================================================
   // IPC Server (Issue #1042)
   // ============================================================================
 
@@ -367,6 +396,9 @@ export class PrimaryNode extends EventEmitter {
 
     logger.info({ nodeId: this.localNodeId }, 'Starting PrimaryNode');
 
+    // Issue #2948: Start GLM proxy for non-Anthropic endpoint tool compatibility
+    await this.initGLMProxyIfNeeded();
+
     // Start IPC server for MCP Server connections (Issue #1042)
     await this.startIpcServer();
 
@@ -388,6 +420,9 @@ export class PrimaryNode extends EventEmitter {
     }
 
     logger.info({ nodeId: this.localNodeId }, 'Stopping PrimaryNode');
+
+    // Issue #2948: Stop GLM proxy
+    await stopGLMProxy();
 
     // Stop Scheduler (Issue #1377)
     this.stopScheduler();

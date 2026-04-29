@@ -46,6 +46,10 @@ export {
   getNodeBinDir,
   extractText,
   buildSdkEnv,
+  // Issue #2948: GLM proxy for tool compatibility
+  initGLMProxy,
+  getGLMProxyUrl,
+  stopGLMProxy,
 } from './sdk.js';
 
 // Output Adapter (Issue #1040)
