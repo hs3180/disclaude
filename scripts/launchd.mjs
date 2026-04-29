@@ -76,10 +76,15 @@ function ensureLaunchAgentsDir() {
 // Plist generation
 // ---------------------------------------------------------------------------
 
-function generatePlist() {
-  const nodePath = getNodePath();
-
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+/**
+ * Generate plist XML content string.
+ * Separated from file I/O for testability.
+ *
+ * @param {string} nodePath - Absolute path to the node binary
+ * @returns {string} plist XML content
+ */
+export function generatePlistContent(nodePath) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -120,6 +125,11 @@ function generatePlist() {
 </dict>
 </plist>
 `;
+}
+
+function generatePlist() {
+  const nodePath = getNodePath();
+  const plist = generatePlistContent(nodePath);
 
   ensureLaunchAgentsDir();
   writeFileSync(PLIST_PATH, plist, 'utf-8');
@@ -227,10 +237,14 @@ function cmdStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Constants (exported for testing)
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
+export { LABEL, CLI_ENTRY, PROJECT_ROOT, STDOUT_LOG, STDERR_LOG };
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 
 const commands = {
   generate: cmdGenerate,
@@ -243,8 +257,14 @@ const commands = {
   status: cmdStatus,
 };
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+/**
+ * Run CLI command dispatch. Extracted for testability.
+ *
+ * @param {string} command - Command name to execute
+ */
+export function runCommand(command) {
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -256,7 +276,15 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
+    process.exit(1);
+  }
+
+  commands[command]();
 }
 
-commands[command]();
+// Only run when executed directly (not imported)
+const __main = fileURLToPath(import.meta.url) === resolve(process.argv[1] || '');
+if (__main) {
+  const command = process.argv[2];
+  runCommand(command);
+}
