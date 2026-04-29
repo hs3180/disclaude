@@ -2,10 +2,11 @@
  * Unit tests for ChatStore
  *
  * Issue #1703: Phase 1 — Core data layer for temporary chat management.
+ * Issue #2946: registerTempChat() removed; tests refactored to seed data via file loading.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ChatStore, type TempChatResponse } from './chat-store.js';
+import { ChatStore, type TempChatRecord, type TempChatResponse } from './chat-store.js';
 import * as fsPromises from 'fs/promises';
 
 vi.mock('fs/promises', () => ({
@@ -24,16 +25,13 @@ vi.mock('fs/promises', () => ({
 }));
 
 describe('ChatStore', () => {
-  let store: ChatStore;
   let storeDir: string;
 
   beforeEach(() => {
     storeDir = '/tmp/test-temp-chats';
-    store = new ChatStore({ storeDir });
-
     // Mock mkdir to succeed
     vi.mocked(fsPromises.mkdir).mockResolvedValue(undefined);
-    // Mock readdir to return empty
+    // Mock readdir to return empty by default
     vi.mocked(fsPromises.readdir).mockResolvedValue([]);
   });
 
@@ -41,107 +39,63 @@ describe('ChatStore', () => {
     vi.restoreAllMocks();
   });
 
-  describe('constructor', () => {
-    it('should create a ChatStore', () => {
-      expect(store).toBeDefined();
-    });
-  });
-
-  describe('registerTempChat', () => {
-    it('should register a temp chat and persist to file', async () => {
-      await store.registerTempChat('oc_test1');
-
-      expect(fsPromises.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining('oc_test1.json'),
-        expect.stringContaining('"chatId": "oc_test1"'),
-        'utf-8'
+  /**
+   * Helper: create a ChatStore pre-loaded with records by simulating file loading.
+   * This replaces the removed registerTempChat() method for test setup.
+   */
+  async function createStoreWithRecords(records: TempChatRecord[]): Promise<ChatStore> {
+    if (records.length > 0) {
+      const filenames = records.map(r =>
+        `${r.chatId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`
       );
-    });
-
-    it('should use provided expiresAt', async () => {
-      const customExpiry = '2026-12-31T00:00:00.000Z';
-      await store.registerTempChat('oc_test2', { expiresAt: customExpiry });
-
-      expect(fsPromises.writeFile).toHaveBeenCalledWith(
-        expect.stringContaining('oc_test2.json'),
-        expect.stringContaining(customExpiry),
-        'utf-8'
-      );
-    });
-
-    it('should default to 24h expiry', async () => {
-      const before = Date.now();
-      await store.registerTempChat('oc_test3');
-      const after = Date.now();
-
-      const writeCall = vi.mocked(fsPromises.writeFile).mock.calls.find(
-        call => call[0].toString().includes('oc_test3.json')
-      );
-      expect(writeCall).toBeDefined();
-
-      const record = JSON.parse(writeCall![1] as string);
-      const expiresTime = new Date(record.expiresAt).getTime();
-      const expectedMin = before + 24 * 60 * 60 * 1000;
-      const expectedMax = after + 24 * 60 * 60 * 1000;
-      expect(expiresTime).toBeGreaterThanOrEqual(expectedMin);
-      expect(expiresTime).toBeLessThanOrEqual(expectedMax);
-    });
-
-    it('should store creatorChatId and context', async () => {
-      await store.registerTempChat('oc_test4', {
-        creatorChatId: 'oc_original',
-        context: { prNumber: 123 },
+      vi.mocked(fsPromises.readdir).mockResolvedValue(filenames as any);
+      vi.mocked(fsPromises.readFile).mockImplementation((filePath: unknown) => {
+        const pathStr = (filePath as string).toString();
+        for (const record of records) {
+          const safeId = record.chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
+          if (pathStr.includes(safeId)) {
+            return Promise.resolve(JSON.stringify(record));
+          }
+        }
+        return Promise.reject(new Error('Not found'));
       });
+    }
 
-      const writeCall = vi.mocked(fsPromises.writeFile).mock.calls.find(
-        call => call[0].toString().includes('oc_test4.json')
-      );
-      expect(writeCall).toBeDefined();
+    const freshStore = new ChatStore({ storeDir });
+    // Trigger initialization by calling any method
+    await freshStore.listTempChats();
+    return freshStore;
+  }
 
-      const record = JSON.parse(writeCall![1] as string);
-      expect(record.creatorChatId).toBe('oc_original');
-      expect(record.context).toEqual({ prNumber: 123 });
-    });
+  /**
+   * Helper: create a minimal TempChatRecord for testing.
+   */
+  function makeRecord(overrides: Partial<TempChatRecord> & { chatId: string }): TempChatRecord {
+    return {
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      ...overrides,
+    };
+  }
 
-    it('should handle writeFile errors gracefully', async () => {
-      vi.mocked(fsPromises.writeFile).mockRejectedValue(new Error('Write error'));
-      // Should not throw
-      await expect(store.registerTempChat('oc_test5')).resolves.not.toThrow();
-    });
-
-    it('should store triggerMode field (Issue #2291)', async () => {
-      await store.registerTempChat('oc_test_tm', { triggerMode: 'always' });
-
-      const writeCall = vi.mocked(fsPromises.writeFile).mock.calls.find(
-        call => call[0].toString().includes('oc_test_tm.json')
-      );
-      expect(writeCall).toBeDefined();
-
-      const record = JSON.parse(writeCall![1] as string);
-      expect(record.triggerMode).toBe('always');
-    });
-
-    it('should persist triggerMode as undefined when not specified (Issue #2291)', async () => {
-      await store.registerTempChat('oc_test_tm2');
-
-      const writeCall = vi.mocked(fsPromises.writeFile).mock.calls.find(
-        call => call[0].toString().includes('oc_test_tm2.json')
-      );
-      expect(writeCall).toBeDefined();
-
-      const record = JSON.parse(writeCall![1] as string);
-      expect(record.triggerMode).toBeUndefined();
+  describe('constructor', () => {
+    it('should create a ChatStore', async () => {
+      const store = await createStoreWithRecords([]);
+      expect(store).toBeDefined();
     });
   });
 
   describe('getTempChat', () => {
     it('should return null for non-existent chat', async () => {
+      const store = await createStoreWithRecords([]);
       const result = await store.getTempChat('oc_nonexistent');
       expect(result).toBeNull();
     });
 
-    it('should return the registered record', async () => {
-      await store.registerTempChat('oc_test1', { creatorChatId: 'oc_orig' });
+    it('should return the loaded record', async () => {
+      const store = await createStoreWithRecords([
+        makeRecord({ chatId: 'oc_test1', creatorChatId: 'oc_orig' }),
+      ]);
 
       const result = await store.getTempChat('oc_test1');
       expect(result).not.toBeNull();
@@ -152,13 +106,16 @@ describe('ChatStore', () => {
 
   describe('listTempChats', () => {
     it('should return empty array when no chats registered', async () => {
+      const store = await createStoreWithRecords([]);
       const result = await store.listTempChats();
       expect(result).toEqual([]);
     });
 
-    it('should return all registered chats', async () => {
-      await store.registerTempChat('oc_test1');
-      await store.registerTempChat('oc_test2');
+    it('should return all loaded chats', async () => {
+      const store = await createStoreWithRecords([
+        makeRecord({ chatId: 'oc_test1' }),
+        makeRecord({ chatId: 'oc_test2' }),
+      ]);
 
       const result = await store.listTempChats();
       expect(result).toHaveLength(2);
@@ -169,14 +126,17 @@ describe('ChatStore', () => {
 
   describe('removeTempChat', () => {
     it('should return false for non-existent chat', async () => {
+      const store = await createStoreWithRecords([]);
       const result = await store.removeTempChat('oc_nonexistent');
       expect(result).toBe(false);
     });
 
-    it('should remove a registered chat and delete file', async () => {
-      await store.registerTempChat('oc_test1');
-      const result = await store.removeTempChat('oc_test1');
+    it('should remove a loaded chat and delete file', async () => {
+      const store = await createStoreWithRecords([
+        makeRecord({ chatId: 'oc_test1' }),
+      ]);
 
+      const result = await store.removeTempChat('oc_test1');
       expect(result).toBe(true);
       expect(fsPromises.unlink).toHaveBeenCalled();
 
@@ -186,7 +146,10 @@ describe('ChatStore', () => {
     });
 
     it('should handle unlink ENOENT gracefully', async () => {
-      await store.registerTempChat('oc_test1');
+      const store = await createStoreWithRecords([
+        makeRecord({ chatId: 'oc_test1' }),
+      ]);
+
       const enoentError = new Error('Not found') as NodeJS.ErrnoException;
       enoentError.code = 'ENOENT';
       vi.mocked(fsPromises.unlink).mockRejectedValue(enoentError);
@@ -199,6 +162,7 @@ describe('ChatStore', () => {
 
   describe('markTempChatResponded', () => {
     it('should return false for non-existent chat', async () => {
+      const store = await createStoreWithRecords([]);
       const response: TempChatResponse = {
         selectedValue: 'approve',
         responder: 'ou_xxx',
@@ -209,7 +173,9 @@ describe('ChatStore', () => {
     });
 
     it('should update record with response and persist', async () => {
-      await store.registerTempChat('oc_test1');
+      const store = await createStoreWithRecords([
+        makeRecord({ chatId: 'oc_test1' }),
+      ]);
 
       const response: TempChatResponse = {
         selectedValue: 'approve',
@@ -217,24 +183,24 @@ describe('ChatStore', () => {
         repliedAt: '2026-03-27T10:00:00.000Z',
       };
       const result = await store.markTempChatResponded('oc_test1', response);
-
       expect(result).toBe(true);
 
-      // Verify persisted with response (use last call since register + markResponded both write)
+      // Verify persisted with response
       const writeCalls = vi.mocked(fsPromises.writeFile).mock.calls.filter(
         call => call[0].toString().includes('oc_test1.json')
       );
-      expect(writeCalls.length).toBeGreaterThanOrEqual(2);
+      expect(writeCalls.length).toBeGreaterThanOrEqual(1);
       const record = JSON.parse(writeCalls[writeCalls.length - 1][1] as string);
       expect(record.response.selectedValue).toBe('approve');
       expect(record.response.responder).toBe('ou_xxx');
     });
 
     it('should persist response even on writeFile error', async () => {
-      await store.registerTempChat('oc_test1');
+      const store = await createStoreWithRecords([
+        makeRecord({ chatId: 'oc_test1' }),
+      ]);
 
-      // First call (register) succeeds, second call (markResponded) fails
-      vi.mocked(fsPromises.writeFile).mockRejectedValueOnce(new Error('Persist error'));
+      vi.mocked(fsPromises.writeFile).mockRejectedValue(new Error('Persist error'));
 
       const response: TempChatResponse = {
         selectedValue: 'reject',
@@ -252,18 +218,24 @@ describe('ChatStore', () => {
 
   describe('getExpiredTempChats', () => {
     it('should return empty array when no chats are expired', async () => {
-      // Register with future expiry
-      const futureExpiry = new Date(Date.now() + 60_000).toISOString();
-      await store.registerTempChat('oc_test1', { expiresAt: futureExpiry });
+      const store = await createStoreWithRecords([
+        makeRecord({
+          chatId: 'oc_test1',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      ]);
 
       const expired = await store.getExpiredTempChats();
       expect(expired).toEqual([]);
     });
 
     it('should return chats that are expired and not responded', async () => {
-      // Register with past expiry
-      const pastExpiry = new Date(Date.now() - 60_000).toISOString();
-      await store.registerTempChat('oc_expired1', { expiresAt: pastExpiry });
+      const store = await createStoreWithRecords([
+        makeRecord({
+          chatId: 'oc_expired1',
+          expiresAt: new Date(Date.now() - 60_000).toISOString(),
+        }),
+      ]);
 
       const expired = await store.getExpiredTempChats();
       expect(expired).toHaveLength(1);
@@ -271,27 +243,37 @@ describe('ChatStore', () => {
     });
 
     it('should not return expired chats that have been responded', async () => {
-      const pastExpiry = new Date(Date.now() - 60_000).toISOString();
-      await store.registerTempChat('oc_expired1', { expiresAt: pastExpiry });
-
-      // Mark as responded
-      await store.markTempChatResponded('oc_expired1', {
-        selectedValue: 'approve',
-        responder: 'ou_xxx',
-        repliedAt: new Date().toISOString(),
-      });
+      const store = await createStoreWithRecords([
+        makeRecord({
+          chatId: 'oc_expired1',
+          expiresAt: new Date(Date.now() - 60_000).toISOString(),
+          response: {
+            selectedValue: 'approve',
+            responder: 'ou_xxx',
+            repliedAt: new Date().toISOString(),
+          },
+        }),
+      ]);
 
       const expired = await store.getExpiredTempChats();
       expect(expired).toEqual([]);
     });
 
     it('should mix expired and non-expired correctly', async () => {
-      const pastExpiry = new Date(Date.now() - 60_000).toISOString();
-      const futureExpiry = new Date(Date.now() + 60_000).toISOString();
-
-      await store.registerTempChat('oc_expired1', { expiresAt: pastExpiry });
-      await store.registerTempChat('oc_active1', { expiresAt: futureExpiry });
-      await store.registerTempChat('oc_expired2', { expiresAt: pastExpiry });
+      const store = await createStoreWithRecords([
+        makeRecord({
+          chatId: 'oc_expired1',
+          expiresAt: new Date(Date.now() - 60_000).toISOString(),
+        }),
+        makeRecord({
+          chatId: 'oc_active1',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+        makeRecord({
+          chatId: 'oc_expired2',
+          expiresAt: new Date(Date.now() - 60_000).toISOString(),
+        }),
+      ]);
 
       const expired = await store.getExpiredTempChats();
       expect(expired).toHaveLength(2);
@@ -302,18 +284,14 @@ describe('ChatStore', () => {
 
   describe('initialization', () => {
     it('should load existing records from disk', async () => {
-      const record = {
+      const store = await createStoreWithRecords([{
         chatId: 'oc_existing',
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         creatorChatId: 'oc_original',
-      };
+      }]);
 
-      vi.mocked(fsPromises.readdir).mockResolvedValue(['oc_existing.json'] as any);
-      vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(record));
-
-      const freshStore = new ChatStore({ storeDir });
-      const chat = await freshStore.getTempChat('oc_existing');
+      const chat = await store.getTempChat('oc_existing');
       expect(chat).not.toBeNull();
       expect(chat!.chatId).toBe('oc_existing');
       expect(chat!.creatorChatId).toBe('oc_original');
@@ -322,27 +300,36 @@ describe('ChatStore', () => {
     it('should handle directory creation errors gracefully', async () => {
       vi.mocked(fsPromises.mkdir).mockRejectedValue(new Error('Permission denied'));
 
+      const store = new ChatStore({ storeDir });
       // Should not throw — continues without persistence
-      await store.registerTempChat('oc_test1');
-      const result = await store.getTempChat('oc_test1');
-      expect(result).not.toBeNull();
+      const chats = await store.listTempChats();
+      expect(chats).toEqual([]);
     });
 
     it('should load passiveMode from disk (Issue #2069)', async () => {
-      const record = {
+      const store = await createStoreWithRecords([{
         chatId: 'oc_passive_off',
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         passiveMode: false,
-      };
+      }]);
 
-      vi.mocked(fsPromises.readdir).mockResolvedValue(['oc_passive_off.json'] as any);
-      vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(record));
-
-      const freshStore = new ChatStore({ storeDir });
-      const chat = await freshStore.getTempChat('oc_passive_off');
+      const chat = await store.getTempChat('oc_passive_off');
       expect(chat).not.toBeNull();
       expect(chat!.passiveMode).toBe(false);
+    });
+
+    it('should load triggerMode from disk (Issue #2291)', async () => {
+      const store = await createStoreWithRecords([{
+        chatId: 'oc_trigger_always',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        triggerMode: 'always',
+      }]);
+
+      const chat = await store.getTempChat('oc_trigger_always');
+      expect(chat).not.toBeNull();
+      expect(chat!.triggerMode).toBe('always');
     });
   });
 });

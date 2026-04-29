@@ -195,7 +195,6 @@ export {
   type ChatStoreOptions,
   type TempChatRecord,
   type TempChatResponse,
-  type RegisterTempChatOptions,
   // Issue #2947: Bot group chat mapping
   BotChatMappingStore,
   makeMappingKey,
