@@ -350,15 +350,23 @@ export function setLogLevel(level: LogLevel): void {
 }
 
 /**
- * Check if a log level is enabled
+ * Check if a log level is enabled for the root logger.
+ *
+ * In Pino, higher numeric values indicate more severe levels:
+ *   trace=10, debug=20, info=30, warn=40, error=50, fatal=60
+ *
+ * A level is "enabled" when its numeric severity meets or exceeds the
+ * configured threshold (`logger.levelVal`). For example, if the logger
+ * is set to `warn` (40), then `warn` (40), `error` (50), and `fatal`
+ * (60) are all enabled, while `info` (30), `debug` (20), and `trace`
+ * (10) are suppressed.
  *
  * @param level - Log level to check
- * @returns true if the level is enabled
+ * @returns true if the level's severity meets or exceeds the configured threshold
  */
 export function isLevelEnabled(level: LogLevel): boolean {
   const logger = getRootLogger();
-  return logger.level === level ||
-    pino.levels.values[level] >= logger.levelVal;
+  return pino.levels.values[level] >= logger.levelVal;
 }
 
 /**
