@@ -104,6 +104,23 @@ describe('ChatAgent (primary-node)', () => {
     it('should have name "ChatAgent"', () => {
       expect(chatAgent.name).toBe('ChatAgent');
     });
+
+    it('should default sessionInactivityTimeoutMs to 0 (disabled, Issue #3066)', () => {
+      // The default should be 0 (disabled), not 300000 (5 minutes)
+      expect((chatAgent as any).sessionInactivityTimeoutMs).toBe(0);
+    });
+
+    it('should allow explicit sessionInactivityTimeoutMs override (Issue #3066)', () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_timeout_test',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+        sessionInactivityTimeoutMs: 300_000,
+      });
+      expect((agent as any).sessionInactivityTimeoutMs).toBe(300_000);
+    });
   });
 
   describe('getChatId', () => {
@@ -635,7 +652,7 @@ describe('ChatAgent - session inactivity timeout (Issue #2993)', () => {
       expect(sendMessage).not.toHaveBeenCalledWith('TIMEOUT');
     });
 
-    it('should not set a timer when timeout is disabled (0ms)', () => {
+    it('should not set a timer when timeout is disabled (0ms, the default)', () => {
       vi.useFakeTimers();
 
       const iterator = createMockIterator({ hang: true });
