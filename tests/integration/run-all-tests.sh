@@ -14,7 +14,7 @@
 #   ./tests/integration/run-all-tests.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout override (default: per-suite)
 #   --port PORT         REST API port (default: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
 #   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
@@ -29,11 +29,18 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
-TIMEOUT="${TIMEOUT:-60}"
 MAX_RETRIES="${MAX_RETRIES:-2}"
 INTER_SUITE_DELAY="${INTER_SUITE_DELAY:-5}"
 RETRY_INITIAL_DELAY="${RETRY_INITIAL_DELAY:-5}"
 RETRY_BACKOFF="${RETRY_BACKOFF:-2}"
+
+# Track whether timeout was explicitly provided (via --timeout arg or env var).
+# When not explicit, sub-scripts use their own per-suite defaults (e.g. 120s for
+# AI-heavy suites, 30s for basic suites).  See #3058.
+EXPLICIT_TIMEOUT=false
+if [ -n "${TIMEOUT+x}" ]; then
+    EXPLICIT_TIMEOUT=true
+fi
 
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
@@ -45,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --retries) MAX_RETRIES="$2"; shift 2 ;;
         --delay) INTER_SUITE_DELAY="$2"; shift 2 ;;
+        --timeout) EXPLICIT_TIMEOUT=true; shift 2 ;;
         --tag|--name) FILTER_ARGS+=("$1" "$2"); shift 2 ;;
         *) shift ;;
     esac
@@ -77,7 +85,11 @@ show_test_plan_body() {
     echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    if [ "$EXPLICIT_TIMEOUT" = true ]; then
+        echo "  - Timeout: ${TIMEOUT}s (overriding per-suite defaults)"
+    else
+        echo "  - Timeout: per-suite defaults (30s / 60s / 120s)"
+    fi
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s (rate limit avoidance)"
     echo "  - Retry Backoff: ${RETRY_INITIAL_DELAY}s × ${RETRY_BACKOFF}^attempt"
@@ -101,7 +113,14 @@ run_test_script() {
     local args=()
 
     args+=("--port" "$REST_PORT")
-    args+=("--timeout" "$TIMEOUT")
+    # Only override per-suite timeout when user explicitly specifies one.
+    # Each sub-script defines its own appropriate default:
+    #   - AI-heavy suites (use-case-2, mcp-tools, multimodal): 120s
+    #   - Basic suites (rest-channel, use-case-1): 30s
+    #   - Multi-turn (use-case-3): 60s
+    if [ "$EXPLICIT_TIMEOUT" = true ]; then
+        args+=("--timeout" "$TIMEOUT")
+    fi
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
@@ -178,7 +197,11 @@ main() {
 
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    if [ "$EXPLICIT_TIMEOUT" = true ]; then
+        echo "  - Timeout: ${TIMEOUT}s (overriding per-suite defaults)"
+    else
+        echo "  - Timeout: per-suite defaults (30s / 60s / 120s)"
+    fi
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s"
     echo ""
