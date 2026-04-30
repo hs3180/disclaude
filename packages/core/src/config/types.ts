@@ -40,6 +40,14 @@ export interface AgentConfig {
    * @see https://code.claude.com/docs/en/agent-teams
    */
   enableAgentTeams?: boolean;
+  /**
+   * SDK HTTP request timeout in milliseconds.
+   * Sets the ANTHROPIC_TIMEOUT environment variable for the SDK subprocess,
+   * preventing infinite hangs when the TCP connection to the API proxy stalls.
+   * Default: 300000 (5 minutes). Set to 0 to disable.
+   * @see Issue #2992
+   */
+  sdkTimeoutMs?: number;
 }
 
 /**

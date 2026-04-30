@@ -60,13 +60,15 @@ export function extractText(message: AgentMessage): string {
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
+ * @param sdkTimeoutMs - SDK HTTP request timeout in ms (Issue #2992, default: 300000)
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
   apiKey: string,
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
-  sdkDebug: boolean = true
+  sdkDebug: boolean = true,
+  sdkTimeoutMs?: number
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -103,6 +105,17 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+  }
+
+  // Issue #2992: Set HTTP timeout for SDK→API connections.
+  // Prevents infinite hang when the TCP connection to the API proxy (e.g., LiteLLM)
+  // stalls without closing. The default 5-minute timeout ensures that hung connections
+  // are aborted rather than blocking the session indefinitely.
+  // Users can override via ANTHROPIC_TIMEOUT env var (process.env takes precedence).
+  // Set to 0 to disable.
+  const effectiveTimeoutMs = sdkTimeoutMs ?? 300_000;
+  if (effectiveTimeoutMs > 0 && !env.ANTHROPIC_TIMEOUT) {
+    env.ANTHROPIC_TIMEOUT = String(effectiveTimeoutMs);
   }
 
   return env;
