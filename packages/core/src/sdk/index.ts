@@ -13,6 +13,7 @@
  * ├── types.ts                 # 统一类型定义
  * ├── interface.ts             # IAgentSDKProvider 接口
  * ├── factory.ts               # Provider 工厂
+ * ├── glm-auth-adapter.ts      # GLM auth header adapter (Issue #2916)
  * └── providers/
  *     ├── index.ts
  *     └── claude/              # Claude SDK 实现
@@ -134,3 +135,14 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// GLM Auth Adapter (Issue #2916)
+// ============================================================================
+
+export {
+  start as startGlmAuthAdapter,
+  stop as stopGlmAuthAdapter,
+  isRunning as isGlmAuthAdapterRunning,
+  getAdapterUrl as getGlmAuthAdapterUrl,
+} from './glm-auth-adapter.js';

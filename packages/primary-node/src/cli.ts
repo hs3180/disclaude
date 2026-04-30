@@ -26,6 +26,9 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  startGlmAuthAdapter,
+  stopGlmAuthAdapter,
+  setGlmAdapterUrl,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -167,6 +170,20 @@ async function main(): Promise<void> {
       { provider: agentConfig.apiBaseUrl ? 'glm' : 'anthropic', model: agentConfig.model },
       'Agent configuration loaded'
     );
+
+    // Issue #2916: Start GLM auth adapter when GLM provider is configured.
+    // The adapter transforms Authorization: Bearer → x-api-key header
+    // to fix 401 authentication failures with Claude Code CLI and GLM API.
+    if (agentConfig.provider === 'glm' && agentConfig.apiBaseUrl) {
+      try {
+        const adapterUrl = await startGlmAuthAdapter(agentConfig.apiBaseUrl);
+        setGlmAdapterUrl(adapterUrl);
+        logger.info({ adapterUrl, targetUrl: agentConfig.apiBaseUrl }, 'GLM auth adapter started');
+      } catch (adapterError) {
+        logger.error({ err: adapterError }, 'Failed to start GLM auth adapter');
+        // Non-fatal: continue without adapter (requests may fail with 401)
+      }
+    }
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error('Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.');
@@ -229,6 +246,8 @@ async function main(): Promise<void> {
     try {
       agentPool.disposeAll();
       await lifecycleManager.stopAll();
+      // Issue #2916: Stop GLM auth adapter
+      await stopGlmAuthAdapter();
       await primaryNode.stop();
       logger.info('Primary Node stopped');
       process.exit(0);

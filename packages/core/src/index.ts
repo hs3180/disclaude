@@ -45,6 +45,11 @@ export {
   clearProviderCache,
   isProviderAvailable,
   type ProviderType,
+  // GLM auth adapter (Issue #2916)
+  startGlmAuthAdapter,
+  stopGlmAuthAdapter,
+  isGlmAuthAdapterRunning,
+  getGlmAuthAdapterUrl,
 } from './sdk/index.js';
 
 // Export SDK types with Sdk prefix to avoid conflicts with extended types

@@ -46,6 +46,8 @@ export {
   getNodeBinDir,
   extractText,
   buildSdkEnv,
+  setGlmAdapterUrl,
+  getGlmAdapterUrl,
 } from './sdk.js';
 
 // Output Adapter (Issue #1040)

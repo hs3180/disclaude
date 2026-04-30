@@ -16,6 +16,45 @@ export function getNodeBinDir(): string {
   return execPath.substring(0, execPath.lastIndexOf('/'));
 }
 
+// ============================================================================
+// GLM Auth Adapter URL (Issue #2916)
+// ============================================================================
+
+/**
+ * Cached GLM auth adapter URL.
+ *
+ * When the GLM auth adapter is running, this stores its local URL
+ * (e.g., http://127.0.0.1:12345) so that `buildSdkEnv()` can use it
+ * as `ANTHROPIC_BASE_URL` instead of the direct GLM endpoint.
+ *
+ * The adapter transforms `Authorization: Bearer` → `x-api-key` header
+ * to fix GLM API 401 authentication failures with Claude Code CLI.
+ *
+ * Set via `setGlmAdapterUrl()` during service startup, cleared on shutdown.
+ */
+let glmAdapterUrl: string | undefined;
+
+/**
+ * Set the GLM auth adapter URL.
+ *
+ * Called during service startup after the adapter is started.
+ * Set to `undefined` to clear (e.g., during shutdown).
+ *
+ * @param url - The adapter URL (e.g., http://127.0.0.1:12345) or undefined
+ */
+export function setGlmAdapterUrl(url: string | undefined): void {
+  glmAdapterUrl = url;
+}
+
+/**
+ * Get the current GLM auth adapter URL (if set).
+ *
+ * @returns The adapter URL or undefined
+ */
+export function getGlmAdapterUrl(): string | undefined {
+  return glmAdapterUrl;
+}
+
 /**
  * Extract text from AgentMessage.
  * Handles both string content and array content with text blocks.
@@ -103,8 +142,10 @@ export function buildSdkEnv(
   delete env.CLAUDECODE;
 
   // Set base URL if provided (for GLM or custom endpoints)
+  // Issue #2916: When GLM auth adapter is running, route traffic through it
+  // to transform Authorization: Bearer → x-api-key header for GLM API compatibility
   if (apiBaseUrl) {
-    env.ANTHROPIC_BASE_URL = apiBaseUrl;
+    env.ANTHROPIC_BASE_URL = glmAdapterUrl || apiBaseUrl;
   }
 
   // Issue #2992: Set HTTP timeout for SDK→API connections.
