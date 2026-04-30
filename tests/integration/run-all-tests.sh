@@ -14,7 +14,7 @@
 #   ./tests/integration/run-all-tests.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout (default: per-suite, e.g. 30-120s)
 #   --port PORT         REST API port (default: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
 #   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
@@ -29,15 +29,29 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
-TIMEOUT="${TIMEOUT:-60}"
+# Per-suite default: each sub-script defines its own appropriate timeout
+# (e.g. mcp-tools-test.sh uses 120s, rest-channel-test.sh uses 30s).
+# We only pass --timeout to sub-scripts when the user explicitly sets one.
+_USER_TIMEOUT_SET=false
+TIMEOUT=""  # No default — sub-scripts use their own
 MAX_RETRIES="${MAX_RETRIES:-2}"
 INTER_SUITE_DELAY="${INTER_SUITE_DELAY:-5}"
 RETRY_INITIAL_DELAY="${RETRY_INITIAL_DELAY:-5}"
 RETRY_BACKOFF="${RETRY_BACKOFF:-2}"
 
+# Detect --timeout before parse_common_args consumes it
+for _arg in "$@"; do
+    if [ "$_arg" = "--timeout" ]; then
+        _USER_TIMEOUT_SET=true
+    fi
+done
+
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
 register_cleanup
+
+# Set a display-only timeout for the test plan output
+_DISPLAY_TIMEOUT="${TIMEOUT:-per-suite default}"
 
 # Additional args for tag/test filtering (passthrough to sub-scripts)
 FILTER_ARGS=()
@@ -77,7 +91,7 @@ show_test_plan_body() {
     echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    echo "  - Timeout: ${_DISPLAY_TIMEOUT}"
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s (rate limit avoidance)"
     echo "  - Retry Backoff: ${RETRY_INITIAL_DELAY}s × ${RETRY_BACKOFF}^attempt"
@@ -101,7 +115,11 @@ run_test_script() {
     local args=()
 
     args+=("--port" "$REST_PORT")
-    args+=("--timeout" "$TIMEOUT")
+    # Only pass --timeout if the user explicitly set one via CLI or env;
+    # otherwise let each sub-script use its own per-suite default
+    if [ "$_USER_TIMEOUT_SET" = true ] && [ -n "$TIMEOUT" ]; then
+        args+=("--timeout" "$TIMEOUT")
+    fi
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
@@ -178,7 +196,7 @@ main() {
 
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    echo "  - Timeout: ${_DISPLAY_TIMEOUT}"
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s"
     echo ""
