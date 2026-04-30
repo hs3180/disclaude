@@ -276,6 +276,24 @@ describe('adaptSDKMessage', () => {
       expect(result.metadata?.outputTokens).toBe(5000);
     });
 
+    it('should format success result with total_cost_usd (SDK field)', () => {
+      const message = {
+        type: 'result' as const,
+        subtype: 'success',
+        total_cost_usd: 0.0789,
+        usage: {
+          input_tokens: 8000,
+          output_tokens: 4000,
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('result');
+      expect(result.content).toContain('$0.0789');
+      expect(result.content).toContain('12.0k');
+      expect(result.metadata?.costUsd).toBe(0.0789);
+    });
+
     it('should format success result without usage', () => {
       const message = {
         type: 'result' as const,

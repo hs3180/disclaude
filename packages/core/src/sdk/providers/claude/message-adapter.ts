@@ -39,7 +39,12 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      const content = apiMessage.content as BetaContentBlock[];
+      // apiMessage.content 已由上方 Array.isArray 守卫确认为数组。
+      // TypeScript 通过 switch 将 message 收窄为 SDKAssistantMessage，
+      // 因此 apiMessage (BetaMessage) 的 content 类型为 Array<BetaContentBlock>。
+      // Array.isArray() 返回类型为 `x is any[]`，丢失了元素类型信息，
+      // 这里使用类型注解（非 as 断言）恢复精确类型。
+      const { content }: { content: BetaContentBlock[] } = apiMessage;
 
       // 提取工具使用块 — BetaContentBlock 是可辨识联合类型，
       // block.type === 'tool_use' 时 TypeScript 自动收窄为 BetaToolUseBlock
@@ -82,9 +87,13 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
     }
 
     case 'tool_progress': {
-      if ('tool_name' in message && 'elapsed_time_seconds' in message) {
-        const toolName = message.tool_name as string;
-        const elapsed = message.elapsed_time_seconds as number;
+      // TypeScript 通过 switch 将 message 收窄为 SDKToolProgressMessage，
+      // tool_name (string) 和 elapsed_time_seconds (number) 已有明确类型。
+      // 保留属性守卫以防御运行时数据与 SDK 类型不一致的情况。
+      if (message.tool_name !== undefined && message.tool_name !== null
+          && message.elapsed_time_seconds !== undefined && message.elapsed_time_seconds !== null) {
+        const toolName = message.tool_name;
+        const elapsed = message.elapsed_time_seconds;
         metadata.toolName = toolName;
         metadata.elapsedMs = elapsed * 1000;
         return {
@@ -104,10 +113,13 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
     }
 
     case 'tool_use_summary': {
-      if ('summary' in message) {
+      // TypeScript 通过 switch 将 message 收窄为 SDKToolUseSummaryMessage，
+      // summary 字段类型为 string，无需类型断言。
+      // 保留属性守卫以防御运行时数据与 SDK 类型不一致的情况。
+      if (message.summary !== undefined && message.summary !== null) {
         return {
           type: 'tool_result',
-          content: `✓ ${message.summary as string}`,
+          content: `✓ ${message.summary}`,
           role: 'assistant',
           metadata,
           raw: message,
@@ -123,30 +135,37 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
 
     case 'result': {
       if (message.subtype === 'success') {
+        // TypeScript 通过 subtype === 'success' 将 message 收窄为 SDKResultSuccess。
+        // SDKResultSuccess 包含 usage: NonNullableUsage 和 total_cost_usd: number。
         let statsText = '✅ Complete';
 
         if ('usage' in message && message.usage) {
-          const usage = message.usage as {
-            total_cost?: number;
-            total_tokens?: number;
-            input_tokens?: number;
-            output_tokens?: number;
-          };
+          const { usage } = message;
 
           const parts: string[] = [];
 
-          if (usage.total_cost !== undefined) {
-            metadata.costUsd = usage.total_cost;
-            parts.push(`Cost: $${usage.total_cost.toFixed(4)}`);
+          // SDKResultSuccess.total_cost_usd 是 SDK 标准字段；
+          // 部分运行时数据可能将 cost 放在 usage.total_cost 中（非 SDK 类型定义）。
+          // 使用运行时检查优先读取 total_cost_usd，回退到 usage.total_cost。
+          const costUsd = message.total_cost_usd
+            ?? ('total_cost' in usage ? usage.total_cost as number : undefined);
+          if (costUsd !== undefined && costUsd > 0) {
+            metadata.costUsd = costUsd;
+            parts.push(`Cost: $${costUsd.toFixed(4)}`);
           }
-          if (usage.total_tokens !== undefined) {
-            parts.push(`Tokens: ${(usage.total_tokens / 1000).toFixed(1)}k`);
+
+          // NonNullableUsage 提供 input_tokens 和 output_tokens (number 类型)
+          const inputTokens = usage.input_tokens as number | undefined;
+          const outputTokens = usage.output_tokens as number | undefined;
+          const totalTokens = (inputTokens ?? 0) + (outputTokens ?? 0);
+          if (totalTokens > 0) {
+            parts.push(`Tokens: ${(totalTokens / 1000).toFixed(1)}k`);
           }
-          if (usage.input_tokens !== undefined) {
-            metadata.inputTokens = usage.input_tokens;
+          if (inputTokens !== undefined) {
+            metadata.inputTokens = inputTokens;
           }
-          if (usage.output_tokens !== undefined) {
-            metadata.outputTokens = usage.output_tokens;
+          if (outputTokens !== undefined) {
+            metadata.outputTokens = outputTokens;
           }
 
           if (parts.length > 0) {
@@ -163,11 +182,12 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
+      // SDKResultError.subtype 包含 'error_during_execution' 等多种错误类型，
+      // errors 字段类型为 string[]，无需类型断言。
       if (message.subtype === 'error_during_execution' && 'errors' in message) {
-        const errors = message.errors as string[];
         return {
           type: 'error',
-          content: `❌ Error: ${errors.join(', ')}`,
+          content: `❌ Error: ${message.errors.join(', ')}`,
           role: 'assistant',
           metadata,
           raw: message,
