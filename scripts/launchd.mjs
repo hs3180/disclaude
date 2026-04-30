@@ -37,12 +37,17 @@ const PLIST_FILENAME = `${LABEL}.plist`;
 const LAUNCHAGENTS_DIR = resolve(homedir(), 'Library/LaunchAgents');
 const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
 
+// Issue #2934: Log directory moved from /tmp to ~/Library/Logs/disclaude
+// for security (restrictive permissions) and pino-roll log rotation support.
+// Application logs go through pino file transport with rotation;
+// only stderr (for uncaught Node.js crashes) uses launchd's StandardErrorPath.
+const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
+const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
+const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
 const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
-
-const STDOUT_LOG = '/tmp/disclaude-stdout.log';
-const STDERR_LOG = '/tmp/disclaude-stderr.log';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,6 +77,18 @@ function ensureLaunchAgentsDir() {
   }
 }
 
+/**
+ * Issue #2934: Ensure log directory exists with restrictive permissions.
+ * ~/Library/Logs/disclaude with 0o700 prevents global readability
+ * (security concern from Issue #2898).
+ */
+function ensureLogDir() {
+  if (!existsSync(LOG_DIR)) {
+    mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+    console.log(`Log directory created: ${LOG_DIR}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plist generation
 // ---------------------------------------------------------------------------
@@ -79,6 +96,9 @@ function ensureLaunchAgentsDir() {
 function generatePlist() {
   const nodePath = getNodePath();
 
+  // Issue #2934: Removed StandardOutPath — application logs go through
+  // pino file transport with pino-roll rotation (triggered by LOG_TO_FILE env var).
+  // StandardErrorPath is kept for uncaught Node.js crash diagnostics.
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -102,9 +122,6 @@ function generatePlist() {
   <key>KeepAlive</key>
   <true/>
 
-  <key>StandardOutPath</key>
-  <string>${STDOUT_LOG}</string>
-
   <key>StandardErrorPath</key>
   <string>${STDERR_LOG}</string>
 
@@ -116,19 +133,24 @@ function generatePlist() {
     <string>${homedir()}</string>
     <key>NODE_ENV</key>
     <string>production</string>
+    <key>LOG_TO_FILE</key>
+    <string>true</string>
+    <key>LOG_DIR</key>
+    <string>${LOG_DIR}</string>
   </dict>
 </dict>
 </plist>
 `;
 
   ensureLaunchAgentsDir();
+  ensureLogDir();
   writeFileSync(PLIST_PATH, plist, 'utf-8');
   console.log(`Plist generated: ${PLIST_PATH}`);
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${CLI_ENTRY}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
-  console.log(`  Stdout: ${STDOUT_LOG}`);
-  console.log(`  Stderr: ${STDERR_LOG}`);
+  console.log(`  App log: ${APP_LOG} (pino-roll rotated)`);
+  console.log(`  Stderr: ${STDERR_LOG} (launchd crash log)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,9 +225,9 @@ function cmdRestart() {
 function cmdLogs() {
   const lines = process.argv.find(a => a.startsWith('--lines='));
   const n = lines ? lines.split('=')[1] : '100';
-  console.log(`=== stdout (last ${n} lines) ===`);
+  console.log(`=== app log (last ${n} lines) ===`);
   try {
-    run(`tail -n ${n} ${STDOUT_LOG}`, { silent: true });
+    run(`tail -n ${n} ${APP_LOG}`, { silent: true });
   } catch {}
   console.log(`\n=== stderr (last ${n} lines) ===`);
   try {
@@ -218,8 +240,8 @@ function cmdStatus() {
   if (result) {
     console.log(result.trim());
     console.log(`\nPlist: ${PLIST_PATH}`);
-    console.log(`Stdout: ${STDOUT_LOG}`);
-    console.log(`Stderr: ${STDERR_LOG}`);
+    console.log(`App log: ${APP_LOG} (pino-roll rotated)`);
+    console.log(`Stderr: ${STDERR_LOG} (launchd crash log)`);
   } else {
     console.log('Service is NOT loaded.');
     console.log(`Plist: ${PLIST_PATH} (${existsSync(PLIST_PATH) ? 'exists' : 'not found'})`);
