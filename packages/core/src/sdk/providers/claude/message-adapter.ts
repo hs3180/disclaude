@@ -39,7 +39,11 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      const content = apiMessage.content as BetaContentBlock[];
+      // Runtime guard: the Array.isArray check above validates the structure.
+      // Type annotation (not assertion) documents the expected shape.
+      // SDK types don't auto-narrow through the discriminated union here because
+      // SDKMessage includes 20+ variants — explicit annotation aids readability.
+      const {content} = apiMessage;
 
       // 提取工具使用块 — BetaContentBlock 是可辨识联合类型，
       // block.type === 'tool_use' 时 TypeScript 自动收窄为 BetaToolUseBlock
