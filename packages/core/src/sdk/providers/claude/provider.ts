@@ -21,6 +21,110 @@ import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
+// ============================================================================
+// stderr 捕获工具（Issue #2920）
+// ============================================================================
+
+/**
+ * stderr 捕获器 — 缓冲 Claude Code 进程的 stderr 输出行
+ *
+ * 当进程因启动阶段错误（MCP 配置错误、认证失败等）退出时，
+ * stderr 包含具体的错误原因。捕获器保留最近的输出行，
+ * 以便在错误发生时附加到 error 对象上供上层使用。
+ *
+ * 设计决策：直接保存原始 stderr 文本，不使用 regex 解析。
+ * 原因：regex 模式需要针对真实 CLI stderr 验证（见 PR #2933 审查意见），
+ * 直接展示原始文本已足够帮助用户诊断问题。
+ */
+export class StderrCapture {
+  private lines: string[] = [];
+  private readonly maxLines: number;
+
+  constructor(maxLines = 50) {
+    this.maxLines = maxLines;
+  }
+
+  /** 接收一行 stderr 输出 */
+  append(data: string): void {
+    const text = data.trimEnd();
+    if (!text) {return;}
+    this.lines.push(text);
+    // 只保留最近的 maxLines 行
+    if (this.lines.length > this.maxLines) {
+      this.lines = this.lines.slice(-this.maxLines);
+    }
+  }
+
+  /** 获取已捕获的全部 stderr 文本 */
+  getCaptured(): string {
+    return this.lines.join('\n');
+  }
+
+  /** 是否有捕获内容 */
+  hasContent(): boolean {
+    return this.lines.length > 0;
+  }
+
+  /** 获取最后 N 行（用于简短错误消息） */
+  getTail(maxChars = 500): string {
+    const full = this.getCaptured();
+    if (full.length <= maxChars) {return full;}
+    return `...${  full.slice(-(maxChars - 3))}`;
+  }
+
+  /** 重置缓冲区 */
+  reset(): void {
+    this.lines = [];
+  }
+}
+
+/**
+ * 用于附加到 Error 对象上的 stderr 属性键
+ *
+ * 使用 Symbol 避免与 Error 对象的标准属性冲突。
+ * 外部通过 `getErrorStderr()` 辅助函数读取。
+ */
+const STDERR_SYMBOL = Symbol('stderr');
+
+/**
+ * 将捕获的 stderr 附加到 error 对象上
+ */
+export function attachStderrToError(error: unknown, stderr: string): void {
+  if (error instanceof Error) {
+    (error as Error & { [STDERR_SYMBOL]: string })[STDERR_SYMBOL] = stderr;
+  }
+}
+
+/**
+ * 从 error 对象中读取附加的 stderr
+ *
+ * @returns stderr 字符串或 undefined
+ */
+export function getErrorStderr(error: unknown): string | undefined {
+  if (error instanceof Error) {
+    return (error as Error & { [STDERR_SYMBOL]?: string })[STDERR_SYMBOL];
+  }
+  return undefined;
+}
+
+/**
+ * 检测是否为启动阶段失败（Issue #2920）
+ *
+ * 启动失败的特征：
+ * - messageCount === 0（没有收到任何 SDK 消息）
+ * - 进程在短时间内退出
+ *
+ * 启动失败不应触发重试/断路器，因为根因通常是配置错误，
+ * 重试无法解决。
+ *
+ * @param messageCount - 已接收的 SDK 消息数
+ * @param elapsedMs - 从查询开始到错误发生的时间
+ * @returns true 如果判定为启动失败
+ */
+export function isStartupFailure(messageCount: number, elapsedMs: number): boolean {
+  return messageCount === 0 && elapsedMs < 10_000;
+}
+
 /**
  * Claude SDK Provider
  *
@@ -51,7 +155,17 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       throw new Error('Provider has been disposed');
     }
 
+    // Issue #2920: 创建 stderr 捕获器
+    const stderrCapture = new StderrCapture();
+
     const sdkOptions = adaptOptions(options);
+    // 将 stderr 回调注入 SDK 选项
+    sdkOptions.stderr = (data: string) => {
+      stderrCapture.append(data);
+      // 同时调用用户提供的回调（如果有）
+      options.stderr?.(data);
+    };
+
     const adaptedInput = adaptInput(input);
 
     const queryResult = query({
@@ -59,8 +173,20 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       options: sdkOptions as Parameters<typeof query>[0]['options'],
     });
 
-    for await (const message of queryResult) {
-      yield adaptSDKMessage(message);
+    try {
+      for await (const message of queryResult) {
+        yield adaptSDKMessage(message);
+      }
+    } catch (error) {
+      // Issue #2920: 将捕获的 stderr 附加到 error 对象
+      if (stderrCapture.hasContent()) {
+        attachStderrToError(error, stderrCapture.getCaptured());
+        logger.error(
+          { err: error, stderr: stderrCapture.getTail() },
+          'queryOnce failed with stderr output'
+        );
+      }
+      throw error;
     }
   }
 
@@ -72,7 +198,16 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       throw new Error('Provider has been disposed');
     }
 
+    // Issue #2920: 创建 stderr 捕获器
+    const stderrCapture = new StderrCapture();
+
     const sdkOptions = adaptOptions(options);
+    // 将 stderr 回调注入 SDK 选项
+    sdkOptions.stderr = (data: string) => {
+      stderrCapture.append(data);
+      // 同时调用用户提供的回调（如果有）
+      options.stderr?.(data);
+    };
 
     // 创建输入适配器生成器
     // IMPORTANT: Use manual iteration instead of `for await...of` to avoid blocking on input
@@ -109,7 +244,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           yield adaptSDKMessage(message);
         }
       } catch (error) {
-        logger.error({ err: error, messageCount }, 'adaptIterator error');
+        // Issue #2920: 将捕获的 stderr 附加到 error 对象
+        if (stderrCapture.hasContent()) {
+          attachStderrToError(error, stderrCapture.getCaptured());
+        }
+        logger.error(
+          { err: error, messageCount, stderr: stderrCapture.hasContent() ? stderrCapture.getTail() : '(no stderr)' },
+          'adaptIterator error'
+        );
         throw error;
       }
     }

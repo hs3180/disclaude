@@ -31,6 +31,10 @@ export * from './config/index.js';
 export {
   // Provider
   ClaudeSDKProvider,
+  // stderr capture utilities (Issue #2920)
+  StderrCapture,
+  getErrorStderr,
+  isStartupFailure,
   // Factory functions
   getProvider,
   registerProvider,

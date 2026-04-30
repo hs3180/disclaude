@@ -105,6 +105,24 @@ describe('adaptOptions', () => {
       env: { PORT: '3000' },
     });
   });
+
+  it('should pass through stderr callback (Issue #2920)', () => {
+    const stderrFn = (_data: string) => { /* test callback */ };
+    const result = adaptOptions({
+      settingSources: ['project'],
+      stderr: stderrFn,
+    });
+
+    expect(result.stderr).toBe(stderrFn);
+  });
+
+  it('should not include stderr when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.stderr).toBeUndefined();
+  });
 });
 
 describe('adaptInput', () => {

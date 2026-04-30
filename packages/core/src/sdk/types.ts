@@ -192,6 +192,13 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * stderr 输出回调（Issue #2920）
+   *
+   * 用于捕获 Claude Code 进程的 stderr 输出，辅助诊断启动失败原因。
+   * Provider 层将其传递给 SDK 的 stderr 选项。
+   */
+  stderr?: (data: string) => void;
 }
 
 // ============================================================================
