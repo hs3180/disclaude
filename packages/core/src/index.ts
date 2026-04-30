@@ -94,8 +94,6 @@ export {
   type BaseAgentConfig,
   type ChatAgentConfig,
   type AgentConfig,
-  /** @deprecated Use ChatAgent directly (Issue #2941) */
-  type AgentFactoryInterface,
   // Type guards
   isChatAgent,
   isDisposable,
