@@ -17,6 +17,7 @@ import type {
 } from '../../types.js';
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 import { adaptOptions } from './options-adapter.js';
+import { ThirdPartyApiProxy, isThirdPartyEndpoint } from './third-party-proxy.js';
 import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('ClaudeSDKProvider');
@@ -125,6 +126,84 @@ export function isStartupFailure(messageCount: number, elapsedMs: number): boole
   return messageCount === 0 && elapsedMs < 10_000;
 }
 
+// ============================================================================
+// Third-party proxy manager (Issue #2948)
+// ============================================================================
+
+/**
+ * Proxy manager — caches running proxy instances per target URL.
+ *
+ * The proxy is started asynchronously during agent initialization (e.g., ChatAgent.start()),
+ * and the proxy URL is cached for synchronous use in queryStream().
+ */
+const activeProxies = new Map<string, {
+  proxy: ThirdPartyApiProxy;
+  url: string;
+}>();
+
+/**
+ * Ensure a third-party compatibility proxy is running for the given API base URL.
+ *
+ * This method is async and should be called during agent initialization,
+ * before any queries are made. The proxy URL is cached for subsequent
+ * synchronous use in queryStream().
+ *
+ * @param apiBaseUrl - The original third-party API base URL
+ * @returns The proxy URL (e.g., http://127.0.0.1:12345) or undefined if not needed
+ */
+export async function ensureThirdPartyProxy(apiBaseUrl: string | undefined): Promise<string | undefined> {
+  if (!apiBaseUrl || !isThirdPartyEndpoint(apiBaseUrl)) {
+    return undefined;
+  }
+
+  // Check cache
+  const cached = activeProxies.get(apiBaseUrl);
+  if (cached) {
+    return cached.url;
+  }
+
+  // Start new proxy
+  const proxy = new ThirdPartyApiProxy({ targetBaseUrl: apiBaseUrl });
+  const proxyUrl = await proxy.start();
+
+  activeProxies.set(apiBaseUrl, { proxy, url: proxyUrl });
+
+  logger.info(
+    { targetBaseUrl: apiBaseUrl, proxyUrl },
+    'Third-party API compatibility proxy started'
+  );
+
+  return proxyUrl;
+}
+
+/**
+ * Get cached proxy URL for a given API base URL (synchronous).
+ *
+ * Returns undefined if no proxy is running for the URL.
+ */
+function getCachedProxyUrl(apiBaseUrl: string): string | undefined {
+  return activeProxies.get(apiBaseUrl)?.url;
+}
+
+/**
+ * Stop all running third-party proxies.
+ */
+export async function stopAllProxies(): Promise<void> {
+  const entries = Array.from(activeProxies.entries());
+  activeProxies.clear();
+
+  await Promise.all(
+    entries.map(async ([targetUrl, { proxy }]) => {
+      try {
+        await proxy.stop();
+        logger.info({ targetUrl }, 'Third-party proxy stopped');
+      } catch (error) {
+        logger.warn({ err: error, targetUrl }, 'Error stopping proxy');
+      }
+    })
+  );
+}
+
 /**
  * Claude SDK Provider
  *
@@ -159,6 +238,33 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const stderrCapture = new StderrCapture();
 
     const sdkOptions = adaptOptions(options);
+
+    // Issue #2948: If a third-party proxy is cached, replace apiBaseUrl
+    const originalBaseUrl = options.env?.ANTHROPIC_BASE_URL;
+    if (originalBaseUrl && isThirdPartyEndpoint(originalBaseUrl)) {
+      const proxyUrl = getCachedProxyUrl(originalBaseUrl);
+      if (proxyUrl) {
+        sdkOptions.apiBaseUrl = proxyUrl;
+        if (sdkOptions.env) {
+          (sdkOptions.env as Record<string, unknown>).ANTHROPIC_BASE_URL = proxyUrl;
+        }
+        logger.debug(
+          { originalBaseUrl, proxyUrl },
+          'Using third-party proxy for API requests'
+        );
+      } else {
+        // Proxy not started yet — log warning
+        // This happens if ensureThirdPartyProxy() wasn't called during init.
+        // The query will still work, but built-in tools may not function
+        // correctly with the third-party endpoint.
+        logger.warn(
+          { apiBaseUrl: originalBaseUrl },
+          'Third-party endpoint detected but proxy not started. '
+          + 'Call ensureThirdPartyProxy() during agent initialization for full tool support.'
+        );
+      }
+    }
+
     // 将 stderr 回调注入 SDK 选项
     sdkOptions.stderr = (data: string) => {
       stderrCapture.append(data);
@@ -261,5 +367,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
   dispose(): void {
     this.disposed = true;
+    // Note: Proxies are stopped via stopAllProxies(), not per-provider dispose,
+    // because proxies are shared across all provider instances.
   }
 }

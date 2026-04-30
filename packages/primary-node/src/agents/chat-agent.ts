@@ -296,7 +296,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   start(): Promise<void> {
     this.logger.debug({ chatId: this.boundChatId }, 'ChatAgent start() called - session is created on-demand');
-    return Promise.resolve();
+    // Issue #2948: Initialize third-party API compatibility proxy
+    // for non-Anthropic endpoints (e.g., GLM) to support built-in tools.
+    return this.initializeThirdPartyProxy().then(() => {});
   }
 
   /**

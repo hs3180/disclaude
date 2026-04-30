@@ -19,6 +19,7 @@ import {
   type StreamingUserMessage,
   type QueryHandle,
   type AgentMessage as SdkAgentMessage,
+  ensureThirdPartyProxy,
 } from '../sdk/index.js';
 import { buildSdkEnv } from '../utils/sdk.js';
 import { createLogger, type Logger } from '../utils/logger.js';
@@ -126,6 +127,42 @@ export abstract class BaseAgent implements Disposable {
 
     // Get SDK provider instance
     this.sdkProvider = getProvider();
+  }
+
+  /**
+   * Initialize third-party API compatibility proxy (Issue #2948).
+   *
+   * When using a non-Anthropic API endpoint (e.g., GLM), starts a local
+   * proxy that converts tool definitions from system prompt XML format
+   * to the `tools` API parameter, ensuring compatibility with third-party
+   * Claude-compatible endpoints.
+   *
+   * This method is async and should be called during agent initialization
+   * (e.g., in ChatAgent.start()).
+   *
+   * @returns The proxy URL, or undefined if no proxy is needed
+   */
+  protected async initializeThirdPartyProxy(): Promise<string | undefined> {
+    if (!this.apiBaseUrl) {
+      return undefined;
+    }
+
+    try {
+      const proxyUrl = await ensureThirdPartyProxy(this.apiBaseUrl);
+      if (proxyUrl) {
+        this.logger.info(
+          { apiBaseUrl: this.apiBaseUrl, proxyUrl },
+          'Third-party proxy initialized for tool compatibility'
+        );
+      }
+      return proxyUrl;
+    } catch (error) {
+      this.logger.error(
+        { err: error, apiBaseUrl: this.apiBaseUrl },
+        'Failed to initialize third-party proxy — tools may not work correctly'
+      );
+      return undefined;
+    }
   }
 
   /**

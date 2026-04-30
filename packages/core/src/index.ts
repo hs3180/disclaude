@@ -35,6 +35,9 @@ export {
   StderrCapture,
   getErrorStderr,
   isStartupFailure,
+  // Third-party API compatibility proxy (Issue #2948)
+  ensureThirdPartyProxy,
+  stopAllProxies,
   // Factory functions
   getProvider,
   registerProvider,
