@@ -155,7 +155,13 @@ export abstract class BaseAgent implements Disposable {
     const options: AgentQueryOptions = {
       cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
-      settingSources: ['project'],
+      // 使用 Claude Code preset 确保 vibe coding 识别合规 (Issue #2890)
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+      tools: { type: 'preset', preset: 'claude_code' },
+      // 加载 user + project + local 设置，确保 Skills/Commands/Memory 可用
+      settingSources: ['user', 'project', 'local'],
+      // 启用流式部分消息以支持实时输出
+      includePartialMessages: true,
     };
 
     // Add allowed/disallowed tools

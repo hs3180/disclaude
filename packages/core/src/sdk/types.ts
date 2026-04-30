@@ -172,7 +172,26 @@ export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
 // ============================================================================
 
 /** 权限模式 */
-export type PermissionMode = 'default' | 'bypassPermissions';
+export type PermissionMode = 'default' | 'bypassPermissions' | 'acceptEdits' | 'plan' | 'dontAsk';
+
+/** 设置来源类型（与 SDK SettingSource 一致） */
+export type SettingSource = 'user' | 'project' | 'local';
+
+/** Claude Code preset 类型 */
+export interface ClaudeCodePreset {
+  type: 'preset';
+  preset: 'claude_code';
+}
+
+/** 系统提示词配置 */
+export type SystemPromptConfig = string | ClaudeCodePreset | {
+  type: 'preset';
+  preset: 'claude_code';
+  append: string;
+};
+
+/** 工具配置 */
+export type ToolsConfig = string[] | ClaudeCodePreset;
 
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
@@ -190,8 +209,31 @@ export interface AgentQueryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   /** 环境变量 */
   env?: Record<string, string | undefined>;
-  /** 设置来源（必填） */
-  settingSources: string[];
+  /**
+   * 设置来源（必填）
+   * - 'user' — 全局用户设置 (~/.claude/settings.json)
+   * - 'project' — 项目设置 (.claude/settings.json)，加载 CLAUDE.md
+   * - 'local' — 本地设置 (.claude/settings.local.json)
+   */
+  settingSources: SettingSource[];
+  /**
+   * 系统提示词配置
+   * - `string` — 自定义系统提示词
+   * - `{ type: 'preset', preset: 'claude_code' }` — 使用 Claude Code 默认系统提示词
+   * - `{ type: 'preset', preset: 'claude_code', append: '...' }` — 在默认提示词后追加指令
+   */
+  systemPrompt?: SystemPromptConfig;
+  /**
+   * 工具配置
+   * - `string[]` — 指定工具名称列表
+   * - `{ type: 'preset', preset: 'claude_code' }` — 使用 Claude Code 默认工具集
+   */
+  tools?: ToolsConfig;
+  /**
+   * 是否在输出中包含部分/流式消息事件
+   * 启用后会收到 SDKPartialAssistantMessage 事件
+   */
+  includePartialMessages?: boolean;
 }
 
 // ============================================================================

@@ -38,6 +38,84 @@ describe('adaptOptions', () => {
     });
 
     expect(result.permissionMode).toBe('bypassPermissions');
+    // bypassPermissions 模式需要同时设置 allowDangerouslySkipPermissions
+    expect(result.allowDangerouslySkipPermissions).toBe(true);
+  });
+
+  it('should not set allowDangerouslySkipPermissions for non-bypass mode', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      permissionMode: 'default',
+    });
+
+    expect(result.permissionMode).toBe('default');
+    expect(result.allowDangerouslySkipPermissions).toBeUndefined();
+  });
+
+  it('should pass through systemPrompt preset configuration', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+    });
+
+    expect(result.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+  });
+
+  it('should pass through systemPrompt preset with append', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Extra instructions' },
+    });
+
+    expect(result.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: 'Extra instructions' });
+  });
+
+  it('should pass through tools preset configuration', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      tools: { type: 'preset', preset: 'claude_code' },
+    });
+
+    expect(result.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+  });
+
+  it('should pass through includePartialMessages', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      includePartialMessages: true,
+    });
+
+    expect(result.includePartialMessages).toBe(true);
+  });
+
+  it('should pass through includePartialMessages false', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      includePartialMessages: false,
+    });
+
+    expect(result.includePartialMessages).toBe(false);
+  });
+
+  it('should support full preset configuration', () => {
+    const result = adaptOptions({
+      settingSources: ['user', 'project', 'local'],
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+      tools: { type: 'preset', preset: 'claude_code' },
+      includePartialMessages: true,
+      permissionMode: 'bypassPermissions',
+      cwd: '/workspace',
+      model: 'claude-sonnet-4-20250514',
+    });
+
+    expect(result.settingSources).toEqual(['user', 'project', 'local']);
+    expect(result.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+    expect(result.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+    expect(result.includePartialMessages).toBe(true);
+    expect(result.permissionMode).toBe('bypassPermissions');
+    expect(result.allowDangerouslySkipPermissions).toBe(true);
+    expect(result.cwd).toBe('/workspace');
+    expect(result.model).toBe('claude-sonnet-4-20250514');
   });
 
   it('should pass through allowedTools and disallowedTools', () => {

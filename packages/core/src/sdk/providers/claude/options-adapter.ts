@@ -28,18 +28,37 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 权限模式 - 直接传递，使用原始 SDK 格式
   if (options.permissionMode) {
     sdkOptions.permissionMode = options.permissionMode;
+    // bypassPermissions 模式需要同时设置 allowDangerouslySkipPermissions
+    if (options.permissionMode === 'bypassPermissions') {
+      sdkOptions.allowDangerouslySkipPermissions = true;
+    }
   }
 
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
 
-  // 工具配置
+  // 系统提示词配置 — 支持 preset 模式
+  if (options.systemPrompt) {
+    sdkOptions.systemPrompt = options.systemPrompt;
+  }
+
+  // 工具配置 — 支持 preset 模式
+  if (options.tools) {
+    sdkOptions.tools = options.tools;
+  }
+
+  // 允许使用的工具列表
   if (options.allowedTools) {
     sdkOptions.allowedTools = options.allowedTools;
   }
 
   if (options.disallowedTools) {
     sdkOptions.disallowedTools = options.disallowedTools;
+  }
+
+  // 流式部分消息
+  if (options.includePartialMessages !== undefined) {
+    sdkOptions.includePartialMessages = options.includePartialMessages;
   }
 
   // MCP 服务器

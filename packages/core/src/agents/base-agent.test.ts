@@ -262,7 +262,10 @@ describe('BaseAgent', () => {
     const defaultOptions = {
       cwd: '/workspace',
       permissionMode: 'bypassPermissions' as const,
-      settingSources: ['project'],
+      systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
+      tools: { type: 'preset' as const, preset: 'claude_code' as const },
+      settingSources: ['user', 'project', 'local'] as ('user' | 'project' | 'local')[],
+      includePartialMessages: true,
     };
 
     it('should yield parsed messages from SDK provider for string input', async () => {
@@ -375,7 +378,10 @@ describe('BaseAgent', () => {
     const defaultOptions = {
       cwd: '/workspace',
       permissionMode: 'bypassPermissions' as const,
-      settingSources: ['project'],
+      systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const },
+      tools: { type: 'preset' as const, preset: 'claude_code' as const },
+      settingSources: ['user', 'project', 'local'] as ('user' | 'project' | 'local')[],
+      includePartialMessages: true,
     };
 
     async function* createMockInput(messages: StreamingUserMessage[]): AsyncGenerator<StreamingUserMessage> {
@@ -629,6 +635,16 @@ describe('BaseAgent', () => {
       const noModelAgent = new TestAgent({ apiKey: 'key', model: '', provider: 'anthropic' });
       const options = noModelAgent.testCreateSdkOptions();
       expect(options.model).toBeUndefined();
+    });
+
+    it('should use Claude Code preset for systemPrompt and tools (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      // Verify preset configuration for vibe coding compliance
+      expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+      expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+      expect(options.settingSources).toEqual(['user', 'project', 'local']);
+      expect(options.includePartialMessages).toBe(true);
     });
   });
 });

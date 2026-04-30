@@ -90,6 +90,10 @@ export type {
   // 查询选项
   AgentQueryOptions,
   PermissionMode,
+  SettingSource,
+  ClaudeCodePreset,
+  SystemPromptConfig,
+  ToolsConfig,
 
   // 查询结果
   QueryHandle,
