@@ -13,6 +13,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock all @disclaude/core dependencies
+// Issue #2920: stderr symbol key for attaching stderr to Error objects
+const STDERR_SYMBOL = Symbol('stderr');
+
 vi.mock('@disclaude/core', () => ({
   Config: {
     getSessionRestoreConfig: vi.fn(() => ({
@@ -55,6 +58,16 @@ vi.mock('@disclaude/core', () => ({
     deleteThreadRoot: vi.fn(),
     clearAll: vi.fn(),
   })),
+  // Issue #2920: Real implementations for stderr utilities
+  getErrorStderr: (error: unknown): string | undefined => {
+    if (error instanceof Error) {
+      return (error as any)[STDERR_SYMBOL];
+    }
+    return undefined;
+  },
+  isStartupFailure: (messageCount: number, elapsedMs: number): boolean => {
+    return messageCount === 0 && elapsedMs < 10_000;
+  },
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({
@@ -198,6 +211,154 @@ describe('ChatAgent (primary-node)', () => {
       await expect(
         chatAgent.executeOnce('oc_test_chat', 'hello', 'msg_1')
       ).resolves.toBeUndefined();
+    });
+
+    it('should show "Agent 启动失败" for startup failures (Issue #2920)', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_fail',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Create error with stderr attached
+      const startupError = new Error('Claude Code process exited with code 1');
+      (startupError as any)[STDERR_SYMBOL] = 'Error: MCP server "test" failed to initialize\ncommand is empty';
+
+      // Override createQueryStream to throw immediately (0 messages, fast)
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          throw startupError;
+        })(),
+      });
+
+      await expect(
+        agent.executeOnce('oc_startup_fail', 'hello', 'msg_1')
+      ).rejects.toThrow('Claude Code process exited with code 1');
+
+      // Should show startup failure message, not generic session error
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_fail',
+        expect.stringContaining('Agent 启动失败'),
+        'msg_1',
+      );
+      // Should contain the stderr diagnostic info
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_fail',
+        expect.stringContaining('MCP server'),
+        'msg_1',
+      );
+      // Should contain guidance about configuration error
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_fail',
+        expect.stringContaining('配置或环境错误'),
+        'msg_1',
+      );
+    });
+
+    it('should show "Agent 启动失败" with error.message when no stderr (Issue #2920)', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_no_stderr',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Throw without stderr attached
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          throw new Error('connection refused');
+        })(),
+      });
+
+      await expect(
+        agent.executeOnce('oc_startup_no_stderr', 'hello')
+      ).rejects.toThrow('connection refused');
+
+      // Should still show startup failure using error.message
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_no_stderr',
+        expect.stringContaining('Agent 启动失败: connection refused'),
+        undefined,
+      );
+    });
+
+    it('should show "Session error" when error occurs after receiving messages (Issue #2920)', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_runtime_error',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Override createQueryStream to yield a message then throw
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', content: 'partial response' } };
+          throw new Error('runtime crash');
+        })(),
+      });
+
+      await expect(
+        agent.executeOnce('oc_runtime_error', 'hello')
+      ).rejects.toThrow('runtime crash');
+
+      // Should show generic session error (not startup failure)
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_runtime_error',
+        expect.stringContaining('❌ Session error'),
+        undefined,
+      );
+      // Should NOT show startup failure message
+      expect(callbacks.sendMessage).not.toHaveBeenCalledWith(
+        'oc_runtime_error',
+        expect.stringContaining('Agent 启动失败'),
+        undefined,
+      );
+    });
+
+    it('should show "Session error" with stderr for runtime errors (Issue #2920)', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_runtime_stderr',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      const runtimeError = new Error('API rate limit exceeded');
+      (runtimeError as any)[STDERR_SYMBOL] = 'Rate limit: too many requests';
+
+      // Yield a message first (makes it a runtime error, not startup)
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'text', content: 'working...' } };
+          throw runtimeError;
+        })(),
+      });
+
+      await expect(
+        agent.executeOnce('oc_runtime_stderr', 'hello')
+      ).rejects.toThrow('API rate limit exceeded');
+
+      // Should show Session error with stderr diagnostic
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_runtime_stderr',
+        expect.stringContaining('❌ Session error'),
+        undefined,
+      );
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_runtime_stderr',
+        expect.stringContaining('Rate limit'),
+        undefined,
+      );
     });
   });
 

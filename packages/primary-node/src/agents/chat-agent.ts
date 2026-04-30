@@ -473,6 +473,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with streaming path');
 
+    // Issue #2920: 追踪消息计数和开始时间，用于启动失败检测
+    let messageCount = 0;
+    const startTime = Date.now();
+
     try {
       // Issue #3108: Wrap static input as a single-yield AsyncGenerator
       // to use the streaming query path instead of the removed queryOnce.
@@ -489,6 +493,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       try {
         for await (const { parsed } of iterator) {
+          messageCount++;
+
           // Check for completion - result type means query is done
           if (parsed.type === 'result') {
             this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
@@ -508,24 +514,58 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.logger.info({ chatId }, 'CLI query completed normally');
     } catch (error) {
       const err = error as Error;
+      const elapsedMs = Date.now() - startTime;
+
       this.logger.error({
         err,
         chatId,
+        messageCount,
+        elapsedMs,
         errorMessage: err.message,
         errorStack: err.stack,
         errorName: err.constructor.name,
         errorCause: err.cause,
       }, 'CLI query error');
 
-      // Issue #2920: 如果有 stderr 输出，附加到错误消息中
-      const stderr = getErrorStderr(err);
-      if (stderr) {
-        const stderrLines = stderr.split('\n').filter(l => l.trim());
-        const tailLines = stderrLines.slice(-5).join('\n');
-        const diagnosticDetail = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
-        await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}\n\n${diagnosticDetail}`, messageId);
+      // Issue #2920: 检测启动阶段失败
+      // 启动失败（0 条消息 + 短时间内退出）通常为配置错误，
+      // 向用户展示具体诊断信息，帮助快速定位问题。
+      if (isStartupFailure(messageCount, elapsedMs)) {
+        const stderr = getErrorStderr(err);
+
+        // 优先使用 stderr 内容作为诊断信息
+        let diagnosticMessage = err.message;
+        if (stderr) {
+          const stderrLines = stderr.split('\n').filter(l => l.trim());
+          const tailLines = stderrLines.slice(-5).join('\n');
+          diagnosticMessage = tailLines.length > 800
+            ? tailLines.slice(-800)
+            : tailLines;
+        }
+
+        this.logger.error(
+          { chatId, messageCount, elapsedMs, stderr: stderr ? stderr.slice(-500) : undefined },
+          'Startup failure detected in executeOnce',
+        );
+
+        await this.callbacks.sendMessage(
+          chatId,
+          `❌ Agent 启动失败: ${diagnosticMessage}\n\n`
+          + '这是一次配置或环境错误，重试无法解决。\n'
+          + '请检查上述错误信息，修复后发送 /reset 重置会话。',
+          messageId,
+        );
       } else {
-        await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, messageId);
+        // 运行时错误：显示 stderr 诊断（如果有）
+        const stderr = getErrorStderr(err);
+        if (stderr) {
+          const stderrLines = stderr.split('\n').filter(l => l.trim());
+          const tailLines = stderrLines.slice(-5).join('\n');
+          const diagnosticDetail = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
+          await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}\n\n${diagnosticDetail}`, messageId);
+        } else {
+          await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, messageId);
+        }
       }
       throw err;
     }
