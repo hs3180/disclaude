@@ -88,6 +88,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private firstMessageHistoryLoaded = false;
   private firstMessageHistoryLoadPromise?: Promise<void>;
 
+  // Issue #3124: One-shot mode & task completion
+  // When onceMode is true, processIterator closes the channel after the first
+  // `result` message and resolves the completion promise, enabling blocking
+  // one-shot execution via processMessage + taskComplete.
+  private onceMode = false;
+  private taskCompletionPromise?: Promise<void>;
+  private taskCompletionResolve?: () => void;
+  private taskCompletionReject?: (error: Error) => void;
+
   constructor(config: ChatAgentConfig) {
     super(config);
 
@@ -121,6 +130,72 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   getChatId(): string {
     return this.boundChatId;
+  }
+
+  /**
+   * Promise that resolves when the current task completes (Issue #3124).
+   *
+   * Set when a session is started via processMessage().
+   * Resolves when the SDK returns a `result` message.
+   * Rejects if an error occurs during processing.
+   *
+   * Consumers (e.g., ScheduleExecutor) can use this to await task completion:
+   * ```typescript
+   * agent.processMessage(chatId, prompt, messageId, userId);
+   * await agent.taskComplete;
+   * ```
+   */
+  get taskComplete(): Promise<void> | undefined {
+    return this.taskCompletionPromise;
+  }
+
+  /**
+   * Build MCP servers configuration (Issue #3124).
+   *
+   * Extracted from startAgentLoop and the former executeOnce to eliminate
+   * duplication of MCP server config building.
+   *
+   * @param skipChannelMcp - If true, skips the channel MCP server (for one-shot/CLI mode)
+   * @returns MCP servers configuration object
+   */
+  private buildMcpServers(skipChannelMcp: boolean): Record<string, unknown> {
+    const chatId = this.boundChatId;
+    const mcpServers: Record<string, unknown> = {};
+
+    if (!skipChannelMcp) {
+      // Get channel capabilities for MCP server filtering (Issue #590 Phase 3)
+      const capabilities = this.callbacks.getCapabilities?.(chatId);
+      const supportedMcpTools = capabilities?.supportedMcpTools;
+
+      // Determine if we should include Context MCP server
+      const contextTools = ['send_text', 'send_card', 'send_interactive', 'send_file'];
+      const shouldIncludeContextMcp = supportedMcpTools === undefined ||
+        contextTools.some(tool => supportedMcpTools.includes(tool));
+
+      // Use inline transport for channel MCP server
+      if (shouldIncludeContextMcp) {
+        mcpServers['channel-mcp'] = createChannelMcpServer();
+
+        this.logger.info({
+          ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
+        }, 'Configured channel MCP server (inline transport)');
+      }
+    }
+
+    // Merge configured external MCP servers from config file
+    const configuredMcpServers = Config.getMcpServersConfig();
+    if (configuredMcpServers) {
+      for (const [name, config] of Object.entries(configuredMcpServers)) {
+        mcpServers[name] = {
+          type: 'stdio',
+          command: config.command,
+          args: config.args || [],
+          ...(config.env && { env: config.env }),
+        };
+      }
+    }
+
+    return mcpServers;
   }
 
   /**
@@ -403,19 +478,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
-   * Execute a one-shot query (CLI mode).
+   * Execute a one-shot query (Issue #3124).
    *
-   * This method is blocking - it waits for the query to complete before returning.
-   * Uses the streaming path internally by wrapping the static input as a
-   * single-yield AsyncGenerator (Issue #3108: unified query path).
-   * No session state is maintained - each call is independent.
+   * This method uses the unified streaming path (processMessage + taskComplete)
+   * instead of a separate code path. It:
+   * 1. Enables once-mode on the agent
+   * 2. Calls processMessage to start the session and push the message
+   * 3. Awaits taskComplete which resolves when the SDK returns a result
+   *
+   * The once-mode flag causes processIterator to close the channel after
+   * receiving the first `result` message, effectively making the session
+   * one-shot.
    *
    * @param chatId - Platform-specific chat identifier (must match bound chatId)
    * @param text - User's message text
    * @param messageId - Unique message identifier
    * @param senderOpenId - Optional sender's open_id for @ mentions
    */
-  async executeOnce(
+  async runOnce(
     chatId: string,
     text: string,
     messageId?: string,
@@ -425,103 +505,32 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (chatId !== this.boundChatId) {
       this.logger.error(
         { boundChatId: this.boundChatId, receivedChatId: chatId },
-        'executeOnce called with wrong chatId'
+        'runOnce called with wrong chatId'
       );
       throw new Error(`ChatAgent bound to ${this.boundChatId} cannot execute for ${chatId}`);
     }
 
-    this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query via streaming path');
+    this.logger.info({ chatId, messageId, textLength: text.length }, 'One-shot mode: executing via unified streaming path');
 
-    // Add MCP servers
-    const mcpServers: Record<string, unknown> = {};
-
-    // CLI mode doesn't need Feishu MCP server
-    // Merge configured external MCP servers from config file
-    const configuredMcpServers = Config.getMcpServersConfig();
-    if (configuredMcpServers) {
-      for (const [name, config] of Object.entries(configuredMcpServers)) {
-        mcpServers[name] = {
-          type: 'stdio',
-          command: config.command,
-          args: config.args || [],
-          ...(config.env && { env: config.env }),
-        };
-      }
-    }
-
-    // Build SDK options using BaseAgent's createSdkOptions
-    const sdkOptions = this.createSdkOptions({
-      disallowedTools: ['EnterPlanMode'],
-      mcpServers,
-    });
-
-    // Get capabilities for message building
-    const capabilities = this.callbacks.getCapabilities?.(chatId);
-
-    // Build enhanced content using MessageBuilder (Issue #697)
-    const enhancedContent = this.messageBuilder.buildEnhancedContent({
-      text,
-      messageId: messageId ?? `cli-${Date.now()}`,
-      senderOpenId,
-    }, chatId, capabilities);
-
-    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with streaming path');
+    // Enable once-mode: processIterator will close channel after first result
+    this.onceMode = true;
 
     try {
-      // Issue #3108: Wrap static input as a single-yield AsyncGenerator
-      // to use the streaming query path instead of the removed queryOnce.
-      async function* singleInput(): AsyncGenerator<StreamingUserMessage> {
-        yield {
-          type: 'user',
-          message: { role: 'user', content: enhancedContent },
-          parent_tool_use_id: null,
-          session_id: '',
-        };
+      // Use processMessage to push the message through the unified streaming path.
+      // The processIterator running in the background will handle the SDK responses
+      // and resolve/reject the taskComplete promise.
+      const effectiveMessageId = messageId ?? `once-${Date.now()}`;
+      await this.processMessage(chatId, text, effectiveMessageId, senderOpenId);
+
+      // Wait for the task to complete via the unified streaming path
+      if (this.taskCompletionPromise) {
+        await this.taskCompletionPromise;
       }
 
-      const { handle, iterator } = this.createQueryStream(singleInput(), sdkOptions);
-
-      try {
-        for await (const { parsed } of iterator) {
-          // Check for completion - result type means query is done
-          if (parsed.type === 'result') {
-            this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
-            break;
-          }
-
-          // Send message content to callback (with thread support)
-          if (parsed.content) {
-            await this.callbacks.sendMessage(chatId, parsed.content, messageId);
-          }
-        }
-      } finally {
-        // Ensure the query handle is closed to release resources
-        handle.close();
-      }
-
-      this.logger.info({ chatId }, 'CLI query completed normally');
-    } catch (error) {
-      const err = error as Error;
-      this.logger.error({
-        err,
-        chatId,
-        errorMessage: err.message,
-        errorStack: err.stack,
-        errorName: err.constructor.name,
-        errorCause: err.cause,
-      }, 'CLI query error');
-
-      // Issue #2920: 如果有 stderr 输出，附加到错误消息中
-      const stderr = getErrorStderr(err);
-      if (stderr) {
-        const stderrLines = stderr.split('\n').filter(l => l.trim());
-        const tailLines = stderrLines.slice(-5).join('\n');
-        const diagnosticDetail = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
-        await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}\n\n${diagnosticDetail}`, messageId);
-      } else {
-        await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, messageId);
-      }
-      throw err;
+      this.logger.info({ chatId }, 'One-shot task completed normally');
+    } finally {
+      // Clean up once-mode state
+      this.onceMode = false;
     }
   }
 
@@ -665,6 +674,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Issue #590 Phase 3: Filters MCP servers based on channel capabilities.
    * Issue #955: Triggers background loading of persisted chat history.
    * Issue #1230: Triggers background loading of chat history for first message.
+   * Issue #3124: Uses buildMcpServers() for shared MCP config, sets up taskComplete promise.
    */
   private startAgentLoop(): void {
     const chatId = this.boundChatId;
@@ -683,40 +693,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       });
     }
 
-    // Get channel capabilities for MCP server filtering (Issue #590 Phase 3)
-    const capabilities = this.callbacks.getCapabilities?.(chatId);
-    const supportedMcpTools = capabilities?.supportedMcpTools;
-
-    // Determine if we should include Context MCP server
-    const contextTools = ['send_text', 'send_card', 'send_interactive', 'send_file'];
-    const shouldIncludeContextMcp = supportedMcpTools === undefined ||
-      contextTools.some(tool => supportedMcpTools.includes(tool));
-
-    // Add MCP servers
-    const mcpServers: Record<string, unknown> = {};
-
-    // Use inline transport for channel MCP server
-    // Only add channel MCP server if channel supports any channel tools
-    if (shouldIncludeContextMcp) {
-      mcpServers['channel-mcp'] = createChannelMcpServer();
-
-      this.logger.info({
-        ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
-      }, 'Configured channel MCP server (inline transport)');
-    }
-
-    // Merge configured external MCP servers from config file
-    const configuredMcpServers = Config.getMcpServersConfig();
-    if (configuredMcpServers) {
-      for (const [name, config] of Object.entries(configuredMcpServers)) {
-        mcpServers[name] = {
-          type: 'stdio',
-          command: config.command,
-          args: config.args || [],
-          ...(config.env && { env: config.env }),
-        };
-      }
-    }
+    // Issue #3124: Use shared buildMcpServers() helper (includes channel MCP + external servers)
+    const mcpServers = this.buildMcpServers(false);
 
     // Build SDK options using BaseAgent's createSdkOptions
     const sdkOptions = this.createSdkOptions({
@@ -725,12 +703,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}), supportedMcpTools },
+      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) },
       'Starting SDK query with message channel'
     );
 
     // Issue #2926: Create fresh AbortController for this agent loop
     this.abortController = new AbortController();
+
+    // Issue #3124: Set up task completion promise
+    this.taskCompletionPromise = new Promise<void>((resolve, reject) => {
+      this.taskCompletionResolve = resolve;
+      this.taskCompletionReject = reject;
+    });
 
     // Create message channel
     this.channel = new MessageChannel();
@@ -754,6 +738,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }, 'Agent loop error');
       this.isSessionActive = false;
 
+      // Issue #3124: Reject completion promise on outer catch
+      this.taskCompletionReject?.(err instanceof Error ? err : new Error(String(err)));
+      this.clearTaskCompletion();
+
       // Issue #1357: Notify user about the critical failure.
       // This is the outer catch — if processIterator itself throws (not an inner
       // iteration error, which is already handled inside processIterator), the user
@@ -767,6 +755,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.logger.error({ err: notifyErr, chatId }, 'Failed to send agent loop error notification');
       }
     });
+  }
+
+  /**
+   * Clear task completion state (Issue #3124).
+   */
+  private clearTaskCompletion(): void {
+    this.taskCompletionPromise = undefined;
+    this.taskCompletionResolve = undefined;
+    this.taskCompletionReject = undefined;
   }
 
   /**
@@ -863,6 +860,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.onDone(chatId, threadRoot);
           }
+
+          // Issue #3124: In once-mode, close channel after result to end the iterator.
+          // This enables blocking one-shot execution via processMessage + taskComplete.
+          if (this.onceMode) {
+            this.logger.info({ chatId }, 'Once-mode: closing channel after result');
+            this.isSessionActive = false;
+            this.channel?.close();
+            this.taskCompletionResolve?.();
+            this.clearTaskCompletion();
+          }
         }
       }
     } catch (error) {
@@ -923,6 +930,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // 启动失败不触发重试，直接标记会话为非活跃
         this.isSessionActive = false;
 
+        // Issue #3124: Reject completion promise on startup failure
+        this.taskCompletionReject?.(iteratorError);
+        this.clearTaskCompletion();
+
         if (this.callbacks.onDone) {
           await this.callbacks.onDone(chatId, threadRoot);
         }
@@ -934,6 +945,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
         await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
       }
+
+      // Issue #3124: Reject completion promise on runtime error
+      this.taskCompletionReject?.(iteratorError);
+      this.clearTaskCompletion();
 
       if (this.callbacks.onDone) {
         const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -967,6 +982,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Iterator ended without explicit close - this is unexpected
     this.isSessionActive = false;
+
+    // Issue #3124: In once-mode, resolve completion and skip restart logic.
+    // The channel was closed by the result handler or an error occurred.
+    if (this.onceMode) {
+      this.taskCompletionResolve?.();
+      this.clearTaskCompletion();
+      return;
+    }
 
     // Iterator ended without explicit close - determine error message for restart logic
     const errorMessage = iteratorError?.message ?? 'Unknown error';
@@ -1068,6 +1091,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Clear first message history context (Issue #1230)
     this.firstMessageHistoryContext = undefined;
     this.firstMessageHistoryLoaded = false;
+
+    // Issue #3124: Clear once-mode and task completion state
+    this.onceMode = false;
+    this.clearTaskCompletion();
 
     // Issue #1213: Reload history only if explicitly requested via keepContext
     if (keepContext) {

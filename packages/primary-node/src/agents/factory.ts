@@ -15,7 +15,8 @@
  * // Create a short-lived ChatAgent - dispose after execution
  * const agent = AgentFactory.createAgent('chat-123', callbacks);
  * try {
- *   await agent.executeOnce(chatId, prompt);
+ *   await agent.processMessage(chatId, prompt, messageId);
+ *   await agent.taskComplete;
  * } finally {
  *   agent.dispose();
  * }
@@ -200,7 +201,8 @@ export class AgentFactory {
    * ```typescript
    * const agent = AgentFactory.createAgent('chat-123', callbacks);
    * try {
-   *   await agent.executeOnce(chatId, prompt);
+   *   await agent.processMessage(chatId, prompt, messageId);
+   *   await agent.taskComplete;
    * } finally {
    *   agent.dispose();
    * }
