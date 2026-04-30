@@ -306,6 +306,98 @@ describe('MessageBuilder with Feishu sections', () => {
     });
   });
 
+  describe('buildFeishuDocGuidance - Feishu document link handling (Issue #3035)', () => {
+    it('should include doc guidance when message contains Feishu wiki URL', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Please review https://example.feishu.cn/wiki/YgJMw6RRkifisVkPVR8cKnWLnmb',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Feishu Document Link Handling');
+      expect(result).toContain('lark-cli docs +fetch');
+      expect(result).toContain('Do NOT use webReader');
+    });
+
+    it('should include doc guidance when message contains Feishu docx URL', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Check this doc: https://open.feishu.com/docx/doxcnAbCdEfGhIjKlMnO',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Feishu Document Link Handling');
+      expect(result).toContain('lark-cli docs +fetch');
+    });
+
+    it('should include doc guidance when message contains Lark wiki URL', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'See https://example.lark.com/wiki/AbCdEfGh123456',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Feishu Document Link Handling');
+    });
+
+    it('should not include doc guidance for regular messages without Feishu doc URLs', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello, how are you?',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Feishu Document Link Handling');
+    });
+
+    it('should not include doc guidance for non-doc Feishu URLs', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Visit https://open.feishu.cn/contact for details',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Feishu Document Link Handling');
+    });
+
+    it('should include two-step flow instructions', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Read https://example.feishu.cn/wiki/TestDoc123',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Recommended Two-Step Flow');
+      expect(result).toContain('--scope outline');
+      expect(result).toContain('--scope section');
+    });
+
+    it('should include quick read option', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Read https://example.feishu.cn/wiki/TestDoc123',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).toContain('Quick Read');
+      expect(result).toContain('--doc-format markdown');
+    });
+
+    it('should coexist with mention section when both apply', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Check https://example.feishu.cn/wiki/TestDoc123',
+        messageId: 'msg-123',
+        senderOpenId: 'user-789',
+      }, 'chat-123');
+
+      expect(result).toContain('@ Mention the User');
+      expect(result).toContain('user-789');
+      expect(result).toContain('Feishu Document Link Handling');
+    });
+
+    it('should not include doc guidance for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/summarize https://example.feishu.cn/wiki/TestDoc123',
+        messageId: 'msg-123',
+      }, 'chat-123');
+
+      expect(result).not.toContain('Feishu Document Link Handling');
+    });
+  });
+
   describe('Feishu @ mention section', () => {
     it('should include mention section when senderOpenId is provided', () => {
       const result = messageBuilder.buildEnhancedContent({

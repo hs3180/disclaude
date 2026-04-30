@@ -162,6 +162,61 @@ If your model supports native multimodal input, you can also use the Read tool t
 }
 
 /**
+ * Check if the message text contains Feishu document/wiki URLs.
+ *
+ * Issue #3035: Detects Feishu doc and wiki links that require lark-cli
+ * for content access (webReader cannot access authenticated Feishu pages).
+ */
+function hasFeishuDocUrl(text: string): boolean {
+  const feishuDocPattern = /https?:\/\/[^\s<>\"']*\.feishu\.(cn|com)\/(wiki|docx|doc)\/[^\s<>\"')\]]+/;
+  const larkDocPattern = /https?:\/\/[^\s<>\"']*\.lark\.(cn|com)\/(wiki|docx|doc)\/[^\s<>\"')\]]+/;
+  return feishuDocPattern.test(text) || larkDocPattern.test(text);
+}
+
+/**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: When the user's message contains Feishu document/wiki links,
+ * instruct the Agent to use `lark-cli docs +fetch` instead of webReader,
+ * since webReader cannot access authenticated Feishu pages.
+ */
+function buildFeishuDocGuidance(ctx: MessageBuilderContext): string {
+  const { msg: { text } } = ctx;
+
+  if (!hasFeishuDocUrl(text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+The user's message contains Feishu document/wiki links. **Do NOT use webReader** — it cannot access authenticated Feishu pages. Instead, use \`lark-cli docs +fetch\` to read the document content.
+
+### Recommended Two-Step Flow
+
+1. **First, get the document outline:**
+   \`\`\`bash
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope outline --max-depth 3
+   \`\`\`
+2. **Then read the relevant sections:**
+   \`\`\`bash
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope section --start-block-id <heading_id> --doc-format markdown
+   \`\`\`
+
+### Quick Read (Entire Document)
+
+\`\`\`bash
+lark-cli docs +fetch --api-version v2 --doc "<URL>" --doc-format markdown
+\`\`\`
+
+### Notes
+- The \`--doc\` parameter accepts both full URLs and document tokens
+- Supports both Wiki (\`/wiki/\`) and Document (\`/docx/\`) URL types
+- Output formats: markdown, xml, plain text`;
+}
+
+/**
  * Check if image analyzer MCP is configured.
  *
  * Issue #809: Detects image analyzer MCP server configuration.
@@ -192,7 +247,9 @@ function hasImageAnalyzerMcp(): boolean {
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
   return {
     buildHeader: buildFeishuHeader,
-    buildPostHistory: buildFeishuMentionSection,
+    buildPostHistory: (ctx: MessageBuilderContext): string => {
+      return buildFeishuMentionSection(ctx) + buildFeishuDocGuidance(ctx);
+    },
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
   };
