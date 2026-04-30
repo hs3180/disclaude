@@ -1,13 +1,9 @@
 /**
  * IPC Transport abstraction for testability.
  *
- * Follows the ACP MockTransport pattern (packages/core/src/sdk/acp/transport.ts):
- * - `IAcpTransport` interface in production code
- * - `AcpStdioTransport` (production) and `MockTransport` (test) implement it
- *
- * For IPC:
- * - `IIpcServerTransport` and `IIpcClientTransport` in production code
- * - `UnixSocketIpcServer`/`UnixSocketIpcClient` use default net-based transport
+ * Uses a transport-interface pattern for dependency injection:
+ * - `IIpcServerTransport` and `IIpcClientTransport` define the transport contract
+ * - `UnixSocketIpcServer`/`UnixSocketIpcClient` provide production net-based implementations
  * - Tests inject `InMemoryIpcTransport` implementations (no filesystem side effects)
  *
  * @module core/ipc/transport
