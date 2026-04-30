@@ -13,6 +13,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock all @disclaude/core dependencies
+// Issue #2920: stderr symbol key for attaching stderr to Error objects
+const STDERR_SYMBOL = Symbol('stderr');
+
 vi.mock('@disclaude/core', () => ({
   Config: {
     getSessionRestoreConfig: vi.fn(() => ({
@@ -58,6 +61,16 @@ vi.mock('@disclaude/core', () => ({
     deleteThreadRoot: vi.fn(),
     clearAll: vi.fn(),
   })),
+  // Issue #2920: Real implementations for stderr utilities
+  getErrorStderr: (error: unknown): string | undefined => {
+    if (error instanceof Error) {
+      return (error as any)[STDERR_SYMBOL];
+    }
+    return undefined;
+  },
+  isStartupFailure: (messageCount: number, elapsedMs: number): boolean => {
+    return messageCount === 0 && elapsedMs < 10_000;
+  },
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({
@@ -343,6 +356,255 @@ describe('ChatAgent (primary-node)', () => {
       await agent.shutdown();
       expect(ac.signal.aborted).toBe(true);
       expect((agent as any).abortController).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // Startup Failure Detection Tests (Issue #2920)
+  // ==========================================================================
+
+  describe('Issue #2920: startup failure detection in executeOnce', () => {
+    it('should show "Agent 启动失败" when error occurs with 0 messages immediately', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_fail',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Override queryOnce to throw immediately (0 messages, fast)
+      const startupError = new Error('Claude Code process exited with code 1');
+      (startupError as any)[STDERR_SYMBOL] = 'Error: MCP server "test" failed to initialize\ncommand is empty';
+
+      (agent as any).queryOnce = vi.fn(() => {
+        return (async function* () {
+          throw startupError;
+        })();
+      });
+
+      await expect(
+        agent.executeOnce('oc_startup_fail', 'hello', 'msg_1')
+      ).rejects.toThrow('Claude Code process exited with code 1');
+
+      // Should show startup failure message, not generic session error
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_fail',
+        expect.stringContaining('Agent 启动失败'),
+        'msg_1',
+      );
+      // Should contain the stderr diagnostic info
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_fail',
+        expect.stringContaining('MCP server'),
+        'msg_1',
+      );
+      // Should NOT show generic "Session error" prefix
+      expect(callbacks.sendMessage).not.toHaveBeenCalledWith(
+        'oc_startup_fail',
+        expect.stringContaining('❌ Session error'),
+        'msg_1',
+      );
+    });
+
+    it('should show "Agent 启动失败" with stderr diagnostic for startup errors', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_stderr',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      const authError = new Error('process exited with code 1');
+      (authError as any)[STDERR_SYMBOL] = 'Authentication failed: 401\nToken has expired';
+
+      (agent as any).queryOnce = vi.fn(() => {
+        return (async function* () {
+          throw authError;
+        })();
+      });
+
+      await expect(
+        agent.executeOnce('oc_startup_stderr', 'hello')
+      ).rejects.toThrow('process exited with code 1');
+
+      const { calls } = callbacks.sendMessage.mock;
+      expect(calls.length).toBe(1);
+      expect(calls[0][1]).toContain('Agent 启动失败');
+      expect(calls[0][1]).toContain('Authentication failed');
+      expect(calls[0][1]).toContain('这是一次配置或环境错误');
+    });
+
+    it('should show "Session error" when error occurs after receiving messages', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_runtime_error',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Override queryOnce to yield a message then throw
+      (agent as any).queryOnce = vi.fn(() => {
+        return (async function* () {
+          yield { parsed: { type: 'text', content: 'partial response' } };
+          throw new Error('runtime crash');
+        })();
+      });
+
+      await expect(
+        agent.executeOnce('oc_runtime_error', 'hello')
+      ).rejects.toThrow('runtime crash');
+
+      // Should show generic session error (not startup failure)
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_runtime_error',
+        expect.stringContaining('❌ Session error'),
+        undefined,
+      );
+    });
+
+    it('should show startup failure with error.message when no stderr available', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_no_stderr',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Throw without stderr attached
+      (agent as any).queryOnce = vi.fn(() => {
+        return (async function* () {
+          throw new Error('connection refused');
+        })();
+      });
+
+      await expect(
+        agent.executeOnce('oc_startup_no_stderr', 'hello')
+      ).rejects.toThrow('connection refused');
+
+      // Should still show startup failure, using error.message
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_startup_no_stderr',
+        expect.stringContaining('Agent 启动失败: connection refused'),
+        undefined,
+      );
+    });
+
+    it('should show "Session error" with stderr for runtime errors with stderr', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_runtime_stderr',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      const runtimeError = new Error('API rate limit exceeded');
+      (runtimeError as any)[STDERR_SYMBOL] = 'Rate limit: too many requests';
+
+      // Yield a message first (makes it a runtime error, not startup)
+      (agent as any).queryOnce = vi.fn(() => {
+        return (async function* () {
+          yield { parsed: { type: 'text', content: 'working...' } };
+          throw runtimeError;
+        })();
+      });
+
+      await expect(
+        agent.executeOnce('oc_runtime_stderr', 'hello')
+      ).rejects.toThrow('API rate limit exceeded');
+
+      // Should show Session error with stderr
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_runtime_stderr',
+        expect.stringContaining('❌ Session error: API rate limit exceeded'),
+        undefined,
+      );
+      expect(callbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_runtime_stderr',
+        expect.stringContaining('Rate limit'),
+        undefined,
+      );
+    });
+  });
+
+  describe('Issue #2920: processIterator startup failure skips retry', () => {
+    it('should skip retry and show startup failure when iterator fails immediately', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_pi_startup',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      const startupError = new Error('CLI exited with code 1');
+      (startupError as any)[STDERR_SYMBOL] = 'MCP server "broken" failed: command not found';
+
+      // Override createQueryStream to return iterator that throws immediately
+      (agent as any).createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          throw startupError;
+        })(),
+      }));
+
+      // Start the agent loop
+      void agent.processMessage('oc_pi_startup', 'hello', 'msg_1');
+
+      // Wait for processIterator to complete
+      await new Promise<void>(r => setTimeout(r, 200));
+
+      // Should have sent startup failure message
+      const allCalls = callbacks.sendMessage.mock.calls;
+      const startupCall = allCalls.find((c: any[]) => typeof c[1] === 'string' && c[1].includes('Agent 启动失败'));
+      expect(startupCall).toBeDefined();
+      expect(startupCall![1]).toContain('MCP server');
+      expect(startupCall![1]).toContain('这是一次配置或环境错误');
+
+      // Session should be inactive (no retry attempted)
+      expect(agent.hasActiveSession()).toBe(false);
+    });
+
+    it('should NOT show startup failure when messages were received before error', async () => {
+      const agent = new ChatAgent({
+        chatId: 'oc_pi_runtime',
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      const runtimeError = new Error('API error during conversation');
+
+      // Override createQueryStream to yield some messages then throw
+      (agent as any).createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield { parsed: { type: 'assistant', content: 'Hello!' } };
+          yield { parsed: { type: 'assistant', content: 'Let me help...' } };
+          throw runtimeError;
+        })(),
+      }));
+
+      void agent.processMessage('oc_pi_runtime', 'hello', 'msg_1');
+
+      // Wait for processIterator to process messages and error
+      await new Promise<void>(r => setTimeout(r, 200));
+
+      // Should NOT show startup failure message
+      const allCalls = callbacks.sendMessage.mock.calls;
+      const startupCall = allCalls.find((c: any[]) => typeof c[1] === 'string' && c[1].includes('Agent 启动失败'));
+      expect(startupCall).toBeUndefined();
+
+      // Should show session error or restart message
+      const errorCall = allCalls.find((c: any[]) =>
+        typeof c[1] === 'string' && (c[1].includes('Session error') || c[1].includes('重新连接')),
+      );
+      expect(errorCall).toBeDefined();
     });
   });
 });
@@ -682,3 +944,4 @@ describe('ChatAgent - session inactivity timeout (Issue #2993)', () => {
     });
   });
 });
+

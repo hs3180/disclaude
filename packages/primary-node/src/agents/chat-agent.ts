@@ -472,9 +472,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
 
+    // Issue #2920: Track message count and start time for startup failure detection
+    let messageCount = 0;
+    const startTime = Date.now();
+
     try {
       // Use BaseAgent's queryOnce for one-shot query with timeout protection
       for await (const { parsed } of this.queryOnce(enhancedContent, sdkOptions)) {
+        messageCount++;
+
         // Check for completion - result type means query is done
         if (parsed.type === 'result') {
           this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
@@ -490,23 +496,52 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.logger.info({ chatId }, 'CLI query completed normally');
     } catch (error) {
       const err = error as Error;
+      const elapsedMs = Date.now() - startTime;
+
       this.logger.error({
         err,
         chatId,
+        messageCount,
+        elapsedMs,
         errorMessage: err.message,
         errorStack: err.stack,
         errorName: err.constructor.name,
         errorCause: err.cause,
       }, 'CLI query error');
 
-      // Issue #2920: 如果有 stderr 输出，附加到错误消息中
+      // Issue #2920: 检测启动阶段失败 — 区分配置错误和运行时错误
       const stderr = getErrorStderr(err);
-      if (stderr) {
+      if (isStartupFailure(messageCount, elapsedMs)) {
+        // 启动失败：展示具体诊断信息
+        let diagnosticMessage = err.message;
+        if (stderr) {
+          const stderrLines = stderr.split('\n').filter(l => l.trim());
+          const tailLines = stderrLines.slice(-5).join('\n');
+          diagnosticMessage = tailLines.length > 800
+            ? tailLines.slice(-800)
+            : tailLines;
+        }
+
+        this.logger.error(
+          { chatId, messageCount, elapsedMs, stderr: stderr ? stderr.slice(-500) : undefined },
+          'Startup failure detected in CLI mode'
+        );
+
+        await this.callbacks.sendMessage(
+          chatId,
+          `❌ Agent 启动失败: ${diagnosticMessage}\n\n`
+          + '这是一次配置或环境错误，重试无法解决。\n'
+          + '请检查上述错误信息，修复后重试。',
+          messageId,
+        );
+      } else if (stderr) {
+        // 运行时错误 + 有 stderr 信息
         const stderrLines = stderr.split('\n').filter(l => l.trim());
         const tailLines = stderrLines.slice(-5).join('\n');
         const diagnosticDetail = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
         await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}\n\n${diagnosticDetail}`, messageId);
       } else {
+        // 运行时错误，无 stderr
         await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, messageId);
       }
       throw err;
