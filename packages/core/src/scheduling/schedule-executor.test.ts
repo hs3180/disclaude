@@ -63,7 +63,7 @@ describe('createScheduleExecutor', () => {
       await executor('chat-1', 'Run tests');
 
       expect(mockAgentFactory).toHaveBeenCalledTimes(1);
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined);
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, undefined);
     });
 
     it('should call executeOnce with correct arguments', async () => {
@@ -125,7 +125,7 @@ describe('createScheduleExecutor', () => {
 
       await executor('chat-1', 'Run tests', 'user-1', 'claude-sonnet-4-20250514');
 
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4-20250514');
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4-20250514', undefined);
     });
 
     it('should pass undefined model when not specified', async () => {
@@ -136,7 +136,42 @@ describe('createScheduleExecutor', () => {
 
       await executor('chat-1', 'Run tests');
 
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined);
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, undefined);
+    });
+  });
+
+  describe('modelTier support (Issue #3059)', () => {
+    it('should pass modelTier to agent factory', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await executor('chat-1', 'Run tests', 'user-1', undefined, 'low');
+
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, 'low');
+    });
+
+    it('should pass both model and modelTier to agent factory', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await executor('chat-1', 'Run tests', 'user-1', 'claude-sonnet-4-20250514', 'high');
+
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4-20250514', 'high');
+    });
+
+    it('should pass undefined modelTier when not specified', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await executor('chat-1', 'Run tests', 'user-1', 'claude-sonnet-4-20250514');
+
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4-20250514', undefined);
     });
   });
 

@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ModelTier,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -504,6 +505,50 @@ export class Config {
    */
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
+  }
+
+  /**
+   * Resolve model identifier for a given tier.
+   *
+   * Checks tier-specific model config first, falls back to the default model.
+   * Works for both Anthropic and GLM providers based on the current active provider.
+   *
+   * Issue #3059: Three-level model configuration.
+   *
+   * @param tier - Model tier (high, low, multimodal)
+   * @returns Model identifier string, or undefined if no tier-specific or default model is configured
+   */
+  static getModelForTier(tier: ModelTier): string | undefined {
+    // Check if GLM is the active provider
+    if (this.GLM_API_KEY) {
+      const glmConfig = fileConfigOnly.glm;
+      const tierModel = glmConfig?.[`${tier}Model` as keyof typeof glmConfig] as string | undefined;
+      if (tierModel) {
+        logger.debug({ tier, model: tierModel, provider: 'glm' }, 'Resolved tier model for GLM');
+        return tierModel;
+      }
+      // Fall back to default GLM model
+      if (this.GLM_MODEL) {
+        logger.debug({ tier, model: this.GLM_MODEL, provider: 'glm', fallback: true }, 'Using default GLM model for tier');
+        return this.GLM_MODEL;
+      }
+    }
+
+    // Anthropic provider
+    const agentConfig = fileConfigOnly.agent;
+    const tierModel = agentConfig?.[`${tier}Model` as keyof typeof agentConfig] as string | undefined;
+    if (tierModel) {
+      logger.debug({ tier, model: tierModel, provider: 'anthropic' }, 'Resolved tier model for Anthropic');
+      return tierModel;
+    }
+    // Fall back to default Anthropic model
+    if (this.CLAUDE_MODEL) {
+      logger.debug({ tier, model: this.CLAUDE_MODEL, provider: 'anthropic', fallback: true }, 'Using default Anthropic model for tier');
+      return this.CLAUDE_MODEL;
+    }
+
+    logger.warn({ tier }, 'No model found for tier (no tier-specific or default model configured)');
+    return undefined;
   }
 }
 

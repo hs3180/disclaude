@@ -26,7 +26,7 @@
  * @module agents/factory
  */
 
-import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type ModelTier } from '@disclaude/core';
 import { ChatAgent } from './chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
 
@@ -88,6 +88,14 @@ export interface AgentCreateOptions {
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+  /**
+   * Model tier for three-level model configuration.
+   * When specified, resolves to the tier-specific model from config.
+   * Takes priority over model field if both are specified.
+   *
+   * Issue #3059: Three-level model configuration.
+   */
+  modelTier?: ModelTier;
 }
 
 /**
@@ -111,9 +119,19 @@ export class AgentFactory {
   private static getBaseConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
     const defaultConfig = Config.getAgentConfig();
 
+    // Issue #3059: Resolve model from tier if specified.
+    // Priority: options.model > tier-specific model > default model
+    let resolvedModel = options.model;
+    if (!resolvedModel && options.modelTier) {
+      const tierModel = Config.getModelForTier(options.modelTier);
+      if (tierModel) {
+        resolvedModel = tierModel;
+      }
+    }
+
     return {
       apiKey: options.apiKey ?? defaultConfig.apiKey,
-      model: options.model ?? defaultConfig.model,
+      model: resolvedModel ?? defaultConfig.model,
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',

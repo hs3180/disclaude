@@ -19,6 +19,19 @@ export interface WorkspaceConfig {
 }
 
 /**
+ * Model tier for three-level model configuration.
+ *
+ * Allows different agent scenarios to use models with appropriate
+ * capability/cost trade-offs:
+ * - high: Strongest reasoning (e.g., Opus) for evaluators, complex analysis
+ * - low: Fast/cheap (e.g., Haiku) for scheduled tasks, simple operations
+ * - multimodal: Balanced (e.g., Sonnet) for main dialogue, multimodal processing
+ *
+ * Issue #3059: Three-level model configuration.
+ */
+export type ModelTier = 'high' | 'low' | 'multimodal';
+
+/**
  * Agent configuration section.
  *
  * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
@@ -33,6 +46,27 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /**
+   * Model for high-tier scenarios (e.g., Opus).
+   * Used by evaluators and complex analysis tasks.
+   * Falls back to model if not configured.
+   * @see Issue #3059
+   */
+  highModel?: string;
+  /**
+   * Model for low-tier scenarios (e.g., Haiku).
+   * Used by scheduled tasks and simple operations to reduce cost and latency.
+   * Falls back to model if not configured.
+   * @see Issue #3059
+   */
+  lowModel?: string;
+  /**
+   * Model for multimodal scenarios (e.g., Sonnet).
+   * Used by main dialogue agent and multimodal processing.
+   * Falls back to model if not configured.
+   * @see Issue #3059
+   */
+  multimodalModel?: string;
   /**
    * Enable Claude Code Agent Teams mode.
    * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
@@ -82,6 +116,24 @@ export interface GlmConfig {
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
+  /**
+   * Model for high-tier scenarios (e.g., glm-5.1).
+   * Falls back to model if not configured.
+   * @see Issue #3059
+   */
+  highModel?: string;
+  /**
+   * Model for low-tier scenarios (e.g., glm-4-flash).
+   * Falls back to model if not configured.
+   * @see Issue #3059
+   */
+  lowModel?: string;
+  /**
+   * Model for multimodal scenarios (e.g., glm-4v).
+   * Falls back to model if not configured.
+   * @see Issue #3059
+   */
+  multimodalModel?: string;
 }
 
 /**

@@ -101,6 +101,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'createdAt':
       case 'lastExecutedAt':
       case 'model':
+      case 'modelTier':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -234,6 +235,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -243,6 +245,11 @@ export class ScheduleFileScanner {
         logger.warn({ taskId: task.id, name: task.name }, 'Schedule task has empty model value, will be ignored');
       } else if (task.model) {
         logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task will use model override');
+      }
+
+      // Issue #3059: Log modelTier if specified
+      if (task.modelTier) {
+        logger.info({ taskId: task.id, name: task.name, modelTier: task.modelTier }, 'Schedule task will use model tier');
       }
 
       logger.debug({ taskId: task.id, name: task.name }, 'Parsed schedule file');
@@ -289,6 +296,9 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.modelTier) {
+      frontmatter.push(`modelTier: "${task.modelTier}"`);
     }
 
     frontmatter.push('---', '');

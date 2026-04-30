@@ -24,6 +24,7 @@
 
 import type { ChatAgent } from '../agents/types.js';
 import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
+import type { ModelTier } from '../config/types.js';
 
 /**
  * Factory function type for creating short-lived ChatAgent instances.
@@ -34,12 +35,14 @@ import type { SchedulerCallbacks, TaskExecutor } from './scheduler.js';
  * @param chatId - Chat ID for message delivery
  * @param callbacks - Callbacks for sending messages
  * @param model - Optional model override for this task (Issue #1338)
+ * @param modelTier - Optional model tier for three-level config (Issue #3059)
  * @returns A ChatAgent instance (caller must dispose)
  */
 export type AgentFactory = (
   chatId: string,
   callbacks: SchedulerCallbacks,
-  model?: string
+  model?: string,
+  modelTier?: ModelTier
 ) => ChatAgent;
 
 /**
@@ -87,10 +90,11 @@ export interface ScheduleExecutorOptions {
 export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskExecutor {
   const { agentFactory, callbacks } = options;
 
-  return async (chatId: string, prompt: string, userId?: string, model?: string): Promise<void> => {
+  return async (chatId: string, prompt: string, userId?: string, model?: string, modelTier?: ModelTier): Promise<void> => {
     // Create a short-lived ChatAgent for this execution
     // Issue #1338: Pass model override for per-task model selection
-    const agent = agentFactory(chatId, callbacks, model);
+    // Issue #3059: Pass modelTier for three-level model configuration
+    const agent = agentFactory(chatId, callbacks, model, modelTier);
 
     try {
       await agent.executeOnce(chatId, prompt, undefined, userId); // messageId is always undefined for scheduled tasks
