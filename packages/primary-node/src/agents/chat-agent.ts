@@ -790,6 +790,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let messageCount = 0;
     const startTime = Date.now(); // Issue #2920: 追踪启动时间
 
+    // Issue #3003: Timing diagnostics for request pipeline
+    let firstMessageMs: number | undefined;
+    let lastToolCallMs: number | undefined;
+    let toolCallCount = 0;
+
     try {
 
       for await (const { parsed } of iterator) {
@@ -806,6 +811,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         messageCount++;
 
+        // Issue #3003: Track Time-To-First-Token (TTFT)
+        if (!firstMessageMs) {
+          firstMessageMs = Date.now();
+          this.logger.info(
+            { chatId, ttftMs: firstMessageMs - startTime, type: parsed.type },
+            'First SDK message received (TTFT)'
+          );
+        }
+
+        // Issue #3003: Track tool call timing
+        if (parsed.type === 'tool_use') {
+          toolCallCount++;
+          const now = Date.now();
+          const sinceLastTool = lastToolCallMs ? now - lastToolCallMs : undefined;
+          lastToolCallMs = now;
+          this.logger.info(
+            { chatId, toolCallCount, sinceLastToolMs: sinceLastTool, elapsedMs: now - startTime },
+            'Tool call received'
+          );
+        }
+
         this.logger.debug(
           { chatId, messageCount, type: parsed.type },
           'SDK message received'
@@ -819,7 +845,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Check for completion
         if (parsed.type === 'result') {
-          this.logger.info({ chatId, content: parsed.content }, 'Result received, turn complete');
+          // Issue #3003: Log timing summary on completion
+          const completionMs = Date.now() - startTime;
+          this.logger.info({
+            chatId,
+            content: parsed.content,
+            completionMs,
+            ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
+            toolCallCount,
+            messageCount,
+          }, 'Result received, turn complete');
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
@@ -834,11 +869,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       iteratorError = error as Error;
       const elapsedMs = Date.now() - startTime; // Issue #2920: 计算耗时
 
+      // Issue #3003: Log detailed timing on iterator error
       this.logger.error({
         err: iteratorError,
         chatId,
         messageCount,
         elapsedMs,
+        ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
+        toolCallCount,
         errorMessage: iteratorError.message,
         errorStack: iteratorError.stack,
         errorName: iteratorError.constructor.name,
@@ -905,6 +943,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Check if this was an explicit close (reset cleared the session)
     const wasExplicitClose = !this.isSessionActive;
+
+    // Issue #3003: Log timing summary for the entire agent loop
+    if (!wasExplicitClose) {
+      const loopElapsedMs = Date.now() - startTime;
+      this.logger.warn(
+        {
+          chatId,
+          loopElapsedMs,
+          messageCount,
+          ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
+          toolCallCount,
+          hadError: !!iteratorError,
+        },
+        'Agent loop ended unexpectedly — timing summary'
+      );
+    }
 
     if (wasExplicitClose) {
       this.logger.info({ chatId }, 'Agent loop completed (explicit close)');
