@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -499,7 +499,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         errorCause: err.cause,
       }, 'CLI query error');
 
-      await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, messageId);
+      // Issue #2920: 如果有 stderr 输出，附加到错误消息中
+      const stderr = getErrorStderr(err);
+      if (stderr) {
+        const stderrLines = stderr.split('\n').filter(l => l.trim());
+        const tailLines = stderrLines.slice(-5).join('\n');
+        const diagnosticDetail = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
+        await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}\n\n${diagnosticDetail}`, messageId);
+      } else {
+        await this.callbacks.sendMessage(chatId, `❌ Session error: ${err.message}`, messageId);
+      }
       throw err;
     }
   }
@@ -770,6 +779,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
     let messageCount = 0;
+    const startTime = Date.now(); // Issue #2920: 追踪启动时间
 
     // Issue #2993: Inactivity watchdog state
     let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
@@ -861,16 +871,65 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       }
     } catch (error) {
       iteratorError = error as Error;
+      const elapsedMs = Date.now() - startTime; // Issue #2920: 计算耗时
+
       this.logger.error({
         err: iteratorError,
         chatId,
         messageCount,
+        elapsedMs,
         inactivityTimedOut,
         errorMessage: iteratorError.message,
         errorStack: iteratorError.stack,
         errorName: iteratorError.constructor.name,
         errorCause: iteratorError.cause,
       }, 'Iterator error');
+
+      // Issue #2920: 检测启动阶段失败
+      // 启动失败的特征：没有收到任何 SDK 消息且耗时很短。
+      // 根因通常是配置错误（MCP 配置无效、API Key 过期等），
+      // 重试无法解决，直接向用户展示具体错误。
+      if (isStartupFailure(messageCount, elapsedMs)) {
+        const stderr = getErrorStderr(iteratorError);
+        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+
+        // 提取有用的错误信息：优先使用 stderr 内容
+        let diagnosticMessage = iteratorError.message;
+        if (stderr) {
+          // 取 stderr 最后几行作为诊断信息（去空行，限制长度）
+          const stderrLines = stderr.split('\n').filter(l => l.trim());
+          const tailLines = stderrLines.slice(-5).join('\n');
+          diagnosticMessage = tailLines.length > 800
+            ? tailLines.slice(-800)
+            : tailLines;
+        }
+
+        this.logger.error(
+          {
+            chatId,
+            messageCount,
+            elapsedMs,
+            stderr: stderr ? stderr.slice(-500) : undefined,
+          },
+          'Startup failure detected — skipping retry/circuit-breaker'
+        );
+
+        await this.callbacks.sendMessage(
+          chatId,
+          `❌ Agent 启动失败: ${diagnosticMessage}\n\n`
+          + '这是一次配置或环境错误，重试无法解决。\n'
+          + '请检查上述错误信息，修复后发送 /reset 重置会话。',
+          threadRoot,
+        );
+
+        // 启动失败不触发重试，直接标记会话为非活跃
+        this.isSessionActive = false;
+
+        if (this.callbacks.onDone) {
+          await this.callbacks.onDone(chatId, threadRoot);
+        }
+        return; // 直接返回，不进入重启逻辑
+      }
 
       // Issue #2993: Skip redundant error notification if inactivity timeout
       // already sent one. The user already knows the session is hung.

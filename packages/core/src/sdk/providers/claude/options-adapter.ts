@@ -61,6 +61,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // stderr 回调（Issue #2920: 捕获 Claude Code 进程的 stderr 输出）
+  if (options.stderr) {
+    sdkOptions.stderr = options.stderr;
+  }
+
   return sdkOptions;
 }
 
