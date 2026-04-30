@@ -32,10 +32,6 @@ class TestAgent extends BaseAgent {
     return this.handleIteratorError(error, operation);
   }
 
-  async *testQueryOnce(input: string | unknown[], options: Parameters<BaseAgent['queryOnce']>[1]) {
-    yield* this.queryOnce(input, options);
-  }
-
   testCreateQueryStream(
     input: AsyncGenerator<StreamingUserMessage>,
     options: Parameters<BaseAgent['createQueryStream']>[1]
@@ -61,7 +57,6 @@ function createMockSdkMessage(overrides: Partial<AgentMessage> = {}): AgentMessa
 
 // Minimal mock for SDK provider
 const mockSdkProvider = {
-  queryOnce: vi.fn(),
   queryStream: vi.fn(),
 };
 
@@ -255,119 +250,6 @@ describe('BaseAgent', () => {
       const message = agent.testHandleIteratorError(42, 'testOperation');
 
       expect(message.content).toContain('42');
-    });
-  });
-
-  describe('queryOnce', () => {
-    const defaultOptions = {
-      cwd: '/workspace',
-      permissionMode: 'bypassPermissions' as const,
-      settingSources: ['project'],
-    };
-
-    it('should yield parsed messages from SDK provider for string input', async () => {
-      const sdkMessages = [
-        createMockSdkMessage({ type: 'text', content: 'Hello' }),
-        createMockSdkMessage({ type: 'tool_use', content: 'Using tool', metadata: { toolName: 'Read', toolInput: { file: '/test.ts' }, elapsedMs: 100, costUsd: 0.01, inputTokens: 10, outputTokens: 20 } }),
-      ];
-
-      mockSdkProvider.queryOnce.mockImplementation(async function* () {
-        for (const msg of sdkMessages) {
-          yield msg;
-        }
-      });
-
-      const results: IteratorYieldResult[] = [];
-      for await (const result of agent.testQueryOnce('test prompt', defaultOptions)) {
-        results.push(result);
-      }
-
-      expect(results).toHaveLength(2);
-      expect(results[0].parsed.type).toBe('text');
-      expect(results[0].parsed.content).toBe('Hello');
-      expect(results[0].raw).toEqual(sdkMessages[0]);
-
-      expect(results[1].parsed.type).toBe('tool_use');
-      expect(results[1].parsed.metadata?.toolName).toBe('Read');
-      expect(results[1].parsed.metadata?.elapsed).toBe(100);
-      expect(results[1].parsed.metadata?.cost).toBe(0.01);
-      expect(results[1].parsed.metadata?.tokens).toBe(30); // inputTokens + outputTokens
-    });
-
-    it('should handle empty response from SDK provider', async () => {
-      mockSdkProvider.queryOnce.mockImplementation(async function* () {
-        // no messages
-      });
-
-      const results: IteratorYieldResult[] = [];
-      for await (const result of agent.testQueryOnce('test', defaultOptions)) {
-        results.push(result);
-      }
-
-      expect(results).toHaveLength(0);
-    });
-
-    it('should pass string input directly to SDK provider', async () => {
-      mockSdkProvider.queryOnce.mockImplementation(async function* () {
-        yield createMockSdkMessage();
-      });
-
-      for await (const _ of agent.testQueryOnce('hello input', defaultOptions)) {
-        // consume
-      }
-
-      expect(mockSdkProvider.queryOnce).toHaveBeenCalledWith('hello input', defaultOptions);
-    });
-
-    it('should convert array input via convertInputToUserInput', async () => {
-      mockSdkProvider.queryOnce.mockImplementation(async function* () {
-        yield createMockSdkMessage();
-      });
-
-      for await (const _ of agent.testQueryOnce([], defaultOptions)) {
-        // consume
-      }
-
-      // Array input should be converted - the method returns [] for array input
-      expect(mockSdkProvider.queryOnce).toHaveBeenCalledWith([], defaultOptions);
-    });
-
-    it('should yield messages with sessionId from metadata', async () => {
-      const sdkMessage = createMockSdkMessage({
-        type: 'result',
-        content: 'Done',
-        metadata: { sessionId: 'session-123' },
-      });
-
-      mockSdkProvider.queryOnce.mockImplementation(async function* () {
-        yield sdkMessage;
-      });
-
-      const results: IteratorYieldResult[] = [];
-      for await (const result of agent.testQueryOnce('test', defaultOptions)) {
-        results.push(result);
-      }
-
-      expect(results[0].parsed.sessionId).toBe('session-123');
-    });
-
-    it('should handle messages without metadata', async () => {
-      const sdkMessage = createMockSdkMessage({
-        type: 'text',
-        content: 'No metadata',
-      });
-
-      mockSdkProvider.queryOnce.mockImplementation(async function* () {
-        yield sdkMessage;
-      });
-
-      const results: IteratorYieldResult[] = [];
-      for await (const result of agent.testQueryOnce('test', defaultOptions)) {
-        results.push(result);
-      }
-
-      expect(results[0].parsed.metadata).toBeUndefined();
-      expect(results[0].parsed.sessionId).toBeUndefined();
     });
   });
 

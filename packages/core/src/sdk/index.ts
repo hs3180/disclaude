@@ -30,13 +30,16 @@
  * // 获取默认 Provider
  * const provider = getProvider();
  *
- * // 一次性查询
- * for await (const message of provider.queryOnce('Hello', options)) {
+ * // 流式查询（一次性输入可包装为单次 AsyncGenerator）
+ * async function* singleInput(text: string) {
+ *   yield { role: 'user' as const, content: text };
+ * }
+ * const result = provider.queryStream(singleInput('Hello'), options);
+ * for await (const message of result.iterator) {
  *   console.log(message.content);
  * }
  *
- * // 流式查询
- * const result = provider.queryStream(inputGenerator, options);
+ * // 持续对话流式查询
  * for await (const message of result.iterator) {
  *   console.log(message.content);
  * }

@@ -16,7 +16,7 @@ import type {
   UserInput,
 } from '../../types.js';
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
-import { adaptOptions, adaptInput } from './options-adapter.js';
+import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('ClaudeSDKProvider');
@@ -145,49 +145,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       available,
       unavailableReason: available ? undefined : 'ANTHROPIC_API_KEY not set',
     };
-  }
-
-  async *queryOnce(
-    input: string | UserInput[],
-    options: AgentQueryOptions
-  ): AsyncGenerator<AgentMessage> {
-    if (this.disposed) {
-      throw new Error('Provider has been disposed');
-    }
-
-    // Issue #2920: 创建 stderr 捕获器
-    const stderrCapture = new StderrCapture();
-
-    const sdkOptions = adaptOptions(options);
-    // 将 stderr 回调注入 SDK 选项
-    sdkOptions.stderr = (data: string) => {
-      stderrCapture.append(data);
-      // 同时调用用户提供的回调（如果有）
-      options.stderr?.(data);
-    };
-
-    const adaptedInput = adaptInput(input);
-
-    const queryResult = query({
-      prompt: adaptedInput as Parameters<typeof query>[0]['prompt'],
-      options: sdkOptions as Parameters<typeof query>[0]['options'],
-    });
-
-    try {
-      for await (const message of queryResult) {
-        yield adaptSDKMessage(message);
-      }
-    } catch (error) {
-      // Issue #2920: 将捕获的 stderr 附加到 error 对象
-      if (stderrCapture.hasContent()) {
-        attachStderrToError(error, stderrCapture.getCaptured());
-        logger.error(
-          { err: error, stderr: stderrCapture.getTail() },
-          'queryOnce failed with stderr output'
-        );
-      }
-      throw error;
-    }
   }
 
   queryStream(
