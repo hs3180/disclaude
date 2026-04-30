@@ -333,6 +333,29 @@ ${task.prompt}`;
   }
 
   /**
+   * Immediately trigger a task by its ID, bypassing the cron schedule.
+   *
+   * This is the core method for event-driven schedule triggering.
+   * It respects cooldown periods and blocking mechanisms just like cron-triggered execution.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   *
+   * @param taskId - The ID of the task to trigger
+   * @returns true if the task was triggered, false if not found or skipped
+   */
+  async triggerNow(taskId: string): Promise<boolean> {
+    const entry = this.activeJobs.get(taskId);
+    if (!entry) {
+      logger.warn({ taskId }, 'triggerNow: task not found or not scheduled');
+      return false;
+    }
+
+    logger.info({ taskId, name: entry.task.name }, 'Triggering task immediately (event-driven)');
+    await this.executeTask(entry.task);
+    return true;
+  }
+
+  /**
    * Get all active jobs.
    */
   getActiveJobs(): ActiveJob[] {

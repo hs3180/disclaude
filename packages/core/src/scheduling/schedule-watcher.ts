@@ -101,6 +101,8 @@ function parseScheduleFrontmatter(content: string): {
       case 'createdAt':
       case 'lastExecutedAt':
       case 'model':
+      case 'watchPath':
+      case 'signalFile':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -234,6 +236,8 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        watchPath: frontmatter['watchPath'] as string | undefined,
+        signalFile: frontmatter['signalFile'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -289,6 +293,12 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.watchPath) {
+      frontmatter.push(`watchPath: "${task.watchPath}"`);
+    }
+    if (task.signalFile) {
+      frontmatter.push(`signalFile: "${task.signalFile}"`);
     }
 
     frontmatter.push('---', '');

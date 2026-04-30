@@ -602,6 +602,117 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  describe('parseFile - watchPath and signalFile (Issue #1953)', () => {
+    it('should parse watchPath and signalFile fields', async () => {
+      const content = [
+        '---',
+        'name: "Chats Activation"',
+        'cron: "0 */5 * * * *"',
+        'chatId: "oc_chats"',
+        'watchPath: "workspace/chats"',
+        'signalFile: ".trigger"',
+        '---',
+        '',
+        'Activate pending chats.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/chats-activation/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watchPath).toBe('workspace/chats');
+      expect(task!.signalFile).toBe('.trigger');
+    });
+
+    it('should parse watchPath without signalFile', async () => {
+      const content = [
+        '---',
+        'name: "Event Task"',
+        'cron: "0 0 * * *"',
+        'chatId: "oc_event"',
+        'watchPath: "workspace/events"',
+        '---',
+        '',
+        'Process events.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/event-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watchPath).toBe('workspace/events');
+      expect(task!.signalFile).toBeUndefined();
+    });
+
+    it('should default watchPath and signalFile to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-watch/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watchPath).toBeUndefined();
+      expect(task!.signalFile).toBeUndefined();
+    });
+
+    it('should parse unquoted watchPath value', async () => {
+      const content = [
+        '---',
+        'name: "Unquoted Watch"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_test"',
+        'watchPath: workspace/chats',
+        '---',
+        '',
+        'Task content.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/unquoted-watch/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.watchPath).toBe('workspace/chats');
+    });
+  });
+
+  describe('writeTask - watchPath and signalFile (Issue #1953)', () => {
+    it('should write watchPath and signalFile when present', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-signal-task',
+        name: 'Signal Task',
+        cron: '0 */5 * * * *',
+        prompt: 'Process signals',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        watchPath: 'workspace/chats',
+        signalFile: '.trigger',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('watchPath: "workspace/chats"');
+      expect(writtenContent).toContain('signalFile: ".trigger"');
+    });
+
+    it('should not write watchPath or signalFile when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-signal',
+        name: 'No Signal Task',
+        cron: '0 0 * * *',
+        prompt: 'Regular task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('watchPath:');
+      expect(writtenContent).not.toContain('signalFile:');
+    });
+  });
 });
 
 // ============================================================================

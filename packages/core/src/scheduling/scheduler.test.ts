@@ -535,4 +535,134 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  describe('triggerNow (Issue #1953)', () => {
+    it('should immediately execute a task by ID', async () => {
+      const task = createTask({ id: 'trigger-1', name: 'Triggerable Task' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerNow('trigger-1');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+    });
+
+    it('should pass correct arguments to executor', async () => {
+      const task = createTask({
+        id: 'trigger-2',
+        createdBy: 'ou_user',
+        model: 'claude-sonnet-4-20250514',
+      });
+      scheduler.addTask(task);
+
+      await scheduler.triggerNow('trigger-2');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        'ou_user',
+        'claude-sonnet-4-20250514',
+      );
+    });
+
+    it('should return false for non-existent task', async () => {
+      const result = await scheduler.triggerNow('non-existent');
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect blocking mechanism', async () => {
+      // Make executor hang so the task stays "running"
+      let resolveExecutor: () => void;
+      mockExecutor.mockReturnValue(new Promise<void>((resolve) => {
+        resolveExecutor = resolve;
+      }));
+
+      const task = createTask({ id: 'blocking-trigger', blocking: true });
+      scheduler.addTask(task);
+
+      // First trigger
+      const triggerPromise1 = scheduler.triggerNow('blocking-trigger');
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-trigger')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger while running — should be skipped by blocking
+      resolveExecutor!();
+      await triggerPromise1;
+
+      // Now trigger again — should work
+      mockExecutor.mockResolvedValue(undefined);
+      const result = await scheduler.triggerNow('blocking-trigger');
+      expect(result).toBe(true);
+    });
+
+    it('should respect cooldown period', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date('2026-01-01T12:00:00'),
+          cooldownEndsAt: new Date('2026-01-01T13:00:00'),
+          remainingMs: 3600000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'cooldown-trigger', cooldownPeriod: 3600000 });
+      cooldownScheduler.addTask(task);
+
+      const result = await cooldownScheduler.triggerNow('cooldown-trigger');
+
+      // triggerNow returns true because the task exists and was "triggered"
+      // (executeTask was called but skipped due to cooldown)
+      expect(result).toBe(true);
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('冷静期'),
+      );
+      // Executor should NOT be called when in cooldown
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should wrap prompt with anti-recursion instructions', async () => {
+      const task = createTask({
+        id: 'trigger-anti-recursion',
+        name: 'Signal Task',
+        prompt: 'Process the signal',
+      });
+      scheduler.addTask(task);
+
+      await scheduler.triggerNow('trigger-anti-recursion');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('Signal Task');
+      expect(promptArg).toContain('Process the signal');
+    });
+  });
 });

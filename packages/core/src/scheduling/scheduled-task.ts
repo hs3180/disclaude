@@ -41,4 +41,19 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Directory path to watch for signal files that trigger immediate execution.
+   * When set, the SignalWatcher monitors this directory for the signal file.
+   * Cron schedule remains active as a fallback.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  watchPath?: string;
+  /**
+   * Signal filename to watch for in the watchPath directory.
+   * Defaults to '.trigger' if watchPath is set but signalFile is not.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  signalFile?: string;
 }
