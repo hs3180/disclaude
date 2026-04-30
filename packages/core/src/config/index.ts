@@ -493,6 +493,18 @@ export class Config {
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
   }
+
+  /**
+   * Get SDK HTTP request timeout in milliseconds.
+   * This sets the ANTHROPIC_TIMEOUT env var for the SDK subprocess,
+   * preventing infinite hangs when TCP connections to the API proxy stall.
+   * @see Issue #2992
+   *
+   * @returns Timeout in milliseconds (default: 300000 = 5 minutes)
+   */
+  static getSdkTimeoutMs(): number {
+    return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
+  }
 }
 
 // ============================================================================

@@ -197,5 +197,31 @@ describe('SDK Utilities', () => {
       const env = buildSdkEnv('sk-test-key', undefined, undefined, true);
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('0');
     });
+
+    describe('ANTHROPIC_TIMEOUT (Issue #2992)', () => {
+      it('should set ANTHROPIC_TIMEOUT to 300000 by default', () => {
+        vi.stubEnv('ANTHROPIC_TIMEOUT', undefined);
+        const env = buildSdkEnv('sk-test-key');
+        expect(env.ANTHROPIC_TIMEOUT).toBe('300000');
+      });
+
+      it('should use sdkTimeoutMs parameter when provided', () => {
+        vi.stubEnv('ANTHROPIC_TIMEOUT', undefined);
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, 600_000);
+        expect(env.ANTHROPIC_TIMEOUT).toBe('600000');
+      });
+
+      it('should not set ANTHROPIC_TIMEOUT when sdkTimeoutMs is 0', () => {
+        vi.stubEnv('ANTHROPIC_TIMEOUT', undefined);
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, 0);
+        expect(env.ANTHROPIC_TIMEOUT).toBeUndefined();
+      });
+
+      it('should not override ANTHROPIC_TIMEOUT from process.env', () => {
+        vi.stubEnv('ANTHROPIC_TIMEOUT', '120000');
+        const env = buildSdkEnv('sk-test-key');
+        expect(env.ANTHROPIC_TIMEOUT).toBe('120000');
+      });
+    });
   });
 });
