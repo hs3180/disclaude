@@ -143,6 +143,8 @@ interface PendingResponse {
   reject: (error: Error) => void;
   response: string[];
   timeout: NodeJS.Timeout;
+  /** Timestamp when the request was first received (Issue #3003) */
+  requestStartMs: number;
 }
 /**
  * Session status for async mode.
@@ -304,8 +306,10 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         const buffer = messageId ? this.responseBuffers.get(messageId) : undefined;
         const responseText = buffer ? buffer.join('\n') : '';
 
+        // Issue #3003: log task completion with elapsed timing
+        const taskElapsedMs = Date.now() - pending.requestStartMs;
         logger.info(
-          { chatId: message.chatId, messageId, responseLength: responseText.length },
+          { chatId: message.chatId, messageId, responseLength: responseText.length, taskElapsedMs },
           'Task completed, resolving sync response'
         );
 
@@ -516,8 +520,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     const chatId = chatRequest.chatId || uuidv4();
     const messageId = uuidv4();
     const {userId} = chatRequest;
+    const requestStartMs = Date.now(); // Issue #3003: track request timing
 
-    logger.info({ chatId, messageId, userId, syncMode }, 'Received chat request');
+    logger.info({ chatId, messageId, userId, syncMode, requestStartMs }, 'Received chat request');
 
     // For sync mode, set up response handling
     if (syncMode) {
@@ -528,15 +533,21 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     // Emit as incoming message
     if (this.messageHandler) {
       try {
+        const dispatchStartMs = Date.now();
         await this.messageHandler({
           messageId,
           chatId,
           userId,
           content: chatRequest.message,
           messageType: 'text',
-          timestamp: Date.now(),
+          timestamp: requestStartMs,
           threadId: chatRequest.threadId,
         });
+        // Issue #3003: log dispatch latency
+        const dispatchMs = Date.now() - dispatchStartMs;
+        if (dispatchMs > 100) {
+          logger.info({ chatId, messageId, dispatchMs }, 'Message dispatch to agent completed (slow dispatch)');
+        }
       } catch (error) {
         logger.error({ err: error, messageId }, 'Failed to handle message');
         this.sendError(res, 500, 'Failed to process message');
@@ -556,8 +567,15 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     if (syncMode) {
       // Wait for response with timeout (4 minutes for AI processing)
       const timeoutMs = 240000; // 240 seconds (4 minutes)
-      const responseText = await this.waitForResponse(chatId, messageId, timeoutMs);
+      const responseText = await this.waitForResponse(chatId, messageId, timeoutMs, requestStartMs);
       response.response = responseText;
+
+      // Issue #3003: log total request timing
+      const totalMs = Date.now() - requestStartMs;
+      logger.info(
+        { chatId, messageId, totalMs, responseLength: responseText?.length ?? 0 },
+        'Sync request completed'
+      );
 
       // Cleanup
       this.responseBuffers.delete(messageId);
@@ -744,11 +762,20 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   /**
    * Wait for response in sync mode.
    */
-  private waitForResponse(chatId: string, messageId: string, timeoutMs: number): Promise<string> {
+  private waitForResponse(chatId: string, messageId: string, timeoutMs: number, requestStartMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(chatId);
         this.responseBuffers.delete(messageId);
+
+        // Issue #3003: log detailed timing summary on timeout
+        const elapsedMs = Date.now() - requestStartMs;
+        logger.warn(
+          { chatId, messageId, elapsedMs, timeoutMs, timeoutExceededBy: elapsedMs - timeoutMs },
+          'Sync response timeout — no response received within timeout. '
+          + 'Check server logs for this chatId to identify the slow stage.'
+        );
+
         reject(new Error('Response timeout'));
       }, timeoutMs);
 
@@ -772,6 +799,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         },
         response: [],
         timeout,
+        requestStartMs, // Issue #3003: store for elapsed tracking
       });
     });
   }

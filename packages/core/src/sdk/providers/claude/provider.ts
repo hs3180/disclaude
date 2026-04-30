@@ -188,18 +188,44 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       options: sdkOptions as Parameters<typeof query>[0]['options'],
     });
 
+    // Issue #3003: Track SDK query timing for diagnostics
+    const queryStartMs = Date.now();
+
     // 创建消息适配迭代器
     let messageCount = 0;
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
       try {
+        let firstMessageMs: number | undefined;
         for await (const message of queryResult) {
+          const now = Date.now();
           messageCount++;
-          logger.info(
-            { messageCount, messageType: message.type },
-            'SDK message received'
-          );
+          // Issue #3003: log TTFT and per-message elapsed
+          if (!firstMessageMs) {
+            firstMessageMs = now;
+            logger.info(
+              { messageCount, messageType: message.type, ttftMs: now - queryStartMs },
+              'SDK first message received (TTFT)'
+            );
+          } else if (message.type === 'assistant' || message.type === 'tool_use') {
+            // Log timing for significant messages (not every system message)
+            logger.info(
+              { messageCount, messageType: message.type, elapsedMs: now - queryStartMs },
+              'SDK message received'
+            );
+          } else {
+            logger.info(
+              { messageCount, messageType: message.type },
+              'SDK message received'
+            );
+          }
           yield adaptSDKMessage(message);
         }
+        // Issue #3003: log iterator completion timing
+        const totalMs = Date.now() - queryStartMs;
+        logger.info(
+          { totalMs, messageCount, ttftMs: firstMessageMs ? firstMessageMs - queryStartMs : undefined },
+          'SDK iterator completed'
+        );
       } catch (error) {
         // Issue #2920: 将捕获的 stderr 附加到 error 对象
         if (stderrCapture.hasContent()) {

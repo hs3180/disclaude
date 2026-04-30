@@ -508,6 +508,17 @@ assert_status() {
             if [ -f "${SERVER_LOG}" ]; then
                 log_error "  Last server activity:"
                 tail -10 "${SERVER_LOG}" | sed 's/^/    /'
+
+                # Issue #3003: Extract timing timeline from server logs
+                # Find the most recent chatId from sync requests and show its timeline
+                local recent_chatId
+                recent_chatId=$(grep -o '"chatId":"[^"]*"' "${SERVER_LOG}" | tail -1 | cut -d'"' -f4)
+                if [ -n "$recent_chatId" ]; then
+                    log_error "  Request timeline (chatId: ${recent_chatId}):"
+                    grep "$recent_chatId" "${SERVER_LOG}" | \
+                      grep -E "(Received chat request|processMessage called|Starting SDK query|TTFT|Tool call|Task completed|Sync request completed|timeout|Iterator error)" | \
+                      tail -15 | sed 's/^/    /'
+                fi
             fi
         else
             log_fail "$test_name: expected status $expected, got $RESPONSE_STATUS"
@@ -634,6 +645,7 @@ assert_body_matches() {
 
 # Combined assertion: send sync chat and validate HTTP 200 + success + non-empty response
 # Sets RESPONSE_TEXT to the extracted response field value
+# Issue #3003: Includes timing diagnostics on failure
 # Usage: assert_sync_chat_ok "message" ["chatId"]
 # Returns: 0 on success, 1 on failure
 assert_sync_chat_ok() {
@@ -641,10 +653,34 @@ assert_sync_chat_ok() {
     local chat_id="${2:-}"
     local result
 
+    local request_start_ms
+    request_start_ms=$(date +%s%N 2>/dev/null || date +%s)
+
     result=$(make_sync_request "$message" "$chat_id")
+
+    local request_end_ms
+    request_end_ms=$(date +%s%N 2>/dev/null || date +%s)
+
     parse_response "$result"
 
     RESPONSE_TEXT=$(extract_json_field "response")
+
+    # Issue #3003: Calculate and report client-side timing
+    if [ "$request_start_ms" != "$request_end_ms" ]; then
+        local client_elapsed_ms=$(( (request_end_ms - request_start_ms) / 1000000 ))
+        if [ "$RESPONSE_STATUS" = "000" ] || [ "$RESPONSE_STATUS" != "200" ]; then
+            log_error "Client-side elapsed: ${client_elapsed_ms}ms (timeout: ${TIMEOUT}s = $((TIMEOUT * 1000))ms)"
+            # Show server-side timeline for this chatId
+            if [ -n "$chat_id" ] && [ -f "${SERVER_LOG}" ]; then
+                log_error "Server-side timeline for ${chat_id}:"
+                grep "$chat_id" "${SERVER_LOG}" | \
+                  grep -E "(Received chat request|processMessage|Starting SDK|TTFT|Tool call|Task completed|Iterator error)" | \
+                  tail -15 | sed 's/^/    /'
+            fi
+        elif [ -n "$VERBOSE" ] && [ "$VERBOSE" = true ]; then
+            log_info "Client-side elapsed: ${client_elapsed_ms}ms"
+        fi
+    fi
 
     if [ "$RESPONSE_STATUS" != "200" ]; then
         log_fail "Chat request failed with HTTP $RESPONSE_STATUS"

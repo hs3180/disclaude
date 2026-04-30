@@ -311,9 +311,23 @@ export abstract class BaseAgent implements Disposable {
     const result = this.sdkProvider.queryStream(convertInput(), options);
 
     const self = this;
+    const streamStartMs = Date.now(); // Issue #3003: track stream timing
     async function* wrappedIterator(): AsyncGenerator<IteratorYieldResult> {
+      let firstYieldMs: number | undefined;
+      let yieldCount = 0;
       for await (const message of result.iterator) {
         const parsed = self.convertToLegacyFormat(message);
+        yieldCount++;
+
+        // Issue #3003: Track TTFT at baseAgent level
+        if (!firstYieldMs) {
+          firstYieldMs = Date.now();
+          self.logger.info({
+            provider: self.provider,
+            ttftMs: firstYieldMs - streamStartMs,
+            messageType: parsed.type,
+          }, 'First message yielded from SDK stream (TTFT)');
+        }
 
         // Log SDK message with full details for debugging
         self.logger.debug({
@@ -321,11 +335,21 @@ export abstract class BaseAgent implements Disposable {
           messageType: parsed.type,
           contentLength: parsed.content?.length || 0,
           toolName: parsed.metadata?.toolName,
-          rawMessage: message,
+          elapsedMs: Date.now() - streamStartMs,
+          yieldCount,
         }, 'SDK message received');
 
         yield { parsed, raw: message };
       }
+
+      // Issue #3003: Log stream completion timing
+      const totalMs = Date.now() - streamStartMs;
+      self.logger.info({
+        provider: self.provider,
+        totalMs,
+        yieldCount,
+        ttftMs: firstYieldMs ? firstYieldMs - streamStartMs : undefined,
+      }, 'SDK stream completed');
     }
 
     return {
