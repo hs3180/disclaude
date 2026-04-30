@@ -93,8 +93,44 @@ function ensureLogDir() {
 // Plist generation
 // ---------------------------------------------------------------------------
 
+/**
+ * Issue #2975: Detect caffeinate availability on macOS.
+ * Returns the path to caffeinate binary, or null if not available.
+ */
+function getCaffeinatePath() {
+  try {
+    return execSync('which caffeinate', { encoding: 'utf-8' }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the ProgramArguments array for the plist.
+ *
+ * Issue #2975: On macOS, wraps the node command with caffeinate -s to
+ * prevent system sleep during service operation. When launchd stops the
+ * service, caffeinate terminates automatically (along with the node child),
+ * so no separate cleanup is needed.
+ *
+ * @param {string} nodePath - Absolute path to the node binary
+ * @returns {string[]} ProgramArguments entries
+ */
+function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePath()) {
+  const args = [];
+
+  if (caffeinatePath) {
+    args.push(caffeinatePath, '-s');
+  }
+
+  args.push(nodePath, CLI_ENTRY, 'start');
+  return args;
+}
+
 function generatePlist() {
   const nodePath = getNodePath();
+  const caffeinatePath = getCaffeinatePath();
+  const programArgs = buildProgramArguments(nodePath, caffeinatePath);
 
   // Issue #2934: Removed StandardOutPath — application logs go through
   // pino file transport with pino-roll rotation (triggered by LOG_TO_FILE env var).
@@ -108,9 +144,7 @@ function generatePlist() {
 
   <key>ProgramArguments</key>
   <array>
-    <string>${nodePath}</string>
-    <string>${CLI_ENTRY}</string>
-    <string>start</string>
+${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
   </array>
 
   <key>WorkingDirectory</key>
@@ -148,6 +182,7 @@ function generatePlist() {
   console.log(`Plist generated: ${PLIST_PATH}`);
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${CLI_ENTRY}`);
+  console.log(`  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
   console.log(`  App log: ${APP_LOG} (pino-roll rotated)`);
   console.log(`  Stderr: ${STDERR_LOG} (launchd crash log)`);
