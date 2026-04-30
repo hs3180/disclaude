@@ -94,7 +94,8 @@ export interface SchedulerOptions {
  *   executor: async (chatId, prompt, userId) => {
  *     // Create and run agent
  *     const agent = AgentFactory.createAgent(chatId, callbacks);
- *     await agent.executeOnce(chatId, prompt, undefined, userId);
+ *     await agent.processMessage(chatId, prompt, messageId, userId);
+ *     await agent.taskComplete;
  *     agent.dispose();
  *   },
  * });

@@ -3,6 +3,8 @@
  *
  * Issue #1382: Unified executor implementation for both Primary Node and Worker Node.
  * Issue #2941: Uses ChatAgent directly since it is the only agent type.
+ * Issue #3124: Uses processMessage + taskComplete instead of executeOnce,
+ *   unifying scheduled tasks on the streaming input path.
  *
  * This module provides a factory function to create TaskExecutor instances
  * that can be used with the Scheduler. The executor uses a provided agent
@@ -15,8 +17,9 @@
  * Scheduler uses TaskExecutor to execute tasks:
  *   executor(chatId, prompt, userId)
  *     -> agentFactory(chatId, callbacks)
- *       -> chatAgent.executeOnce(chatId, prompt, undefined, userId)
- *         -> chatAgent.dispose()
+ *       -> chatAgent.processMessage(chatId, prompt, messageId, userId)
+ *       -> await chatAgent.taskComplete
+ *       -> chatAgent.dispose()
  * ```
  *
  * @module @disclaude/core/scheduling
@@ -57,12 +60,13 @@ export interface ScheduleExecutorOptions {
  *
  * This factory function creates an executor that:
  * 1. Creates a short-lived ChatAgent using the provided factory
- * 2. Executes the task via chatAgent.executeOnce()
+ * 2. Executes the task via processMessage() + taskComplete (Issue #3124)
  * 3. Disposes the ChatAgent after execution (success or failure)
  *
  * Issue #1382: This enables both Primary Node and Worker Node to use
  * the same executor logic, just with different agent factories.
  * Issue #2941: Uses ChatAgent directly.
+ * Issue #3124: Unified on streaming input path (processMessage + taskComplete).
  *
  * @param options - Executor options including agent factory and callbacks
  * @returns A TaskExecutor function for use with Scheduler
@@ -93,7 +97,16 @@ export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskEx
     const agent = agentFactory(chatId, callbacks, model);
 
     try {
-      await agent.executeOnce(chatId, prompt, undefined, userId); // messageId is always undefined for scheduled tasks
+      // Issue #3124: Use processMessage + taskComplete instead of executeOnce.
+      // This unifies scheduled tasks on the streaming input path, eliminating
+      // the duplicated MCP config, message building, and iterator processing.
+      const messageId = `sched-${Date.now()}`;
+      await agent.processMessage(chatId, prompt, messageId, userId);
+
+      // Wait for the task to complete via the streaming path
+      if (agent.taskComplete) {
+        await agent.taskComplete;
+      }
     } finally {
       // Always dispose the ChatAgent after execution
       agent.dispose();

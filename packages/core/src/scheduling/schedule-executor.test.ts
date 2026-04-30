@@ -30,8 +30,8 @@ describe('createScheduleExecutor', () => {
       name: 'test-agent',
       start: vi.fn().mockResolvedValue(undefined),
       handleInput: vi.fn(),
-      processMessage: vi.fn(),
-      executeOnce: vi.fn().mockResolvedValue(undefined),
+      processMessage: vi.fn().mockResolvedValue(undefined),
+      taskComplete: Promise.resolve(),
       reset: vi.fn(),
       stop: vi.fn().mockReturnValue(false),
       dispose: vi.fn(),
@@ -66,7 +66,7 @@ describe('createScheduleExecutor', () => {
       expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined);
     });
 
-    it('should call executeOnce with correct arguments', async () => {
+    it('should call processMessage with correct arguments', async () => {
       const executor = createScheduleExecutor({
         agentFactory: mockAgentFactory,
         callbacks: mockCallbacks,
@@ -74,8 +74,13 @@ describe('createScheduleExecutor', () => {
 
       await executor('chat-1', 'Run tests', 'user-42');
 
-      expect(mockAgent.executeOnce).toHaveBeenCalledTimes(1);
-      expect(mockAgent.executeOnce).toHaveBeenCalledWith('chat-1', 'Run tests', undefined, 'user-42');
+      expect(mockAgent.processMessage).toHaveBeenCalledTimes(1);
+      // messageId is generated as `sched-{timestamp}`
+      const [[argChatId, argPrompt, argMessageId, argUserId]] = vi.mocked(mockAgent.processMessage).mock.calls;
+      expect(argChatId).toBe('chat-1');
+      expect(argPrompt).toBe('Run tests');
+      expect(argMessageId).toMatch(/^sched-\d+$/);
+      expect(argUserId).toBe('user-42');
     });
 
     it('should dispose agent after successful execution', async () => {
@@ -90,7 +95,8 @@ describe('createScheduleExecutor', () => {
     });
 
     it('should dispose agent even when execution fails', async () => {
-      vi.mocked(mockAgent.executeOnce).mockRejectedValue(new Error('Execution failed'));
+      vi.mocked(mockAgent.processMessage).mockResolvedValue(undefined);
+      (mockAgent as any).taskComplete = Promise.reject(new Error('Execution failed'));
 
       const executor = createScheduleExecutor({
         agentFactory: mockAgentFactory,
@@ -102,8 +108,9 @@ describe('createScheduleExecutor', () => {
       expect(mockAgent.dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('should dispose agent when executeOnce throws non-Error', async () => {
-      vi.mocked(mockAgent.executeOnce).mockRejectedValue('string error');
+    it('should dispose agent when processMessage throws non-Error', async () => {
+      vi.mocked(mockAgent.processMessage).mockResolvedValue(undefined);
+      (mockAgent as any).taskComplete = Promise.reject('string error');
 
       const executor = createScheduleExecutor({
         agentFactory: mockAgentFactory,
@@ -163,7 +170,7 @@ describe('createScheduleExecutor', () => {
       await executor('chat-1', 'First');
       await executor('chat-1', 'Second');
 
-      expect(mockAgent.executeOnce).toHaveBeenCalledTimes(2);
+      expect(mockAgent.processMessage).toHaveBeenCalledTimes(2);
     });
   });
 });

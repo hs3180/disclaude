@@ -14,7 +14,7 @@ function createMockChatAgent(chatId: string): ChatAgent {
     start: vi.fn().mockResolvedValue(undefined),
     handleInput: vi.fn(),
     processMessage: vi.fn(),
-    executeOnce: vi.fn().mockResolvedValue(undefined),
+    taskComplete: undefined,
     reset: vi.fn(),
     stop: vi.fn().mockReturnValue(true),
     dispose: vi.fn(),

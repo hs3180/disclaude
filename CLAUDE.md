@@ -128,7 +128,7 @@ Agent implementations using the Template Method pattern:
   - **Message Queue**: Messages queued and processed sequentially per chatId
   - **Session Cleanup**: Idle sessions cleaned up after timeout (default 30min)
   - `processMessage()` - Non-blocking, queues message for Agent processing
-  - `executeOnce()` - Blocking one-shot query for CLI mode
+  - `runOnce()` - Blocking one-shot query using unified streaming path (Issue #3124)
 
 - **`evaluator.ts`** - Task completion evaluation
 - **`executor.ts`** - Task execution with progress reporting
@@ -366,7 +366,7 @@ npm run pm2:restart
 |--------|----------------------|------------------------|
 | **Startup** | ⚡ Instant | 🔄 Requires WebSocket connection |
 | **Output** | 📺 Full colored console | 💬 Chat messages (throttled) |
-| **Session** | ❌ One-shot (`executeOnce()`) | ✅ Persistent (`processMessage()`) |
+| **Session** | ❌ One-shot (`runOnce()`) | ✅ Persistent (`processMessage()`) |
 | **Permissions** | 🔒 `default` (ask user) | ✅ `bypassPermissions` (auto-approve) |
 | **Best for** | 🔧 Development & testing | 🤖 Production & users |
 
@@ -411,7 +411,7 @@ Tools are configured via `disallowedTools` in the agent classes:
 - **ChatAgent** (`packages/primary-node/src/agents/chat-agent.ts`): Uses `disallowedTools: ['EnterPlanMode']`
 - **BaseAgent**: Provides `createSdkOptions()` for SDK configuration
 
-To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.processMessage()` or `ChatAgent.executeOnce()`.
+To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.startAgentLoop()` or `ChatAgent.runOnce()`.
 
 ## Logging Guidelines
 

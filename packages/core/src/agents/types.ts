@@ -89,7 +89,7 @@ export interface UserInput {
  * This is the **only** agent interface in the simplified architecture (Issue #1501).
  * ChatAgent implements this interface and serves as the universal agent for all scenarios:
  * - Long-lived conversation (via handleInput + processMessage)
- * - One-shot task execution (via executeOnce) - replaces former SkillAgent/Subagent
+ * - One-shot task execution (via processMessage + taskComplete) - replaces former SkillAgent/Subagent
  * - Scheduled tasks (via AgentFactory.createAgent())
  *
  * @example
@@ -150,19 +150,18 @@ export interface ChatAgent extends Disposable {
   ): void;
 
   /**
-   * Execute a one-shot query (for CLI and scheduled tasks).
+   * Promise that resolves when the current task completes.
    *
-   * @param chatId - Chat/conversation ID
-   * @param text - Message text
-   * @param messageId - Optional message identifier
-   * @param senderOpenId - Optional sender's open_id
+   * Set when a session is started (via processMessage or startAgentLoop).
+   * Resolves when the SDK returns a `result` message or the session ends.
+   * Rejects if an error occurs during processing.
+   *
+   * Consumers (e.g., ScheduleExecutor) can use this to await task completion
+   * after calling processMessage().
+   *
+   * Undefined if no session has been started yet.
    */
-  executeOnce(
-    chatId: string,
-    text: string,
-    messageId?: string,
-    senderOpenId?: string
-  ): Promise<void>;
+  readonly taskComplete?: Promise<void>;
 
   /**
    * Reset the agent session.
