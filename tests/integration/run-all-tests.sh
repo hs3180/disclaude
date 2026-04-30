@@ -14,7 +14,7 @@
 #   ./tests/integration/run-all-tests.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Default request timeout (default: 60); some AI-heavy suites use longer timeouts
 #   --port PORT         REST API port (default: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
 #   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
@@ -77,11 +77,15 @@ show_test_plan_body() {
     echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    echo "  - Default Timeout: ${TIMEOUT}s"
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s (rate limit avoidance)"
     echo "  - Retry Backoff: ${RETRY_INITIAL_DELAY}s × ${RETRY_BACKOFF}^attempt"
     echo "  - Project Root: $PROJECT_ROOT"
+    echo ""
+    echo "Per-Suite Timeouts:"
+    echo "  - Use Case 2 (Task Execution): 180s (multi-round LLM tool calls)"
+    echo "  - All other suites: ${TIMEOUT}s (default)"
     echo ""
     echo "Prerequisites:"
     echo "  - Node.js installed"
@@ -98,10 +102,11 @@ show_test_plan_body() {
 run_test_script() {
     local script="$1"
     local name="$2"
+    local script_timeout="${3:-$TIMEOUT}"
     local args=()
 
     args+=("--port" "$REST_PORT")
-    args+=("--timeout" "$TIMEOUT")
+    args+=("--timeout" "$script_timeout")
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
@@ -146,6 +151,7 @@ _SUITE_COUNT=0
 run_suite() {
     local script="$1"
     local name="$2"
+    local suite_timeout="${3:-}"
 
     # Add delay before suite (skip for the very first one)
     if [ $_SUITE_COUNT -gt 0 ] && [ "$INTER_SUITE_DELAY" -gt 0 ] 2>/dev/null; then
@@ -154,7 +160,7 @@ run_suite() {
     fi
     _SUITE_COUNT=$((_SUITE_COUNT + 1))
 
-    run_test_script "$script" "$name"
+    run_test_script "$script" "$name" "$suite_timeout"
 }
 
 # =============================================================================
@@ -190,27 +196,27 @@ main() {
     local RETRIED_SUCCESSES=0
     local TOTAL_RETRIES=0
 
-    if ! run_suite "$SCRIPT_DIR/rest-channel-test.sh" "REST Channel Tests"; then
+    if ! run_suite "$SCRIPT_DIR/rest-channel-test.sh" "REST Channel Tests" "$TIMEOUT"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_suite "$SCRIPT_DIR/use-case-1-basic-reply.sh" "Use Case 1 - Basic Reply"; then
+    if ! run_suite "$SCRIPT_DIR/use-case-1-basic-reply.sh" "Use Case 1 - Basic Reply" "$TIMEOUT"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_suite "$SCRIPT_DIR/use-case-2-task-execution.sh" "Use Case 2 - Task Execution"; then
+    if ! run_suite "$SCRIPT_DIR/use-case-2-task-execution.sh" "Use Case 2 - Task Execution" 180; then
         failed=$((failed + 1))
     fi
 
-    if ! run_suite "$SCRIPT_DIR/use-case-3-multi-turn.sh" "Use Case 3 - Multi-turn Conversation"; then
+    if ! run_suite "$SCRIPT_DIR/use-case-3-multi-turn.sh" "Use Case 3 - Multi-turn Conversation" "$TIMEOUT"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_suite "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests"; then
+    if ! run_suite "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests" "$TIMEOUT"; then
         failed=$((failed + 1))
     fi
 
-    if ! run_suite "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests"; then
+    if ! run_suite "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests" "$TIMEOUT"; then
         failed=$((failed + 1))
     fi
 
