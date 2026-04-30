@@ -608,7 +608,7 @@ export class MessageHandler {
 
         const response = await this.client.im.messageResource.get({
           path: { message_id: messageId, file_key: fileKey },
-          params: { type: messageType },
+          params: { type: mapResourceType(messageType) },
         });
         await response.writeFile(localPath);
 
@@ -734,7 +734,7 @@ export class MessageHandler {
 
           const response = await this.client.im.messageResource.get({
             path: { message_id, file_key: fileKey },
-            params: { type: message_type },
+            params: { type: mapResourceType(message_type) },
           });
           await response.writeFile(localPath);
 
@@ -1200,4 +1200,21 @@ export class MessageHandler {
       logger.debug({ err: error, chatId }, 'Failed to check group member count for auto-detection');
     }
   }
+}
+
+/**
+ * Map Feishu message type to resource download API type parameter.
+ *
+ * The Feishu "Get message resource" API only accepts two values for `type`:
+ * - "image" for images
+ * - "file" for files, audio, and video
+ *
+ * When `message_type` is "media" (video) or "audio", passing it directly
+ * causes HTTP 400 Bad Request because those are not valid `type` values.
+ *
+ * @see https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get
+ * @see https://github.com/hs3180/disclaude/issues/2981
+ */
+function mapResourceType(messageType: string): 'image' | 'file' {
+  return messageType === 'image' ? 'image' : 'file';
 }
