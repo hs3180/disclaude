@@ -55,6 +55,31 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 /** Maximum document file size in bytes (30 MB). */
 const MAX_FILE_SIZE = 30 * 1024 * 1024;
 
+/**
+ * Check if a string looks like a local file path.
+ *
+ * A local path is detected by:
+ * - Starting with `/` (absolute Unix path)
+ * - Starting with `./` or `../` (relative path)
+ * - Having a known image extension (e.g., `chart.png`, `image.jpg`)
+ *
+ * Feishu image_keys look like `img_v3_02ab_xxxx` which don't match these patterns.
+ *
+ * Issue #2951: Auto-translate local image paths in cards.
+ */
+export function isLocalImagePath(value: string): boolean {
+  if (!value || typeof value !== 'string') {return false;}
+  // Exclude HTTP/HTTPS URLs — they are not local file paths
+  if (value.startsWith('http://') || value.startsWith('https://')) {return false;}
+  // Exclude other URL schemes (data:, ftp:, etc.)
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value)) {return false;}
+  // Absolute or relative path
+  if (value.startsWith('/') || value.startsWith('./') || value.startsWith('../')) {return true;}
+  // Check for known image extension (bare filename like "chart.png")
+  const ext = path.extname(value).toLowerCase();
+  return ext.length > 0 && IMAGE_EXTENSIONS.has(ext);
+}
+
 const THEME_MAP: Record<string, string> = {
   blue: 'blue',
   wathet: 'wathet',
@@ -139,6 +164,170 @@ export class FeishuAdapter implements IChannelAdapter {
    */
   canHandle(chatId: string): boolean {
     return /^(oc_|ou_|on_)/.test(chatId);
+  }
+
+  /**
+   * Resolve local image paths in card sections to Feishu image_keys.
+   *
+   * Scans card sections for `type: 'image'` entries where `imageUrl` is a
+   * local file path. Uploads each image to Feishu via `im.image.create`
+   * and replaces the local path with the returned `image_key`.
+   *
+   * Also scans `type: 'markdown'` sections for local image references
+   * (`![alt](/local/path.png)`) and uploads + replaces them.
+   *
+   * Failures are logged but do not block card delivery — the section is
+   * either kept as-is (non-local paths pass through) or converted to a
+   * text placeholder for un-uploadable local images.
+   *
+   * Issue #2951: Auto-translate local image paths in cards.
+   */
+  async resolveCardImagePaths(card: CardContent): Promise<CardContent> {
+    const client = this.getClient();
+    const resolvedSections: CardSection[] = [];
+
+    for (const section of card.sections) {
+      if (section.type === 'image' && section.imageUrl && isLocalImagePath(section.imageUrl)) {
+        const resolved = await this.resolveImageSection(client, section);
+        resolvedSections.push(resolved);
+      } else if (section.type === 'markdown' && section.content) {
+        const resolved = await this.resolveMarkdownImages(client, section);
+        resolvedSections.push(resolved);
+      } else {
+        resolvedSections.push(section);
+      }
+    }
+
+    return { ...card, sections: resolvedSections };
+  }
+
+  /**
+   * Upload a local image and return an updated image section.
+   *
+   * On upload failure, the section is converted to a text placeholder
+   * so the card still delivers without the broken image.
+   */
+  private async resolveImageSection(
+    client: lark.Client,
+    section: CardSection,
+  ): Promise<CardSection> {
+    const imagePath = section.imageUrl;
+
+    try {
+      // Check file existence and size
+      let fileSize: number;
+      try {
+        fileSize = fs.statSync(imagePath).size;
+      } catch {
+        logger.warn({ imagePath }, 'Card image not found, converting to text placeholder');
+        return { type: 'text', content: `🖼️ Image not found: ${imagePath}` };
+      }
+
+      if (fileSize > MAX_IMAGE_SIZE) {
+        logger.warn({ imagePath, fileSize }, 'Card image exceeds 10MB limit');
+        return { type: 'text', content: `🖼️ Image too large: ${imagePath} (${Math.round(fileSize / 1024 / 1024)}MB)` };
+      }
+
+      // Upload to Feishu
+      const uploadResp = await client.im.image.create({
+        data: {
+          image_type: 'message',
+          image: fs.createReadStream(imagePath),
+        },
+      });
+
+      const imageKey = uploadResp?.image_key;
+      if (!imageKey) {
+        logger.warn({ imagePath }, 'Card image upload returned no image_key');
+        return { type: 'text', content: `🖼️ Image upload failed: ${imagePath}` };
+      }
+
+      logger.debug({ imagePath, imageKey }, 'Card image uploaded successfully');
+      return { ...section, imageUrl: imageKey };
+    } catch (error) {
+      logger.error({ err: error, imagePath }, 'Failed to upload card image');
+      return { type: 'text', content: `🖼️ Image upload error: ${imagePath}` };
+    }
+  }
+
+  /**
+   * Resolve local image references in markdown sections.
+   *
+   * Scans for markdown image syntax `![alt](local/path)` and uploads
+   * any local paths, replacing them with the Feishu image_key.
+   * Non-local URLs are left unchanged.
+   *
+   * Note: Feishu markdown elements have limited image support. This
+   * handles the common case where agents embed local paths in markdown.
+   */
+  private async resolveMarkdownImages(
+    client: lark.Client,
+    section: CardSection,
+  ): Promise<CardSection> {
+    if (!section.content) {return section;}
+
+    // Match markdown images: ![alt](path)
+    const IMAGE_REF_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
+    let modified = section.content;
+    const uploads: Array<{ match: string; path: string }> = [];
+
+    // Collect all local image references
+    for (const matchResult of section.content.matchAll(IMAGE_REF_REGEX)) {
+      const [, , imagePath] = matchResult;
+      if (isLocalImagePath(imagePath)) {
+        uploads.push({ match: matchResult[0], path: imagePath });
+      }
+    }
+
+    // Upload each unique local image path
+    const pathToKey = new Map<string, string>();
+    for (const { path: imagePath } of uploads) {
+      if (pathToKey.has(imagePath)) {continue;} // Already processed
+
+      try {
+        let fileSize: number;
+        try {
+          fileSize = fs.statSync(imagePath).size;
+        } catch {
+          logger.warn({ imagePath }, 'Markdown image not found, skipping');
+          continue;
+        }
+
+        if (fileSize > MAX_IMAGE_SIZE) {
+          logger.warn({ imagePath, fileSize }, 'Markdown image exceeds 10MB limit');
+          continue;
+        }
+
+        const uploadResp = await client.im.image.create({
+          data: {
+            image_type: 'message',
+            image: fs.createReadStream(imagePath),
+          },
+        });
+
+        const imageKey = uploadResp?.image_key;
+        if (imageKey) {
+          pathToKey.set(imagePath, imageKey);
+          logger.debug({ imagePath, imageKey }, 'Markdown image uploaded');
+        }
+      } catch (error) {
+        logger.error({ err: error, imagePath }, 'Failed to upload markdown image');
+      }
+    }
+
+    // Replace paths in markdown content
+    if (pathToKey.size > 0) {
+      modified = modified.replace(IMAGE_REF_REGEX, (fullMatch, alt, imagePath) => {
+        const imageKey = pathToKey.get(imagePath);
+        if (imageKey) {
+          return `![${alt}](${imageKey})`;
+        }
+        return fullMatch; // Keep original if upload failed
+      });
+      return { ...section, content: modified };
+    }
+
+    return section;
   }
 
   /**
@@ -390,7 +579,15 @@ export class FeishuAdapter implements IChannelAdapter {
         return this.sendFileMessage(client, message);
       }
 
-      const feishuMessage = this.convert(message) as {
+      // Issue #2951: Resolve local image paths in card content before conversion.
+      // Upload local images to Feishu and replace paths with image_keys.
+      let resolvedMessage = message;
+      if (message.content.type === 'card') {
+        const resolvedCard = await this.resolveCardImagePaths(message.content);
+        resolvedMessage = { ...message, content: resolvedCard };
+      }
+
+      const feishuMessage = this.convert(resolvedMessage) as {
         msg_type: string;
         content: string;
       };
@@ -592,10 +789,6 @@ export class FeishuAdapter implements IChannelAdapter {
   async update(messageId: string, message: UniversalMessage): Promise<SendResult> {
     try {
       const client = this.getClient();
-      const feishuMessage = this.convert(message) as {
-        msg_type: string;
-        content: string;
-      };
 
       // Only cards can be updated
       if (message.content.type !== 'card') {
@@ -604,6 +797,15 @@ export class FeishuAdapter implements IChannelAdapter {
           error: 'Only card messages can be updated',
         };
       }
+
+      // Issue #2951: Resolve local image paths before conversion.
+      const resolvedCard = await this.resolveCardImagePaths(message.content);
+      const resolvedMessage = { ...message, content: resolvedCard };
+
+      const feishuMessage = this.convert(resolvedMessage) as {
+        msg_type: string;
+        content: string;
+      };
 
       await client.im.message.patch({
         path: {
