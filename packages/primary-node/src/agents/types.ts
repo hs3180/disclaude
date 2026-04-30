@@ -124,9 +124,11 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * with an error notification to the user. The query is then cancelled
    * and the existing restart/circuit-breaker logic takes over.
    *
-   * Default: 300000 (5 minutes). Set to 0 to disable.
+   * Default: 0 (disabled). Set to a positive value (e.g. 300000 for 5 minutes)
+   * to enable.
    *
    * Issue #2993: Session inactivity timeout detection.
+   * Issue #3066: Changed default from 300000 to 0 (disabled by default).
    */
   sessionInactivityTimeoutMs?: number;
 }
