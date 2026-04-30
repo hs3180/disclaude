@@ -6,7 +6,6 @@
  */
 
 import type {
-  AgentMessage,
   AgentQueryOptions,
   InlineToolDefinition,
   McpServerConfig,
@@ -39,25 +38,18 @@ export interface IAgentSDKProvider {
   // ==========================================================================
 
   /**
-   * 一次性查询（静态输入）
+   * 流式查询（统一入口）
    *
-   * 用于任务型 Agent（Evaluator、Executor、SiteMiner 等），
-   * 接受静态输入，返回消息流。
+   * 所有查询（包括一次性任务和持续对话）都通过此方法进行。
+   * 静态输入可通过包装为只 yield 一次的 AsyncGenerator 实现：
+   * ```typescript
+   * async function* singleInput(text: string): AsyncGenerator<UserInput> {
+   *   yield { role: 'user', content: text };
+   * }
+   * provider.queryStream(singleInput('Hello'), options);
+   * ```
    *
-   * @param input - 输入内容（字符串或用户消息数组）
-   * @param options - 查询选项
-   * @returns 消息异步迭代器
-   */
-  queryOnce(
-    input: string | UserInput[],
-    options: AgentQueryOptions
-  ): AsyncGenerator<AgentMessage>;
-
-  /**
-   * 流式查询（动态输入）
-   *
-   * 用于对话型 Agent（ChatAgent），接受动态输入流，
-   * 支持会话持久化和多轮对话。
+   * Issue #3108: 移除了 queryOnce 双路径，统一为流式查询。
    *
    * @param input - 输入异步生成器
    * @param options - 查询选项
