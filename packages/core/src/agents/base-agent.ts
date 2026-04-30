@@ -184,7 +184,8 @@ export abstract class BaseAgent implements Disposable {
       this.apiKey,
       this.apiBaseUrl,
       globalEnv,
-      loggingConfig.sdkDebug
+      loggingConfig.sdkDebug,
+      this.getSdkTimeoutMs(),
     );
 
     // Set model
@@ -239,6 +240,14 @@ export abstract class BaseAgent implements Disposable {
       return getRuntimeContext().isAgentTeamsEnabled();
     }
     return false;
+  }
+
+  /**
+   * Get SDK HTTP request timeout from config.
+   * @see Issue #2992
+   */
+  protected getSdkTimeoutMs(): number {
+    return Config.getSdkTimeoutMs();
   }
 
   /**
