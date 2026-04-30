@@ -97,6 +97,42 @@ function isDevelopment(): boolean {
 }
 
 /**
+ * Create a PassThrough stream that pipes to a sync file destination.
+ * Used by createLogger() and getRootLogger() for synchronous file logging
+ * that can later be upgraded to pino-roll by initLogger().
+ *
+ * Issue #2934: Extracts the repeated LOG_TO_FILE setup logic into a
+ * single helper to avoid duplication across createLogger/getRootLogger.
+ *
+ * @returns Object with { passthrough, dest } if file logging is active,
+ *          or null if stdout should be used instead.
+ */
+function setupSyncFilePassthrough(): { passthrough: PassThrough; dest: NodeJS.WritableStream | ReturnType<typeof pino.destination> } | null {
+  if (process.env.LOG_TO_FILE !== 'true' || process.env.NODE_ENV === 'test') {
+    return null;
+  }
+
+  const logDir = process.env.LOG_DIR ?? './logs';
+  const logsPath = path.resolve(process.cwd(), logDir);
+
+  if (!fs.existsSync(logsPath)) {
+    fs.mkdirSync(logsPath, { recursive: true });
+  }
+
+  const logFile = path.join(logsPath, 'disclaude-combined.log');
+  const passthrough = new PassThrough();
+  const dest = pino.destination({ dest: logFile, sync: false, mkdir: true });
+
+  // Handle PassThrough errors to prevent silent log loss
+  passthrough.on('error', (err: Error) => {
+    console.warn('Log passthrough stream error:', err.message);
+  });
+
+  passthrough.pipe(dest as unknown as NodeJS.WritableStream);
+  return { passthrough, dest: dest as unknown as NodeJS.WritableStream };
+}
+
+/**
  * Get log level from environment or default
  */
 function getDefaultLogLevel(): LogLevel {
@@ -358,28 +394,13 @@ export function createLogger(
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
 
-    // Issue #2934: When LOG_TO_FILE=true, set up a PassThrough stream
-    // that initially pipes to a plain file. This is synchronous (works at
-    // module level). initLogger() later upgrades to pino-roll (async).
-    if (process.env.LOG_TO_FILE === 'true' && process.env.NODE_ENV !== 'test') {
-      const logDir = process.env.LOG_DIR ?? './logs';
-      const logsPath = path.resolve(process.cwd(), logDir);
-
-      // Ensure log directory exists
-      if (!fs.existsSync(logsPath)) {
-        fs.mkdirSync(logsPath, { recursive: true });
-      }
-
-      const logFile = path.join(logsPath, 'disclaude-combined.log');
-
-      // Create PassThrough proxy for later upgrade to pino-roll
-      logPassthrough = new PassThrough();
-      currentLogDest = pino.destination({ dest: logFile, sync: false, mkdir: true });
-      logPassthrough.pipe(currentLogDest);
-
+    // Issue #2934: Use shared helper for LOG_TO_FILE sync file setup
+    const fileSetup = setupSyncFilePassthrough();
+    if (fileSetup) {
+      logPassthrough = fileSetup.passthrough;
+      currentLogDest = fileSetup.dest;
       rootLogger = pino(options, logPassthrough);
     } else {
-      // Default: sync initialization writing to stdout
       rootLogger = pino(options, process.stdout);
     }
   }
@@ -406,20 +427,11 @@ export function getRootLogger(): Logger {
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
 
-    // Issue #2934: Same LOG_TO_FILE handling as createLogger()
-    if (process.env.LOG_TO_FILE === 'true' && process.env.NODE_ENV !== 'test') {
-      const logDir = process.env.LOG_DIR ?? './logs';
-      const logsPath = path.resolve(process.cwd(), logDir);
-
-      if (!fs.existsSync(logsPath)) {
-        fs.mkdirSync(logsPath, { recursive: true });
-      }
-
-      const logFile = path.join(logsPath, 'disclaude-combined.log');
-      logPassthrough = new PassThrough();
-      currentLogDest = pino.destination({ dest: logFile, sync: false, mkdir: true });
-      logPassthrough.pipe(currentLogDest);
-
+    // Issue #2934: Use shared helper for LOG_TO_FILE sync file setup
+    const fileSetup = setupSyncFilePassthrough();
+    if (fileSetup) {
+      logPassthrough = fileSetup.passthrough;
+      currentLogDest = fileSetup.dest;
       rootLogger = pino(options, logPassthrough);
     } else {
       rootLogger = pino(options, process.stdout);
