@@ -44,9 +44,11 @@ Write to the iteration directory with this format:
 - Action 2
 ```
 
-### If COMPLETE: Also Create final_result.md
+### If COMPLETE: Also Create final_result.md AND Append Task Record
 
-When status is COMPLETE, you MUST also create `final_result.md` in the task directory:
+When status is COMPLETE, you MUST:
+
+1. **Create `final_result.md`** in the task directory:
 
 ```markdown
 # Final Result
@@ -59,9 +61,34 @@ Task completed successfully.
 ## Deliverables
 - Deliverable 1
 - Deliverable 2
+
+## Task Metrics
+- **Iterations**: {total iteration count}
+- **Files Modified**: {number of files changed}
+- **Task Type**: {bugfix|feature|refactoring|docs|test|other}
 ```
 
 **File Path**: The prompt will tell you where to write `final_result.md`.
+
+2. **Append task record** to `.claude/task-records.md` (Issue #1234 Phase 1):
+
+Read the existing `.claude/task-records.md` file, then append a new record at the end (before the last comment marker, or at the very end if no marker exists):
+
+```markdown
+### {current date YYYY-MM-DD HH:mm} {task title from Task.md}
+
+- **类型**: {bugfix|feature|refactoring|docs|test|other — infer from task description}
+- **Task ID**: {taskId}
+- **迭代次数**: {current iteration number}
+- **实际时间**: {approximate based on iteration count, e.g., "~5分钟/迭代×N迭代"}
+- **复盘**: {one-line lesson learned, e.g., "类型推断问题需要更仔细的边界检查"}
+```
+
+**CRITICAL**:
+- Use the Write tool to write the complete updated file (read first, then write with new record appended)
+- Keep all existing records intact
+- Infer task type from the task description and changes made
+- The 复盘 should be a brief, practical lesson that helps future ETA estimation
 
 ## Completion Behavior (CRITICAL)
 
