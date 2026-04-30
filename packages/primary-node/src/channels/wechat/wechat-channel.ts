@@ -9,9 +9,8 @@
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Media handling (CDN upload) — Issue #1556 Phase 3.3
- * - Typing indicator — Issue #1556 Phase 3.2
- * - Thread send support via context_token — Issue #1556 Phase 3.4
+ * - Typing indicator — Issue #1556 Phase 3.2 (removed)
+ * - Thread send support via context_token — Issue #1556 Phase 3.4 (removed)
  *
  * @module channels/wechat/wechat-channel
  * @see Issue #1473 - WeChat Channel MVP
@@ -124,7 +123,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Send a message through the WeChat channel.
    *
-   * MVP: Supports 'text' and 'card' (downgraded to JSON text) types.
+   * Supports: 'text', 'card' (downgraded to JSON text), 'image', 'file'.
    * Other types are logged as warnings and silently ignored.
    */
   protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
@@ -151,15 +150,43 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       });
       logger.debug(
         { chatId: message.chatId, cardLength: cardText.length },
-        'Card downgraded to text for WeChat MVP'
+        'Card downgraded to text for WeChat'
       );
+      return;
+    }
+
+    // File/image message — upload to CDN then send
+    if (message.type === 'file' && message.filePath) {
+      const { readFile } = await import('node:fs/promises');
+      const nodePath = await import('node:path');
+      const fileData = await readFile(message.filePath);
+      const fileName = nodePath.basename(message.filePath);
+      const mimeType = this.guessMimeType(fileName);
+      const isImage = mimeType.startsWith('image/');
+
+      const { url } = await this.client.uploadMedia({ fileData, fileName, mimeType });
+
+      if (isImage) {
+        await this.client.sendImage({
+          to: message.chatId,
+          imageUrl: url,
+          contextToken: message.threadId,
+        });
+      } else {
+        await this.client.sendFile({
+          to: message.chatId,
+          fileUrl: url,
+          fileName,
+          contextToken: message.threadId,
+        });
+      }
       return;
     }
 
     // Unsupported message types
     logger.warn(
       { type: message.type, chatId: message.chatId },
-      'WeChat MVP unsupported message type, ignoring'
+      'WeChat unsupported message type, ignoring'
     );
   }
 
@@ -175,17 +202,17 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Get the capabilities of the WeChat channel.
    *
-   * MVP capabilities: only send_text is supported.
+   * Supports text, image, and file messaging via CDN upload.
    */
   getCapabilities(): ChannelCapabilities {
     return {
       supportsCard: false,
       supportsThread: false,
-      supportsFile: false,
+      supportsFile: true,
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text'],
+      supportedMcpTools: ['send_text', 'send_file'],
     };
   }
 
@@ -201,5 +228,31 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
    */
   getMessageListener(): WeChatMessageListener | undefined {
     return this.messageListener;
+  }
+
+  /**
+   * Guess MIME type from file extension.
+   */
+  private guessMimeType(fileName: string): string {
+    const ext = fileName.toLowerCase().split('.').pop();
+    const mimeMap: Record<string, string> = {
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      pdf: 'application/pdf',
+      txt: 'text/plain',
+      json: 'application/json',
+      csv: 'text/csv',
+      zip: 'application/zip',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      ppt: 'application/vnd.ms-powerpoint',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    };
+    return mimeMap[ext ?? ''] || 'application/octet-stream';
   }
 }

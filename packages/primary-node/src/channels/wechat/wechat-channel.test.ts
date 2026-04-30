@@ -3,7 +3,7 @@
  *
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
- * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1)
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1 + 3.2)
  */
 
  
@@ -91,17 +91,17 @@ describe('WeChatChannel', () => {
   });
 
   describe('getCapabilities', () => {
-    it('should return current capabilities', () => {
+    it('should return media-enabled capabilities', () => {
       const channel = new WeChatChannel();
       const caps = channel.getCapabilities();
       expect(caps).toEqual({
         supportsCard: false,
         supportsThread: false,
-        supportsFile: false,
+        supportsFile: true,
         supportsMarkdown: false,
         supportsMention: false,
         supportsUpdate: false,
-        supportedMcpTools: ['send_text'],
+        supportedMcpTools: ['send_text', 'send_file'],
       });
     });
   });
@@ -199,14 +199,92 @@ describe('WeChatChannel', () => {
       expect(mockSendText).not.toHaveBeenCalled();
     });
 
+    it('should upload and send file messages via CDN', async () => {
+      const mockUploadMedia = vi.fn().mockResolvedValue({
+        url: 'https://cdn.example.com/test.txt',
+        fileKey: 'key-123',
+      });
+      const mockSendFile = vi.fn().mockResolvedValue(undefined);
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+      (channel as any).client = {
+        sendText: mockSendText,
+        hasToken: mockHasToken,
+        uploadMedia: mockUploadMedia,
+        sendFile: mockSendFile,
+      };
+
+      // Create a temp file
+      const { writeFileSync, unlinkSync } = await import('node:fs');
+      const tmpPath = '/tmp/wechat-test-upload.txt';
+      writeFileSync(tmpPath, 'test content');
+
+      try {
+        await (channel as any).doSendMessage({
+          chatId: 'chat-1',
+          type: 'file',
+          filePath: tmpPath,
+        });
+
+        expect(mockUploadMedia).toHaveBeenCalledTimes(1);
+        expect(mockUploadMedia).toHaveBeenCalledWith(
+          expect.objectContaining({ fileName: 'wechat-test-upload.txt' }),
+        );
+        expect(mockSendFile).toHaveBeenCalledWith({
+          to: 'chat-1',
+          fileUrl: 'https://cdn.example.com/test.txt',
+          fileName: 'wechat-test-upload.txt',
+          contextToken: undefined,
+        });
+      } finally {
+        unlinkSync(tmpPath);
+      }
+    });
+
+    it('should upload and send image files via CDN as image messages', async () => {
+      const mockUploadMedia = vi.fn().mockResolvedValue({
+        url: 'https://cdn.example.com/photo.png',
+        fileKey: 'key-img',
+      });
+      const mockSendImage = vi.fn().mockResolvedValue(undefined);
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+      (channel as any).client = {
+        sendText: mockSendText,
+        hasToken: mockHasToken,
+        uploadMedia: mockUploadMedia,
+        sendImage: mockSendImage,
+      };
+
+      const { writeFileSync, unlinkSync } = await import('node:fs');
+      const tmpPath = '/tmp/wechat-test-image.png';
+      writeFileSync(tmpPath, 'fake-png-data');
+
+      try {
+        await (channel as any).doSendMessage({
+          chatId: 'chat-1',
+          type: 'file',
+          filePath: tmpPath,
+        });
+
+        expect(mockUploadMedia).toHaveBeenCalledTimes(1);
+        expect(mockSendImage).toHaveBeenCalledWith({
+          to: 'chat-1',
+          imageUrl: 'https://cdn.example.com/photo.png',
+          contextToken: undefined,
+        });
+      } finally {
+        unlinkSync(tmpPath);
+      }
+    });
+
     it('should ignore unsupported message types', async () => {
       const channel = new WeChatChannel({ token: 'test-token' });
       (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
 
       await (channel as any).doSendMessage({
         chatId: 'chat-1',
-        type: 'file',
-        filePath: '/tmp/test.txt',
+        type: 'done',
       });
 
       expect(mockSendText).not.toHaveBeenCalled();
