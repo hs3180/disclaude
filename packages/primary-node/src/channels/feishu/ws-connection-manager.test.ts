@@ -1,14 +1,13 @@
 /**
- * Tests for WsConnectionManager (Issue #1351, #1666).
+ * Tests for WsConnectionManager (Issue #1351, #1666, #2905).
  *
  * Tests cover:
  * - Connection lifecycle (start, stop)
- * - Health detection (dead connection detection via passive message listening)
+ * - SDK event-driven reconnection (Issue #2905: replaced health check)
  * - Exponential backoff reconnection
  * - State machine transitions
  * - Event emission
  * - Metrics reporting
- * - Grace period after connect
  *
  * Does NOT mock the @larksuiteoapi/node-sdk directly (per CLAUDE.md rules),
  * instead uses dependency-injected mocks via constructor.
@@ -26,6 +25,7 @@ interface MockWSClient {
   start: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   removeAllListeners?: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
 }
 
 function createMockWSClient(shouldFail = false): MockWSClient {
@@ -33,6 +33,7 @@ function createMockWSClient(shouldFail = false): MockWSClient {
     start: vi.fn().mockResolvedValue(shouldFail ? false : undefined),
     close: vi.fn(),
     removeAllListeners: vi.fn(),
+    on: vi.fn(),
   };
 }
 
@@ -45,8 +46,6 @@ function createMockEventDispatcher(): any {
 // ─── Mock @disclaude/core ───────────────────────────────────────────────
 
 const MOCK_WS_HEALTH = vi.hoisted(() => ({
-  DEAD_CONNECTION_TIMEOUT_MS: 3000,
-  HEALTH_CHECK_INTERVAL_MS: 1000,
   RECONNECT: {
     BASE_DELAY_MS: 100,
     MAX_DELAY_MS: 1000,
@@ -84,16 +83,12 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
 function createTestManager(overrides: {
   wsClient?: MockWSClient;
   maxAttempts?: number;
-  deadTimeoutMs?: number;
-  healthCheckMs?: number;
   dnsCheckHost?: string;
 } = {}): WsConnectionManager {
   const manager = new WsConnectionManager({
     appId: 'test-app-id',
     appSecret: 'test-app-secret',
     reconnectMaxAttempts: overrides.maxAttempts ?? MOCK_WS_HEALTH.RECONNECT.MAX_ATTEMPTS,
-    deadConnectionTimeoutMs: overrides.deadTimeoutMs ?? MOCK_WS_HEALTH.DEAD_CONNECTION_TIMEOUT_MS,
-    healthCheckIntervalMs: overrides.healthCheckMs ?? MOCK_WS_HEALTH.HEALTH_CHECK_INTERVAL_MS,
     // Disable DNS pre-check by default for existing tests; individual tests
     // in the Issue #2259 describe block enable it explicitly.
     dnsCheckHost: overrides.dnsCheckHost ?? '',
@@ -109,6 +104,19 @@ function createTestManager(overrides: {
   };
 
   return manager;
+}
+
+/**
+ * Helper to find an event listener registered on a mock WSClient.
+ * Returns undefined if no listener is found for the given event type.
+ */
+function findEventListener(
+  mockClient: MockWSClient,
+  eventType: string,
+): ((...args: unknown[]) => void) | undefined {
+  const onCalls = mockClient.on.mock.calls as Array<[string, ...unknown[]]>;
+  return onCalls.find((call) => call[0] === eventType)?.[1] as
+    ((...args: unknown[]) => void) | undefined;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────
@@ -202,6 +210,23 @@ describe('WsConnectionManager', () => {
       expect(manager.isHealthy()).toBe(false);
     });
 
+    it('should not be healthy when reconnecting', async () => {
+      manager = createTestManager();
+      await manager.start(mockEventDispatcher as never);
+      expect(manager.isHealthy()).toBe(true);
+
+      // Trigger reconnect via SDK close event
+      const mockClient = (manager as unknown as { wsClient: MockWSClient }).wsClient;
+      const closeListener = findEventListener(mockClient, 'close');
+
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+        expect(manager.state).toBe('reconnecting');
+        expect(manager.isHealthy()).toBe(false);
+      }
+    });
+
     it('should handle start failure gracefully', async () => {
       const failingClient = createMockWSClient(true);
       manager = createTestManager({ wsClient: failingClient });
@@ -215,109 +240,10 @@ describe('WsConnectionManager', () => {
     });
   });
 
-  describe('health detection', () => {
-    it('should detect dead connection after timeout', async () => {
-      const deadTimeoutMs = 5000;
-      const healthCheckMs = 1000;
-      manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
-        maxAttempts: 0,
-      });
-
-      const deadConnectionEvents: number[] = [];
-      manager.on('deadConnection', (elapsed) => deadConnectionEvents.push(elapsed));
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Record a message to set lastMessageReceivedAt
-      manager.recordMessageReceived();
-
-      // Advance time past the dead connection timeout
-      await vi.advanceTimersByTimeAsync(deadTimeoutMs + healthCheckMs);
-
-      // Should have detected dead connection
-      expect(deadConnectionEvents.length).toBeGreaterThanOrEqual(1);
-      expect(deadConnectionEvents[0]).toBeGreaterThanOrEqual(deadTimeoutMs);
-    });
-
-    it('should reset health timer on recordMessageReceived', async () => {
-      const deadTimeoutMs = 5000;
-      const healthCheckMs = 1000;
-      manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
-        maxAttempts: 0,
-      });
-
-      const deadConnectionEvents: number[] = [];
-      manager.on('deadConnection', () => deadConnectionEvents.push(1));
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Advance 4 seconds (not yet dead from connect time)
-      await vi.advanceTimersByTimeAsync(4000);
-      expect(deadConnectionEvents.length).toBe(0);
-
-      // Record activity (resets the timer)
-      manager.recordMessageReceived();
-
-      // Advance another 4 seconds from now (still not dead, only 4s since last activity)
-      await vi.advanceTimersByTimeAsync(4000);
-      expect(deadConnectionEvents.length).toBe(0);
-
-      // Advance past the timeout from the last activity
-      await vi.advanceTimersByTimeAsync(2000);
-      expect(deadConnectionEvents.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it('should emit heartbeat event on recordMessageReceived', async () => {
-      manager = createTestManager();
-      await manager.start(mockEventDispatcher as never);
-
-      const heartbeatTimestamps: number[] = [];
-      manager.on('heartbeat', (ts) => heartbeatTimestamps.push(ts));
-
-      const before = Date.now();
-      manager.recordMessageReceived();
-
-      expect(heartbeatTimestamps.length).toBe(1);
-      expect(heartbeatTimestamps[0]).toBeGreaterThanOrEqual(before);
-    });
-
-    it('should have grace period equal to deadConnectionTimeoutMs after initial connect', async () => {
-      const deadTimeoutMs = 5000;
-      const healthCheckMs = 1000;
-      manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
-        maxAttempts: 0,
-      });
-
-      await manager.start(mockEventDispatcher as never);
-
-      // Don't call recordMessageReceived — connectFresh() sets lastMessageReceivedAt
-      // The grace period is effectively deadConnectionTimeoutMs from connect time
-
-      // Advance to just before timeout — should still be healthy
-      await vi.advanceTimersByTimeAsync(deadTimeoutMs - 100);
-      expect(manager.isHealthy()).toBe(true);
-
-      // Advance past timeout — should be unhealthy (triggers dead connection)
-      await vi.advanceTimersByTimeAsync(200);
-      expect(manager.isHealthy()).toBe(false);
-    });
-  });
-
-  describe('reconnection', () => {
-    it('should transition through reconnecting state on dead connection', async () => {
-      const deadTimeoutMs = 3000;
-      const healthCheckMs = 1000;
+  describe('SDK event-driven reconnection (Issue #2905)', () => {
+    it('should trigger reconnect on SDK close event', async () => {
       const succeedingClient = createMockWSClient(false);
-
       manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
         maxAttempts: 3,
         wsClient: succeedingClient,
       });
@@ -326,26 +252,101 @@ describe('WsConnectionManager', () => {
       manager.on('stateChange', (state) => stateChanges.push(state));
 
       await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
+      expect(manager.state).toBe('connected');
 
-      // Trigger dead connection
-      await vi.advanceTimersByTimeAsync(deadTimeoutMs + healthCheckMs);
+      // Simulate SDK close event
+      const closeListener = findEventListener(succeedingClient, 'close');
 
-      // Should have gone through reconnecting state
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'connection lost');
+      }
+
+      // Should have transitioned to reconnecting
       expect(stateChanges).toContain('reconnecting');
-      // After reconnect succeeds, should be connected again
+
+      // Wait for reconnect delay to pass
       await vi.advanceTimersByTimeAsync(5000);
+
+      // After reconnect succeeds, should be connected again
       expect(stateChanges.filter(s => s === 'connected').length).toBeGreaterThanOrEqual(2);
     });
 
-    it('should successfully reconnect after dead connection detection', async () => {
-      const deadTimeoutMs = 3000;
-      const healthCheckMs = 1000;
+    it('should trigger reconnect on SDK error event', async () => {
       const succeedingClient = createMockWSClient(false);
-
       manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
+        maxAttempts: 3,
+        wsClient: succeedingClient,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Simulate SDK error event (error alone doesn't trigger reconnect)
+      const errorListener = findEventListener(succeedingClient, 'error');
+
+      expect(errorListener).toBeDefined();
+      // Error event should not trigger reconnect by itself (only close does)
+      if (errorListener) {
+        errorListener(new Error('test error'));
+      }
+      expect(manager.state).toBe('connected');
+    });
+
+    it('should not double-reconnect when already reconnecting', async () => {
+      const succeedingClient = createMockWSClient(false);
+      manager = createTestManager({
+        maxAttempts: 3,
+        wsClient: succeedingClient,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Simulate SDK close event
+      const closeListener = findEventListener(succeedingClient, 'close');
+      expect(closeListener).toBeDefined();
+
+      if (closeListener) {
+        closeListener(1000, 'first close');
+        expect(manager.state).toBe('reconnecting');
+
+        // Second close event should be ignored
+        closeListener(1000, 'second close');
+        expect(manager.state).toBe('reconnecting');
+      }
+    });
+
+    it('should not trigger reconnect when stopped', async () => {
+      const succeedingClient = createMockWSClient(false);
+      manager = createTestManager({
+        maxAttempts: 3,
+        wsClient: succeedingClient,
+      });
+
+      await manager.start(mockEventDispatcher as never);
+      await manager.stop();
+
+      // State should be stopped, close listener is removed with client
+      expect(manager.state).toBe('stopped');
+    });
+
+    it('should register error and close event listeners on connect', async () => {
+      const mockClient = createMockWSClient(false);
+      manager = createTestManager({ wsClient: mockClient });
+
+      await manager.start(mockEventDispatcher as never);
+
+      // Should have registered listeners for 'error' and 'close'
+      const onCalls = mockClient.on.mock.calls as Array<[string, ...unknown[]]>;
+      const eventTypes = onCalls.map((call) => call[0]);
+      expect(eventTypes).toContain('error');
+      expect(eventTypes).toContain('close');
+    });
+  });
+
+  describe('reconnection', () => {
+    it('should successfully reconnect after SDK close event', async () => {
+      const succeedingClient = createMockWSClient(false);
+      manager = createTestManager({
         maxAttempts: 3,
         wsClient: succeedingClient,
       });
@@ -354,10 +355,13 @@ describe('WsConnectionManager', () => {
       manager.on('reconnected', (attempt) => reconnectedEvents.push(attempt));
 
       await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
 
-      // Trigger dead connection
-      await vi.advanceTimersByTimeAsync(deadTimeoutMs + healthCheckMs);
+      // Trigger reconnect via SDK close event
+      const closeListener = findEventListener(succeedingClient, 'close');
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+      }
 
       // Wait for reconnect delay to pass
       await vi.advanceTimersByTimeAsync(5000);
@@ -368,19 +372,16 @@ describe('WsConnectionManager', () => {
     });
 
     it('should stop reconnecting after max attempts when all fail', async () => {
-      const deadTimeoutMs = 2000;
-      const healthCheckMs = 1000;
-
       // Create a mock that succeeds initially but fails on reconnects
       const conditionalClient: MockWSClient = {
         start: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined))
           .mockImplementation(() => Promise.resolve(false)),
         close: vi.fn(),
+        removeAllListeners: vi.fn(),
+        on: vi.fn(),
       };
 
       manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
         maxAttempts: 2,
         wsClient: conditionalClient,
       });
@@ -391,13 +392,14 @@ describe('WsConnectionManager', () => {
       await manager.start(mockEventDispatcher as never);
       expect(manager.state).toBe('connected');
 
-      manager.recordMessageReceived();
-
-      // Trigger dead connection
-      await vi.advanceTimersByTimeAsync(deadTimeoutMs + healthCheckMs);
+      // Trigger reconnect via SDK close event
+      const closeListener = findEventListener(conditionalClient, 'close');
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+      }
 
       // Advance through all reconnect attempts with enough time
-      // baseDelay=100, max=1000, attempts: 0 (100-150ms), 1 (200-250ms), then stop
       for (let i = 0; i < 30; i++) {
         await vi.advanceTimersByTimeAsync(2000);
       }
@@ -408,19 +410,17 @@ describe('WsConnectionManager', () => {
     });
 
     it('should emit reconnectFailed with correct total attempts', async () => {
-      const deadTimeoutMs = 2000;
-      const healthCheckMs = 1000;
       const maxAttempts = 2;
 
       const conditionalClient: MockWSClient = {
         start: vi.fn().mockImplementationOnce(() => Promise.resolve(undefined))
           .mockImplementation(() => Promise.resolve(false)),
         close: vi.fn(),
+        removeAllListeners: vi.fn(),
+        on: vi.fn(),
       };
 
       manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
         maxAttempts,
         wsClient: conditionalClient,
       });
@@ -429,9 +429,13 @@ describe('WsConnectionManager', () => {
       manager.on('reconnectFailed', (total) => { failedTotal = total; });
 
       await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
 
-      await vi.advanceTimersByTimeAsync(deadTimeoutMs + healthCheckMs);
+      // Trigger reconnect via SDK close event
+      const closeListener = findEventListener(conditionalClient, 'close');
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+      }
 
       // Run through all retries
       for (let i = 0; i < 30; i++) {
@@ -443,7 +447,7 @@ describe('WsConnectionManager', () => {
   });
 
   describe('metrics', () => {
-    it('should return correct metrics', async () => {
+    it('should return correct metrics after start', async () => {
       manager = createTestManager();
       await manager.start(mockEventDispatcher as never);
 
@@ -451,88 +455,35 @@ describe('WsConnectionManager', () => {
       expect(metrics.state).toBe('connected');
       expect(metrics.isConnected).toBe(true);
       expect(metrics.reconnectAttempt).toBe(0);
-      expect(metrics.lastMessageReceivedAt).toBeGreaterThan(0);
     });
 
     it('should reflect state changes in metrics', async () => {
-      const deadTimeoutMs = 3000;
-      const healthCheckMs = 1000;
       const succeedingClient = createMockWSClient(false);
-
       manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
         maxAttempts: 3,
         wsClient: succeedingClient,
       });
 
       await manager.start(mockEventDispatcher as never);
 
-      // Before any dead connection
+      // Before any reconnect
       const metricsBefore = manager.getMetrics();
       expect(metricsBefore.state).toBe('connected');
 
-      // Trigger dead connection (state should transition to reconnecting)
-      manager.recordMessageReceived();
-      await vi.advanceTimersByTimeAsync(deadTimeoutMs + healthCheckMs);
+      // Trigger reconnect via SDK close event
+      const closeListener = findEventListener(succeedingClient, 'close');
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+      }
 
-      // State is at least reconnecting or already reconnected
+      // State should transition to reconnecting
       const metricsDuring = manager.getMetrics();
-      expect(['reconnecting', 'connected']).toContain(metricsDuring.state);
+      expect(metricsDuring.state).toBe('reconnecting');
     });
   });
 
   describe('edge cases', () => {
-    it('should not trigger dead connection when stopped', async () => {
-      const deadTimeoutMs = 2000;
-      const healthCheckMs = 500;
-      manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
-        maxAttempts: 0,
-      });
-
-      await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
-      await manager.stop();
-
-      const deadEvents: number[] = [];
-      manager.on('deadConnection', (e) => deadEvents.push(e));
-
-      // Advance well past timeout
-      await vi.advanceTimersByTimeAsync(10000);
-
-      expect(deadEvents.length).toBe(0);
-    });
-
-    it('should suppress redundant reconnect initiation while reconnecting', async () => {
-      const deadTimeoutMs = 2000;
-      const healthCheckMs = 500;
-      const succeedingClient = createMockWSClient(false);
-
-      manager = createTestManager({
-        deadTimeoutMs,
-        healthCheckMs,
-        maxAttempts: 3,
-        wsClient: succeedingClient,
-      });
-
-      let deadEventCount = 0;
-      manager.on('deadConnection', () => { deadEventCount++; });
-
-      await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
-
-      // Trigger first dead connection
-      await vi.advanceTimersByTimeAsync(deadTimeoutMs + healthCheckMs);
-      const firstCount = deadEventCount;
-
-      // The reconnect flow transitions state to 'reconnecting',
-      // and runHealthCheck() early-returns when state !== 'connected'.
-      // Additional health check ticks should be suppressed.
-      expect(deadEventCount).toBeLessThanOrEqual(firstCount + 1);
-    });
-
     it('should handle double stop gracefully', async () => {
       manager = createTestManager();
       await manager.start(mockEventDispatcher as never);
@@ -541,20 +492,27 @@ describe('WsConnectionManager', () => {
       expect(manager.state).toBe('stopped');
     });
 
-    it('should not export removed APIs (Issue #1666)', async () => {
-      // Verify that the simplified manager no longer has
-      // custom ping loop, pong detection, or WS interception capabilities
+    it('should not export removed APIs (Issue #2905)', async () => {
+      // Verify that the manager no longer has health check related methods
       manager = createTestManager();
       await manager.start(mockEventDispatcher as never);
 
+      // Should not have removed methods
+      expect((manager as unknown as Record<string, unknown>).recordMessageReceived).toBeUndefined();
+      expect((manager as unknown as Record<string, unknown>).startHealthCheck).toBeUndefined();
+      expect((manager as unknown as Record<string, unknown>).stopHealthCheck).toBeUndefined();
+      expect((manager as unknown as Record<string, unknown>).runHealthCheck).toBeUndefined();
+
+      // Metrics should not have health-check-specific fields
       const metrics = manager.getMetrics();
-      // Should not have pong/ping-specific fields
       expect(metrics).not.toHaveProperty('pongCount');
       expect(metrics).not.toHaveProperty('customPingCount');
       expect(metrics).not.toHaveProperty('customPingIntervalMs');
       expect(metrics).not.toHaveProperty('lastPongAt');
       expect(metrics).not.toHaveProperty('timeSinceLastPongMs');
       expect(metrics).not.toHaveProperty('hasWsInterception');
+      expect(metrics).not.toHaveProperty('lastMessageReceivedAt');
+      expect(metrics).not.toHaveProperty('timeSinceLastMessageMs');
     });
   });
 
@@ -565,17 +523,18 @@ describe('WsConnectionManager', () => {
       mockClient.removeAllListeners = removeAllListenersSpy;
 
       manager = createTestManager({
-        deadTimeoutMs: 2000,
-        healthCheckMs: 500,
         maxAttempts: 3,
         wsClient: mockClient,
       });
 
       await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
 
-      // Trigger dead connection to force reconnect (which calls closeClient)
-      await vi.advanceTimersByTimeAsync(3000);
+      // Trigger reconnect via SDK close event (which calls closeClient)
+      const closeListener = findEventListener(mockClient, 'close');
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+      }
 
       // removeAllListeners should have been called on the old client
       expect(removeAllListenersSpy).toHaveBeenCalled();
@@ -584,8 +543,6 @@ describe('WsConnectionManager', () => {
     it('should skip reconnect when DNS pre-check fails', async () => {
       const mockClient = createMockWSClient(false);
       manager = createTestManager({
-        deadTimeoutMs: 2000,
-        healthCheckMs: 500,
         maxAttempts: 3,
         wsClient: mockClient,
         dnsCheckHost: 'open.feishu.cn',
@@ -598,10 +555,13 @@ describe('WsConnectionManager', () => {
       ).mockResolvedValue(false);
 
       await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
 
-      // Trigger dead connection
-      await vi.advanceTimersByTimeAsync(3000);
+      // Trigger reconnect via SDK close event
+      const closeListener = findEventListener(mockClient, 'close');
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+      }
 
       // Wait for reconnect attempt cycle
       await vi.advanceTimersByTimeAsync(5000);
@@ -619,8 +579,6 @@ describe('WsConnectionManager', () => {
     it('should call checkDns during reconnect when dnsCheckHost is configured', async () => {
       const mockClient = createMockWSClient(false);
       manager = createTestManager({
-        deadTimeoutMs: 2000,
-        healthCheckMs: 500,
         maxAttempts: 3,
         wsClient: mockClient,
         dnsCheckHost: 'open.feishu.cn',
@@ -633,13 +591,19 @@ describe('WsConnectionManager', () => {
       ).mockResolvedValue(true);
 
       await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
 
       // checkDns should NOT have been called during initial connect
       expect(checkDnsSpy).not.toHaveBeenCalled();
 
-      // Trigger dead connection
-      await vi.advanceTimersByTimeAsync(3000);
+      // Trigger reconnect via SDK close event
+      const closeListener = findEventListener(mockClient, 'close');
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+      }
+
+      // Wait for the reconnect delay to pass so performReconnectAttempt fires
+      await vi.advanceTimersByTimeAsync(5000);
 
       // checkDns should have been called during reconnect attempt
       expect(checkDnsSpy).toHaveBeenCalledWith('open.feishu.cn');
@@ -650,8 +614,6 @@ describe('WsConnectionManager', () => {
     it('should not call checkDns when dnsCheckHost is empty', async () => {
       const mockClient = createMockWSClient(false);
       manager = createTestManager({
-        deadTimeoutMs: 2000,
-        healthCheckMs: 500,
         maxAttempts: 3,
         wsClient: mockClient,
         // dnsCheckHost defaults to '' in tests → DNS check disabled
@@ -663,10 +625,13 @@ describe('WsConnectionManager', () => {
       ).mockResolvedValue(true);
 
       await manager.start(mockEventDispatcher as never);
-      manager.recordMessageReceived();
 
-      // Trigger dead connection
-      await vi.advanceTimersByTimeAsync(3000);
+      // Trigger reconnect via SDK close event
+      const closeListener = findEventListener(mockClient, 'close');
+      expect(closeListener).toBeDefined();
+      if (closeListener) {
+        closeListener(1000, 'test close');
+      }
 
       // Wait for reconnect
       await vi.advanceTimersByTimeAsync(5000);
