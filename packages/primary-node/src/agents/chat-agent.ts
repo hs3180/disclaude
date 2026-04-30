@@ -112,8 +112,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
 
-    // Issue #2993: SDK message inactivity timeout (default 5 minutes, 0 to disable)
-    this.sessionInactivityTimeoutMs = config.sessionInactivityTimeoutMs ?? 300_000;
+    // Issue #3066: SDK message inactivity timeout (disabled by default, set positive to enable)
+    this.sessionInactivityTimeoutMs = config.sessionInactivityTimeoutMs ?? 0;
 
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');
   }
