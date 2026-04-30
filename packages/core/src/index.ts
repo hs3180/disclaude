@@ -45,6 +45,11 @@ export {
   clearProviderCache,
   isProviderAvailable,
   type ProviderType,
+  // GLM API proxy (Issue #2948)
+  getOrCreateProxy,
+  stopAllProxies,
+  hasActiveProxies,
+  getProxyInfo,
 } from './sdk/index.js';
 
 // Export SDK types with Sdk prefix to avoid conflicts with extended types

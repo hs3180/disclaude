@@ -43,6 +43,12 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * Override API base URL (Issue #2948).
+   * When provided, replaces this.apiBaseUrl in buildSdkEnv().
+   * Used by GLM proxy integration to redirect requests through the local proxy.
+   */
+  apiBaseUrl?: string;
 }
 
 /**
@@ -186,7 +192,7 @@ export abstract class BaseAgent implements Disposable {
     }
     options.env = buildSdkEnv(
       this.apiKey,
-      this.apiBaseUrl,
+      extra.apiBaseUrl ?? this.apiBaseUrl,
       globalEnv,
       loggingConfig.sdkDebug,
       this.getSdkTimeoutMs(),

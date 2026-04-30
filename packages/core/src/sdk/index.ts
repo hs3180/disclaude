@@ -134,3 +134,21 @@ export {
   isProviderAvailable,
   type ProviderType,
 } from './factory.js';
+
+// ============================================================================
+// GLM API 代理导出 (Issue #2948)
+// ============================================================================
+
+export {
+  GlmApiProxy,
+  extractToolDefinitions,
+  type GlmApiProxyOptions,
+  type ToolDefinition,
+} from './glm-api-proxy.js';
+
+export {
+  getOrCreateProxy,
+  stopAllProxies,
+  hasActiveProxies,
+  getProxyInfo,
+} from './glm-proxy-manager.js';

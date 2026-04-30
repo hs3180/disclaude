@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, getOrCreateProxy, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -121,6 +121,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   getChatId(): string {
     return this.boundChatId;
+  }
+
+  /**
+   * Check if an API URL is a non-Anthropic endpoint (Issue #2948).
+   *
+   * Non-Anthropic endpoints (like GLM) need the API proxy to
+   * translate tool definitions from system prompt XML to `tools` API parameter.
+   *
+   * @param url - API base URL to check
+   * @returns true if the URL is NOT an Anthropic endpoint
+   */
+  private isNonAnthropicEndpoint(url: string): boolean {
+    const anthropicHosts = ['api.anthropic.com', 'anthropic.com'];
+    return !anthropicHosts.some(host => url.includes(host));
   }
 
   /**
@@ -328,7 +342,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Start session if needed
       if (!this.isSessionActive) {
-        this.startAgentLoop();
+        await this.startAgentLoop();
       }
 
       // Get capabilities for message building
@@ -377,7 +391,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         this.logger.warn({ chatId, messageId }, 'handleInput: first push failed, attempting session restart');
         try {
-          this.startAgentLoop();
+          await this.startAgentLoop();
         } catch (restartErr) {
           this.logger.error({ err: restartErr, chatId, messageId }, 'handleInput: session restart failed');
         }
@@ -570,7 +584,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Start session if needed
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
-      this.startAgentLoop();
+      await this.startAgentLoop();
     }
 
     // Issue #1863: Wait for first message history to load before building content.
@@ -665,8 +679,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Issue #590 Phase 3: Filters MCP servers based on channel capabilities.
    * Issue #955: Triggers background loading of persisted chat history.
    * Issue #1230: Triggers background loading of chat history for first message.
+   * Issue #2948: Starts GLM API proxy for non-Anthropic endpoints.
    */
-  private startAgentLoop(): void {
+  private async startAgentLoop(): Promise<void> {
     const chatId = this.boundChatId;
 
     // Issue #955: Trigger background loading of persisted history
@@ -681,6 +696,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.loadFirstMessageHistory().catch((err) => {
         this.logger.error({ err, chatId }, 'Failed to load first message history in background');
       });
+    }
+
+    // Issue #2948: Start GLM API proxy for non-Anthropic endpoints
+    // The proxy intercepts API requests and adds `tools` parameter
+    // extracted from the system prompt XML, enabling GLM to use system tools.
+    let effectiveApiBaseUrl: string | undefined;
+    if (this.apiBaseUrl && this.isNonAnthropicEndpoint(this.apiBaseUrl)) {
+      try {
+        effectiveApiBaseUrl = await getOrCreateProxy(this.apiBaseUrl);
+        this.logger.info(
+          { chatId, originalUrl: this.apiBaseUrl, proxyUrl: effectiveApiBaseUrl },
+          'GLM API proxy activated for tool compatibility',
+        );
+      } catch (err) {
+        this.logger.error(
+          { err, chatId, targetUrl: this.apiBaseUrl },
+          'Failed to start GLM API proxy, falling back to direct connection',
+        );
+        effectiveApiBaseUrl = this.apiBaseUrl;
+      }
     }
 
     // Get channel capabilities for MCP server filtering (Issue #590 Phase 3)
@@ -722,6 +757,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
+      // Issue #2948: Use proxy URL for GLM endpoints
+      ...(effectiveApiBaseUrl ? { apiBaseUrl: effectiveApiBaseUrl } : {}),
     });
 
     this.logger.info(
@@ -955,7 +992,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     await this.callbacks.sendMessage(chatId, restartMessage, threadRoot);
 
     // Restart the agent loop to preserve context for future messages
-    this.startAgentLoop();
+    await this.startAgentLoop();
     this.logger.info({ chatId }, 'Agent loop restarted');
   }
 
