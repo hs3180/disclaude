@@ -119,11 +119,13 @@ export class Config {
           // No fallback defaults - model must be explicitly configured
   static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
+          static readonly GLM_FAST_MODEL = fileConfigOnly.glm?.fastModel || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
           // Anthropic Claude configuration (from env for fallback)
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+          static readonly CLAUDE_FAST_MODEL = fileConfigOnly.agent?.fastModel || '';
 
           // Logging configuration
           static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
@@ -329,12 +331,13 @@ export class Config {
    * Get agent configuration based on available API keys.
    * Prefers GLM if configured, otherwise falls back to Anthropic.
    *
-   * @returns Agent configuration with API key and model
+   * @returns Agent configuration with API key, model, and optional fastModel
    * @throws Error if no API key is configured or model is missing
    */
   static getAgentConfig(): {
     apiKey: string;
     model: string;
+    fastModel?: string;
     apiBaseUrl?: string;
     provider: 'anthropic' | 'glm';
   } {
@@ -347,6 +350,7 @@ export class Config {
       return {
         apiKey: this.GLM_API_KEY,
         model: this.GLM_MODEL,
+        fastModel: this.GLM_FAST_MODEL || undefined,
         apiBaseUrl: this.GLM_API_BASE_URL,
         provider: 'glm',
       };
@@ -357,6 +361,7 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      fastModel: this.CLAUDE_FAST_MODEL || undefined,
       provider: 'anthropic',
     };
   }

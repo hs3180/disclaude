@@ -164,7 +164,7 @@ async function main(): Promise<void> {
   try {
     const agentConfig = Config.getAgentConfig();
     logger.info(
-      { provider: agentConfig.apiBaseUrl ? 'glm' : 'anthropic', model: agentConfig.model },
+      { provider: agentConfig.apiBaseUrl ? 'glm' : 'anthropic', model: agentConfig.model, fastModel: agentConfig.fastModel },
       'Agent configuration loaded'
     );
   } catch (error) {

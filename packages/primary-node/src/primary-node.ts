@@ -445,9 +445,11 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toChatAgentCallbacks helper to convert SchedulerCallbacks to ChatAgentCallbacks
     // Issue #2941: Use createAgent() instead of createScheduleAgent()
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #3059: Use fastModel for scheduled tasks when no explicit model is set
     const executor = createScheduleExecutor({
       agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), model ? { model } : {});
+        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks),
+          model ? { model } : { useFastModel: true });
       },
       callbacks: schedulerCallbacks,
     });

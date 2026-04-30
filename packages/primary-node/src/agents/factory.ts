@@ -85,6 +85,14 @@ export interface AgentCreateOptions {
   /** Override permission mode */
   permissionMode?: 'default' | 'bypassPermissions';
   /**
+   * Use the fast/cheap model for this agent instead of the default model.
+   * When true, uses `fastModel` from config if configured; otherwise falls back to `model`.
+   * Ignored when `model` is explicitly set.
+   *
+   * @see Issue #3059
+   */
+  useFastModel?: boolean;
+  /**
    * Channel-specific MessageBuilder options.
    * Issue #1499: Decouple Feishu-specific logic from worker-node.
    */
@@ -106,17 +114,32 @@ export class AgentFactory {
   /**
    * Get base agent configuration from Config with optional overrides.
    *
+   * Model selection priority (Issue #3059):
+   * 1. Explicit `options.model` override (highest priority)
+   * 2. `fastModel` from config when `options.useFastModel` is true
+   * 3. Default `model` from config
+   *
    * @param options - Optional configuration overrides
    * @returns BaseAgentConfig with merged configuration
    */
   private static getBaseConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
-    const defaultConfig = Config.getAgentConfig();
+    const { model: defaultModel, fastModel, apiKey, provider, apiBaseUrl } = Config.getAgentConfig();
+
+    // Model selection: explicit override > fastModel (when requested) > default
+    let model: string;
+    if (options.model) {
+      ({ model } = options);
+    } else if (options.useFastModel && fastModel) {
+      model = fastModel;
+    } else {
+      model = defaultModel;
+    }
 
     return {
-      apiKey: options.apiKey ?? defaultConfig.apiKey,
-      model: options.model ?? defaultConfig.model,
-      provider: options.provider ?? defaultConfig.provider,
-      apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
+      apiKey: options.apiKey ?? apiKey,
+      model,
+      provider: options.provider ?? provider,
+      apiBaseUrl: options.apiBaseUrl ?? apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
     };
   }

@@ -34,6 +34,15 @@ export interface AgentConfig {
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
   /**
+   * Fast/cheap model identifier for Anthropic/Claude.
+   * Used for scheduled tasks and simple scenarios to reduce cost and latency.
+   * Falls back to `model` if not configured.
+   *
+   * @example "claude-haiku-4-20250506"
+   * @see Issue #3059
+   */
+  fastModel?: string;
+  /**
    * Enable Claude Code Agent Teams mode.
    * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
    * This allows the agent to spawn and coordinate multiple teammate sessions.
@@ -74,6 +83,14 @@ export interface GlmConfig {
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
+  /**
+   * Fast/cheap model identifier for GLM.
+   * Used for scheduled tasks and simple scenarios to reduce cost and latency.
+   * Falls back to `model` if not configured.
+   *
+   * @see Issue #3059
+   */
+  fastModel?: string;
 }
 
 /**
