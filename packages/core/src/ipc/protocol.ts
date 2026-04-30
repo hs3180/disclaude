@@ -21,6 +21,8 @@ export type IpcRequestType =
   | 'uploadFile'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
+  // Image upload for card embedding (Issue #1919 Phase 1)
+  | 'uploadImage'
   // Temporary chat lifecycle management (Issue #1703)
   | 'listTempChats'
   | 'markChatResponded';
@@ -63,6 +65,11 @@ export interface IpcRequestPayloads {
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
+  // Image upload for card embedding (Issue #1919 Phase 1)
+  uploadImage: {
+    chatId: string;
+    filePath: string;
+  };
   // Temporary chat lifecycle management (Issue #1703)
   listTempChats: Record<string, never>;
   markChatResponded: {
@@ -96,6 +103,13 @@ export interface IpcResponsePayloads {
   sendInteractive: {
     success: boolean;
     messageId?: string;
+  };
+  // Image upload for card embedding (Issue #1919 Phase 1)
+  uploadImage: {
+    success: boolean;
+    imageKey?: string;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
   };
   // Temporary chat lifecycle management (Issue #1703)
   listTempChats: {

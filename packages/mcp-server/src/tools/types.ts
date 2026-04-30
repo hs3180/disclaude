@@ -69,5 +69,15 @@ export interface SendInteractiveResult {
   error?: string;
 }
 
+/**
+ * Result type for upload_image tool (Issue #1919 Phase 1).
+ */
+export interface UploadImageResult {
+  success: boolean;
+  message: string;
+  imageKey?: string;
+  error?: string;
+}
+
 
 

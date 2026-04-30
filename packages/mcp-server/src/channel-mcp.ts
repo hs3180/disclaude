@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -147,6 +148,18 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  upload_image: {
+    description: 'Upload an image and return image_key for card embedding.',
+    parameters: {
+      type: 'object',
+      properties: {
+        imagePath: { type: 'string' },
+        chatId: { type: 'string' },
+      },
+      required: ['imagePath', 'chatId'],
+    },
+    handler: upload_image,
   },
 };
 
@@ -395,6 +408,52 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'upload_image',
+    description: `Upload an image to Feishu and return image_key for card embedding.
+
+Use this when you need to embed a local image into a card message.
+Returns an \`image_key\` that can be used in \`send_card\` with \`img\` elements.
+
+## Parameters
+- **imagePath**: Path to the image file (supports png, jpg, jpeg, gif, bmp, webp, svg)
+- **chatId**: Target chat ID (for routing context)
+
+## Example
+\`\`\`json
+{"imagePath": "/path/to/chart.png", "chatId": "oc_xxx"}
+\`\`\`
+
+## Usage in Cards
+After getting the image_key, use it in a card:
+\`\`\`json
+{
+  "card": {
+    "elements": [
+      {"tag": "img", "img_key": "<image_key_from_upload>"}
+    ]
+  }
+}
+\`\`\``,
+    parameters: z.object({
+      imagePath: z.string().describe('Path to the image file to upload'),
+      chatId: z.string().describe('Target chat ID'),
+    }),
+    handler: async ({ imagePath, chatId }: { imagePath: string; chatId: string }) => {
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await upload_image({ imagePath, chatId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
