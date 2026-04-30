@@ -46,7 +46,16 @@ export {
   getNodeBinDir,
   extractText,
   buildSdkEnv,
+  setGlmProxyUrl,
+  getGlmProxyUrl,
 } from './sdk.js';
+
+// GLM Auth Proxy (Issue #2916)
+export {
+  GlmAuthProxy,
+  startGlmAuthProxy,
+  stopGlmAuthProxy,
+} from './glm-auth-proxy.js';
 
 // Output Adapter (Issue #1040)
 export type { OutputAdapter, MessageMetadata, FeishuOutputAdapterOptions } from './output-adapter.js';

@@ -8,6 +8,36 @@ import type {
 } from '../types/agent.js';
 
 /**
+ * GLM Auth Proxy URL override (Issue #2916).
+ *
+ * When set, buildSdkEnv() will use this URL instead of the real GLM API URL,
+ * routing all SDK requests through the local auth proxy that transforms
+ * `Authorization: Bearer` → `x-api-key`.
+ *
+ * This is set at service startup by cli.ts when GLM provider is detected.
+ */
+let glmProxyUrl: string | undefined;
+
+/**
+ * Set the GLM Auth Proxy URL override.
+ * When set, buildSdkEnv() will route through the proxy instead of the real GLM endpoint.
+ *
+ * @param proxyUrl - The local proxy URL (e.g., 'http://127.0.0.1:12345'), or undefined to clear
+ */
+export function setGlmProxyUrl(proxyUrl: string | undefined): void {
+  glmProxyUrl = proxyUrl;
+}
+
+/**
+ * Get the current GLM Auth Proxy URL override.
+ *
+ * @returns The proxy URL or undefined if not set
+ */
+export function getGlmProxyUrl(): string | undefined {
+  return glmProxyUrl;
+}
+
+/**
  * Get directory containing node executable.
  * This is needed for SDK subprocess spawning to find node.
  */
@@ -101,7 +131,12 @@ export function buildSdkEnv(
   delete env.CLAUDECODE;
 
   // Set base URL if provided (for GLM or custom endpoints)
-  if (apiBaseUrl) {
+  // Issue #2916: Route through GLM Auth Proxy when available.
+  // The proxy transforms `Authorization: Bearer` → `x-api-key`
+  // to fix GLM API 401 authentication failures.
+  if (glmProxyUrl && apiBaseUrl) {
+    env.ANTHROPIC_BASE_URL = glmProxyUrl;
+  } else if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
   }
 
