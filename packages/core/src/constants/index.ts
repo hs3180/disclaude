@@ -86,40 +86,21 @@ export const SESSION_RESTORE = {
 } as const;
 
 /**
- * WebSocket health monitoring constants (Issue #1351, #1666).
+ * WebSocket reconnection and offline queue constants (Issue #1351, #1666, #2905).
  *
- * Controls the detection of zombie WebSocket connections and auto-reconnect behavior.
+ * The Feishu SDK (@larksuiteoapi/node-sdk) WSClient has built-in keepalive:
+ * - `pingInterval: 120s` — SDK automatically sends ping frames
+ * - `reconnectCount: -1` — infinite reconnect attempts
+ * - `reconnectInterval: 120s` — reconnect delay
  *
- * Simplified approach (Issue #1666): The Feishu WS Server does NOT respond to
- * client-sent application-layer ping messages. Therefore, we use passive message
- * listening — any message from the server (including SDK pong, user messages, or
- * data frames) resets the liveness timer. If no message arrives within the timeout,
- * the connection is deemed dead and a reconnect is triggered.
+ * Previous custom health check constants (DEAD_CONNECTION_TIMEOUT_MS,
+ * HEALTH_CHECK_INTERVAL_MS) were removed in Issue #2905 because the passive
+ * message listening approach only tracked EventDispatcher events, not SDK-level
+ * ping/pong frames, causing ~15 false-positive reconnections per 50 minutes.
  *
- * The SDK's own pingLoop (~120s interval) continues to run and the server responds
- * to those pings with pong, which our event handler captures via
- * `recordMessageReceived()`.
+ * Remaining constants control exponential backoff for reconnect and offline queue.
  */
 export const WS_HEALTH = {
-  /**
-   * Maximum duration without receiving any server message before considering
-   * the connection dead. If no message (data, pong, or control) arrives within
-   * this window, the connection is force-closed and reconnection is triggered.
-   *
-   * Set to 130s — slightly longer than the SDK's pingLoop interval (~120s) to
-   * allow the SDK's own ping/pong cycle to keep the connection alive. If the
-   * SDK's pings also go unanswered, we detect it shortly after.
-   */
-  DEAD_CONNECTION_TIMEOUT_MS: 130 * 1000, // 130 seconds
-
-  /**
-   * Interval between health checks. Each tick compares now against
-   * lastMessageReceivedAt to detect zombie connections.
-   *
-   * Set to 30s — no need for frequent checks since the timeout is 130s.
-   */
-  HEALTH_CHECK_INTERVAL_MS: 30 * 1000, // 30 seconds
-
   /**
    * Exponential backoff configuration for reconnection attempts.
    * Uses: delay = min(baseDelay × 2^attempt + jitter, maxDelay)

@@ -1,48 +1,35 @@
 /**
- * WebSocket Connection Health Monitor & Auto-Reconnect Manager.
+ * WebSocket Connection Manager & Auto-Reconnect.
  *
- * Addresses Issue #1351: NAT/firewall silently drops WebSocket connections while
- * the SDK's pingLoop only sends Pings without checking Pong responses, leaving
- * readyState as OPEN with no messages flowing.
+ * Wraps the Feishu SDK's WSClient with connection state tracking and
+ * exponential-backoff reconnection triggered by SDK error/close events.
  *
- * Simplified by Issue #1666: Removed the custom ping loop (Issue #1437) and
- * SDK internal WebSocket interception (Issue #1504) since the Lark WS Server
- * does NOT respond to client-sent application-layer ping messages. The custom
- * ping loop was completely ineffective.
+ * ### Why no custom health check?
  *
- * This module now uses a simple passive message listening approach:
- * - **Passive monitoring**: Any message from the server (SDK pong, user messages,
- *   data frames) resets the liveness timer via `recordMessageReceived()`.
- * - **Auto-reconnect**: Exponential backoff with jitter when dead connections are detected.
- * - **Connection state machine**: Explicit state tracking (connected, reconnecting, stopped).
- * - **Observability**: Emits events and logs for connection lifecycle monitoring.
+ * The Feishu SDK (@larksuiteoapi/node-sdk) WSClient has built-in keepalive:
+ * - `pingInterval: 120s` — SDK automatically sends ping frames
+ * - `reconnectCount: -1` — infinite reconnect attempts
+ * - `reconnectInterval: 120s` — reconnect delay
  *
- * ### How it works
+ * A previous custom health check (Issue #1351, simplified in #1666) monitored
+ * `lastMessageReceivedAt` and triggered reconnect when no message arrived within
+ * 130s. However, `recordMessageReceived()` was only called from EventDispatcher
+ * handlers, **not** from SDK-level ping/pong frames — causing ~15 false-positive
+ * reconnections per 50 minutes (Issue #2905).
  *
- * 1. **Start**: Creates a WSClient and calls `start()`.
+ * This module now relies on SDK error/close events to detect connection failures,
+ * and adds its own exponential-backoff reconnect with DNS pre-check on top of the
+ * SDK's built-in mechanism.
  *
- * 2. **Health check**: Every `healthCheckIntervalMs` (30s), checks
- *    `lastMessageReceivedAt`. If no message received within
- *    `deadConnectionTimeoutMs` (130s), the connection is deemed dead.
+ * ### Architecture
  *
- * 3. **Message tracking**: `recordMessageReceived()` is called by the
- *    FeishuChannel event handler whenever any server message arrives.
- *    This captures SDK pong responses, user messages, and any other data.
- *
- * 4. **Dead connection → reconnect**: Force-closes the WSClient, then
- *    creates a new one with exponentially increasing delays.
- *
- * 5. **Reconnect flow**: On each failure, delay doubles (capped at `maxDelayMs`)
- *    with random jitter. If `maxAttempts` is reached, transitions to 'stopped'.
- *
- * ### Why not intercept SDK internals?
- *
- * The Lark WS Server does NOT respond to client-sent application-layer ping
- * messages. The custom ping loop (Issue #1437) and SDK WebSocket interception
- * (Issue #1504) were built around the assumption that we could detect pong
- * responses to our own pings, but this was incorrect. The SDK's own pingLoop
- * (~120s) handles keepalive, and its pong responses flow through the normal
- * event handler path — captured by `recordMessageReceived()`.
+ * ```
+ * connectFresh() → create WSClient + register error/close listeners
+ *     ↓
+ * SDK detects connection loss → emits 'close'/'error'
+ *     ↓
+ * initiateReconnect() → force-close old client → create new one with backoff
+ * ```
  *
  * Usage:
  * ```typescript
@@ -53,8 +40,9 @@
  * ```
  *
  * @module channels/feishu/ws-connection-manager
- * @see https://github.com/hs3180/disclaude/issues/1351
+ * @see https://github.com/hs3180/disclaude/issues/2905
  * @see https://github.com/hs3180/disclaude/issues/1666
+ * @see https://github.com/hs3180/disclaude/issues/1351
  */
 
 import dns from 'dns/promises';
@@ -78,10 +66,6 @@ export type WsConnectionState = 'connected' | 'reconnecting' | 'stopped';
 export interface WsConnectionManagerEvents {
   /** Connection state changed */
   stateChange: [state: WsConnectionState];
-  /** Any server message received (including SDK pong) */
-  heartbeat: [lastReceived: number];
-  /** Dead connection detected, initiating reconnect */
-  deadConnection: [elapsedMs: number];
   /** Reconnect attempt succeeded */
   reconnected: [attempt: number];
   /** All reconnect attempts exhausted */
@@ -112,10 +96,6 @@ export interface WsConnectionManagerConfig {
    * @default lark.LoggerLevel.info
    */
   sdkLogLevel?: lark.LoggerLevel;
-  /** Override dead connection timeout (ms) */
-  deadConnectionTimeoutMs?: number;
-  /** Override health check interval (ms) */
-  healthCheckIntervalMs?: number;
   /** Override reconnect base delay (ms) */
   reconnectBaseDelayMs?: number;
   /** Override reconnect max delay cap (ms) */
@@ -182,39 +162,26 @@ function createDefaultSdkLogger(): {
 /**
  * WebSocket Connection Manager.
  *
- * Wraps the Feishu SDK's WSClient to add zombie connection detection and
- * exponential-backoff reconnection via passive message listening.
+ * Wraps the Feishu SDK's WSClient with connection state tracking and
+ * exponential-backoff reconnection triggered by SDK error/close events.
  *
- * ### How it works
+ * ### How it works (Issue #2905)
  *
- * 1. **Start**: Creates a WSClient and calls `start()`.
+ * 1. **Start**: Creates a WSClient and registers error/close listeners.
  *
- * 2. **Health check**: Every `healthCheckIntervalMs` (30s), checks
- *    `lastMessageReceivedAt`. If no message received within
- *    `deadConnectionTimeoutMs` (130s), the connection is deemed dead.
+ * 2. **SDK-driven reconnect**: When the SDK emits `error` or `close` events,
+ *    the manager initiates its own reconnect sequence with exponential backoff
+ *    and DNS pre-check.
  *
- * 3. **Message tracking**: `recordMessageReceived()` is called by the
- *    FeishuChannel event handler whenever any server message arrives.
+ * 3. **Connection state machine**: Explicit state tracking (connected, reconnecting, stopped).
  *
- * 4. **Dead connection → reconnect**: Force-closes the WSClient, then
- *    creates a new one with exponentially increasing delays.
+ * ### No custom health check
  *
- * ### Simplified architecture (Issue #1666)
- *
- * ```
- * 连接建立 → 启动 health check 定时器（每 30s）
- *     ↓
- * 每次收到 server 消息 → 更新 lastMessageReceivedAt
- *     ↓
- * health check 检测: elapsed > 130s → 触发重连
- * ```
- *
- * No longer requires:
- * - ❌ Intercepting SDK internal WebSocket instance
- * - ❌ Parsing protobuf binary pong frames
- * - ❌ Custom ping loop
- * - ❌ RTT calculation
- * - ❌ SDK internal API dependencies (`wsConfig.getWSInstance()` etc.)
+ * The Feishu SDK already has built-in ping/pong with auto-reconnect
+ * (pingInterval: 120s, reconnectCount: -1). A previous custom health check
+ * (Issue #1351/#1666) that monitored `lastMessageReceivedAt` produced false
+ * positives because it only tracked EventDispatcher events, not SDK-level
+ * ping/pong frames — causing ~15 spurious reconnections per 50 minutes.
  */
 export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents> {
   private readonly config: WsConnectionManagerConfig;
@@ -227,12 +194,6 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
   // State machine
   private _state: WsConnectionState = 'stopped';
-
-  // Health monitoring — passive message listening
-  private lastMessageReceivedAt: number = 0;
-  private healthCheckTimer?: ReturnType<typeof setInterval>;
-  private readonly deadConnectionTimeoutMs: number;
-  private readonly healthCheckIntervalMs: number;
 
   // Reconnect state
   private reconnectAttempt: number = 0;
@@ -253,10 +214,6 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     this.larkSDK = lark;
 
     // Resolve configuration with defaults from constants
-    this.deadConnectionTimeoutMs = config.deadConnectionTimeoutMs
-      ?? WS_HEALTH.DEAD_CONNECTION_TIMEOUT_MS;
-    this.healthCheckIntervalMs = config.healthCheckIntervalMs
-      ?? WS_HEALTH.HEALTH_CHECK_INTERVAL_MS;
     this.reconnectBaseDelayMs = config.reconnectBaseDelayMs
       ?? WS_HEALTH.RECONNECT.BASE_DELAY_MS;
     this.reconnectMaxDelayMs = config.reconnectMaxDelayMs
@@ -270,11 +227,10 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
     logger.info(
       {
-        deadConnectionTimeoutMs: this.deadConnectionTimeoutMs,
-        healthCheckIntervalMs: this.healthCheckIntervalMs,
         reconnectBaseDelayMs: this.reconnectBaseDelayMs,
         reconnectMaxDelayMs: this.reconnectMaxDelayMs,
         reconnectMaxAttempts: this.reconnectMaxAttempts,
+        dnsCheckHost: this.dnsCheckHost,
       },
       'WsConnectionManager created',
     );
@@ -294,24 +250,18 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    */
   getMetrics(): {
     state: WsConnectionState;
-    lastMessageReceivedAt: number;
-    timeSinceLastMessageMs: number;
     reconnectAttempt: number;
     isConnected: boolean;
   } {
     return {
       state: this._state,
-      lastMessageReceivedAt: this.lastMessageReceivedAt,
-      timeSinceLastMessageMs: this.lastMessageReceivedAt > 0
-        ? Date.now() - this.lastMessageReceivedAt
-        : 0,
       reconnectAttempt: this.reconnectAttempt,
       isConnected: this._state === 'connected',
     };
   }
 
   /**
-   * Start the WebSocket connection with health monitoring.
+   * Start the WebSocket connection.
    *
    * @param eventDispatcher - Feishu SDK EventDispatcher for handling events
    */
@@ -323,9 +273,6 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       logger.warn('Initial connection failed, entering reconnect mode');
       this.initiateReconnect();
     }
-
-    // Always start health monitoring
-    this.startHealthCheck();
   }
 
   /**
@@ -335,7 +282,6 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     await Promise.resolve();
     logger.info('WsConnectionManager stopping');
 
-    this.stopHealthCheck();
     this.clearReconnectTimer();
     this.closeClient();
 
@@ -347,36 +293,22 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   }
 
   /**
-   * Record that a message was received from the server.
-   *
-   * This is the sole liveness signal. Called by FeishuChannel event handlers
-   * for all incoming messages — including SDK pong responses, user messages,
-   * and any other server-initiated data.
-   */
-  recordMessageReceived(): void {
-    this.lastMessageReceivedAt = Date.now();
-    this.emit('heartbeat', this.lastMessageReceivedAt);
-  }
-
-  /**
    * Check if the connection is currently healthy.
+   *
+   * After removing the custom health check (Issue #2905), this simply checks
+   * if the connection state is 'connected'.
    */
   isHealthy(): boolean {
-    if (this._state !== 'connected') {
-      return false;
-    }
-
-    if (this.lastMessageReceivedAt === 0) {
-      return true; // Grace period — just connected
-    }
-    const elapsed = Date.now() - this.lastMessageReceivedAt;
-    return elapsed < this.deadConnectionTimeoutMs;
+    return this._state === 'connected';
   }
 
   // ─── Connection lifecycle ────────────────────────────────────────────────
 
   /**
    * Create a fresh WSClient and connect.
+   *
+   * Registers error/close event listeners on the WSClient to trigger
+   * reconnection when the SDK detects connection failures (Issue #2905).
    *
    * @returns `true` if connection succeeded
    */
@@ -402,8 +334,27 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         throw new Error('WSClient.start() returned false');
       }
 
-      // Start grace period
-      this.lastMessageReceivedAt = Date.now();
+      // Register SDK error/close event listeners (Issue #2905)
+      // These trigger reconnect when the SDK detects connection failures,
+      // replacing the previous custom health check mechanism.
+      if (typeof this.wsClient.on === 'function') {
+        this.wsClient.on('error', (err: unknown) => {
+          logger.warn({ err }, 'WSClient error event received');
+        });
+
+        this.wsClient.on('close', (code?: number, reason?: string) => {
+          logger.warn(
+            { code, reason, state: this._state, isReconnecting: this.isReconnecting },
+            'WSClient close event received',
+          );
+          // Only trigger reconnect if we're currently connected and not already
+          // in the reconnect loop — prevents double-reconnect
+          if (this._state === 'connected' && !this.isReconnecting) {
+            this.initiateReconnect();
+          }
+        });
+      }
+
       this.reconnectAttempt = 0;
       this.transitionTo('connected');
 
@@ -435,70 +386,6 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
         logger.debug({ err: error }, 'Error while closing WSClient');
       }
       this.wsClient = undefined;
-    }
-  }
-
-  // ─── Health monitoring ───────────────────────────────────────────────────
-
-  /**
-   * Start the periodic health check loop.
-   */
-  private startHealthCheck(): void {
-    this.stopHealthCheck();
-
-    this.healthCheckTimer = setInterval(() => {
-      this.runHealthCheck();
-    }, this.healthCheckIntervalMs);
-
-    if (this.healthCheckTimer.unref) {
-      this.healthCheckTimer.unref();
-    }
-
-    logger.debug(
-      { intervalMs: this.healthCheckIntervalMs, timeoutMs: this.deadConnectionTimeoutMs },
-      'Health check timer started',
-    );
-  }
-
-  private stopHealthCheck(): void {
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer);
-      this.healthCheckTimer = undefined;
-    }
-  }
-
-  /**
-   * Single health check iteration.
-   *
-   * Checks `lastMessageReceivedAt` — the sole liveness signal.
-   * Any message from the server (pong, user message, data frame) resets this
-   * via `recordMessageReceived()`.
-   */
-  private runHealthCheck(): void {
-    if (this._state !== 'connected' || this.isReconnecting) {
-      return;
-    }
-
-    // Grace period: just connected, no signals yet
-    if (this.lastMessageReceivedAt === 0) {
-      return;
-    }
-
-    const elapsed = Date.now() - this.lastMessageReceivedAt;
-
-    if (elapsed >= this.deadConnectionTimeoutMs) {
-      logger.warn(
-        {
-          elapsedMs: elapsed,
-          timeoutMs: this.deadConnectionTimeoutMs,
-          signalType: 'message',
-          reconnectAttempt: this.reconnectAttempt,
-        },
-        'Dead connection detected — no message received within timeout',
-      );
-
-      this.emit('deadConnection', elapsed);
-      this.initiateReconnect();
     }
   }
 

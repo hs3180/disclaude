@@ -97,7 +97,6 @@ vi.mock('./feishu/index.js', () => ({
     stop: vi.fn().mockResolvedValue(undefined),
     isHealthy: vi.fn().mockReturnValue(true),
     on: vi.fn(),
-    recordMessageReceived: vi.fn(),
     getMetrics: vi.fn().mockReturnValue(undefined),
   })),
   type: {},
