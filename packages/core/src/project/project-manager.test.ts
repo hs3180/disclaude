@@ -88,6 +88,77 @@ describe('ProjectManager constructor', () => {
     const pm = new ProjectManager(createOptions({ templatesConfig: undefined }));
     expect(pm.listTemplates()).toHaveLength(0);
   });
+
+  // ── Auto-discovery (Issue #2286) ──
+
+  it('should auto-discover templates from packageDir when templatesConfig is omitted', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+    const templateDir = join(packageDir, 'templates', 'research');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# Research Template');
+    writeFileSync(join(templateDir, 'template.yaml'), 'displayName: "研究模式"');
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      // templatesConfig omitted — triggers auto-discovery
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('research');
+    expect(templates[0].displayName).toBe('研究模式');
+  });
+
+  it('should auto-discover multiple templates from packageDir', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+    for (const name of ['research', 'book-reader', 'code-review']) {
+      const templateDir = join(packageDir, 'templates', name);
+      mkdirSync(templateDir, { recursive: true });
+      writeFileSync(join(templateDir, 'CLAUDE.md'), `# ${name} Template`);
+    }
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(3);
+    const names = templates.map((t) => t.name).sort();
+    expect(names).toEqual(['book-reader', 'code-review', 'research']);
+  });
+
+  it('should prefer explicit templatesConfig over auto-discovery', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+    // Create a filesystem template that should NOT be loaded
+    const templateDir = join(packageDir, 'templates', 'from-filesystem');
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), '# From Filesystem');
+
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      templatesConfig: {
+        'from-config': { displayName: 'From Config' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    // Should only have the config template, not the filesystem one
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('from-config');
+  });
+
+  it('should return empty templates when packageDir has no templates directory', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+    mkdirSync(packageDir, { recursive: true });
+    // No templates/ directory created
+
+    const pm = new ProjectManager({ workspaceDir, packageDir });
+    expect(pm.listTemplates()).toHaveLength(0);
+  });
 });
 
 describe('ProjectManager init()', () => {
