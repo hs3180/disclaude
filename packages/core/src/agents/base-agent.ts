@@ -85,9 +85,13 @@ export interface QueryStreamResult {
  * class MyAgent extends BaseAgent {
  *   protected getAgentName() { return 'MyAgent'; }
  *
- *   async *query(input: AgentInput): AsyncIterable<AgentMessage> {
+ *   async *query(input: string): AsyncIterable<AgentMessage> {
  *     const options = this.createSdkOptions({ allowedTools: ['Read', 'Write'] });
- *     for await (const { parsed } of this.queryOnce(input, options)) {
+ *     async function* singleInput(): AsyncGenerator<UserInput> {
+ *       yield { role: 'user', content: input };
+ *     }
+ *     const { iterator } = this.createQueryStream(singleInput(), options);
+ *     for await (const { parsed } of iterator) {
  *       yield this.formatMessage(parsed);
  *     }
  *   }
@@ -262,46 +266,6 @@ export abstract class BaseAgent implements Disposable {
   }
 
   /**
-   * Execute a one-shot query.
-   *
-   * For task-based agents (Evaluator, Executor) that use
-   * static prompts. Input is a string or message array.
-   *
-   * This method wraps the SDK provider query with:
-   * - Automatic debug logging
-   * - Parsed message output
-   *
-   * @param input - Static prompt string or message array
-   * @param options - AgentQueryOptions
-   * @yields IteratorYieldResult with parsed and raw message
-   */
-  protected async *queryOnce(
-    input: string | unknown[],
-    options: AgentQueryOptions
-  ): AsyncGenerator<IteratorYieldResult> {
-    // Convert input to SDK format
-    const sdkInput = typeof input === 'string' ? input : this.convertInputToUserInput(input);
-
-    // Use SDK provider
-    const iterator = this.sdkProvider.queryOnce(sdkInput, options);
-
-    for await (const message of iterator) {
-      const parsed = this.convertToLegacyFormat(message);
-
-      // Log SDK message with full details for debugging
-      this.logger.debug({
-        provider: this.provider,
-        messageType: parsed.type,
-        contentLength: parsed.content?.length || 0,
-        toolName: parsed.metadata?.toolName,
-        rawMessage: message,
-      }, 'SDK message received');
-
-      yield { parsed, raw: message };
-    }
-  }
-
-  /**
    * Execute a streaming query.
    *
    * For conversational agents (ChatAgent) that use dynamic input generators.
@@ -359,19 +323,6 @@ export abstract class BaseAgent implements Disposable {
       handle: result.handle,
       iterator: wrappedIterator(),
     };
-  }
-
-  /**
-   * Convert legacy AsyncIterable<StreamingUserMessage> to SDK UserInput format.
-   */
-  private convertInputToUserInput(input: unknown[]): UserInput[] | string {
-    // For string input, just return it
-    if (typeof input === 'string') {
-      return input;
-    }
-
-    // For array input, return empty array as fallback
-    return [];
   }
 
   /**

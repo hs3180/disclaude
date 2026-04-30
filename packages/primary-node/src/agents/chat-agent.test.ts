@@ -27,9 +27,6 @@ vi.mock('@disclaude/core', () => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
       iterator: (async function* () { /* empty */ })(),
     }));
-    this.queryOnce = vi.fn(() => (async function* () {
-      yield { parsed: { type: 'result', content: 'done' } };
-    })());
     this.dispose = vi.fn();
     this.logger = {
       info: vi.fn(),

@@ -412,7 +412,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Execute a one-shot query (CLI mode).
    *
    * This method is blocking - it waits for the query to complete before returning.
-   * Uses direct string prompt instead of streaming input.
+   * Uses the streaming path internally by wrapping the static input as a
+   * single-yield AsyncGenerator (Issue #3108: unified query path).
    * No session state is maintained - each call is independent.
    *
    * @param chatId - Platform-specific chat identifier (must match bound chatId)
@@ -435,7 +436,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       throw new Error(`ChatAgent bound to ${this.boundChatId} cannot execute for ${chatId}`);
     }
 
-    this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query');
+    this.logger.info({ chatId, messageId, textLength: text.length }, 'CLI mode: executing one-shot query via streaming path');
 
     // Add MCP servers
     const mcpServers: Record<string, unknown> = {};
@@ -470,21 +471,38 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       senderOpenId,
     }, chatId, capabilities);
 
-    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with direct prompt');
+    this.logger.info({ chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) }, 'Starting CLI query with streaming path');
 
     try {
-      // Use BaseAgent's queryOnce for one-shot query with timeout protection
-      for await (const { parsed } of this.queryOnce(enhancedContent, sdkOptions)) {
-        // Check for completion - result type means query is done
-        if (parsed.type === 'result') {
-          this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
-          break;
-        }
+      // Issue #3108: Wrap static input as a single-yield AsyncGenerator
+      // to use the streaming query path instead of the removed queryOnce.
+      async function* singleInput(): AsyncGenerator<StreamingUserMessage> {
+        yield {
+          type: 'user',
+          message: { role: 'user', content: enhancedContent },
+          parent_tool_use_id: null,
+          session_id: '',
+        };
+      }
 
-        // Send message content to callback (with thread support)
-        if (parsed.content) {
-          await this.callbacks.sendMessage(chatId, parsed.content, messageId);
+      const { handle, iterator } = this.createQueryStream(singleInput(), sdkOptions);
+
+      try {
+        for await (const { parsed } of iterator) {
+          // Check for completion - result type means query is done
+          if (parsed.type === 'result') {
+            this.logger.debug({ chatId, content: parsed.content }, 'CLI query result received, breaking loop');
+            break;
+          }
+
+          // Send message content to callback (with thread support)
+          if (parsed.content) {
+            await this.callbacks.sendMessage(chatId, parsed.content, messageId);
+          }
         }
+      } finally {
+        // Ensure the query handle is closed to release resources
+        handle.close();
       }
 
       this.logger.info({ chatId }, 'CLI query completed normally');
