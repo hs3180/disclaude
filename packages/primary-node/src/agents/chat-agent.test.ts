@@ -171,17 +171,23 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
-  describe('executeOnce', () => {
+  describe('runOnce', () => {
     it('should throw when chatId does not match bound chatId', async () => {
       await expect(
-        chatAgent.executeOnce('oc_wrong', 'hello', 'msg_1')
+        chatAgent.runOnce('oc_wrong', 'hello', 'msg_1')
       ).rejects.toThrow('cannot execute for oc_wrong');
     });
 
     it('should complete successfully for matching chatId', async () => {
       await expect(
-        chatAgent.executeOnce('oc_test_chat', 'hello', 'msg_1')
+        chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1')
       ).resolves.toBeUndefined();
+    });
+
+    it('should set onceMode during execution', async () => {
+      // Verify onceMode is cleaned up after execution
+      await chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1');
+      expect((chatAgent as any).onceMode).toBe(false);
     });
   });
 
