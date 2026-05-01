@@ -181,6 +181,42 @@ describe('SDK Utilities', () => {
       expect(env.CLAUDECODE).toBeUndefined();
     });
 
+    describe('OAuth env var stripping (Issue #2916)', () => {
+      const oauthEnvVars = [
+        'ANTHROPIC_AUTH_TOKEN',
+        'CLAUDE_CODE_OAUTH_TOKEN',
+        'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+        'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+        'CLAUDE_CODE_OAUTH_CLIENT_ID',
+        'CLAUDE_CODE_OAUTH_SCOPES',
+      ];
+
+      it.each(oauthEnvVars)('should remove %s from environment', (envVar) => {
+        vi.stubEnv(envVar, 'some-oauth-token-value');
+        const env = buildSdkEnv('sk-test-key');
+        expect(env[envVar]).toBeUndefined();
+      });
+
+      it('should remove all OAuth env vars simultaneously', () => {
+        for (const envVar of oauthEnvVars) {
+          vi.stubEnv(envVar, `test-value-for-${envVar}`);
+        }
+        const env = buildSdkEnv('sk-test-key');
+        for (const envVar of oauthEnvVars) {
+          expect(env[envVar]).toBeUndefined();
+        }
+      });
+
+      it('should still set ANTHROPIC_API_KEY correctly when OAuth vars are present', () => {
+        vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'some-bearer-token');
+        vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'some-oauth-token');
+        const env = buildSdkEnv('sk-test-glm-key');
+        expect(env.ANTHROPIC_API_KEY).toBe('sk-test-glm-key');
+        expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+        expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      });
+    });
+
     it('should set DEBUG_CLAUDE_AGENT_SDK when sdkDebug is true (default)', () => {
       const env = buildSdkEnv('sk-test-key');
       expect(env.DEBUG_CLAUDE_AGENT_SDK).toBeDefined();

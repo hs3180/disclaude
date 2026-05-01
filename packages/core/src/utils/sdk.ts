@@ -102,6 +102,19 @@ export function buildSdkEnv(
   // Must use delete to completely remove the key, not just set to undefined.
   delete env.CLAUDECODE;
 
+  // Issue #2916: Remove OAuth/auth-token env vars that conflict with
+  // API key authentication. When using third-party Anthropic-compatible
+  // APIs (GLM, etc.), the CLI reads these env vars and sends
+  // "Authorization: Bearer <token>" headers that override or conflict
+  // with the "X-Api-Key" header, causing 401 authentication failures.
+  // By stripping these, the CLI only uses ANTHROPIC_API_KEY → X-Api-Key.
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR;
+  delete env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN;
+  delete env.CLAUDE_CODE_OAUTH_CLIENT_ID;
+  delete env.CLAUDE_CODE_OAUTH_SCOPES;
+
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
