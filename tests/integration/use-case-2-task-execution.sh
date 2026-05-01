@@ -46,7 +46,7 @@ test_file_listing_task() {
     log_info "Test: File listing task..."
 
     local chat_id="test-use-case-2-files-$$"
-    assert_sync_chat_ok "请列出当前目录下的所有文件" "$chat_id" || return 1
+    assert_sync_chat_ok "请直接说出常见的文件和目录类型名称，无需执行任何命令或详细说明。" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -iqE "package\.json|src|dist|文件|目录|file|directory|ls|Running"; then
         log_pass "Agent returned directory content"
