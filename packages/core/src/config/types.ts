@@ -19,6 +19,17 @@ export interface WorkspaceConfig {
 }
 
 /**
+ * Model tier for three-level model configuration (Issue #3059).
+ *
+ * Allows different agent scenarios to use models with appropriate
+ * capability/cost trade-offs:
+ * - 'high': Evaluators, complex analysis (e.g., claude-opus-4)
+ * - 'low': Scheduled tasks, simple operations (e.g., claude-haiku-4)
+ * - 'multimodal': Main dialogue, multimodal processing (e.g., claude-sonnet-4)
+ */
+export type ModelTier = 'high' | 'low' | 'multimodal';
+
+/**
  * Agent configuration section.
  *
  * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
@@ -33,6 +44,12 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /** High-capability model for evaluators, complex analysis (Issue #3059) */
+  highModel?: string;
+  /** Low-cost model for scheduled tasks, simple operations (Issue #3059) */
+  lowModel?: string;
+  /** Multimodal model for main dialogue, multimodal processing (Issue #3059) */
+  multimodalModel?: string;
   /**
    * Enable Claude Code Agent Teams mode.
    * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
@@ -82,6 +99,12 @@ export interface GlmConfig {
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
+  /** High-capability GLM model (Issue #3059) */
+  highModel?: string;
+  /** Low-cost GLM model for scheduled tasks (Issue #3059) */
+  lowModel?: string;
+  /** Multimodal GLM model (Issue #3059) */
+  multimodalModel?: string;
 }
 
 /**

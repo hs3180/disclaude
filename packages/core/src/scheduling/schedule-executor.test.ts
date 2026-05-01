@@ -6,6 +6,7 @@
  * - Executor creates and disposes ChatAgents properly
  * - Error handling and cleanup on failure
  * - Model override passing (Issue #1338)
+ * - Model tier passing (Issue #3059)
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
  * Issue #2941: Updated to use ChatAgent directly.
@@ -18,6 +19,7 @@ import {
 } from './schedule-executor.js';
 import type { ChatAgent } from '../agents/types.js';
 import type { SchedulerCallbacks } from './scheduler.js';
+import type { ModelTier } from '../config/types.js';
 
 describe('createScheduleExecutor', () => {
   let mockAgent: ChatAgent;
@@ -63,7 +65,7 @@ describe('createScheduleExecutor', () => {
       await executor('chat-1', 'Run tests');
 
       expect(mockAgentFactory).toHaveBeenCalledTimes(1);
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined);
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, undefined);
     });
 
     it('should call processMessage with correct arguments', async () => {
@@ -132,7 +134,7 @@ describe('createScheduleExecutor', () => {
 
       await executor('chat-1', 'Run tests', 'user-1', 'claude-sonnet-4-20250514');
 
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4-20250514');
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4-20250514', undefined);
     });
 
     it('should pass undefined model when not specified', async () => {
@@ -143,7 +145,59 @@ describe('createScheduleExecutor', () => {
 
       await executor('chat-1', 'Run tests');
 
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined);
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, undefined);
+    });
+  });
+
+  describe('model tier (Issue #3059)', () => {
+    it('should pass modelTier to agent factory', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await executor('chat-1', 'Run tests', 'user-1', undefined, 'low');
+
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, 'low');
+    });
+
+    it('should pass both model and modelTier to agent factory', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await executor('chat-1', 'Run tests', 'user-1', 'claude-opus-4', 'high');
+
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-opus-4', 'high');
+    });
+
+    it('should pass undefined modelTier when not specified', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await executor('chat-1', 'Run tests');
+
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, undefined);
+    });
+
+    it('should pass all model tier values correctly', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      const tiers: ModelTier[] = ['high', 'low', 'multimodal'];
+      for (const tier of tiers) {
+        await executor('chat-1', `Task with ${tier}`, 'user-1', undefined, tier);
+      }
+
+      expect(mockAgentFactory).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(mockAgentFactory)).toHaveBeenNthCalledWith(1, 'chat-1', mockCallbacks, undefined, 'high');
+      expect(vi.mocked(mockAgentFactory)).toHaveBeenNthCalledWith(2, 'chat-1', mockCallbacks, undefined, 'low');
+      expect(vi.mocked(mockAgentFactory)).toHaveBeenNthCalledWith(3, 'chat-1', mockCallbacks, undefined, 'multimodal');
     });
   });
 

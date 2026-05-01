@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ModelTier,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -359,6 +360,43 @@ export class Config {
       model: this.CLAUDE_MODEL,
       provider: 'anthropic',
     };
+  }
+
+  /**
+   * Get model for a specific tier (Issue #3059).
+   *
+   * Resolves the model identifier based on the tier, looking at the
+   * currently active provider (GLM or Anthropic).
+   *
+   * Returns undefined if no tier-specific model is configured, allowing
+   * the caller to fall back to the default model.
+   *
+   * Model resolution priority:
+   * ```
+   * options.model > tier-specific model > default model
+   * ```
+   *
+   * @param tier - Model tier ('high', 'low', or 'multimodal')
+   * @returns Model identifier for the tier, or undefined if not configured
+   */
+  static getModelForTier(tier: ModelTier): string | undefined {
+    const config = this.getRawConfig();
+
+    // Prefer GLM tier models if GLM is configured
+    if (this.GLM_API_KEY) {
+      switch (tier) {
+        case 'high': return config.glm?.highModel;
+        case 'low': return config.glm?.lowModel;
+        case 'multimodal': return config.glm?.multimodalModel;
+      }
+    }
+
+    // Anthropic tier models
+    switch (tier) {
+      case 'high': return config.agent?.highModel;
+      case 'low': return config.agent?.lowModel;
+      case 'multimodal': return config.agent?.multimodalModel;
+    }
   }
 
   /**

@@ -28,9 +28,17 @@ agent:
   # Options: anthropic, glm
   provider: "glm"
 
-  # Model to use for AI operations
+  # Model to use for AI operations (fallback default)
   # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)
   model: "glm-4.7"
+
+  # Three-level model configuration (Issue #3059)
+  # Allows different agent scenarios to use models with appropriate capability/cost trade-offs.
+  # Model resolution priority: options.model > tier-specific model > default model
+  #
+  # highModel: "glm-5.1"           # Evaluators, complex analysis
+  # lowModel: "glm-4-flash"        # Scheduled tasks, simple operations
+  # multimodalModel: "glm-4v"      # Main dialogue, multimodal processing
 
   # Permission mode for SDK tools
   # Options: default (ask user), bypassPermissions (auto-approve)
@@ -117,6 +125,11 @@ glm:
 
   # API base URL (usually no need to change)
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
+
+  # Three-level model configuration for GLM provider (Issue #3059)
+  # highModel: "glm-5.1"           # Evaluators, complex analysis
+  # lowModel: "glm-4-flash"        # Scheduled tasks, simple operations
+  # multimodalModel: "glm-4v"      # Main dialogue, multimodal processing
 
 # -----------------------------------------------------------------------------
 # Logging Configuration

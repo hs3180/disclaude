@@ -27,7 +27,7 @@
  * @module agents/factory
  */
 
-import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type ModelTier } from '@disclaude/core';
 import { ChatAgent } from './chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
 
@@ -76,8 +76,10 @@ export function toChatAgentCallbacks(callbacks: SchedulerCallbacks): ChatAgentCa
 export interface AgentCreateOptions {
   /** Override API key */
   apiKey?: string;
-  /** Override model */
+  /** Override model (highest priority, overrides modelTier) */
   model?: string;
+  /** Model tier for tier-based model selection (Issue #3059) */
+  modelTier?: ModelTier;
   /** Override API provider */
   provider?: AgentProvider;
   /** Override API base URL */
@@ -106,15 +108,24 @@ export class AgentFactory {
   /**
    * Get base agent configuration from Config with optional overrides.
    *
+   * Model resolution priority (Issue #3059):
+   * ```
+   * options.model > tier-specific model (modelTier) > default model
+   * ```
+   *
    * @param options - Optional configuration overrides
    * @returns BaseAgentConfig with merged configuration
    */
   private static getBaseConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
     const defaultConfig = Config.getAgentConfig();
 
+    // Issue #3059: Resolve model with tier fallback
+    const tierModel = options.modelTier ? Config.getModelForTier(options.modelTier) : undefined;
+    const resolvedModel = options.model ?? tierModel ?? defaultConfig.model;
+
     return {
       apiKey: options.apiKey ?? defaultConfig.apiKey,
-      model: options.model ?? defaultConfig.model,
+      model: resolvedModel,
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',

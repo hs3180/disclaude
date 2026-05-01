@@ -299,6 +299,7 @@ describe('Scheduler', () => {
         expect.stringContaining('Run tests'),
         undefined,
         undefined,
+        undefined,
       );
     });
 
@@ -321,6 +322,7 @@ describe('Scheduler', () => {
         expect.any(String),
         'user-123',
         'claude-3-5-sonnet-20241022',
+        undefined,
       );
     });
 
