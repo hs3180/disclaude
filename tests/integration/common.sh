@@ -33,7 +33,7 @@ _COMMON_SH_LOADED=1
 REST_PORT="${REST_PORT:-3099}"
 HOST="${HOST:-127.0.0.1}"
 API_URL="http://${HOST}:${REST_PORT}"
-# Timeout for API requests - increased to 60s for AI processing
+# Timeout for API requests - increased to 120s for AI processing with MCP tool calls
 TIMEOUT="${TIMEOUT:-30}"
 # Default to test config file for integration tests (no MCP servers)
 CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
