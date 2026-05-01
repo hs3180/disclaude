@@ -26,6 +26,9 @@ export * from './ipc/index.js';
 // Config (exports McpServerConfig for config)
 export * from './config/index.js';
 
+// Project management (Issue #1916, #2227 — unified ProjectContext system)
+export * from './project/index.js';
+
 // Agent SDK abstraction layer (Issue #1040)
 // Export SDK functions and classes
 export {

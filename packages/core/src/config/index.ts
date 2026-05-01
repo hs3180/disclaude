@@ -24,6 +24,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
+import type { ProjectTemplatesConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -504,6 +505,17 @@ export class Config {
    */
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
+  }
+
+  /**
+   * Get project templates configuration from config file.
+   * Templates define project blueprints for per-chatId context switching.
+   * @see Issue #1916 (unified ProjectContext system), #2227 (config integration)
+   *
+   * @returns Project templates configuration, or undefined if not configured
+   */
+  static getProjectTemplates(): ProjectTemplatesConfig | undefined {
+    return fileConfigOnly.projectTemplates;
   }
 }
 
