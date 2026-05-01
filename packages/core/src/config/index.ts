@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ModelTier,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -124,6 +125,14 @@ export class Config {
           // Anthropic Claude configuration (from env for fallback)
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+
+          // Tier-specific model configuration (Issue #3059)
+          static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
+          static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';
+          static readonly CLAUDE_MULTIMODAL_MODEL = fileConfigOnly.agent?.multimodalModel || '';
+          static readonly GLM_HIGH_MODEL = fileConfigOnly.glm?.highModel || '';
+          static readonly GLM_LOW_MODEL = fileConfigOnly.glm?.lowModel || '';
+          static readonly GLM_MULTIMODAL_MODEL = fileConfigOnly.glm?.multimodalModel || '';
 
           // Logging configuration
           static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
@@ -359,6 +368,53 @@ export class Config {
       model: this.CLAUDE_MODEL,
       provider: 'anthropic',
     };
+  }
+
+  /**
+   * Get model for a specific tier.
+   *
+   * Resolves the model identifier based on the tier, considering the
+   * currently active provider (GLM or Anthropic).
+   *
+   * Resolution order:
+   * 1. Tier-specific model (e.g., agent.highModel or glm.highModel)
+   * 2. Default model (agent.model or glm.model)
+   * 3. Empty string if nothing is configured
+   *
+   * @param tier - The model tier to resolve
+   * @returns The resolved model identifier, or empty string if not configured
+   *
+   * @see Issue #3059
+   *
+   * @example
+   * ```typescript
+   * // Config: agent.model: "claude-sonnet-4", agent.highModel: "claude-opus-4"
+   * Config.getModelForTier('high');  // "claude-opus-4"
+   * Config.getModelForTier('low');   // "claude-sonnet-4" (falls back to default)
+   * ```
+   */
+  static getModelForTier(tier: ModelTier): string {
+    // GLM provider
+    if (this.GLM_API_KEY) {
+      switch (tier) {
+        case 'high':
+          return this.GLM_HIGH_MODEL || this.GLM_MODEL;
+        case 'low':
+          return this.GLM_LOW_MODEL || this.GLM_MODEL;
+        case 'multimodal':
+          return this.GLM_MULTIMODAL_MODEL || this.GLM_MODEL;
+      }
+    }
+
+    // Anthropic provider
+    switch (tier) {
+      case 'high':
+        return this.CLAUDE_HIGH_MODEL || this.CLAUDE_MODEL;
+      case 'low':
+        return this.CLAUDE_LOW_MODEL || this.CLAUDE_MODEL;
+      case 'multimodal':
+        return this.CLAUDE_MULTIMODAL_MODEL || this.CLAUDE_MODEL;
+    }
   }
 
   /**

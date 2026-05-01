@@ -28,9 +28,21 @@ agent:
   # Options: anthropic, glm
   provider: "glm"
 
-  # Model to use for AI operations
+  # Model to use for AI operations (default fallback)
   # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)
   model: "glm-4.7"
+
+  # Three-tier model configuration (Issue #3059)
+  # Allows different agent scenarios to use appropriate models.
+  # When a tier is not specified, falls back to the default model above.
+  #
+  # highModel: "claude-opus-4"          # Evaluator, complex analysis
+  # lowModel: "claude-haiku-4"          # Scheduled tasks, simple operations
+  # multimodalModel: "claude-sonnet-4"  # Main conversation, multimodal processing
+  #
+  # Usage in schedule frontmatter:
+  #   modelTier: "low"    # Resolves to lowModel or falls back to model
+  #   model: "xxx"        # Explicit model takes precedence over modelTier
 
   # Permission mode for SDK tools
   # Options: default (ask user), bypassPermissions (auto-approve)

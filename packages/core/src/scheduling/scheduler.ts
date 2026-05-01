@@ -25,6 +25,7 @@
 
 import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
+import { Config } from '../config/index.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
@@ -296,9 +297,14 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
+      // Issue #3059: Resolve model with tier support.
+      // Priority: explicit model > modelTier resolution > default (undefined)
+      const resolvedModel = task.model ||
+        (task.modelTier ? Config.getModelForTier(task.modelTier) : undefined);
+
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model);
+      await this.executor(task.chatId, wrappedPrompt, task.createdBy, resolvedModel || undefined);
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 

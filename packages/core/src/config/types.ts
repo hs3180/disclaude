@@ -19,6 +19,18 @@ export interface WorkspaceConfig {
 }
 
 /**
+ * Model tier type for three-tier model configuration.
+ *
+ * Allows different agent scenarios to use appropriate models:
+ * - 'high': Evaluator, complex analysis (e.g., claude-opus-4)
+ * - 'low': Scheduled tasks, simple operations (e.g., claude-haiku-4)
+ * - 'multimodal': Main conversation, multimodal processing (e.g., claude-sonnet-4)
+ *
+ * @see Issue #3059
+ */
+export type ModelTier = 'high' | 'low' | 'multimodal';
+
+/**
  * Agent configuration section.
  *
  * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
@@ -33,6 +45,24 @@ export interface AgentConfig {
   maxConcurrentTasks?: number;
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
+  /**
+   * High-capability model for complex tasks (evaluators, deep analysis).
+   * Falls back to model if not specified.
+   * @see Issue #3059
+   */
+  highModel?: string;
+  /**
+   * Low-cost model for simple tasks (scheduled tasks, routine operations).
+   * Falls back to model if not specified.
+   * @see Issue #3059
+   */
+  lowModel?: string;
+  /**
+   * Multimodal model for main conversation and multimodal processing.
+   * Falls back to model if not specified.
+   * @see Issue #3059
+   */
+  multimodalModel?: string;
   /**
    * Enable Claude Code Agent Teams mode.
    * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
@@ -82,6 +112,24 @@ export interface GlmConfig {
   model?: string;
   /** API base URL (overrides GLM_API_BASE_URL env var) */
   apiBaseUrl?: string;
+  /**
+   * High-capability model for complex tasks.
+   * Falls back to model if not specified.
+   * @see Issue #3059
+   */
+  highModel?: string;
+  /**
+   * Low-cost model for simple tasks.
+   * Falls back to model if not specified.
+   * @see Issue #3059
+   */
+  lowModel?: string;
+  /**
+   * Multimodal model for main conversation.
+   * Falls back to model if not specified.
+   * @see Issue #3059
+   */
+  multimodalModel?: string;
 }
 
 /**
