@@ -228,6 +228,11 @@ export {
   createScheduleExecutor,
   type AgentFactory,
   type ScheduleExecutorOptions,
+  // Issue #1953: Event-driven schedule trigger mechanism
+  type TriggerResult,
+  SignalWatcher,
+  type OnTrigger,
+  type SignalWatcherOptions,
 } from './scheduling/index.js';
 
 // Task module (Issue #1041 - migrated from worker-node)

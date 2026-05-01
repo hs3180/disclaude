@@ -41,4 +41,12 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Whether this task can be triggered programmatically (via signal files or API).
+   * When true, the task responds to event-driven triggers in addition to cron.
+   * When false or undefined, the task only triggers via cron schedule.
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   */
+  invocable?: boolean;
 }

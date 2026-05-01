@@ -69,7 +69,15 @@ export {
   type SchedulerCallbacks,
   type TaskExecutor,
   type SchedulerOptions,
+  type TriggerResult,
 } from './scheduler.js';
+
+// Signal Watcher (Issue #1953: Event-driven trigger)
+export {
+  SignalWatcher,
+  type OnTrigger,
+  type SignalWatcherOptions,
+} from './signal-watcher.js';
 
 // Schedule Executor (Issue #1382, Issue #2941: ChatAgent-only)
 export {

@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1953: Event-driven trigger mechanism
+  SignalWatcher,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
@@ -152,6 +154,8 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
+  // Signal watcher (Issue #1953)
+  protected signalWatcher?: SignalWatcher;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
@@ -480,8 +484,19 @@ export class PrimaryNode extends EventEmitter {
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
 
+    // Issue #1953: Initialize signal file watcher for event-driven triggers
+    const schedulerRef = this.scheduler;
+    this.signalWatcher = new SignalWatcher({
+      schedulesDir,
+      onTrigger: async (taskId, context) => {
+        return await schedulerRef?.triggerTask(taskId, context) ?? { ok: false as const, error: 'Scheduler not initialized' };
+      },
+    });
+    await this.signalWatcher.start();
+
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    console.log('✓ Signal file watcher started');
     logger.info('Scheduler initialized');
   }
 
@@ -489,6 +504,7 @@ export class PrimaryNode extends EventEmitter {
    * Stop the scheduler.
    */
   protected stopScheduler(): void {
+    this.signalWatcher?.stop();
     this.scheduleFileWatcher?.stop();
     this.scheduler?.stop();
     logger.info('Scheduler stopped');

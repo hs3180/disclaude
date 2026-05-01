@@ -61,6 +61,16 @@ export interface SchedulerCallbacks {
 export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string) => Promise<void>;
 
 /**
+ * Result of a trigger attempt.
+ *
+ * Issue #1953: Event-driven schedule trigger mechanism.
+ * Returns a discriminated union to indicate success/failure with reason.
+ */
+export type TriggerResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/**
  * Scheduler options.
  *
  * Issue #711: No longer requires AgentPool.
@@ -402,5 +412,101 @@ ${task.prompt}`;
   async clearCooldown(taskId: string): Promise<boolean> {
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
+  }
+
+  /**
+   * Trigger a task programmatically (event-driven execution).
+   *
+   * Issue #1953: Event-driven schedule trigger mechanism.
+   * Allows external systems (signal files, API calls, Coordinator Agent)
+   * to trigger schedule execution without waiting for cron.
+   *
+   * Behavior:
+   * - Reads the latest task definition from ScheduleManager (file-driven)
+   * - Respects `invocable` flag (task must have `invocable: true`)
+   * - Respects `blocking` flag (skips if task is already running)
+   * - Respects cooldown period (skips if within cooldown)
+   * - Records execution for cooldown tracking
+   *
+   * @param taskId - Task ID to trigger (e.g., "schedule-chats-activation")
+   * @param context - Optional extra context to append to the task prompt
+   * @returns Result indicating success/failure with reason
+   */
+  async triggerTask(taskId: string, context?: string): Promise<TriggerResult> {
+    // 1. Load task from file system (file-driven architecture)
+    const task = await this.scheduleManager.get(taskId);
+    if (!task) {
+      logger.warn({ taskId }, 'Trigger failed: task not found');
+      return { ok: false as const, error: `Task not found: ${taskId}` };
+    }
+
+    // 2. Check invocable flag
+    if (!task.invocable) {
+      logger.warn({ taskId, name: task.name }, 'Trigger failed: task is not invocable');
+      return { ok: false as const, error: `Task "${task.name}" is not invocable (set invocable: true in frontmatter)` };
+    }
+
+    // 3. Check cooldown period
+    if (task.cooldownPeriod && this.cooldownManager) {
+      const isInCooldown = await this.cooldownManager.isInCooldown(task.id, task.cooldownPeriod);
+      if (isInCooldown) {
+        const status = await this.cooldownManager.getCooldownStatus(task.id, task.cooldownPeriod);
+        const remainingMinutes = Math.ceil((status.remainingMs || 0) / 60000);
+        logger.info(
+          { taskId: task.id, name: task.name, remainingMinutes },
+          'Trigger skipped - in cooldown period'
+        );
+        return { ok: false as const, error: `Task "${task.name}" is in cooldown (${remainingMinutes} min remaining)` };
+      }
+    }
+
+    // 4. Check blocking mechanism
+    if (task.blocking && this.runningTasks.has(task.id)) {
+      logger.info(
+        { taskId: task.id, name: task.name },
+        'Trigger skipped - previous execution still running'
+      );
+      return { ok: false as const, error: `Task "${task.name}" is already running` };
+    }
+
+    // 5. Execute the task (reuse existing execution logic)
+    logger.info({ taskId: task.id, name: task.name, context: !!context }, 'Event-driven task triggered');
+
+    // Build prompt with optional trigger context
+    const wrappedPrompt = context
+      ? `${this.buildScheduledTaskPrompt(task)  }\n\n---\n\n**Trigger Context:**\n${context}`
+      : this.buildScheduledTaskPrompt(task);
+
+    // Mark task as running
+    this.runningTasks.add(task.id);
+
+    try {
+      // Send trigger notification
+      await this.callbacks.sendMessage(
+        task.chatId,
+        `⚡ 定时任务「${task.name}」被事件触发，开始执行...`
+      );
+
+      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model);
+      logger.info({ taskId: task.id }, 'Event-driven task completed');
+      return { ok: true as const };
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, taskId: task.id }, 'Event-driven task failed');
+
+      await this.callbacks.sendMessage(
+        task.chatId,
+        `❌ 定时任务「${task.name}」事件触发执行失败: ${errorMessage}`
+      );
+      return { ok: false as const, error: errorMessage };
+
+    } finally {
+      this.runningTasks.delete(task.id);
+
+      if (task.cooldownPeriod && this.cooldownManager) {
+        await this.cooldownManager.recordExecution(task.id, task.cooldownPeriod);
+      }
+    }
   }
 }

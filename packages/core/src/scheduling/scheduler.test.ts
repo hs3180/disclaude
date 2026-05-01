@@ -535,4 +535,176 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  // Issue #1953: Event-driven trigger tests
+  describe('triggerTask', () => {
+    it('should fail if task not found', async () => {
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(undefined);
+
+      const result = await scheduler.triggerTask('nonexistent');
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('not found');
+      }
+    });
+
+    it('should fail if task is not invocable', async () => {
+      const task = createTask({ id: 'trigger-1', invocable: false });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      const result = await scheduler.triggerTask('trigger-1');
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('not invocable');
+      }
+    });
+
+    it('should succeed for invocable task', async () => {
+      const task = createTask({ id: 'trigger-2', invocable: true });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      const result = await scheduler.triggerTask('trigger-2');
+      expect(result.ok).toBe(true);
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('事件触发'),
+      );
+    });
+
+    it('should append trigger context to prompt', async () => {
+      const task = createTask({ id: 'trigger-3', invocable: true, prompt: 'Base task' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      const result = await scheduler.triggerTask('trigger-3', 'PR #42 was opened');
+      expect(result.ok).toBe(true);
+
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Base task');
+      expect(promptArg).toContain('Trigger Context');
+      expect(promptArg).toContain('PR #42 was opened');
+    });
+
+    it('should skip if task is blocking and already running', async () => {
+      const task = createTask({ id: 'trigger-4', invocable: true, blocking: true });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      // Simulate task running by triggering it and checking before executor resolves
+      let resolveExecutor: () => void;
+      const executorPromise = new Promise<void>(resolve => { resolveExecutor = resolve; });
+      mockExecutor.mockReturnValueOnce(executorPromise);
+
+      const result1Promise = scheduler.triggerTask('trigger-4');
+      // Wait a tick to ensure runningTasks.add() has been called
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-4')).toBe(true);
+      }, { timeout: 1000 });
+
+      // Second trigger should fail because task is running
+      const result2 = await scheduler.triggerTask('trigger-4');
+      expect(result2.ok).toBe(false);
+      if (!result2.ok) {
+        expect(result2.error).toContain('already running');
+      }
+
+      // Let the first execution complete
+      resolveExecutor!();
+      const result1 = await result1Promise;
+      expect(result1.ok).toBe(true);
+    });
+
+    it('should skip if task is in cooldown period', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date(),
+          cooldownEndsAt: new Date(),
+          remainingMs: 30000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'trigger-5', invocable: true, cooldownPeriod: 60000 });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      const result = await cooldownScheduler.triggerTask('trigger-5');
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('cooldown');
+      }
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should record cooldown after successful trigger', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(false),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue(null),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'trigger-6', invocable: true, cooldownPeriod: 60000 });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      const result = await cooldownScheduler.triggerTask('trigger-6');
+      expect(result.ok).toBe(true);
+      expect(mockCooldownManager.recordExecution).toHaveBeenCalledWith('trigger-6', 60000);
+    });
+
+    it('should return error when executor fails', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('Agent failed'));
+      const task = createTask({ id: 'trigger-7', invocable: true });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      const result = await scheduler.triggerTask('trigger-7');
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('Agent failed');
+      }
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('执行失败'),
+      );
+    });
+
+    it('should clear running state even when executor fails on trigger', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('fail'));
+      const task = createTask({ id: 'trigger-8', invocable: true, blocking: true });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      await scheduler.triggerTask('trigger-8');
+      expect(scheduler.isTaskRunning('trigger-8')).toBe(false);
+    });
+
+    it('should pass model override to executor on trigger', async () => {
+      const task = createTask({ id: 'trigger-9', invocable: true, model: 'gpt-4o' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      const result = await scheduler.triggerTask('trigger-9');
+      expect(result.ok).toBe(true);
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        undefined,
+        'gpt-4o',
+      );
+    });
+  });
 });

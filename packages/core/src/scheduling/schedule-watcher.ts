@@ -105,6 +105,7 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'enabled':
       case 'blocking':
+      case 'invocable':
         frontmatter[key] = value === 'true';
         break;
       case 'cooldownPeriod':
@@ -234,6 +235,7 @@ export class ScheduleFileScanner {
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
+        invocable: (frontmatter['invocable'] as boolean) ?? false,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -289,6 +291,9 @@ export class ScheduleFileScanner {
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
+    }
+    if (task.invocable) {
+      frontmatter.push('invocable: true');
     }
 
     frontmatter.push('---', '');
