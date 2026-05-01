@@ -167,6 +167,8 @@ export class ProjectManager {
    * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
    * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
    *
+   * If persist fails, the in-memory mutation is rolled back and the error is returned.
+   *
    * @param chatId - Chat session requesting creation
    * @param templateName - Template to instantiate from
    * @param name - Unique name for the new instance
@@ -194,6 +196,9 @@ export class ProjectManager {
       return { ok: false, error: `实例 "${name}" 已存在` };
     }
 
+    // Save previous binding for potential rollback
+    const previousBinding = this.chatProjectMap.get(chatId);
+
     const workingDir = this.resolveWorkingDir(name);
     const instance: ProjectInstance = {
       name,
@@ -206,8 +211,19 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: remove the new instance and restore previous binding
+      this.instances.delete(name);
+      this.removeFromReverseIndex(name, chatId);
+      if (previousBinding) {
+        this.chatProjectMap.set(chatId, previousBinding);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return persistResult;
+    }
 
     return {
       ok: true,
@@ -221,6 +237,8 @@ export class ProjectManager {
 
   /**
    * Bind a chatId to an existing instance.
+   *
+   * If persist fails, the in-memory mutation is rolled back and the error is returned.
    *
    * @param chatId - Chat session requesting binding
    * @param name - Instance name to bind to
@@ -237,17 +255,33 @@ export class ProjectManager {
       return { ok: false, error: `实例 "${name}" 不存在` };
     }
 
-    // Remove from old instance's reverse index if rebinding
+    // Save previous state for potential rollback
     const oldName = this.chatProjectMap.get(chatId);
-    if (oldName && oldName !== name) {
+    const wasRebinding = oldName && oldName !== name;
+
+    // Remove from old instance's reverse index if rebinding
+    if (wasRebinding) {
       this.removeFromReverseIndex(oldName, chatId);
     }
 
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore previous binding
+      this.removeFromReverseIndex(name, chatId);
+      if (oldName) {
+        this.chatProjectMap.set(chatId, oldName);
+        if (wasRebinding) {
+          this.addToReverseIndex(oldName, chatId);
+        }
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return persistResult;
+    }
 
     return {
       ok: true,
@@ -262,6 +296,8 @@ export class ProjectManager {
   /**
    * Reset a chatId's binding, reverting to default project.
    *
+   * If persist fails, the in-memory mutation is rolled back and the error is returned.
+   *
    * @param chatId - Chat session to reset
    * @returns ProjectResult with default ProjectContextConfig
    */
@@ -271,14 +307,24 @@ export class ProjectManager {
       return { ok: false, error: chatIdError };
     }
 
+    // Save previous state for potential rollback
     const boundName = this.chatProjectMap.get(chatId);
+
     this.chatProjectMap.delete(chatId);
     if (boundName) {
       this.removeFromReverseIndex(boundName, chatId);
     }
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore the binding
+      if (boundName) {
+        this.chatProjectMap.set(chatId, boundName);
+        this.addToReverseIndex(boundName, chatId);
+      }
+      return persistResult;
+    }
 
     return {
       ok: true,
@@ -287,6 +333,56 @@ export class ProjectManager {
         workingDir: this.workspaceDir,
       },
     };
+  }
+
+  // ───────────────────────────────────────────
+  // Delete
+  // ───────────────────────────────────────────
+
+  /**
+   * Delete a project instance and clean up all associated bindings.
+   *
+   * Removes the instance from both memory and persisted state.
+   * All chatIds bound to this instance are automatically unbound.
+   *
+   * If persist fails, the in-memory mutation is rolled back and the error is returned.
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult indicating success or failure
+   */
+  delete(name: string): ProjectResult<void> {
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Save bound chatIds for cleanup
+    const boundChatIds = this.getBoundChatIds(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Remove all bindings pointing to this instance
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Clean up reverse index
+    this.instanceChatIds.delete(name);
+
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore instance and all bindings
+      this.instances.set(name, instance);
+      for (const chatId of boundChatIds) {
+        this.chatProjectMap.set(chatId, name);
+      }
+      this.instanceChatIds.set(name, new Set(boundChatIds));
+      return persistResult;
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ───────────────────────────────────────────
