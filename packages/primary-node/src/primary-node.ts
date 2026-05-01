@@ -444,9 +444,13 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1382: Use unified createScheduleExecutor
     // Issue #1412: Use toChatAgentCallbacks helper to convert SchedulerCallbacks to ChatAgentCallbacks
     // Issue #1338: Pass model override for per-task model selection
+    // Issue #3059: Pass modelTier for tier-based model selection
     const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model) => {
-        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), model ? { model } : {});
+      agentFactory: (chatId, callbacks, model, modelTier) => {
+        const options: Record<string, unknown> = {};
+        if (model) { options.model = model; }
+        if (modelTier) { options.modelTier = modelTier; }
+        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), options);
       },
       callbacks: schedulerCallbacks,
     });

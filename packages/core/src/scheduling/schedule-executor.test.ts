@@ -63,7 +63,7 @@ describe('createScheduleExecutor', () => {
       await executor('chat-1', 'Run tests');
 
       expect(mockAgentFactory).toHaveBeenCalledTimes(1);
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined);
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, undefined);
     });
 
     it('should call processMessage with correct arguments', async () => {
@@ -132,7 +132,7 @@ describe('createScheduleExecutor', () => {
 
       await executor('chat-1', 'Run tests', 'user-1', 'claude-sonnet-4-20250514');
 
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4-20250514');
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4-20250514', undefined);
     });
 
     it('should pass undefined model when not specified', async () => {
@@ -143,7 +143,31 @@ describe('createScheduleExecutor', () => {
 
       await executor('chat-1', 'Run tests');
 
-      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined);
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, undefined);
+    });
+  });
+
+  describe('modelTier (Issue #3059)', () => {
+    it('should pass modelTier to agent factory', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await executor('chat-1', 'Run tests', 'user-1', undefined, 'low');
+
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, undefined, 'low');
+    });
+
+    it('should pass both model and modelTier to agent factory', async () => {
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await executor('chat-1', 'Run tests', 'user-1', 'claude-sonnet-4', 'high');
+
+      expect(mockAgentFactory).toHaveBeenCalledWith('chat-1', mockCallbacks, 'claude-sonnet-4', 'high');
     });
   });
 

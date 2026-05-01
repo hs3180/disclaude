@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ModelTier,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -124,6 +125,14 @@ export class Config {
           // Anthropic Claude configuration (from env for fallback)
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+
+          // Three-level model configuration (Issue #3059)
+          static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
+          static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';
+          static readonly CLAUDE_MULTIMODAL_MODEL = fileConfigOnly.agent?.multimodalModel || '';
+          static readonly GLM_HIGH_MODEL = fileConfigOnly.glm?.highModel || '';
+          static readonly GLM_LOW_MODEL = fileConfigOnly.glm?.lowModel || '';
+          static readonly GLM_MULTIMODAL_MODEL = fileConfigOnly.glm?.multimodalModel || '';
 
           // Logging configuration
           static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
@@ -492,6 +501,35 @@ export class Config {
       maxSessions: timeoutConfig.maxSessions ?? 100,
       checkIntervalMinutes: timeoutConfig.checkIntervalMinutes ?? 5,
     };
+  }
+
+  /**
+   * Get the model for a specific tier (Issue #3059).
+   *
+   * Returns the tier-specific model if configured, otherwise falls back to the
+   * default model. This enables different agent scenarios to use models with
+   * appropriate capability/cost trade-offs.
+   *
+   * Resolution order:
+   * 1. Tier-specific model (e.g., agent.highModel for tier 'high')
+   * 2. Default model (agent.model or glm.model)
+   *
+   * @param tier - The model tier ('high', 'low', or 'multimodal')
+   * @returns The model identifier for the tier
+   */
+  static getModelForTier(tier: ModelTier): string {
+    if (this.GLM_API_KEY) {
+      switch (tier) {
+        case 'high': return this.GLM_HIGH_MODEL || this.GLM_MODEL;
+        case 'low': return this.GLM_LOW_MODEL || this.GLM_MODEL;
+        case 'multimodal': return this.GLM_MULTIMODAL_MODEL || this.GLM_MODEL;
+      }
+    }
+    switch (tier) {
+      case 'high': return this.CLAUDE_HIGH_MODEL || this.CLAUDE_MODEL;
+      case 'low': return this.CLAUDE_LOW_MODEL || this.CLAUDE_MODEL;
+      case 'multimodal': return this.CLAUDE_MULTIMODAL_MODEL || this.CLAUDE_MODEL;
+    }
   }
 
   /**

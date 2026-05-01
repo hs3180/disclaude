@@ -27,7 +27,7 @@
  * @module agents/factory
  */
 
-import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type ModelTier } from '@disclaude/core';
 import { ChatAgent } from './chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
 
@@ -78,6 +78,8 @@ export interface AgentCreateOptions {
   apiKey?: string;
   /** Override model */
   model?: string;
+  /** Model tier for tier-based model selection (Issue #3059) */
+  modelTier?: ModelTier;
   /** Override API provider */
   provider?: AgentProvider;
   /** Override API base URL */
@@ -106,15 +108,26 @@ export class AgentFactory {
   /**
    * Get base agent configuration from Config with optional overrides.
    *
+   * Model resolution priority (Issue #3059):
+   *   options.model > tier-specific model (via options.modelTier) > default model
+   *
    * @param options - Optional configuration overrides
    * @returns BaseAgentConfig with merged configuration
    */
   private static getBaseConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
     const defaultConfig = Config.getAgentConfig();
 
+    // Issue #3059: Model resolution priority
+    // 1. Explicit model override (highest)
+    // 2. Tier-specific model (from modelTier, falls back to default)
+    // 3. Default model from config
+    const resolvedModel = options.model
+      ?? (options.modelTier ? Config.getModelForTier(options.modelTier) : undefined)
+      ?? defaultConfig.model;
+
     return {
       apiKey: options.apiKey ?? defaultConfig.apiKey,
-      model: options.model ?? defaultConfig.model,
+      model: resolvedModel,
       provider: options.provider ?? defaultConfig.provider,
       apiBaseUrl: options.apiBaseUrl ?? defaultConfig.apiBaseUrl,
       permissionMode: options.permissionMode ?? 'bypassPermissions',
