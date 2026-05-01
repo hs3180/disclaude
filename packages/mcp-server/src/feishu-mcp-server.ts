@@ -20,7 +20,7 @@
  * The actual implementation is in channel-mcp.ts.
  */
 
-import { createLogger } from '@disclaude/core';
+import { createLogger, Config } from '@disclaude/core';
 import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
 
 const logger = createLogger('ContextMCPServer');
@@ -167,6 +167,20 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
+              {
+                name: 'get_task_status',
+                description: 'Get the current status of a running task by reading its shared context.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    taskId: {
+                      type: 'string',
+                      description: 'Task identifier to check status for',
+                    },
+                  },
+                  required: ['taskId'],
+                },
+              },
             ],
           },
         };
@@ -254,6 +268,58 @@ async function handleMessage(message: unknown) {
               }],
             },
           };
+        }
+
+        if (name === 'get_task_status') {
+          const args = toolArgs as { taskId: string };
+          try {
+            const workspaceDir = Config.getWorkspaceDir();
+            const path = await import('path');
+            const fs = await import('fs/promises');
+            const sanitized = args.taskId.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const contextPath = path.join(workspaceDir, 'tasks', sanitized, 'context.json');
+
+            let contextData;
+            try {
+              const content = await fs.readFile(contextPath, 'utf-8');
+              contextData = JSON.parse(content);
+            } catch {
+              return {
+                jsonrpc: '2.0',
+                id,
+                result: {
+                  content: [{ type: 'text', text: `⚠️ Task context not found for ID: ${args.taskId}` }],
+                },
+              };
+            }
+
+            const statusEmoji: Record<string, string> = { pending: '⏳', running: '🔄', completed: '✅', failed: '❌' };
+            const emoji = statusEmoji[contextData.status] || '❓';
+            const elapsed = contextData.startedAt ? Math.round((Date.now() - new Date(contextData.startedAt).getTime()) / 1000) : 0;
+
+            const lines = [`${emoji} Task: ${contextData.description || 'N/A'}`, `Status: ${contextData.status}`];
+            if (contextData.startedAt) {lines.push(`Elapsed: ${elapsed}s`);}
+            if (contextData.currentStep) {lines.push(`Current Step: ${contextData.currentStep}`);}
+            if (contextData.completedSteps?.length > 0) {
+              const total = contextData.totalSteps ? `/${contextData.totalSteps}` : '';
+              lines.push(`Progress: ${contextData.completedSteps.length}${total} steps completed`);
+            }
+            if (contextData.error) {lines.push(`Error: ${contextData.error}`);}
+
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: { content: [{ type: 'text', text: lines.join('\n') }] },
+            };
+          } catch (error) {
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: {
+                content: [{ type: 'text', text: `⚠️ Failed to get task status: ${error instanceof Error ? error.message : String(error)}` }],
+              },
+            };
+          }
         }
 
         throw new Error(`Unknown tool: ${name}`);

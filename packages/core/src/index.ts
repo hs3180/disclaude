@@ -240,6 +240,9 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  TaskContext,
+  type TaskContextData,
+  type TaskStatus,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

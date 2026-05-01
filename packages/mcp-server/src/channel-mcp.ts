@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { getProvider, type SdkInlineToolDefinition } from '@disclaude/core';
+import { getProvider, Config, type SdkInlineToolDefinition } from '@disclaude/core';
 import {
   send_text,
   send_card,
@@ -147,6 +147,50 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  // Issue #857: Task status tool for independent Reporter Agent
+  get_task_status: {
+    description: 'Get the current status of a running task by reading its shared context.',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'Task identifier to check status for' },
+      },
+      required: ['taskId'],
+    },
+    handler: async ({ taskId }: { taskId: string }) => {
+      try {
+        const workspaceDir = Config.getWorkspaceDir();
+        const path = await import('path');
+        const fs = await import('fs/promises');
+        const contextPath = path.join(workspaceDir, 'tasks', taskId.replace(/[^a-zA-Z0-9_-]/g, '_'), 'context.json');
+
+        let contextData;
+        try {
+          const content = await fs.readFile(contextPath, 'utf-8');
+          contextData = JSON.parse(content);
+        } catch {
+          return toolError(`Task context not found for ID: ${taskId}`);
+        }
+
+        const statusEmoji: Record<string, string> = { pending: '⏳', running: '🔄', completed: '✅', failed: '❌' };
+        const emoji = statusEmoji[contextData.status] || '❓';
+        const elapsed = contextData.startedAt ? Math.round((Date.now() - new Date(contextData.startedAt).getTime()) / 1000) : 0;
+
+        const lines = [`${emoji} Task: ${contextData.description || 'N/A'}`, `Status: ${contextData.status}`];
+        if (contextData.startedAt) {lines.push(`Elapsed: ${elapsed}s`);}
+        if (contextData.currentStep) {lines.push(`Current Step: ${contextData.currentStep}`);}
+        if (contextData.completedSteps?.length > 0) {
+          const total = contextData.totalSteps ? `/${contextData.totalSteps}` : '';
+          lines.push(`Progress: ${contextData.completedSteps.length}${total} steps completed`);
+        }
+        if (contextData.error) {lines.push(`Error: ${contextData.error}`);}
+
+        return toolSuccess(lines.join('\n'));
+      } catch (error) {
+        return toolError(`Failed to get task status: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
   },
 };
 
@@ -395,6 +439,83 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  // Issue #857: Task status tool for independent Reporter Agent
+  {
+    name: 'get_task_status',
+    description: `Get the current status of a running task.
+
+This tool reads the shared task context and returns information about
+the task's progress, including completed steps, current step, and timing.
+
+Used by the Reporter Agent to generate progress reports for users.
+
+## Parameters
+- **taskId**: The task identifier (required)
+
+## Example
+\`\`\`json
+{"taskId": "om_abc123"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task identifier to check status for'),
+    }),
+    handler: async ({ taskId }: { taskId: string }) => {
+      try {
+        const workspaceDir = Config.getWorkspaceDir();
+        const path = await import('path');
+        const fs = await import('fs/promises');
+        const contextPath = path.join(workspaceDir, 'tasks', taskId.replace(/[^a-zA-Z0-9_-]/g, '_'), 'context.json');
+
+        let contextData;
+        try {
+          const content = await fs.readFile(contextPath, 'utf-8');
+          contextData = JSON.parse(content);
+        } catch {
+          return toolError(`Task context not found for ID: ${taskId}`);
+        }
+
+        // Build a readable summary
+        const statusEmoji: Record<string, string> = {
+          pending: '⏳',
+          running: '🔄',
+          completed: '✅',
+          failed: '❌',
+        };
+
+        const emoji = statusEmoji[contextData.status] || '❓';
+        const elapsed = contextData.startedAt
+          ? Math.round((Date.now() - new Date(contextData.startedAt).getTime()) / 1000)
+          : 0;
+
+        const lines = [
+          `${emoji} Task: ${contextData.description || 'N/A'}`,
+          `Status: ${contextData.status}`,
+        ];
+
+        if (contextData.startedAt) {
+          lines.push(`Elapsed: ${elapsed}s`);
+        }
+        if (contextData.currentStep) {
+          lines.push(`Current Step: ${contextData.currentStep}`);
+        }
+        if (contextData.completedSteps?.length > 0) {
+          const total = contextData.totalSteps ? `/${contextData.totalSteps}` : '';
+          lines.push(`Progress: ${contextData.completedSteps.length}${total} steps completed`);
+          lines.push(`Completed: ${contextData.completedSteps.join(', ')}`);
+        }
+        if (contextData.currentIteration) {
+          lines.push(`Iteration: ${contextData.currentIteration}`);
+        }
+        if (contextData.error) {
+          lines.push(`Error: ${contextData.error}`);
+        }
+
+        return toolSuccess(lines.join('\n'));
+      } catch (error) {
+        return toolError(`Failed to get task status: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
