@@ -55,6 +55,16 @@ vi.mock('@disclaude/core', () => ({
     deleteThreadRoot: vi.fn(),
     clearAll: vi.fn(),
   })),
+  // Issue #2920: Real implementations for startup failure detection
+  isStartupFailure: (messageCount: number, elapsedMs: number) => {
+    return messageCount === 0 && elapsedMs < 10_000;
+  },
+  getErrorStderr: (error: unknown) => {
+    if (error instanceof Error) {
+      return (error as any).__stderr__;
+    }
+    return undefined;
+  },
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({
@@ -221,6 +231,168 @@ describe('ChatAgent (primary-node)', () => {
 
       void chatAgent.processMessage('oc_test_chat', 'second', 'msg_2');
       expect(chatAgent.hasActiveSession()).toBe(true);
+    });
+  });
+
+  describe('Issue #2920: startup failure detection and diagnostics', () => {
+    it('should detect startup failure and show diagnostic message (no stderr)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_fail',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Iterator that throws immediately (0 messages = startup failure)
+      async function* failingIterator() {
+        throw new Error('Claude Code process exited with code 1');
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: failingIterator(),
+      });
+
+      // Trigger the agent loop
+      void agent.processMessage('oc_startup_fail', 'hello', 'msg_1');
+
+      // Wait for processIterator to handle the error
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // Should show startup failure message
+      const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
+      const diagnosticCall = sendMessageCalls.find(
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败'),
+      );
+      expect(diagnosticCall).toBeDefined();
+      expect(diagnosticCall![1]).toContain('Claude Code process exited with code 1');
+      expect(diagnosticCall![1]).toContain('配置或环境错误');
+      expect(diagnosticCall![1]).toContain('/reset');
+
+      // Session should be inactive
+      expect(agent.hasActiveSession()).toBe(false);
+
+      // onDone should be called
+      expect(localCallbacks.onDone).toHaveBeenCalled();
+    });
+
+    it('should include stderr content in startup failure message', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_stderr',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Iterator that throws with stderr attached
+      async function* failingIteratorWithStderr() {
+        const error = new Error('CLI process exited with code 1');
+        (error as any).__stderr__ = 'MCP server "amap-maps" failed to initialize\nCaused by: command is empty';
+        throw error;
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: failingIteratorWithStderr(),
+      });
+
+      void agent.processMessage('oc_startup_stderr', 'hello', 'msg_1');
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // Should show stderr content in the diagnostic message
+      const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
+      const diagnosticCall = sendMessageCalls.find(
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败'),
+      );
+      expect(diagnosticCall).toBeDefined();
+      expect(diagnosticCall![1]).toContain('MCP server "amap-maps"');
+      expect(diagnosticCall![1]).toContain('command is empty');
+    });
+
+    it('should NOT trigger restart/circuit-breaker for startup failure', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_startup_no_retry',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* failingIterator() {
+        throw new Error('Startup crash');
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: failingIterator(),
+      });
+
+      void agent.processMessage('oc_startup_no_retry', 'hello', 'msg_1');
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // Session should be inactive (not restarted)
+      expect(agent.hasActiveSession()).toBe(false);
+
+      // Should NOT see the restart/backoff messages
+      const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
+      const restartCall = sendMessageCalls.find(
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('重新连接'),
+      );
+      expect(restartCall).toBeUndefined();
+
+      // Should NOT see circuit breaker message
+      const circuitBreakerCall = sendMessageCalls.find(
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('暂停处理'),
+      );
+      expect(circuitBreakerCall).toBeUndefined();
+    });
+
+    it('should treat runtime error (with messages) as normal error, not startup failure', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_runtime_error',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Iterator that yields messages before throwing (runtime error)
+      async function* runtimeErrorIterator() {
+        yield { parsed: { type: 'text', content: 'Hello from agent' } };
+        await new Promise<void>(r => setTimeout(r, 20));
+        throw new Error('Runtime crash after messages');
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: runtimeErrorIterator(),
+      });
+
+      void agent.processMessage('oc_runtime_error', 'hello', 'msg_1');
+      await new Promise<void>(r => setTimeout(r, 150));
+
+      // Should show Session error (not startup failure)
+      const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
+      const sessionErrorCall = sendMessageCalls.find(
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Session error'),
+      );
+      expect(sessionErrorCall).toBeDefined();
+      expect(sessionErrorCall![1]).toContain('Runtime crash after messages');
+
+      // Should NOT show startup failure message
+      const startupFailCall = sendMessageCalls.find(
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败'),
+      );
+      expect(startupFailCall).toBeUndefined();
+
+      // Session should be inactive
+      expect(agent.hasActiveSession()).toBe(false);
     });
   });
 
