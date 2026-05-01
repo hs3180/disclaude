@@ -19,6 +19,8 @@ export type IpcRequestType =
   | 'sendMessage'
   | 'sendCard'
   | 'uploadFile'
+  // Image upload for card embedding (Issue #1919: upload_image MCP tool)
+  | 'uploadImage'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
@@ -48,6 +50,13 @@ export interface IpcRequestPayloads {
     chatId: string;
     filePath: string;
     threadId?: string;
+  };
+  // Image upload for card embedding (Issue #1919: upload_image MCP tool)
+  // Uploads image and returns image_key WITHOUT sending a message.
+  // Used to get image_key for embedding in card img elements.
+  uploadImage: {
+    chatId: string;
+    filePath: string;
   };
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {
@@ -87,6 +96,15 @@ export interface IpcResponsePayloads {
     success: boolean;
     fileKey?: string;
     fileType?: string;
+    fileName?: string;
+    fileSize?: number;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
+  };
+  // Image upload response (Issue #1919: upload_image MCP tool)
+  uploadImage: {
+    success: boolean;
+    imageKey?: string;
     fileName?: string;
     fileSize?: number;
     error?: string;

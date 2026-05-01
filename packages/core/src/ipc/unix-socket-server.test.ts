@@ -286,6 +286,79 @@ describe('createInteractiveMessageHandler', () => {
     });
   });
 
+  // ----- uploadImage (Issue #1919) -----
+  describe('uploadImage request', () => {
+    it('should call handler.uploadImage and return result', async () => {
+      const uploadImageContainer = createMockHandlersContainer({
+        uploadImage: vi.fn().mockResolvedValue({
+          imageKey: 'img_v3_test_key',
+          fileName: 'chart.png',
+          fileSize: 2048,
+        }),
+      });
+      const uploadImageHandler = createInteractiveMessageHandler(registerActionPrompts, uploadImageContainer);
+      const request = createRequest('uploadImage', 'req-img-1', {
+        chatId: 'chat-1',
+        filePath: '/path/to/chart.png',
+      });
+      const response = await uploadImageHandler(request);
+
+      expect(uploadImageContainer.handlers!.uploadImage).toHaveBeenCalledWith('chat-1', '/path/to/chart.png');
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({
+        success: true,
+        imageKey: 'img_v3_test_key',
+        fileName: 'chart.png',
+        fileSize: 2048,
+      });
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('uploadImage', 'req-img-2', {
+        chatId: 'chat-1',
+        filePath: '/path/to/image.png',
+      });
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
+    });
+
+    it('should return error when channel does not support uploadImage', async () => {
+      // Channel without uploadImage handler (e.g., REST channel)
+      const noSupportContainer = createMockHandlersContainer({
+        uploadImage: undefined,
+      });
+      const noSupportHandler = createInteractiveMessageHandler(registerActionPrompts, noSupportContainer);
+      const request = createRequest('uploadImage', 'req-img-3', {
+        chatId: 'chat-1',
+        filePath: '/path/to/image.png',
+      });
+      const response = await noSupportHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('uploadImage not supported');
+    });
+
+    it('should return error when uploadImage throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        uploadImage: vi.fn().mockRejectedValue(new Error('Image upload failed')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('uploadImage', 'req-img-4', {
+        chatId: 'chat-1',
+        filePath: '/path/to/image.png',
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Image upload failed');
+    });
+  });
+
   // ----- sendInteractive -----
   describe('sendInteractive request', () => {
     it('should call handler.sendInteractive and register action prompts', async () => {

@@ -576,6 +576,55 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image to Feishu and return image_key for card embedding.
+   *
+   * Issue #1919 Phase 1: Unlike sendMessage('file'), this method ONLY uploads
+   * the image and returns the image_key — no message is sent to the chat.
+   * The image_key can then be used in card img elements.
+   *
+   * @param chatId - Target chat ID (used for logging context only)
+   * @param filePath - Local path to the image file
+   * @returns Object with imageKey, fileName, and fileSize
+   */
+  async uploadImageForCard(
+    chatId: string,
+    filePath: string
+  ): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Not an image file: ${fileName} (extension: ${ext}). Supported: ${imageExtensions.join(', ')}`);
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ chatId, filePath, fileName, fileSize }, 'uploadImageForCard: uploading image');
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName} — no image_key returned`);
+    }
+
+    logger.info({ chatId, imageKey, fileName, fileSize }, 'uploadImageForCard: image uploaded successfully');
+    return { imageKey, fileName, fileSize };
+  }
+
+  /**
    * Build Feishu post content with @mention tags.
    *
    * Constructs a rich text (post) message structure with @mention elements

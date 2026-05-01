@@ -69,5 +69,18 @@ export interface SendInteractiveResult {
   error?: string;
 }
 
+/**
+ * Result type for upload_image tool.
+ * Issue #1919: Returns image_key for embedding in Feishu card img elements.
+ */
+export interface UploadImageResult {
+  success: boolean;
+  message: string;
+  imageKey?: string;
+  fileName?: string;
+  fileSize?: number;
+  error?: string;
+}
+
 
 
