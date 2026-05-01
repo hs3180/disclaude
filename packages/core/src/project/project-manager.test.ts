@@ -88,6 +88,84 @@ describe('ProjectManager constructor', () => {
     const pm = new ProjectManager(createOptions({ templatesConfig: undefined }));
     expect(pm.listTemplates()).toHaveLength(0);
   });
+
+  it('should auto-discover templates from packageDir when no templatesConfig provided', () => {
+    // Create a package directory with templates
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+
+    // Create template directories in packageDir
+    const researchDir = join(packageDir, 'templates', 'research');
+    mkdirSync(researchDir, { recursive: true });
+    writeFileSync(join(researchDir, 'CLAUDE.md'), '# Research Template');
+    writeFileSync(join(researchDir, 'template.yaml'), 'displayName: "研究模式"\ndescription: 专注研究');
+
+    const codingDir = join(packageDir, 'templates', 'coding');
+    mkdirSync(codingDir, { recursive: true });
+    writeFileSync(join(codingDir, 'CLAUDE.md'), '---\ndisplayName: 编码模式\n---\n\n# Coding Template');
+
+    // Construct without templatesConfig — should auto-discover
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+    const names = templates.map(t => t.name).sort();
+    expect(names).toEqual(['coding', 'research']);
+
+    // Verify metadata was read
+    const research = templates.find(t => t.name === 'research')!;
+    expect(research.displayName).toBe('研究模式');
+    expect(research.description).toBe('专注研究');
+
+    const coding = templates.find(t => t.name === 'coding')!;
+    expect(coding.displayName).toBe('编码模式');
+  });
+
+  it('should auto-discover templates when templatesConfig is empty object', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+
+    // Create one template
+    const researchDir = join(packageDir, 'templates', 'research');
+    mkdirSync(researchDir, { recursive: true });
+    writeFileSync(join(researchDir, 'CLAUDE.md'), '# Research');
+
+    // Empty config triggers auto-discovery
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      templatesConfig: {},
+    });
+
+    expect(pm.listTemplates()).toHaveLength(1);
+    expect(pm.listTemplates()[0].name).toBe('research');
+  });
+
+  it('should use explicit templatesConfig over auto-discovery', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+
+    // Create template on filesystem
+    const researchDir = join(packageDir, 'templates', 'research');
+    mkdirSync(researchDir, { recursive: true });
+    writeFileSync(join(researchDir, 'CLAUDE.md'), '# Research');
+
+    // Explicit config should take priority over filesystem discovery
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      templatesConfig: {
+        coding: { displayName: '编码模式' },
+      },
+    });
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('coding');
+  });
 });
 
 describe('ProjectManager init()', () => {
