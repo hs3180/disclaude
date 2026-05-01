@@ -248,10 +248,10 @@ export interface ChannelApiHandlersOptions {
 export function createChannelApiHandlers(
   channel: IChannel,
   options: ChannelApiHandlersOptions
-): Pick<ChannelApiHandlers, 'sendMessage' | 'sendCard' | 'uploadFile'> {
+): Pick<ChannelApiHandlers, 'sendMessage' | 'sendCard' | 'uploadFile'> & { uploadImage?: ChannelApiHandlers['uploadImage'] } {
   const { logger, channelName } = options;
 
-  return {
+  const result: Pick<ChannelApiHandlers, 'sendMessage' | 'sendCard' | 'uploadFile'> & { uploadImage?: ChannelApiHandlers['uploadImage'] } = {
     sendMessage: async (chatId: string, text: string, threadId?: string, mentions?: Array<{ openId: string; name?: string }>) => {
       try {
         await channel.sendMessage({ chatId, type: 'text', text, threadId, mentions });
@@ -297,4 +297,19 @@ export function createChannelApiHandlers(
       };
     },
   };
+
+  // Issue #1919 Phase 1: Wire uploadImage handler if channel supports it
+  if ('uploadImage' in channel && typeof (channel as Record<string, unknown>).uploadImage === 'function') {
+    result.uploadImage = async (chatId: string, filePath: string) => {
+      logger.debug({ chatId, filePath, channel: channelName }, 'uploadImage: delegating to channel');
+      try {
+        return await (channel as { uploadImage: (chatId: string, filePath: string) => Promise<{ imageKey: string; fileName: string; fileSize: number }> }).uploadImage(chatId, filePath);
+      } catch (error) {
+        logger.error({ err: error, chatId, channel: channelName, handler: 'uploadImage' }, 'IPC handler failed');
+        throw error;
+      }
+    };
+  }
+
+  return result;
 }

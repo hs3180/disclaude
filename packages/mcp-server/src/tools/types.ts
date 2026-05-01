@@ -30,6 +30,18 @@ export interface SendFileResult {
 }
 
 /**
+ * Result type for upload_image tool (Issue #1919 Phase 1).
+ */
+export interface UploadImageResult {
+  success: boolean;
+  message: string;
+  imageKey?: string;
+  fileName?: string;
+  fileSize?: number;
+  error?: string;
+}
+
+/**
  * Message sent callback type.
  * Called when a message is successfully sent to track user communication.
  */

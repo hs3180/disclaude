@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  upload_image,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -23,11 +24,12 @@ import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
 
 // Re-export
-export type { MessageSentCallback, InteractiveOption, ActionPromptMap } from './tools/types.js';
+export type { MessageSentCallback, InteractiveOption, ActionPromptMap, UploadImageResult } from './tools/types.js';
 export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { upload_image } from './tools/upload-image.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -148,6 +150,18 @@ For display-only cards, use send_card instead.`,
     },
     handler: send_file,
   },
+  upload_image: {
+    description: 'Upload a local image and return an image_key for embedding in card messages.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Local file path to the image' },
+        chatId: { type: 'string', description: 'Target chat ID' },
+      },
+      required: ['filePath', 'chatId'],
+    },
+    handler: upload_image,
+  },
 };
 
 export const channelToolDefinitions: SdkInlineToolDefinition[] = [
@@ -157,6 +171,7 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
   // - send_card: Display-only cards (no interactions)
   // - send_interactive: Interactive cards with button handlers
   // - send_file: File uploads
+  // - upload_image: Image upload for card embedding (Issue #1919 Phase 1)
   // Issue #1298: Removed start_group_discussion (business logic not MCP scope)
   // ============================================================================
   {
@@ -395,6 +410,48 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'upload_image',
+    description: `Upload a local image file and return an image_key for embedding in card messages.
+
+Use this tool when you need to embed images inside Feishu card messages (e.g., charts, diagrams).
+The returned image_key can be used in card JSON \`img\` elements.
+
+## Parameters
+- **filePath**: Local file path to the image (string)
+- **chatId**: Target chat ID
+
+## Supported Formats
+jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10MB)
+
+## Example
+\`\`\`json
+{"filePath": "/path/to/chart.png", "chatId": "oc_xxx"}
+\`\`\`
+
+Returns an \`image_key\` that you can use in \`send_card\`:
+\`\`\`json
+{"tag": "img", "img_key": "image_key_returned_here"}
+\`\`\``,
+    parameters: z.object({
+      filePath: z.string().describe('Local file path to the image'),
+      chatId: z.string().describe('Target chat ID'),
+    }),
+    handler: async ({ filePath, chatId }: { filePath: string; chatId: string }) => {
+      // Issue #1641 P1: Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await upload_image({ filePath, chatId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Image upload failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },

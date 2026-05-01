@@ -808,4 +808,58 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     logger.info({ flushed: valid.length, dropped: queue.length - valid.length }, 'Offline queue flushed');
   }
+
+  // ============================================================================
+  // Issue #1919 Phase 1: Dedicated image upload for card embedding
+  // ============================================================================
+
+  /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * This method exposes the existing im.image.create capability
+   * for use in card embedding scenarios where the Agent needs
+   * an image_key to embed images inside Feishu card messages.
+   *
+   * @param chatId - Target chat ID (used for logging only)
+   * @param filePath - Local file path to the image
+   * @returns Object with imageKey, fileName, and fileSize
+   */
+  async uploadImage(
+    chatId: string,
+    filePath: string
+  ): Promise<{ imageKey: string; fileName: string; fileSize: number }> {
+    const resolvedPath = path.resolve(filePath);
+    const fileName = path.basename(resolvedPath);
+    const ext = path.extname(resolvedPath).toLowerCase();
+
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
+    if (!imageExtensions.includes(ext)) {
+      throw new Error(`Not an image file: ${fileName}. Supported formats: ${imageExtensions.join(', ')}`);
+    }
+
+    const { size: fileSize } = fs.statSync(resolvedPath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    logger.info({ chatId, filePath: resolvedPath, fileName, fileSize }, 'Uploading image for image_key');
+
+    if (!this.client) {
+      throw new Error('Feishu client not initialized');
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(resolvedPath),
+      },
+    });
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${fileName}`);
+    }
+
+    logger.info({ chatId, imageKey, fileName }, 'Image uploaded successfully');
+    return { imageKey, fileName, fileSize };
+  }
 }

@@ -8,6 +8,7 @@
 export type {
   SendMessageResult,
   SendFileResult,
+  UploadImageResult,
   MessageSentCallback,
   ActionPromptMap,
   SendInteractiveResult,
@@ -30,6 +31,9 @@ export { send_card } from './send-card.js';
 
 // Send File
 export { send_file } from './send-file.js';
+
+// Upload Image (Issue #1919 Phase 1)
+export { upload_image } from './upload-image.js';
 
 // Interactive Message
 export {
