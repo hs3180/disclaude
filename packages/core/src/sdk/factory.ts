@@ -65,7 +65,6 @@ export function getProvider(type?: ProviderType): IAgentSDKProvider {
 
   // Copy preset agent definitions to workspace .claude/agents/ for Claude Code discovery
   // Fire-and-forget: failure only logs warning, doesn't block agent creation
-  // Issue #1410: Replace SubagentManager with project-level Agent definitions
   if (!agentsSetupDone) {
     agentsSetupDone = true;
     setupAgentsInWorkspace().then((result) => {
