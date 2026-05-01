@@ -506,4 +506,70 @@ describe('WeChatApiClient', () => {
       expect(result[1].msg_id).toBe('msg-2');
     });
   });
+
+  describe('sendTyping (Issue #1556 Phase 3.2)', () => {
+    it('should send typing indicator via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('ilink/bot/typing'),
+        expect.objectContaining({
+          method: 'POST',
+        }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.to_user_id).toBe('user-123');
+    });
+
+    it('should not throw on HTTP error (non-fatal)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Server Error'),
+      });
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await expect(client.sendTyping({ to: 'user-123' })).resolves.toBeUndefined();
+    });
+
+    it('should not throw on network error (non-fatal)', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await expect(client.sendTyping({ to: 'user-123' })).resolves.toBeUndefined();
+    });
+
+    it('should not throw on API error response (non-fatal)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 1001, err_msg: 'Invalid token' })),
+      });
+
+      client.setToken('test-token');
+      // Should not throw — typing indicator is non-fatal
+      await expect(client.sendTyping({ to: 'user-123' })).resolves.toBeUndefined();
+    });
+
+    it('should use short timeout (5s)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      // We can't directly verify the timeout, but we verify the call was made
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });

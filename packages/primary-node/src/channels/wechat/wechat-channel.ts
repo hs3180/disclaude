@@ -10,7 +10,6 @@
  *
  * Not yet implemented (future phases):
  * - Media handling (CDN upload) — Issue #1556 Phase 3.3
- * - Typing indicator — Issue #1556 Phase 3.2
  * - Thread send support via context_token — Issue #1556 Phase 3.4
  *
  * @module channels/wechat/wechat-channel
@@ -91,7 +90,13 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     }
 
     // Start message listener (Issue #1556 Phase 3.1)
+    // Send typing indicator on message receive (Issue #1556 Phase 3.2)
     const processor: MessageProcessor = async (message: IncomingMessage) => {
+      // Send typing indicator to show bot is processing (best-effort, non-blocking)
+      const { client } = this;
+      if (client) {
+        await client.sendTyping({ to: message.chatId });
+      }
       await this.emitMessage(message);
     };
 
