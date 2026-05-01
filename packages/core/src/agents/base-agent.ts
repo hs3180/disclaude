@@ -13,6 +13,8 @@
 
 import {
   getProvider,
+  ensureAuthProxy,
+  isThirdPartyEndpoint,
   type IAgentSDKProvider,
   type AgentQueryOptions,
   type UserInput,
@@ -110,6 +112,9 @@ export abstract class BaseAgent implements Disposable {
   protected initialized = false;
   protected sdkProvider: IAgentSDKProvider;
 
+  /** Cached auth proxy URL for third-party endpoints (Issue #2916) */
+  private authProxyUrl: string | undefined;
+
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model;
@@ -126,6 +131,46 @@ export abstract class BaseAgent implements Disposable {
 
     // Get SDK provider instance
     this.sdkProvider = getProvider();
+
+    // Issue #2916: Start auth proxy eagerly for third-party endpoints.
+    // The proxy transforms Authorization: Bearer → x-api-key for
+    // compatibility with third-party Claude-compatible APIs (e.g., GLM).
+    // Started fire-and-forget in constructor so it's ready by the time
+    // the first query is made.
+    if (this.apiBaseUrl && isThirdPartyEndpoint(this.apiBaseUrl)) {
+      this.initializeAuthProxy();
+    }
+  }
+
+  /**
+   * Initialize auth header proxy for third-party API endpoints (Issue #2916).
+   *
+   * Starts a local HTTP proxy that transforms `Authorization: Bearer` → `x-api-key`
+   * for third-party Claude-compatible APIs that require the `x-api-key` header.
+   *
+   * This method is fire-and-forget — it starts the proxy in the background.
+   * The proxy URL is cached in `this.authProxyUrl` for synchronous use
+   * in `createSdkOptions()`. If the proxy isn't ready when the first query
+   * is made, the query will proceed with the direct URL (which may fail with
+   * 401 if the third-party API doesn't support `Authorization: Bearer`).
+   */
+  private initializeAuthProxy(): void {
+    ensureAuthProxy(this.apiBaseUrl)
+      .then((proxyUrl: string | undefined) => {
+        if (proxyUrl) {
+          this.authProxyUrl = proxyUrl;
+          this.logger.info(
+            { apiBaseUrl: this.apiBaseUrl, proxyUrl },
+            'Auth header proxy initialized for third-party endpoint'
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          { err: error, apiBaseUrl: this.apiBaseUrl },
+          'Failed to initialize auth header proxy — API requests may fail with 401'
+        );
+      });
   }
 
   /**
@@ -184,9 +229,14 @@ export abstract class BaseAgent implements Disposable {
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
     }
+
+    // Issue #2916: Use auth proxy URL for third-party endpoints if available.
+    // The proxy transforms Authorization: Bearer → x-api-key header.
+    const effectiveApiBaseUrl = this.authProxyUrl ?? this.apiBaseUrl;
+
     options.env = buildSdkEnv(
       this.apiKey,
-      this.apiBaseUrl,
+      effectiveApiBaseUrl,
       globalEnv,
       loggingConfig.sdkDebug,
       this.getSdkTimeoutMs(),

@@ -35,6 +35,9 @@ export {
   StderrCapture,
   getErrorStderr,
   isStartupFailure,
+  // Auth header proxy (Issue #2916)
+  ensureAuthProxy,
+  stopAllAuthProxies,
   // Factory functions
   getProvider,
   registerProvider,

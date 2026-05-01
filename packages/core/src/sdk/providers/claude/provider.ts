@@ -17,6 +17,7 @@ import type {
 } from '../../types.js';
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 import { adaptOptions } from './options-adapter.js';
+import { AuthHeaderProxy, isThirdPartyEndpoint } from './third-party-auth-proxy.js';
 import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('ClaudeSDKProvider');
@@ -125,6 +126,87 @@ export function isStartupFailure(messageCount: number, elapsedMs: number): boole
   return messageCount === 0 && elapsedMs < 10_000;
 }
 
+// ============================================================================
+// Auth header proxy manager (Issue #2916)
+// ============================================================================
+
+/**
+ * Proxy manager — caches running proxy instances per target URL.
+ *
+ * The proxy is started asynchronously when a third-party endpoint is detected,
+ * and the proxy URL is cached for subsequent synchronous use.
+ */
+const activeAuthProxies = new Map<string, {
+  proxy: AuthHeaderProxy;
+  url: string;
+}>();
+
+/**
+ * Ensure an auth header proxy is running for the given API base URL.
+ *
+ * Starts a local proxy that transforms `Authorization: Bearer` → `x-api-key`
+ * for third-party API endpoints (e.g., GLM) that require the `x-api-key` header.
+ *
+ * This method is async and should be called during agent initialization,
+ * before any queries are made. The proxy URL is cached for subsequent
+ * synchronous use in queryStream().
+ *
+ * @param apiBaseUrl - The original third-party API base URL
+ * @returns The proxy URL (e.g., http://127.0.0.1:12345) or undefined if not needed
+ */
+export async function ensureAuthProxy(apiBaseUrl: string | undefined): Promise<string | undefined> {
+  if (!apiBaseUrl || !isThirdPartyEndpoint(apiBaseUrl)) {
+    return undefined;
+  }
+
+  // Check cache
+  const cached = activeAuthProxies.get(apiBaseUrl);
+  if (cached) {
+    return cached.url;
+  }
+
+  // Start new proxy
+  const proxy = new AuthHeaderProxy({ targetBaseUrl: apiBaseUrl });
+  const proxyUrl = await proxy.start();
+
+  activeAuthProxies.set(apiBaseUrl, { proxy, url: proxyUrl });
+
+  logger.info(
+    { targetBaseUrl: apiBaseUrl, proxyUrl },
+    'Auth header proxy started for third-party endpoint'
+  );
+
+  return proxyUrl;
+}
+
+/**
+ * Get cached auth proxy URL for a given API base URL (synchronous).
+ *
+ * Returns undefined if no proxy is running for the URL.
+ */
+function getCachedAuthProxyUrl(apiBaseUrl: string): string | undefined {
+  return activeAuthProxies.get(apiBaseUrl)?.url;
+}
+
+/**
+ * Stop all running auth header proxies.
+ */
+export async function stopAllAuthProxies(): Promise<void> {
+  const entries = Array.from(activeAuthProxies.entries());
+  activeAuthProxies.clear();
+
+  await Promise.all(
+    entries.map(async ([targetUrl, { proxy }]) => {
+      try {
+        await proxy.stop();
+        logger.info({ targetUrl }, 'Auth header proxy stopped');
+      } catch (error) {
+        logger.warn({ err: error, targetUrl }, 'Error stopping auth header proxy');
+      }
+    })
+  );
+}
+
 /**
  * Claude SDK Provider
  *
@@ -159,6 +241,36 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const stderrCapture = new StderrCapture();
 
     const sdkOptions = adaptOptions(options);
+
+    // Issue #2916: If a third-party endpoint is detected, replace apiBaseUrl
+    // with the auth header proxy URL. The proxy transforms Authorization: Bearer
+    // → x-api-key for compatibility with third-party Claude-compatible APIs.
+    const originalBaseUrl = options.env?.ANTHROPIC_BASE_URL;
+    if (originalBaseUrl && isThirdPartyEndpoint(originalBaseUrl)) {
+      const proxyUrl = getCachedAuthProxyUrl(originalBaseUrl);
+      if (proxyUrl) {
+        sdkOptions.apiBaseUrl = proxyUrl;
+        if (sdkOptions.env) {
+          (sdkOptions.env as Record<string, unknown>).ANTHROPIC_BASE_URL = proxyUrl;
+        }
+        logger.debug(
+          { originalBaseUrl, proxyUrl },
+          'Using auth header proxy for third-party API requests'
+        );
+      } else {
+        // Proxy not started yet — log warning
+        // This happens if ensureAuthProxy() wasn't called during agent init.
+        // The query may fail with 401 if the third-party API doesn't support
+        // Authorization: Bearer header.
+        logger.warn(
+          { apiBaseUrl: originalBaseUrl },
+          'Third-party endpoint detected but auth proxy not started. '
+          + 'Call ensureAuthProxy() during agent initialization for auth header compatibility. '
+          + 'The API may return 401 if it requires x-api-key header.'
+        );
+      }
+    }
+
     // 将 stderr 回调注入 SDK 选项
     sdkOptions.stderr = (data: string) => {
       stderrCapture.append(data);
