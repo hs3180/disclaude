@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, loadRuntimeEnv, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -116,7 +116,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Initialize message builder with channel-specific options (Issue #697, #1492, #1499)
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
-    this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+    // Issue #1371: Include runtime-env data for agent awareness.
+    const runtimeEnv = loadRuntimeEnv(this.getWorkspaceDir());
+    const messageBuilderOptions = {
+      ...config.messageBuilderOptions,
+      ...(Object.keys(runtimeEnv).length > 0 ? { runtimeEnv } : {}),
+    };
+    this.messageBuilder = new MessageBuilder(messageBuilderOptions);
 
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');
   }

@@ -508,4 +508,82 @@ describe('MessageBuilder', () => {
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
     });
   });
+
+  describe('buildEnhancedContent - runtime-env awareness (Issue #1371)', () => {
+    it('should not include runtime-env section when no runtimeEnv provided', () => {
+      const builder = new MessageBuilder();
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Runtime Environment Variables');
+    });
+
+    it('should not include runtime-env section when runtimeEnv is empty', () => {
+      const builder = new MessageBuilder({ runtimeEnv: {} });
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Runtime Environment Variables');
+    });
+
+    it('should include runtime-env section when variables are provided', () => {
+      const builder = new MessageBuilder({
+        runtimeEnv: { GH_TOKEN: 'ghs_abc123def456', API_URL: 'https://api.example.com' },
+      });
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Runtime Environment Variables');
+      expect(result).toContain('GH_TOKEN');
+      expect(result).toContain('API_URL');
+    });
+
+    it('should mask sensitive values in runtime-env section', () => {
+      const builder = new MessageBuilder({
+        runtimeEnv: { GH_TOKEN: 'ghs_supersecrettoken123' },
+      });
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('GH_TOKEN');
+      expect(result).not.toContain('ghs_supersecrettoken123');
+    });
+
+    it('should place runtime-env section after location awareness guidance', () => {
+      const builder = new MessageBuilder({
+        runtimeEnv: { GH_TOKEN: 'ghs_abc123' },
+      });
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      const locationIdx = result.indexOf('Location Awareness');
+      const runtimeEnvIdx = result.indexOf('Runtime Environment Variables');
+      expect(runtimeEnvIdx).toBeGreaterThan(locationIdx);
+    });
+
+    it('should work alongside other channel-specific options', () => {
+      const builder = new MessageBuilder({
+        buildHeader: () => 'You are in a Test Chat.',
+        runtimeEnv: { MY_VAR: 'my_value' },
+      });
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Test Chat');
+      expect(result).toContain('Runtime Environment Variables');
+      expect(result).toContain('MY_VAR');
+    });
+  });
 });

@@ -185,6 +185,74 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess, sharing state with
+ * the main process via a file-based runtime-env mechanism. This guidance
+ * tells the agent what runtime-env variables are available and how to
+ * interact with them.
+ *
+ * Sensitive values (tokens, keys, secrets) are masked — the agent accesses
+ * them via process environment variables, not through the prompt.
+ *
+ * @param runtimeEnv - Current runtime-env variables, or undefined to skip
+ * @returns Formatted runtime-env awareness section, or empty string if no variables
+ */
+export function buildRuntimeEnvGuidance(runtimeEnv?: Record<string, string>): string {
+  if (!runtimeEnv || Object.keys(runtimeEnv).length === 0) {
+    return '';
+  }
+
+  const maskedEntries = Object.entries(runtimeEnv)
+    .map(([key, value]) => `- \`${key}\`: \`${maskSensitiveValue(key, value)}\``)
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You have access to shared environment variables stored in the runtime-env file. These variables are already loaded into your process environment — you can access them directly via \`process.env\` or shell commands.
+
+### Available Variables
+
+${maskedEntries}
+
+### Usage Guidelines
+
+- **Reading**: Variables are in your process environment. Use \`process.env.KEY\` or \`echo $KEY\` in bash
+- **Writing**: To update a runtime-env variable, use the Write tool to append or modify lines in \`{workspace}/.runtime-env\`. Format: \`KEY=VALUE\` (one per line)
+- **Sensitive values**: Token values shown above are masked. Always use the actual environment variable (e.g., \`process.env.GH_TOKEN\`) rather than copying masked values
+- **Expiry tracking**: Tokens may have a companion \`*_EXPIRES_AT\` variable (ISO 8601). Check expiry before use and refresh if needed`;
+}
+
+/**
+ * Mask sensitive values for safe display in prompts.
+ *
+ * Shows first 4 and last 4 characters for tokens/keys,
+ * full value for non-sensitive variables.
+ */
+function maskSensitiveValue(key: string, value: string): string {
+  const sensitivePatterns = [
+    /token/i,
+    /key/i,
+    /secret/i,
+    /password/i,
+    /credential/i,
+    /auth/i,
+  ];
+
+  const isSensitive = sensitivePatterns.some(pattern => pattern.test(key));
+
+  if (!isSensitive || value.length <= 12) {
+    return value.length > 40 ? `${value.slice(0, 20)}...${value.slice(-8)}` : value;
+  }
+
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

@@ -28,6 +28,7 @@ vi.mock('@disclaude/core', () => ({
       iterator: (async function* () { /* empty */ })(),
     }));
     this.dispose = vi.fn();
+    this.getWorkspaceDir = vi.fn(() => '/tmp/test-workspace');
     this.logger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -65,6 +66,8 @@ vi.mock('@disclaude/core', () => ({
     }
     return undefined;
   },
+  // Issue #1371: loadRuntimeEnv mock for runtime-env awareness
+  loadRuntimeEnv: vi.fn(() => ({})),
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({

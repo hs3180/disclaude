@@ -56,7 +56,7 @@ export interface MessageBuilderContext {
  * The core MessageBuilder handles framework-agnostic content:
  * - Metadata (chatId, messageId, senderId)
  * - History sections (chat history, persisted history)
- * - Guidance sections (next-step, output format, location awareness)
+ * - Guidance sections (next-step, output format, location awareness, runtime-env)
  * - Basic attachment info (file list, paths, MIME types)
  *
  * Channel-specific content:
@@ -105,4 +105,14 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * Runtime environment variables for agent awareness.
+   *
+   * Issue #1371: Provides the agent with knowledge of shared environment
+   * variables available in the runtime-env file. Values are masked for
+   * sensitive keys (tokens, secrets) — the agent accesses actual values
+   * via process.env in the SDK subprocess.
+   */
+  runtimeEnv?: Record<string, string>;
 }
