@@ -174,6 +174,10 @@ If user confirms (✅ 创建定时任务), use the `/schedule` skill to create t
 
 ---
 
+## Schedule 模板
+
+见同目录下的 `schedule.md`。将其复制到 `schedules/recommend-analysis/SCHEDULE.md`，替换 `{controlChannelChatId}` 后启用。
+
 ## DO NOT
 
 - Recommend schedules for one-time tasks
