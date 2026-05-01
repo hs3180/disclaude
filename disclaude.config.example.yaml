@@ -119,6 +119,26 @@ glm:
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
 
 # -----------------------------------------------------------------------------
+# Anthropic API Configuration (Issue #2768)
+# -----------------------------------------------------------------------------
+# Use this section when connecting to a custom Anthropic-compatible API endpoint
+# (e.g., LiteLLM proxy, Azure, or other compatible services).
+#
+# Configuration priority (highest to lowest):
+# 1. This section (anthropic.apiBaseUrl)
+# 2. Environment variable (ANTHROPIC_BASE_URL)
+# 3. Default Anthropic API endpoint (https://api.anthropic.com)
+#
+# This takes precedence over ~/.claude/settings.json, preventing config leakage.
+#
+# anthropic:
+#   # API key (alternative to ANTHROPIC_API_KEY env var)
+#   apiKey: "your_anthropic_api_key_here"
+#
+#   # Custom API base URL for Anthropic-compatible endpoints
+#   apiBaseUrl: "https://your-proxy.example.com/v1"
+
+# -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
 logging:

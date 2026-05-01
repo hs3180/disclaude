@@ -85,6 +85,26 @@ export interface GlmConfig {
 }
 
 /**
+ * Anthropic API configuration section.
+ *
+ * Allows configuring a custom Anthropic-compatible API endpoint
+ * (e.g., LiteLLM proxy, Azure, or other compatible services).
+ *
+ * Configuration priority (highest to lowest):
+ * 1. This config section (disclaude.config.yaml → anthropic.apiBaseUrl)
+ * 2. Environment variable (ANTHROPIC_BASE_URL)
+ * 3. Default Anthropic API endpoint
+ *
+ * @see Issue #2768
+ */
+export interface AnthropicConfig {
+  /** API key (alternative to ANTHROPIC_API_KEY env var) */
+  apiKey?: string;
+  /** Custom API base URL for Anthropic-compatible endpoints */
+  apiBaseUrl?: string;
+}
+
+/**
  * Ruliu reply mode.
  * Controls how the bot responds to messages.
  */
@@ -331,6 +351,8 @@ export interface DisclaudeConfig {
   ruliu?: RuliuConfig;
   /** GLM API settings */
   glm?: GlmConfig;
+  /** Anthropic API settings (custom endpoint, API key) */
+  anthropic?: AnthropicConfig;
   /** Logging settings */
   logging?: LoggingConfig;
   /** Tool configuration */

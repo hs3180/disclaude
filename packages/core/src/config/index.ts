@@ -121,8 +121,10 @@ export class Config {
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Anthropic Claude configuration (from config file, with env var fallback)
+          // Issue #2768: Support custom Anthropic-compatible API endpoint via config
+          static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+          static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl || process.env.ANTHROPIC_BASE_URL || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -278,7 +280,7 @@ export class Config {
       if (!this.ANTHROPIC_API_KEY) {
         errors.push({
           field: 'ANTHROPIC_API_KEY',
-          message: 'ANTHROPIC_API_KEY environment variable is required when agent.provider is "anthropic"',
+          message: 'ANTHROPIC_API_KEY is required when agent.provider is "anthropic" (set via anthropic.apiKey in config or ANTHROPIC_API_KEY env var)',
         });
       }
       if (!this.CLAUDE_MODEL) {
@@ -307,7 +309,7 @@ export class Config {
       // No provider configured at all
       errors.push({
         field: 'apiKey',
-        message: 'No API key configured. Set glm.apiKey in disclaude.config.yaml or ANTHROPIC_API_KEY environment variable',
+        message: 'No API key configured. Set glm.apiKey or anthropic.apiKey in disclaude.config.yaml, or ANTHROPIC_API_KEY environment variable',
       });
     }
 
@@ -357,6 +359,7 @@ export class Config {
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      ...(this.ANTHROPIC_API_BASE_URL ? { apiBaseUrl: this.ANTHROPIC_API_BASE_URL } : {}),
       provider: 'anthropic',
     };
   }

@@ -105,6 +105,13 @@ export function buildSdkEnv(
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {
     env.ANTHROPIC_BASE_URL = apiBaseUrl;
+
+    // Issue #2768: Clean up provider-specific env vars that may have leaked
+    // from ~/.claude/settings.json. When disclaude explicitly configures a
+    // custom endpoint, proxy-specific headers (e.g., Baidu Comate's
+    // comate_custom_header) should NOT be inherited. Users who need custom
+    // headers should configure them in disclaude.config.yaml's env: section.
+    delete env.ANTHROPIC_CUSTOM_HEADERS;
   }
 
   // Issue #2992: Set HTTP timeout for SDK→API connections.

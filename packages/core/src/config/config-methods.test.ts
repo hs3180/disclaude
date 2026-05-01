@@ -37,6 +37,10 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
       model: 'glm-4',
       apiBaseUrl: 'https://api.test.com',
     },
+    anthropic: {
+      apiKey: 'test-anthropic-key',
+      apiBaseUrl: 'https://anthropic-proxy.test.com',
+    },
     feishu: { appId: 'test-app-id', appSecret: 'test-secret' },
     workspace: { dir: '/test/workspace' },
     messaging: { debug: { forwardPatterns: ['error.*'] } },
@@ -196,6 +200,11 @@ describe('Config', () => {
       expect(Config.GLM_API_KEY).toBe('test-glm-key');
       expect(Config.GLM_MODEL).toBe('glm-4');
       expect(Config.GLM_API_BASE_URL).toBe('https://api.test.com');
+    });
+
+    it('should have Anthropic configuration from config file (Issue #2768)', () => {
+      expect(Config.ANTHROPIC_API_KEY).toBe('test-anthropic-key');
+      expect(Config.ANTHROPIC_API_BASE_URL).toBe('https://anthropic-proxy.test.com');
     });
 
     it('should have Feishu configuration from config file', () => {

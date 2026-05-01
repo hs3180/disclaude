@@ -203,11 +203,11 @@ export function validateRequiredConfig(config: DisclaudeConfig): {
     });
   }
 
-  // If Anthropic API key is configured (from env), agent.model should be set
-  if (process.env.ANTHROPIC_API_KEY && !config.agent?.model) {
+  // If Anthropic API key is configured (from config or env), agent.model should be set
+  if ((config.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY) && !config.agent?.model) {
     errors.push({
       field: 'agent.model',
-      message: 'agent.model is required when ANTHROPIC_API_KEY env var is set',
+      message: 'agent.model is required when Anthropic API key is set (via anthropic.apiKey or ANTHROPIC_API_KEY env var)',
     });
   }
 

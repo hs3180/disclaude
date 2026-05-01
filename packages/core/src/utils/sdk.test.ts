@@ -223,5 +223,25 @@ describe('SDK Utilities', () => {
         expect(env.ANTHROPIC_TIMEOUT).toBe('120000');
       });
     });
+
+    describe('ANTHROPIC_CUSTOM_HEADERS cleanup (Issue #2768)', () => {
+      it('should remove ANTHROPIC_CUSTOM_HEADERS when apiBaseUrl is provided', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'comate_custom_header=value');
+        const env = buildSdkEnv('sk-test-key', 'https://custom-endpoint.example.com');
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+      });
+
+      it('should preserve ANTHROPIC_CUSTOM_HEADERS when apiBaseUrl is not provided', () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'comate_custom_header=value');
+        const env = buildSdkEnv('sk-test-key');
+        expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe('comate_custom_header=value');
+      });
+
+      it('should override ANTHROPIC_BASE_URL from process.env when apiBaseUrl is provided', () => {
+        vi.stubEnv('ANTHROPIC_BASE_URL', 'https://leaked-from-settings-json.example.com');
+        const env = buildSdkEnv('sk-test-key', 'https://configured-endpoint.example.com');
+        expect(env.ANTHROPIC_BASE_URL).toBe('https://configured-endpoint.example.com');
+      });
+    });
   });
 });
