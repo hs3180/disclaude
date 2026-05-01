@@ -130,9 +130,15 @@ export function isStartupFailure(messageCount: number, elapsedMs: number): boole
  *
  * 封装 @anthropic-ai/claude-agent-sdk 的功能，
  * 提供与 IAgentSDKProvider 接口一致的 API。
+ *
+ * Issue #2890: 遵循 Anthropic Agent SDK Branding Guidelines:
+ * - ✅ Provider name 为 'disclaude'（产品自有品牌名）
+ * - ✅ 不使用 "Claude Code" 作为产品名
+ * - 参考: https://platform.claude.com/docs/en/agent-sdk/overview#branding-guidelines
  */
 export class ClaudeSDKProvider implements IAgentSDKProvider {
-  readonly name = 'claude';
+  /** Provider 名称 — 使用产品自有品牌名，不使用 'claude'（Issue #2890 品牌合规） */
+  readonly name = 'disclaude';
   readonly version = '0.2.19';
 
   private disposed = false;

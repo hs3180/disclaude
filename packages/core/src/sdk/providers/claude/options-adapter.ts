@@ -61,6 +61,17 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     }
   }
 
+  // Issue #2890: System prompt preset — 确保 vibe coding 合规
+  // 默认使用 claude_code preset，使 SDK 使用与 Claude Code CLI 完全一致的 system prompt。
+  // 这是被识别为 vibe coding 工具的关键配置。
+  // 参考 claude-agent-acp 实现: systemPrompt: { type: "preset", preset: "claude_code" }
+  sdkOptions.systemPrompt = options.systemPrompt ?? { type: 'preset', preset: 'claude_code' };
+
+  // Issue #2890: Tools preset — 使用 Claude Code 全部默认工具
+  // 确保 Agent 可以使用 Bash, Read, Write, Edit, Grep, Glob, Task 等所有内置工具。
+  // 参考 claude-agent-acp 实现: tools: { type: "preset", preset: "claude_code" }
+  sdkOptions.tools = options.tools ?? { type: 'preset', preset: 'claude_code' };
+
   // stderr 回调（Issue #2920: 捕获 Claude Code 进程的 stderr 输出）
   if (options.stderr) {
     sdkOptions.stderr = options.stderr;

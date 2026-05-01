@@ -174,6 +174,31 @@ export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
 /** 权限模式 */
 export type PermissionMode = 'default' | 'bypassPermissions';
 
+/**
+ * System prompt 预设配置（Issue #2890）
+ *
+ * 使用 claude_code preset 确保 vibe coding 合规性。
+ * 参考 claude-agent-acp 实现：当 preset 为 'claude_code' 时，
+ * SDK 会使用与 Claude Code CLI 完全一致的 system prompt，
+ * 这是被识别为 vibe coding 工具的关键。
+ */
+export type SystemPromptPreset = {
+  type: 'preset';
+  preset: 'claude_code';
+  append?: string;
+};
+
+/**
+ * Tools 预设配置（Issue #2890）
+ *
+ * 使用 claude_code preset 加载所有 Claude Code 内置工具。
+ * 包括 Bash, Read, Write, Edit, Grep, Glob, Task 等。
+ */
+export type ToolsPreset = {
+  type: 'preset';
+  preset: 'claude_code';
+};
+
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
   /** 工作目录 */
@@ -192,6 +217,25 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * System prompt 配置（Issue #2890）
+   *
+   * - `string` — 使用自定义 system prompt
+   * - `{ type: 'preset', preset: 'claude_code' }` — 使用 Claude Code 默认 system prompt（推荐，确保 vibe coding 合规）
+   * - `{ type: 'preset', preset: 'claude_code', append: '...' }` — 在默认 prompt 后追加自定义指令
+   *
+   * 默认值为 `{ type: 'preset', preset: 'claude_code' }` 以确保 vibe coding 合规性。
+   */
+  systemPrompt?: string | SystemPromptPreset;
+  /**
+   * Tools 配置（Issue #2890）
+   *
+   * - `string[]` — 指定可用工具列表
+   * - `{ type: 'preset', preset: 'claude_code' }` — 使用 Claude Code 全部默认工具
+   *
+   * 默认值为 `{ type: 'preset', preset: 'claude_code' }` 以确保工具集完整。
+   */
+  tools?: string[] | ToolsPreset;
   /**
    * stderr 输出回调（Issue #2920）
    *

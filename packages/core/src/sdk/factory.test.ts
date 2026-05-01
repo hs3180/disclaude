@@ -80,7 +80,7 @@ describe('Provider Factory', () => {
     it('should return a provider for the default type (claude)', () => {
       const provider = getProvider();
       expect(provider).toBeDefined();
-      expect(provider.name).toBe('claude');
+      expect(provider.name).toBe('disclaude');
     });
 
     it('should return the same cached instance on subsequent calls', () => {
@@ -221,7 +221,7 @@ describe('Provider Factory', () => {
       const infos = getAvailableProviders();
       expect(infos.length).toBeGreaterThanOrEqual(1);
 
-      const claudeInfo = infos.find((i: ProviderInfo) => i.name === 'claude');
+      const claudeInfo = infos.find((i: ProviderInfo) => i.name === 'disclaude');
       expect(claudeInfo).toBeDefined();
       expect(claudeInfo!.version).toBeDefined();
     });

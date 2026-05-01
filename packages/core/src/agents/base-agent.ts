@@ -159,7 +159,12 @@ export abstract class BaseAgent implements Disposable {
     const options: AgentQueryOptions = {
       cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
-      settingSources: ['project'],
+      // Issue #2890: 加载所有层级的设置，确保 vibe coding 合规
+      // - 'user': 全局用户设置 (~/.claude/settings.json)
+      // - 'project': 项目设置 (.claude/settings.json) + CLAUDE.md
+      // - 'local': 本地设置 (.claude/settings.local.json)
+      // 参考 claude-agent-acp: settingSources: ["user", "project", "local"]
+      settingSources: ['user', 'project', 'local'],
     };
 
     // Add allowed/disallowed tools

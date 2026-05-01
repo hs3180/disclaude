@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { adaptOptions, adaptInput } from './options-adapter.js';
 
 describe('adaptOptions', () => {
-  it('should return empty options for minimal input', () => {
+  it('should return options with claude_code preset defaults (Issue #2890)', () => {
     const result = adaptOptions({
       settingSources: ['project'],
     });
@@ -18,6 +18,9 @@ describe('adaptOptions', () => {
     expect(result.settingSources).toEqual(['project']);
     expect(result.cwd).toBeUndefined();
     expect(result.model).toBeUndefined();
+    // Issue #2890: 默认使用 claude_code preset 确保 vibe coding 合规
+    expect(result.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+    expect(result.tools).toEqual({ type: 'preset', preset: 'claude_code' });
   });
 
   it('should pass through cwd and model', () => {
@@ -122,6 +125,37 @@ describe('adaptOptions', () => {
     });
 
     expect(result.stderr).toBeUndefined();
+  });
+
+  it('should allow overriding systemPrompt preset (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Always respond in Chinese.' },
+    });
+
+    expect(result.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: 'Always respond in Chinese.',
+    });
+  });
+
+  it('should allow overriding systemPrompt with custom string (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: 'You are a helpful assistant.',
+    });
+
+    expect(result.systemPrompt).toBe('You are a helpful assistant.');
+  });
+
+  it('should allow overriding tools preset with custom list (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      tools: ['Bash', 'Read', 'Write'],
+    });
+
+    expect(result.tools).toEqual(['Bash', 'Read', 'Write']);
   });
 });
 

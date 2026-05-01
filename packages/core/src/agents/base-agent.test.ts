@@ -257,7 +257,8 @@ describe('BaseAgent', () => {
     const defaultOptions = {
       cwd: '/workspace',
       permissionMode: 'bypassPermissions' as const,
-      settingSources: ['project'],
+      // Issue #2890: Updated to include all setting sources for vibe coding compliance
+      settingSources: ['user', 'project', 'local'],
     };
 
     async function* createMockInput(messages: StreamingUserMessage[]): AsyncGenerator<StreamingUserMessage> {
