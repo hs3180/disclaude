@@ -715,6 +715,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.taskCompletionResolve = resolve;
       this.taskCompletionReject = reject;
     });
+    // Issue #3141: Prevent unhandled rejection when nobody awaits taskCompletionPromise.
+    // In the regular streaming path (processMessage), executeOnce is not used, so
+    // taskCompletionPromise is never awaited. When processIterator catches an error
+    // and calls taskCompletionReject(), the rejected promise would cause an unhandled
+    // rejection. The executeOnce flow still properly awaits the promise and will see
+    // the rejection regardless of this no-op catch handler.
+    this.taskCompletionPromise.catch(() => {});
 
     // Create message channel
     this.channel = new MessageChannel();
