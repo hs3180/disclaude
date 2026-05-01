@@ -13,6 +13,8 @@
 
 import {
   getProvider,
+  ensureThirdPartyProxy,
+  isThirdPartyEndpoint,
   type IAgentSDKProvider,
   type AgentQueryOptions,
   type UserInput,
@@ -110,6 +112,9 @@ export abstract class BaseAgent implements Disposable {
   protected initialized = false;
   protected sdkProvider: IAgentSDKProvider;
 
+  /** Cached proxy URL for third-party endpoints (Issues #2916, #2948) */
+  private proxyUrl: string | undefined;
+
   constructor(config: BaseAgentConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model;
@@ -126,6 +131,42 @@ export abstract class BaseAgent implements Disposable {
 
     // Get SDK provider instance
     this.sdkProvider = getProvider();
+
+    // Issues #2916, #2948: Start proxy eagerly for third-party endpoints.
+    // The proxy transforms auth headers AND extracts tool definitions from
+    // the system prompt, injecting them as the `tools` API parameter.
+    if (this.apiBaseUrl && isThirdPartyEndpoint(this.apiBaseUrl)) {
+      this.initializeProxy();
+    }
+  }
+
+  /**
+   * Initialize the third-party API proxy (Issues #2916, #2948).
+   *
+   * Starts a local HTTP proxy that:
+   * - Transforms Authorization: Bearer → x-api-key (Issue #2916)
+   * - Extracts tool definitions from system prompt XML and injects as `tools` API param (Issue #2948)
+   *
+   * This method is fire-and-forget — it starts the proxy in the background.
+   * The proxy URL is cached for synchronous use in `createSdkOptions()`.
+   */
+  private initializeProxy(): void {
+    ensureThirdPartyProxy(this.apiBaseUrl)
+      .then((url: string | undefined) => {
+        if (url) {
+          this.proxyUrl = url;
+          this.logger.info(
+            { apiBaseUrl: this.apiBaseUrl, proxyUrl: url },
+            'Third-party API proxy initialized'
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          { err: error, apiBaseUrl: this.apiBaseUrl },
+          'Failed to initialize third-party API proxy — API requests may fail or tools may be unavailable'
+        );
+      });
   }
 
   /**
@@ -184,9 +225,14 @@ export abstract class BaseAgent implements Disposable {
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
     }
+
+    // Issues #2916, #2948: Use proxy URL for third-party endpoints if available.
+    // The proxy handles auth header transformation and tool extraction.
+    const effectiveApiBaseUrl = this.proxyUrl ?? this.apiBaseUrl;
+
     options.env = buildSdkEnv(
       this.apiKey,
-      this.apiBaseUrl,
+      effectiveApiBaseUrl,
       globalEnv,
       loggingConfig.sdkDebug,
       this.getSdkTimeoutMs(),

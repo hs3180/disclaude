@@ -17,6 +17,7 @@ import type {
 } from '../../types.js';
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 import { adaptOptions } from './options-adapter.js';
+import { ThirdPartyProxy, isThirdPartyEndpoint } from './third-party-proxy.js';
 import { createLogger } from '../../../utils/logger.js';
 
 const logger = createLogger('ClaudeSDKProvider');
@@ -125,6 +126,88 @@ export function isStartupFailure(messageCount: number, elapsedMs: number): boole
   return messageCount === 0 && elapsedMs < 10_000;
 }
 
+// ============================================================================
+// Third-party API proxy manager (Issues #2916, #2948)
+// ============================================================================
+
+/**
+ * Proxy manager — caches running proxy instances per target URL.
+ *
+ * The proxy is started asynchronously when a third-party endpoint is detected,
+ * and the proxy URL is cached for subsequent synchronous use.
+ */
+const activeProxies = new Map<string, {
+  proxy: ThirdPartyProxy;
+  url: string;
+}>();
+
+/**
+ * Ensure a proxy is running for the given API base URL.
+ *
+ * Starts a local proxy that:
+ * - Transforms `Authorization: Bearer` → `x-api-key` (Issue #2916)
+ * - Extracts tool definitions from system prompt and injects as `tools` param (Issue #2948)
+ *
+ * This method is async and should be called during agent initialization,
+ * before any queries are made. The proxy URL is cached for subsequent
+ * synchronous use in queryStream().
+ *
+ * @param apiBaseUrl - The original third-party API base URL
+ * @returns The proxy URL (e.g., http://127.0.0.1:12345) or undefined if not needed
+ */
+export async function ensureThirdPartyProxy(apiBaseUrl: string | undefined): Promise<string | undefined> {
+  if (!apiBaseUrl || !isThirdPartyEndpoint(apiBaseUrl)) {
+    return undefined;
+  }
+
+  // Check cache
+  const cached = activeProxies.get(apiBaseUrl);
+  if (cached) {
+    return cached.url;
+  }
+
+  // Start new proxy
+  const proxy = new ThirdPartyProxy({ targetBaseUrl: apiBaseUrl });
+  const proxyUrl = await proxy.start();
+
+  activeProxies.set(apiBaseUrl, { proxy, url: proxyUrl });
+
+  logger.info(
+    { targetBaseUrl: apiBaseUrl, proxyUrl },
+    'Third-party API proxy started'
+  );
+
+  return proxyUrl;
+}
+
+/**
+ * Get cached proxy URL for a given API base URL (synchronous).
+ *
+ * Returns undefined if no proxy is running for the URL.
+ */
+function getCachedProxyUrl(apiBaseUrl: string): string | undefined {
+  return activeProxies.get(apiBaseUrl)?.url;
+}
+
+/**
+ * Stop all running third-party API proxies.
+ */
+export async function stopAllProxies(): Promise<void> {
+  const entries = Array.from(activeProxies.entries());
+  activeProxies.clear();
+
+  await Promise.all(
+    entries.map(async ([targetUrl, { proxy }]) => {
+      try {
+        await proxy.stop();
+        logger.info({ targetUrl }, 'Third-party API proxy stopped');
+      } catch (error) {
+        logger.warn({ err: error, targetUrl }, 'Error stopping proxy');
+      }
+    })
+  );
+}
+
 /**
  * Claude SDK Provider
  *
@@ -159,6 +242,34 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     const stderrCapture = new StderrCapture();
 
     const sdkOptions = adaptOptions(options);
+
+    // Issues #2916, #2948: If a third-party endpoint is detected, replace
+    // apiBaseUrl with the proxy URL. The proxy handles:
+    // - Auth header transformation: Authorization: Bearer → x-api-key
+    // - Tool extraction: system prompt XML → tools API parameter
+    const originalBaseUrl = options.env?.ANTHROPIC_BASE_URL;
+    if (originalBaseUrl && isThirdPartyEndpoint(originalBaseUrl)) {
+      const proxyUrl = getCachedProxyUrl(originalBaseUrl);
+      if (proxyUrl) {
+        sdkOptions.apiBaseUrl = proxyUrl;
+        if (sdkOptions.env) {
+          (sdkOptions.env as Record<string, unknown>).ANTHROPIC_BASE_URL = proxyUrl;
+        }
+        logger.debug(
+          { originalBaseUrl, proxyUrl },
+          'Using proxy for third-party API requests'
+        );
+      } else {
+        // Proxy not started yet — log warning
+        logger.warn(
+          { apiBaseUrl: originalBaseUrl },
+          'Third-party endpoint detected but proxy not started. '
+          + 'Call ensureThirdPartyProxy() during agent initialization. '
+          + 'API requests may fail or tools may be unavailable.'
+        );
+      }
+    }
+
     // 将 stderr 回调注入 SDK 选项
     sdkOptions.stderr = (data: string) => {
       stderrCapture.append(data);
