@@ -162,6 +162,82 @@ If your model supports native multimodal input, you can also use the Read tool t
 }
 
 /**
+ * Regex pattern for Feishu document/wiki URLs.
+ *
+ * Issue #3035: Matches both wiki and docx URL patterns:
+ * - https://xxx.feishu.cn/wiki/{token}
+ * - https://xxx.feishu.cn/docx/{id}
+ * - https://xxx.feishu.cn/sheets/{id}
+ * - https://xxx.feishu.cn/space/{id}
+ */
+const FEISHU_DOC_URL_PATTERN = /https?:\/\/[a-zA-Z0-9-]+\.feishu\.cn\/(wiki|docx|sheets|space)\/[a-zA-Z0-9]+/;
+
+/**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: When the user message contains Feishu document/wiki links,
+ * inject guidance telling the Agent to use `lark-cli docs +fetch` instead
+ * of webReader (which cannot access authenticated Feishu pages).
+ *
+ * Only included when the message contains a Feishu doc/wiki URL pattern.
+ */
+function buildFeishuDocLinkGuidance(ctx: MessageBuilderContext): string {
+  const { msg } = ctx;
+
+  if (!FEISHU_DOC_URL_PATTERN.test(msg.text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+The user message contains a Feishu document/wiki link. **Do NOT use webReader** — it cannot access authenticated Feishu pages. Use \`lark-cli docs +fetch\` instead:
+
+### Step 1: Get document outline
+\`\`\`bash
+lark-cli docs +fetch --api-version v2 --doc "<FEISHU_URL>" --scope outline --max-depth 3
+\`\`\`
+
+### Step 2: Read relevant sections
+\`\`\`bash
+lark-cli docs +fetch --api-version v2 --doc "<FEISHU_URL>" --scope section --start-block-id <heading_id> --doc-format markdown
+\`\`\`
+
+### Quick read (full document)
+\`\`\`bash
+lark-cli docs +fetch --api-version v2 --doc "<FEISHU_URL>" --doc-format markdown
+\`\`\`
+
+**Notes:**
+- Supports both Wiki (\`/wiki/{token}\`) and Document (\`/docx/{id}\`) URL formats
+- Use \`--scope keyword --keyword "关键词"\` to search by keyword
+- Always prefer the two-step flow (outline → section) for long documents`;
+}
+
+/**
+ * Build combined Feishu post-history section.
+ *
+ * Issue #3035: Combines the @ mention section and Feishu doc link guidance
+ * into a single post-history callback.
+ */
+function buildFeishuPostHistory(ctx: MessageBuilderContext): string {
+  const parts: string[] = [];
+
+  const mentionSection = buildFeishuMentionSection(ctx);
+  if (mentionSection) {
+    parts.push(mentionSection);
+  }
+
+  const docLinkGuidance = buildFeishuDocLinkGuidance(ctx);
+  if (docLinkGuidance) {
+    parts.push(docLinkGuidance);
+  }
+
+  return parts.join('\n');
+}
+
+/**
  * Check if image analyzer MCP is configured.
  *
  * Issue #809: Detects image analyzer MCP server configuration.
@@ -192,7 +268,7 @@ function hasImageAnalyzerMcp(): boolean {
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
   return {
     buildHeader: buildFeishuHeader,
-    buildPostHistory: buildFeishuMentionSection,
+    buildPostHistory: buildFeishuPostHistory,
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
   };
