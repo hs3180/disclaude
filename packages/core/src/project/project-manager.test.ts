@@ -942,3 +942,130 @@ describe('ProjectManager — edge cases', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// delete() (Sub-Issue C — #2225)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager delete()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should delete an existing instance', () => {
+    pm.create('chat_1', 'research', 'my-research');
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.name).toBe('default');
+      expect(result.data.workingDir).toBe(workspaceDir);
+    }
+
+    // Instance should be gone
+    expect(pm.listInstances()).toEqual([]);
+  });
+
+  it('should reject deleting non-existent instance', () => {
+    const result = pm.delete('nonexistent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should reject empty name', () => {
+    const result = pm.delete('');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不能为空');
+    }
+  });
+
+  it('should reject "default" as name', () => {
+    const result = pm.delete('default');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('保留名称');
+    }
+  });
+
+  it('should clean up all associated chatId bindings', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.use('chat_2', 'my-research');
+    pm.use('chat_3', 'my-research');
+
+    const result = pm.delete('my-research');
+    expect(result.ok).toBe(true);
+
+    // All bound chatIds should revert to default
+    expect(pm.getActive('chat_1').name).toBe('default');
+    expect(pm.getActive('chat_2').name).toBe('default');
+    expect(pm.getActive('chat_3').name).toBe('default');
+  });
+
+  it('should not affect other instances when deleting one', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    pm.delete('research-1');
+
+    // book-1 should still exist
+    expect(pm.getActive('chat_2').name).toBe('book-1');
+    expect(pm.listInstances()).toHaveLength(1);
+    expect(pm.listInstances()[0].name).toBe('book-1');
+  });
+
+  it('should auto-persist after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    const persistPath = pm.getPersistPath();
+    const raw = readFileSync(persistPath, 'utf8');
+    const data = JSON.parse(raw);
+
+    expect(data.instances['my-research']).toBeUndefined();
+    expect(data.chatProjectMap['chat_1']).toBeUndefined();
+  });
+
+  it('should allow re-creating an instance with the same name after deletion', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    pm.delete('my-research');
+
+    // Should be able to create again with the same name
+    const result = pm.create('chat_2', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.name).toBe('my-research');
+    }
+  });
+
+  it('should survive delete → persist → reload round-trip', () => {
+    const opts = createOptions();
+    const { workspaceDir } = opts;
+
+    // Phase 1: Create two instances
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'research-1');
+    pm1.create('chat_2', 'book-reader', 'book-1');
+
+    // Phase 2: Delete research-1
+    pm1.delete('research-1');
+
+    // Phase 3: Reload and verify
+    const pm2 = new ProjectManager({ ...opts, workspaceDir });
+    const instances = pm2.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('book-1');
+
+    // chat_1 should be default (binding was cleaned up)
+    expect(pm2.getActive('chat_1').name).toBe('default');
+    // chat_2 should still be bound to book-1
+    expect(pm2.getActive('chat_2').name).toBe('book-1');
+  });
+});

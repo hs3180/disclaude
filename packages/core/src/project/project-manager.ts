@@ -56,7 +56,7 @@ interface ProjectInstance {
  * Lifecycle:
  * 1. Construct with `ProjectManagerOptions`
  * 2. Call `init()` (or `init(templatesConfig)`) to load templates
- * 3. Use `create()`, `use()`, `getActive()`, `reset()` to manage projects
+ * 3. Use `create()`, `use()`, `getActive()`, `reset()`, `delete()` to manage projects
  * 4. Call `createCwdProvider()` to get a CwdProvider for Agent injection
  *
  * Zero-config: if no templates are configured, behavior is identical to
@@ -278,6 +278,53 @@ export class ProjectManager {
     }
 
     // Persist after mutation
+    this.persist();
+
+    return {
+      ok: true,
+      data: {
+        name: 'default',
+        workingDir: this.workspaceDir,
+      },
+    };
+  }
+
+  /**
+   * Delete a project instance (from memory + disk persistence).
+   *
+   * Removes the instance and cleans up all associated chatId bindings.
+   * After deletion, all previously bound chatIds revert to the default project.
+   *
+   * Note: This does NOT delete the working directory on disk. Directory cleanup
+   * is the caller's responsibility (to avoid accidental data loss).
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult with default ProjectContextConfig on success
+   */
+  delete(name: string): ProjectResult<ProjectContextConfig> {
+    const nameError = this.validateInstanceName(name);
+    if (nameError) {
+      return { ok: false, error: nameError };
+    }
+
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Clean up all chatId bindings pointing to this instance
+    const boundChatIds = this.getBoundChatIds(name);
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Remove reverse index entry entirely
+    this.instanceChatIds.delete(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Persist the cleaned-up state
     this.persist();
 
     return {
