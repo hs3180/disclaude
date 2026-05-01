@@ -35,6 +35,10 @@ HOST="${HOST:-127.0.0.1}"
 API_URL="http://${HOST}:${REST_PORT}"
 # Timeout for API requests - increased to 60s for AI processing
 TIMEOUT="${TIMEOUT:-30}"
+# Per-suite minimum timeout — suites can declare MIN_TIMEOUT before sourcing
+# common.sh to prevent the orchestrator from overriding below this threshold.
+# Usage: Set MIN_TIMEOUT=120 in the test script before calling parse_common_args.
+MIN_TIMEOUT="${MIN_TIMEOUT:-0}"
 # Default to test config file for integration tests (no MCP servers)
 CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
 SERVER_PID=""
@@ -1017,6 +1021,28 @@ parse_common_args() {
                 ;;
         esac
     done
+}
+
+# =============================================================================
+# Per-Suite Minimum Timeout
+# =============================================================================
+
+# Enforce per-suite minimum timeout after parse_common_args.
+# Call this AFTER parse_common_args to prevent the orchestrator's --timeout
+# from overriding the suite's minimum.
+#
+# Usage:
+#   1. Set MIN_TIMEOUT=120 in your test script BEFORE sourcing common.sh
+#   2. After parse_common_args, call enforce_min_timeout
+#
+# The orchestrator (run-all-tests.sh) passes --timeout to each suite,
+# which can override a suite's carefully chosen default.  This function
+# restores the suite's minimum if the passed value is too low.
+enforce_min_timeout() {
+    if [ "${MIN_TIMEOUT:-0}" -gt 0 ] && [ "$TIMEOUT" -lt "$MIN_TIMEOUT" ]; then
+        log_info "Suite minimum timeout: ${MIN_TIMEOUT}s (overriding orchestrator's ${TIMEOUT}s)"
+        TIMEOUT="$MIN_TIMEOUT"
+    fi
 }
 
 # =============================================================================

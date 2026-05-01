@@ -20,9 +20,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REST_PORT="${REST_PORT:-3099}"
 TIMEOUT="${TIMEOUT:-120}"
+# Task execution tests involve file system operations that need more time.
+# Prevent the orchestrator from overriding below this threshold.
+MIN_TIMEOUT=120
 
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
+enforce_min_timeout
 register_cleanup
 
 # =============================================================================

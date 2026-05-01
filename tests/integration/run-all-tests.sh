@@ -14,7 +14,7 @@
 #   ./tests/integration/run-all-tests.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout (default: 60, per-suite minimums may override)
 #   --port PORT         REST API port (default: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
 #   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
@@ -22,6 +22,13 @@
 #   --dry-run           Show test plan without executing
 #   --tag TAG           Filter tests by tag (fast, ai)
 #   --test NAME         Filter tests by name (substring match)
+#
+# Note on timeouts:
+#   Individual test suites can declare MIN_TIMEOUT to enforce a floor.
+#   When --timeout is lower than a suite's MIN_TIMEOUT, the suite will
+#   automatically bump its timeout to the minimum.  This allows the
+#   orchestrator to use a reasonable default (60s) while ensuring
+#   MCP-heavy or multimodal suites get the time they need (120s).
 #
 
 set -e
