@@ -53,6 +53,9 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #1953: Event-driven trigger support
+  SignalWatcher,
+  type Signal,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
@@ -151,6 +154,7 @@ export class PrimaryNode extends EventEmitter {
   protected scheduler?: Scheduler;
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
+  protected signalWatcher?: SignalWatcher;
   protected cooldownManager?: CooldownManager;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
@@ -480,8 +484,23 @@ export class PrimaryNode extends EventEmitter {
     await this.scheduler.start();
     await this.scheduleFileWatcher.start();
 
+    // Issue #1953: Initialize SignalWatcher for event-driven triggers
+    const signalsDir = path.join(schedulesDir, '.signals');
+    this.signalWatcher = new SignalWatcher({
+      signalsDir,
+      onSignal: (signal: Signal) => {
+        logger.info(
+          { targetTaskId: signal.targetTaskId, eventType: signal.eventType },
+          'Signal received, triggering task'
+        );
+        void this.scheduler?.triggerTask(signal.targetTaskId);
+      },
+    });
+    await this.signalWatcher.start();
+
     console.log('✓ Scheduler started');
     console.log('✓ Schedule file watcher started');
+    console.log('✓ Signal watcher started');
     logger.info('Scheduler initialized');
   }
 
@@ -489,6 +508,7 @@ export class PrimaryNode extends EventEmitter {
    * Stop the scheduler.
    */
   protected stopScheduler(): void {
+    this.signalWatcher?.stop();
     this.scheduleFileWatcher?.stop();
     this.scheduler?.stop();
     logger.info('Scheduler stopped');

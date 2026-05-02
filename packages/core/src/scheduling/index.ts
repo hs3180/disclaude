@@ -77,3 +77,12 @@ export {
   type AgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
+
+// Signal Watcher (Issue #1953: Event-driven triggers)
+export {
+  SignalWatcher,
+  writeSignal,
+  type Signal,
+  type OnSignal,
+  type SignalWatcherOptions,
+} from './signal-watcher.js';

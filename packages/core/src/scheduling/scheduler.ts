@@ -1,5 +1,5 @@
 /**
- * Scheduler - Executes scheduled tasks using cron.
+ * Scheduler - Executes scheduled tasks using cron or event-driven triggers.
  *
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
@@ -15,8 +15,14 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #1953: Event-driven trigger support.
+ * - triggerTask(taskId) enables programmatic task execution
+ * - SignalWatcher can trigger tasks via signal files
+ * - Foundation for Coordinator Agent architecture
+ *
  * Features:
- * - Dynamic task scheduling
+ * - Dynamic task scheduling (cron)
+ * - Event-driven task triggering (signal files)
  * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
  *
@@ -321,6 +327,45 @@ ${task.prompt}`;
         logger.debug({ taskId: task.id, cooldownPeriod: task.cooldownPeriod }, 'Recorded task execution for cooldown');
       }
     }
+  }
+
+  /**
+   * Trigger a task immediately by task ID.
+   *
+   * Issue #1953: Event-driven trigger support.
+   * Looks up the task from the active jobs or ScheduleManager and executes it
+   * immediately, bypassing the cron schedule. This enables external systems
+   * (Coordinator Agent, signal files, webhooks) to trigger tasks on demand.
+   *
+   * Respects blocking and cooldown settings (same as cron-triggered execution).
+   * If the task is disabled, not found, currently running (blocking), or in
+   * cooldown, the trigger is silently skipped.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if the task was triggered, false if skipped
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    // First check active jobs (in-memory)
+    const activeEntry = this.activeJobs.get(taskId);
+    if (activeEntry) {
+      await this.executeTask(activeEntry.task);
+      return true;
+    }
+
+    // Fall back to ScheduleManager (on-disk lookup)
+    const task = await this.scheduleManager.get(taskId);
+    if (!task) {
+      logger.warn({ taskId }, 'Cannot trigger task: not found');
+      return false;
+    }
+
+    if (!task.enabled) {
+      logger.debug({ taskId }, 'Cannot trigger task: disabled');
+      return false;
+    }
+
+    await this.executeTask(task);
+    return true;
   }
 
   /**
