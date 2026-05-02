@@ -10,12 +10,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WeChatChannel } from './wechat-channel.js';
+import { WeChatApiClient } from './api-client.js';
+import { WeChatMessageListener } from './message-listener.js';
 
 // Mock the API client
 const mockSendText = vi.fn().mockResolvedValue(undefined);
 const mockSetToken = vi.fn();
 const mockHasToken = vi.fn().mockReturnValue(true);
 const mockGetUpdates = vi.fn().mockResolvedValue([]);
+const mockSendTyping = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./api-client.js', () => ({
   WeChatApiClient: vi.fn().mockImplementation(() => ({
@@ -23,6 +26,7 @@ vi.mock('./api-client.js', () => ({
     setToken: mockSetToken,
     hasToken: mockHasToken,
     getUpdates: mockGetUpdates,
+    sendTyping: mockSendTyping,
   })),
 }));
 
@@ -282,6 +286,87 @@ describe('WeChatChannel', () => {
 
       expect(mockListener.stop).toHaveBeenCalledTimes(1);
       expect((channel as any).messageListener).toBeUndefined();
+    });
+  });
+
+  describe('typing indicator (Issue #1556 Phase 3.2)', () => {
+    it('should send typing indicator before processing incoming message', async () => {
+      // Restore mock implementations cleared by beforeEach
+      vi.mocked(WeChatApiClient).mockImplementation((() => ({
+        sendText: mockSendText,
+        setToken: mockSetToken,
+        hasToken: mockHasToken,
+        getUpdates: mockGetUpdates,
+        sendTyping: mockSendTyping,
+      })) as any);
+      vi.mocked(WeChatMessageListener).mockImplementation((() => ({
+        start: mockStart,
+        stop: mockStop,
+        isListening: mockIsListening,
+      })) as any);
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+      await (channel as any).doStart();
+
+      // Get the processor passed to WeChatMessageListener from the constructor call
+      const listenerCalls = vi.mocked(WeChatMessageListener).mock.calls;
+      expect(listenerCalls.length).toBeGreaterThan(0);
+      const processor = listenerCalls[0][1] as (msg: any) => Promise<void>;
+
+      const incomingMessage = {
+        messageId: 'msg-1',
+        chatId: 'user-123',
+        userId: 'user-123',
+        content: 'Hello!',
+        messageType: 'text',
+        timestamp: Date.now(),
+      };
+
+      await processor(incomingMessage);
+
+      // Verify typing indicator was sent before processing
+      expect(mockSendTyping).toHaveBeenCalledWith({ to: 'user-123' });
+    });
+
+    it('should continue processing even if typing indicator fails', async () => {
+      // Restore mock implementations cleared by beforeEach
+      vi.mocked(WeChatApiClient).mockImplementation((() => ({
+        sendText: mockSendText,
+        setToken: mockSetToken,
+        hasToken: mockHasToken,
+        getUpdates: mockGetUpdates,
+        sendTyping: mockSendTyping,
+      })) as any);
+      vi.mocked(WeChatMessageListener).mockImplementation((() => ({
+        start: mockStart,
+        stop: mockStop,
+        isListening: mockIsListening,
+      })) as any);
+
+      const channel = new WeChatChannel({ token: 'test-token' });
+
+      // Make sendTyping fail on next call
+      mockSendTyping.mockRejectedValueOnce(new Error('Network error'));
+
+      await (channel as any).doStart();
+
+      const listenerCalls = vi.mocked(WeChatMessageListener).mock.calls;
+      const processor = listenerCalls[0][1] as (msg: any) => Promise<void>;
+
+      const incomingMessage = {
+        messageId: 'msg-2',
+        chatId: 'user-456',
+        userId: 'user-456',
+        content: 'Test',
+        messageType: 'text',
+        timestamp: Date.now(),
+      };
+
+      // Should not throw even though sendTyping failed
+      await processor(incomingMessage);
+
+      // The typing call should have been attempted
+      expect(mockSendTyping).toHaveBeenCalledWith({ to: 'user-456' });
     });
   });
 });

@@ -18,7 +18,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import type { WeChatGetUpdatesResponse } from './types.js';
+import type { WeChatGetUpdatesResponse, WeChatTypingResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -210,6 +210,43 @@ export class WeChatApiClient {
 
     await this.postJson('ilink/bot/sendmessage', body);
     logger.debug({ to, contentLength: content.length }, 'Text message sent');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Typing indicator — Issue #1556 Phase 3.2
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send a typing indicator to a user.
+   *
+   * POST /ilink/bot/typing
+   *
+   * Informs the user that the bot is processing their message.
+   * Non-fatal: failures are logged but do not throw.
+   *
+   * @param params - Typing indicator parameters
+   */
+  async sendTyping(params: { to: string }): Promise<void> {
+    const { to } = params;
+
+    const body = {
+      to_user_id: to,
+    };
+
+    try {
+      await this.postJson<WeChatTypingResponse>(
+        'ilink/bot/typing',
+        body,
+        { timeoutMs: 5_000 }, // Short timeout for typing indicator
+      );
+      logger.debug({ to }, 'Typing indicator sent');
+    } catch (error) {
+      // Typing indicator failure should not block message processing
+      logger.warn(
+        { err: error instanceof Error ? error.message : String(error), to },
+        'Failed to send typing indicator (non-fatal)',
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------

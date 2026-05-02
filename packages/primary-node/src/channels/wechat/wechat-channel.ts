@@ -92,6 +92,13 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
 
     // Start message listener (Issue #1556 Phase 3.1)
     const processor: MessageProcessor = async (message: IncomingMessage) => {
+      // Send typing indicator before processing (Issue #1556 Phase 3.2)
+      try {
+        await this.client?.sendTyping({ to: message.chatId });
+      } catch {
+        // Non-fatal: typing indicator failure should not block processing
+      }
+
       await this.emitMessage(message);
     };
 
