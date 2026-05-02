@@ -210,7 +210,7 @@ export async function resolveCardImages(
 
     if (Array.isArray(obj)) {
       for (let i = 0; i < obj.length; i++) {
-        replaceImagePaths(obj[i], obj, i);
+        replaceImagePaths(obj[i]);
       }
       return;
     }
