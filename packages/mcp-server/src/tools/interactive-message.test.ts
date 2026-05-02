@@ -287,3 +287,101 @@ describe('IPC server helpers', () => {
     expect(getIpcServerSocketPath()).toBeNull();
   });
 });
+
+describe('IPC server lifecycle', () => {
+  let startIpcServer: typeof import('./interactive-message.js').startIpcServer;
+  let stopIpcServer: typeof import('./interactive-message.js').stopIpcServer;
+  let _isIpcServerRunning: typeof import('./interactive-message.js').isIpcServerRunning;
+  let _getIpcServerSocketPath: typeof import('./interactive-message.js').getIpcServerSocketPath;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.resetModules();
+
+    vi.doMock('@disclaude/core', () => ({
+      createLogger: () => ({
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      }),
+      getIpcClient: vi.fn(),
+      UnixSocketIpcServer: vi.fn().mockImplementation(() => ({
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        getSocketPath: vi.fn(() => '/tmp/test-ipc-socket.sock'),
+        isRunning: vi.fn(() => true),
+      })),
+      createInteractiveMessageHandler: vi.fn(() => vi.fn()),
+    }));
+
+    vi.doMock('./ipc-utils.js', () => ({
+      isIpcAvailable: vi.fn().mockResolvedValue(true),
+      getIpcErrorMessage: vi.fn(),
+    }));
+
+    vi.doMock('./callback-manager.js', () => ({
+      getMessageSentCallback: vi.fn().mockReturnValue(null),
+    }));
+
+    const mod = await import('./interactive-message.js');
+    ({ startIpcServer, stopIpcServer, isIpcServerRunning: _isIpcServerRunning, getIpcServerSocketPath: _getIpcServerSocketPath } = mod);
+  });
+
+  afterEach(async () => {
+    try {
+      await stopIpcServer();
+    } catch {
+      // Ignore cleanup errors
+    }
+    vi.restoreAllMocks();
+    await vi.resetModules();
+  });
+
+  it('should start IPC server successfully', async () => {
+    await startIpcServer();
+    expect(_isIpcServerRunning()).toBe(true);
+    expect(_getIpcServerSocketPath()).toBe('/tmp/test-ipc-socket.sock');
+  });
+
+  it('should stop IPC server', async () => {
+    await startIpcServer();
+    expect(_isIpcServerRunning()).toBe(true);
+
+    await stopIpcServer();
+    expect(_isIpcServerRunning()).toBe(false);
+    expect(_getIpcServerSocketPath()).toBeNull();
+  });
+
+  it('should be idempotent when stopping a non-running server', async () => {
+    await expect(stopIpcServer()).resolves.toBeUndefined();
+  });
+
+  it('should register feishu handlers on start', async () => {
+    const handlers = { sendMessage: vi.fn() };
+    await startIpcServer(handlers as any);
+    expect(_isIpcServerRunning()).toBe(true);
+  });
+
+  it('should not create new server if already running', async () => {
+    const { UnixSocketIpcServer } = await import('@disclaude/core');
+    await startIpcServer();
+    const callCount = vi.mocked(UnixSocketIpcServer).mock.calls.length;
+
+    await startIpcServer();
+    expect(vi.mocked(UnixSocketIpcServer).mock.calls.length).toBe(callCount);
+  });
+
+  it('should handle start failure gracefully', async () => {
+    const { UnixSocketIpcServer } = await import('@disclaude/core');
+    vi.mocked(UnixSocketIpcServer).mockImplementation(() => ({
+      start: vi.fn().mockRejectedValue(new Error('Port in use')),
+      stop: vi.fn(),
+      getSocketPath: vi.fn(),
+      isRunning: vi.fn(() => false),
+    }) as any);
+
+    await expect(startIpcServer()).rejects.toThrow('Port in use');
+    expect(_isIpcServerRunning()).toBe(false);
+  });
+});
