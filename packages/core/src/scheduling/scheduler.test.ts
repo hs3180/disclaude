@@ -299,6 +299,7 @@ describe('Scheduler', () => {
         expect.stringContaining('Run tests'),
         undefined,
         undefined,
+        undefined,
       );
     });
 
@@ -321,6 +322,52 @@ describe('Scheduler', () => {
         expect.any(String),
         'user-123',
         'claude-3-5-sonnet-20241022',
+        undefined,
+      );
+    });
+
+    it('should pass modelTier to executor when set (Issue #3059)', async () => {
+      const task = createTask({
+        id: 'exec-tier',
+        modelTier: 'low',
+      });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        undefined,
+        undefined,
+        'low',
+      );
+    });
+
+    it('should pass both model and modelTier to executor (Issue #3059)', async () => {
+      const task = createTask({
+        id: 'exec-both',
+        model: 'claude-haiku-4',
+        modelTier: 'low',
+      });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        undefined,
+        'claude-haiku-4',
+        'low',
       );
     });
 

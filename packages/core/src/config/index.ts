@@ -125,6 +125,14 @@ export class Config {
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
+          // Tier model configuration (Issue #3059)
+          private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
+          private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';
+          private static readonly CLAUDE_MULTIMODAL_MODEL = fileConfigOnly.agent?.multimodalModel || '';
+          private static readonly GLM_HIGH_MODEL = fileConfigOnly.glm?.highModel || '';
+          private static readonly GLM_LOW_MODEL = fileConfigOnly.glm?.lowModel || '';
+          private static readonly GLM_MULTIMODAL_MODEL = fileConfigOnly.glm?.multimodalModel || '';
+
           // Logging configuration
           static readonly LOG_LEVEL = fileConfigOnly.logging?.level || 'info';
           static readonly LOG_FILE = fileConfigOnly.logging?.file;
@@ -359,6 +367,49 @@ export class Config {
       model: this.CLAUDE_MODEL,
       provider: 'anthropic',
     };
+  }
+
+  /**
+   * Resolve a model name for the given tier.
+   *
+   * Resolution priority: tier-specific model → default model (fallback).
+   *
+   * @param tier - Model tier (high, low, multimodal)
+   * @returns Model identifier string, or undefined if tier is not set
+   * @see Issue #3059
+   */
+  static getModelForTier(tier: 'high' | 'low' | 'multimodal'): string | undefined {
+    // Check GLM tier models first (if GLM is configured)
+    if (this.GLM_API_KEY) {
+      const glmTierMap: Record<string, string> = {
+        high: this.GLM_HIGH_MODEL,
+        low: this.GLM_LOW_MODEL,
+        multimodal: this.GLM_MULTIMODAL_MODEL,
+      };
+      const tierModel = glmTierMap[tier];
+      if (tierModel) {
+        logger.debug({ provider: 'GLM', tier, model: tierModel }, 'Using GLM tier model');
+        return tierModel;
+      }
+      // Fallback to GLM default model
+      logger.debug({ provider: 'GLM', tier, fallback: this.GLM_MODEL }, 'Tier model not set, using GLM default');
+      return this.GLM_MODEL || undefined;
+    }
+
+    // Anthropic tier models
+    const anthropicTierMap: Record<string, string> = {
+      high: this.CLAUDE_HIGH_MODEL,
+      low: this.CLAUDE_LOW_MODEL,
+      multimodal: this.CLAUDE_MULTIMODAL_MODEL,
+    };
+    const tierModel = anthropicTierMap[tier];
+    if (tierModel) {
+      logger.debug({ provider: 'Anthropic', tier, model: tierModel }, 'Using Anthropic tier model');
+      return tierModel;
+    }
+    // Fallback to Anthropic default model
+    logger.debug({ provider: 'Anthropic', tier, fallback: this.CLAUDE_MODEL }, 'Tier model not set, using Anthropic default');
+    return this.CLAUDE_MODEL || undefined;
   }
 
   /**
