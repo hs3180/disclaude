@@ -179,6 +179,63 @@ function hasImageAnalyzerMcp(): boolean {
 }
 
 /**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: Instructs the Agent to use lark-cli for Feishu doc/wiki links
+ * instead of webReader (which cannot access authenticated Feishu pages).
+ *
+ * Only injected when the user message contains a Feishu document or wiki URL.
+ */
+function buildFeishuDocLinkGuidance(ctx: MessageBuilderContext): string {
+  const { msg: { text } } = ctx;
+
+  // Match Feishu wiki/docx URL patterns (e.g. https://xxx.feishu.cn/wiki/xxx or /docx/xxx)
+  const feishuLinkPattern = /https?:\/\/[a-zA-Z0-9-]+\.feishu\.cn\/(wiki|docx)\/\S+/i;
+  if (!feishuLinkPattern.test(text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+The user message contains a Feishu document/wiki link. Do NOT use webReader to access it — Feishu documents require authentication and webReader will only get the login page.
+
+Instead, use \`lark-cli\` to read the document:
+
+**Recommended two-step flow:**
+1. First, get the document outline:
+   \`\`\`bash
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope outline --max-depth 3
+   \`\`\`
+2. Then read the relevant sections:
+   \`\`\`bash
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope section --start-block-id <heading_id> --doc-format markdown
+   \`\`\`
+
+**Quick read (entire document):**
+\`\`\`bash
+lark-cli docs +fetch --api-version v2 --doc "<URL>" --doc-format markdown
+\`\`\`
+
+**Search by keyword:**
+\`\`\`bash
+lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope keyword --keyword "搜索词"
+\`\`\`
+
+**Note:** The \`--doc\` parameter accepts both full URLs and document tokens.`;
+}
+
+/**
+ * Build combined post-history section (mention + doc link guidance).
+ *
+ * Composes the @ mention section with the Feishu doc link guidance.
+ */
+function buildFeishuPostHistory(ctx: MessageBuilderContext): string {
+  return buildFeishuMentionSection(ctx) + buildFeishuDocLinkGuidance(ctx);
+}
+
+/**
  * Create Feishu-specific MessageBuilderOptions.
  *
  * Returns the options object with all Feishu channel section builders
@@ -186,13 +243,14 @@ function hasImageAnalyzerMcp(): boolean {
  *
  * Issue #1499: Moved from worker-node to primary-node. Use this function
  * when creating ChatAgent instances for Feishu channels.
+ * Issue #3035: Added Feishu doc link guidance for lark-cli usage.
  *
  * @returns MessageBuilderOptions with Feishu-specific callbacks
  */
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
   return {
     buildHeader: buildFeishuHeader,
-    buildPostHistory: buildFeishuMentionSection,
+    buildPostHistory: buildFeishuPostHistory,
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
   };
