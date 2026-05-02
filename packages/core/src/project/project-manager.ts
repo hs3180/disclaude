@@ -21,6 +21,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +65,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing `templates/` for auto-discovery */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +83,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -98,21 +99,27 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Initialize (or re-initialize) templates from config.
+   * Initialize (or re-initialize) templates.
+   *
+   * Template loading strategy (in order):
+   * 1. If `templatesConfig` is explicitly provided → use it (manual config mode)
+   * 2. If `templatesConfig` is undefined → auto-discover from `{packageDir}/templates/`
+   * 3. If `templatesConfig` is an empty object `{}` → no templates loaded (explicit empty)
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @param templatesConfig - Template configuration (from disclaude.config.yaml or undefined for auto-discovery)
+   *
+   * @see Issue #2286 — Auto-discovery from package directory
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
 
-    if (!templatesConfig) {
-      return;
-    }
+    // Auto-discover from filesystem when no explicit config provided
+    const config = templatesConfig ?? discoverTemplatesAsConfig(this.packageDir);
 
-    for (const [name, meta] of Object.entries(templatesConfig)) {
+    for (const [name, meta] of Object.entries(config)) {
       this.templates.set(name, {
         name,
         displayName: meta.displayName,
