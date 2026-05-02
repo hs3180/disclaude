@@ -287,8 +287,6 @@ function cmdStatus() {
 // Main
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
-
 const commands = {
   generate: cmdGenerate,
   install: cmdInstall,
@@ -300,8 +298,60 @@ const commands = {
   status: cmdStatus,
 };
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+// ---------------------------------------------------------------------------
+// Exports (for unit testing)
+// ---------------------------------------------------------------------------
+
+export {
+  LABEL,
+  PLIST_FILENAME,
+  PLIST_PATH,
+  LAUNCHAGENTS_DIR,
+  LOG_DIR,
+  STDERR_LOG,
+  APP_LOG,
+  PROJECT_ROOT,
+  CLI_ENTRY,
+  getNodePath,
+  run,
+  ensureLaunchAgentsDir,
+  ensureLogDir,
+  getCaffeinatePath,
+  buildProgramArguments,
+  generatePlist,
+  loadPlist,
+  unloadPlist,
+  build,
+  cmdGenerate,
+  cmdInstall,
+  cmdUninstall,
+  cmdStart,
+  cmdStop,
+  cmdRestart,
+  cmdLogs,
+  cmdStatus,
+  commands,
+};
+
+// ---------------------------------------------------------------------------
+// CLI entry point (only runs when executed directly, not when imported)
+// ---------------------------------------------------------------------------
+
+function isMainModule() {
+  try {
+    const scriptPath = fileURLToPath(import.meta.url);
+    const argv1 = process.argv[1] ? resolve(process.argv[1]) : '';
+    return scriptPath === argv1;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  const command = process.argv[2];
+
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -313,7 +363,8 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
-}
+    process.exit(1);
+  }
 
-commands[command]();
+  commands[command]();
+}
