@@ -223,5 +223,25 @@ describe('SDK Utilities', () => {
         expect(env.ANTHROPIC_TIMEOUT).toBe('120000');
       });
     });
+
+    describe('ANTHROPIC_AUTH_TOKEN cleanup (Issue #2768)', () => {
+      it('should remove ANTHROPIC_AUTH_TOKEN from process.env by default', () => {
+        vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'leaked-token');
+        const env = buildSdkEnv('sk-test-key');
+        expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      });
+
+      it('should preserve ANTHROPIC_AUTH_TOKEN when provided via extraEnv', () => {
+        vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'leaked-token');
+        const env = buildSdkEnv('sk-test-key', undefined, { ANTHROPIC_AUTH_TOKEN: 'explicit-token' });
+        expect(env.ANTHROPIC_AUTH_TOKEN).toBe('explicit-token');
+      });
+
+      it('should not add ANTHROPIC_AUTH_TOKEN when not present', () => {
+        vi.stubEnv('ANTHROPIC_AUTH_TOKEN', undefined);
+        const env = buildSdkEnv('sk-test-key');
+        expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      });
+    });
   });
 });

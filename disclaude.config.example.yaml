@@ -119,6 +119,33 @@ glm:
   apiBaseUrl: "https://open.bigmodel.cn/api/anthropic"
 
 # -----------------------------------------------------------------------------
+# Anthropic API Configuration
+# -----------------------------------------------------------------------------
+# Configure Anthropic or Anthropic-compatible API endpoints.
+# This is the recommended way to set up custom API proxies for disclaude,
+# as it prevents user-global ~/.claude/settings.json settings from leaking
+# into the agent process.
+#
+# When set, these values take precedence over ANTHROPIC_API_KEY and
+# ANTHROPIC_BASE_URL environment variables.
+# @see Issue #2768
+anthropic:
+  # API key for Anthropic or compatible service
+  # Overrides ANTHROPIC_API_KEY environment variable
+  # apiKey: "sk-ant-..."
+
+  # Custom API base URL for Anthropic-compatible proxies
+  # Examples:
+  #   Zhipu GLM:  "https://open.bigmodel.cn/api/anthropic"
+  #   LiteLLM:    "http://localhost:4000/v1"
+  #   OpenRouter: "https://openrouter.ai/api/v1"
+  # apiBaseUrl: "https://api.anthropic.com"
+
+  # Auth token (overrides ANTHROPIC_AUTH_TOKEN environment variable)
+  # Some proxy services use this instead of apiKey
+  # authToken: "your-auth-token"
+
+# -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
 logging:

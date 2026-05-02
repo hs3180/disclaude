@@ -56,6 +56,11 @@ export function extractText(message: AgentMessage): string {
  * Also, we must unset CLAUDECODE to allow SDK subprocess to run inside
  * another Claude Code session (nested session detection).
  *
+ * Issue #2768: Cleans proxy-specific environment variables that may leak
+ * from user-global ~/.claude/settings.json (User Scope). Known problematic
+ * variables (e.g., ANTHROPIC_CUSTOM_HEADERS with proxy-specific values)
+ * are removed to prevent interference with disclaude's own API configuration.
+ *
  * @param apiKey - API key for authentication
  * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
  * @param extraEnv - Optional extra environment variables to merge
@@ -101,6 +106,21 @@ export function buildSdkEnv(
   // "Claude Code cannot be launched inside another Claude Code session"
   // Must use delete to completely remove the key, not just set to undefined.
   delete env.CLAUDECODE;
+
+  // Issue #2768: Clean up proxy-specific environment variables that may leak
+  // from user-global ~/.claude/settings.json (User Scope). These variables
+  // are set by specific API proxies (e.g., Baidu Comate) and should not
+  // affect disclaude's own API configuration.
+  // ANTHROPIC_AUTH_TOKEN is cleaned unless explicitly provided via extraEnv
+  // (it can conflict with the apiKey-based authentication disclaude uses).
+  // We always delete it from the merged env, then restore only if extraEnv
+  // explicitly provided it (process.env has higher priority than extraEnv in
+  // the merge, so we must use this restore pattern).
+  const explicitAuthToken = extraEnv?.ANTHROPIC_AUTH_TOKEN;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  if (explicitAuthToken) {
+    env.ANTHROPIC_AUTH_TOKEN = explicitAuthToken;
+  }
 
   // Set base URL if provided (for GLM or custom endpoints)
   if (apiBaseUrl) {

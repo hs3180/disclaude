@@ -115,14 +115,20 @@ export class Config {
   static readonly FEISHU_APP_SECRET = fileConfigOnly.feishu?.appSecret || '';
   static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.feishu?.cliChatId || '';
 
+  // Anthropic configuration (from config file, Issue #2768)
+  // Config file takes precedence over environment variables to prevent
+  // user-global ~/.claude/settings.json from leaking into the agent process.
+  static readonly ANTHROPIC_API_KEY = fileConfigOnly.anthropic?.apiKey || process.env.ANTHROPIC_API_KEY || '';
+  static readonly ANTHROPIC_API_BASE_URL = fileConfigOnly.anthropic?.apiBaseUrl || '';
+  static readonly ANTHROPIC_AUTH_TOKEN = fileConfigOnly.anthropic?.authToken || '';
+
   // GLM configuration (from config file)
           // No fallback defaults - model must be explicitly configured
   static readonly GLM_API_KEY = fileConfigOnly.glm?.apiKey || '';
           static readonly GLM_MODEL = fileConfigOnly.glm?.model || '';
           static readonly GLM_API_BASE_URL = fileConfigOnly.glm?.apiBaseUrl || 'https://open.bigmodel.cn/api/anthropic';
 
-          // Anthropic Claude configuration (from env for fallback)
-          static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+          // Claude model (shared between providers, from agent section)
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
           // Logging configuration
@@ -353,10 +359,13 @@ export class Config {
     }
 
     // Fallback to Anthropic
-    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
+    // Issue #2768: Include apiBaseUrl from config if configured
+    const anthropicBaseUrl = this.ANTHROPIC_API_BASE_URL || undefined;
+    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL, apiBaseUrl: anthropicBaseUrl || 'default' }, 'Using Anthropic API configuration');
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      ...(anthropicBaseUrl && { apiBaseUrl: anthropicBaseUrl }),
       provider: 'anthropic',
     };
   }

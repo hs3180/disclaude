@@ -70,6 +70,26 @@ export interface FeishuConfig {
 }
 
 /**
+ * Anthropic API configuration section.
+ *
+ * Allows configuring Anthropic-compatible API endpoints directly in
+ * disclaude.config.yaml, independent of user-global ~/.claude/settings.json.
+ *
+ * This is the recommended way to configure custom API endpoints for disclaude,
+ * as it prevents user-local proxy settings from leaking into the agent process.
+ *
+ * @see Issue #2768
+ */
+export interface AnthropicConfig {
+  /** API key (overrides ANTHROPIC_API_KEY environment variable) */
+  apiKey?: string;
+  /** Custom API base URL for Anthropic-compatible proxies */
+  apiBaseUrl?: string;
+  /** Auth token (overrides ANTHROPIC_AUTH_TOKEN environment variable) */
+  authToken?: string;
+}
+
+/**
  * GLM (Zhipu AI) API configuration section.
  *
  * When using GLM provider, both apiKey and model are REQUIRED.
@@ -329,6 +349,8 @@ export interface DisclaudeConfig {
   feishu?: FeishuConfig;
   /** Ruliu (如流) platform settings */
   ruliu?: RuliuConfig;
+  /** Anthropic API settings (Issue #2768) */
+  anthropic?: AnthropicConfig;
   /** GLM API settings */
   glm?: GlmConfig;
   /** Logging settings */

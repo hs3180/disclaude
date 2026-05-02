@@ -32,6 +32,11 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
       },
     },
     agent: { provider: 'glm' as const, enableAgentTeams: true },
+    anthropic: {
+      apiKey: 'sk-ant-test-key',
+      apiBaseUrl: 'https://custom-proxy.example.com',
+      authToken: 'test-auth-token',
+    },
     glm: {
       apiKey: 'test-glm-key',
       model: 'glm-4',
@@ -192,6 +197,12 @@ describe('Config', () => {
   });
 
   describe('static properties', () => {
+    it('should have Anthropic configuration from config file (Issue #2768)', () => {
+      expect(Config.ANTHROPIC_API_KEY).toBe('sk-ant-test-key');
+      expect(Config.ANTHROPIC_API_BASE_URL).toBe('https://custom-proxy.example.com');
+      expect(Config.ANTHROPIC_AUTH_TOKEN).toBe('test-auth-token');
+    });
+
     it('should have GLM configuration from config file', () => {
       expect(Config.GLM_API_KEY).toBe('test-glm-key');
       expect(Config.GLM_MODEL).toBe('glm-4');
