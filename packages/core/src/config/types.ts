@@ -341,6 +341,22 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /**
+   * Project templates configuration (Issue #2227).
+   *
+   * Key = template name, Value = optional display metadata.
+   *
+   * ```yaml
+   * projectTemplates:
+   *   research:
+   *     displayName: "研究模式"
+   *     description: "专注研究的独立空间"
+   * ```
+   *
+   * Templates are auto-discovered from the package `templates/` directory.
+   * This config is used to override or supplement auto-discovered templates.
+   */
+  projectTemplates?: Record<string, { displayName?: string; description?: string }>;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

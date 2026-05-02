@@ -320,3 +320,31 @@ export {
   type CommandDefinition,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module (Issue #1916 — unified per-chatId Agent context switching)
+// Issue #2227: re-export ProjectManager and types from @disclaude/core
+export type {
+  CwdProvider,
+  InstanceInfo,
+  PersistedInstance,
+  ProjectContextConfig,
+  ProjectManagerOptions,
+  ProjectResult,
+  ProjectTemplate,
+  ProjectTemplatesConfig,
+  ProjectsPersistData,
+} from './project/index.js';
+
+export {
+  discoverTemplates,
+  discoveryResultToConfig,
+  discoverTemplatesAsConfig,
+} from './project/index.js';
+
+export type {
+  DiscoveryResult,
+  DiscoveryError,
+  DiscoveryOptions,
+} from './project/index.js';
+
+export { ProjectManager } from './project/index.js';

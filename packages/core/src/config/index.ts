@@ -505,6 +505,19 @@ export class Config {
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
+
+  /**
+   * Get project templates configuration from config file.
+   *
+   * Returns the `projectTemplates` section from disclaude.config.yaml,
+   * or undefined if not configured.
+   *
+   * @see Issue #2227
+   * @returns Project templates configuration or undefined
+   */
+  static getProjectTemplatesConfig(): DisclaudeConfig['projectTemplates'] {
+    return fileConfigOnly.projectTemplates;
+  }
 }
 
 // ============================================================================
