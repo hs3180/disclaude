@@ -567,15 +567,56 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     if (syncMode) {
       // Wait for response with timeout (4 minutes for AI processing)
       const timeoutMs = 240000; // 240 seconds (4 minutes)
-      const responseText = await this.waitForResponse(chatId, messageId, timeoutMs, requestStartMs);
-      response.response = responseText;
 
-      // Issue #3003: log total request timing
-      const totalMs = Date.now() - requestStartMs;
-      logger.info(
-        { chatId, messageId, totalMs, responseLength: responseText?.length ?? 0 },
-        'Sync request completed'
-      );
+      // Issue #3193: Detect client disconnect and abort pending response.
+      // When the client (e.g., curl with --max-time) disconnects due to its own
+      // timeout, the server should stop waiting immediately to free resources
+      // for subsequent requests.
+      const clientDisconnected = new Promise<never>((_resolve, reject) => {
+        res.on('close', () => {
+          // res.close fires when the underlying connection is closed — either
+          // because we ended the response (normal path) or the client dropped.
+          // Only act if the response hasn't been sent yet (writableFinished).
+          if (!res.writableFinished) {
+            const elapsedMs = Date.now() - requestStartMs;
+            logger.info(
+              { chatId, messageId, elapsedMs },
+              'Client disconnected before response was sent — aborting pending response'
+            );
+            reject(new Error('Client disconnected'));
+          }
+        });
+      });
+
+      try {
+        const responseText = await Promise.race([
+          this.waitForResponse(chatId, messageId, timeoutMs, requestStartMs),
+          clientDisconnected,
+        ]);
+        response.response = responseText;
+
+        // Issue #3003: log total request timing
+        const totalMs = Date.now() - requestStartMs;
+        logger.info(
+          { chatId, messageId, totalMs, responseLength: responseText?.length ?? 0 },
+          'Sync request completed'
+        );
+      } catch (error) {
+        const elapsedMs = Date.now() - requestStartMs;
+        // Client disconnected before we could respond — clean up silently.
+        if (error instanceof Error && error.message === 'Client disconnected') {
+          logger.info(
+            { chatId, messageId, elapsedMs },
+            'Sync request aborted — client already gone'
+          );
+          // Cleanup buffers so the agent loop's late messages don't leak.
+          this.responseBuffers.delete(messageId);
+          this.chatToMessage.delete(chatId);
+          return; // Don't try to write to a closed socket.
+        }
+        // Re-throw other errors (e.g., timeout) to be handled by the caller.
+        throw error;
+      }
 
       // Cleanup
       this.responseBuffers.delete(messageId);
