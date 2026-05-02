@@ -10,6 +10,7 @@
  */
 
 import * as fs from 'node:fs';
+import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import {
@@ -629,7 +630,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       throw new Error('Feishu client not initialized — call start() first');
     }
 
-    const { size: fileSize } = fs.statSync(filePath);
+    const { size: fileSize } = await fsp.stat(filePath);
     if (fileSize > 10 * 1024 * 1024) {
       throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
     }

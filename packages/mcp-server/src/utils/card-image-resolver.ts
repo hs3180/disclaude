@@ -202,27 +202,43 @@ export async function resolveCardImages(
 
   /**
    * Walk the JSON tree and replace local paths with uploaded image_keys.
+   * For failed uploads, img elements are replaced with plain text elements
+   * to avoid sending invalid image_keys that would cause Feishu API errors.
    */
   function replaceImagePaths(obj: unknown): void {
     if (!obj || typeof obj !== 'object') {return;}
 
     if (Array.isArray(obj)) {
-      for (const item of obj) {
-        replaceImagePaths(item);
+      for (let i = 0; i < obj.length; i++) {
+        replaceImagePaths(obj[i], obj, i);
       }
       return;
     }
 
     const record = obj as Record<string, unknown>;
 
-    // Replace img_key in img elements and other contexts
-    if (typeof record.img_key === 'string' && pathToKey.has(record.img_key)) {
+    // Replace img_key in img elements: on failure, convert to text element
+    if (record.tag === 'img' && typeof record.img_key === 'string' && pathToKey.has(record.img_key)) {
       const imageKey = pathToKey.get(record.img_key);
       if (imageKey) {
         record.img_key = imageKey;
       } else {
-        // Graceful degradation: replace with a placeholder
-        record.img_key = 'img_v3_placeholder_upload_failed';
+        // Graceful degradation: replace img element with a plain text element
+        // to avoid sending invalid image_key to Feishu (which returns 400)
+        record.tag = 'div';
+        record.text = { tag: 'plain_text', content: '🖼️ [图片上传失败]' };
+        delete record.img_key;
+      }
+    }
+
+    // Replace img_key in non-img contexts (e.g., standard_image, header background)
+    if (typeof record.img_key === 'string' && record.tag !== 'img' && pathToKey.has(record.img_key)) {
+      const imageKey = pathToKey.get(record.img_key);
+      if (imageKey) {
+        record.img_key = imageKey;
+      } else {
+        // Remove the invalid img_key; the element may render without the image
+        delete record.img_key;
       }
     }
 

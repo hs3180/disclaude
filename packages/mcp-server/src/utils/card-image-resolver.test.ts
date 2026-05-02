@@ -196,8 +196,10 @@ describe('resolveCardImages', () => {
     const result = await resolveCardImages(card);
     expect(result.uploadedCount).toBe(0);
     expect(result.failedCount).toBe(1);
-    // Graceful degradation: placeholder
-    expect(getElements(result)[0].img_key).toBe('img_v3_placeholder_upload_failed');
+    // Graceful degradation: img element replaced with text element
+    expect(getElements(result)[0].tag).toBe('div');
+    expect(getElements(result)[0].text.content).toBe('🖼️ [图片上传失败]');
+    expect(getElements(result)[0].img_key).toBeUndefined();
   });
 
   it('should upload and replace markdown image references', async () => {
@@ -323,8 +325,9 @@ describe('resolveCardImages', () => {
     const result = await resolveCardImages(card);
     expect(result.uploadedCount).toBe(0);
     expect(result.failedCount).toBe(1);
-    // Should not throw, graceful degradation
-    expect(getElements(result)[0].img_key).toBe('img_v3_placeholder_upload_failed');
+    // Should not throw, graceful degradation: img replaced with text
+    expect(getElements(result)[0].tag).toBe('div');
+    expect(getElements(result)[0].img_key).toBeUndefined();
   });
 
   it('should preserve non-image content in the card', async () => {
