@@ -617,6 +617,40 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   /**
+   * Upload an image to Feishu and return the image_key for card embedding.
+   * Issue #2951: Used by MCP send_card to auto-translate local image paths.
+   *
+   * @param filePath - Local file path to upload
+   * @returns Feishu image_key (e.g., "img_v3_xxx")
+   * @throws Error if client not initialized or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized — call start() first');
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${path.basename(filePath)}`);
+    }
+
+    logger.info({ imageKey, fileName: path.basename(filePath) }, 'Image uploaded for card embedding');
+    return { imageKey };
+  }
+
+  /**
    * Get the capabilities of Feishu channel.
    */
   getCapabilities(): ChannelCapabilities {
