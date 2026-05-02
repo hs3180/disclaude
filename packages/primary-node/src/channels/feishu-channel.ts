@@ -10,6 +10,7 @@
  */
 
 import * as fs from 'node:fs';
+import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 import * as lark from '@larksuiteoapi/node-sdk';
 import {
@@ -614,6 +615,40 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return this.wsConnectionManager.isHealthy();
     }
     return false;
+  }
+
+  /**
+   * Upload an image to Feishu and return the image_key for card embedding.
+   * Issue #2951: Used by MCP send_card to auto-translate local image paths.
+   *
+   * @param filePath - Local file path to upload
+   * @returns Feishu image_key (e.g., "img_v3_xxx")
+   * @throws Error if client not initialized or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string }> {
+    if (!this.client) {
+      throw new Error('Feishu client not initialized — call start() first');
+    }
+
+    const { size: fileSize } = await fsp.stat(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${path.basename(filePath)}`);
+    }
+
+    logger.info({ imageKey, fileName: path.basename(filePath) }, 'Image uploaded for card embedding');
+    return { imageKey };
   }
 
   /**

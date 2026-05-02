@@ -19,6 +19,7 @@ import {
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
 import { transformCardTables } from './utils/table-converter.js';
+import { resolveCardImages } from './utils/card-image-resolver.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
 
@@ -217,6 +218,16 @@ For interactive cards with button click handlers, use send_interactive instead.
 - **card**: MUST be an object with config/header/elements, NOT an array or string
 - **chatId**: MUST be a non-empty string
 
+## Image Embedding (Auto-upload)
+You can embed local images directly in cards — the tool will auto-upload them:
+- **\`img\` element**: Set \`img_key\` to a local file path (e.g., \`/tmp/chart.png\`)
+  \`\`\`json
+  { "tag": "img", "img_key": "/tmp/chart.png" }
+  \`\`\`
+- **Markdown**: Use \`![alt](/path/to/image.png)\` in markdown elements
+- Supported formats: jpg, jpeg, png, webp, gif, tiff, bmp, ico (max 10MB)
+- The tool automatically detects local paths, uploads to Feishu, and replaces with image_key
+
 ## Markdown Limitations (IMPORTANT)
 The \`markdown\` element supports a **restricted subset** of GFM:
 - ✅ Supported: bold, italic, links, lists, code blocks, headings
@@ -268,13 +279,30 @@ The \`markdown\` element supports a **restricted subset** of GFM:
 
       try {
         // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
-        const processedCard = transformCardTables(card);
+        let processedCard = transformCardTables(card);
+
+        // Issue #2951: Auto-upload local image paths and replace with Feishu image_keys
+        const imageResult = await resolveCardImages(processedCard);
+        processedCard = imageResult.card;
+
         const result = await send_card({ card: processedCard, chatId, parentMessageId });
 
         // Issue #2340: Detect GFM table syntax in markdown elements and append info
         const tableWarnings = detectMarkdownTableWarnings(card);
         if (result.success && tableWarnings.length > 0) {
-          return toolSuccess(`${result.message}\n\nℹ️ Auto-converted ${tableWarnings.length === 1 ? 'a GFM table' : `${tableWarnings.length  } GFM tables`} to column_set layout. The table renders correctly now.`);
+          let message = `${result.message}\n\nℹ️ Auto-converted ${tableWarnings.length === 1 ? 'a GFM table' : `${tableWarnings.length  } GFM tables`} to column_set layout. The table renders correctly now.`;
+          if (imageResult.uploadedCount > 0) {
+            message += `\n🖼️ Auto-uploaded ${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? 'image' : 'images'}.`;
+          }
+          return toolSuccess(message);
+        }
+
+        // Issue #2951: Include image upload info in success message
+        if (result.success && imageResult.uploadedCount > 0) {
+          return toolSuccess(`${result.message} (${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? 'image' : 'images'} auto-uploaded)`);
+        }
+        if (result.success && imageResult.failedCount > 0) {
+          return toolSuccess(`${result.message} (⚠️ ${imageResult.failedCount} ${imageResult.failedCount === 1 ? 'image' : 'images'} failed to upload)`);
         }
 
         return result.success ? toolSuccess(result.message) : toolError(result.message);

@@ -58,6 +58,10 @@ export interface ChannelApiHandlers {
     filePath: string,
     threadId?: string
   ) => Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }>;
+  /** Issue #2951: Upload image and return Feishu image_key for card embedding */
+  uploadImage?: (
+    filePath: string
+  ) => Promise<{ imageKey: string }>;
   sendInteractive: (
     chatId: string,
     params: {
@@ -177,6 +181,34 @@ export function createInteractiveMessageHandler(
             request.payload as IpcRequestPayloads['uploadFile'];
           try {
             const result = await handlers.uploadFile(chatId, filePath, threadId);
+            return { id: request.id, success: true, payload: { success: true, ...result } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Issue #2951: Upload image for card embedding
+        case 'uploadImage': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.uploadImage) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'uploadImage not supported by this channel',
+            };
+          }
+          const { filePath } =
+            request.payload as IpcRequestPayloads['uploadImage'];
+          try {
+            const result = await handlers.uploadImage(filePath);
             return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
