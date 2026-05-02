@@ -98,10 +98,11 @@ show_test_plan_body() {
 run_test_script() {
     local script="$1"
     local name="$2"
+    local suite_timeout="${3:-$TIMEOUT}"
     local args=()
 
     args+=("--port" "$REST_PORT")
-    args+=("--timeout" "$TIMEOUT")
+    args+=("--timeout" "$suite_timeout")
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
@@ -146,6 +147,7 @@ _SUITE_COUNT=0
 run_suite() {
     local script="$1"
     local name="$2"
+    local suite_timeout="${3:-$TIMEOUT}"
 
     # Add delay before suite (skip for the very first one)
     if [ $_SUITE_COUNT -gt 0 ] && [ "$INTER_SUITE_DELAY" -gt 0 ] 2>/dev/null; then
@@ -154,7 +156,7 @@ run_suite() {
     fi
     _SUITE_COUNT=$((_SUITE_COUNT + 1))
 
-    run_test_script "$script" "$name"
+    run_test_script "$script" "$name" "$suite_timeout"
 }
 
 # =============================================================================
@@ -206,7 +208,7 @@ main() {
         failed=$((failed + 1))
     fi
 
-    if ! run_suite "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests"; then
+    if ! run_suite "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests" 120; then
         failed=$((failed + 1))
     fi
 

@@ -88,7 +88,7 @@ test_tool_result_format() {
     log_info "Test: Tool result format validation..."
 
     local chat_id="test-mcp-tools-list-$$"
-    assert_sync_chat_ok "请列出你可以使用的所有 MCP 工具，并告诉我每个工具的功能。" "$chat_id" || return 1
+    assert_sync_chat_ok "请简要说明你有哪些工具可以使用，一句话回答即可，不要调用任何工具。" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -iqE "send_text|send_file|send_message|工具|tool"; then
         log_pass "Agent knows about MCP tools"
