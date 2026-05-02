@@ -241,9 +241,14 @@ describe('resolveCardImages', () => {
   it('should handle multiple images in a single card', async () => {
     const img1 = createTestImage('chart1.png');
     const img2 = createTestImage('chart2.png');
-    mockIpcClient.uploadImage
-      .mockResolvedValueOnce({ success: true, imageKey: 'img_v3_first' })
-      .mockResolvedValueOnce({ success: true, imageKey: 'img_v3_second' });
+    // Use mockImplementation to return deterministic results based on input path,
+    // since Promise.all resolves uploads in non-deterministic order
+    mockIpcClient.uploadImage.mockImplementation((filePath: string) => {
+      if (filePath.includes('chart1')) {
+        return Promise.resolve({ success: true, imageKey: 'img_v3_first' });
+      }
+      return Promise.resolve({ success: true, imageKey: 'img_v3_second' });
+    });
 
     const card = {
       elements: [
