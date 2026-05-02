@@ -637,6 +637,42 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Upload an image to Feishu and return the image_key.
+   *
+   * Used by IPC handler for Issue #2951: send_card auto-uploads local image paths.
+   * Unlike doSendMessage('file'), this only uploads — no message is sent.
+   *
+   * @param filePath - Local file path to the image
+   * @returns The Feishu image_key for use in card img elements
+   * @throws Error if client not initialized or upload fails
+   */
+  async uploadImage(filePath: string): Promise<{ imageKey: string }> {
+    if (!this.client) {
+      throw new Error('Client not initialized');
+    }
+
+    const { size: fileSize } = fs.statSync(filePath);
+    if (fileSize > 10 * 1024 * 1024) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    }
+
+    const uploadResp = await this.client.im.image.create({
+      data: {
+        image_type: 'message',
+        image: fs.createReadStream(filePath),
+      },
+    });
+
+    const imageKey = uploadResp?.image_key;
+    if (!imageKey) {
+      throw new Error(`Failed to upload image: ${path.basename(filePath)}`);
+    }
+
+    logger.info({ imageKey, fileName: path.basename(filePath) }, 'Image uploaded for card embedding');
+    return { imageKey };
+  }
+
   // Delegate trigger mode methods to TriggerModeManager (Issue #2193: renamed from PassiveMode)
   isTriggerEnabled(chatId: string): boolean {
     return this.triggerModeManager.isTriggerEnabled(chatId);

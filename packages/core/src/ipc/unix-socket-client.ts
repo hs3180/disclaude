@@ -606,6 +606,25 @@ export class UnixSocketIpcClient {
     }
   }
 
+  /**
+   * Upload an image and get image_key (without sending a message).
+   * Issue #2951: Used by send_card to auto-upload local image paths.
+   *
+   * @param filePath - Local file path to the image
+   * @returns Upload result with image_key on success
+   */
+  async uploadImage(
+    filePath: string
+  ): Promise<{ success: boolean; imageKey?: string; error?: string }> {
+    try {
+      return await this.request('uploadImage', { filePath });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, filePath }, 'uploadImage failed');
+      return { success: false, error: err.message };
+    }
+  }
+
   // ============================================================================
   // Temporary chat lifecycle management (Issue #1703)
   // ============================================================================

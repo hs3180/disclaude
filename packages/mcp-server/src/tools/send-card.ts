@@ -9,6 +9,7 @@
 
 import { createLogger, getIpcClient, type FeishuCard } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
+import { resolveCardImagePaths } from '../utils/card-image-resolver.js';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
@@ -73,6 +74,21 @@ export async function send_card(params: {
     // Note: GFM table auto-conversion is handled in channel-mcp.ts (the MCP entry point)
     // No need to call transformCardTables here as channel-mcp.ts already processes the card
 
+    // Issue #2951: Auto-upload local image paths in card JSON
+    let imageResolveInfo = '';
+    const imageResult = await resolveCardImagePaths(card);
+    if (imageResult.pathsFound > 0) {
+      logger.info({
+        chatId,
+        pathsFound: imageResult.pathsFound,
+        uploaded: imageResult.uploaded,
+        failed: imageResult.failed,
+      }, 'Card image paths resolved');
+      if (imageResult.uploaded > 0) {
+        imageResolveInfo = ` (${imageResult.uploaded}/${imageResult.pathsFound} image${imageResult.pathsFound > 1 ? 's' : ''} uploaded)`;
+      }
+    }
+
     const { appId, appSecret } = getFeishuCredentials();
 
     if (!appId || !appSecret) {
@@ -106,7 +122,7 @@ export async function send_card(params: {
 
     invokeMessageSentCallback(chatId);
     logger.debug({ chatId, parentMessageId }, 'Card message sent');
-    return { success: true, message: '✅ Card message sent' };
+    return { success: true, message: `✅ Card message sent${imageResolveInfo}` };
 
   } catch (error) {
     logger.error({ err: error, chatId }, 'send_card FAILED');

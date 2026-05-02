@@ -69,6 +69,8 @@ export interface ChannelApiHandlers {
       actionPrompts?: Record<string, string>;
     }
   ) => Promise<{ messageId?: string }>;
+  /** Upload image and return image_key without sending a message (Issue #2951) */
+  uploadImage?: (filePath: string) => Promise<{ imageKey: string }>;
   /** List all tracked temp chats (Issue #1703) */
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
@@ -220,6 +222,34 @@ export function createInteractiveMessageHandler(
               );
             }
 
+            return { id: request.id, success: true, payload: { success: true, ...result } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Image upload for card embedding (Issue #2951)
+        case 'uploadImage': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.uploadImage) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'uploadImage not supported by this channel',
+            };
+          }
+          const { filePath } =
+            request.payload as IpcRequestPayloads['uploadImage'];
+          try {
+            const result = await handlers.uploadImage(filePath);
             return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
