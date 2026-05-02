@@ -7,6 +7,8 @@
  * @module @disclaude/core/scheduling
  */
 
+import type { ModelTier } from '../config/types.js';
+
 /**
  * Scheduled task definition.
  */
@@ -41,4 +43,14 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Model tier for this task (high/low/multimodal).
+   * Resolved to a model name via Config.getModelForTier().
+   * Ignored when `model` is explicitly set (explicit model takes highest priority).
+   *
+   * Defined in schedule markdown frontmatter (e.g., `modelTier: "low"`).
+   *
+   * Issue #3059: Three-level model configuration.
+   */
+  modelTier?: ModelTier;
 }

@@ -28,6 +28,7 @@ import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
+import type { ModelTier } from '../config/types.js';
 
 const logger = createLogger('Scheduler');
 
@@ -57,8 +58,9 @@ export interface SchedulerCallbacks {
  * @param prompt - The task prompt to execute
  * @param userId - Optional user ID for context
  * @param model - Optional model override for this task (Issue #1338)
+ * @param modelTier - Optional model tier for tier-based model resolution (Issue #3059)
  */
-export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string) => Promise<void>;
+export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string, modelTier?: ModelTier) => Promise<void>;
 
 /**
  * Scheduler options.
@@ -298,7 +300,8 @@ ${task.prompt}`;
 
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model);
+      // Issue #3059: Pass modelTier for tier-based model resolution
+      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier);
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 
