@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, loadRuntimeEnv, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -410,10 +410,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       const capabilities = this.callbacks.getCapabilities?.(chatId);
 
       // Build the user message using MessageBuilder (Issue #697)
+      // Issue #1371: Include runtime-env vars for agent awareness
       const enhancedContent = this.messageBuilder.buildEnhancedContent({
         text: userInput.content,
         messageId,
         senderOpenId,
+        runtimeEnvVars: loadRuntimeEnv(this.getWorkspaceDir()),
       }, chatId, capabilities);
 
       const streamingMessage: StreamingUserMessage = {
@@ -607,9 +609,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
+    // Issue #1371: Include runtime-env vars for agent awareness
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
+      runtimeEnvVars: loadRuntimeEnv(this.getWorkspaceDir()),
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

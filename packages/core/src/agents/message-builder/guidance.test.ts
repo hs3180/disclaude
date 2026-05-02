@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,63 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no env vars are provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+    expect(buildRuntimeEnvGuidance({})).toBe('');
+  });
+
+  it('should include runtime env section header when vars are provided', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123' });
+    expect(result).toContain('Runtime Environment Variables');
+  });
+
+  it('should list provided environment variables', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_abc123def456',
+      GH_TOKEN_EXPIRES_AT: '2026-03-20T12:00:00Z',
+    });
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should mask sensitive values (tokens, keys)', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_abcdefghijklmnopqrstuvwxyz',
+    });
+    expect(result).toContain('ghs_abcd...');
+    expect(result).not.toContain('ghs_abcdefghijklmnopqrstuvwxyz');
+  });
+
+  it('should not mask non-sensitive values', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN_EXPIRES_AT: '2026-03-20T12:00:00Z',
+    });
+    expect(result).toContain('2026-03-20T12:00:00Z');
+  });
+
+  it('should include description for known variables', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123' });
+    expect(result).toContain('GitHub API token');
+  });
+
+  it('should include usage instructions', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123' });
+    expect(result).toContain('process.env');
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('Security');
+  });
+
+  it('should handle unknown variables without description', () => {
+    const result = buildRuntimeEnvGuidance({
+      CUSTOM_VAR: 'some_value',
+    });
+    expect(result).toContain('CUSTOM_VAR');
+    expect(result).toContain('some_value');
+    // Should not crash for unknown vars - they just don't get a description
   });
 });

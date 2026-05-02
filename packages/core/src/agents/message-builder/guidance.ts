@@ -218,3 +218,67 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Known runtime-env variable definitions with descriptions.
+ *
+ * Issue #1371: Provides human-readable descriptions for common
+ * runtime-env variables so the agent understands their purpose.
+ */
+const RUNTIME_ENV_VAR_DESCRIPTIONS: Record<string, string> = {
+  GH_TOKEN: 'GitHub API token (installation access token)',
+  GH_TOKEN_EXPIRES_AT: 'GitHub token expiration time (ISO 8601)',
+  GH_INSTALLATION_ID: 'GitHub App installation ID',
+};
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess and shares state
+ * with the main process via a `.runtime-env` file in the workspace.
+ * This guidance tells the agent what variables are currently available
+ * and how to interact with them.
+ *
+ * @param envVars - Current runtime environment variables, or undefined/empty to skip
+ * @returns Formatted runtime-env awareness section, or empty string if no vars
+ */
+export function buildRuntimeEnvGuidance(envVars?: Record<string, string>): string {
+  if (!envVars || Object.keys(envVars).length === 0) {
+    return '';
+  }
+
+  const varList = Object.entries(envVars)
+    .map(([key, value]) => {
+      const description = RUNTIME_ENV_VAR_DESCRIPTIONS[key];
+      const descText = description ? ` — ${description}` : '';
+      // Mask sensitive values — check if the last underscore-delimited segment
+      // is a sensitive word (e.g., GH_TOKEN → TOKEN → sensitive, GH_TOKEN_EXPIRES_AT → AT → not sensitive)
+      const lastSegment = key.split('_').pop() ?? '';
+      const isSensitive = /^(?:token|key|secret|password|credential|auth|pass)$/i.test(lastSegment);
+      const displayValue = isSensitive && value.length > 12
+        ? `${value.slice(0, 8)}...`
+        : value;
+      return `- \`${key}\` = \`${displayValue}\`${descText}`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The following shared environment variables are available in your workspace (\`.runtime-env\`):
+
+${varList}
+
+### How to Use
+
+- **Read**: These variables are already loaded into your environment. Access them via \`process.env\`.
+- **Update**: Write new values to the \`.runtime-env\` file in the workspace directory using the Write tool:
+  \`\`\`
+  KEY_NAME=new_value
+  \`\`\`
+  Write the **complete file** — include all existing keys plus your changes.
+- **Security**: Never expose token values in chat responses. Use masked representations when discussing credentials.`;
+}
