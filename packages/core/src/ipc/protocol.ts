@@ -19,6 +19,7 @@ export type IpcRequestType =
   | 'sendMessage'
   | 'sendCard'
   | 'uploadFile'
+  | 'uploadImage'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
@@ -48,6 +49,10 @@ export interface IpcRequestPayloads {
     chatId: string;
     filePath: string;
     threadId?: string;
+  };
+  // Issue #2951: Upload image for card embedding (returns image_key)
+  uploadImage: {
+    filePath: string;
   };
   // Raw-param interactive card (Issue #1570)
   sendInteractive: {
@@ -89,6 +94,13 @@ export interface IpcResponsePayloads {
     fileType?: string;
     fileName?: string;
     fileSize?: number;
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
+  };
+  // Issue #2951: Upload image response (returns Feishu image_key for card embedding)
+  uploadImage: {
+    success: boolean;
+    imageKey?: string;
     error?: string;
     errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
   };
