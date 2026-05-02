@@ -505,6 +505,16 @@ export class Config {
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
+
+  /**
+   * Get project templates configuration for per-chatId Agent context switching.
+   * @see Issue #1916
+   *
+   * @returns Project templates configuration or undefined
+   */
+  static getProjectTemplatesConfig(): DisclaudeConfig['projectTemplates'] {
+    return fileConfigOnly.projectTemplates;
+  }
 }
 
 // ============================================================================

@@ -26,6 +26,8 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  ProjectManager,
+  discoverTemplatesAsConfig,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -175,8 +177,32 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #1916: CwdProvider from ProjectManager for per-chatId project context
+  const projectTemplatesConfig = Config.getProjectTemplatesConfig();
+  const workspaceDir = Config.getWorkspaceDir();
+  let projectManager: ProjectManager | undefined;
+  let cwdProvider: ((chatId: string) => string | undefined) | undefined;
+
+  if (projectTemplatesConfig && Object.keys(projectTemplatesConfig).length > 0) {
+    // Auto-discover templates from package directory and merge with config
+    const discoveredConfig = discoverTemplatesAsConfig(workspaceDir);
+    const mergedConfig = { ...discoveredConfig, ...projectTemplatesConfig };
+
+    projectManager = new ProjectManager({
+      workspaceDir,
+      packageDir: workspaceDir,
+      templatesConfig: mergedConfig,
+    });
+    cwdProvider = projectManager.createCwdProvider();
+    logger.info(
+      { templates: Object.keys(mergedConfig) },
+      'ProjectManager initialized with templates',
+    );
+  }
+
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    cwdProvider,
   });
 
   // Create unified control handler context
@@ -191,6 +217,7 @@ async function main(): Promise<void> {
       setDebugGroup: (chatId: string, name?: string) => primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
     },
+    projectManager,
     logger,
   };
 

@@ -78,6 +78,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
+  // Dynamic cwd resolution for project context (Issue #1916)
+  private readonly cwdProvider?: import('@disclaude/core').CwdProvider;
+
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
   private historyLoaded = false;
@@ -117,6 +120,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+
+    // Store CwdProvider for dynamic cwd resolution (Issue #1916)
+    this.cwdProvider = config.cwdProvider;
 
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');
   }
@@ -697,7 +703,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const mcpServers = this.buildMcpServers(false);
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1916: Use CwdProvider for dynamic cwd resolution
+    const cwd = this.cwdProvider?.(chatId);
     const sdkOptions = this.createSdkOptions({
+      ...(cwd ? { cwd } : {}),
       disallowedTools: ['EnterPlanMode'],
       mcpServers,
     });

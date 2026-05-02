@@ -320,3 +320,21 @@ export {
   type CommandDefinition,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module — per-chatId Agent context switching (Issue #1916)
+export {
+  ProjectManager,
+  discoverTemplates,
+  discoveryResultToConfig,
+  discoverTemplatesAsConfig,
+} from './project/index.js';
+
+export type {
+  CwdProvider,
+  InstanceInfo,
+  ProjectContextConfig,
+  ProjectManagerOptions,
+  ProjectResult,
+  ProjectTemplate,
+  ProjectTemplatesConfig,
+} from './project/index.js';
