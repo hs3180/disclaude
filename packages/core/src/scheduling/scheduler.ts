@@ -28,6 +28,7 @@ import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
+import { SoulLoader } from '../soul/loader.js';
 
 const logger = createLogger('Scheduler');
 
@@ -214,11 +215,27 @@ export class Scheduler {
    * Build wrapped prompt with anti-recursion instructions.
    * Provides defense-in-depth against infinite recursion.
    *
+   * Issue #1228: If task has a per-task soul, loads and prepends SOUL content.
+   *
    * @param task - Task being executed
    * @returns Wrapped prompt with explicit anti-recursion instructions
    */
-  private buildScheduledTaskPrompt(task: ScheduledTask): string {
-    return `⚠️ **Scheduled Task Execution Context**
+  private async buildScheduledTaskPrompt(task: ScheduledTask): Promise<string> {
+    let soulContent = '';
+
+    // Issue #1315, #1228: Load per-task SOUL.md if configured
+    if (task.soul) {
+      const loader = new SoulLoader(task.soul);
+      const result = await loader.load();
+      if (result) {
+        soulContent = `\n\n---\n\n**SOUL Profile** (from ${result.path}):\n\n${result.content}\n\n---\n\n`;
+        logger.info({ taskId: task.id, soulPath: result.path }, 'Loaded per-task SOUL.md');
+      } else {
+        logger.warn({ taskId: task.id, soulPath: task.soul }, 'Failed to load per-task SOUL.md');
+      }
+    }
+
+    return `${soulContent}⚠️ **Scheduled Task Execution Context**
 
 You are executing a scheduled task named "${task.name}".
 
@@ -294,7 +311,7 @@ ${task.prompt}`;
       );
 
       // Build wrapped prompt with anti-recursion instructions
-      const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+      const wrappedPrompt = await this.buildScheduledTaskPrompt(task);
 
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection

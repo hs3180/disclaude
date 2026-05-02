@@ -41,4 +41,14 @@ export interface ScheduledTask {
    * Issue #1338: Smart model selection per task scenario.
    */
   model?: string;
+  /**
+   * Optional per-task SOUL.md path override.
+   * When set, the schedule agent will load and inject this SOUL.md file's content
+   * into the system prompt, overriding the global soul.
+   * Supports ~ expansion for home directory paths.
+   *
+   * @see Issue #1315 (SOUL.md infrastructure)
+   * @see Issue #1228 (Discussion SOUL profile)
+   */
+  soul?: string;
 }

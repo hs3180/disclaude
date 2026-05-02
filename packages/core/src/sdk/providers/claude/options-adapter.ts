@@ -66,6 +66,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.stderr = options.stderr;
   }
 
+  // SOUL.md 系统提示注入（Issue #1315, #1228）
+  if (options.systemPromptAppend) {
+    sdkOptions.systemPromptAppend = options.systemPromptAppend;
+  }
+
   return sdkOptions;
 }
 

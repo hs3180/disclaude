@@ -255,6 +255,17 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# SOUL.md Personality Configuration (Issue #1315, #1228)
+# -----------------------------------------------------------------------------
+# Path to a global SOUL.md file that defines the Agent's personality/behavior.
+# Content is loaded at startup and injected into the Agent's system prompt.
+# Supports ~ expansion for home directory paths.
+# Max file size: 32 KB.
+#
+# soul:
+#   path: "~/.disclaude/SOUL.md"
+
 # =============================================================================
 # Notes
 # =============================================================================

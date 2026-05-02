@@ -320,3 +320,6 @@ export {
   type CommandDefinition,
   type DebugGroup,
 } from './control/index.js';
+
+// SOUL.md module (Issue #1315, #1228)
+export { SoulLoader, type SoulLoadResult } from './soul/index.js';

@@ -43,6 +43,11 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * Text appended to the Agent's system prompt (SOUL.md content).
+   * @see Issue #1315, #1228
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -195,6 +200,11 @@ export abstract class BaseAgent implements Disposable {
     // Set model
     if (this.model) {
       options.model = this.model;
+    }
+
+    // Set system prompt append (SOUL.md content)
+    if (extra.systemPromptAppend) {
+      options.systemPromptAppend = extra.systemPromptAppend;
     }
 
     return options;

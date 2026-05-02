@@ -199,6 +199,16 @@ export interface AgentQueryOptions {
    * Provider 层将其传递给 SDK 的 stderr 选项。
    */
   stderr?: (data: string) => void;
+  /**
+   * Text appended to the Agent's system prompt.
+   *
+   * Used by the SOUL.md system to inject personality/behavior profiles.
+   * The content is appended after any CLAUDE.md system instructions.
+   *
+   * @see Issue #1315 (SOUL.md infrastructure)
+   * @see Issue #1228 (Discussion SOUL profile)
+   */
+  systemPromptAppend?: string;
 }
 
 // ============================================================================

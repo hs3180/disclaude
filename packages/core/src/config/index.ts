@@ -505,6 +505,17 @@ export class Config {
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
+
+  /**
+   * Get SOUL.md personality configuration.
+   * Controls global SOUL.md file loading for Agent personality injection.
+   * @see Issue #1315 (SOUL.md infrastructure)
+   *
+   * @returns Soul configuration or undefined
+   */
+  static getSoulConfig(): { path?: string } | undefined {
+    return fileConfigOnly.soul;
+  }
 }
 
 // ============================================================================

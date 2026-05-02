@@ -128,6 +128,21 @@ export interface RuliuConfig {
 }
 
 /**
+ * SOUL.md personality/behavior configuration.
+ *
+ * Controls global SOUL.md file loading for Agent personality injection.
+ * The soul path points to a Markdown file whose content is appended
+ * to the Agent's system prompt at startup.
+ *
+ * @see Issue #1315 (SOUL.md infrastructure)
+ * @see Issue #1228 (Discussion SOUL profile)
+ */
+export interface SoulConfig {
+  /** Path to global SOUL.md file (supports ~ expansion) */
+  path?: string;
+}
+
+/**
  * Logging configuration section.
  */
 export interface LoggingConfig {
@@ -343,6 +358,8 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /** SOUL.md personality/behavior configuration */
+  soul?: SoulConfig;
 }
 
 /**
