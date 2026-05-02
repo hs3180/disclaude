@@ -290,6 +290,58 @@ export class ProjectManager {
   }
 
   // ───────────────────────────────────────────
+  // Delete
+  // ───────────────────────────────────────────
+
+  /**
+   * Delete an instance from memory and persisted state.
+   *
+   * Removes the instance and all associated chatId bindings.
+   * ChatIds that were bound to the deleted instance revert to default.
+   *
+   * Note: This does NOT remove the instance's working directory on disk.
+   * Directory cleanup is the caller's responsibility.
+   *
+   * @param name - Instance name to delete
+   * @returns ProjectResult with the deleted instance info on success
+   */
+  delete(name: string): ProjectResult<ProjectContextConfig> {
+    const nameError = this.validateInstanceName(name);
+    if (nameError) {
+      return { ok: false, error: nameError };
+    }
+
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Remove all chatId bindings for this instance
+    const boundChatIds = this.getBoundChatIds(name);
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Remove reverse index entry
+    this.instanceChatIds.delete(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Persist after mutation
+    this.persist();
+
+    return {
+      ok: true,
+      data: {
+        name: instance.name,
+        templateName: instance.templateName,
+        workingDir: instance.workingDir,
+      },
+    };
+  }
+
+  // ───────────────────────────────────────────
   // Query Methods
   // ───────────────────────────────────────────
 
