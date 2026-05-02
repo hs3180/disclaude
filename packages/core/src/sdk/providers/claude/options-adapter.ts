@@ -33,13 +33,28 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
 
-  // 工具配置
+  // Issue #2890: 使用 Claude Code preset 确保 vibe coding 识别
+  // systemPrompt preset 提供与 Claude Code 一致的系统提示词
+  sdkOptions.systemPrompt = { type: 'preset', preset: 'claude_code' };
+
+  // Issue #2890: 使用 Claude Code preset 启用所有默认内置工具
+  // 仅在未显式配置 allowedTools/disallowedTools 时使用 preset
+  if (!options.allowedTools && !options.disallowedTools) {
+    sdkOptions.tools = { type: 'preset', preset: 'claude_code' };
+  }
+
+  // 工具配置（作为 preset 的补充过滤）
   if (options.allowedTools) {
     sdkOptions.allowedTools = options.allowedTools;
   }
 
   if (options.disallowedTools) {
     sdkOptions.disallowedTools = options.disallowedTools;
+  }
+
+  // Issue #2890: 启用部分消息流式输出，实现实时展示 Agent 输出进度
+  if (options.includePartialMessages) {
+    sdkOptions.includePartialMessages = true;
   }
 
   // MCP 服务器

@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { adaptOptions, adaptInput } from './options-adapter.js';
 
 describe('adaptOptions', () => {
-  it('should return empty options for minimal input', () => {
+  it('should return minimal options with vibe coding presets (Issue #2890)', () => {
     const result = adaptOptions({
       settingSources: ['project'],
     });
@@ -18,6 +18,11 @@ describe('adaptOptions', () => {
     expect(result.settingSources).toEqual(['project']);
     expect(result.cwd).toBeUndefined();
     expect(result.model).toBeUndefined();
+    // Issue #2890: systemPrompt should default to claude_code preset
+    expect(result.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+    // Issue #2890: tools should default to claude_code preset when no tool filters
+    expect(result.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+    expect(result.includePartialMessages).toBeUndefined();
   });
 
   it('should pass through cwd and model', () => {
@@ -40,6 +45,26 @@ describe('adaptOptions', () => {
     expect(result.permissionMode).toBe('bypassPermissions');
   });
 
+  it('should not set tools preset when allowedTools is provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      allowedTools: ['tool1', 'tool2'],
+    });
+
+    expect(result.allowedTools).toEqual(['tool1', 'tool2']);
+    expect(result.tools).toBeUndefined();
+  });
+
+  it('should not set tools preset when disallowedTools is provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      disallowedTools: ['tool3'],
+    });
+
+    expect(result.disallowedTools).toEqual(['tool3']);
+    expect(result.tools).toBeUndefined();
+  });
+
   it('should pass through allowedTools and disallowedTools', () => {
     const result = adaptOptions({
       settingSources: ['project'],
@@ -49,6 +74,15 @@ describe('adaptOptions', () => {
 
     expect(result.allowedTools).toEqual(['tool1', 'tool2']);
     expect(result.disallowedTools).toEqual(['tool3']);
+  });
+
+  it('should pass through includePartialMessages (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      includePartialMessages: true,
+    });
+
+    expect(result.includePartialMessages).toBe(true);
   });
 
   it('should extract API key and base URL from env', () => {

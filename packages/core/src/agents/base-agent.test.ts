@@ -157,6 +157,16 @@ describe('BaseAgent', () => {
       expect(options.env?.ANTHROPIC_API_KEY).toBe('test-api-key');
     });
 
+    it('should use full settingSources for vibe coding compliance (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.settingSources).toEqual(['user', 'project', 'local']);
+    });
+
+    it('should enable includePartialMessages by default (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.includePartialMessages).toBe(true);
+    });
+
     it('should include model if specified', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.model).toBe('claude-3-5-sonnet-20241022');
@@ -257,7 +267,8 @@ describe('BaseAgent', () => {
     const defaultOptions = {
       cwd: '/workspace',
       permissionMode: 'bypassPermissions' as const,
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
+      includePartialMessages: true,
     };
 
     async function* createMockInput(messages: StreamingUserMessage[]): AsyncGenerator<StreamingUserMessage> {

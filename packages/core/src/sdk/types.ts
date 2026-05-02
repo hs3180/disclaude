@@ -193,6 +193,13 @@ export interface AgentQueryOptions {
   /** 设置来源（必填） */
   settingSources: string[];
   /**
+   * 是否启用部分消息流式输出（Issue #2890）
+   *
+   * 当为 true 时，SDK 将在流式传输过程中发出部分/流式消息事件，
+   * 使上层能够实时展示 Agent 的输出进度。
+   */
+  includePartialMessages?: boolean;
+  /**
    * stderr 输出回调（Issue #2920）
    *
    * 用于捕获 Claude Code 进程的 stderr 输出，辅助诊断启动失败原因。
