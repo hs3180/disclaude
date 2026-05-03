@@ -35,6 +35,11 @@ function createTempDir(): string {
   return dir;
 }
 
+/**
+ * Create ProjectManagerOptions with a temp workspace and packageDir.
+ * If no templatesConfig override is given, provides default config-based templates.
+ * The packageDir points to a temp directory (no templates/ by default).
+ */
 function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManagerOptions {
   const workspaceDir = createTempDir();
   return {
@@ -49,6 +54,38 @@ function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManag
         displayName: '读书助手',
       },
     },
+    ...overrides,
+  };
+}
+
+/**
+ * Create ProjectManagerOptions with a packageDir that has auto-discovered templates.
+ * Creates the given template directories with CLAUDE.md files on disk.
+ */
+function createOptionsWithDiscoveredTemplates(
+  templates: Array<{ name: string; displayName?: string; description?: string }>,
+  overrides?: Partial<ProjectManagerOptions>,
+): ProjectManagerOptions {
+  const workspaceDir = createTempDir();
+  const packageDir = join(workspaceDir, 'packages/core');
+  const templatesDir = join(packageDir, 'templates');
+
+  for (const tpl of templates) {
+    const templateDir = join(templatesDir, tpl.name);
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, 'CLAUDE.md'), `# ${tpl.name} Template`);
+    if (tpl.displayName || tpl.description) {
+      let yaml = '';
+      if (tpl.displayName) {yaml += `displayName: "${tpl.displayName}"\n`;}
+      if (tpl.description) {yaml += `description: ${tpl.description}\n`;}
+      writeFileSync(join(templateDir, 'template.yaml'), yaml);
+    }
+  }
+
+  return {
+    workspaceDir,
+    packageDir,
+    // No templatesConfig — rely on auto-discovery
     ...overrides,
   };
 }
@@ -940,5 +977,142 @@ describe('ProjectManager — edge cases', () => {
 
     const result = pm.create('chat_1', 'minimal', 'my-minimal');
     expect(result.ok).toBe(true);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Auto-Discovery (Issue #2286)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager auto-discovery (Issue #2286)', () => {
+  it('should auto-discover templates from packageDir/templates/', () => {
+    const opts = createOptionsWithDiscoveredTemplates([
+      { name: 'research', displayName: '研究模式', description: '专注研究' },
+      { name: 'coding', displayName: '编码模式' },
+    ]);
+    const pm = new ProjectManager(opts);
+
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+    expect(templates.find((t) => t.name === 'research')).toEqual({
+      name: 'research',
+      displayName: '研究模式',
+      description: '专注研究',
+    });
+    expect(templates.find((t) => t.name === 'coding')).toEqual({
+      name: 'coding',
+      displayName: '编码模式',
+    });
+  });
+
+  it('should work with zero config — pure auto-discovery', () => {
+    const opts = createOptionsWithDiscoveredTemplates([
+      { name: 'research' },
+    ]);
+    // No templatesConfig provided
+    expect(opts.templatesConfig).toBeUndefined();
+
+    const pm = new ProjectManager(opts);
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(1);
+    expect(templates[0].name).toBe('research');
+
+    // Should be able to create instances from discovered templates
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+  });
+
+  it('should merge config templates with discovered templates', () => {
+    // Create discovered templates on disk
+    const opts = createOptionsWithDiscoveredTemplates([
+      { name: 'research', displayName: 'Discovered Research' },
+      { name: 'coding', displayName: 'Discovered Coding' },
+    ]);
+
+    // Also provide config templates
+    opts.templatesConfig = {
+      // Override metadata for 'research' (config takes priority)
+      research: { displayName: 'Config Research', description: 'From config' },
+      // Add a config-only template (not on disk but available)
+      'config-only': { displayName: 'Config Only' },
+    };
+
+    const pm = new ProjectManager(opts);
+    const templates = pm.listTemplates();
+
+    // Should have 3 templates: research (merged), coding (discovered), config-only (config)
+    expect(templates).toHaveLength(3);
+
+    // research: config metadata should override discovered
+    const research = templates.find((t) => t.name === 'research');
+    expect(research).toBeDefined();
+    expect(research!.displayName).toBe('Config Research');
+    expect(research!.description).toBe('From config');
+
+    // coding: from discovery only
+    const coding = templates.find((t) => t.name === 'coding');
+    expect(coding).toBeDefined();
+    expect(coding!.displayName).toBe('Discovered Coding');
+
+    // config-only: from config only
+    const configOnly = templates.find((t) => t.name === 'config-only');
+    expect(configOnly).toBeDefined();
+    expect(configOnly!.displayName).toBe('Config Only');
+  });
+
+  it('should re-discover templates on init() re-call', () => {
+    const opts = createOptionsWithDiscoveredTemplates([
+      { name: 'research', displayName: '研究模式' },
+    ]);
+    const pm = new ProjectManager(opts);
+    expect(pm.listTemplates()).toHaveLength(1);
+
+    // Add a new template directory after construction
+    const newTemplateDir = join(opts.packageDir, 'templates', 'coding');
+    mkdirSync(newTemplateDir, { recursive: true });
+    writeFileSync(join(newTemplateDir, 'CLAUDE.md'), '# Coding');
+    writeFileSync(join(newTemplateDir, 'template.yaml'), 'displayName: "编码模式"');
+
+    // Re-initialize — should discover the new template
+    pm.init(undefined);
+    expect(pm.listTemplates()).toHaveLength(2);
+  });
+
+  it('should return empty templates when packageDir has no templates/', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = join(workspaceDir, 'packages/core');
+    // Don't create any templates directory
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      // No templatesConfig — rely purely on auto-discovery
+    });
+
+    expect(pm.listTemplates()).toEqual([]);
+  });
+
+  it('should expose packageDir via getPackageDir()', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+    expect(pm.getPackageDir()).toBe(opts.packageDir);
+  });
+
+  it('should allow creating instances from auto-discovered templates', () => {
+    const opts = createOptionsWithDiscoveredTemplates([
+      { name: 'research', displayName: '研究模式' },
+    ]);
+    const pm = new ProjectManager(opts);
+
+    // Create instance from discovered template
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.templateName).toBe('research');
+      expect(result.data.name).toBe('my-research');
+    }
+
+    // Verify active project
+    const active = pm.getActive('chat_1');
+    expect(active.name).toBe('my-research');
   });
 });

@@ -4,8 +4,12 @@
  * Manages project templates, instances, and chatId bindings in memory,
  * with atomic persistence to `{workspace}/.disclaude/projects.json`.
  *
+ * Templates are auto-discovered from `{packageDir}/templates/` by default.
+ * Config-based templates can be provided to override discovered metadata.
+ *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — persistence layer)
+ * @see Issue #2286 (auto-discovery from package directory)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
@@ -21,6 +25,7 @@ import type {
   ProjectTemplatesConfig,
   ProjectsPersistData,
 } from './types.js';
+import { discoverTemplatesAsConfig } from './template-discovery.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Validation Constants
@@ -64,8 +69,8 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  /** Package directory containing `templates/` for auto-discovery and CLAUDE.md copying */
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +87,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -98,21 +103,30 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Initialize (or re-initialize) templates from config.
+   * Initialize (or re-initialize) templates from auto-discovery and/or config.
+   *
+   * Template loading strategy (Issue #2286):
+   * 1. Auto-discover templates from `{packageDir}/templates/`
+   * 2. If `templatesConfig` is provided, merge it with discovered templates
+   *    (config metadata overrides discovered metadata for same-named templates)
+   * 3. If `templatesConfig` is not provided, use only discovered templates
    *
    * Does NOT clear existing instances or bindings — templates can be
    * hot-reloaded without losing runtime state.
    *
-   * @param templatesConfig - Template configuration (from disclaude.config.yaml or auto-discovery)
+   * @param templatesConfig - Optional template configuration (from disclaude.config.yaml)
    */
   init(templatesConfig?: ProjectTemplatesConfig): void {
     this.templates.clear();
 
-    if (!templatesConfig) {
-      return;
-    }
+    // Step 1: Auto-discover templates from packageDir/templates/
+    const discoveredConfig = discoverTemplatesAsConfig(this.packageDir);
 
-    for (const [name, meta] of Object.entries(templatesConfig)) {
+    // Step 2: Merge with config (config overrides discovered metadata)
+    const mergedConfig = { ...discoveredConfig, ...templatesConfig };
+
+    // Step 3: Load merged templates
+    for (const [name, meta] of Object.entries(mergedConfig)) {
       this.templates.set(name, {
         name,
         displayName: meta.displayName,
@@ -494,6 +508,15 @@ export class ProjectManager {
    */
   getPersistPath(): string {
     return this.persistPath;
+  }
+
+  /**
+   * Get the package directory (for testing/debugging and CLAUDE.md copying).
+   *
+   * @returns Absolute path to package directory
+   */
+  getPackageDir(): string {
+    return this.packageDir;
   }
 
   // ───────────────────────────────────────────

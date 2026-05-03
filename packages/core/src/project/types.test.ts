@@ -230,7 +230,7 @@ describe('ProjectManagerOptions', () => {
     };
     expect(options.workspaceDir).toBe('/workspace');
     expect(options.packageDir).toBe('/app/packages/core');
-    expect(Object.keys(options.templatesConfig)).toHaveLength(1);
+    expect(Object.keys(options.templatesConfig!)).toHaveLength(1);
   });
 });
 
