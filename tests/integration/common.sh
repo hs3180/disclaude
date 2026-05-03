@@ -35,6 +35,9 @@ HOST="${HOST:-127.0.0.1}"
 API_URL="http://${HOST}:${REST_PORT}"
 # Timeout for API requests - increased to 60s for AI processing
 TIMEOUT="${TIMEOUT:-30}"
+# Timeout for sync chat requests - must be >= server syncTimeoutMs (default 300000ms = 300s)
+# Issue #3193: ensure client timeout >= server timeout to avoid premature HTTP 000
+SYNC_TIMEOUT="${SYNC_TIMEOUT:-300}"
 # Default to test config file for integration tests (no MCP servers)
 CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
 SERVER_PID=""
@@ -398,6 +401,8 @@ format_request_error() {
 }
 
 # Make synchronous chat request (waits for agent response)
+# Uses SYNC_TIMEOUT (default 300s) instead of TIMEOUT to ensure client waits
+# long enough for the server's sync response (Issue #3193).
 # Usage: result=$(make_sync_request "message" "chatId")
 # Returns: "status_code|response_body"
 make_sync_request() {
@@ -411,7 +416,11 @@ make_sync_request() {
         body=$(jq -n --arg msg "$message" '{message: $msg}')
     fi
 
+    # Save original TIMEOUT, use SYNC_TIMEOUT for sync requests, then restore
+    local _saved_timeout="$TIMEOUT"
+    TIMEOUT="$SYNC_TIMEOUT"
     make_request "POST" "/api/chat/sync" "$body"
+    TIMEOUT="$_saved_timeout"
 }
 
 # =============================================================================

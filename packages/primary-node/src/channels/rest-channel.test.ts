@@ -260,6 +260,17 @@ describe('RestChannel', () => {
       channel = new RestChannel(config);
       expect(channel.getPort()).toBe(testPort);
     });
+
+    it('should accept custom syncTimeoutMs config (Issue #3193)', () => {
+      const config: RestChannelConfig = {
+        port: testPort,
+        syncTimeoutMs: 600000, // 10 minutes
+      };
+      channel = new RestChannel(config);
+      expect(channel.getPort()).toBe(testPort);
+      // Channel should be created successfully with custom timeout
+      expect(channel).toBeDefined();
+    });
   });
 
   describe('getCapabilities()', () => {

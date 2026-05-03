@@ -53,6 +53,10 @@ export interface RestChannelConfig extends ChannelConfig {
   fileStorageServiceProvider?: () => Promise<{ FileStorageService: new (config: { storageDir: string; maxFileSize: number }) => IFileStorageService }>;
   /** API prefix for routes (default: '/api') */
   apiPrefix?: string;
+  /** Sync mode response timeout in milliseconds (default: 300000 = 5 minutes).
+   *  Clients should set their HTTP timeout >= this value to avoid premature disconnects.
+   *  @see Issue #3193 - increased from 240s to 300s to reduce intermittent timeout failures */
+  syncTimeoutMs?: number;
 }
 
 /**
@@ -188,6 +192,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private fileStorageDir: string;
   private maxFileSize: number;
   private fileStorageServiceProvider?: RestChannelConfig['fileStorageServiceProvider'];
+  /** Sync mode response timeout (Issue #3193: configurable, default 300s) */
+  private syncTimeoutMs: number;
 
   // Hardcoded session management defaults
   private static readonly SESSION_TTL = 3600000; // 1 hour
@@ -216,6 +222,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     this.fileStorageDir = config.fileStorageDir ?? './workspace/files';
     this.maxFileSize = config.maxFileSize ?? 100 * 1024 * 1024; // 100MB
     this.fileStorageServiceProvider = config.fileStorageServiceProvider;
+    this.syncTimeoutMs = config.syncTimeoutMs ?? 300000; // 300 seconds (5 minutes) — Issue #3193
 
     logger.info({ id: this.id, port: this.port, host: this.host }, 'RestChannel created');
   }
@@ -565,8 +572,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     };
 
     if (syncMode) {
-      // Wait for response with timeout (4 minutes for AI processing)
-      const timeoutMs = 240000; // 240 seconds (4 minutes)
+      // Wait for response with configurable timeout (default 5 minutes for AI processing)
+      // Issue #3193: timeout is configurable via RestChannelConfig.syncTimeoutMs
+      const timeoutMs = this.syncTimeoutMs;
       const responseText = await this.waitForResponse(chatId, messageId, timeoutMs, requestStartMs);
       response.response = responseText;
 
@@ -767,6 +775,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       const timeout = setTimeout(() => {
         this.pendingResponses.delete(chatId);
         this.responseBuffers.delete(messageId);
+        this.chatToMessage.delete(chatId); // Issue #3193: clean up mapping to prevent stale entries
 
         // Issue #3003: log detailed timing summary on timeout
         const elapsedMs = Date.now() - requestStartMs;
