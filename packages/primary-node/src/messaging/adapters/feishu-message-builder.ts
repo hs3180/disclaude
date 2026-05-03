@@ -50,9 +50,53 @@ To notify the user in your FINAL response, use:
 }
 
 /**
+ * Regex pattern to detect Feishu document and wiki URLs.
+ *
+ * Issue #3035: Matches both wiki and docx URL patterns:
+ * - https://xxx.feishu.cn/wiki/{token}
+ * - https://xxx.feishu.cn/docx/{id}
+ */
+const FEISHU_DOC_URL_PATTERN = /https?:\/\/[\w-]+\.feishu\.cn\/(wiki|docx)\/[\w]+/;
+
+/**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: Instructs the Agent to use lark-cli instead of webReader
+ * for Feishu document/wiki links, since webReader cannot access
+ * authenticated Feishu pages.
+ *
+ * Only included when the user message contains a Feishu doc/wiki URL.
+ */
+function buildFeishuDocLinkGuidance(ctx: MessageBuilderContext): string {
+  const { msg } = ctx;
+
+  if (!FEISHU_DOC_URL_PATTERN.test(msg.text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+The user message contains a Feishu document or wiki link. **Do NOT use webReader** — it cannot access authenticated Feishu pages. Instead, use \`lark-cli\` to read the document.
+
+**Recommended two-step flow:**
+1. First, get the document outline:
+   \`lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope outline --max-depth 3\`
+2. Then read the relevant sections:
+   \`lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope section --start-block-id <heading_id> --doc-format markdown\`
+
+**Quick read (entire document):**
+\`lark-cli docs +fetch --api-version v2 --doc "<URL>" --doc-format markdown\`
+
+**Note:** The \`--doc\` parameter accepts both full URLs and document tokens.`;
+}
+
+/**
  * Build Feishu capability-aware tools section.
  *
  * Issue #582: Dynamically includes available MCP tools based on channel capabilities.
+ * Issue #3035: Includes Feishu doc link guidance when message contains doc/wiki URLs.
  */
 function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   const { chatId, msg, capabilities } = ctx;
@@ -107,6 +151,12 @@ ${messagingTools.join('\n')}
   if (capabilities?.supportsThread === false) {
     parts.push(`
 - Note: Thread replies are NOT supported on this channel.`);
+  }
+
+  // Issue #3035: Feishu doc link guidance (conditional on URL presence)
+  const docLinkGuidance = buildFeishuDocLinkGuidance(ctx);
+  if (docLinkGuidance) {
+    parts.push(docLinkGuidance);
   }
 
   return parts.join('\n');
