@@ -706,6 +706,32 @@ assert_sync_chat_ok() {
 }
 
 # =============================================================================
+# Per-Test Timeout Override
+# =============================================================================
+
+# Temporarily override TIMEOUT for a specific assertion or test function.
+# Restores the original TIMEOUT after the function completes.
+#
+# This is useful for AI-heavy tests (e.g., file listing with multi-turn tool calls)
+# that need a longer timeout than the suite default.
+#
+# Usage: with_timeout SECONDS function [args...]
+# Example: with_timeout 180 assert_sync_chat_ok_with_retry "list files" "chat-123"
+#
+# Issue #3058: File listing tasks can take >120s under concurrent load,
+# so individual tests need the ability to extend their timeout.
+with_timeout() {
+    local saved_timeout="$TIMEOUT"
+    TIMEOUT="$1"
+    shift
+    log_debug "Timeout override: ${saved_timeout}s → ${TIMEOUT}s"
+    "$@"
+    local result=$?
+    TIMEOUT="$saved_timeout"
+    return $result
+}
+
+# =============================================================================
 # Rate-Limit-Aware Request Helpers
 # =============================================================================
 

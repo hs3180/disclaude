@@ -8,7 +8,7 @@
 #   ./tests/integration/use-case-2-task-execution.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout (default: 120)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
@@ -46,7 +46,10 @@ test_file_listing_task() {
     log_info "Test: File listing task..."
 
     local chat_id="test-use-case-2-files-$$"
-    assert_sync_chat_ok "请列出当前目录下的所有文件" "$chat_id" || return 1
+    # File listing involves multi-turn LLM tool calls and can be slow under
+    # concurrent load (63–94s observed in CI). Use extended timeout (180s)
+    # and retry-aware assertion to handle intermittent failures. (Issue #3058)
+    with_timeout 180 assert_sync_chat_ok_with_retry "请列出当前目录下的所有文件" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -iqE "package\.json|src|dist|文件|目录|file|directory|ls|Running"; then
         log_pass "Agent returned directory content"
@@ -60,7 +63,8 @@ test_text_analysis_task() {
     log_info "Test: Text analysis task..."
 
     local chat_id="test-use-case-2-text-$$"
-    assert_sync_chat_ok "请用一句话总结：人工智能是计算机科学的一个分支，它试图理解智能的本质，并开发出一种新的能以人类智能相似的方式做出反应的智能机器。" "$chat_id" || return 1
+    # Text analysis is AI-heavy; use retry-aware assertion for resilience. (Issue #3058)
+    assert_sync_chat_ok_with_retry "请用一句话总结：人工智能是计算机科学的一个分支，它试图理解智能的本质，并开发出一种新的能以人类智能相似的方式做出反应的智能机器。" "$chat_id" || return 1
 
     # Validate response is a summary (non-empty)
     if [ -n "$RESPONSE_TEXT" ]; then

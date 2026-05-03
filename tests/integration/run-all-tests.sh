@@ -35,6 +35,17 @@ INTER_SUITE_DELAY="${INTER_SUITE_DELAY:-5}"
 RETRY_INITIAL_DELAY="${RETRY_INITIAL_DELAY:-5}"
 RETRY_BACKOFF="${RETRY_BACKOFF:-2}"
 
+# Detect whether --timeout was explicitly provided by the user.
+# Used by run_test_script to decide whether to pass --timeout to sub-scripts.
+# Without this, the orchestrator's 60s default would override per-suite timeouts
+# (e.g., Use Case 2's 120s default), causing false failures on AI-heavy tests.
+_EXPLICIT_TIMEOUT=""
+for _arg in "$@"; do
+    if [ "$_arg" = "--timeout" ]; then
+        _EXPLICIT_TIMEOUT=1
+    fi
+done
+
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
 register_cleanup
@@ -101,7 +112,14 @@ run_test_script() {
     local args=()
 
     args+=("--port" "$REST_PORT")
-    args+=("--timeout" "$TIMEOUT")
+    # Only pass --timeout to sub-scripts when explicitly provided by user.
+    # Each sub-script already has its own appropriate default timeout
+    # (e.g., 30s for basic tests, 120s for AI-heavy tests like Use Case 2).
+    # Passing the orchestrator's 60s default would override these per-suite
+    # timeouts, causing false failures on slower tests. (Issue #3058)
+    if [ -n "$_EXPLICIT_TIMEOUT" ]; then
+        args+=("--timeout" "$TIMEOUT")
+    fi
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
