@@ -77,3 +77,14 @@ export {
   type AgentFactory,
   type ScheduleExecutorOptions,
 } from './schedule-executor.js';
+
+// GitHub Change Detector (Issue #1953: Event-driven schedule trigger Phase 1)
+export {
+  GitHubChangeDetector,
+  type ChangePriority,
+  type ChangeItemType,
+  type ChangeAction,
+  type GitHubChange,
+  type PriorityRule,
+  type GitHubChangeDetectorOptions,
+} from './github-change-detector.js';
