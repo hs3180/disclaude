@@ -198,30 +198,11 @@ React 19 正式发布了！🎉
 
 ### Schedule Configuration
 
-To enable automatic topic initiation, create a schedule file in `schedules/`:
+本 skill 包含定时执行模板 `schedule.md`，可直接复制到 `schedules/` 目录启用：
 
-```markdown
----
-name: "BBS 话题发起"
-cron: "0 9,15 * * 1-5"  # 9am and 3pm on weekdays
-enabled: true
-blocking: true
-chatId: "{your_bbs_group_chat_id}"
----
-
-请使用 bbs-topic-initiator skill 为当前群组生成一个话题。
-
-要求：
-1. 读取 workspace/chat/{chatId}.md 分析最近的讨论
-2. 根据上下文选择合适的话题类型
-3. 生成一个开放式的、引人参与的话题
-4. 使用 send_user_feedback 发送到当前 chatId
-
-注意：
-- 如果最近已有活跃讨论，跳过本次
-- 避免重复相似的话题
-- 保持话题的多样性和趣味性
-```
+1. 将 `skills/bbs-topic-initiator/schedule.md` 复制到 `schedules/bbs-topic-initiation/SCHEDULE.md`
+2. 替换 `{controlChannelChatId}` 为实际的 BBS 群组 chatId
+3. 将 `enabled` 设为 `true`
 
 ### Topic Categories Configuration
 
