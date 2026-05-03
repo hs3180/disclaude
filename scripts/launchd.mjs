@@ -45,7 +45,8 @@ const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
 const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
 const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 const PROJECT_ROOT = resolve(__dirname, '..');
 const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 
@@ -284,24 +285,51 @@ function cmdStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// Exports (for testing)
+// ---------------------------------------------------------------------------
+
+export {
+  LABEL,
+  PLIST_FILENAME,
+  PLIST_PATH,
+  LOG_DIR,
+  STDERR_LOG,
+  APP_LOG,
+  CLI_ENTRY,
+  PROJECT_ROOT,
+  getNodePath,
+  getCaffeinatePath,
+  buildProgramArguments,
+  generatePlist,
+  ensureLaunchAgentsDir,
+  ensureLogDir,
+  loadPlist,
+  unloadPlist,
+  build,
+};
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
+const isMainModule = process.argv[1] === __filename;
 
-const commands = {
-  generate: cmdGenerate,
-  install: cmdInstall,
-  uninstall: cmdUninstall,
-  start: cmdStart,
-  stop: cmdStop,
-  restart: cmdRestart,
-  logs: cmdLogs,
-  status: cmdStatus,
-};
+if (isMainModule) {
+  const command = process.argv[2];
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+  const commands = {
+    generate: cmdGenerate,
+    install: cmdInstall,
+    uninstall: cmdUninstall,
+    start: cmdStart,
+    stop: cmdStop,
+    restart: cmdRestart,
+    logs: cmdLogs,
+    status: cmdStatus,
+  };
+
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -313,7 +341,8 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
-}
+    process.exit(1);
+  }
 
-commands[command]();
+  commands[command]();
+}
