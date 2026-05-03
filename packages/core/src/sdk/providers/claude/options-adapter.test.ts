@@ -10,19 +10,22 @@ import { describe, it, expect } from 'vitest';
 import { adaptOptions, adaptInput } from './options-adapter.js';
 
 describe('adaptOptions', () => {
-  it('should return empty options for minimal input', () => {
+  it('should return options with claude_code preset for vibe coding (Issue #2890)', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
     });
 
-    expect(result.settingSources).toEqual(['project']);
+    // Issue #2890: preset configuration ensures vibe coding compliance
+    expect(result.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+    expect(result.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+    expect(result.settingSources).toEqual(['user', 'project', 'local']);
     expect(result.cwd).toBeUndefined();
     expect(result.model).toBeUndefined();
   });
 
   it('should pass through cwd and model', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       cwd: '/workspace',
       model: 'claude-sonnet-4-20250514',
     });
@@ -33,7 +36,7 @@ describe('adaptOptions', () => {
 
   it('should pass through permission mode', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       permissionMode: 'bypassPermissions',
     });
 
@@ -42,7 +45,7 @@ describe('adaptOptions', () => {
 
   it('should pass through allowedTools and disallowedTools', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       allowedTools: ['tool1', 'tool2'],
       disallowedTools: ['tool3'],
     });
@@ -53,7 +56,7 @@ describe('adaptOptions', () => {
 
   it('should extract API key and base URL from env', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       env: {
         ANTHROPIC_API_KEY: 'sk-123',
         ANTHROPIC_BASE_URL: 'https://api.example.com',
@@ -72,7 +75,7 @@ describe('adaptOptions', () => {
 
   it('should pass through env without extracting when no API key', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       env: {
         OTHER_VAR: 'value',
       },
@@ -84,7 +87,7 @@ describe('adaptOptions', () => {
 
   it('should adapt stdio MCP servers', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       mcpServers: {
         'my-server': {
           type: 'stdio',
@@ -109,7 +112,7 @@ describe('adaptOptions', () => {
   it('should pass through stderr callback (Issue #2920)', () => {
     const stderrFn = (_data: string) => { /* test callback */ };
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       stderr: stderrFn,
     });
 
@@ -118,7 +121,7 @@ describe('adaptOptions', () => {
 
   it('should not include stderr when not provided', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
     });
 
     expect(result.stderr).toBeUndefined();

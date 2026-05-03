@@ -10,11 +10,19 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 /**
  * 适配统一选项为 Claude SDK 选项
  *
+ * Issue #2890: 添加 systemPrompt 和 tools preset 配置，
+ * 确保 Agent 被识别为 vibe coding 工具。
+ *
  * @param options - 统一的查询选项
  * @returns Claude SDK 选项对象
  */
 export function adaptOptions(options: AgentQueryOptions): Record<string, unknown> {
   const sdkOptions: Record<string, unknown> = {};
+
+  // Issue #2890: 使用 claude_code preset 确保 vibe coding 识别
+  // preset 配置使 Agent 的 system prompt 和 tools 与 Claude Code 一致
+  sdkOptions.systemPrompt = { type: 'preset', preset: 'claude_code' };
+  sdkOptions.tools = { type: 'preset', preset: 'claude_code' };
 
   // 基本选项
   if (options.cwd) {

@@ -159,7 +159,11 @@ export abstract class BaseAgent implements Disposable {
     const options: AgentQueryOptions = {
       cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
-      settingSources: ['project'],
+      // Issue #2890: 使用完整的 settingSources 加载 Skills/Commands/Memory
+      // user: 用户级设置 (~/.claude/)
+      // project: 项目级设置 (.claude/ in workspace)
+      // local: 本地设置（会话级覆盖）
+      settingSources: ['user', 'project', 'local'],
     };
 
     // Add allowed/disallowed tools
