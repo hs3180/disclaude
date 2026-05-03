@@ -185,6 +185,61 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the task recording guidance section for ETA estimation.
+ *
+ * Issue #1234 Phase 1: Guides the agent to record task execution
+ * information in Markdown format for future ETA estimation.
+ *
+ * The system uses non-structured Markdown storage in:
+ * - `.claude/task-records.md` — per-task execution records
+ * - `.claude/eta-rules.md` — learned estimation rules
+ *
+ * @returns Formatted task recording guidance section
+ */
+export function buildTaskRecordingGuidance(): string {
+  return `
+
+---
+
+## Task Recording for ETA Estimation
+
+**IMPORTANT: After completing significant tasks, record execution information.**
+
+When you complete a non-trivial task (bug fix, feature implementation, refactoring, etc.),
+append a record to \`.claude/task-records.md\` in the workspace root using this format:
+
+\`\`\`markdown
+## {YYYY-MM-DD} {Brief Task Title}
+
+- **Type**: {bugfix | feature-small | feature-medium | refactoring | research | test}
+- **Estimated Time**: {e.g., "30 minutes"} (if you made an estimate)
+- **Estimation Basis**: {e.g., "similar to previous form refactoring"}
+- **Actual Time**: {e.g., "45 minutes"} (approximate wall-clock time from start to completion)
+- **Review**: {e.g., "underestimated password validation complexity, next time reserve more time for auth logic"}
+\`\`\`
+
+### When to Record
+
+- ✅ Code changes (bug fixes, features, refactoring)
+- ✅ Multi-step tasks that took more than 2 minutes
+- ✅ Tasks with clear start and end points
+- ❌ Simple Q&A or informational responses
+- ❌ Greetings or trivial interactions
+
+### How to Estimate Actual Time
+
+Approximate the wall-clock time from when you started working on the task
+to when you completed it. You don't need exact timestamps — a reasonable
+estimate is fine.
+
+### Why This Matters
+
+These records help the system learn to provide accurate time estimates for
+future tasks. Honest recording of both accurate and inaccurate estimates
+improves future predictions.`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

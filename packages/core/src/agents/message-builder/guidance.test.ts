@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildTaskRecordingGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -99,6 +100,43 @@ describe('buildOutputFormatGuidance', () => {
     const result = buildOutputFormatGuidance();
     expect(result).toContain('Convert JSON objects to readable text');
     expect(result).toContain('Markdown tables instead of raw JSON');
+  });
+});
+
+describe('buildTaskRecordingGuidance', () => {
+  it('should include task recording guidance section', () => {
+    const result = buildTaskRecordingGuidance();
+    expect(result).toContain('Task Recording for ETA Estimation');
+    expect(result).toContain('.claude/task-records.md');
+  });
+
+  it('should include the markdown record format template', () => {
+    const result = buildTaskRecordingGuidance();
+    expect(result).toContain('**Type**');
+    expect(result).toContain('bugfix');
+    expect(result).toContain('feature-small');
+    expect(result).toContain('refactoring');
+    expect(result).toContain('**Estimated Time**');
+    expect(result).toContain('**Actual Time**');
+    expect(result).toContain('**Review**');
+  });
+
+  it('should include when-to-record guidelines', () => {
+    const result = buildTaskRecordingGuidance();
+    expect(result).toContain('Code changes');
+    expect(result).toContain('Multi-step tasks');
+    expect(result).toContain('Simple Q&A');
+  });
+
+  it('should explain the purpose of recording', () => {
+    const result = buildTaskRecordingGuidance();
+    expect(result).toContain('help the system learn');
+    expect(result).toContain('accurate time estimates');
+  });
+
+  it('should include estimation basis field', () => {
+    const result = buildTaskRecordingGuidance();
+    expect(result).toContain('**Estimation Basis**');
   });
 });
 
