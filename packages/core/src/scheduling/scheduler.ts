@@ -337,6 +337,46 @@ ${task.prompt}`;
   }
 
   /**
+   * Trigger a task to execute immediately, bypassing the cron schedule.
+   *
+   * Issue #1953: Direct invocation API for event-driven task triggering.
+   * Allows runtime code to trigger a task on demand (e.g., after a PR is created,
+   * after a chat is created) without waiting for the next cron cycle.
+   *
+   * Respects existing protection mechanisms:
+   * - Blocking: won't execute if task is already running (when task.blocking=true)
+   * - Cooldown: won't execute if task is within its cooldown period
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and triggered, false otherwise
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    // 1. Try to find task from active (in-memory) jobs first
+    const activeEntry = this.activeJobs.get(taskId);
+    if (activeEntry) {
+      logger.info({ taskId, source: 'active' }, 'Triggering task immediately');
+      await this.executeTask(activeEntry.task);
+      return true;
+    }
+
+    // 2. Fall back to disk lookup via ScheduleManager
+    const task = await this.scheduleManager.get(taskId);
+    if (!task) {
+      logger.warn({ taskId }, 'Cannot trigger task: not found');
+      return false;
+    }
+
+    if (!task.enabled) {
+      logger.info({ taskId }, 'Cannot trigger task: disabled');
+      return false;
+    }
+
+    logger.info({ taskId, source: 'disk' }, 'Triggering task immediately');
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
    * Get all active jobs.
    */
   getActiveJobs(): ActiveJob[] {
