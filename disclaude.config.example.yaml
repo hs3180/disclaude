@@ -116,6 +116,28 @@ ruliu:
   webhookPath: "/webhook/ruliu"
 
 # -----------------------------------------------------------------------------
+# Anthropic API Endpoint Configuration (Issue #2768)
+# -----------------------------------------------------------------------------
+# Configure a custom Anthropic-compatible API endpoint.
+# This is useful when using a proxy service (e.g., Baidu Comate, LiteLLM) or
+# an alternative Anthropic-compatible API instead of the default Anthropic endpoint.
+#
+# These values can also be set as environment variables:
+#   ANTHROPIC_BASE_URL - Custom API base URL
+#   ANTHROPIC_AUTH_TOKEN - Authentication token (alternative to API key)
+#
+# Priority: environment variables > config file values
+#
+# anthropic:
+#   # Custom API base URL (e.g., https://open.bigmodel.cn/api/anthropic for Zhipu GLM,
+#   # or your LiteLLM proxy URL)
+#   apiBaseUrl: "https://your-proxy.example.com"
+#
+#   # Authentication token for services that use token-based auth
+#   # (alternative to ANTHROPIC_API_KEY)
+#   # authToken: "your-auth-token"
+
+# -----------------------------------------------------------------------------
 # GLM (Zhipu AI) API Configuration
 # -----------------------------------------------------------------------------
 glm:

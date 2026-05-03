@@ -40,6 +40,13 @@ module.exports = {
       // Add your secrets here or use environment variables
       // JOINQUANT_USERNAME: 'your-username',
       // JOINQUANT_PASSWORD: 'your-password',
+
+      // ===== Anthropic API Endpoint Configuration (@see Issue #2768) =====
+      // Uncomment to use a custom Anthropic-compatible API endpoint.
+      // These can also be configured in disclaude.config.yaml's `anthropic:` section.
+      // ANTHROPIC_API_KEY: 'your-api-key',
+      // ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',  // Zhipu GLM
+      // ANTHROPIC_AUTH_TOKEN: 'your-auth-token',  // For token-based auth
     },
     env_production: {
       NODE_ENV: 'production',

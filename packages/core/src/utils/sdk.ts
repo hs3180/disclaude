@@ -57,7 +57,7 @@ export function extractText(message: AgentMessage): string {
  * another Claude Code session (nested session detection).
  *
  * @param apiKey - API key for authentication
- * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM)
+ * @param apiBaseUrl - Optional base URL for API requests (e.g., for GLM or custom Anthropic endpoint)
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
  * @param sdkTimeoutMs - SDK HTTP request timeout in ms (Issue #2992, default: 300000)
@@ -68,7 +68,7 @@ export function buildSdkEnv(
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
   sdkDebug: boolean = true,
-  sdkTimeoutMs?: number
+  sdkTimeoutMs?: number,
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 

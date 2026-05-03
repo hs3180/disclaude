@@ -46,6 +46,10 @@ const configLoaded = fileConfig._fromFile;
  * the main process's process.env. This ensures Skills, MCP servers, and
  * other main-process components can access configured environment variables.
  *
+ * Also injects Anthropic endpoint configuration (Issue #2768):
+ * - `anthropic.apiBaseUrl` → `ANTHROPIC_BASE_URL`
+ * - `anthropic.authToken` → `ANTHROPIC_AUTH_TOKEN`
+ *
  * System environment variables take precedence — config values will NOT
  * override existing process.env entries.
  *
@@ -60,9 +64,20 @@ export function applyGlobalEnv(): void {
   // config loaded at module import time. This ensures applyGlobalEnv()
   // reads from the correct config file when --config is used.
   const preloaded = getPreloadedConfig();
-  const env = (preloaded && validateConfig(preloaded))
-    ? (getConfigFromFile(preloaded).env || {})
-    : Config.getGlobalEnv();
+  const rawConfig = (preloaded && validateConfig(preloaded))
+    ? getConfigFromFile(preloaded)
+    : fileConfigOnly;
+
+  const env = rawConfig.env || {};
+  // Merge anthropic endpoint config into env vars (Issue #2768)
+  // These are injected into process.env so that buildSdkEnv() (which spreads
+  // process.env) passes them through to the SDK subprocess automatically.
+  if (rawConfig.anthropic?.apiBaseUrl) {
+    env.ANTHROPIC_BASE_URL = rawConfig.anthropic.apiBaseUrl;
+  }
+  if (rawConfig.anthropic?.authToken) {
+    env.ANTHROPIC_AUTH_TOKEN = rawConfig.anthropic.authToken;
+  }
 
   let applied = 0;
   let skipped = 0;
@@ -124,6 +139,11 @@ export class Config {
           // Anthropic Claude configuration (from env for fallback)
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
+
+          // Anthropic custom endpoint configuration (Issue #2768)
+          // Priority: environment variable > config file value
+          static readonly ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL || fileConfigOnly.anthropic?.apiBaseUrl || '';
+          static readonly ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN || fileConfigOnly.anthropic?.authToken || '';
 
           // Tier model configuration (Issue #3059)
           private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
@@ -361,10 +381,15 @@ export class Config {
     }
 
     // Fallback to Anthropic
-    logger.debug({ provider: 'Anthropic', model: this.CLAUDE_MODEL }, 'Using Anthropic API configuration');
+    const anthropicApiBaseUrl = this.ANTHROPIC_BASE_URL || undefined;
+    logger.debug(
+      { provider: 'Anthropic', model: this.CLAUDE_MODEL, customEndpoint: !!anthropicApiBaseUrl },
+      'Using Anthropic API configuration',
+    );
     return {
       apiKey: this.ANTHROPIC_API_KEY,
       model: this.CLAUDE_MODEL,
+      ...(anthropicApiBaseUrl ? { apiBaseUrl: anthropicApiBaseUrl } : {}),
       provider: 'anthropic',
     };
   }
