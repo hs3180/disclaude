@@ -346,6 +346,19 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * Project template entry in configuration.
+ * Each key under `projectTemplates` maps to a template with optional metadata.
+ *
+ * @see Issue #2227 (Sub-Issue E — config integration)
+ */
+export interface ProjectTemplateEntry {
+  /** Human-readable display name (e.g. "研究模式") */
+  displayName?: string;
+  /** Template description for display */
+  description?: string;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -374,6 +387,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project templates configuration (Issue #2227) */
+  projectTemplates?: Record<string, ProjectTemplateEntry>;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
