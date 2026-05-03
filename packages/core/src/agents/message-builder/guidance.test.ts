@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvAwarenessGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,43 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvAwarenessGuidance', () => {
+  it('should include runtime environment variables section', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('Runtime Environment Variables');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should explain cross-process state sharing', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('SDK subprocess');
+    expect(result).toContain('cross-process state sharing');
+  });
+
+  it('should list common variables including GH_TOKEN', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GitHub');
+  });
+
+  it('should include guidance about token expiry checking', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('EXPIRES_AT');
+    expect(result).toContain('Check expiry');
+  });
+
+  it('should warn against exposing token values', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('Do not expose');
+    expect(result).toContain('tokens/credentials');
+  });
+
+  it('should mention how to check available variables', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('cat');
+    expect(result).toContain('.runtime-env');
   });
 });

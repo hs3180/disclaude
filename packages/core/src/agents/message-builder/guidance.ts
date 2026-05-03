@@ -218,3 +218,52 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess and cannot access
+ * in-memory singletons from the main process. Runtime environment variables
+ * are shared via a file (.runtime-env) in the workspace directory.
+ *
+ * This guidance informs the agent about available runtime environment
+ * variables so it can proactively use them (e.g., GitHub tokens for PR
+ * operations) instead of failing or asking the user for credentials.
+ *
+ * @returns Formatted runtime environment awareness guidance section
+ */
+export function buildRuntimeEnvAwarenessGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You have access to **runtime environment variables** shared via the workspace \`.runtime-env\` file. Since you run in an SDK subprocess, this file is the mechanism for cross-process state sharing (you cannot access the main process's in-memory state).
+
+### How to Check Available Variables
+
+Before performing operations that may require credentials or configuration, check what is available:
+
+\`\`\`bash
+cat \${workspace}/.runtime-env 2>/dev/null || echo "No runtime-env file"
+\`\`\`
+
+### Common Variables
+
+| Variable | Purpose | Set by |
+|----------|---------|--------|
+| \`GH_TOKEN\` | GitHub API authentication (for PR, issue operations) | GitHub App auth skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiration timestamp | GitHub App auth skill |
+| \`ANTHROPIC_API_KEY\` | Anthropic API key | Config or user |
+
+Other variables may also be present depending on the workspace configuration.
+
+### Guidelines
+
+- **Use available tokens proactively** — If \`GH_TOKEN\` is set, use it for GitHub operations (\`GH_TOKEN=xxx gh pr create ...\`) instead of asking the user
+- **Check expiry before use** — If a token has \`_EXPIRES_AT\`, compare with current time before relying on it
+- **Inform the user about missing variables** — If a required variable is not set, explain what is needed and suggest how to set it
+- **Do not expose token values** — Never echo or display the full value of tokens/credentials in your response
+- **Write new variables when needed** — You can add variables to \`.runtime-env\` using the Write tool when producing state for other agents/processes`;
+}
