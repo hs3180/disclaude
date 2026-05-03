@@ -233,6 +233,8 @@ export {
 // Task module (Issue #1041 - migrated from worker-node)
 export type {
   TaskDefinitionDetails,
+  TaskProgress,
+  TaskProgressStatus,
 } from './task/index.js';
 
 export {

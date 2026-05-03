@@ -7,7 +7,7 @@
  */
 
 // Types
-export type { TaskDefinitionDetails, TaskMessageType } from './types.js';
+export type { TaskDefinitionDetails, TaskMessageType, TaskProgress, TaskProgressStatus } from './types.js';
 
 // Dialogue Message Tracker
 export { DialogueMessageTracker } from './dialogue-message-tracker.js';

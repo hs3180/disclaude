@@ -347,4 +347,105 @@ describe('TaskFileManager', () => {
       await expect(manager.cleanupTask('nonexistent')).resolves.toBeUndefined();
     });
   });
+
+  describe('progress tracking (Issue #857)', () => {
+    it('should return correct progress path', () => {
+      const result = manager.getProgressPath('task-1');
+      expect(result).toContain('progress.md');
+      expect(result).toContain('task-1');
+    });
+
+    it('should write and read progress', async () => {
+      await manager.initializeTask('task-1');
+
+      const progress = {
+        taskId: 'task-1',
+        progress: 45,
+        status: 'in_progress' as const,
+        message: 'Refactoring authentication module',
+        completedSteps: ['Analyzed existing code', 'Created new interface'],
+        remainingSteps: ['Implement new flow', 'Update tests'],
+        updatedAt: '2026-05-03T10:00:00Z',
+        startedAt: '2026-05-03T09:00:00Z',
+      };
+
+      await manager.writeProgress('task-1', progress);
+
+      // Verify file exists
+      expect(await manager.hasProgress('task-1')).toBe(true);
+
+      // Read and verify
+      const read = await manager.readProgress('task-1');
+      expect(read).not.toBeNull();
+      expect(read!.taskId).toBe('task-1');
+      expect(read!.progress).toBe(45);
+      expect(read!.status).toBe('in_progress');
+      expect(read!.completedSteps).toHaveLength(2);
+      expect(read!.remainingSteps).toHaveLength(2);
+    });
+
+    it('should return null for non-existent progress', async () => {
+      await manager.initializeTask('task-1');
+      const read = await manager.readProgress('task-1');
+      expect(read).toBeNull();
+    });
+
+    it('should return false for non-existent progress check', async () => {
+      await manager.initializeTask('task-1');
+      expect(await manager.hasProgress('task-1')).toBe(false);
+    });
+
+    it('should overwrite existing progress', async () => {
+      await manager.initializeTask('task-1');
+
+      const progress1 = {
+        taskId: 'task-1',
+        progress: 30,
+        status: 'in_progress' as const,
+        message: 'Starting',
+        completedSteps: [],
+        remainingSteps: ['Step 1', 'Step 2'],
+        updatedAt: '2026-05-03T10:00:00Z',
+        startedAt: '2026-05-03T09:00:00Z',
+      };
+
+      await manager.writeProgress('task-1', progress1);
+
+      const progress2 = {
+        ...progress1,
+        progress: 80,
+        message: 'Almost done',
+        completedSteps: ['Step 1'],
+        remainingSteps: ['Step 2'],
+      };
+
+      await manager.writeProgress('task-1', progress2);
+
+      const read = await manager.readProgress('task-1');
+      expect(read!.progress).toBe(80);
+      expect(read!.completedSteps).toHaveLength(1);
+    });
+
+    it('should handle completed status', async () => {
+      await manager.initializeTask('task-1');
+
+      const progress = {
+        taskId: 'task-1',
+        progress: 100,
+        status: 'completed' as const,
+        message: 'Task finished',
+        completedSteps: ['Step 1', 'Step 2'],
+        remainingSteps: [],
+        updatedAt: '2026-05-03T11:00:00Z',
+        startedAt: '2026-05-03T09:00:00Z',
+      };
+
+      await manager.writeProgress('task-1', progress);
+
+      const read = await manager.readProgress('task-1');
+      expect(read!.status).toBe('completed');
+      expect(read!.progress).toBe(100);
+      expect(read!.remainingSteps).toHaveLength(0);
+    });
+  });
 });
