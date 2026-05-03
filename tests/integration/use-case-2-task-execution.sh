@@ -46,7 +46,16 @@ test_file_listing_task() {
     log_info "Test: File listing task..."
 
     local chat_id="test-use-case-2-files-$$"
-    assert_sync_chat_ok "请列出当前目录下的所有文件" "$chat_id" || return 1
+
+    # Issue #3058: File listing involves multi-turn tool calls that can exceed
+    # the default 60s timeout. Increase timeout to 180s for this test and use
+    # retry logic for resilience against intermittent AI API latency.
+    local _saved_timeout="$TIMEOUT"
+    TIMEOUT=180
+
+    assert_sync_chat_ok_with_retry "请列出当前目录下的所有文件" "$chat_id" || { TIMEOUT="$_saved_timeout"; return 1; }
+
+    TIMEOUT="$_saved_timeout"
 
     if echo "$RESPONSE_TEXT" | grep -iqE "package\.json|src|dist|文件|目录|file|directory|ls|Running"; then
         log_pass "Agent returned directory content"
