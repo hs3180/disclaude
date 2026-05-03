@@ -12,6 +12,10 @@ import tsPlugin from '@typescript-eslint/eslint-plugin';
 // TODO(#918): Refactor ws-connection-manager.test.ts to use dependency injection
 const legacyMockTestFiles = [
   'packages/primary-node/src/channels/feishu/ws-connection-manager.test.ts',
+  // ClaudeSDKProvider wraps a process-level SDK (@anthropic-ai/claude-agent-sdk),
+  // not an HTTP API. vi.mock() is the correct approach here since nock cannot
+  // intercept process spawning. TODO(#918): Consider dependency injection instead.
+  'packages/core/src/sdk/providers/claude/provider.test.ts',
 ];
 
 export default [
