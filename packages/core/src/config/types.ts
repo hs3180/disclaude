@@ -374,6 +374,34 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /**
+   * Project template configuration for per-chatId Agent context switching.
+   *
+   * When set, enables the ProjectManager to create isolated project instances
+   * per chat session, each with its own working directory and CLAUDE.md.
+   *
+   * Templates can also be auto-discovered from the package `templates/` directory
+   * using `discoverTemplates()` — config values take precedence over auto-discovery.
+   *
+   * @see Issue #1916 (unified ProjectContext system)
+   * @see Issue #2227 (config integration)
+   *
+   * @example
+   * ```yaml
+   * projectTemplates:
+   *   research:
+   *     displayName: "研究模式"
+   *     description: "专注研究的独立空间"
+   *   book-reader:
+   *     displayName: "读书助手"
+   * ```
+   */
+  projectTemplates?: Record<string, {
+    /** Human-readable display name */
+    displayName?: string;
+    /** Template description */
+    description?: string;
+  }>;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }

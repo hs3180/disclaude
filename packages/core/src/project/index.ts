@@ -30,3 +30,9 @@ export type {
 } from './template-discovery.js';
 
 export { ProjectManager } from './project-manager.js';
+
+// Factory — creates CwdProvider from config + template discovery (Issue #2227)
+export {
+  createCwdProviderFromConfig,
+  type CreateCwdProviderOptions,
+} from './create-cwd-provider.js';

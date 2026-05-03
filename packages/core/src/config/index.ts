@@ -556,6 +556,29 @@ export class Config {
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
+
+  /**
+   * Get project templates configuration from config file.
+   *
+   * Used by ProjectManager to load template definitions for per-chatId
+   * Agent context switching. Templates can also be auto-discovered
+   * from the package `templates/` directory.
+   *
+   * @see Issue #1916 (unified ProjectContext system)
+   * @see Issue #2227 (config integration)
+   *
+   * @returns Project templates configuration or undefined if not configured
+   */
+  static getProjectTemplatesConfig(): Record<string, {
+    displayName?: string;
+    description?: string;
+  }> | undefined {
+    const preloaded = getPreloadedConfig();
+    if (preloaded && validateConfig(preloaded)) {
+      return getConfigFromFile(preloaded).projectTemplates;
+    }
+    return fileConfigOnly.projectTemplates;
+  }
 }
 
 // ============================================================================
