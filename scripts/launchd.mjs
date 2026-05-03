@@ -284,10 +284,45 @@ function cmdStatus() {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Exports (for testing)
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
+export {
+  getNodePath,
+  run,
+  ensureLaunchAgentsDir,
+  ensureLogDir,
+  getCaffeinatePath,
+  buildProgramArguments,
+  generatePlist,
+  loadPlist,
+  unloadPlist,
+  build,
+  cmdGenerate,
+  cmdInstall,
+  cmdUninstall,
+  cmdStart,
+  cmdStop,
+  cmdRestart,
+  cmdLogs,
+  cmdStatus,
+};
+
+// Expose constants for test assertions
+export {
+  LABEL,
+  PLIST_FILENAME,
+  PLIST_PATH,
+  LAUNCHAGENTS_DIR,
+  LOG_DIR,
+  STDERR_LOG,
+  APP_LOG,
+  CLI_ENTRY,
+};
+
+// ---------------------------------------------------------------------------
+// Main (only runs when executed directly, not when imported)
+// ---------------------------------------------------------------------------
 
 const commands = {
   generate: cmdGenerate,
@@ -300,8 +335,15 @@ const commands = {
   status: cmdStatus,
 };
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+/**
+ * Run CLI. Exported for testability; called automatically when this module is
+ * the main entry point.
+ */
+export function main(argv = process.argv) {
+  const command = argv[2];
+
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -313,7 +355,13 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
+    process.exit(1);
+  }
+
+  commands[command]();
 }
 
-commands[command]();
+// Auto-execute only when run as the main module
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  main();
+}
