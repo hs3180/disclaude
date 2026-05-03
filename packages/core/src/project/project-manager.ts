@@ -9,7 +9,7 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   CwdProvider,
@@ -287,6 +287,69 @@ export class ProjectManager {
         workingDir: this.workspaceDir,
       },
     };
+  }
+
+  /**
+   * Delete a project instance (from memory + disk).
+   *
+   * Removes the instance and all associated chatId bindings.
+   * Optionally removes the working directory from disk.
+   *
+   * @param name - Instance name to delete
+   * @param options - Delete options
+   * @returns ProjectResult with void on success
+   */
+  delete(name: string, options?: { removeWorkingDir?: boolean }): ProjectResult<void> {
+    const instance = this.instances.get(name);
+    if (!instance) {
+      return { ok: false, error: `实例 "${name}" 不存在` };
+    }
+
+    // Collect all chatIds bound to this instance
+    const boundChatIds = this.getBoundChatIds(name);
+
+    // Remove all bindings for this instance
+    for (const chatId of boundChatIds) {
+      this.chatProjectMap.delete(chatId);
+    }
+
+    // Clean up reverse index entry
+    this.instanceChatIds.delete(name);
+
+    // Remove instance from memory
+    this.instances.delete(name);
+
+    // Optionally remove working directory
+    if (options?.removeWorkingDir && existsSync(instance.workingDir)) {
+      try {
+        rmSync(instance.workingDir, { recursive: true, force: true });
+      } catch (err) {
+        // Revert in-memory state on disk cleanup failure
+        this.instances.set(name, instance);
+        for (const chatId of boundChatIds) {
+          this.chatProjectMap.set(chatId, name);
+          this.addToReverseIndex(name, chatId);
+        }
+        return {
+          ok: false,
+          error: `删除工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+
+    // Persist the updated state
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Revert in-memory state on persist failure
+      this.instances.set(name, instance);
+      for (const chatId of boundChatIds) {
+        this.chatProjectMap.set(chatId, name);
+        this.addToReverseIndex(name, chatId);
+      }
+      return persistResult;
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ───────────────────────────────────────────
