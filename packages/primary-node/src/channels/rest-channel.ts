@@ -565,21 +565,24 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     };
 
     if (syncMode) {
-      // Wait for response with timeout (4 minutes for AI processing)
-      const timeoutMs = 240000; // 240 seconds (4 minutes)
-      const responseText = await this.waitForResponse(chatId, messageId, timeoutMs, requestStartMs);
-      response.response = responseText;
+      // Issue #3193: use try-finally to ensure cleanup even on timeout
+      try {
+        // Wait for response with timeout (4 minutes for AI processing)
+        const timeoutMs = 240000; // 240 seconds (4 minutes)
+        const responseText = await this.waitForResponse(chatId, messageId, timeoutMs, requestStartMs);
+        response.response = responseText;
 
-      // Issue #3003: log total request timing
-      const totalMs = Date.now() - requestStartMs;
-      logger.info(
-        { chatId, messageId, totalMs, responseLength: responseText?.length ?? 0 },
-        'Sync request completed'
-      );
-
-      // Cleanup
-      this.responseBuffers.delete(messageId);
-      this.chatToMessage.delete(chatId);
+        // Issue #3003: log total request timing
+        const totalMs = Date.now() - requestStartMs;
+        logger.info(
+          { chatId, messageId, totalMs, responseLength: responseText?.length ?? 0 },
+          'Sync request completed'
+        );
+      } finally {
+        // Ensure cleanup regardless of success or timeout
+        this.responseBuffers.delete(messageId);
+        this.chatToMessage.delete(chatId);
+      }
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -765,8 +768,10 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private waitForResponse(chatId: string, messageId: string, timeoutMs: number, requestStartMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        // Issue #3193: complete cleanup on timeout to prevent cascade issues
         this.pendingResponses.delete(chatId);
         this.responseBuffers.delete(messageId);
+        this.chatToMessage.delete(chatId);
 
         // Issue #3003: log detailed timing summary on timeout
         const elapsedMs = Date.now() - requestStartMs;

@@ -38,13 +38,13 @@ test_number_context() {
 
     # Turn 1: Tell agent my favorite number
     log_debug "Turn 1: Telling agent my favorite number is 42"
-    assert_sync_chat_ok "我的幸运数字是 42，请记住它" "$chat_id" || return 1
+    assert_sync_chat_ok_with_retry "我的幸运数字是 42，请记住它" "$chat_id" || return 1
 
     sleep 1
 
     # Turn 2: Ask agent to recall the number
     log_debug "Turn 2: Asking agent to recall my favorite number"
-    assert_sync_chat_ok "我的幸运数字是多少？" "$chat_id" || return 1
+    assert_sync_chat_ok_with_retry "我的幸运数字是多少？" "$chat_id" || return 1
 
     # Probabilistic check - use log_warn instead of return 1
     if echo "$RESPONSE_TEXT" | grep -q "42"; then
@@ -57,7 +57,7 @@ test_number_context() {
 
     # Turn 3: Ask agent to calculate using the remembered number
     log_debug "Turn 3: Asking agent to calculate using the number"
-    assert_sync_chat_ok "用我的幸运数字乘以 2 等于多少？" "$chat_id" || return 1
+    assert_sync_chat_ok_with_retry "用我的幸运数字乘以 2 等于多少？" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -q "84"; then
         log_pass "Agent correctly calculated 42 * 2 = 84"
@@ -74,13 +74,13 @@ test_name_context() {
 
     # Turn 1: Introduce name
     log_debug "Turn 1: Introducing myself as Xiaoming"
-    assert_sync_chat_ok "你好，我叫小明，我是一名程序员" "$chat_id" || return 1
+    assert_sync_chat_ok_with_retry "你好，我叫小明，我是一名程序员" "$chat_id" || return 1
 
     sleep 1
 
     # Turn 2: Ask about my name
     log_debug "Turn 2: Asking about my name"
-    assert_sync_chat_ok "你还记得我叫什么名字吗？" "$chat_id" || return 1
+    assert_sync_chat_ok_with_retry "你还记得我叫什么名字吗？" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -q "小明"; then
         log_pass "Agent correctly recalled the name (小明)"
@@ -92,7 +92,7 @@ test_name_context() {
 
     # Turn 3: Ask about my profession
     log_debug "Turn 3: Asking about my profession"
-    assert_sync_chat_ok "我的职业是什么？" "$chat_id" || return 1
+    assert_sync_chat_ok_with_retry "我的职业是什么？" "$chat_id" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -q "程序员"; then
         log_pass "Agent correctly recalled the profession (程序员)"
@@ -110,13 +110,14 @@ test_context_isolation() {
 
     # Chat 1: Set a secret number
     log_debug "Chat 1: Setting secret number 123"
-    assert_sync_chat_ok "我的秘密数字是 123" "$chat_id_1" || return 1
+    assert_sync_chat_ok_with_retry "我的秘密数字是 123" "$chat_id_1" || return 1
 
-    sleep 1
+    sleep 2
 
     # Chat 2: Try to access the secret number (should not know it)
+    # Issue #3193: use retry-aware assertion to handle intermittent AI latency
     log_debug "Chat 2: Trying to recall secret number from different chat"
-    assert_sync_chat_ok "我的秘密数字是多少？" "$chat_id_2" || return 1
+    assert_sync_chat_ok_with_retry "我的秘密数字是多少？" "$chat_id_2" || return 1
 
     if echo "$RESPONSE_TEXT" | grep -q "123"; then
         log_warn "Context isolation warning: Chat 2 knows about number 123"
