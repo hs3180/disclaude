@@ -174,6 +174,66 @@ export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
 /** 权限模式 */
 export type PermissionMode = 'default' | 'bypassPermissions';
 
+/**
+ * System prompt 配置
+ *
+ * 支持使用 Claude Code 预设 system prompt 或自定义字符串。
+ * 预设模式确保 Agent 被识别为 vibe coding 工具（Issue #2890）。
+ */
+export type SystemPromptConfig = string | {
+  type: 'preset';
+  preset: 'claude_code';
+  /** 在预设 prompt 后追加自定义指令 */
+  append?: string;
+};
+
+/**
+ * Tools 配置
+ *
+ * 支持工具名称列表或 Claude Code 预设工具集。
+ * 预设模式确保 Agent 拥有完整的 Claude Code 工具能力（Issue #2890）。
+ */
+export type ToolsConfig = string[] | {
+  type: 'preset';
+  preset: 'claude_code';
+};
+
+/**
+ * 权限回调结果
+ *
+ * 允许或拒绝工具执行，可选更新权限列表。
+ */
+export type PermissionResult =
+  | {
+      behavior: 'allow';
+      updatedInput?: Record<string, unknown>;
+      updatedPermissions?: unknown[];
+    }
+  | {
+      behavior: 'deny';
+      message: string;
+      interrupt?: boolean;
+    };
+
+/**
+ * 权限回调函数类型
+ *
+ * 在工具执行前调用，用于控制工具是否允许执行（Issue #2890）。
+ * 可用于实现飞书端的权限确认流程。
+ */
+export type CanUseToolCallback = (
+  toolName: string,
+  input: Record<string, unknown>,
+  options: {
+    signal: AbortSignal;
+    suggestions?: unknown[];
+    blockedPath?: string;
+    decisionReason?: string;
+    toolUseID: string;
+    agentID?: string;
+  },
+) => Promise<PermissionResult>;
+
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
   /** 工作目录 */
@@ -182,6 +242,24 @@ export interface AgentQueryOptions {
   model?: string;
   /** 权限模式 */
   permissionMode?: PermissionMode;
+  /**
+   * System prompt 配置（Issue #2890）
+   *
+   * 使用预设确保 Agent 被识别为 vibe coding 工具：
+   * - `{ type: 'preset', preset: 'claude_code' }` — 使用 Claude Code 默认 system prompt
+   * - `{ type: 'preset', preset: 'claude_code', append: '...' }` — 默认 + 自定义追加
+   * - `'custom prompt'` — 完全自定义（不推荐，可能导致 vibe coding 识别失败）
+   */
+  systemPrompt?: SystemPromptConfig;
+  /**
+   * 工具配置（Issue #2890）
+   *
+   * 使用预设确保 Agent 拥有完整的 Claude Code 工具能力：
+   * - `{ type: 'preset', preset: 'claude_code' }` — 使用所有默认 Claude Code 工具
+   * - `['Bash', 'Read', 'Edit']` — 仅启用指定工具
+   * - `[]` — 禁用所有内置工具
+   */
+  tools?: ToolsConfig;
   /** 允许使用的工具列表 */
   allowedTools?: string[];
   /** 禁用的工具列表 */
@@ -192,6 +270,21 @@ export interface AgentQueryOptions {
   env?: Record<string, string | undefined>;
   /** 设置来源（必填） */
   settingSources: string[];
+  /**
+   * 是否包含流式部分消息（Issue #2890）
+   *
+   * 启用后，SDK 会发出 SDKPartialAssistantMessage 事件，
+   * 支持流式输出文本，提供更好的用户体验。
+   * @default false
+   */
+  includePartialMessages?: boolean;
+  /**
+   * 权限回调（Issue #2890）
+   *
+   * 在工具执行前调用，用于控制工具是否允许执行。
+   * 可用于实现飞书端的权限确认流程（弹窗让用户确认）。
+   */
+  canUseTool?: CanUseToolCallback;
   /**
    * stderr 输出回调（Issue #2920）
    *

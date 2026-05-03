@@ -157,6 +157,27 @@ describe('BaseAgent', () => {
       expect(options.env?.ANTHROPIC_API_KEY).toBe('test-api-key');
     });
 
+    // Issue #2890: Verify vibe coding compliance defaults
+    it('should use Claude Code preset for systemPrompt (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+    });
+
+    it('should use Claude Code preset for tools (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+    });
+
+    it('should include user, project, and local in settingSources (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.settingSources).toEqual(['user', 'project', 'local']);
+    });
+
+    it('should enable includePartialMessages by default (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.includePartialMessages).toBe(true);
+    });
+
     it('should include model if specified', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.model).toBe('claude-3-5-sonnet-20241022');

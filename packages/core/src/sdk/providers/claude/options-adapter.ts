@@ -2,6 +2,9 @@
  * Claude SDK 选项适配器
  *
  * 将统一的 AgentQueryOptions 转换为 Claude SDK 特定的选项格式。
+ *
+ * Issue #2890: 新增 systemPrompt/tools preset、includePartialMessages、canUseTool 支持，
+ * 确保 Agent 被识别为 vibe coding 工具。
  */
 
 import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
@@ -28,6 +31,18 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 权限模式 - 直接传递，使用原始 SDK 格式
   if (options.permissionMode) {
     sdkOptions.permissionMode = options.permissionMode;
+  }
+
+  // Issue #2890: System prompt 配置
+  // 使用 preset 确保被识别为 vibe coding 工具
+  if (options.systemPrompt) {
+    sdkOptions.systemPrompt = options.systemPrompt;
+  }
+
+  // Issue #2890: 工具配置
+  // 使用 preset 获取完整的 Claude Code 工具集
+  if (options.tools) {
+    sdkOptions.tools = options.tools;
   }
 
   // 设置来源（必填）
@@ -59,6 +74,16 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     if (options.env.ANTHROPIC_BASE_URL) {
       sdkOptions.apiBaseUrl = options.env.ANTHROPIC_BASE_URL;
     }
+  }
+
+  // Issue #2890: 流式部分消息
+  if (options.includePartialMessages !== undefined) {
+    sdkOptions.includePartialMessages = options.includePartialMessages;
+  }
+
+  // Issue #2890: 权限回调
+  if (options.canUseTool) {
+    sdkOptions.canUseTool = options.canUseTool;
   }
 
   // stderr 回调（Issue #2920: 捕获 Claude Code 进程的 stderr 输出）

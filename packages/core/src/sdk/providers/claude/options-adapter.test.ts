@@ -123,6 +123,117 @@ describe('adaptOptions', () => {
 
     expect(result.stderr).toBeUndefined();
   });
+
+  // Issue #2890: systemPrompt preset support
+  it('should pass through systemPrompt preset configuration', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+    });
+
+    expect(result.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+  });
+
+  it('should pass through systemPrompt preset with append', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Be concise.' },
+    });
+
+    expect(result.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code', append: 'Be concise.' });
+  });
+
+  it('should pass through systemPrompt string', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: 'You are a helpful assistant.',
+    });
+
+    expect(result.systemPrompt).toBe('You are a helpful assistant.');
+  });
+
+  it('should not include systemPrompt when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.systemPrompt).toBeUndefined();
+  });
+
+  // Issue #2890: tools preset support
+  it('should pass through tools preset configuration', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      tools: { type: 'preset', preset: 'claude_code' },
+    });
+
+    expect(result.tools).toEqual({ type: 'preset', preset: 'claude_code' });
+  });
+
+  it('should pass through tools string array', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      tools: ['Bash', 'Read', 'Edit'],
+    });
+
+    expect(result.tools).toEqual(['Bash', 'Read', 'Edit']);
+  });
+
+  it('should not include tools when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.tools).toBeUndefined();
+  });
+
+  // Issue #2890: includePartialMessages support
+  it('should pass through includePartialMessages', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      includePartialMessages: true,
+    });
+
+    expect(result.includePartialMessages).toBe(true);
+  });
+
+  it('should pass through includePartialMessages false', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      includePartialMessages: false,
+    });
+
+    expect(result.includePartialMessages).toBe(false);
+  });
+
+  it('should not include includePartialMessages when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.includePartialMessages).toBeUndefined();
+  });
+
+  // Issue #2890: canUseTool support
+  it('should pass through canUseTool callback', () => {
+    const mockCallback = () => Promise.resolve({
+      behavior: 'allow' as const,
+    });
+    const result = adaptOptions({
+      settingSources: ['project'],
+      canUseTool: mockCallback,
+    });
+
+    expect(result.canUseTool).toBe(mockCallback);
+  });
+
+  it('should not include canUseTool when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.canUseTool).toBeUndefined();
+  });
 });
 
 describe('adaptInput', () => {
