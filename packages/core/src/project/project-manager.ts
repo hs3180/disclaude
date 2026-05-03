@@ -6,11 +6,12 @@
  *
  * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
  * @see Issue #2225 (Sub-Issue C — persistence layer)
+ * @see Issue #2226 (Sub-Issue D — filesystem operations)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
@@ -64,8 +65,7 @@ interface ProjectInstance {
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  // NOTE: packageDir from options is not stored yet.
-  // Will be re-added when Sub-Issue D (#2459) implements instantiateFromTemplate().
+  private readonly packageDir: string;
   private templates: Map<string, ProjectTemplate> = new Map();
   private instances: Map<string, ProjectInstance> = new Map();
   /** chatId → instance name binding */
@@ -82,7 +82,7 @@ export class ProjectManager {
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    // packageDir will be stored when Sub-Issue D (#2459) implements instantiateFromTemplate()
+    this.packageDir = options.packageDir;
     this.dataDir = join(options.workspaceDir, '.disclaude');
     this.persistPath = join(this.dataDir, 'projects.json');
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
@@ -162,10 +162,10 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template (in-memory only).
+   * Create a new project instance from a template.
    *
-   * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
-   * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
+   * Creates the working directory and copies CLAUDE.md from the template.
+   * On filesystem failure, the in-memory state is rolled back.
    *
    * @param chatId - Chat session requesting creation
    * @param templateName - Template to instantiate from
@@ -205,6 +205,16 @@ export class ProjectManager {
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
+
+    // Filesystem operations: create directory + copy CLAUDE.md
+    const fsResult = this.instantiateFromTemplate(workingDir, templateName);
+    if (!fsResult.ok) {
+      // Rollback in-memory state on filesystem failure
+      this.instances.delete(name);
+      this.chatProjectMap.delete(chatId);
+      this.removeFromReverseIndex(name, chatId);
+      return { ok: false, error: fsResult.error };
+    }
 
     // Persist after mutation
     this.persist();
@@ -350,6 +360,92 @@ export class ProjectManager {
       }
       return active.workingDir;
     };
+  }
+
+  // ───────────────────────────────────────────
+  // Filesystem Operations (Sub-Issue D)
+  // ───────────────────────────────────────────
+
+  /**
+   * Instantiate a project from a template on the filesystem.
+   *
+   * Creates the working directory and copies CLAUDE.md from the template.
+   * On copy failure, the created directory is removed (rollback).
+   *
+   * @param workingDir - Target working directory for the instance
+   * @param templateName - Template to copy CLAUDE.md from
+   * @returns ProjectResult indicating success or failure
+   */
+  private instantiateFromTemplate(workingDir: string, templateName: string): ProjectResult<void> {
+    // Path traversal protection: verify resolved path is within workspaceDir
+    const resolvedWorkingDir = resolve(workingDir);
+    const resolvedWorkspace = resolve(this.workspaceDir);
+    if (!resolvedWorkingDir.startsWith(`${resolvedWorkspace  }/`) && resolvedWorkingDir !== resolvedWorkspace) {
+      return { ok: false, error: `路径遍历防护: 工作目录 "${workingDir}" 不在 workspace 内` };
+    }
+
+    try {
+      // Create working directory (and parents) if it doesn't exist
+      mkdirSync(workingDir, { recursive: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(workingDir, templateName);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory
+      try {
+        rmSync(workingDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup; the primary error is the copy failure
+      }
+      return copyResult;
+    }
+
+    return { ok: true, data: undefined };
+  }
+
+  /**
+   * Copy CLAUDE.md from the template directory to the instance working directory.
+   *
+   * Source: `{packageDir}/templates/{templateName}/CLAUDE.md`
+   * Target: `{workingDir}/CLAUDE.md`
+   *
+   * If packageDir is empty/not configured, the copy is skipped (instance
+   * is created without CLAUDE.md, but creation still succeeds).
+   * If the template CLAUDE.md doesn't exist, returns an error.
+   *
+   * @param workingDir - Target working directory
+   * @param templateName - Template name to copy CLAUDE.md from
+   * @returns ProjectResult indicating success or failure
+   */
+  private copyClaudeMd(workingDir: string, templateName: string): ProjectResult<void> {
+    // packageDir not configured → skip (instance has no CLAUDE.md, but creation succeeds)
+    if (!this.packageDir) {
+      return { ok: true, data: undefined };
+    }
+
+    const sourcePath = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+    const targetPath = join(workingDir, 'CLAUDE.md');
+
+    if (!existsSync(sourcePath)) {
+      return { ok: false, error: `模板文件不存在: ${sourcePath}` };
+    }
+
+    try {
+      copyFileSync(sourcePath, targetPath);
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    return { ok: true, data: undefined };
   }
 
   // ───────────────────────────────────────────
