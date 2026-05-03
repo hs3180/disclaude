@@ -41,10 +41,15 @@ register_cleanup
 
 # Additional args for tag/test filtering (passthrough to sub-scripts)
 FILTER_ARGS=()
+# Issue #2989/#3058: Track whether user explicitly provided --timeout.
+# When not provided, sub-scripts should use their own carefully chosen defaults
+# (e.g., mcp-tools-test.sh uses 120s) instead of being overridden to 60s.
+_USER_TIMEOUT=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --retries) MAX_RETRIES="$2"; shift 2 ;;
         --delay) INTER_SUITE_DELAY="$2"; shift 2 ;;
+        --timeout) _USER_TIMEOUT=true; shift 2 ;;
         --tag|--name) FILTER_ARGS+=("$1" "$2"); shift 2 ;;
         *) shift ;;
     esac
@@ -101,7 +106,12 @@ run_test_script() {
     local args=()
 
     args+=("--port" "$REST_PORT")
-    args+=("--timeout" "$TIMEOUT")
+    # Issue #2989/#3058: Only pass --timeout when user explicitly provided one.
+    # Each sub-script has its own appropriate default (30s-120s) that should be
+    # respected when the orchestrator has no explicit override.
+    if [ "$_USER_TIMEOUT" = true ]; then
+        args+=("--timeout" "$TIMEOUT")
+    fi
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
