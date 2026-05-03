@@ -202,12 +202,26 @@ export class ProjectManager {
       createdAt: new Date().toISOString(),
     };
 
+    // Save pre-mutation binding for rollback
+    const oldBinding = this.chatProjectMap.get(chatId);
+
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: remove instance and restore old binding
+      this.instances.delete(name);
+      this.removeFromReverseIndex(name, chatId);
+      if (oldBinding !== undefined) {
+        this.chatProjectMap.set(chatId, oldBinding);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -237,8 +251,10 @@ export class ProjectManager {
       return { ok: false, error: `实例 "${name}" 不存在` };
     }
 
-    // Remove from old instance's reverse index if rebinding
+    // Save pre-mutation binding for rollback
     const oldName = this.chatProjectMap.get(chatId);
+
+    // Remove from old instance's reverse index if rebinding
     if (oldName && oldName !== name) {
       this.removeFromReverseIndex(oldName, chatId);
     }
@@ -246,8 +262,19 @@ export class ProjectManager {
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore old binding
+      this.removeFromReverseIndex(name, chatId);
+      if (oldName !== undefined) {
+        this.chatProjectMap.set(chatId, oldName);
+        this.addToReverseIndex(oldName, chatId);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -271,14 +298,24 @@ export class ProjectManager {
       return { ok: false, error: chatIdError };
     }
 
+    // Save pre-mutation binding for rollback
     const boundName = this.chatProjectMap.get(chatId);
+
     this.chatProjectMap.delete(chatId);
     if (boundName) {
       this.removeFromReverseIndex(boundName, chatId);
     }
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation — rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback: restore old binding
+      if (boundName) {
+        this.chatProjectMap.set(chatId, boundName);
+        this.addToReverseIndex(boundName, chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,

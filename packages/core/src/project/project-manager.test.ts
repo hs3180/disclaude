@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProjectManager } from './project-manager.js';
@@ -892,24 +892,26 @@ describe('ProjectManager — edge cases', () => {
   });
 
   it('should compute workingDir correctly with trailing slash in workspaceDir', () => {
+    const workspaceDir = createTempDir();
     const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace/',
+      workspaceDir: `${workspaceDir}/`,
     }));
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(`${workspaceDir}/projects/test-project`);
     }
   });
 
   it('should compute workingDir correctly with multiple trailing slashes', () => {
+    const workspaceDir = createTempDir();
     const pm = new ProjectManager(createOptions({
-      workspaceDir: '/workspace///',
+      workspaceDir: `${workspaceDir}///`,
     }));
     const result = pm.create('chat_1', 'research', 'test-project');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.workingDir).toBe('/workspace/projects/test-project');
+      expect(result.data.workingDir).toBe(`${workspaceDir}/projects/test-project`);
     }
   });
 
@@ -940,5 +942,199 @@ describe('ProjectManager — edge cases', () => {
 
     const result = pm.create('chat_1', 'minimal', 'my-minimal');
     expect(result.ok).toBe(true);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Persist Failure Rollback
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager persist failure rollback', () => {
+  /** Create a read-only .disclaude directory to force persist() to fail */
+  function createReadOnlyWorkspace(): { workspaceDir: string; restore: () => void } {
+    const workspaceDir = createTempDir();
+    const dataDir = join(workspaceDir, '.disclaude');
+
+    // Create .disclaude dir and make it read-only
+    mkdirSync(dataDir, { recursive: true });
+
+    // Write a dummy file and make dir read-only
+    writeFileSync(join(dataDir, 'projects.json'), '{}', 'utf8');
+    // Make the file read-only so writeFileSync fails
+    chmodSync(join(dataDir, 'projects.json'), 0o444);
+    // Make the directory read-only so renameSync fails
+    chmodSync(dataDir, 0o555);
+
+    const restore = () => {
+      try {
+        chmodSync(dataDir, 0o755);
+        chmodSync(join(dataDir, 'projects.json'), 0o644);
+      } catch {
+        // Ignore
+      }
+    };
+
+    return { workspaceDir, restore };
+  }
+
+  it('should rollback create() when persist fails', () => {
+    const { workspaceDir, restore } = createReadOnlyWorkspace();
+    try {
+      const pm = new ProjectManager(createOptions({ workspaceDir }));
+      const result = pm.create('chat_1', 'research', 'test-project');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('持久化');
+      }
+
+      // Instance should NOT exist in memory
+      expect(pm.listInstances()).toHaveLength(0);
+      // Binding should NOT exist
+      expect(pm.getActive('chat_1').name).toBe('default');
+    } finally {
+      restore();
+    }
+  });
+
+  it('should rollback use() when persist fails', () => {
+    const workspaceDir = createTempDir();
+    const pm = new ProjectManager(createOptions({ workspaceDir }));
+
+    // Create instance successfully in writable dir
+    pm.create('chat_1', 'research', 'my-research');
+
+    // Make persist fail by making the data dir read-only
+    const dataDir = join(workspaceDir, '.disclaude');
+    chmodSync(join(dataDir, 'projects.json'), 0o444);
+    chmodSync(dataDir, 0o555);
+
+    try {
+      const result = pm.use('chat_2', 'my-research');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('持久化');
+      }
+
+      // chat_2 should NOT be bound
+      expect(pm.getActive('chat_2').name).toBe('default');
+      // chat_1 should still be bound
+      expect(pm.getActive('chat_1').name).toBe('my-research');
+    } finally {
+      chmodSync(dataDir, 0o755);
+      chmodSync(join(dataDir, 'projects.json'), 0o644);
+    }
+  });
+
+  it('should rollback reset() when persist fails', () => {
+    const workspaceDir = createTempDir();
+    const pm = new ProjectManager(createOptions({ workspaceDir }));
+
+    // Create instance successfully
+    pm.create('chat_1', 'research', 'my-research');
+
+    // Make persist fail
+    const dataDir = join(workspaceDir, '.disclaude');
+    chmodSync(join(dataDir, 'projects.json'), 0o444);
+    chmodSync(dataDir, 0o555);
+
+    try {
+      const result = pm.reset('chat_1');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('持久化');
+      }
+
+      // Binding should still exist (rolled back)
+      expect(pm.getActive('chat_1').name).toBe('my-research');
+    } finally {
+      chmodSync(dataDir, 0o755);
+      chmodSync(join(dataDir, 'projects.json'), 0o644);
+    }
+  });
+
+  it('should allow retrying after persist failure is resolved', () => {
+    const { workspaceDir, restore } = createReadOnlyWorkspace();
+    try {
+      const pm = new ProjectManager(createOptions({ workspaceDir }));
+
+      // First attempt fails
+      const r1 = pm.create('chat_1', 'research', 'test-project');
+      expect(r1.ok).toBe(false);
+
+      // Fix the permission issue
+      restore();
+
+      // Retry should succeed
+      const r2 = pm.create('chat_1', 'research', 'test-project');
+      expect(r2.ok).toBe(true);
+      expect(pm.getActive('chat_1').name).toBe('test-project');
+    } finally {
+      // Ensure cleanup
+      const dataDir = join(workspaceDir, '.disclaude');
+      try {
+        chmodSync(dataDir, 0o755);
+        chmodSync(join(dataDir, 'projects.json'), 0o644);
+      } catch {
+        // Ignore
+      }
+    }
+  });
+
+  it('should not affect other instances when one create() fails', () => {
+    const workspaceDir = createTempDir();
+    const pm = new ProjectManager(createOptions({ workspaceDir }));
+
+    // Create first instance successfully
+    pm.create('chat_1', 'research', 'research-1');
+
+    // Make persist fail
+    const dataDir = join(workspaceDir, '.disclaude');
+    chmodSync(join(dataDir, 'projects.json'), 0o444);
+    chmodSync(dataDir, 0o555);
+
+    try {
+      // Second create should fail
+      const result = pm.create('chat_2', 'book-reader', 'book-1');
+      expect(result.ok).toBe(false);
+
+      // First instance should be unaffected
+      expect(pm.listInstances()).toHaveLength(1);
+      expect(pm.getActive('chat_1').name).toBe('research-1');
+    } finally {
+      chmodSync(dataDir, 0o755);
+      chmodSync(join(dataDir, 'projects.json'), 0o644);
+    }
+  });
+
+  it('should rollback use() rebinding without affecting old binding target', () => {
+    const workspaceDir = createTempDir();
+    const pm = new ProjectManager(createOptions({ workspaceDir }));
+
+    // Create two instances
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_1', 'book-reader', 'book-1');
+
+    // chat_1 is now bound to book-1
+    expect(pm.getActive('chat_1').name).toBe('book-1');
+
+    // Make persist fail
+    const dataDir = join(workspaceDir, '.disclaude');
+    chmodSync(join(dataDir, 'projects.json'), 0o444);
+    chmodSync(dataDir, 0o555);
+
+    try {
+      // Try to rebind to research-1
+      const result = pm.use('chat_1', 'research-1');
+      expect(result.ok).toBe(false);
+
+      // chat_1 should still be bound to book-1 (rolled back)
+      expect(pm.getActive('chat_1').name).toBe('book-1');
+    } finally {
+      chmodSync(dataDir, 0o755);
+      chmodSync(join(dataDir, 'projects.json'), 0o644);
+    }
   });
 });
