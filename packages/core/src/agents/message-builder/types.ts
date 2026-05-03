@@ -99,6 +99,15 @@ export interface MessageBuilderOptions {
   buildAttachmentExtra?: (ctx: MessageBuilderContext) => string;
 
   /**
+   * Build content-specific guidance based on message content.
+   * Inserted after the user message and attachment info.
+   *
+   * Example: Feishu document link handling guidance when user
+   * shares a Feishu doc/wiki URL (Issue #3035).
+   */
+  buildContentGuidance?: (ctx: MessageBuilderContext) => string;
+
+  /**
    * Build channel-specific content for skill commands.
    * Inserted after the skill command text and metadata.
    *

@@ -427,6 +427,49 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Skill execution context...');
     });
 
+    it('should include content guidance when buildContentGuidance is provided', () => {
+      const options: MessageBuilderOptions = {
+        buildContentGuidance: () => '\n\n## Content Guidance\nUse lark-cli for docs.',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Content Guidance');
+      expect(result).toContain('Use lark-cli for docs');
+    });
+
+    it('should not include content guidance when buildContentGuidance returns empty', () => {
+      const options: MessageBuilderOptions = {
+        buildContentGuidance: () => '',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('--- User Message ---');
+      expect(result).toContain('Hello');
+    });
+
+    it('should not call buildContentGuidance for skill commands', () => {
+      const buildContentGuidance = vi.fn(() => '\n## Guidance');
+      const options: MessageBuilderOptions = { buildContentGuidance };
+      const builder = new MessageBuilder(options);
+
+      builder.buildEnhancedContent({
+        text: '/command',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(buildContentGuidance).not.toHaveBeenCalled();
+    });
+
     it('should pass correct context to channel callbacks', () => {
       const buildHeader = vi.fn((_ctx) => 'Header');
       const buildPostHistory = vi.fn((_ctx) => 'PostHistory');

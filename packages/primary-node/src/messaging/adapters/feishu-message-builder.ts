@@ -179,6 +179,59 @@ function hasImageAnalyzerMcp(): boolean {
 }
 
 /**
+ * Regex to detect Feishu document and wiki links in user messages.
+ *
+ * Issue #3035: Matches both URL patterns:
+ * - https://xxx.feishu.cn/wiki/{token}
+ * - https://xxx.feishu.cn/docx/{id}
+ */
+const FEISHU_DOC_URL_PATTERN = /https?:\/\/[a-z0-9-]+\.feishu\.cn\/(wiki|docx)\/[a-zA-Z0-9]+/;
+
+/**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: When the user message contains a Feishu document or wiki link,
+ * provides guidance for using lark-cli to read the document instead of webReader.
+ */
+function buildFeishuContentGuidance(ctx: MessageBuilderContext): string {
+  const { msg } = ctx;
+
+  if (!FEISHU_DOC_URL_PATTERN.test(msg.text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+The user message contains a **Feishu document or wiki link**. Do NOT use webReader — it cannot access authenticated Feishu pages. Instead, use \`lark-cli docs +fetch\` to read the document:
+
+### Recommended Two-Step Flow
+
+1. **Get the document outline first:**
+   \`\`\`bash
+   lark-cli docs +fetch --api-version v2 --doc "<FEISHU_URL>" --scope outline --max-depth 3
+   \`\`\`
+
+2. **Read relevant sections based on the outline:**
+   \`\`\`bash
+   lark-cli docs +fetch --api-version v2 --doc "<FEISHU_URL>" --scope section --start-block-id <heading_id> --doc-format markdown
+   \`\`\`
+
+### Quick Read (Entire Document)
+
+\`\`\`bash
+lark-cli docs +fetch --api-version v2 --doc "<FEISHU_URL>" --doc-format markdown
+\`\`\`
+
+### Notes
+- The \`--doc\` parameter accepts both full URLs and document tokens
+- Supports both \`/wiki/\` and \`/docx/\` URL patterns
+- Output formats: markdown (recommended), xml, plain text
+- For keyword search: \`--scope keyword --keyword "search term"\``;
+}
+
+/**
  * Create Feishu-specific MessageBuilderOptions.
  *
  * Returns the options object with all Feishu channel section builders
@@ -195,5 +248,6 @@ export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
     buildPostHistory: buildFeishuMentionSection,
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
+    buildContentGuidance: buildFeishuContentGuidance,
   };
 }

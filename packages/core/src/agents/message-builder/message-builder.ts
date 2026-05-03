@@ -18,7 +18,8 @@
  *   │   ├── buildHeader() - Platform label
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
- *   │   └── buildAttachmentExtra() - Image analyzer hints
+ *   │   ├── buildAttachmentExtra() - Image analyzer hints
+ *   │   └── buildContentGuidance() - Content-specific guidance (e.g., Feishu doc links)
  *   ├── Guidance sections (next-step, output format, location awareness)
  *   └── User message + attachments
  * ```
@@ -170,8 +171,9 @@ export class MessageBuilder {
     // User message + attachments
     const attachmentsInfo = this.buildBasicAttachmentsInfo(msg.attachments);
     const attachmentExtra = this.options.buildAttachmentExtra?.(ctx);
+    const contentGuidance = this.options.buildContentGuidance?.(ctx);
 
-    return `${preamble}\n\n--- User Message ---\n${msg.text}${attachmentsInfo}${attachmentExtra ?? ''}`;
+    return `${preamble}\n\n--- User Message ---\n${msg.text}${attachmentsInfo}${attachmentExtra ?? ''}${contentGuidance ?? ''}`;
   }
 
   /**
