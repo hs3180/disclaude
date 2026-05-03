@@ -44,6 +44,14 @@ export interface ControlHandlerContext {
     setMode(chatId: string, mode: TriggerMode): void;
   };
 
+  /** 调度器触发（可选） (Issue #3249: event-driven schedule trigger) */
+  scheduler?: {
+    /** Trigger a task immediately by ID */
+    triggerTask(taskId: string): Promise<boolean>;
+    /** Get all active scheduled jobs */
+    getActiveJobs(): Array<{ taskId: string; task: { name: string } }>;
+  };
+
   /** 日志记录器 */
   logger?: Logger;
 }

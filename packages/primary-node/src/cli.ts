@@ -191,6 +191,18 @@ async function main(): Promise<void> {
       setDebugGroup: (chatId: string, name?: string) => primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
     },
+    // Issue #3249: Wire scheduler for event-driven task triggering
+    scheduler: {
+      triggerTask: (taskId: string) => primaryNode.triggerTask(taskId),
+      getActiveJobs: () => {
+        const sched = primaryNode.getScheduler();
+        if (!sched) {return [];}
+        return sched.getActiveJobs().map((j) => ({
+          taskId: j.taskId,
+          task: { name: j.task.name },
+        }));
+      },
+    },
     logger,
   };
 

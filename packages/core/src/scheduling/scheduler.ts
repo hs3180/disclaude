@@ -337,6 +337,37 @@ ${task.prompt}`;
   }
 
   /**
+   * Trigger a task immediately by ID.
+   *
+   * Issue #3249: Event-driven schedule trigger mechanism.
+   * Two-phase lookup: activeJobs (memory) → ScheduleManager (disk).
+   * Reuses executeTask() to inherit blocking, cooldown, and error handling.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and triggered, false if not found or disabled
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    // Phase 1: Check activeJobs (memory) for the task
+    const activeEntry = this.activeJobs.get(taskId);
+    if (activeEntry) {
+      logger.info({ taskId }, 'triggerTask: found in activeJobs, executing');
+      await this.executeTask(activeEntry.task);
+      return true;
+    }
+
+    // Phase 2: Fall back to ScheduleManager (disk) lookup
+    const task = await this.scheduleManager.get(taskId);
+    if (!task || !task.enabled) {
+      logger.info({ taskId, found: !!task, enabled: task?.enabled }, 'triggerTask: task not found or disabled');
+      return false;
+    }
+
+    logger.info({ taskId }, 'triggerTask: found via ScheduleManager, executing');
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
    * Get all active jobs.
    */
   getActiveJobs(): ActiveJob[] {

@@ -23,6 +23,7 @@ export const handleHelp: CommandHandler = (
       '| `/trigger` | 切换触发模式 | `/trigger [mention\\|always]` |',
       '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',
       '| `/debug` | 设置/取消 Debug 群 | `/debug` |',
+      '| `/run-schedule` | 手动触发定时任务 | `/run-schedule <task-id>` |',
     ].join('\n'),
   };
 };

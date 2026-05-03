@@ -7,6 +7,7 @@ import { handleStop } from './stop.js';
 import { handleListNodes } from './list-nodes.js';
 import { handleDebug } from './debug.js';
 import { handleTrigger } from './passive.js';
+import { handleRunSchedule } from './run-schedule.js';
 
 /**
  * 命令注册表
@@ -20,6 +21,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'list-nodes', handler: handleListNodes, description: '查看执行节点' },
   { type: 'debug', handler: handleDebug, description: '切换 Debug 群设置' },
   { type: 'trigger', handler: handleTrigger, description: '切换触发模式', usage: '/trigger [mention|always]' },
+  { type: 'run-schedule', handler: handleRunSchedule, description: '手动触发定时任务', usage: '/run-schedule <task-id>' },
 ];
 
 /**
