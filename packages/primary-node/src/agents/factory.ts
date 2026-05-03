@@ -27,7 +27,7 @@
  * @module agents/factory
  */
 
-import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type ModelTier } from '@disclaude/core';
+import { Config, loadRuntimeEnv, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type ModelTier } from '@disclaude/core';
 import { ChatAgent } from './chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
 
@@ -115,6 +115,26 @@ export class AgentFactory {
    * @param options - Optional configuration overrides
    * @returns BaseAgentConfig with merged configuration
    */
+
+  /**
+   * Build MessageBuilderOptions with runtime env vars injected.
+   *
+   * Issue #1371: Loads current runtime env vars from the workspace's
+   * `.runtime-env` file and merges them into the provided options.
+   * The MessageBuilder will include a guidance section listing available
+   * variable keys so the agent is aware of shared state.
+   *
+   * @param options - Existing MessageBuilderOptions (may be undefined)
+   * @returns MessageBuilderOptions with runtimeEnvVars populated
+   */
+  private static buildMessageBuilderOptions(options?: MessageBuilderOptions): MessageBuilderOptions {
+    const runtimeEnvVars = loadRuntimeEnv(Config.getWorkspaceDir());
+    return {
+      ...options,
+      runtimeEnvVars: Object.keys(runtimeEnvVars).length > 0 ? runtimeEnvVars : undefined,
+    };
+  }
+
   private static getBaseConfig(options: AgentCreateOptions = {}): BaseAgentConfig {
     const defaultConfig = Config.getAgentConfig();
 
@@ -194,7 +214,7 @@ export class AgentFactory {
         ...baseConfig,
         chatId,
         callbacks,
-        messageBuilderOptions: options.messageBuilderOptions,
+        messageBuilderOptions: this.buildMessageBuilderOptions(options.messageBuilderOptions),
       };
 
       return new ChatAgent(config);
@@ -238,7 +258,7 @@ export class AgentFactory {
       ...baseConfig,
       chatId,
       callbacks,
-      messageBuilderOptions: options.messageBuilderOptions,
+      messageBuilderOptions: this.buildMessageBuilderOptions(options.messageBuilderOptions),
     };
 
     return new ChatAgent(config);

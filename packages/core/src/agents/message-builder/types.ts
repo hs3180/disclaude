@@ -105,4 +105,16 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * Runtime environment variables for agent awareness (Issue #1371).
+   *
+   * When provided, a guidance section is added to the agent prompt listing
+   * available variable keys and explaining how to read/write them via
+   * the `.runtime-env` file. This enables the agent to leverage shared
+   * state (e.g., authentication tokens set by other processes).
+   *
+   * Values are NOT exposed in the prompt — only key names are listed.
+   */
+  runtimeEnvVars?: Record<string, string>;
 }

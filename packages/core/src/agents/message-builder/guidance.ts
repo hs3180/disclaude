@@ -218,3 +218,53 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime environment variables guidance section.
+ *
+ * Issue #1371: Informs the agent about available runtime environment
+ * variables stored in the workspace's `.runtime-env` file. These variables
+ * enable inter-process communication between the main process and the
+ * agent subprocess (which cannot access in-memory singletons).
+ *
+ * The guidance lists available variable keys and explains how to
+ * read/write them, so the agent can leverage shared state (e.g.,
+ * authentication tokens set by other processes).
+ *
+ * @param envVars - Current runtime environment variables (key-value pairs),
+ *   or undefined/empty to skip
+ * @returns Formatted runtime env guidance section, or empty string if no vars
+ */
+export function buildRuntimeEnvGuidance(envVars?: Record<string, string>): string {
+  if (!envVars || Object.keys(envVars).length === 0) {
+    return '';
+  }
+
+  const varList = Object.keys(envVars)
+    .map(key => `- \`${key}\``)
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+You have access to shared environment variables stored in the workspace \`.runtime-env\` file. These variables enable inter-process communication between the main process and your agent subprocess.
+
+### Available Variables
+
+${varList}
+
+### How to Access
+
+- **Read**: Use the Read tool on the \`.runtime-env\` file in the workspace directory to view current values
+- **Write**: Use the Edit or Write tool to add or update variables (format: \`KEY=VALUE\` per line)
+- **Delete**: Use the Edit tool to remove specific lines from the file
+
+### Important Notes
+
+- **Security**: Never expose variable **values** in your responses to users — only mention variable names
+- **Format**: Simple \`KEY=VALUE\` per line; lines starting with \`#\` are comments; blank lines are ignored
+- **Automatic Updates**: Some variables are set and refreshed automatically by other processes (e.g., authentication tokens)`;
+}

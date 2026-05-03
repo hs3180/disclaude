@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,57 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no env vars are provided', () => {
+    expect(buildRuntimeEnvGuidance()).toBe('');
+    expect(buildRuntimeEnvGuidance(undefined)).toBe('');
+    expect(buildRuntimeEnvGuidance({})).toBe('');
+  });
+
+  it('should include runtime env guidance section header', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_xxx' });
+    expect(result).toContain('Runtime Environment Variables');
+  });
+
+  it('should list available variable keys', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_abc123',
+      GH_TOKEN_EXPIRES_AT: '1234567890',
+    });
+    expect(result).toContain('`GH_TOKEN`');
+    expect(result).toContain('`GH_TOKEN_EXPIRES_AT`');
+  });
+
+  it('should NOT expose variable values', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_secret_value' });
+    expect(result).not.toContain('ghs_secret_value');
+  });
+
+  it('should explain how to access variables', () => {
+    const result = buildRuntimeEnvGuidance({ FOO: 'bar' });
+    expect(result).toContain('Read tool');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should include security warning about not exposing values', () => {
+    const result = buildRuntimeEnvGuidance({ TOKEN: 'secret' });
+    expect(result).toContain('Security');
+    expect(result).toContain('Never expose variable **values**');
+  });
+
+  it('should explain the file format', () => {
+    const result = buildRuntimeEnvGuidance({ KEY: 'val' });
+    expect(result).toContain('KEY=VALUE');
+    expect(result).toContain('#');
+    expect(result).toContain('comments');
+  });
+
+  it('should mention automatic updates by other processes', () => {
+    const result = buildRuntimeEnvGuidance({ TOKEN: 'val' });
+    expect(result).toContain('Automatic Updates');
+    expect(result).toContain('authentication tokens');
   });
 });
