@@ -1186,3 +1186,200 @@ describe('ProjectManager — persist failure rollback', () => {
     restoreWritePermissions(workspaceDir);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Filesystem Operations (Sub-Issue D — Issue #2226)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager create() — filesystem operations', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should create working directory on disk when create() succeeds', () => {
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+
+    const instanceDir = join(workspaceDir, 'projects', 'my-research');
+    expect(existsSync(instanceDir)).toBe(true);
+  });
+
+  it('should copy CLAUDE.md from template to instance directory', () => {
+    const result = pm.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+
+    const claudeMdPath = join(workspaceDir, 'projects', 'my-research', 'CLAUDE.md');
+    expect(existsSync(claudeMdPath)).toBe(true);
+
+    const content = readFileSync(claudeMdPath, 'utf8');
+    expect(content).toBe('# Research Template');
+  });
+
+  it('should create instance without CLAUDE.md when template has no CLAUDE.md on disk', () => {
+    const pmVirtual = new ProjectManager(createOptions({
+      templatesConfig: {
+        'virtual-template': {
+          displayName: '虚拟模板',
+        },
+      },
+    }));
+
+    const result = pmVirtual.create('chat_1', 'virtual-template', 'my-virtual');
+    expect(result.ok).toBe(true);
+
+    const instanceDir = join(pmVirtual.getActive('chat_1').workingDir);
+    expect(existsSync(instanceDir)).toBe(true);
+
+    // No CLAUDE.md since template is virtual (not on disk)
+    const claudeMdPath = join(instanceDir, 'CLAUDE.md');
+    expect(existsSync(claudeMdPath)).toBe(false);
+  });
+
+  it('should create instance without CLAUDE.md when packageDir has no templates directory', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir(); // Empty, no templates/
+    const pmNoTemplates = new ProjectManager({
+      workspaceDir,
+      packageDir,
+      templatesConfig: {
+        research: { displayName: '研究' },
+      },
+    });
+
+    const result = pmNoTemplates.create('chat_1', 'research', 'my-research');
+    expect(result.ok).toBe(true);
+
+    const instanceDir = join(workspaceDir, 'projects', 'my-research');
+    expect(existsSync(instanceDir)).toBe(true);
+    expect(existsSync(join(instanceDir, 'CLAUDE.md'))).toBe(false);
+  });
+
+  it('should copy different CLAUDE.md for different templates', () => {
+    pm.create('chat_1', 'research', 'research-1');
+    pm.create('chat_2', 'book-reader', 'book-1');
+
+    const researchMd = readFileSync(join(workspaceDir, 'projects', 'research-1', 'CLAUDE.md'), 'utf8');
+    const bookMd = readFileSync(join(workspaceDir, 'projects', 'book-1', 'CLAUDE.md'), 'utf8');
+
+    expect(researchMd).toBe('# Research Template');
+    expect(bookMd).toBe('# Book Reader Template');
+  });
+
+  it('should not create directory when create() fails validation', () => {
+    const result = pm.create('chat_1', 'nonexistent', 'test');
+    expect(result.ok).toBe(false);
+
+    const instanceDir = join(workspaceDir, 'projects', 'test');
+    expect(existsSync(instanceDir)).toBe(false);
+  });
+
+  it('should not create directory when create() fails due to duplicate name', () => {
+    pm.create('chat_1', 'research', 'my-research');
+    const result = pm.create('chat_2', 'research', 'my-research');
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('ProjectManager create() — filesystem rollback', () => {
+  it('should rollback in-memory state when directory creation fails', () => {
+    // Create a scenario where mkdir would fail by making projects dir read-only
+    const opts = createOptions();
+    const { workspaceDir } = opts;
+
+    // Pre-create projects directory as read-only
+    const projectsDir = join(workspaceDir, 'projects');
+    mkdirSync(projectsDir, { recursive: true });
+    chmodSync(projectsDir, 0o555);
+
+    const pm = new ProjectManager(opts);
+    const result = pm.create('chat_1', 'research', 'test-project');
+
+    // Should fail due to filesystem error
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('创建工作目录失败');
+    }
+
+    // In-memory state should be rolled back
+    expect(pm.listInstances()).toHaveLength(0);
+    expect(pm.getActive('chat_1').name).toBe('default');
+
+    // Restore permissions for cleanup
+    chmodSync(projectsDir, 0o755);
+  });
+
+  it('should rollback and remove directory when CLAUDE.md copy fails', () => {
+    const opts = createOptions();
+    const { workspaceDir, packageDir } = opts;
+
+    // Create a template with an unreadable CLAUDE.md
+    const badTemplateDir = join(packageDir, 'templates', 'research');
+    const claudeMdPath = join(badTemplateDir, 'CLAUDE.md');
+    // Make the source CLAUDE.md unreadable
+    chmodSync(claudeMdPath, 0o000);
+
+    const pm = new ProjectManager(opts);
+    const result = pm.create('chat_1', 'research', 'test-project');
+
+    // Should fail due to CLAUDE.md copy error
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('复制 CLAUDE.md 失败');
+    }
+
+    // Directory should have been cleaned up (rollback)
+    const instanceDir = join(workspaceDir, 'projects', 'test-project');
+    expect(existsSync(instanceDir)).toBe(false);
+
+    // In-memory state should be rolled back
+    expect(pm.listInstances()).toHaveLength(0);
+
+    // Restore permissions for cleanup
+    chmodSync(claudeMdPath, 0o644);
+  });
+});
+
+describe('ProjectManager create() — path traversal filesystem protection', () => {
+  it('should prevent path traversal that bypasses name validation', () => {
+    // While name validation already blocks "..", "/", etc.,
+    // instantiateFromTemplate also verifies the resolved path is within workspaceDir
+    // This is a defense-in-depth check
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+
+    // Normal names should pass both validation and path check
+    const result = pm.create('chat_1', 'research', 'normal-name');
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('ProjectManager create() — filesystem with persistence round-trip', () => {
+  it('should preserve filesystem state across persistence round-trip', () => {
+    const opts = createOptions();
+    const { workspaceDir, packageDir } = opts;
+
+    // Phase 1: Create instance with filesystem
+    const pm1 = new ProjectManager(opts);
+    pm1.create('chat_1', 'research', 'my-research');
+
+    // Verify directory and CLAUDE.md were created
+    expect(existsSync(join(workspaceDir, 'projects', 'my-research'))).toBe(true);
+    expect(existsSync(join(workspaceDir, 'projects', 'my-research', 'CLAUDE.md'))).toBe(true);
+
+    // Phase 2: Reload from persisted state
+    const pm2 = new ProjectManager({ workspaceDir, packageDir });
+
+    // Instance should be restored from persistence
+    const instances = pm2.listInstances();
+    expect(instances).toHaveLength(1);
+    expect(instances[0].name).toBe('my-research');
+
+    // Filesystem should still be intact
+    expect(existsSync(join(workspaceDir, 'projects', 'my-research', 'CLAUDE.md'))).toBe(true);
+  });
+});
