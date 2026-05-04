@@ -53,6 +53,8 @@ export interface IPrimaryNodeForSetup {
   registerFeishuHandlers(handlers: FeishuApiHandlers): void;
   /** Issue #1703: Get the ChatStore for temp chat lifecycle management */
   getChatStore(): import('@disclaude/core').ChatStore;
+  /** Issue #3249: Trigger a scheduled task manually by its ID */
+  triggerTask(taskId: string): Promise<boolean>;
 }
 
 /**

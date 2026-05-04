@@ -77,6 +77,8 @@ export interface ChannelApiHandlers {
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
+  /** Trigger a scheduled task manually (Issue #3249) */
+  triggerTask?: (taskId: string) => Promise<{ triggered: boolean }>;
 }
 
 /**
@@ -306,6 +308,34 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Event-driven task triggering (Issue #3249)
+        case 'triggerTask': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.triggerTask) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'triggerTask not supported',
+            };
+          }
+          const { taskId } =
+            request.payload as IpcRequestPayloads['triggerTask'];
+          try {
+            const result = await handlers.triggerTask(taskId);
+            return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

@@ -240,6 +240,11 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         const updated = await chatStore.markTempChatResponded(chatId, response);
         return { success: updated };
       },
+      // Issue #3249: Event-driven task triggering via IPC
+      triggerTask: async (taskId: string) => {
+        const triggered = await context.primaryNode.triggerTask(taskId);
+        return { triggered };
+      },
     };
 
     context.primaryNode.registerFeishuHandlers(feishuHandlers);

@@ -508,4 +508,22 @@ export class PrimaryNode extends EventEmitter {
   getScheduleManager(): ScheduleManager | undefined {
     return this.scheduleManager;
   }
+
+  /**
+   * Trigger a scheduled task manually by its ID.
+   *
+   * Issue #3249: Convenience proxy for event-driven task triggering.
+   * Delegates to Scheduler.triggerTask() with two-phase lookup.
+   * Returns false if scheduler is not initialized or task not found.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and triggered, false otherwise
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    if (!this.scheduler) {
+      logger.warn({ taskId }, 'Cannot trigger task: scheduler not initialized');
+      return false;
+    }
+    return await this.scheduler.triggerTask(taskId);
+  }
 }

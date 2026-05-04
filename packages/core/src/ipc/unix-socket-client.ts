@@ -684,6 +684,37 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Event-driven task triggering (Issue #3249)
+  // ============================================================================
+
+  /**
+   * Trigger a scheduled task manually via IPC.
+   * Issue #3249: Event-driven task triggering.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns Whether the task was triggered
+   */
+  async triggerTask(
+    taskId: string
+  ): Promise<{ success: boolean; triggered: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('triggerTask', { taskId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, taskId }, 'triggerTask failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, triggered: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

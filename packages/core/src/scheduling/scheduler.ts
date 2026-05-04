@@ -327,6 +327,33 @@ ${task.prompt}`;
   }
 
   /**
+   * Trigger a task manually by its ID.
+   * Uses two-phase lookup: activeJobs (memory) → ScheduleManager (disk).
+   *
+   * Issue #3247: Event-driven schedule trigger mechanism.
+   * Issue #3249: Caller integration for PrimaryNode and Skills.
+   * Reuses executeTask() to inherit blocking / cooldown / error handling.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and triggered, false if not found or disabled
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    // 1. Check activeJobs (in-memory) first
+    const activeEntry = this.activeJobs.get(taskId);
+    if (activeEntry) {
+      await this.executeTask(activeEntry.task);
+      return true;
+    }
+
+    // 2. Fallback to ScheduleManager (disk lookup)
+    const task = await this.scheduleManager.get(taskId);
+    if (!task || !task.enabled) { return false; }
+
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
    * Reload all tasks from ScheduleManager.
    * Useful after external changes to the schedule storage.
    */

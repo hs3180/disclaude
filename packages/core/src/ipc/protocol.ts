@@ -24,7 +24,9 @@ export type IpcRequestType =
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Event-driven task triggering (Issue #3249)
+  | 'triggerTask';
 
 /**
  * IPC request payload types.
@@ -78,6 +80,10 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Event-driven task triggering (Issue #3249)
+  triggerTask: {
+    taskId: string;
+  };
 }
 
 /**
@@ -122,6 +128,11 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // Event-driven task triggering (Issue #3249)
+  triggerTask: {
+    success: boolean;
+    triggered: boolean;
   };
 }
 
