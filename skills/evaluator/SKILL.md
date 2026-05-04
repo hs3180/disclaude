@@ -59,9 +59,17 @@ Task completed successfully.
 ## Deliverables
 - Deliverable 1
 - Deliverable 2
+
+## Execution Timing
+- **Started**: {task creation timestamp from Task.md}
+- **Completed**: {current timestamp}
+- **Duration**: {calculated duration}
+- **Iterations**: {current iteration number}
 ```
 
 **File Path**: The prompt will tell you where to write `final_result.md`.
+
+**Timing Data**: Including `Execution Timing` in final_result.md enables the `eta-predictor` skill to record task execution data for future ETA estimation. Use the `Created` field from Task.md as the start time, and the current time as the completion time.
 
 ## Completion Behavior (CRITICAL)
 
