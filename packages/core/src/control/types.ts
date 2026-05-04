@@ -7,6 +7,7 @@
 import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
+import type { ProjectContextConfig, ProjectResult, ProjectTemplate, InstanceInfo } from '../project/types.js';
 
 /**
  * Debug 组信息
@@ -42,6 +43,22 @@ export interface ControlHandlerContext {
     getMode(chatId: string): TriggerMode;
     /** Set the trigger mode for a chat */
     setMode(chatId: string, mode: TriggerMode): void;
+  };
+
+  /** Project 管理器（可选） (Issue #1916 Phase 2: per-chatId Agent context switching) */
+  projectManager?: {
+    /** Get active project context for a chatId */
+    getActive(chatId: string): ProjectContextConfig;
+    /** Create a new project instance from a template */
+    create(chatId: string, templateName: string, name: string): ProjectResult<ProjectContextConfig>;
+    /** Bind a chatId to an existing instance */
+    use(chatId: string, name: string): ProjectResult<ProjectContextConfig>;
+    /** Reset a chatId's binding to default */
+    reset(chatId: string): ProjectResult<ProjectContextConfig>;
+    /** List all available templates */
+    listTemplates(): ProjectTemplate[];
+    /** List all instances */
+    listInstances(): InstanceInfo[];
   };
 
   /** 日志记录器 */
