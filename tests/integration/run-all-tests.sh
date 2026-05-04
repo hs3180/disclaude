@@ -14,7 +14,7 @@
 #   ./tests/integration/run-all-tests.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 60)
+#   --timeout SECONDS   Request timeout (default: per-suite defaults, 30-120s)
 #   --port PORT         REST API port (default: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
 #   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
@@ -35,6 +35,9 @@ INTER_SUITE_DELAY="${INTER_SUITE_DELAY:-5}"
 RETRY_INITIAL_DELAY="${RETRY_INITIAL_DELAY:-5}"
 RETRY_BACKOFF="${RETRY_BACKOFF:-2}"
 
+# Track whether user explicitly set --timeout (to avoid overriding per-suite defaults)
+_USER_TIMEOUT=""
+
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
 register_cleanup
@@ -45,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --retries) MAX_RETRIES="$2"; shift 2 ;;
         --delay) INTER_SUITE_DELAY="$2"; shift 2 ;;
+        --timeout) _USER_TIMEOUT="$2"; shift 2 ;;
         --tag|--name) FILTER_ARGS+=("$1" "$2"); shift 2 ;;
         *) shift ;;
     esac
@@ -77,7 +81,7 @@ show_test_plan_body() {
     echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    echo "  - Timeout: ${_USER_TIMEOUT:-per-suite defaults (30-120s)}"
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s (rate limit avoidance)"
     echo "  - Retry Backoff: ${RETRY_INITIAL_DELAY}s × ${RETRY_BACKOFF}^attempt"
@@ -101,7 +105,14 @@ run_test_script() {
     local args=()
 
     args+=("--port" "$REST_PORT")
-    args+=("--timeout" "$TIMEOUT")
+    # Only pass --timeout if user explicitly set it; otherwise let each sub-script
+    # use its own default (e.g., mcp-tools-test.sh uses 120s, rest-channel-test.sh uses 30s).
+    # This prevents run-all-tests.sh's default 60s from overriding per-suite timeouts.
+    # Issue #2989: Previously, --timeout 60 was always passed, causing MCP tools tests
+    # to fail with HTTP 000 when tool execution exceeded 60s.
+    if [ -n "$_USER_TIMEOUT" ]; then
+        args+=("--timeout" "$_USER_TIMEOUT")
+    fi
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
@@ -178,7 +189,7 @@ main() {
 
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
-    echo "  - Timeout: ${TIMEOUT}s"
+    echo "  - Timeout: ${_USER_TIMEOUT:-per-suite defaults (30-120s)}"
     echo "  - Max Retries: ${MAX_RETRIES}"
     echo "  - Inter-suite Delay: ${INTER_SUITE_DELAY}s"
     echo ""
