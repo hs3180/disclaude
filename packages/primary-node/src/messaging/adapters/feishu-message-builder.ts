@@ -179,6 +179,53 @@ function hasImageAnalyzerMcp(): boolean {
 }
 
 /**
+ * Feishu document/wiki URL pattern.
+ *
+ * Matches both URL types:
+ * - Wiki: https://xxx.feishu.cn/wiki/TOKEN
+ * - Document: https://xxx.feishu.cn/docx/TOKEN
+ *
+ * Issue #3035: Used to detect Feishu document links in user messages
+ * so the Agent can be guided to use lark-cli instead of webReader.
+ */
+export const FEISHU_DOC_URL_PATTERN = /https:\/\/[a-z0-9-]+\.feishu\.cn\/(wiki|docx)\/[a-zA-Z0-9]+/;
+
+/**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: When user messages contain Feishu document/wiki links,
+ * guides the Agent to use `lark-cli docs +fetch` instead of webReader
+ * (which cannot access authenticated Feishu pages).
+ *
+ * Uses a recommended two-step flow (outline → section) for efficiency,
+ * but also provides a quick-read option for shorter documents.
+ */
+function buildFeishuDocLinkGuidance(ctx: MessageBuilderContext): string {
+  const { msg } = ctx;
+
+  if (!FEISHU_DOC_URL_PATTERN.test(msg.text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+When the user message contains Feishu document or wiki links, do **NOT** use webReader (it cannot access authenticated Feishu pages). Instead, use \`lark-cli docs +fetch\` to read the document.
+
+**Recommended two-step flow:**
+1. First, get the document outline:
+   \`lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope outline --max-depth 3\`
+2. Then read the relevant sections:
+   \`lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope section --start-block-id <heading_id> --doc-format markdown\`
+
+**Quick read (entire document):**
+\`lark-cli docs +fetch --api-version v2 --doc "<URL>" --doc-format markdown\`
+
+**Note:** The \`--doc\` parameter accepts both full URLs and document tokens.`;
+}
+
+/**
  * Create Feishu-specific MessageBuilderOptions.
  *
  * Returns the options object with all Feishu channel section builders
@@ -192,7 +239,9 @@ function hasImageAnalyzerMcp(): boolean {
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
   return {
     buildHeader: buildFeishuHeader,
-    buildPostHistory: buildFeishuMentionSection,
+    buildPostHistory: (ctx: MessageBuilderContext) => {
+      return buildFeishuMentionSection(ctx) + buildFeishuDocLinkGuidance(ctx);
+    },
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
   };
