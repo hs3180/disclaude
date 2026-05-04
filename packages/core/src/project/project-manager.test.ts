@@ -21,7 +21,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProjectManager } from './project-manager.js';
-import type { ProjectManagerOptions, ProjectTemplatesConfig } from './types.js';
+import type { ProjectManagerOptions } from './types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Test Fixtures
@@ -37,23 +37,26 @@ function createTempDir(): string {
 
 function createOptions(overrides?: Partial<ProjectManagerOptions>): ProjectManagerOptions {
   const workspaceDir = createTempDir();
+  const packageDir = join(workspaceDir, 'packages/core');
+
+  // Create on-disk templates for auto-discovery
+  const researchDir = join(packageDir, 'templates', 'research');
+  mkdirSync(researchDir, { recursive: true });
+  writeFileSync(join(researchDir, 'CLAUDE.md'), '# Research Template');
+  writeFileSync(join(researchDir, 'template.yaml'),
+    'displayName: "研究模式"\ndescription: 专注研究的独立空间');
+
+  const bookDir = join(packageDir, 'templates', 'book-reader');
+  mkdirSync(bookDir, { recursive: true });
+  writeFileSync(join(bookDir, 'CLAUDE.md'), '# Book Reader Template');
+  writeFileSync(join(bookDir, 'template.yaml'), 'displayName: "读书助手"');
+
   return {
     workspaceDir,
-    packageDir: join(workspaceDir, 'packages/core'),
-    templatesConfig: {
-      research: {
-        displayName: '研究模式',
-        description: '专注研究的独立空间',
-      },
-      'book-reader': {
-        displayName: '读书助手',
-      },
-    },
+    packageDir,
     ...overrides,
   };
 }
-
-const EMPTY_CONFIG: ProjectTemplatesConfig = {};
 
 // Cleanup all temp directories after all tests
 afterEach(() => {
@@ -71,7 +74,7 @@ afterEach(() => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('ProjectManager constructor', () => {
-  it('should construct with valid options and load templates', () => {
+  it('should construct with valid options and auto-discover templates', () => {
     const pm = new ProjectManager(createOptions());
     const templates = pm.listTemplates();
     expect(templates).toHaveLength(2);
@@ -79,14 +82,54 @@ describe('ProjectManager constructor', () => {
     expect(templates[1].name).toBe('research');
   });
 
-  it('should construct with empty templates config', () => {
-    const pm = new ProjectManager(createOptions({ templatesConfig: {} }));
+  it('should auto-discover templates even without templatesConfig', () => {
+    // No config override — templates come purely from filesystem
+    const pm = new ProjectManager(createOptions());
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+    expect(templates[1].displayName).toBe('研究模式');
+  });
+
+  it('should load no templates when packageDir has no templates directory', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir(); // Empty, no templates/
+    const pm = new ProjectManager({
+      workspaceDir,
+      packageDir,
+    });
     expect(pm.listTemplates()).toHaveLength(0);
   });
 
-  it('should construct with undefined templates config', () => {
-    const pm = new ProjectManager(createOptions({ templatesConfig: undefined }));
-    expect(pm.listTemplates()).toHaveLength(0);
+  it('should allow config to override discovered template metadata', () => {
+    const pm = new ProjectManager(createOptions({
+      templatesConfig: {
+        research: {
+          displayName: '自定义研究',
+          description: '自定义描述',
+        },
+      },
+    }));
+    const templates = pm.listTemplates();
+    const research = templates.find(t => t.name === 'research');
+    expect(research).toBeDefined();
+    expect(research!.displayName).toBe('自定义研究');
+    expect(research!.description).toBe('自定义描述');
+  });
+
+  it('should allow config to add virtual templates not on disk', () => {
+    const pm = new ProjectManager(createOptions({
+      templatesConfig: {
+        'virtual-template': {
+          displayName: '虚拟模板',
+          description: '仅存在于配置中的模板',
+        },
+      },
+    }));
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(3);
+    const virtual = templates.find(t => t.name === 'virtual-template');
+    expect(virtual).toBeDefined();
+    expect(virtual!.displayName).toBe('虚拟模板');
   });
 });
 
@@ -97,11 +140,21 @@ describe('ProjectManager init()', () => {
     pm = new ProjectManager(createOptions());
   });
 
-  it('should reload templates from new config', () => {
+  it('should re-discover templates on re-init', () => {
+    // Re-init without config — should re-discover from disk
+    pm.init();
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
+  });
+
+  it('should apply config overrides on re-init', () => {
     pm.init({ coding: { displayName: '编码模式' } });
     const templates = pm.listTemplates();
-    expect(templates).toHaveLength(1);
-    expect(templates[0].name).toBe('coding');
+    // Should have both discovered templates + config-only "coding"
+    expect(templates.length).toBeGreaterThanOrEqual(1);
+    const coding = templates.find(t => t.name === 'coding');
+    expect(coding).toBeDefined();
+    expect(coding!.displayName).toBe('编码模式');
   });
 
   it('should not clear instances when re-initializing templates', () => {
@@ -116,14 +169,17 @@ describe('ProjectManager init()', () => {
     expect(instances[0].name).toBe('my-research');
   });
 
-  it('should clear all templates with empty config', () => {
+  it('should re-discover from disk when called with empty config', () => {
+    // Empty config still re-discovers from disk
     pm.init({});
-    expect(pm.listTemplates()).toHaveLength(0);
+    const templates = pm.listTemplates();
+    expect(templates).toHaveLength(2);
   });
 
   it('should handle undefined config in init', () => {
     pm.init(undefined);
-    expect(pm.listTemplates()).toHaveLength(0);
+    // Should re-discover from disk
+    expect(pm.listTemplates()).toHaveLength(2);
   });
 });
 
@@ -457,7 +513,7 @@ describe('ProjectManager reset()', () => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 describe('ProjectManager listTemplates()', () => {
-  it('should return templates sorted by name', () => {
+  it('should return auto-discovered templates sorted by name', () => {
     const pm = new ProjectManager(createOptions());
     const templates = pm.listTemplates();
     expect(templates).toHaveLength(2);
@@ -467,22 +523,23 @@ describe('ProjectManager listTemplates()', () => {
     expect(templates[1].description).toBe('专注研究的独立空间');
   });
 
-  it('should return empty array when no templates configured', () => {
-    const pm = new ProjectManager(createOptions({ templatesConfig: EMPTY_CONFIG }));
+  it('should return empty array when no templates on disk and no config', () => {
+    const workspaceDir = createTempDir();
+    const packageDir = createTempDir();
+    const pm = new ProjectManager({ workspaceDir, packageDir });
     expect(pm.listTemplates()).toEqual([]);
   });
 
-  it('should include all metadata from config', () => {
+  it('should include config-only templates alongside discovered ones', () => {
     const pm = new ProjectManager(createOptions({
       templatesConfig: {
-        research: { displayName: '研究', description: '研究模式' },
         coding: { displayName: '编码' },
         minimal: {},
       },
     }));
 
     const templates = pm.listTemplates();
-    expect(templates).toHaveLength(3);
+    expect(templates).toHaveLength(4); // 2 discovered + 2 config-only
     expect(templates.find((t) => t.name === 'minimal')).toEqual({
       name: 'minimal',
       displayName: undefined,
@@ -927,7 +984,7 @@ describe('ProjectManager — edge cases', () => {
     expect(new Date(instances[0].createdAt).toISOString()).toBe(instances[0].createdAt);
   });
 
-  it('should handle template with no metadata', () => {
+  it('should handle template with no metadata (config-only template)', () => {
     const pm = new ProjectManager(createOptions({
       templatesConfig: {
         minimal: {},
@@ -935,8 +992,10 @@ describe('ProjectManager — edge cases', () => {
     }));
 
     const templates = pm.listTemplates();
-    expect(templates).toHaveLength(1);
-    expect(templates[0]).toEqual({ name: 'minimal' });
+    // 2 discovered + 1 config-only = 3
+    const minimal = templates.find(t => t.name === 'minimal');
+    expect(minimal).toBeDefined();
+    expect(minimal).toEqual({ name: 'minimal' });
 
     const result = pm.create('chat_1', 'minimal', 'my-minimal');
     expect(result.ok).toBe(true);

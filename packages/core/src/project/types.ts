@@ -35,7 +35,9 @@ export type ProjectResult<T> =
  * Template CLAUDE.md source: `{packageDir}/templates/{name}/CLAUDE.md`
  * Instance workingDir: `{workspace}/projects/{name}/`
  *
- * Only templates listed in `projectTemplates` config are available.
+ * Templates are auto-discovered from `{packageDir}/templates/` by default.
+ * Config entries can override metadata (displayName/description) or declare
+ * virtual templates not present on disk.
  * The "default" project is always implicitly available (no template needed).
  */
 export interface ProjectTemplate {
@@ -189,6 +191,11 @@ export interface ProjectManagerOptions {
   /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
   packageDir: string;
 
-  /** Template configuration from disclaude.config.yaml */
-  templatesConfig: ProjectTemplatesConfig;
+  /**
+   * Template configuration overrides from disclaude.config.yaml.
+   *
+   * When provided, these entries override/extend auto-discovered templates.
+   * When omitted, templates are auto-discovered from `{packageDir}/templates/`.
+   */
+  templatesConfig?: ProjectTemplatesConfig;
 }
