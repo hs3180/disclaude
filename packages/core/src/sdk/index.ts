@@ -94,6 +94,7 @@ export type {
   AgentQueryOptions,
   PermissionMode,
   SystemPromptPreset,
+  ToolsPreset,
 
   // 查询结果
   QueryHandle,

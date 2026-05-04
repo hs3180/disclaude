@@ -181,6 +181,12 @@ export interface SystemPromptPreset {
   append?: string;
 }
 
+/** Tools preset 配置 (Issue #2890) */
+export interface ToolsPreset {
+  type: 'preset';
+  preset: 'claude_code';
+}
+
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
   /** 工作目录 */
@@ -193,6 +199,12 @@ export interface AgentQueryOptions {
   allowedTools?: string[];
   /** 禁用的工具列表 */
   disallowedTools?: string[];
+  /**
+   * Tools preset 配置 (Issue #2890)
+   * - `string[]` - 自定义工具列表（与 allowedTools 相同）
+   * - `{ type: 'preset', preset: 'claude_code' }` - 使用 Claude Code 默认工具集
+   */
+  tools?: string[] | ToolsPreset;
   /** MCP 服务器配置 */
   mcpServers?: Record<string, McpServerConfig>;
   /** 环境变量 */
