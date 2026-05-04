@@ -157,6 +157,15 @@ describe('BaseAgent', () => {
       expect(options.env?.ANTHROPIC_API_KEY).toBe('test-api-key');
     });
 
+    it('should set systemPrompt to claude_code preset (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      expect(options.systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+      });
+    });
+
     it('should include model if specified', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.model).toBe('claude-3-5-sonnet-20241022');
