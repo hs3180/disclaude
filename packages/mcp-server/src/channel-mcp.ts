@@ -235,6 +235,45 @@ The \`markdown\` element supports a **restricted subset** of GFM:
 - ⚡ **Auto-conversion**: GFM tables in markdown elements are automatically converted to \`column_set\` layout
 - For complex tabular layouts, prefer using \`column_set\` directly
 
+## Column_set Table Best Practices (Issue #3277)
+When building tables with \`column_set\`, follow these rules:
+1. **Row-oriented layout**: Each table row is a separate \`column_set\` element
+2. **Header row**: Use \`"background_style": "grey"\` to distinguish from data rows
+3. **Data rows**: Use \`"background_style": "default"\`
+4. **Equal column weights**: All columns use \`"weight": 1\` for balanced layout
+5. **flex_mode**: Use \`"bisect"\` for 2 columns, \`"trisection"\` for 3+ columns
+6. **vertical_align**: Always set to \`"center"\` for proper alignment
+7. **header.title**: Must use \`{"content": "...", "tag": "plain_text"}\` format (NOT a plain string)
+
+❌ **Avoid**: GFM table syntax in markdown elements (auto-converted but suboptimal)
+❌ **Avoid**: Mixing emoji and numbers in the same column (causes misalignment)
+
+**Example (2-column table):**
+\`\`\`json
+{
+  "elements": [
+    {
+      "tag": "column_set", "flex_mode": "bisect", "background_style": "grey",
+      "columns": [
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center",
+         "elements": [{"tag": "markdown", "content": "**Name**"}]},
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center",
+         "elements": [{"tag": "markdown", "content": "**Value**"}]}
+      ]
+    },
+    {
+      "tag": "column_set", "flex_mode": "bisect", "background_style": "default",
+      "columns": [
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center",
+         "elements": [{"tag": "markdown", "content": "BTC_PERP"}]},
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center",
+         "elements": [{"tag": "markdown", "content": "80,294.0"}]}
+      ]
+    }
+  ]
+}
+\`\`\`
+
 ## Example
 \`\`\`json
 {
