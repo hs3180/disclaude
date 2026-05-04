@@ -33,3 +33,46 @@ export interface TaskDefinitionDetails {
   constraints: string[];
   quality_criteria: string[];
 }
+
+/**
+ * Task type classification for ETA estimation (Issue #1234).
+ */
+export type TaskType =
+  | 'bugfix'
+  | 'feature-small'
+  | 'feature-medium'
+  | 'feature-large'
+  | 'refactoring'
+  | 'test'
+  | 'documentation'
+  | 'research'
+  | 'other';
+
+/**
+ * Task record for ETA estimation system (Issue #1234 Phase 1).
+ *
+ * Records task execution metadata including estimated and actual duration,
+ * enabling future ETA predictions based on historical patterns.
+ *
+ * Stored in `{workspace}/task-records.md` as Markdown entries.
+ */
+export interface TaskRecord {
+  /** Task title / brief description */
+  title: string;
+  /** Task type classification */
+  type: TaskType;
+  /** ISO timestamp when the task was started */
+  startedAt: string;
+  /** ISO timestamp when the task was completed */
+  completedAt: string;
+  /** Estimated duration in minutes (null if not estimated) */
+  estimatedMinutes: number | null;
+  /** Reasoning / basis for the estimate */
+  estimationBasis: string;
+  /** Actual duration in minutes (computed from startedAt/completedAt) */
+  actualMinutes: number;
+  /** Post-completion review / retrospective notes */
+  review: string;
+  /** Optional tags for categorization */
+  tags?: string[];
+}
