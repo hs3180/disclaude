@@ -100,48 +100,83 @@ function parsePipeRow(line: string): string[] {
 }
 
 /**
- * Build a Feishu column_set element from parsed table data.
+ * Build Feishu column_set elements from parsed table data using row-oriented layout.
  *
- * Each table column becomes a Feishu column, with the header cell bolded.
- * All columns have equal weight for balanced layout.
+ * Follows best practices from Issue #3277:
+ * - Header row as separate column_set with grey background
+ * - Each data row as its own column_set with default background
+ * - Equal-weight columns for balanced layout
+ * - bisect flex_mode for 2-4 columns, trisection for more
+ * - vertical_align: center for proper alignment
  *
  * @param headers - Column header strings
  * @param rows - Row data (each row is an array of cell strings)
- * @returns Feishu column_set element object
+ * @returns Array of Feishu column_set element objects (header + one per data row)
+ *
+ * @see https://github.com/hs3180/disclaude/issues/3277
+ * @see https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/using-column-set
  */
-export function buildColumnSet(headers: string[], rows: string[][]): Record<string, unknown> {
-  const columns = headers.map((_header, colIdx) => {
-    const elements: Array<Record<string, unknown>> = [];
+export function buildTableColumnSets(headers: string[], rows: string[][]): Record<string, unknown>[] {
+  const colCount = headers.length;
+  const flexMode = colCount <= 4 ? 'bisect' : 'trisection';
 
-    // Header cell (bold)
-    elements.push({
-      tag: 'markdown',
-      content: `**${headers[colIdx]}**`,
-    });
+  // Header row with grey background
+  const headerColumns = headers.map(header => ({
+    tag: 'column',
+    width: 'weighted',
+    weight: 1,
+    vertical_align: 'center',
+    elements: [{ tag: 'markdown', content: `**${header}**` }],
+  }));
 
-    // Data cells
-    for (const row of rows) {
-      const cellContent = colIdx < row.length ? row[colIdx] : '';
-      elements.push({
-        tag: 'markdown',
-        content: cellContent || ' ',
-      });
-    }
+  const headerSet: Record<string, unknown> = {
+    tag: 'column_set',
+    flex_mode: flexMode,
+    background_style: 'grey',
+    columns: headerColumns,
+  };
 
-    return {
+  // Data rows with default background (one column_set per row)
+  const dataSets: Record<string, unknown>[] = rows.map(row => ({
+    tag: 'column_set',
+    flex_mode: flexMode,
+    background_style: 'default',
+    columns: headers.map((_header, colIdx) => ({
       tag: 'column',
       width: 'weighted',
       weight: 1,
-      vertical_align: 'top',
-      elements,
-    };
+      vertical_align: 'center',
+      elements: [{ tag: 'markdown', content: colIdx < row.length ? (row[colIdx] || ' ') : ' ' }],
+    })),
+  }));
+
+  return [headerSet, ...dataSets];
+}
+
+/**
+ * @deprecated Use buildTableColumnSets() instead, which returns row-oriented layout
+ * with proper header styling per Issue #3277 best practices.
+ */
+export function buildColumnSet(headers: string[], rows: string[][]): Record<string, unknown> {
+  // Merge all into single column_set for backward compatibility
+  const colCount = headers.length;
+  const flexMode = colCount <= 4 ? 'bisect' : 'trisection';
+
+  const allColumns = headers.map((_header, colIdx) => {
+    const elements: Array<Record<string, unknown>> = [];
+    elements.push({ tag: 'markdown', content: `**${headers[colIdx]}**` });
+    for (const row of rows) {
+      const cellContent = colIdx < row.length ? row[colIdx] : '';
+      elements.push({ tag: 'markdown', content: cellContent || ' ' });
+    }
+    return { tag: 'column', width: 'weighted', weight: 1, vertical_align: 'center', elements };
   });
 
   return {
     tag: 'column_set',
-    flex_mode: 'stretch',
+    flex_mode: flexMode,
     background_style: 'default',
-    columns,
+    columns: allColumns,
   };
 }
 
@@ -190,8 +225,8 @@ export function transformCardTables(card: Record<string, unknown>): Record<strin
           });
         }
 
-        // Add column_set element
-        newElements.push(buildColumnSet(parsed.headers, parsed.rows));
+        // Add column_set elements (header row + one per data row)
+        newElements.push(...buildTableColumnSets(parsed.headers, parsed.rows));
 
         // Add suffix text as separate markdown element (if non-empty)
         if (parsed.suffix) {
