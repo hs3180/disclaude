@@ -35,6 +35,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.systemPrompt = options.systemPrompt;
   }
 
+  // Tools preset 配置 (Issue #2890)
+  if (options.tools) {
+    sdkOptions.tools = options.tools;
+  }
+
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
 
