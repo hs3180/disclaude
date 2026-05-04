@@ -171,7 +171,8 @@ export class ProjectManager {
       // Stale binding self-healing: instance was removed, clean up binding
       this.chatProjectMap.delete(chatId);
       this.removeFromReverseIndex(boundName, chatId);
-      // Persist the cleaned-up state
+      // Best-effort persist: self-healing should not block the caller.
+      // If persist fails, in-memory cleanup still takes effect for this session.
       this.persist();
     }
 
@@ -187,6 +188,8 @@ export class ProjectManager {
    *
    * Does NOT create directories or copy CLAUDE.md — that's Sub-Issue D.
    * The workingDir is computed as `{workspaceDir}/projects/{name}/`.
+   *
+   * If persist fails, the in-memory mutation is rolled back and an error is returned.
    *
    * @param chatId - Chat session requesting creation
    * @param templateName - Template to instantiate from
@@ -223,12 +226,26 @@ export class ProjectManager {
       createdAt: new Date().toISOString(),
     };
 
+    // Save pre-mutation state for rollback
+    const prevBinding = this.chatProjectMap.get(chatId);
+
     this.instances.set(name, instance);
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation; rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state
+      this.instances.delete(name);
+      if (prevBinding !== undefined) {
+        this.chatProjectMap.set(chatId, prevBinding);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      this.removeFromReverseIndex(name, chatId);
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -242,6 +259,8 @@ export class ProjectManager {
 
   /**
    * Bind a chatId to an existing instance.
+   *
+   * If persist fails, the in-memory mutation is rolled back and an error is returned.
    *
    * @param chatId - Chat session requesting binding
    * @param name - Instance name to bind to
@@ -258,17 +277,34 @@ export class ProjectManager {
       return { ok: false, error: `实例 "${name}" 不存在` };
     }
 
-    // Remove from old instance's reverse index if rebinding
+    // Save pre-mutation state for rollback
     const oldName = this.chatProjectMap.get(chatId);
-    if (oldName && oldName !== name) {
+    const isRebinding = oldName !== undefined && oldName !== name;
+
+    // Remove from old instance's reverse index if rebinding
+    if (isRebinding) {
       this.removeFromReverseIndex(oldName, chatId);
     }
 
     this.chatProjectMap.set(chatId, name);
     this.addToReverseIndex(name, chatId);
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation; rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state
+      this.removeFromReverseIndex(name, chatId);
+      if (isRebinding) {
+        // Restore old reverse index entry
+        this.addToReverseIndex(oldName, chatId);
+      }
+      if (oldName !== undefined) {
+        this.chatProjectMap.set(chatId, oldName);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
@@ -283,6 +319,8 @@ export class ProjectManager {
   /**
    * Reset a chatId's binding, reverting to default project.
    *
+   * If persist fails, the in-memory mutation is rolled back and an error is returned.
+   *
    * @param chatId - Chat session to reset
    * @returns ProjectResult with default ProjectContextConfig
    */
@@ -292,14 +330,24 @@ export class ProjectManager {
       return { ok: false, error: chatIdError };
     }
 
+    // Save pre-mutation state for rollback
     const boundName = this.chatProjectMap.get(chatId);
+
     this.chatProjectMap.delete(chatId);
     if (boundName) {
       this.removeFromReverseIndex(boundName, chatId);
     }
 
-    // Persist after mutation
-    this.persist();
+    // Persist after mutation; rollback on failure
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      // Rollback in-memory state
+      if (boundName) {
+        this.chatProjectMap.set(chatId, boundName);
+        this.addToReverseIndex(boundName, chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
 
     return {
       ok: true,
