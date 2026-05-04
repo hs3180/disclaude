@@ -30,6 +30,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.permissionMode = options.permissionMode;
   }
 
+  // System prompt 配置 (Issue #2890)
+  if (options.systemPrompt) {
+    sdkOptions.systemPrompt = options.systemPrompt;
+  }
+
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
 

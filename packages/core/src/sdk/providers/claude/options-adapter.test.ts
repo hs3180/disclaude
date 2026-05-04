@@ -123,6 +123,48 @@ describe('adaptOptions', () => {
 
     expect(result.stderr).toBeUndefined();
   });
+
+  it('should pass through systemPrompt preset (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+    });
+
+    expect(result.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+    });
+  });
+
+  it('should pass through systemPrompt with append (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Extra instructions' },
+    });
+
+    expect(result.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: 'Extra instructions',
+    });
+  });
+
+  it('should pass through string systemPrompt (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      systemPrompt: 'You are a helpful assistant.',
+    });
+
+    expect(result.systemPrompt).toBe('You are a helpful assistant.');
+  });
+
+  it('should not include systemPrompt when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.systemPrompt).toBeUndefined();
+  });
 });
 
 describe('adaptInput', () => {
