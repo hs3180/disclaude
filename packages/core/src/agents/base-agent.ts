@@ -159,6 +159,7 @@ export abstract class BaseAgent implements Disposable {
     const options: AgentQueryOptions = {
       cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['project'],
     };
 

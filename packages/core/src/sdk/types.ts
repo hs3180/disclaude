@@ -174,6 +174,13 @@ export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
 /** 权限模式 */
 export type PermissionMode = 'default' | 'bypassPermissions';
 
+/** System prompt preset 配置 */
+export interface SystemPromptPreset {
+  type: 'preset';
+  preset: 'claude_code';
+  append?: string;
+}
+
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
   /** 工作目录 */
@@ -190,6 +197,13 @@ export interface AgentQueryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   /** 环境变量 */
   env?: Record<string, string | undefined>;
+  /**
+   * System prompt 配置 (Issue #2890)
+   * - `string` - 自定义 system prompt
+   * - `{ type: 'preset', preset: 'claude_code' }` - 使用 Claude Code 默认 system prompt
+   * - `{ type: 'preset', preset: 'claude_code', append: '...' }` - 默认 prompt + 追加指令
+   */
+  systemPrompt?: string | SystemPromptPreset;
   /** 设置来源（必填） */
   settingSources: string[];
   /**
