@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { getProvider, type SdkInlineToolDefinition } from '@disclaude/core';
+import { getProvider, createLogger, logTiming, type SdkInlineToolDefinition } from '@disclaude/core';
 import {
   send_text,
   send_card,
@@ -22,6 +22,8 @@ import { transformCardTables } from './utils/table-converter.js';
 import { resolveCardImages } from './utils/card-image-resolver.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
+
+const timingLogger = createLogger('TimingLog');
 
 // Re-export
 export type { MessageSentCallback, InteractiveOption, ActionPromptMap } from './tools/types.js';
@@ -194,10 +196,16 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
         return toolError(`Invalid chatId: ${chatIdError}`);
       }
 
+      // Issue #3292: Timing log for MCP tool call
+      const toolStartMs = Date.now();
+      logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_text', toolParams: `textLength=${text.length}`, elapsedMs: 0 });
+
       try {
         const result = await send_text({ text, chatId, parentMessageId, mentions });
+        logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_text', elapsedMs: Date.now() - toolStartMs, success: result.success });
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
+        logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_text', elapsedMs: Date.now() - toolStartMs, success: false, error: error instanceof Error ? error.message : String(error) });
         return toolError(`Text send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
@@ -316,6 +324,10 @@ When building tables with \`column_set\`, follow these rules:
         return toolError(`Invalid chatId: ${chatIdError}`);
       }
 
+      // Issue #3292: Timing log for MCP tool call
+      const toolStartMs = Date.now();
+      logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_card', elapsedMs: 0 });
+
       try {
         // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
         let processedCard = transformCardTables(card);
@@ -325,6 +337,8 @@ When building tables with \`column_set\`, follow these rules:
         processedCard = imageResult.card;
 
         const result = await send_card({ card: processedCard, chatId, parentMessageId });
+
+        logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_card', elapsedMs: Date.now() - toolStartMs, success: result.success });
 
         // Issue #2340: Detect GFM table syntax in markdown elements and append info
         const tableWarnings = detectMarkdownTableWarnings(card);
@@ -346,6 +360,7 @@ When building tables with \`column_set\`, follow these rules:
 
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
+        logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_card', elapsedMs: Date.now() - toolStartMs, success: false, error: error instanceof Error ? error.message : String(error) });
         return toolError(`Card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
@@ -424,10 +439,16 @@ For display-only cards, use send_card instead.
         return toolError(`Invalid chatId: ${chatIdError}`);
       }
 
+      // Issue #3292: Timing log for MCP tool call
+      const toolStartMs = Date.now();
+      logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_interactive', toolParams: `options=${options.length}`, elapsedMs: 0 });
+
       try {
         const result = await send_interactive({ question, options, chatId, title, context, actionPrompts, parentMessageId });
+        logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_interactive', elapsedMs: Date.now() - toolStartMs, success: result.success });
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
+        logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_interactive', elapsedMs: Date.now() - toolStartMs, success: false, error: error instanceof Error ? error.message : String(error) });
         return toolError(`Interactive card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
@@ -457,10 +478,16 @@ For display-only cards, use send_card instead.
         return toolError(`Invalid chatId: ${chatIdError}`);
       }
 
+      // Issue #3292: Timing log for MCP tool call
+      const toolStartMs = Date.now();
+      logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_file', elapsedMs: 0 });
+
       try {
         const result = await send_file({ filePath, chatId, parentMessageId });
+        logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_file', elapsedMs: Date.now() - toolStartMs, success: result.success });
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
+        logTiming(timingLogger, { chatId, phase: 'mcp-tool-call', tool: 'send_file', elapsedMs: Date.now() - toolStartMs, success: false, error: error instanceof Error ? error.message : String(error) });
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },

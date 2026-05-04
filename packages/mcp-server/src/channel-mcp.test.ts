@@ -33,6 +33,7 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
+  logTiming: vi.fn(),
   getIpcClient: vi.fn(),
   getIpcSocketPath: vi.fn(),
   Config: { get: vi.fn() },

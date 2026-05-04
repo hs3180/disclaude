@@ -10,7 +10,7 @@
 import { unlinkSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { createServer, type Server } from 'net';
-import { createLogger } from '../utils/logger.js';
+import { createLogger, logTiming } from '../utils/index.js';
 import type { FeishuCard } from '../types/platform.js';
 import {
   DEFAULT_IPC_CONFIG,
@@ -25,6 +25,7 @@ import type {
 } from './transport.js';
 
 const logger = createLogger('IpcServer');
+const timingLogger = createLogger('TimingLog');
 
 /**
  * Maximum length for Unix domain socket paths.
@@ -656,11 +657,18 @@ export class UnixSocketIpcServer {
       return;
     }
 
+    // Issue #3292: Timing log for IPC server-side request handling
+    const handleStartMs = Date.now();
+    const chatId = (request.payload as { chatId?: string } | undefined)?.chatId;
+    logTiming(timingLogger, { chatId, phase: 'ipc-request', ipcType: request.type, elapsedMs: 0 });
+
     try {
       const response = await this.handler(request);
+      logTiming(timingLogger, { chatId, phase: 'ipc-response', ipcType: request.type, elapsedMs: Date.now() - handleStartMs, success: response.success });
       conn.write(`${JSON.stringify(response)}\n`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      logTiming(timingLogger, { chatId, phase: 'ipc-error', ipcType: request.type, elapsedMs: Date.now() - handleStartMs, success: false, error: errorMessage });
       const response: IpcResponse = {
         id: request.id,
         success: false,

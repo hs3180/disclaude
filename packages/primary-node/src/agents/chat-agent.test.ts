@@ -65,6 +65,13 @@ vi.mock('@disclaude/core', () => ({
     }
     return undefined;
   },
+  createLogger: () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+  logTiming: vi.fn(),
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({

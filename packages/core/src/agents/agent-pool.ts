@@ -22,10 +22,12 @@
  * - Short-lived ChatAgents (for scheduled/one-shot tasks): Not stored here, created and disposed as needed
  */
 
-import { createLogger, type Logger } from '../utils/logger.js';
+import { createLogger, logTiming } from '../utils/index.js';
+import type { Logger } from '../utils/logger.js';
 import type { ChatAgent } from './types.js';
 
 const defaultLogger = createLogger('AgentPool');
+const timingLogger = createLogger('TimingLog');
 
 /**
  * Factory function type for creating ChatAgent instances.
@@ -78,6 +80,15 @@ export class AgentPool {
       agent = this.chatAgentFactory(chatId);
       this.chatAgents.set(chatId, agent);
     }
+
+    // Issue #3292: Concurrency snapshot when agent is acquired
+    logTiming(timingLogger, {
+      chatId,
+      phase: 'concurrency-snapshot',
+      elapsedMs: 0,
+      activeAgents: this.chatAgents.size,
+    });
+
     return agent;
   }
 

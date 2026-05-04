@@ -35,9 +35,11 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, logTiming, createLogger, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
+
+const timingLogger = createLogger('TimingLog');
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -678,6 +680,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   private startAgentLoop(): void {
     const chatId = this.boundChatId;
+
+    // Issue #3292: TimingLog for agent startup
+    logTiming(timingLogger, { chatId, phase: 'agent-startup', elapsedMs: 0 });
 
     // Issue #955: Trigger background loading of persisted history
     if (!this.historyLoaded) {

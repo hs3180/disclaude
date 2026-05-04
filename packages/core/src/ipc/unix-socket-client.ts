@@ -9,7 +9,7 @@
 
 import { existsSync } from 'fs';
 import { createConnection, type Socket } from 'net';
-import { createLogger } from '../utils/logger.js';
+import { createLogger, logTiming } from '../utils/index.js';
 import type { FeishuCard } from '../types/platform.js';
 import {
   DEFAULT_IPC_CONFIG,
@@ -25,6 +25,7 @@ import type {
 } from './transport.js';
 
 const logger = createLogger('IpcClient');
+const timingLogger = createLogger('TimingLog');
 
 /**
  * Pending request tracker.
@@ -431,9 +432,15 @@ export class UnixSocketIpcClient {
     const id = `${++this.requestId}`;
     const request: IpcRequest<T> = { type, id, payload };
 
+    // Issue #3292: Timing log for IPC request
+    const ipcStartMs = Date.now();
+    const chatId = (payload as { chatId?: string })?.chatId;
+    logTiming(timingLogger, { chatId, phase: 'ipc-request', ipcType: type, elapsedMs: 0 });
+
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
+        logTiming(timingLogger, { chatId, phase: 'ipc-error', ipcType: type, elapsedMs: Date.now() - ipcStartMs, success: false, error: `IPC_TIMEOUT: ${type}` });
         const error = new Error(`IPC_TIMEOUT: Request timed out: ${type}`);
         reject(error);
       }, this.timeout);
@@ -441,6 +448,8 @@ export class UnixSocketIpcClient {
       this.pendingRequests.set(id, {
         resolve: (response) => {
           clearTimeout(timeoutId);
+          // Issue #3292: Timing log for IPC response
+          logTiming(timingLogger, { chatId, phase: 'ipc-response', ipcType: type, elapsedMs: Date.now() - ipcStartMs, success: response.success, error: response.success ? undefined : response.error });
           if (response.success) {
             resolve(response.payload as IpcResponsePayloads[T]);
           } else {

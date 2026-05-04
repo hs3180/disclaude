@@ -83,3 +83,10 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Timing Log (Issue #3292)
+export type { TimingPhase, TimingLogData, RequestTracker } from './timing-log.js';
+export {
+  logTiming,
+  createRequestTracker,
+} from './timing-log.js';

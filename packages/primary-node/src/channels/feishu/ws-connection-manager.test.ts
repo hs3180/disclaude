@@ -68,6 +68,7 @@ vi.mock('@disclaude/core', () => ({
     debug: vi.fn(),
     trace: vi.fn(),
   }),
+  logTiming: vi.fn(),
 }));
 
 vi.mock('@larksuiteoapi/node-sdk', () => ({

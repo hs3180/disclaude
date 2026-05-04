@@ -21,10 +21,11 @@
  */
 
 import http from 'node:http';
-import { createLogger, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
+import { createLogger, logTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 
 const logger = createLogger('RestChannel');
+const timingLogger = createLogger('TimingLog');
 
 /**
  * File storage service interface for dependency injection.
@@ -307,11 +308,18 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         const responseText = buffer ? buffer.join('\n') : '';
 
         // Issue #3003: log task completion with elapsed timing
+        // Issue #3292: Also emit TimingLog for HTTP response sent
         const taskElapsedMs = Date.now() - pending.requestStartMs;
         logger.info(
           { chatId: message.chatId, messageId, responseLength: responseText.length, taskElapsedMs },
           'Task completed, resolving sync response'
         );
+        logTiming(timingLogger, {
+          chatId: message.chatId,
+          phase: 'http-response-sent',
+          elapsedMs: taskElapsedMs,
+          success: true,
+        });
 
         // Clear timeout and resolve
         clearTimeout(pending.timeout);
@@ -523,6 +531,16 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     const requestStartMs = Date.now(); // Issue #3003: track request timing
 
     logger.info({ chatId, messageId, userId, syncMode, requestStartMs }, 'Received chat request');
+
+    // Issue #3292: Concurrency snapshot + HTTP request timing log
+    logTiming(timingLogger, {
+      chatId,
+      phase: 'http-request-received',
+      elapsedMs: 0,
+      syncMode,
+      pendingSyncResponses: this.pendingResponses.size,
+      activeAsyncSessions: this.sessionStates.size,
+    });
 
     // For sync mode, set up response handling
     if (syncMode) {
@@ -775,6 +793,14 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
           'Sync response timeout — no response received within timeout. '
           + 'Check server logs for this chatId to identify the slow stage.'
         );
+        // Issue #3292: TimingLog for timeout
+        logTiming(timingLogger, {
+          chatId,
+          phase: 'http-response-sent',
+          elapsedMs,
+          success: false,
+          error: `Response timeout after ${timeoutMs}ms`,
+        });
 
         reject(new Error('Response timeout'));
       }, timeoutMs);

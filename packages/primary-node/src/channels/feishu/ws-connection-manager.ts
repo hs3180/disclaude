@@ -47,10 +47,11 @@
 
 import dns from 'dns/promises';
 import { EventEmitter } from 'events';
-import { WS_HEALTH, createLogger } from '@disclaude/core';
+import { WS_HEALTH, createLogger, logTiming } from '@disclaude/core';
 import * as lark from '@larksuiteoapi/node-sdk';
 
 const logger = createLogger('WsConnectionManager');
+const timingLogger = createLogger('TimingLog');
 
 /**
  * WebSocket connection states.
@@ -531,6 +532,14 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       { oldState, newState, reconnectAttempt: this.reconnectAttempt },
       'Connection state changed',
     );
+    // Issue #3292: TimingLog for WebSocket connection state change
+    logTiming(timingLogger, {
+      phase: 'ws-connection-change',
+      elapsedMs: 0,
+      oldState,
+      newState,
+      reconnectAttempt: this.reconnectAttempt,
+    });
     this.emit('stateChange', newState);
   }
 }
