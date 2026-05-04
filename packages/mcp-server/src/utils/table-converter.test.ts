@@ -135,23 +135,23 @@ describe('buildTableColumnSets', () => {
     expect(dataCol1Elements[0].content).toBe('30');
   });
 
-  it('should use bisect for 2-4 columns', () => {
+  it('should use bisect for 2 columns', () => {
     const result2 = buildTableColumnSets(['A', 'B'], [['1', '2']]);
     expect((result2[0] as Record<string, unknown>).flex_mode).toBe('bisect');
-
-    const result3 = buildTableColumnSets(['A', 'B', 'C'], [['1', '2', '3']]);
-    expect((result3[0] as Record<string, unknown>).flex_mode).toBe('bisect');
-
-    const result4 = buildTableColumnSets(['A', 'B', 'C', 'D'], [['1', '2', '3', '4']]);
-    expect((result4[0] as Record<string, unknown>).flex_mode).toBe('bisect');
   });
 
-  it('should use trisection for 5+ columns', () => {
-    const result = buildTableColumnSets(
+  it('should use trisection for 3+ columns', () => {
+    const result3 = buildTableColumnSets(['A', 'B', 'C'], [['1', '2', '3']]);
+    expect((result3[0] as Record<string, unknown>).flex_mode).toBe('trisection');
+
+    const result4 = buildTableColumnSets(['A', 'B', 'C', 'D'], [['1', '2', '3', '4']]);
+    expect((result4[0] as Record<string, unknown>).flex_mode).toBe('trisection');
+
+    const result5 = buildTableColumnSets(
       ['A', 'B', 'C', 'D', 'E'],
       [['1', '2', '3', '4', '5']]
     );
-    expect((result[0] as Record<string, unknown>).flex_mode).toBe('trisection');
+    expect((result5[0] as Record<string, unknown>).flex_mode).toBe('trisection');
   });
 
   it('should handle multiple rows', () => {

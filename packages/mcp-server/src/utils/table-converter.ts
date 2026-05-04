@@ -118,7 +118,7 @@ function parsePipeRow(line: string): string[] {
  */
 export function buildTableColumnSets(headers: string[], rows: string[][]): Record<string, unknown>[] {
   const colCount = headers.length;
-  const flexMode = colCount <= 4 ? 'bisect' : 'trisection';
+  const flexMode = colCount <= 2 ? 'bisect' : 'trisection';
 
   // Header row with grey background
   const headerColumns = headers.map(header => ({
@@ -160,7 +160,7 @@ export function buildTableColumnSets(headers: string[], rows: string[][]): Recor
 export function buildColumnSet(headers: string[], rows: string[][]): Record<string, unknown> {
   // Merge all into single column_set for backward compatibility
   const colCount = headers.length;
-  const flexMode = colCount <= 4 ? 'bisect' : 'trisection';
+  const flexMode = colCount <= 2 ? 'bisect' : 'trisection';
 
   const allColumns = headers.map((_header, colIdx) => {
     const elements: Array<Record<string, unknown>> = [];

@@ -241,7 +241,7 @@ When building tables with \`column_set\`, follow these rules:
 2. **Header row**: Use \`"background_style": "grey"\` to distinguish from data rows
 3. **Data rows**: Use \`"background_style": "default"\`
 4. **Equal column weights**: All columns use \`"weight": 1\` for balanced layout
-5. **flex_mode**: Use \`"bisect"\` for 2-4 columns, \`"trisection"\` for 5+ columns
+5. **flex_mode**: Use \`"bisect"\` for 2 columns, \`"trisection"\` for 3+ columns
 6. **vertical_align**: Always set to \`"center"\` for proper alignment
 7. **header.title**: Must use \`{"content": "...", "tag": "plain_text"}\` format (NOT a plain string)
 
