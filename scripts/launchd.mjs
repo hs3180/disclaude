@@ -32,28 +32,28 @@ import { fileURLToPath } from 'node:url';
 // Constants
 // ---------------------------------------------------------------------------
 
-const LABEL = 'com.disclaude.primary';
-const PLIST_FILENAME = `${LABEL}.plist`;
-const LAUNCHAGENTS_DIR = resolve(homedir(), 'Library/LaunchAgents');
-const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
+export const LABEL = 'com.disclaude.primary';
+export const PLIST_FILENAME = `${LABEL}.plist`;
+export const LAUNCHAGENTS_DIR = resolve(homedir(), 'Library/LaunchAgents');
+export const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
 
 // Issue #2934: Log directory moved from /tmp to ~/Library/Logs/disclaude
 // for security (restrictive permissions) and pino-roll log rotation support.
 // Application logs go through pino file transport with rotation;
 // only stderr (for uncaught Node.js crashes) uses launchd's StandardErrorPath.
-const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
-const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
-const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
+export const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
+export const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
+export const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = resolve(__dirname, '..');
-const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
+export const __dirname = dirname(fileURLToPath(import.meta.url));
+export const PROJECT_ROOT = resolve(__dirname, '..');
+export const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getNodePath() {
+export function getNodePath() {
   try {
     return execSync('which node', { encoding: 'utf-8' }).trim();
   } catch {
@@ -62,7 +62,7 @@ function getNodePath() {
   }
 }
 
-function run(cmd, opts = {}) {
+export function run(cmd, opts = {}) {
   try {
     return execSync(cmd, { encoding: 'utf-8', stdio: opts.silent ? 'pipe' : 'inherit', ...opts });
   } catch (e) {
@@ -71,7 +71,7 @@ function run(cmd, opts = {}) {
   }
 }
 
-function ensureLaunchAgentsDir() {
+export function ensureLaunchAgentsDir() {
   if (!existsSync(LAUNCHAGENTS_DIR)) {
     mkdirSync(LAUNCHAGENTS_DIR, { recursive: true });
   }
@@ -82,7 +82,7 @@ function ensureLaunchAgentsDir() {
  * ~/Library/Logs/disclaude with 0o700 prevents global readability
  * (security concern from Issue #2898).
  */
-function ensureLogDir() {
+export function ensureLogDir() {
   if (!existsSync(LOG_DIR)) {
     mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
     console.log(`Log directory created: ${LOG_DIR}`);
@@ -97,7 +97,7 @@ function ensureLogDir() {
  * Issue #2975: Detect caffeinate availability on macOS.
  * Returns the path to caffeinate binary, or null if not available.
  */
-function getCaffeinatePath() {
+export function getCaffeinatePath() {
   try {
     return execSync('which caffeinate', { encoding: 'utf-8' }).trim();
   } catch {
@@ -116,7 +116,7 @@ function getCaffeinatePath() {
  * @param {string} nodePath - Absolute path to the node binary
  * @returns {string[]} ProgramArguments entries
  */
-function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePath()) {
+export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePath()) {
   const args = [];
 
   if (caffeinatePath) {
@@ -127,7 +127,7 @@ function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePath()) {
   return args;
 }
 
-function generatePlist() {
+export function generatePlist() {
   const nodePath = getNodePath();
   const caffeinatePath = getCaffeinatePath();
   const programArgs = buildProgramArguments(nodePath, caffeinatePath);
@@ -287,21 +287,24 @@ function cmdStatus() {
 // Main
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
+const __main = fileURLToPath(import.meta.url);
 
-const commands = {
-  generate: cmdGenerate,
-  install: cmdInstall,
-  uninstall: cmdUninstall,
-  start: cmdStart,
-  stop: cmdStop,
-  restart: cmdRestart,
-  logs: cmdLogs,
-  status: cmdStatus,
-};
+if (process.argv[1] && resolve(process.argv[1]) === __main) {
+  const command = process.argv[2];
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+  const commands = {
+    generate: cmdGenerate,
+    install: cmdInstall,
+    uninstall: cmdUninstall,
+    start: cmdStart,
+    stop: cmdStop,
+    restart: cmdRestart,
+    logs: cmdLogs,
+    status: cmdStatus,
+  };
+
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -313,7 +316,8 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
-}
+    process.exit(1);
+  }
 
-commands[command]();
+  commands[command]();
+}
