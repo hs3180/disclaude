@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { getProvider, type SdkInlineToolDefinition } from '@disclaude/core';
+import { getProvider, createLogger, withTiming, type SdkInlineToolDefinition } from '@disclaude/core';
 import {
   send_text,
   send_card,
@@ -469,12 +469,20 @@ For display-only cards, use send_card instead.
 
 export const channelSdkTools = channelToolDefinitions.map(def => getProvider().createInlineTool(def));
 
+const timingLogger = createLogger('TimingLog');
+
 export function createChannelMcpServer() {
+  // Issue #3292: Wrap each tool handler with timing at dispatcher entry
+  const tools = channelToolDefinitions.map((def): SdkInlineToolDefinition => ({
+    ...def,
+    handler: (params) =>
+      withTiming(timingLogger, `mcp-tool:${def.name}`, undefined, () => def.handler(params)),
+  }));
   return getProvider().createMcpServer({
     type: 'inline',
     name: 'channel-mcp',
     version: '1.0.0',
-    tools: channelToolDefinitions,
+    tools,
   });
 }
 

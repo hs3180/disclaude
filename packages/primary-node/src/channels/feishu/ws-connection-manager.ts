@@ -47,7 +47,7 @@
 
 import dns from 'dns/promises';
 import { EventEmitter } from 'events';
-import { WS_HEALTH, createLogger } from '@disclaude/core';
+import { WS_HEALTH, createLogger, withTiming } from '@disclaude/core';
 import * as lark from '@larksuiteoapi/node-sdk';
 
 const logger = createLogger('WsConnectionManager');
@@ -267,7 +267,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    */
   async start(eventDispatcher: lark.EventDispatcher): Promise<void> {
     this.eventDispatcher = eventDispatcher;
-    const success = await this.connectFresh();
+    const success = await withTiming(logger, 'ws-connect', undefined, () => this.connectFresh());
 
     if (!success) {
       logger.warn('Initial connection failed, entering reconnect mode');
@@ -480,7 +480,7 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       }
     }
 
-    const success = await this.connectFresh();
+    const success = await withTiming(logger, 'ws-reconnect', undefined, () => this.connectFresh());
 
     if (success) {
       this.isReconnecting = false;

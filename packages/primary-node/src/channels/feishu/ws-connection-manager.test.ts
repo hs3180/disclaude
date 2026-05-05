@@ -68,6 +68,9 @@ vi.mock('@disclaude/core', () => ({
     debug: vi.fn(),
     trace: vi.fn(),
   }),
+  // Issue #3292: Pass-through mock for withTiming
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  withTiming: (_logger: any, _label: string, _chatId: any, fn: () => Promise<any>) => fn(),
 }));
 
 vi.mock('@larksuiteoapi/node-sdk', () => ({

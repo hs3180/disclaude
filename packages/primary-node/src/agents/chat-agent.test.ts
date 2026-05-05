@@ -65,6 +65,9 @@ vi.mock('@disclaude/core', () => ({
     }
     return undefined;
   },
+  // Issue #3292: Pass-through mock for withTiming
+   
+  withTiming: (_logger: any, _label: string, _chatId: any, fn: () => Promise<any>) => fn(),
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({

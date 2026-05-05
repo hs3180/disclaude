@@ -21,7 +21,7 @@
  */
 
 import http from 'node:http';
-import { createLogger, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
+import { createLogger, withTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 
 const logger = createLogger('RestChannel');
@@ -233,7 +233,11 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     }
 
     const server = http.createServer((req, res) => {
-      this.handleRequest(req, res).catch((error) => {
+      // Issue #3292: Wrap HTTP request with timing
+      const url = req.url?.split('?')[0] || '/';
+      withTiming(logger, `http:${req.method} ${url}`, undefined, () =>
+        this.handleRequest(req, res)
+      ).catch((error) => {
         logger.error({ err: error }, 'Failed to handle request');
         this.sendError(res, 500, 'Internal server error');
       });

@@ -83,3 +83,8 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Timing (Issue #3292)
+export {
+  withTiming,
+} from './timing.js';

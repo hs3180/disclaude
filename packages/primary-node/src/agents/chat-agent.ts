@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, withTiming, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -736,7 +736,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.isSessionActive = true;
 
     // Process SDK messages in background
-    this.processIterator(iterator).catch(async (err) => {
+    // Issue #3292: Wrap agent loop with timing
+    withTiming(this.logger, 'agent-loop', chatId, () => this.processIterator(iterator)).catch(async (err) => {
       this.logger.error({
         err,
         chatId,

@@ -11,6 +11,7 @@ import { unlinkSync, existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { createServer, type Server } from 'net';
 import { createLogger } from '../utils/logger.js';
+import { withTiming } from '../utils/timing.js';
 import type { FeishuCard } from '../types/platform.js';
 import {
   DEFAULT_IPC_CONFIG,
@@ -657,7 +658,7 @@ export class UnixSocketIpcServer {
     }
 
     try {
-      const response = await this.handler(request);
+      const response = await withTiming(logger, `ipc:${request.type}`, undefined, () => this.handler(request));
       conn.write(`${JSON.stringify(response)}\n`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
