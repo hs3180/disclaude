@@ -31,6 +31,9 @@ const LONG_POLL_TIMEOUT_MS = 35_000;
 /** Default bot type for QR code generation. */
 const DEFAULT_BOT_TYPE = 3;
 
+/** Maximum file size for CDN upload (20MB). */
+const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+
 /**
  * WeChat API Client for Tencent ilink Bot API (MVP).
  *
@@ -254,6 +257,160 @@ export class WeChatApiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Media handling (CDN upload + send) — Issue #1556 Phase 3.2
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Upload a file to WeChat CDN.
+   *
+   * POST /ilink/bot/upload (multipart/form-data)
+   *
+   * @param params - Upload parameters
+   * @returns CDN URL and file key for the uploaded file
+   * @throws Error if file exceeds 20MB or upload fails
+   */
+  async uploadMedia(params: {
+    /** File data as Buffer */
+    fileData: Buffer;
+    /** File name with extension */
+    fileName: string;
+    /** MIME type (default: auto-detect from extension) */
+    mimeType?: string;
+  }): Promise<{ url: string; fileKey: string }> {
+    const { fileData, fileName, mimeType } = params;
+
+    if (fileData.length > MAX_UPLOAD_SIZE_BYTES) {
+      throw new Error(`File too large: ${fileData.length} bytes (max ${MAX_UPLOAD_SIZE_BYTES} bytes)`);
+    }
+
+    const detectedMimeType = mimeType || this.guessMimeType(fileName);
+    const url = `${this.baseUrl}/ilink/bot/upload`;
+
+    logger.debug({ fileName, size: fileData.length, mimeType: detectedMimeType }, 'Uploading media to CDN');
+
+    const formData = new FormData();
+    const blob = new Blob([fileData], { type: detectedMimeType });
+    formData.append('file', blob, fileName);
+
+    const headers: Record<string, string> = {};
+
+    if (this.token?.trim()) {
+      headers['Authorization'] = `Bearer ${this.token.trim()}`;
+    }
+
+    headers['AuthorizationType'] = 'ilink_bot_token';
+
+    if (this.routeTag) {
+      headers['SKRouteTag'] = this.routeTag;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '(unreadable)');
+      throw new Error(`WeChat CDN upload failed [${response.status}]: ${text}`);
+    }
+
+    const rawText = await response.text();
+    const data = JSON.parse(rawText) as Record<string, unknown>;
+
+    const ret = data.ret as number | undefined;
+    if (ret !== undefined && ret !== 0) {
+      const errMsg = (data.err_msg as string) || (data.errmsg as string) || `Error code ${ret}`;
+      throw new Error(`WeChat CDN upload error [${ret}]: ${errMsg}`);
+    }
+
+    const cdnUrl = data.url as string | undefined;
+    const fileKey = data.file_key as string | undefined;
+
+    if (!cdnUrl || !fileKey) {
+      throw new Error('WeChat CDN upload response missing url or file_key');
+    }
+
+    logger.info({ fileName, cdnUrl }, 'Media uploaded to CDN');
+    return { url: cdnUrl, fileKey };
+  }
+
+  /**
+   * Send an image message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage (type: 2 = image)
+   *
+   * @param params - Image message parameters
+   */
+  async sendImage(params: {
+    /** Recipient user ID */
+    to: string;
+    /** CDN URL of the image */
+    imageUrl: string;
+    /** Thread context token */
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, imageUrl, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{ type: 2, image_item: { url: imageUrl } }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, imageUrl }, 'Image message sent');
+  }
+
+  /**
+   * Send a file message via CDN URL.
+   *
+   * POST /ilink/bot/sendmessage (type: 3 = file)
+   *
+   * @param params - File message parameters
+   */
+  async sendFile(params: {
+    /** Recipient user ID */
+    to: string;
+    /** CDN URL of the file */
+    fileUrl: string;
+    /** Display file name */
+    fileName: string;
+    /** Thread context token */
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, fileUrl, fileName, contextToken } = params;
+    const clientId = this.generateClientId();
+
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{
+          type: 3,
+          file_item: { url: fileUrl, file_name: fileName },
+        }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, fileUrl, fileName }, 'File message sent');
+  }
+
+  // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------
 
@@ -379,5 +536,27 @@ export class WeChatApiClient {
 
       throw error;
     }
+  }
+
+  /**
+   * Guess MIME type from file extension.
+   */
+  private guessMimeType(fileName: string): string {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    const mimeMap: Record<string, string> = {
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      pdf: 'application/pdf',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      txt: 'text/plain',
+      zip: 'application/zip',
+    };
+    return mimeMap[ext ?? ''] ?? 'application/octet-stream';
   }
 }
