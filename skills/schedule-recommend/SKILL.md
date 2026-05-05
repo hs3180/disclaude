@@ -152,6 +152,10 @@ For each detected pattern, provide:
 
 ---
 
+## Schedule Template
+
+见同目录下的 `schedule.md`。将其复制到 `schedules/recommend-analysis/SCHEDULE.md`，替换 `{controlChannelChatId}` 后启用。
+
 ## Creating the Schedule
 
 If user confirms (✅ 创建定时任务), use the `/schedule` skill to create the scheduled task.
