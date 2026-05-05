@@ -108,16 +108,27 @@ export interface ChannelHandlersContainer {
 export type FeishuHandlersContainer = ChannelHandlersContainer;
 
 /**
+ * Callbacks for scheduler operations exposed via IPC.
+ * Issue #3249: Enables event-driven task triggering from child processes.
+ */
+export interface SchedulerIpcCallbacks {
+  /** Trigger a scheduled task by ID */
+  triggerTask: (taskId: string) => Promise<boolean>;
+}
+
+/**
  * Create an IPC request handler for channel API operations.
  *
  * Issue #1120: Uses ChannelHandlersContainer for dynamic handler registration.
  * Issue #1573 (Phase 4): Removed InteractiveMessageHandlers — state management
  * dispatch cases removed; only registerActionPrompts callback remains for
  * internal use by the sendInteractive handler.
+ * Issue #3249: Added schedulerCallbacks for triggerTask support.
  */
 export function createInteractiveMessageHandler(
   registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => void,
-  channelHandlersContainer?: ChannelHandlersContainer
+  channelHandlersContainer?: ChannelHandlersContainer,
+  schedulerCallbacks?: SchedulerIpcCallbacks
 ): IpcRequestHandler {
 
   return async (request: IpcRequest): Promise<IpcResponse> => {
@@ -306,6 +317,26 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Scheduler trigger (Issue #3249: event-driven task triggering)
+        case 'triggerTask': {
+          if (!schedulerCallbacks) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Scheduler callbacks not available',
+            };
+          }
+          const { taskId } =
+            request.payload as IpcRequestPayloads['triggerTask'];
+          try {
+            const triggered = await schedulerCallbacks.triggerTask(taskId);
+            return { id: request.id, success: true, payload: { success: true, triggered } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

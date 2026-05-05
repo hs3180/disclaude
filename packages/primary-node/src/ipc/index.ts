@@ -32,6 +32,7 @@ export {
   type ChannelHandlersContainer,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
+  type SchedulerIpcCallbacks,
   type IpcAvailabilityStatus,
   type IpcUnavailableReason,
 } from '@disclaude/core';

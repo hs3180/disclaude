@@ -409,6 +409,64 @@ describe('createInteractiveMessageHandler', () => {
       expect(response.id).toBe('req-special-id');
     });
   });
+
+  // Issue #3249: triggerTask IPC handler tests
+  describe('triggerTask request', () => {
+    it('should return error when no scheduler callbacks provided', async () => {
+      // handler was created without schedulerCallbacks in beforeEach
+      const request = createRequest('triggerTask', 'req-tt-1', { taskId: 'task-1' });
+      const response = await handler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Scheduler callbacks not available');
+    });
+
+    it('should trigger task and return triggered=true', async () => {
+      const mockTriggerTask = vi.fn().mockResolvedValue(true);
+      const handlerWithScheduler = createInteractiveMessageHandler(
+        registerActionPrompts,
+        container,
+        { triggerTask: mockTriggerTask },
+      );
+
+      const request = createRequest('triggerTask', 'req-tt-2', { taskId: 'my-task' });
+      const response = await handlerWithScheduler(request);
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true, triggered: true });
+      expect(mockTriggerTask).toHaveBeenCalledWith('my-task');
+    });
+
+    it('should return triggered=false when task not found', async () => {
+      const mockTriggerTask = vi.fn().mockResolvedValue(false);
+      const handlerWithScheduler = createInteractiveMessageHandler(
+        registerActionPrompts,
+        container,
+        { triggerTask: mockTriggerTask },
+      );
+
+      const request = createRequest('triggerTask', 'req-tt-3', { taskId: 'nonexistent' });
+      const response = await handlerWithScheduler(request);
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true, triggered: false });
+    });
+
+    it('should handle triggerTask callback error', async () => {
+      const mockTriggerTask = vi.fn().mockRejectedValue(new Error('Scheduler error'));
+      const handlerWithScheduler = createInteractiveMessageHandler(
+        registerActionPrompts,
+        container,
+        { triggerTask: mockTriggerTask },
+      );
+
+      const request = createRequest('triggerTask', 'req-tt-4', { taskId: 'failing-task' });
+      const response = await handlerWithScheduler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Scheduler error');
+    });
+  });
 });
 
 // ============================================================================

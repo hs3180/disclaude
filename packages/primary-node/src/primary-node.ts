@@ -291,6 +291,7 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1573: Phase 4 — simplified to a single registerActionPrompts callback.
     // State management dispatch cases removed from IPC; only the callback for
     // sendInteractive's internal prompt registration remains.
+    // Issue #3249: Pass schedulerCallbacks for triggerTask support.
     const contextStore = this.interactiveContextStore;
 
     // Create the request handler with Feishu handlers container
@@ -298,7 +299,8 @@ export class PrimaryNode extends EventEmitter {
       (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
         contextStore.register(messageId, chatId, actionPrompts);
       },
-      this.feishuHandlersContainer
+      this.feishuHandlersContainer,
+      this.scheduler ? { triggerTask: (taskId: string) => this.triggerTask(taskId) } : undefined
     );
 
     this.ipcServer = new UnixSocketIpcServer(requestHandler, {
@@ -507,5 +509,22 @@ export class PrimaryNode extends EventEmitter {
    */
   getScheduleManager(): ScheduleManager | undefined {
     return this.scheduleManager;
+  }
+
+  /**
+   * Manually trigger a scheduled task by ID.
+   *
+   * Proxies to Scheduler.triggerTask() for event-driven task execution.
+   * Issue #3249: Caller integration for PrimaryNode.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and triggered, false if not found/disabled or scheduler not initialized
+   */
+  triggerTask(taskId: string): Promise<boolean> {
+    if (!this.scheduler) {
+      logger.warn({ taskId }, 'Cannot trigger task: scheduler not initialized');
+      return Promise.resolve(false);
+    }
+    return this.scheduler.triggerTask(taskId);
   }
 }

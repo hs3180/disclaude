@@ -351,6 +351,47 @@ ${task.prompt}`;
   }
 
   /**
+   * Manually trigger a task by ID.
+   *
+   * Performs two-phase lookup:
+   * 1. Check activeJobs (in-memory cron jobs)
+   * 2. Fall back to ScheduleManager.get() (disk)
+   *
+   * Reuses executeTask() to inherit blocking, cooldown, and error handling.
+   *
+   * Issue #3247: triggerTask() core method.
+   * Issue #3249: Caller integration via PrimaryNode and IPC.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and triggered, false if not found or disabled
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    // Phase 1: Lookup from activeJobs (in-memory)
+    const activeEntry = this.activeJobs.get(taskId);
+    if (activeEntry) {
+      logger.info({ taskId, source: 'activeJobs' }, 'triggerTask: found in active jobs');
+      await this.executeTask(activeEntry.task);
+      return true;
+    }
+
+    // Phase 2: Fallback to ScheduleManager (disk)
+    const diskTask = await this.scheduleManager.get(taskId);
+    if (!diskTask) {
+      logger.info({ taskId }, 'triggerTask: task not found');
+      return false;
+    }
+
+    if (!diskTask.enabled) {
+      logger.info({ taskId, name: diskTask.name }, 'triggerTask: task is disabled');
+      return false;
+    }
+
+    logger.info({ taskId, source: 'disk', name: diskTask.name }, 'triggerTask: found on disk');
+    await this.executeTask(diskTask);
+    return true;
+  }
+
+  /**
    * Check if a task is currently being executed.
    *
    * @param taskId - Task ID to check

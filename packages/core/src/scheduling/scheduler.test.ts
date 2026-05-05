@@ -582,4 +582,224 @@ describe('Scheduler', () => {
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
     });
   });
+
+  describe('triggerTask', () => {
+    it('should trigger an active task (Phase 1: in-memory lookup)', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerTask('trigger-1');
+
+      expect(result).toBe(true);
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Run tests'),
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
+    it('should fall back to disk lookup (Phase 2: ScheduleManager.get())', async () => {
+      const diskTask = createTask({ id: 'disk-task' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(diskTask);
+
+      // Task NOT in activeJobs — triggers Phase 2 disk lookup
+      const result = await scheduler.triggerTask('disk-task');
+
+      expect(result).toBe(true);
+      expect(mockScheduleManager.get).toHaveBeenCalledWith('disk-task');
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Run tests'),
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
+    it('should return false when task is not found', async () => {
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(undefined);
+
+      const result = await scheduler.triggerTask('nonexistent');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return false when task is disabled', async () => {
+      const disabledTask = createTask({ id: 'disabled-task', enabled: false });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(disabledTask);
+
+      const result = await scheduler.triggerTask('disabled-task');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should prefer active task over disk lookup (Phase 1 priority)', async () => {
+      const activeTask = createTask({ id: 'priority-task', prompt: 'Active prompt' });
+      const diskTask = createTask({ id: 'priority-task', prompt: 'Disk prompt' });
+      scheduler.addTask(activeTask);
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(diskTask);
+
+      const result = await scheduler.triggerTask('priority-task');
+
+      expect(result).toBe(true);
+      // Should NOT call ScheduleManager.get since task found in activeJobs
+      expect(mockScheduleManager.get).not.toHaveBeenCalled();
+      // Should use active task's prompt
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Active prompt'),
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
+    it('should pass model and modelTier from disk task', async () => {
+      const diskTask = createTask({
+        id: 'disk-model-task',
+        model: 'claude-sonnet-4',
+        modelTier: 'low',
+      });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(diskTask);
+
+      const result = await scheduler.triggerTask('disk-model-task');
+
+      expect(result).toBe(true);
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        undefined,
+        'claude-sonnet-4',
+        'low',
+      );
+    });
+
+    it('should pass createdBy and model from active task', async () => {
+      const task = createTask({
+        id: 'active-model-task',
+        createdBy: 'user-456',
+        model: 'claude-haiku-4',
+        modelTier: 'low',
+      });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('active-model-task');
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        'user-456',
+        'claude-haiku-4',
+        'low',
+      );
+    });
+
+    it('should handle blocking: skip if task is already running', async () => {
+      // Make executor block to simulate long-running task
+      let resolveExecutor: () => void;
+      const executorPromise = new Promise<void>((resolve) => { resolveExecutor = resolve; });
+      mockExecutor.mockReturnValueOnce(executorPromise);
+
+      const task = createTask({ id: 'blocking-task', blocking: true });
+      scheduler.addTask(task);
+
+      // First trigger — should execute
+      const trigger1 = scheduler.triggerTask('blocking-task');
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-task')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger while running — should be skipped (executeTask handles blocking)
+      await scheduler.triggerTask('blocking-task');
+      // The second trigger still returns true because the task was found,
+      // but executeTask logs "skipped" internally and doesn't call executor again
+
+      // Resolve the executor to clean up
+      resolveExecutor!();
+      await trigger1;
+    });
+
+    it('should respect cooldown period', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date(),
+          cooldownEndsAt: new Date(Date.now() + 60000),
+          remainingMs: 60000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'cooldown-task', cooldownPeriod: 60000 });
+      cooldownScheduler.addTask(task);
+
+      const result = await cooldownScheduler.triggerTask('cooldown-task');
+
+      // triggerTask returns true because the task was found,
+      // but executeTask sends cooldown notification and doesn't call executor
+      expect(result).toBe(true);
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('冷静期'),
+      );
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should wrap prompt with anti-recursion instructions', async () => {
+      const task = createTask({ id: 'anti-rec-task', name: 'My Scheduled Job', prompt: 'Do the thing' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('anti-rec-task');
+
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('My Scheduled Job');
+      expect(promptArg).toContain('Do NOT create new scheduled tasks');
+      expect(promptArg).toContain('Do the thing');
+    });
+
+    it('should send error notification when executor fails', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('Executor crashed'));
+
+      const task = createTask({ id: 'error-task' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerTask('error-task');
+
+      expect(result).toBe(true);
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('执行失败'),
+      );
+    });
+
+    it('should clean up running state after failure', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('fail'));
+
+      const task = createTask({ id: 'cleanup-task' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('cleanup-task');
+
+      expect(scheduler.isTaskRunning('cleanup-task')).toBe(false);
+    });
+  });
 });

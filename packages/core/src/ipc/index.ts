@@ -33,6 +33,7 @@ export {
   type ChannelHandlersContainer,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
+  type SchedulerIpcCallbacks,
 } from './unix-socket-server.js';
 
 // Client implementation
