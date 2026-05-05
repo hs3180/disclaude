@@ -602,6 +602,209 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  describe('parseFile - modelTier handling (Issue #3059)', () => {
+    it('should parse valid modelTier: "low"', async () => {
+      const content = [
+        '---',
+        'name: "Low Tier Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_low_tier"',
+        'modelTier: "low"',
+        '---',
+        '',
+        'Task using low-cost model.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/low-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBe('low');
+      expect(task!.model).toBeUndefined();
+    });
+
+    it('should parse valid modelTier: "high"', async () => {
+      const content = [
+        '---',
+        'name: "High Tier Task"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_high_tier"',
+        'modelTier: "high"',
+        '---',
+        '',
+        'Task using high-quality model.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/high-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBe('high');
+    });
+
+    it('should parse valid modelTier: "multimodal"', async () => {
+      const content = [
+        '---',
+        'name: "Multimodal Task"',
+        'cron: "0 12 * * *"',
+        'chatId: "oc_mm"',
+        'modelTier: "multimodal"',
+        '---',
+        '',
+        'Task using multimodal model.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/mm-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBe('multimodal');
+    });
+
+    it('should ignore invalid modelTier value', async () => {
+      const content = [
+        '---',
+        'name: "Invalid Tier Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_invalid"',
+        'modelTier: "ultra"',
+        '---',
+        '',
+        'Task with invalid model tier.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/invalid-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBeUndefined();
+    });
+
+    it('should parse unquoted modelTier value', async () => {
+      const content = [
+        '---',
+        'name: "Unquoted Tier Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_unquoted_tier"',
+        'modelTier: low',
+        '---',
+        '',
+        'Task with unquoted model tier.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/unquoted-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBe('low');
+    });
+
+    it('should default modelTier to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBeUndefined();
+    });
+
+    it('should keep both model and modelTier when both are specified', async () => {
+      const content = [
+        '---',
+        'name: "Both Set Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_both"',
+        'model: "claude-sonnet-4-20250514"',
+        'modelTier: "low"',
+        '---',
+        '',
+        'Task with both model and tier.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/both-set/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      // Both fields should be preserved; model takes priority at execution time
+      expect(task!.model).toBe('claude-sonnet-4-20250514');
+      expect(task!.modelTier).toBe('low');
+    });
+  });
+
+  describe('writeTask - modelTier handling (Issue #3059)', () => {
+    it('should write modelTier field when present', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-tier-task',
+        name: 'Tier Task',
+        cron: '0 * * * *',
+        prompt: 'Execute tier task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        modelTier: 'low',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('modelTier: "low"');
+    });
+
+    it('should write multimodal modelTier', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-mm-task',
+        name: 'MM Task',
+        cron: '0 12 * * *',
+        prompt: 'Multimodal task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        modelTier: 'multimodal',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('modelTier: "multimodal"');
+    });
+
+    it('should not write modelTier field when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-tier',
+        name: 'No Tier Task',
+        cron: '0 0 * * *',
+        prompt: 'Task without tier',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('modelTier');
+    });
+
+    it('should write both model and modelTier when both are set', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-both',
+        name: 'Both Fields Task',
+        cron: '0 * * * *',
+        prompt: 'Task with both',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        model: 'claude-sonnet-4-20250514',
+        modelTier: 'low',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('model: "claude-sonnet-4-20250514"');
+      expect(writtenContent).toContain('modelTier: "low"');
+    });
+  });
 });
 
 // ============================================================================

@@ -209,6 +209,154 @@ describe('Scheduler', () => {
       expect(scheduler.isTaskRunning('task-1')).toBe(false);
       expect(scheduler.getRunningTaskIds()).toEqual([]);
     });
+
+    it('should track running task during execution', async () => {
+      let resolveExecutor: () => void;
+      const executorPromise = new Promise<void>((resolve) => { resolveExecutor = resolve; });
+      mockExecutor.mockReturnValueOnce(executorPromise);
+
+      const task = createTask({ id: 'running-1' });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait for execution to start (sendMessage is called before executor)
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Task should be marked as running during execution
+      expect(scheduler.isTaskRunning('running-1')).toBe(true);
+      expect(scheduler.isAnyTaskRunning()).toBe(true);
+      expect(scheduler.getRunningTaskIds()).toEqual(['running-1']);
+
+      // Complete the execution
+      resolveExecutor!();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('running-1')).toBe(false);
+      }, { timeout: 2000 });
+
+      // After completion, should be empty again
+      expect(scheduler.isAnyTaskRunning()).toBe(false);
+      expect(scheduler.getRunningTaskIds()).toEqual([]);
+    });
+
+    it('should track multiple running tasks independently', async () => {
+      let resolveExecutor1: () => void;
+      let resolveExecutor2: () => void;
+      const executorPromise1 = new Promise<void>((resolve) => { resolveExecutor1 = resolve; });
+      const executorPromise2 = new Promise<void>((resolve) => { resolveExecutor2 = resolve; });
+
+      mockExecutor
+        .mockReturnValueOnce(executorPromise1)
+        .mockReturnValueOnce(executorPromise2);
+
+      const task1 = createTask({ id: 'multi-run-1' });
+      const task2 = createTask({ id: 'multi-run-2' });
+      scheduler.addTask(task1);
+      scheduler.addTask(task2);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+      void jobs[1].job.fireOnTick();
+
+      // Wait for both executions to start
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+
+      expect(scheduler.isTaskRunning('multi-run-1')).toBe(true);
+      expect(scheduler.isTaskRunning('multi-run-2')).toBe(true);
+      expect(scheduler.isAnyTaskRunning()).toBe(true);
+      expect(scheduler.getRunningTaskIds().sort()).toEqual(['multi-run-1', 'multi-run-2'].sort());
+
+      // Complete first task
+      resolveExecutor1!();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('multi-run-1')).toBe(false);
+      }, { timeout: 2000 });
+
+      expect(scheduler.isTaskRunning('multi-run-2')).toBe(true);
+      expect(scheduler.isAnyTaskRunning()).toBe(true);
+
+      // Complete second task
+      resolveExecutor2!();
+      await vi.waitFor(() => {
+        expect(scheduler.isAnyTaskRunning()).toBe(false);
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('blocking mechanism', () => {
+    it('should skip blocked task when previous execution is still running', async () => {
+      let resolveExecutor: () => void;
+      const executorPromise = new Promise<void>((resolve) => { resolveExecutor = resolve; });
+      mockExecutor.mockReturnValueOnce(executorPromise);
+
+      const task = createTask({ id: 'blocking-1', blocking: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // First execution: start but don't complete
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Second trigger while first is still running
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        // sendMessage should be called again (for the second trigger attempt)
+        // but the executor should NOT be called again
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Complete the first execution
+      resolveExecutor!();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-1')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should allow non-blocking task to run concurrently', async () => {
+      let resolveExecutor1: () => void;
+      let resolveExecutor2: () => void;
+      const executorPromise1 = new Promise<void>((resolve) => { resolveExecutor1 = resolve; });
+      const executorPromise2 = new Promise<void>((resolve) => { resolveExecutor2 = resolve; });
+
+      mockExecutor
+        .mockReturnValueOnce(executorPromise1)
+        .mockReturnValueOnce(executorPromise2);
+
+      const task = createTask({ id: 'non-block-1', blocking: false });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // First execution
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Second trigger while first is still running - should execute again
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+
+      // Both executions running concurrently
+      expect(scheduler.isTaskRunning('non-block-1')).toBe(true);
+
+      // Complete both
+      resolveExecutor1!();
+      resolveExecutor2!();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('non-block-1')).toBe(false);
+      }, { timeout: 2000 });
+    });
   });
 
   describe('cooldown status', () => {

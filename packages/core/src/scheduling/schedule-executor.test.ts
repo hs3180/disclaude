@@ -208,4 +208,51 @@ describe('createScheduleExecutor', () => {
       expect(mockAgent.processMessage).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe('edge cases', () => {
+    it('should dispose agent when processMessage throws', async () => {
+      vi.mocked(mockAgent.processMessage).mockRejectedValue(new Error('processMessage failed'));
+
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await expect(executor('chat-1', 'Run tests')).rejects.toThrow('processMessage failed');
+
+      expect(mockAgent.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not await taskComplete when it is undefined', async () => {
+      (mockAgent as any).taskComplete = undefined;
+
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      // Should complete without error (no hanging on undefined promise)
+      await executor('chat-1', 'Run tests');
+
+      expect(mockAgent.processMessage).toHaveBeenCalledTimes(1);
+      expect(mockAgent.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('should dispose agent when both processMessage throws and taskComplete is rejected', async () => {
+      vi.mocked(mockAgent.processMessage).mockRejectedValue(new Error('PM failed'));
+      // Pre-catch the taskComplete rejection to prevent unhandled rejection warning
+      const tcPromise = Promise.reject(new Error('TC failed'));
+      tcPromise.catch(() => {}); // Suppress unhandled rejection
+      (mockAgent as any).taskComplete = tcPromise;
+
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await expect(executor('chat-1', 'Run tests')).rejects.toThrow('PM failed');
+
+      expect(mockAgent.dispose).toHaveBeenCalledTimes(1);
+    });
+  });
 });
