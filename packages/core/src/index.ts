@@ -320,3 +320,29 @@ export {
   type CommandDefinition,
   type DebugGroup,
 } from './control/index.js';
+
+// Project module (Issue #1916, Issue #2227: unified ProjectContext system)
+export type {
+  CwdProvider,
+  InstanceInfo,
+  ProjectContextConfig,
+  ProjectManagerOptions,
+  ProjectResult,
+  ProjectTemplate,
+  ProjectTemplatesConfig,
+  ProjectsPersistData,
+} from './project/types.js';
+
+export type {
+  DiscoveryResult,
+  DiscoveryError,
+  DiscoveryOptions,
+} from './project/template-discovery.js';
+
+export {
+  discoverTemplates,
+  discoveryResultToConfig,
+  discoverTemplatesAsConfig,
+} from './project/template-discovery.js';
+
+export { ProjectManager } from './project/project-manager.js';
