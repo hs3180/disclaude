@@ -5,7 +5,9 @@
  * Tests framework-agnostic behavior without channel-specific extensions.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES } from '../../index.js';
 import type { MessageBuilderOptions } from './types.js';
 
@@ -506,6 +508,70 @@ describe('MessageBuilder', () => {
       const historyIdx = result.indexOf('Recent Chat History');
       const outputFormatIdx = result.indexOf('Output Format Requirements');
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
+    });
+  });
+
+  describe('buildEnhancedContent - runtime-env guidance', () => {
+    const tmpDirs: string[] = [];
+
+    afterEach(() => {
+      for (const dir of tmpDirs) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+      tmpDirs.length = 0;
+    });
+
+    it('should not include runtime-env guidance when workspaceDir is not provided', () => {
+      const builder = new MessageBuilder();
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Runtime Environment Variables');
+    });
+
+    it('should not include runtime-env guidance when workspaceDir has no .runtime-env file', () => {
+      const builder = new MessageBuilder({ workspaceDir: '/nonexistent/path' });
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Runtime Environment Variables');
+    });
+
+    it('should include runtime-env guidance when workspaceDir has .runtime-env', () => {
+      const dir = `/tmp/test-runtime-env-${Date.now()}`;
+      tmpDirs.push(dir);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, '.runtime-env'), 'GH_TOKEN=ghs_testtoken123456789\nMY_VAR=hello\n');
+
+      const builder = new MessageBuilder({ workspaceDir: dir });
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Runtime Environment Variables');
+      expect(result).toContain('GH_TOKEN');
+      expect(result).toContain('MY_VAR');
+      expect(result).toContain('hello');
+    });
+
+    it('should not include runtime-env guidance for skill commands', () => {
+      const dir = `/tmp/test-runtime-env-skill-${Date.now()}`;
+      tmpDirs.push(dir);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, '.runtime-env'), 'GH_TOKEN=ghs_testtoken123456789\n');
+
+      const builder = new MessageBuilder({ workspaceDir: dir });
+      const result = builder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Runtime Environment Variables');
     });
   });
 });

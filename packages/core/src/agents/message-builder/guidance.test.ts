@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -120,5 +121,61 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should return empty string when no runtime-env vars are provided', () => {
+    expect(buildRuntimeEnvGuidance({})).toBe('');
+  });
+
+  it('should include runtime-env awareness section when vars are provided', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123def456', GH_TOKEN_EXPIRES_AT: '2026-03-20T12:00:00Z' });
+    expect(result).toContain('Runtime Environment Variables');
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should mask sensitive token values', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_verylongtokenvalue12345' });
+    // First 8 chars shown, then masked with 8 asterisks
+    expect(result).toContain('ghs_very********');
+    expect(result).not.toContain('ghs_verylongtokenvalue12345');
+  });
+
+  it('should not mask non-sensitive values', () => {
+    const result = buildRuntimeEnvGuidance({ MY_VAR: 'hello-world' });
+    expect(result).toContain('hello-world');
+  });
+
+  it('should include description for known variables', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123456789' });
+    expect(result).toContain('GitHub API token');
+  });
+
+  it('should include usage guidelines', () => {
+    const result = buildRuntimeEnvGuidance({ GH_TOKEN: 'ghs_abc123456789' });
+    expect(result).toContain('Usage Guidelines');
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('expiration');
+  });
+
+  it('should handle variables with short sensitive names', () => {
+    const result = buildRuntimeEnvGuidance({ API_KEY: 'short' });
+    // Short value should not be masked
+    expect(result).toContain('short');
+  });
+
+  it('should handle a mix of sensitive and non-sensitive vars', () => {
+    const result = buildRuntimeEnvGuidance({
+      GH_TOKEN: 'ghs_longtokenvalue1234567890',
+      MY_CONFIG: 'some-config-value',
+      APP_NAME: 'disclaude',
+    });
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('MY_CONFIG');
+    expect(result).toContain('APP_NAME');
+    expect(result).toContain('some-config-value');
+    expect(result).toContain('disclaude');
   });
 });

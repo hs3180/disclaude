@@ -35,7 +35,9 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
+import { loadRuntimeEnv } from '../../config/runtime-env.js';
 
 /**
  * Message builder for agent prompts.
@@ -138,6 +140,11 @@ export class MessageBuilder {
     const outputFormatGuidance = buildOutputFormatGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
+    // Issue #1371: Runtime-env awareness (requires workspaceDir)
+    const runtimeEnvGuidance = this.options.workspaceDir
+      ? buildRuntimeEnvGuidance(loadRuntimeEnv(this.options.workspaceDir))
+      : '';
+
     // Compose all sections
     const sections: string[] = [];
 
@@ -164,6 +171,10 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(locationAwarenessGuidance);
+
+    if (runtimeEnvGuidance) {
+      sections.push(runtimeEnvGuidance);
+    }
 
     const preamble = sections.join('\n');
 

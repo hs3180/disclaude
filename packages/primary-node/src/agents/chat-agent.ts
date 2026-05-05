@@ -116,7 +116,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Initialize message builder with channel-specific options (Issue #697, #1492, #1499)
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
-    this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+    // Issue #1371: Include workspaceDir for runtime-env awareness guidance.
+    this.messageBuilder = new MessageBuilder({
+      workspaceDir: Config.getWorkspaceDir(),
+      ...config.messageBuilderOptions,
+    });
 
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');
   }

@@ -105,4 +105,15 @@ export interface MessageBuilderOptions {
    * Example: Additional context for skill execution.
    */
   buildSkillCommandExtra?: (ctx: MessageBuilderContext) => string;
+
+  /**
+   * Workspace directory path for runtime-env awareness.
+   *
+   * Issue #1371: When provided, the MessageBuilder will read the
+   * `.runtime-env` file from this directory and include a guidance
+   * section informing the agent about available shared variables.
+   *
+   * If not provided, runtime-env guidance is omitted.
+   */
+  workspaceDir?: string;
 }

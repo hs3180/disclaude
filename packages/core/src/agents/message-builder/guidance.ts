@@ -11,6 +11,38 @@
  */
 
 /**
+ * Mask sensitive values in runtime-env entries.
+ *
+ * Tokens, keys, and secrets are masked to prevent accidental exposure
+ * in agent logs or outputs. Only the first 8 characters are shown.
+ *
+ * @param key - The environment variable key
+ * @param value - The environment variable value
+ * @returns Masked value string
+ */
+function maskSensitiveValue(key: string, value: string): string {
+  const sensitiveKeywords = ['token', 'secret', 'key', 'password', 'credential', 'auth'];
+  const lowerKey = key.toLowerCase();
+  const isSensitive = sensitiveKeywords.some(kw => lowerKey.includes(kw));
+
+  if (isSensitive && value.length > 8) {
+    return `${value.slice(0, 8)}${'*'.repeat(8)}`;
+  }
+  return value;
+}
+
+/**
+ * Known runtime-env variable descriptions.
+ *
+ * Provides a human-readable description for commonly used runtime-env
+ * variables so the agent understands what each variable is for.
+ */
+const KNOWN_VARS: Record<string, string> = {
+  GH_TOKEN: 'GitHub API token (from GitHub App JWT auth)',
+  GH_TOKEN_EXPIRES_AT: 'GitHub token expiration time (ISO 8601)',
+};
+
+/**
  * Build the chat history section for passive mode.
  *
  * Issue #517: Provides recent conversation context when the agent
@@ -217,4 +249,55 @@ You are running on a remote server that is physically separate from the user's t
 
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
+}
+
+/**
+ * Build the runtime environment awareness guidance section.
+ *
+ * Issue #1371: Informs the agent about available runtime-env variables
+ * that are shared between the main process and agent subprocess.
+ *
+ * The agent runs in an SDK subprocess where in-memory singletons from
+ * the main process are inaccessible. Runtime-env provides a file-based
+ * mechanism to share state. This guidance section tells the agent what
+ * variables are currently available so it can use them proactively.
+ *
+ * @param runtimeEnv - Current runtime environment variables (from loadRuntimeEnv)
+ * @returns Formatted runtime-env awareness section, or empty string if no vars
+ */
+export function buildRuntimeEnvGuidance(runtimeEnv: Record<string, string>): string {
+  const keys = Object.keys(runtimeEnv);
+  if (keys.length === 0) {
+    return '';
+  }
+
+  const varEntries = keys
+    .map(key => {
+      const description = KNOWN_VARS[key] ? ` — ${KNOWN_VARS[key]}` : '';
+      const maskedValue = maskSensitiveValue(key, runtimeEnv[key]);
+      return `- \`${key}\` = \`${maskedValue}\`${description}`;
+    })
+    .join('\n');
+
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The following environment variables are available in the workspace \`.runtime-env\` file. These are shared between the main process and your agent subprocess for cross-process state sharing.
+
+### Available Variables
+
+${varEntries}
+
+### Usage Guidelines
+
+- **Reading**: You can read the \`.runtime-env\` file directly using the Read tool at \`{workspace}/.runtime-env\`
+- **Writing**: Use the Write tool to add or update variables in \`.runtime-env\`
+- **Sensitive values**: Token values above are partially masked for safety. The full values are available in the actual file.
+- **Expiration**: Some variables (e.g., \`GH_TOKEN_EXPIRES_AT\`) indicate when tokens expire. Check expiration before using tokens.
+- **GitHub operations**: When you need to run \`gh\` commands, ensure \`GH_TOKEN\` is set and not expired. Use \`export GH_TOKEN=<value>\` before running \`gh\` commands.
+
+---`;
 }
