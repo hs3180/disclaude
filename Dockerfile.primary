@@ -75,7 +75,12 @@ RUN apk add --no-cache \
     curl \
     ca-certificates \
     procps \
-    bash
+    bash \
+    python3 \
+    py3-pip
+
+# Install common Python data analysis packages (Issue #3336)
+RUN pip3 install --no-cache-dir --break-system-packages matplotlib numpy
 
 # Install GitHub CLI (gh)
 RUN apk add --no-cache github-cli
