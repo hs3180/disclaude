@@ -157,6 +157,21 @@ describe('BaseAgent', () => {
       expect(options.env?.ANTHROPIC_API_KEY).toBe('test-api-key');
     });
 
+    it('should default allowedTools to ALLOWED_TOOLS when not specified (Issue #3325)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      // Should include all ALLOWED_TOOLS by default, not be undefined
+      expect(options.allowedTools).toBeDefined();
+      expect(options.allowedTools).toContain('Read');
+      expect(options.allowedTools).toContain('Write');
+      expect(options.allowedTools).toContain('Bash');
+      expect(options.allowedTools).toContain('Edit');
+      expect(options.allowedTools).toContain('Glob');
+      expect(options.allowedTools).toContain('Grep');
+      expect(options.allowedTools).toContain('Skill');
+      expect(options.allowedTools).toContain('Task');
+    });
+
     it('should set systemPrompt to claude_code preset (Issue #2890)', () => {
       const options = agent.testCreateSdkOptions();
 

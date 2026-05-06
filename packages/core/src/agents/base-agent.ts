@@ -26,6 +26,7 @@ import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js'
 import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
+import { ALLOWED_TOOLS } from '../config/tool-configuration.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
 
 // Re-export BaseAgentConfig for backward compatibility
@@ -164,8 +165,13 @@ export abstract class BaseAgent implements Disposable {
     };
 
     // Add allowed/disallowed tools
+    // Issue #3325: Default to ALLOWED_TOOLS when not explicitly set,
+    // preventing project-level settingSources from silently overriding
+    // with an empty array (e.g., from ~/.claude.json).
     if (extra.allowedTools) {
       options.allowedTools = extra.allowedTools;
+    } else {
+      options.allowedTools = [...ALLOWED_TOOLS];
     }
     if (extra.disallowedTools) {
       options.disallowedTools = extra.disallowedTools;
