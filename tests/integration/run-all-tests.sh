@@ -79,6 +79,9 @@ show_test_plan_body() {
     echo "  6. Multimodal Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
+    echo "  7. Feishu IPC Transport Tests (35 tests)"
+    echo "     - sendMessage, sendCard, sendInteractive, uploadFile, multi-card"
+    echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
     echo "  - Timeout: ${_USER_TIMEOUT:-per-suite defaults (30-120s)}"
@@ -222,6 +225,12 @@ main() {
     fi
 
     if ! run_suite "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests"; then
+        failed=$((failed + 1))
+    fi
+
+    # Feishu IPC tests don't need a running server (uses mock handlers)
+    log_info "Running Feishu IPC transport tests (no server needed)..."
+    if ! run_suite "$SCRIPT_DIR/feishu-ipc-test.sh" "Feishu IPC Transport Tests"; then
         failed=$((failed + 1))
     fi
 
