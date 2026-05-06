@@ -1,11 +1,52 @@
 /**
- * Tests for Claude SDK Provider stderr capture utilities.
+ * Tests for Claude SDK Provider.
  *
  * Issue #2920: Tests for StderrCapture, getErrorStderr, isStartupFailure.
+ * Issue #1617: Phase 2 - ClaudeSDKProvider class test coverage.
  */
 
-import { describe, it, expect } from 'vitest';
-import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError } from './provider.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider } from './provider.js';
+import type { AgentMessage, UserInput } from '../../types.js';
+
+// ============================================================================
+// Mocks for ClaudeSDKProvider tests
+// ============================================================================
+
+// Mock the Claude Agent SDK
+const mockQuery = vi.fn();
+const mockTool = vi.fn((_name: string, _desc: string, _params: unknown, handler: unknown) => ({
+  type: 'sdk_tool',
+  name: _name,
+  handler,
+}));
+const mockCreateSdkMcpServer = vi.fn((config: { name: string; version: string }) => ({
+  type: 'sdk',
+  name: config.name,
+  instance: { name: config.name },
+}));
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: (arg: unknown) => mockQuery(arg),
+  tool: (name: string, desc: string, params: unknown, handler: unknown) => mockTool(name, desc, params, handler),
+  createSdkMcpServer: (arg: { name: string; version: string }) => mockCreateSdkMcpServer(arg),
+}));
+
+// Mock the logger to prevent noise in test output
+vi.mock('../../../utils/logger.js', () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: vi.fn(() => ({
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    })),
+  }),
+}));
 
 // ============================================================================
 // StderrCapture
@@ -161,5 +202,482 @@ describe('isStartupFailure', () => {
     expect(isStartupFailure(0, 9999)).toBe(true);
     // At threshold
     expect(isStartupFailure(0, 10_000)).toBe(false);
+  });
+});
+
+// ============================================================================
+// ClaudeSDKProvider
+// ============================================================================
+
+describe('ClaudeSDKProvider', () => {
+  let provider: ClaudeSDKProvider;
+  let originalApiKey: string | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalApiKey = process.env.ANTHROPIC_API_KEY;
+    provider = new ClaudeSDKProvider();
+  });
+
+  afterEach(() => {
+    if (originalApiKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = originalApiKey;
+    }
+  });
+
+  // --------------------------------------------------------------------------
+  // Properties
+  // --------------------------------------------------------------------------
+
+  describe('properties', () => {
+    it('should have name "claude"', () => {
+      expect(provider.name).toBe('claude');
+    });
+
+    it('should have a version string', () => {
+      expect(provider.version).toBeTruthy();
+      expect(typeof provider.version).toBe('string');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // validateConfig
+  // --------------------------------------------------------------------------
+
+  describe('validateConfig', () => {
+    it('should return true when ANTHROPIC_API_KEY is set', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      expect(provider.validateConfig()).toBe(true);
+    });
+
+    it('should return false when ANTHROPIC_API_KEY is not set', () => {
+      delete process.env.ANTHROPIC_API_KEY;
+      expect(provider.validateConfig()).toBe(false);
+    });
+
+    it('should return false when ANTHROPIC_API_KEY is empty string', () => {
+      process.env.ANTHROPIC_API_KEY = '';
+      expect(provider.validateConfig()).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getInfo
+  // --------------------------------------------------------------------------
+
+  describe('getInfo', () => {
+    it('should return available info when API key is set', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      const info = provider.getInfo();
+
+      expect(info.name).toBe('claude');
+      expect(info.version).toBe(provider.version);
+      expect(info.available).toBe(true);
+      expect(info.unavailableReason).toBeUndefined();
+    });
+
+    it('should return unavailable info when API key is not set', () => {
+      delete process.env.ANTHROPIC_API_KEY;
+      const info = provider.getInfo();
+
+      expect(info.available).toBe(false);
+      expect(info.unavailableReason).toBe('ANTHROPIC_API_KEY not set');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // dispose
+  // --------------------------------------------------------------------------
+
+  describe('dispose', () => {
+    it('should prevent queryStream after disposal', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      provider.dispose();
+
+      async function* emptyInput(): AsyncGenerator<UserInput> {
+        // no input
+      }
+
+      expect(() => provider.queryStream(emptyInput(), {
+        settingSources: ['project'],
+      })).toThrow('Provider has been disposed');
+    });
+
+    it('should be idempotent', () => {
+      provider.dispose();
+      provider.dispose();
+      // Should not throw on second dispose
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // queryStream
+  // --------------------------------------------------------------------------
+
+  describe('queryStream', () => {
+    it('should return handle and iterator from SDK query', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      // Mock SDK query to return an async iterable
+      const sdkMessages = [
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } },
+      ];
+
+      mockQuery.mockReturnValue((async function* () {
+        for (const msg of sdkMessages) {
+          yield msg;
+        }
+      })());
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Hi' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+        cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      expect(result.handle).toBeDefined();
+      expect(result.iterator).toBeDefined();
+      expect(result.handle.sessionId).toBeUndefined();
+
+      // Consume iterator
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) {
+        messages.push(msg);
+      }
+
+      expect(messages.length).toBe(1);
+      expect(messages[0].role).toBe('assistant');
+      expect(mockQuery).toHaveBeenCalled();
+    });
+
+    it('should pass adapted options to SDK query', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      mockQuery.mockReturnValue((async function* () {
+        // no messages
+      })());
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Test' };
+      }
+
+      provider.queryStream(testInput(), {
+        settingSources: ['project'],
+        cwd: '/workspace',
+        model: 'claude-sonnet-4-20250514',
+        permissionMode: 'bypassPermissions',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      // Verify query was called with prompt and options
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockQuery.mock.calls[0][0]).toHaveProperty('prompt');
+      const callOptions = (mockQuery.mock.calls[0][0] as { options: Record<string, unknown> }).options;
+      expect(callOptions).toHaveProperty('cwd');
+      expect(callOptions).toHaveProperty('permissionMode');
+      expect(callOptions.model).toBe('claude-sonnet-4-20250514');
+    });
+
+    it('should adapt user input correctly through the stream', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      let capturedPrompt: unknown;
+      mockQuery.mockImplementation(({ prompt }: { prompt: unknown }) => {
+        capturedPrompt = prompt;
+        return (async function* () {
+          // no messages
+        })();
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Hello world' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+      });
+
+      // Consume iterator to trigger input processing
+      for await (const _ of result.iterator) {
+        // consume
+      }
+
+      // The prompt should be an async generator (adapted input)
+      expect(capturedPrompt).toBeDefined();
+      // Verify it's an async iterable by consuming it
+      const promptMessages: unknown[] = [];
+      for await (const chunk of capturedPrompt as AsyncIterable<unknown>) {
+        promptMessages.push(chunk);
+      }
+      expect(promptMessages.length).toBe(1);
+    });
+
+    it('should inject stderr callback into SDK options', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      const userStderrCalls: string[] = [];
+      mockQuery.mockImplementation(({ options }: { options: Record<string, unknown> }) => {
+        // Verify stderr callback is set
+        expect(options.stderr).toBeDefined();
+        expect(typeof options.stderr).toBe('function');
+
+        // Simulate SDK stderr output
+        if (options.stderr) {
+          (options.stderr as (data: string) => void)('test stderr line');
+        }
+
+        return (async function* () {
+          // no messages
+        })();
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        // no input
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+        stderr: (data: string) => { userStderrCalls.push(data); },
+      });
+
+      for await (const _ of result.iterator) {
+        // consume
+      }
+
+      // User's stderr callback should have been called
+      expect(userStderrCalls).toContain('test stderr line');
+    });
+
+    it('should capture stderr and attach to error on iterator failure', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      const stderrLines = ['MCP server error: config invalid', 'Failed to start'];
+      mockQuery.mockImplementation(({ options }: { options: Record<string, unknown> }) => {
+        // Simulate stderr output
+        if (options.stderr) {
+          for (const line of stderrLines) {
+            (options.stderr as (data: string) => void)(line);
+          }
+        }
+        return (async function* () {
+          throw new Error('SDK process exited with code 1');
+        })();
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        // no input
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+      });
+
+      // Expect the iterator to throw with stderr attached
+      let thrownError: Error | undefined;
+      try {
+        for await (const _ of result.iterator) {
+          // consume
+        }
+      } catch (error) {
+        thrownError = error as Error;
+      }
+
+      expect(thrownError).toBeDefined();
+      if (thrownError) {
+        expect(thrownError.message).toContain('SDK process exited');
+      }
+      // stderr should be attached via attachStderrToError
+      const stderr = getErrorStderr(thrownError);
+      expect(stderr).toContain('MCP server error');
+      expect(stderr).toContain('Failed to start');
+    });
+
+    it('should handle query result without close/cancel gracefully', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      // Return a plain async iterable (no close/cancel methods)
+      mockQuery.mockReturnValue((async function* () {
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Response' }] } };
+      })());
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Test' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+      });
+
+      // close and cancel should not throw even when not available
+      expect(() => result.handle.close()).not.toThrow();
+      expect(() => result.handle.cancel()).not.toThrow();
+    });
+
+    it('should call close and cancel on query result when available', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      const closeFn = vi.fn();
+      const cancelFn = vi.fn();
+
+      // Create an async iterable with close/cancel methods
+      const asyncIterable = Object.assign(
+        (async function* () {
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Hi' }] } };
+        })(),
+        { close: closeFn, cancel: cancelFn },
+      );
+
+      mockQuery.mockReturnValue(asyncIterable);
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Test' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+      });
+
+      result.handle.close();
+      expect(closeFn).toHaveBeenCalled();
+
+      result.handle.cancel();
+      expect(cancelFn).toHaveBeenCalled();
+    });
+
+    it('should handle multiple user inputs', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      let inputCount = 0;
+      mockQuery.mockImplementation(({ prompt }: { prompt: AsyncGenerator<unknown> }) => {
+        return (async function* () {
+          // Consume the prompt generator to count inputs
+          for await (const _ of prompt) {
+            inputCount++;
+          }
+          // Then yield a response
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Done' }] } };
+        })();
+      });
+
+      async function* multiInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'First message' };
+        yield { role: 'user', content: 'Second message' };
+      }
+
+      const result = provider.queryStream(multiInput(), {
+        settingSources: ['project'],
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) {
+        messages.push(msg);
+      }
+
+      expect(inputCount).toBe(2);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // createInlineTool
+  // --------------------------------------------------------------------------
+
+  describe('createInlineTool', () => {
+    it('should create a tool using SDK tool function', () => {
+      const handler = vi.fn();
+      const definition = {
+        name: 'test_tool',
+        description: 'A test tool',
+        parameters: {} as never, // Zod schema - simplified for test
+        handler,
+      };
+
+      const result = provider.createInlineTool(definition);
+
+      expect(mockTool).toHaveBeenCalledWith(
+        'test_tool',
+        'A test tool',
+        definition.parameters,
+        handler,
+      );
+      expect(result).toBeDefined();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // createMcpServer
+  // --------------------------------------------------------------------------
+
+  describe('createMcpServer', () => {
+    it('should create MCP server for inline config with tools', () => {
+      const tools = [
+        {
+          name: 'tool1',
+          description: 'First tool',
+          parameters: {} as never, // Zod schema - simplified for test
+          handler: vi.fn(),
+        },
+        {
+          name: 'tool2',
+          description: 'Second tool',
+          parameters: {} as never, // Zod schema - simplified for test
+          handler: vi.fn(),
+        },
+      ];
+
+      const config = {
+        type: 'inline' as const,
+        name: 'test-server',
+        version: '1.0.0',
+        tools,
+      };
+
+      const result = provider.createMcpServer(config);
+
+      expect(mockCreateSdkMcpServer).toHaveBeenCalledWith({
+        name: 'test-server',
+        version: '1.0.0',
+        tools: expect.arrayContaining([
+          expect.objectContaining({ name: 'tool1' }),
+          expect.objectContaining({ name: 'tool2' }),
+        ]),
+      });
+      expect(result).toBeDefined();
+    });
+
+    it('should create MCP server for inline config without tools', () => {
+      const config = {
+        type: 'inline' as const,
+        name: 'empty-server',
+        version: '1.0.0',
+      };
+
+      provider.createMcpServer(config);
+
+      expect(mockCreateSdkMcpServer).toHaveBeenCalledWith({
+        name: 'empty-server',
+        version: '1.0.0',
+        tools: [],
+      });
+    });
+
+    it('should throw error for stdio config', () => {
+      const config = {
+        type: 'stdio' as const,
+        name: 'stdio-server',
+        command: 'npx',
+        args: ['-y', 'some-mcp-server'],
+      };
+
+      expect(() => provider.createMcpServer(config)).toThrow(
+        'stdio MCP servers are not supported by ClaudeSDKProvider.createMcpServer'
+      );
+    });
   });
 });
