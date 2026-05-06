@@ -153,6 +153,28 @@ describe('logger', () => {
 
       expect(logger).toBeDefined();
     });
+
+    it('should successfully initialize file logging with pino-roll', async () => {
+      // Issue #3359: Verify pino-roll CJS/ESM interop works correctly
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-logs-${Date.now()}`;
+      const logger = await initLogger({
+        fileLogging: true,
+        logDir: tmpDir,
+      });
+
+      expect(logger).toBeDefined();
+      expect(typeof logger.info).toBe('function');
+
+      // Verify logs can be written without error
+      expect(() => {
+        logger.info('pino-roll file logging test');
+      }).not.toThrow();
+
+      // Cleanup
+      const fs = await import('fs');
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
   });
 
   describe('createLogger', () => {
