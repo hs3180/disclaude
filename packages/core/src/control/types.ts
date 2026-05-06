@@ -44,6 +44,18 @@ export interface ControlHandlerContext {
     setMode(chatId: string, mode: TriggerMode): void;
   };
 
+  /** 项目管理能力（可选） (Issue #3335) */
+  project?: {
+    /** List all configured projects */
+    listProjects(): Array<{ key: string; chatId?: string; workingDir?: string; modelTier?: string; idleTimeoutMs?: number }>;
+    /** Get project state summary */
+    getProjectStatus(projectKey?: string): string;
+    /** Trigger a task for a project agent */
+    triggerProject(projectKey: string): string;
+    /** Stop a project agent */
+    stopProject(projectKey: string): string;
+  };
+
   /** 日志记录器 */
   logger?: Logger;
 }

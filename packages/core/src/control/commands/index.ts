@@ -7,6 +7,7 @@ import { handleStop } from './stop.js';
 import { handleListNodes } from './list-nodes.js';
 import { handleDebug } from './debug.js';
 import { handleTrigger } from './passive.js';
+import { handleProjectStatus, handleProjectTrigger, handleProjectStop, handleProjectList } from './project.js';
 
 /**
  * 命令注册表
@@ -20,6 +21,11 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'list-nodes', handler: handleListNodes, description: '查看执行节点' },
   { type: 'debug', handler: handleDebug, description: '切换 Debug 群设置' },
   { type: 'trigger', handler: handleTrigger, description: '切换触发模式', usage: '/trigger [mention|always]' },
+  // Project management commands (Issue #3335)
+  { type: 'project-status', handler: handleProjectStatus, description: '查看项目状态', usage: '/project status [projectKey]' },
+  { type: 'project-trigger', handler: handleProjectTrigger, description: '触发项目任务', usage: '/project trigger <projectKey>' },
+  { type: 'project-stop', handler: handleProjectStop, description: '停止项目 Agent', usage: '/project stop <projectKey>' },
+  { type: 'project-list', handler: handleProjectList, description: '列出所有项目', usage: '/project list' },
 ];
 
 /**

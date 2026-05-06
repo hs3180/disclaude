@@ -177,6 +177,48 @@ export interface LoggingConfig {
 }
 
 /**
+ * Single project configuration for project-bound agents.
+ *
+ * Defined in `disclaude.config.yaml` under the `projects:` section.
+ * Each project can have its own ChatAgent bound to a specific chatId.
+ *
+ * @see Issue #3335 (Phase 5: Project state persistence and admin commands)
+ */
+export interface ProjectEntryConfig {
+  /** Project key (e.g. "owner/repo") — unique identifier */
+  key: string;
+
+  /** Working directory relative to disclaude root (default: ".") */
+  workingDir?: string;
+
+  /** Bound chat ID for this project's agent */
+  chatId?: string;
+
+  /** Model tier for this project's agent (default: uses global setting) */
+  modelTier?: 'high' | 'low' | 'multimodal';
+
+  /** Idle timeout in milliseconds before agent is disposed (default: 1800000 = 30min) */
+  idleTimeoutMs?: number;
+}
+
+/**
+ * Projects configuration section.
+ *
+ * ```yaml
+ * projects:
+ *   - key: "hs3180/disclaude"
+ *     workingDir: "."
+ *     chatId: "oc_xxx"
+ *     modelTier: "low"
+ *     idleTimeoutMs: 1800000
+ * ```
+ */
+export interface ProjectsConfig {
+  /** List of project entries */
+  entries?: ProjectEntryConfig[];
+}
+
+/**
  * MCP server configuration (for external MCP servers like Playwright).
  * Matches the format used in .mcp.json files.
  */
@@ -374,6 +416,8 @@ export interface DisclaudeConfig {
   messaging?: MessagingConfig;
   /** Session restoration configuration (Issue #1213) */
   sessionRestore?: SessionRestoreConfig;
+  /** Project-bound agent configuration (Issue #3335) */
+  projects?: ProjectsConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
 }
