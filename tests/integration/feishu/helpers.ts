@@ -1,27 +1,15 @@
 /**
- * Shared helpers for Feishu integration tests.
- *
- * All tests using these helpers are **skipped by default**.
- * Run with: FEISHU_INTEGRATION_TEST=true npx vitest --run tests/integration/feishu
+ * Shared helpers for Feishu IPC integration tests.
  *
  * These tests use mock IPC handlers — no real Feishu credentials needed.
+ * They run as part of the standard test suite via `npm test`.
  *
  * @see Issue #1626
  */
 
-import { describe } from 'vitest';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { unlinkSync, existsSync } from 'fs';
-
-/** Whether Feishu integration tests are enabled. */
-export const FEISHU_INTEGRATION = process.env.FEISHU_INTEGRATION_TEST === 'true';
-
-/**
- * A describe block that only runs when FEISHU_INTEGRATION_TEST=true.
- * Otherwise it is marked as `.skip` and vitest reports it as skipped.
- */
-export const describeIfFeishu = FEISHU_INTEGRATION ? describe : describe.skip;
 
 /**
  * Generate a unique Unix socket path for IPC tests.
