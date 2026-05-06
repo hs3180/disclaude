@@ -284,24 +284,50 @@ function cmdStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// Exports (for testing)
+// ---------------------------------------------------------------------------
+
+export {
+  LABEL,
+  PLIST_FILENAME,
+  LAUNCHAGENTS_DIR,
+  PLIST_PATH,
+  LOG_DIR,
+  STDERR_LOG,
+  APP_LOG,
+  CLI_ENTRY,
+  getNodePath,
+  run,
+  ensureLaunchAgentsDir,
+  ensureLogDir,
+  getCaffeinatePath,
+  buildProgramArguments,
+  generatePlist,
+  loadPlist,
+  unloadPlist,
+  build as buildProject,
+};
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-const command = process.argv[2];
+function main() {
+  const command = process.argv[2];
 
-const commands = {
-  generate: cmdGenerate,
-  install: cmdInstall,
-  uninstall: cmdUninstall,
-  start: cmdStart,
-  stop: cmdStop,
-  restart: cmdRestart,
-  logs: cmdLogs,
-  status: cmdStatus,
-};
+  const commands = {
+    generate: cmdGenerate,
+    install: cmdInstall,
+    uninstall: cmdUninstall,
+    start: cmdStart,
+    stop: cmdStop,
+    restart: cmdRestart,
+    logs: cmdLogs,
+    status: cmdStatus,
+  };
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -313,7 +339,13 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
+    process.exit(1);
+  }
+
+  commands[command]();
 }
 
-commands[command]();
+// Only run main when executed directly (not when imported for testing)
+if (process.argv[1]?.endsWith('launchd.mjs')) {
+  main();
+}
