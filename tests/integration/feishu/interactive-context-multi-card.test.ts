@@ -8,7 +8,8 @@
  *   Card B sent via IPC → actionPrompts registered
  *   Callback for Card A action → should resolve to Card A's prompt (not B's)
  *
- * Run with: FEISHU_INTEGRATION_TEST=true npx vitest --run tests/integration/feishu
+ * Uses mock IPC handlers — no real Feishu credentials needed.
+ * Runs as part of the standard test suite.
  *
  * @see Issue #1626
  * @see Issue #1625 — IPC sendInteractive actionPrompts overwrite bug
@@ -22,9 +23,9 @@ import {
   type ChannelHandlersContainer,
 } from '@disclaude/primary-node';
 import { InteractiveContextStore } from '@disclaude/primary-node';
-import { describeIfFeishu, generateSocketPath, cleanupSocket } from './helpers.js';
+import { generateSocketPath, cleanupSocket } from './helpers.js';
 
-describeIfFeishu('InteractiveContextStore multi-card coexistence (#1625)', () => {
+describe('InteractiveContextStore multi-card coexistence (#1625)', () => {
   let server: UnixSocketIpcServer;
   let client: UnixSocketIpcClient;
   let socketPath: string;
