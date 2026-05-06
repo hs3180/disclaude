@@ -62,6 +62,16 @@ vi.mock('../../platforms/feishu/card-builders/card-text-extractor.js', () => ({
   extractCardTextContent: vi.fn().mockReturnValue('Extracted card text'),
 }));
 
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    mkdir: vi.fn().mockResolvedValue(undefined),
+    stat: vi.fn().mockResolvedValue({ size: 1024 }),
+    writeFile: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 vi.mock('./message-logger.js', () => ({
   messageLogger: {
     isMessageProcessed: () => mockState.isMessageProcessed,
@@ -951,7 +961,7 @@ describe('MessageHandler', () => {
             message_type: 'text',
             create_time: Date.now(),
           },
-          sender: { sender_type: 'user', sender_id: { open_id: 'string_id_123' } },
+          sender: { sender_type: 'user', sender_id: 'string_id_123' } as any,
         },
       });
       expect(firstCallArg(mockState.emitMessage).userId).toBe('string_id_123');
@@ -991,6 +1001,335 @@ describe('MessageHandler', () => {
         },
       });
       expect(firstCallArg(mockState.emitMessage).userId).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // checkAndAutoDisableSmallGroup
+  // -----------------------------------------------------------------------
+  describe('checkAndAutoDisableSmallGroup', () => {
+    it('should mark as small group when total members ≤ 2', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '1', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // Send a group message without @mention
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_auto_1',
+            chat_id: 'chat_small',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isTriggerEnabled('chat_small')).toBe(true);
+    });
+
+    it('should not mark as small group when total members > 2', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '3', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_auto_2',
+            chat_id: 'chat_large',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isTriggerEnabled('chat_large')).toBe(false);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should handle API error gracefully without blocking', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockRejectedValue(new Error('API error')),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      mockState.isBotMentioned = false;
+      // Should not throw
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_auto_err',
+            chat_id: 'chat_api_err',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isTriggerEnabled('chat_api_err')).toBe(false);
+    });
+
+    it('should skip auto-detection when client is not initialized', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      // No client initialized
+
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_auto_noclient',
+            chat_id: 'chat_noclient',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isTriggerEnabled('chat_noclient')).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // addTypingReaction with client
+  // -----------------------------------------------------------------------
+  describe('addTypingReaction (via handleMessageReceive)', () => {
+    it('should add typing reaction when client is available', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({});
+      const mockClient = {
+        im: {
+          messageReaction: { create: mockCreate },
+          chat: { get: vi.fn().mockResolvedValue({ data: { user_count: '3', bot_count: '1' } }) },
+        },
+      };
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Hello'));
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        path: { message_id: 'msg_001' },
+        data: { reaction_type: { emoji_type: 'Typing' } },
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // File download with client
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — file download with client', () => {
+    it('should download file when client is available', async () => {
+      const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+
+      const mockClient = {
+        im: {
+          messageResource: {
+            get: vi.fn().mockResolvedValue({
+              writeFile: mockWriteFile,
+              headers: {},
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_dl',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ image_key: 'img_001' }),
+            message_type: 'image',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('文件已下载到本地');
+      expect(msg.attachments).toBeDefined();
+      expect(msg.attachments[0].fileName).toContain('image_img_001');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // getQuotedMessageContext with client
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — quoted message with client', () => {
+    it('should include quoted message context when client is available', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'text',
+                  content: JSON.stringify({ text: 'Quoted text' }),
+                  message_id: 'msg_parent',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_2',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.quotedMessage).toContain('Quoted text');
+    });
+
+    it('should handle quoted post message', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'post',
+                  content: JSON.stringify({
+                    content: [[{ tag: 'text', text: 'Bold post' }]],
+                  }),
+                  message_id: 'msg_parent_post',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_post',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent_post',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('Bold post');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // handleCardAction error paths
+  // -----------------------------------------------------------------------
+  describe('handleCardAction — error paths', () => {
+    it('should notify user when emitMessage throws', async () => {
+      mockState.emitMessage.mockRejectedValueOnce(new Error('Emit failed'));
+      const { handler } = createHandler();
+
+      await handler.handleCardAction(cardActionEvent());
+
+      // Should still attempt to send error notification
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('错误') }),
+      );
+    });
+
+    it('should send error message when InteractionManager throws', async () => {
+      mockState.interactionHandleAction.mockRejectedValueOnce(new Error('Interaction error'));
+      const { handler } = createHandler();
+
+      await handler.handleCardAction(cardActionEvent());
+
+      expect(mockState.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('Interaction error') }),
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Media message type
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — media messages', () => {
+    it('should handle media message type like file', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_media',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'media_001', file_name: 'video.mp4' }),
+            message_type: 'media',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.messageType).toBe('file');
     });
   });
 
