@@ -50,6 +50,75 @@ To notify the user in your FINAL response, use:
 }
 
 /**
+ * Regex pattern to detect Feishu document and wiki URLs.
+ *
+ * Issue #3035: Matches both /wiki/ and /docx/ URL patterns.
+ */
+const FEISHU_DOC_URL_PATTERN = /https?:\/\/[^\s"'<>]*\.feishu\.cn\/(wiki|docx)\/[^\s"'<>]*/;
+
+/**
+ * Build Feishu document link handling guidance.
+ *
+ * Issue #3035: When the user message contains a Feishu document/wiki link,
+ * inject guidance telling the Agent to use lark-cli instead of webReader
+ * (which cannot access authenticated Feishu pages).
+ */
+function buildFeishuDocGuidance(ctx: MessageBuilderContext): string {
+  const { msg } = ctx;
+
+  if (!FEISHU_DOC_URL_PATTERN.test(msg.text)) {
+    return '';
+  }
+
+  return `
+
+## 📄 Feishu Document Link Handling
+
+The user message contains a Feishu document/wiki link. **Do NOT use webReader** — Feishu documents require authentication and webReader cannot access them.
+
+Instead, use \`lark-cli\` to read the document:
+
+**Recommended two-step flow:**
+1. First, get the document outline:
+   \`\`\`bash
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope outline --max-depth 3
+   \`\`\`
+2. Then read the relevant sections:
+   \`\`\`bash
+   lark-cli docs +fetch --api-version v2 --doc "<URL>" --scope section --start-block-id <heading_id> --doc-format markdown
+   \`\`\`
+
+**Quick read (entire document):**
+\`\`\`bash
+lark-cli docs +fetch --api-version v2 --doc "<URL>" --doc-format markdown
+\`\`\`
+
+**Note:** The \`--doc\` parameter accepts both full URLs and document tokens.`;
+}
+
+/**
+ * Build combined post-history content for Feishu.
+ *
+ * Issue #3035: Combines @ mention section and Feishu doc link guidance
+ * into a single buildPostHistory callback.
+ */
+function buildFeishuPostHistory(ctx: MessageBuilderContext): string {
+  const parts: string[] = [];
+
+  const mentionSection = buildFeishuMentionSection(ctx);
+  if (mentionSection) {
+    parts.push(mentionSection);
+  }
+
+  const docGuidance = buildFeishuDocGuidance(ctx);
+  if (docGuidance) {
+    parts.push(docGuidance);
+  }
+
+  return parts.join('\n');
+}
+
+/**
  * Build Feishu capability-aware tools section.
  *
  * Issue #582: Dynamically includes available MCP tools based on channel capabilities.
@@ -192,7 +261,7 @@ function hasImageAnalyzerMcp(): boolean {
 export function createFeishuMessageBuilderOptions(): MessageBuilderOptions {
   return {
     buildHeader: buildFeishuHeader,
-    buildPostHistory: buildFeishuMentionSection,
+    buildPostHistory: buildFeishuPostHistory,
     buildToolsSection: buildFeishuToolsSection,
     buildAttachmentExtra: buildFeishuAttachmentExtra,
   };
