@@ -71,6 +71,18 @@ export {
   type SchedulerOptions,
 } from './scheduler.js';
 
+// NonUserMessage types (Issue #3333: Scheduler integration)
+export {
+  type NonUserMessage,
+  type NonUserMessageType,
+  type NonUserMessagePriority,
+  type ProjectRoutingConfig,
+  type RouteResult,
+  type IProjectRoutingProvider,
+  type IAgentMessageDelivery,
+  type INonUserMessageRouter,
+} from '../non-user-message/types.js';
+
 // Schedule Executor (Issue #1382, Issue #2941: ChatAgent-only)
 export {
   createScheduleExecutor,

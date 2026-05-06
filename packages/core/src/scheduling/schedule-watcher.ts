@@ -102,6 +102,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'lastExecutedAt':
       case 'model':
       case 'modelTier':
+      case 'projectKey':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -236,6 +237,7 @@ export class ScheduleFileScanner {
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
         modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
+        projectKey: frontmatter['projectKey'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -307,6 +309,9 @@ export class ScheduleFileScanner {
     }
     if (task.modelTier) {
       frontmatter.push(`modelTier: "${task.modelTier}"`);
+    }
+    if (task.projectKey) {
+      frontmatter.push(`projectKey: "${task.projectKey}"`);
     }
 
     frontmatter.push('---', '');
