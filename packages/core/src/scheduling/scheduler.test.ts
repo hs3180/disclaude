@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { Scheduler, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+import { Scheduler, type SchedulerCallbacks, type TaskExecutor, TaskTimeoutError, DEFAULT_TASK_TIMEOUT_MS } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -551,6 +551,145 @@ describe('Scheduler', () => {
 
       // isInCooldown should not be called when no cooldownPeriod
       expect(mockCooldownManager.isInCooldown).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('executeTask with timeout protection (Issue #3346)', () => {
+    /** Helper: fire a cron job */
+    function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
+      void jobs[0].job.fireOnTick();
+    }
+
+    it('should use DEFAULT_TASK_TIMEOUT_MS when timeoutMs is not set', () => {
+      expect(DEFAULT_TASK_TIMEOUT_MS).toBe(300_000);
+    });
+
+    it('should timeout and clear running state when executor hangs', async () => {
+      // Create a task with a very short timeout for testing
+      const task = createTask({ id: 'timeout-1', timeoutMs: 100 });
+      scheduler.addTask(task);
+
+      // Make the executor hang forever (never resolves)
+      mockExecutor.mockReturnValueOnce(new Promise(() => {})); // never resolves
+
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      // Wait for timeout to trigger
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('timeout-1')).toBe(false);
+      }, { timeout: 2000 });
+
+      // Should send timeout-specific message
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('超时'),
+      );
+      // The timeout message should contain the task name
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('已自动终止'),
+      );
+    });
+
+    it('should allow subsequent execution after timeout', async () => {
+      const task = createTask({ id: 'timeout-2', timeoutMs: 100, blocking: true });
+      scheduler.addTask(task);
+
+      // First execution: hangs and times out
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('timeout-2')).toBe(false);
+      }, { timeout: 2000 });
+
+      // Second execution: should work normally (not skipped)
+      mockExecutor.mockResolvedValueOnce(undefined);
+      fireAndWait(scheduler.getActiveJobs());
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+
+    it('should use task-specific timeoutMs when provided', async () => {
+      const customTimeout = 50;
+      const task = createTask({ id: 'timeout-custom', timeoutMs: customTimeout });
+      scheduler.addTask(task);
+
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      const start = Date.now();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('timeout-custom')).toBe(false);
+      }, { timeout: 2000 });
+      const elapsed = Date.now() - start;
+
+      // Should timeout around the custom timeout (with some margin)
+      expect(elapsed).toBeGreaterThanOrEqual(customTimeout - 20);
+      expect(elapsed).toBeLessThan(customTimeout + 500);
+    });
+
+    it('should send timeout notification with duration in seconds', async () => {
+      const task = createTask({ id: 'timeout-msg', timeoutMs: 100 });
+      scheduler.addTask(task);
+
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('0s'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should record cooldown even when task times out', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(false),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue(null),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const timeoutScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'timeout-cd', timeoutMs: 100, cooldownPeriod: 60000 });
+      timeoutScheduler.addTask(task);
+
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+      const jobs = timeoutScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockCooldownManager.recordExecution).toHaveBeenCalledWith('timeout-cd', 60000);
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('TaskTimeoutError', () => {
+    it('should have correct name and message', () => {
+      const error = new TaskTimeoutError(5000);
+      expect(error.name).toBe('TaskTimeoutError');
+      expect(error.message).toContain('5000ms');
+      expect(error.timeoutMs).toBe(5000);
+    });
+
+    it('should be an instance of Error', () => {
+      const error = new TaskTimeoutError(10000);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toBeInstanceOf(TaskTimeoutError);
     });
   });
 

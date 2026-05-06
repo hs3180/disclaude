@@ -109,6 +109,7 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = value === 'true';
         break;
       case 'cooldownPeriod':
+      case 'timeoutMs':
         frontmatter[key] = parseInt(value, 10);
         break;
     }
