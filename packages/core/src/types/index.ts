@@ -131,3 +131,15 @@ export type {
   IAttachmentManager,
   IPlatformAdapter,
 } from './adapter.js';
+
+// NonUserMessage types (Issue #3329 — System-Driven Task Pipeline)
+export type {
+  NonUserMessage,
+  NonUserMessageSource,
+  NonUserMessagePriority,
+  NonUserProjectConfig,
+  NonUserMessageRouteResult,
+  NonUserMessageHandler,
+  NonUserMessageRouterConfig,
+  NonUserMessageRouterLogger,
+} from './non-user-message.js';

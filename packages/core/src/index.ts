@@ -136,6 +136,21 @@ export {
   AgentPool,
 } from './agents/agent-pool.js';
 
+// NonUserMessage router (Issue #3329 — System-Driven Task Pipeline)
+export {
+  NonUserMessageRouter,
+} from './agents/non-user-message-router.js';
+export type {
+  NonUserMessage,
+  NonUserMessageSource,
+  NonUserMessagePriority,
+  NonUserProjectConfig,
+  NonUserMessageRouteResult,
+  NonUserMessageHandler,
+  NonUserMessageRouterConfig,
+  NonUserMessageRouterLogger,
+} from './types/non-user-message.js';
+
 // Base Agent
 export {
   type SdkOptionsExtra,
