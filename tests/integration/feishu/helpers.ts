@@ -42,17 +42,3 @@ export function cleanupSocket(socketPath: string): void {
     }
   }
 }
-
-/**
- * Get the test Feishu chat ID from the environment.
- *
- * Required for real Feishu API tests (not needed for mock IPC tests).
- * Set FEISHU_TEST_CHAT_ID env var to run tests against real Feishu API.
- *
- * @throws Error if FEISHU_TEST_CHAT_ID is not set
- */
-export function getTestChatId(): string {
-  const chatId = process.env.FEISHU_TEST_CHAT_ID;
-  if (!chatId) throw new Error('FEISHU_TEST_CHAT_ID env var required for real API tests');
-  return chatId;
-}

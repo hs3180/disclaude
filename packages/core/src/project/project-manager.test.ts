@@ -1010,7 +1010,7 @@ describe('ProjectManager — edge cases', () => {
 
 describe('ProjectManager — persist failure rollback', () => {
   /** Make the .disclaude directory read-only so persist() fails */
-  function makePersistDirReadOnly(_pm: ProjectManager, workspaceDir: string): void {
+  function makePersistDirReadOnly(workspaceDir: string): void {
     // First, ensure the .disclaude directory exists
     const dataDir = join(workspaceDir, '.disclaude');
     if (!existsSync(dataDir)) {
