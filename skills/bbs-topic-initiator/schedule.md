@@ -1,0 +1,47 @@
+---
+name: "BBS 话题发起"
+cron: "0 9,15 * * 1-5"
+enabled: true
+blocking: true
+chatId: "{controlChannelChatId}"
+---
+
+# BBS 话题发起 — 定时执行
+
+工作日每天 9:00 和 15:00 使用 `bbs-topic-initiator` skill 为群组生成话题。
+
+## 执行
+
+使用 `bbs-topic-initiator` skill 分析群组活跃度并生成话题。
+
+参数：
+- **目标群 chatId**: {controlChannelChatId}
+
+### 活跃度检查
+
+执行前先检查最近活跃度，避免在活跃时段打扰：
+
+```bash
+cat workspace/chat/{chatId}.md 2>/dev/null | tail -100 || echo "No chat history"
+```
+
+- 如果最近 4 小时内有超过 5 条消息 → 跳过（群组已活跃）
+- 如果最近 4 小时内已发送过话题 → 跳过（避免重复）
+
+### 话题类型轮换
+
+| 星期 | 话题类型 |
+|------|----------|
+| 周一 | 技术前沿 / 本周计划 |
+| 周二 | 经验分享 / 最佳实践 |
+| 周三 | 问题讨论 / 技术挑战 |
+| 周四 | 工具推荐 / 效率提升 |
+| 周五 | 轻松闲聊 / 本周总结 |
+
+## 安装说明
+
+将此文件复制到 `schedules/bbs-topic-initiation/SCHEDULE.md`，然后替换以下占位符：
+
+| 占位符 | 替换为 |
+|--------|--------|
+| `{controlChannelChatId}` | 实际的 BBS 群组 chatId |
