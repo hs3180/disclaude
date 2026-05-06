@@ -7,7 +7,8 @@
  * Verifies text message sending, thread support, mentions, and error handling
  * through the real Unix socket IPC transport layer.
  *
- * Run with: FEISHU_INTEGRATION_TEST=true npx vitest --run tests/integration/feishu
+ * Uses mock IPC handlers — no real Feishu credentials needed.
+ * Runs as part of the standard test suite.
  *
  * @see Issue #1626
  * @see Issue #1574 — Phase 5 of IPC refactor (platform-agnostic messaging)
@@ -20,9 +21,9 @@ import {
   createInteractiveMessageHandler,
   type ChannelHandlersContainer,
 } from '@disclaude/primary-node';
-import { describeIfFeishu, generateSocketPath, cleanupSocket } from './helpers.js';
+import { generateSocketPath, cleanupSocket } from './helpers.js';
 
-describeIfFeishu('IPC sendMessage end-to-end chain', () => {
+describe('IPC sendMessage end-to-end chain', () => {
   let server: UnixSocketIpcServer;
   let client: UnixSocketIpcClient;
   let socketPath: string;

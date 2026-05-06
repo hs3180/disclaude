@@ -8,7 +8,8 @@
  * This test verifies the end-to-end flow that a real Feishu card action callback
  * would exercise: card sent → prompts registered → callback resolves prompt.
  *
- * Run with: FEISHU_INTEGRATION_TEST=true npx vitest --run tests/integration/feishu
+ * Uses mock IPC handlers — no real Feishu credentials needed.
+ * Runs as part of the standard test suite.
  *
  * @see Issue #1626
  * @see Issue #1570 — sendInteractive IPC flow
@@ -23,9 +24,9 @@ import {
   type ChannelHandlersContainer,
 } from '@disclaude/primary-node';
 import { InteractiveContextStore } from '@disclaude/primary-node';
-import { describeIfFeishu, generateSocketPath, cleanupSocket } from './helpers.js';
+import { generateSocketPath, cleanupSocket } from './helpers.js';
 
-describeIfFeishu('IPC sendInteractive end-to-end chain', () => {
+describe('IPC sendInteractive end-to-end chain', () => {
   let server: UnixSocketIpcServer;
   let client: UnixSocketIpcClient;
   let socketPath: string;
