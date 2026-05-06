@@ -21,7 +21,7 @@
  */
 
 import http from 'node:http';
-import { createLogger, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
+import { createLogger, withTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 
 const logger = createLogger('RestChannel');
@@ -422,57 +422,61 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
    */
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = req.url?.split('?')[0] || '/';
+    const route = `${req.method} ${url}`;
 
-    // Route requests
+    // Health check: skip timing wrapper (lightweight endpoint)
     if (url === '/api/health' && req.method === 'GET') {
       this.handleHealth(req, res);
       return;
     }
 
-    if (url === '/api/chat' && req.method === 'POST') {
-      await this.handleChat(req, res, false);
-      return;
-    }
-
-    if (url === '/api/chat/sync' && req.method === 'POST') {
-      await this.handleChat(req, res, true);
-      return;
-    }
-
-    // Async mode: POST /api/chat/{chatId}
-    const asyncChatMatch = url.match(/^\/api\/chat\/([^/]+)$/);
-    if (asyncChatMatch && req.method === 'POST') {
-      const [, chatId] = asyncChatMatch;
-      await this.handleAsyncChat(req, res, chatId);
-      return;
-    }
-
-    // Control endpoints
-    if (url === '/api/control' && req.method === 'POST') {
-      await this.handleControl(req, res);
-      return;
-    }
-
-    // File upload endpoint
-    if (url === '/api/files/upload' && req.method === 'POST') {
-      await this.handleFileUpload(req, res);
-      return;
-    }
-
-    // File info and download endpoints
-    const fileMatch = url.match(/^\/api\/files\/([^/]+)(\/download)?$/);
-    if (fileMatch && req.method === 'GET') {
-      const [, fileId, downloadSuffix] = fileMatch;
-      if (downloadSuffix === '/download') {
-        await this.handleFileDownload(req, res, fileId);
-      } else {
-        await this.handleFileInfo(req, res, fileId);
+    // Issue #3292: Wrap all non-health routes with timing for diagnostics
+    await withTiming(logger, `http:${route}`, undefined, async () => {
+      if (url === '/api/chat' && req.method === 'POST') {
+        await this.handleChat(req, res, false);
+        return;
       }
-      return;
-    }
 
-    // 404 for unknown routes
-    this.sendError(res, 404, 'Not found');
+      if (url === '/api/chat/sync' && req.method === 'POST') {
+        await this.handleChat(req, res, true);
+        return;
+      }
+
+      // Async mode: POST /api/chat/{chatId}
+      const asyncChatMatch = url.match(/^\/api\/chat\/([^/]+)$/);
+      if (asyncChatMatch && req.method === 'POST') {
+        const [, chatId] = asyncChatMatch;
+        await this.handleAsyncChat(req, res, chatId);
+        return;
+      }
+
+      // Control endpoints
+      if (url === '/api/control' && req.method === 'POST') {
+        await this.handleControl(req, res);
+        return;
+      }
+
+      // File upload endpoint
+      if (url === '/api/files/upload' && req.method === 'POST') {
+        await this.handleFileUpload(req, res);
+        return;
+      }
+
+      // File info and download endpoints
+      const fileMatch = url.match(/^\/api\/files\/([^/]+)(\/download)?$/);
+      if (fileMatch && req.method === 'GET') {
+        const [, fileId, downloadSuffix] = fileMatch;
+        if (downloadSuffix === '/download') {
+          await this.handleFileDownload(req, res, fileId);
+        } else {
+          await this.handleFileInfo(req, res, fileId);
+        }
+        return;
+      }
+
+      // 404 for unknown routes
+      this.sendError(res, 404, 'Not found');
+    });
   }
 
   /**

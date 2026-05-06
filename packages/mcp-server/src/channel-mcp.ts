@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { getProvider, type SdkInlineToolDefinition } from '@disclaude/core';
+import { getProvider, createLogger, withTiming, type SdkInlineToolDefinition } from '@disclaude/core';
 import {
   send_text,
   send_card,
@@ -22,6 +22,8 @@ import { transformCardTables } from './utils/table-converter.js';
 import { resolveCardImages } from './utils/card-image-resolver.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
 import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
+
+const timingLogger = createLogger('Timing');
 
 // Re-export
 export type { MessageSentCallback, InteractiveOption, ActionPromptMap } from './tools/types.js';
@@ -187,7 +189,7 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
       chatId: string;
       parentMessageId?: string;
       mentions?: Array<{ openId: string; name?: string }>;
-    }) => {
+    }) => await withTiming(timingLogger, 'mcp:send_text', chatId, async () => {
       // Issue #1641 P1: Validate chatId format before IPC call
       const chatIdError = getChatIdValidationError(chatId);
       if (chatIdError) {
@@ -200,7 +202,7 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
       } catch (error) {
         return toolError(`Text send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    },
+    }),
   },
   {
     name: 'send_card',
@@ -298,7 +300,7 @@ When building tables with \`column_set\`, follow these rules:
       card: Record<string, unknown>;
       chatId: string;
       parentMessageId?: string;
-    }) => {
+    }) => await withTiming(timingLogger, 'mcp:send_card', chatId, async () => {
       // Issue #1355: Pre-validation to prevent message sending on invalid params
       // Validate card type
       if (!card || typeof card !== 'object' || Array.isArray(card)) {
@@ -348,7 +350,7 @@ When building tables with \`column_set\`, follow these rules:
       } catch (error) {
         return toolError(`Card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    },
+    }),
   },
   {
     name: 'send_interactive',
@@ -409,7 +411,7 @@ For display-only cards, use send_card instead.
       context?: string;
       actionPrompts?: ActionPromptMap;
       parentMessageId?: string;
-    }) => {
+    }) => await withTiming(timingLogger, 'mcp:send_interactive', chatId, async () => {
       // Issue #1355: Pre-validation to prevent message sending on invalid params
       if (!question || typeof question !== 'string') {
         return toolError('Invalid question: must be a non-empty string');
@@ -430,7 +432,7 @@ For display-only cards, use send_card instead.
       } catch (error) {
         return toolError(`Interactive card send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    },
+    }),
   },
   {
     name: 'send_file',
@@ -450,7 +452,7 @@ For display-only cards, use send_card instead.
       chatId: z.string(),
       parentMessageId: z.string().optional(),
     }),
-    handler: async ({ filePath, chatId, parentMessageId }: { filePath: string; chatId: string; parentMessageId?: string }) => {
+    handler: async ({ filePath, chatId, parentMessageId }: { filePath: string; chatId: string; parentMessageId?: string }) => await withTiming(timingLogger, 'mcp:send_file', chatId, async () => {
       // Issue #1641 P1: Validate chatId format before IPC call
       const chatIdError = getChatIdValidationError(chatId);
       if (chatIdError) {
@@ -463,7 +465,7 @@ For display-only cards, use send_card instead.
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    },
+    }),
   },
 ];
 
