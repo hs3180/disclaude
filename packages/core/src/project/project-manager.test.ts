@@ -1010,7 +1010,7 @@ describe('ProjectManager — edge cases', () => {
 
 describe('ProjectManager — persist failure rollback', () => {
   /** Make the .disclaude directory read-only so persist() fails */
-  function makePersistDirReadOnly(_pm: ProjectManager, workspaceDir: string): void {
+  function makePersistDirReadOnly(workspaceDir: string): void {
     // First, ensure the .disclaude directory exists
     const dataDir = join(workspaceDir, '.disclaude');
     if (!existsSync(dataDir)) {
@@ -1048,7 +1048,7 @@ describe('ProjectManager — persist failure rollback', () => {
     const pm = new ProjectManager(opts);
 
     // Make persist fail
-    makePersistDirReadOnly(pm, workspaceDir);
+    makePersistDirReadOnly(workspaceDir);
 
     const result = pm.create('chat_1', 'research', 'my-research');
 
@@ -1078,7 +1078,7 @@ describe('ProjectManager — persist failure rollback', () => {
     expect(pm.getActive('chat_1').name).toBe('my-research');
 
     // Now make persist fail and try to rebind
-    makePersistDirReadOnly(pm, workspaceDir);
+    makePersistDirReadOnly(workspaceDir);
 
     const result = pm.use('chat_1', 'book-1');
 
@@ -1103,7 +1103,7 @@ describe('ProjectManager — persist failure rollback', () => {
     expect(pm.getActive('chat_1').name).toBe('my-research');
 
     // Now make persist fail and try to reset
-    makePersistDirReadOnly(pm, workspaceDir);
+    makePersistDirReadOnly(workspaceDir);
 
     const result = pm.reset('chat_1');
 
@@ -1122,7 +1122,7 @@ describe('ProjectManager — persist failure rollback', () => {
 
     // Create a PM and immediately make persist fail
     const pm = new ProjectManager(opts);
-    makePersistDirReadOnly(pm, workspaceDir);
+    makePersistDirReadOnly(workspaceDir);
 
     // Try create — should fail
     const result1 = pm.create('chat_1', 'research', 'my-research');
@@ -1153,7 +1153,7 @@ describe('ProjectManager — persist failure rollback', () => {
     pm.create('chat_1', 'research', 'my-research');
 
     // Make persist fail for second create
-    makePersistDirReadOnly(pm, workspaceDir);
+    makePersistDirReadOnly(workspaceDir);
 
     const result = pm.create('chat_2', 'book-reader', 'book-1');
     expect(result.ok).toBe(false);
@@ -1173,7 +1173,7 @@ describe('ProjectManager — persist failure rollback', () => {
     pm.create('chat_1', 'research', 'my-research');
 
     // Make persist fail and try to bind a new chatId
-    makePersistDirReadOnly(pm, workspaceDir);
+    makePersistDirReadOnly(workspaceDir);
 
     const result = pm.use('chat_2', 'my-research');
     expect(result.ok).toBe(false);
