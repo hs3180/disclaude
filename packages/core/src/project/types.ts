@@ -199,3 +199,72 @@ export interface ProjectManagerOptions {
    */
   templatesConfig?: ProjectTemplatesConfig;
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Project Config (Phase 2 — Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Static project configuration for NonUserMessage routing.
+ *
+ * Defines a binding between a project key and a chatId, allowing
+ * system-driven messages (scheduled tasks, A2A events) to be routed
+ * to a specific ChatAgent with a specific working directory.
+ *
+ * Loaded from `disclaude.config.yaml` under `projects:` key.
+ * This is separate from dynamically created instances — project configs
+ * are static, admin-defined bindings.
+ *
+ * @see Issue #3332 (Phase 2 — Project-scoped ChatAgent with chatId binding)
+ */
+export interface ProjectConfig {
+  /** Project key (e.g., 'hs3180/disclaude') — unique identifier for routing */
+  key: string;
+
+  /** Project working directory (Agent discovers CLAUDE.md here) */
+  workingDir: string;
+
+  /**
+   * Bound chat ID — agent replies go here.
+   * This is a real chat (e.g., a Feishu group for project maintenance).
+   */
+  chatId: string;
+
+  /** Default model tier for scheduled tasks (optional) */
+  modelTier?: 'low' | 'default' | 'high';
+
+  /** Agent idle timeout in milliseconds (optional, default: 30min) */
+  idleTimeoutMs?: number;
+}
+
+/**
+ * YAML format for the `projects:` section in disclaude.config.yaml.
+ *
+ * Each entry maps to a ProjectConfig. The `workingDir` can be relative
+ * to the disclaude workspace root.
+ *
+ * @example
+ * ```yaml
+ * projects:
+ *   - key: "hs3180/disclaude"
+ *     workingDir: "."
+ *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+ *     modelTier: "low"
+ * ```
+ */
+export interface ProjectConfigYaml {
+  /** Project key */
+  key: string;
+
+  /** Working directory (relative to workspace root or absolute) */
+  workingDir: string;
+
+  /** Bound chat ID */
+  chatId: string;
+
+  /** Model tier override */
+  modelTier?: 'low' | 'default' | 'high';
+
+  /** Idle timeout in milliseconds */
+  idleTimeoutMs?: number;
+}

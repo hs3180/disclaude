@@ -9,6 +9,8 @@ export type {
   CwdProvider,
   InstanceInfo,
   PersistedInstance,
+  ProjectConfig,
+  ProjectConfigYaml,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,

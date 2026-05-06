@@ -14,6 +14,8 @@ import { join } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
+  ProjectConfig,
+  ProjectConfigYaml,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -73,6 +75,20 @@ export class ProjectManager {
   private chatProjectMap: Map<string, string> = new Map();
   /** Reverse index: instance name → Set of bound chatIds (O(1) lookup) */
   private instanceChatIds: Map<string, Set<string>> = new Map();
+
+  /**
+   * Static project configurations loaded from disclaude.config.yaml.
+   * Maps projectKey → ProjectConfig.
+   *
+   * Unlike dynamic instances (created from templates), these are
+   * admin-defined, static bindings for NonUserMessage routing.
+   *
+   * @see Issue #3332 (Phase 2 — Project-scoped ChatAgent)
+   */
+  private projectConfigs: Map<string, ProjectConfig> = new Map();
+
+  /** Reverse index: chatId → projectKey for static project configs */
+  private chatIdToProjectKey: Map<string, string> = new Map();
 
   /** Path to .disclaude directory */
   private readonly dataDir: string;
@@ -400,6 +416,91 @@ export class ProjectManager {
   }
 
   // ───────────────────────────────────────────
+  // Project Config Methods (Phase 2 — Issue #3332)
+  // ───────────────────────────────────────────
+
+  /**
+   * Register a static project configuration.
+   *
+   * Project configs define admin-level bindings between a project key
+   * and a chatId, used for NonUserMessage routing and project-scoped
+   * ChatAgent creation.
+   *
+   * @param config - Project configuration to register
+   * @throws Error if key or chatId is empty
+   */
+  registerProjectConfig(config: ProjectConfig): void {
+    if (!config.key || config.key.length === 0) {
+      throw new Error('projectKey cannot be empty');
+    }
+    if (!config.chatId || config.chatId.length === 0) {
+      throw new Error('chatId cannot be empty');
+    }
+    if (!config.workingDir || config.workingDir.length === 0) {
+      throw new Error('workingDir cannot be empty');
+    }
+
+    // Remove old chatId reverse mapping if this key was previously registered
+    const existing = this.projectConfigs.get(config.key);
+    if (existing) {
+      this.chatIdToProjectKey.delete(existing.chatId);
+    }
+
+    this.projectConfigs.set(config.key, config);
+    this.chatIdToProjectKey.set(config.chatId, config.key);
+  }
+
+  /**
+   * Load project configurations from YAML entries.
+   *
+   * Resolves relative workingDir to absolute paths using workspaceDir.
+   *
+   * @param entries - Array of project config entries from disclaude.config.yaml
+   */
+  loadProjectConfigs(entries: ProjectConfigYaml[]): void {
+    for (const entry of entries) {
+      const workingDir = this.resolveProjectWorkingDir(entry.workingDir);
+      this.registerProjectConfig({
+        ...entry,
+        workingDir,
+      });
+    }
+  }
+
+  /**
+   * Get a project configuration by project key.
+   *
+   * @param projectKey - Project key to look up
+   * @returns ProjectConfig if found, undefined otherwise
+   */
+  getProjectConfig(projectKey: string): ProjectConfig | undefined {
+    return this.projectConfigs.get(projectKey);
+  }
+
+  /**
+   * Look up project configuration by chatId.
+   *
+   * Used by CwdProvider to resolve cwd for project-bound chatIds.
+   *
+   * @param chatId - Chat ID to look up
+   * @returns ProjectConfig if found, undefined otherwise
+   */
+  getProjectConfigByChatId(chatId: string): ProjectConfig | undefined {
+    const key = this.chatIdToProjectKey.get(chatId);
+    if (!key) {return undefined;}
+    return this.projectConfigs.get(key);
+  }
+
+  /**
+   * Get all registered project configurations.
+   *
+   * @returns Array of all ProjectConfigs
+   */
+  getAllProjectConfigs(): ProjectConfig[] {
+    return Array.from(this.projectConfigs.values());
+  }
+
+  // ───────────────────────────────────────────
   // CwdProvider Factory
   // ───────────────────────────────────────────
 
@@ -408,16 +509,29 @@ export class ProjectManager {
    *
    * Injected into ChatAgent for dynamic cwd resolution.
    *
+   * Resolution order:
+   * 1. Dynamic instance binding (chatId → instance → workingDir)
+   * 2. Static project config (chatId → projectConfig → workingDir)
+   * 3. Default (return undefined → SDK falls back to getWorkspaceDir())
+   *
    * @returns CwdProvider function
    */
   createCwdProvider(): CwdProvider {
     return (chatId: string): string | undefined => {
+      // 1. Check dynamic instance binding
       const active = this.getActive(chatId);
-      // Return undefined for default → SDK falls back to getWorkspaceDir()
-      if (active.name === 'default') {
-        return undefined;
+      if (active.name !== 'default') {
+        return active.workingDir;
       }
-      return active.workingDir;
+
+      // 2. Check static project config (Phase 2 — Issue #3332)
+      const projectConfig = this.getProjectConfigByChatId(chatId);
+      if (projectConfig) {
+        return projectConfig.workingDir;
+      }
+
+      // 3. Default: undefined → SDK falls back to getWorkspaceDir()
+      return undefined;
     };
   }
 
@@ -582,6 +696,29 @@ export class ProjectManager {
     // Avoid importing `path` to keep this module filesystem-free
     const ws = this.workspaceDir.replace(/\/+$/, '');
     return `${ws}/projects/${name}`;
+  }
+
+  /**
+   * Resolve a project config's workingDir to an absolute path.
+   *
+   * If the path is relative, it's resolved relative to workspaceDir.
+   * If the path is absolute, it's used as-is.
+   *
+   * @param workingDir - Working directory from config (may be relative)
+   * @returns Absolute working directory path
+   */
+  private resolveProjectWorkingDir(workingDir: string): string {
+    if (workingDir.startsWith('/')) {
+      return workingDir;
+    }
+    // Relative path: resolve from workspaceDir
+    const ws = this.workspaceDir.replace(/\/+$/, '');
+    const relative = workingDir.replace(/^\.\/?/, '');
+    if (!relative) {
+      // workingDir was "." or "./"
+      return ws;
+    }
+    return `${ws}/${relative}`;
   }
 
   /**

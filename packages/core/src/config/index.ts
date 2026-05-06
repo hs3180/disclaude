@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectConfigEntry,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -437,6 +438,20 @@ export class Config {
    */
   static getMcpServersConfig(): Record<string, McpServerConfig> | undefined {
     return fileConfigOnly.tools?.mcpServers;
+  }
+
+  /**
+   * Get project configurations from config file.
+   *
+   * Project configs define static bindings between project keys and chatIds
+   * for NonUserMessage routing and project-scoped ChatAgent creation.
+   *
+   * Issue #3332: Project-scoped ChatAgent with chatId binding.
+   *
+   * @returns Array of project config entries, or empty array if not configured
+   */
+  static getProjectConfigs(): ProjectConfigEntry[] {
+    return fileConfigOnly.projects || [];
   }
 
   /**
