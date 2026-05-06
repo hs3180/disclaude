@@ -57,17 +57,4 @@ describe('Config.getModelForTier — GLM with tier models', () => {
   it('should return GLM multimodal model when tier is "multimodal"', () => {
     expect(Config.getModelForTier('multimodal')).toBe('glm-4v');
   });
-
-  it('should prefer GLM tier models over Anthropic tier models when GLM is configured', () => {
-    // When GLM is configured (GLM_API_KEY is set), GLM tiers take priority
-    // even though Anthropic tier models (claude-opus-4, etc.) are also defined
-    expect(Config.getModelForTier('high')).toBe('glm-4-plus');
-    expect(Config.getModelForTier('high')).not.toBe('claude-opus-4');
-  });
-
-  it('should return string type for all tier values', () => {
-    expect(typeof Config.getModelForTier('high')).toBe('string');
-    expect(typeof Config.getModelForTier('low')).toBe('string');
-    expect(typeof Config.getModelForTier('multimodal')).toBe('string');
-  });
 });

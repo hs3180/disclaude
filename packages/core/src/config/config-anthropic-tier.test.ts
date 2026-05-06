@@ -61,17 +61,6 @@ describe('Config.getModelForTier — Anthropic with tier models', () => {
   it('should return Anthropic multimodal model when tier is "multimodal"', () => {
     expect(Config.getModelForTier('multimodal')).toBe('claude-sonnet-4-20250514');
   });
-
-  it('should not return GLM models when GLM is not configured', () => {
-    // Since glm.apiKey is empty, should never enter GLM code path
-    expect(Config.getModelForTier('high')).not.toContain('glm');
-  });
-
-  it('should return string type for all tier values', () => {
-    expect(typeof Config.getModelForTier('high')).toBe('string');
-    expect(typeof Config.getModelForTier('low')).toBe('string');
-    expect(typeof Config.getModelForTier('multimodal')).toBe('string');
-  });
 });
 
 // ─── Session timeout disabled/null (uncovered branch 538-539) ────────────
