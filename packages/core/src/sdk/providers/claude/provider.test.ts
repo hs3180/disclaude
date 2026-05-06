@@ -220,7 +220,11 @@ describe('ClaudeSDKProvider', () => {
   });
 
   afterEach(() => {
-    process.env.ANTHROPIC_API_KEY = originalApiKey;
+    if (originalApiKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = originalApiKey;
+    }
   });
 
   // --------------------------------------------------------------------------
@@ -348,7 +352,8 @@ describe('ClaudeSDKProvider', () => {
         messages.push(msg);
       }
 
-      expect(messages.length).toBeGreaterThan(0);
+      expect(messages.length).toBe(1);
+      expect(messages[0].role).toBe('assistant');
       expect(mockQuery).toHaveBeenCalled();
     });
 
@@ -374,7 +379,10 @@ describe('ClaudeSDKProvider', () => {
       // Verify query was called with prompt and options
       expect(mockQuery).toHaveBeenCalledTimes(1);
       expect(mockQuery.mock.calls[0][0]).toHaveProperty('prompt');
-      expect(mockQuery.mock.calls[0][0]).toHaveProperty('options');
+      const callOptions = (mockQuery.mock.calls[0][0] as { options: Record<string, unknown> }).options;
+      expect(callOptions).toHaveProperty('cwd');
+      expect(callOptions).toHaveProperty('permissionMode');
+      expect(callOptions.model).toBe('claude-sonnet-4-20250514');
     });
 
     it('should adapt user input correctly through the stream', async () => {
@@ -403,6 +411,12 @@ describe('ClaudeSDKProvider', () => {
 
       // The prompt should be an async generator (adapted input)
       expect(capturedPrompt).toBeDefined();
+      // Verify it's an async iterable by consuming it
+      const promptMessages: unknown[] = [];
+      for await (const chunk of capturedPrompt as AsyncIterable<unknown>) {
+        promptMessages.push(chunk);
+      }
+      expect(promptMessages.length).toBe(1);
     });
 
     it('should inject stderr callback into SDK options', async () => {
