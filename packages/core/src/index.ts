@@ -320,3 +320,19 @@ export {
   type CommandDefinition,
   type DebugGroup,
 } from './control/index.js';
+
+// NonUserMessage module (Issue #3331: Phase 1 — system-driven task pipeline)
+export type {
+  NonUserMessage,
+  NonUserMessageType,
+  NonUserMessagePriority,
+  ProjectRoutingConfig,
+  RouteResult,
+  IProjectRoutingProvider,
+  IAgentMessageDelivery,
+} from './non-user-message/index.js';
+
+export {
+  NonUserMessageRouter,
+  type NonUserMessageRouterConfig,
+} from './non-user-message/index.js';
