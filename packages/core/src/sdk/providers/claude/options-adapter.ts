@@ -76,6 +76,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.stderr = options.stderr;
   }
 
+  // 流式部分消息（Issue #2890: 启用后 SDK 会发送 stream_event 类型消息）
+  if (options.includePartialMessages !== undefined) {
+    sdkOptions.includePartialMessages = options.includePartialMessages;
+  }
+
   return sdkOptions;
 }
 

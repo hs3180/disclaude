@@ -194,6 +194,40 @@ describe('adaptOptions', () => {
 
     expect(result.tools).toBeUndefined();
   });
+
+  it('should pass through includePartialMessages when true (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      includePartialMessages: true,
+    });
+
+    expect(result.includePartialMessages).toBe(true);
+  });
+
+  it('should pass through includePartialMessages when false (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      includePartialMessages: false,
+    });
+
+    expect(result.includePartialMessages).toBe(false);
+  });
+
+  it('should not include includePartialMessages when not provided (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.includePartialMessages).toBeUndefined();
+  });
+
+  it('should pass through settingSources as user, project, local (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['user', 'project', 'local'],
+    });
+
+    expect(result.settingSources).toEqual(['user', 'project', 'local']);
+  });
 });
 
 describe('adaptInput', () => {

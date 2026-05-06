@@ -161,7 +161,11 @@ export abstract class BaseAgent implements Disposable {
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['project'],
+      // Issue #2890: Load settings from all sources for full vibe coding compliance
+      // user: user-level settings (memory, preferences)
+      // project: project-level settings (CLAUDE.md, .claude/)
+      // local: local-level settings (skills, commands)
+      settingSources: ['user', 'project', 'local'],
     };
 
     // Add allowed/disallowed tools

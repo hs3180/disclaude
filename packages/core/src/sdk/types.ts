@@ -225,6 +225,15 @@ export interface AgentQueryOptions {
    * Provider 层将其传递给 SDK 的 stderr 选项。
    */
   stderr?: (data: string) => void;
+  /**
+   * Include partial/streaming message events in the output (Issue #2890)
+   *
+   * When true, `SDKPartialAssistantMessage` events (type: 'stream_event')
+   * will be emitted during streaming, enabling real-time text chunk delivery.
+   *
+   * Default: false (partial messages are filtered out by the message adapter)
+   */
+  includePartialMessages?: boolean;
 }
 
 // ============================================================================
