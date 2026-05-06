@@ -33,6 +33,30 @@ import type { ModelTier } from '../config/types.js';
 const logger = createLogger('Scheduler');
 
 /**
+ * Default timeout for scheduled task execution (5 minutes).
+ * Matches TaskQueue default timeout (packages/core/src/queue/task-queue.ts).
+ *
+ * Issue #3346: Timeout protection for scheduled tasks.
+ */
+export const DEFAULT_TASK_TIMEOUT_MS = 300_000; // 5 minutes
+
+/**
+ * Error thrown when a scheduled task exceeds its timeout.
+ *
+ * Issue #3346: Timeout protection for scheduled tasks.
+ */
+export class TaskTimeoutError extends Error {
+  /** The timeout duration in milliseconds */
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Scheduled task timed out after ${timeoutMs}ms`);
+    this.name = 'TaskTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
  * Active cron job entry.
  */
 interface ActiveJob {
@@ -301,7 +325,15 @@ ${task.prompt}`;
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection
       // Issue #3059: Pass modelTier for tier-based model resolution
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier);
+      // Issue #3346: Wrap executor call with timeout protection
+      const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+
+      await Promise.race([
+        this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs)
+        ),
+      ]);
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 

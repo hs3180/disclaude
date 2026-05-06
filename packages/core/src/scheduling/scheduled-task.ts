@@ -31,6 +31,14 @@ export interface ScheduledTask {
   blocking?: boolean;
   /** Cooldown period in milliseconds (prevents re-execution for this duration after execution) */
   cooldownPeriod?: number;
+  /**
+   * Maximum execution time in milliseconds before the task is aborted.
+   * Prevents hanging tasks from blocking future executions of blocking tasks.
+   * Defaults to DEFAULT_TASK_TIMEOUT_MS (5 minutes) when not specified.
+   *
+   * Issue #3346: Timeout protection for scheduled tasks.
+   */
+  timeoutMs?: number;
   /** Creation timestamp */
   createdAt: string;
   /** Last execution timestamp (read from file, for display purposes only) */
