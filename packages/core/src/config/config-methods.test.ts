@@ -41,6 +41,15 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
     workspace: { dir: '/test/workspace' },
     messaging: { debug: { forwardPatterns: ['error.*'] } },
     tools: { mcpServers: { test: { command: 'node' } } },
+    projectTemplates: {
+      research: {
+        displayName: '研究模式',
+        description: '专注研究的独立空间',
+      },
+      'book-reader': {
+        displayName: '读书助手',
+      },
+    },
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
 }));
@@ -188,6 +197,32 @@ describe('Config', () => {
   describe('getAgentsDir', () => {
     it('should return a path string', () => {
       expect(typeof Config.getAgentsDir()).toBe('string');
+    });
+  });
+
+  describe('getProjectTemplatesConfig', () => {
+    it('should return project templates from config file', () => {
+      const templates = Config.getProjectTemplatesConfig();
+      expect(templates).toBeDefined();
+      expect(templates).toEqual({
+        research: {
+          displayName: '研究模式',
+          description: '专注研究的独立空间',
+        },
+        'book-reader': {
+          displayName: '读书助手',
+        },
+      });
+    });
+
+    it('should return template entries with correct structure', () => {
+      const templates = Config.getProjectTemplatesConfig();
+      expect(templates!.research).toBeDefined();
+      expect(templates!.research.displayName).toBe('研究模式');
+      expect(templates!.research.description).toBe('专注研究的独立空间');
+      expect(templates!['book-reader']).toBeDefined();
+      // description is optional
+      expect(templates!['book-reader'].description).toBeUndefined();
     });
   });
 
