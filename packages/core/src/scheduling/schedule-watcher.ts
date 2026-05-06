@@ -109,6 +109,7 @@ function parseScheduleFrontmatter(content: string): {
         frontmatter[key] = value === 'true';
         break;
       case 'cooldownPeriod':
+      case 'timeoutMs':
         frontmatter[key] = parseInt(value, 10);
         break;
     }
@@ -231,6 +232,7 @@ export class ScheduleFileScanner {
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
         cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
+        timeoutMs: frontmatter['timeoutMs'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
@@ -295,6 +297,9 @@ export class ScheduleFileScanner {
 
     if (task.cooldownPeriod) {
       frontmatter.push(`cooldownPeriod: ${task.cooldownPeriod}`);
+    }
+    if (task.timeoutMs) {
+      frontmatter.push(`timeoutMs: ${task.timeoutMs}`);
     }
     if (task.createdBy) {
       frontmatter.push(`createdBy: ${task.createdBy}`);

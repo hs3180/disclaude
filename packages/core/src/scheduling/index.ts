@@ -66,6 +66,7 @@ export {
 // Scheduler
 export {
   Scheduler,
+  TaskTimeoutError,
   type SchedulerCallbacks,
   type TaskExecutor,
   type SchedulerOptions,
