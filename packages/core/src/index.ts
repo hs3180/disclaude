@@ -320,3 +320,17 @@ export {
   type CommandDefinition,
   type DebugGroup,
 } from './control/index.js';
+
+// A2A module — Agent-to-Agent task delegation (Issue #3334: Phase 4 of NonUserMessage RFC)
+export type {
+  A2AEnqueueRequest,
+  A2AEnqueueResult,
+  A2AEnqueueServiceConfig,
+  A2ARateLimitConfig,
+  A2ARouteMessage,
+  RateLimitEntry,
+} from './a2a/index.js';
+
+export {
+  A2AEnqueueService,
+} from './a2a/index.js';
