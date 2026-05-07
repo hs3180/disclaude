@@ -3,8 +3,11 @@
  *
  * Issue #1382: Unified executor implementation for both Primary Node and Worker Node.
  * Issue #2941: Uses ChatAgent directly since it is the only agent type.
- * Issue #3124: Uses processMessage + taskComplete instead of executeOnce,
- *   unifying scheduled tasks on the streaming input path.
+ * Issue #3369: Uses runOnce() instead of processMessage() + await taskComplete.
+ *   The old pattern failed because processMessage() is non-blocking and taskComplete
+ *   never resolves when onceMode is false (which was the case for scheduled tasks).
+ *   runOnce() correctly sets onceMode=true, ensuring the channel closes after the
+ *   first result message and the Promise resolves properly.
  *
  * This module provides a factory function to create TaskExecutor instances
  * that can be used with the Scheduler. The executor uses a provided agent
@@ -17,8 +20,7 @@
  * Scheduler uses TaskExecutor to execute tasks:
  *   executor(chatId, prompt, userId)
  *     -> agentFactory(chatId, callbacks)
- *       -> chatAgent.processMessage(chatId, prompt, messageId, userId)
- *       -> await chatAgent.taskComplete
+ *       -> chatAgent.runOnce(chatId, prompt, messageId, userId)
  *       -> chatAgent.dispose()
  * ```
  *
@@ -63,13 +65,14 @@ export interface ScheduleExecutorOptions {
  *
  * This factory function creates an executor that:
  * 1. Creates a short-lived ChatAgent using the provided factory
- * 2. Executes the task via processMessage() + taskComplete (Issue #3124)
+ * 2. Executes the task via runOnce() (Issue #3369)
  * 3. Disposes the ChatAgent after execution (success or failure)
  *
  * Issue #1382: This enables both Primary Node and Worker Node to use
  * the same executor logic, just with different agent factories.
  * Issue #2941: Uses ChatAgent directly.
- * Issue #3124: Unified on streaming input path (processMessage + taskComplete).
+ * Issue #3369: Uses runOnce() which correctly sets onceMode=true,
+ *   ensuring taskComplete resolves after the first SDK result.
  *
  * @param options - Executor options including agent factory and callbacks
  * @returns A TaskExecutor function for use with Scheduler
@@ -101,16 +104,13 @@ export function createScheduleExecutor(options: ScheduleExecutorOptions): TaskEx
     const agent = agentFactory(chatId, callbacks, model, modelTier);
 
     try {
-      // Issue #3124: Use processMessage + taskComplete instead of executeOnce.
-      // This unifies scheduled tasks on the streaming input path, eliminating
-      // the duplicated MCP config, message building, and iterator processing.
+      // Issue #3369: Use runOnce() which sets onceMode=true internally.
+      // This ensures the channel closes after the first SDK result message,
+      // and the returned Promise resolves when the task is complete.
+      // Previously used processMessage() + await taskComplete, but taskComplete
+      // never resolved because onceMode was false.
       const messageId = `sched-${Date.now()}`;
-      await agent.processMessage(chatId, prompt, messageId, userId);
-
-      // Wait for the task to complete via the streaming path
-      if (agent.taskComplete) {
-        await agent.taskComplete;
-      }
+      await agent.runOnce(chatId, prompt, messageId, userId);
     } finally {
       // Always dispose the ChatAgent after execution
       agent.dispose();
