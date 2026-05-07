@@ -223,18 +223,22 @@ async function setupFileLogging(
       fs.mkdirSync(logsPath, { recursive: true });
     }
 
-    // Dynamic import of pino-roll (no types available)
-    const pinoRoll = (await import('pino-roll')) as unknown as (file: string, options: unknown) => NodeJS.WritableStream;
+    // Dynamic import of pino-roll — CJS module requires .default access (Issue #3359)
+    const pinoRollModule = await import('pino-roll');
+    const pinoRoll = typeof pinoRollModule.default === 'function'
+      ? pinoRollModule.default
+      : pinoRollModule as unknown as typeof pinoRollModule.default;
 
     // Combined log file with rotation
+    // pino-roll v4 API: single options object { file, size, limit, ... }
     const logFile = path.join(logsPath, 'disclaude-combined.log');
-    const rollStream = pinoRoll(logFile, {
+    const rollStream = await pinoRoll({
+      file: logFile,
       size: '10M',
       limit: { count: 30 },
-      compress: true
     });
 
-    return rollStream;
+    return rollStream as unknown as NodeJS.WritableStream;
   } catch (error) {
     // If pino-roll fails, fall back to stdout
     console.warn('Failed to setup file logging, falling back to stdout:', error);

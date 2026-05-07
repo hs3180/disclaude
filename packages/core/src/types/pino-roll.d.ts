@@ -1,30 +1,35 @@
 declare module 'pino-roll' {
-  import { Transform } from 'stream';
+  import { SonicBoom } from 'sonic-boom';
 
   interface PinoRollOptions {
+    /** Path to the log file */
+    file: string;
     /** Size limit for rotation (e.g., '10M', '100M') */
-    size?: string;
+    size?: string | number;
+    /** Frequency for rotation (e.g., 'daily', 'hourly', or ms) */
+    frequency?: string | number;
+    /** File extension to append after file number */
+    extension?: string;
     /** File limit configuration */
     limit?: {
-      /** Maximum number of files to keep */
+      /** Number of log files to keep (in addition to current) */
       count?: number;
-      /** Maximum age of files */
-      age?: string;
+      /** Whether to remove other matching log files */
+      removeOtherLogFiles?: boolean;
     };
-    /** Compress rotated files with gzip */
-    compress?: boolean;
-    /** Date pattern for file naming */
+    /** Create symlink to current log file */
+    symlink?: boolean;
+    /** Date format for file naming (date-fns format) */
     dateFormat?: string;
+    /** Create parent directory if it doesn't exist */
+    mkdir?: boolean;
   }
 
-  interface PinoRoll extends Transform {
-    constructor: (...args: unknown[]) => PinoRoll;
-  }
+  /**
+   * Creates a SonicBoom stream for writing to rotated log files.
+   * pino-roll v4 exports an async function taking a single options object.
+   */
+  function pinoRoll(options: PinoRollOptions): Promise<SonicBoom>;
 
-  interface PinoRollStatic {
-    (file: string, options?: PinoRollOptions): PinoRoll;
-  }
-
-  const pinoRoll: PinoRollStatic;
   export default pinoRoll;
 }
