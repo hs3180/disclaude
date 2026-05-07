@@ -376,6 +376,21 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /**
+   * Project template configuration overrides (Issue #2227).
+   *
+   * Extends or overrides auto-discovered templates with display metadata.
+   * Uses the same `ProjectTemplatesConfig` type from the project module
+   * to avoid type duplication.
+   *
+   * ```yaml
+   * projectTemplates:
+   *   research:
+   *     displayName: "研究模式"
+   *     description: "专注研究的独立空间"
+   * ```
+   */
+  projectTemplates?: Record<string, { displayName?: string; description?: string }>;
 }
 
 /**
