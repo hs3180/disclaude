@@ -177,6 +177,21 @@ describe('BotChatMappingStore', () => {
       expect(fsPromises.writeFile).toHaveBeenCalled();
       expect(fsPromises.rename).toHaveBeenCalled();
     });
+
+    it('should handle persist failure during deletion gracefully', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+
+      // Make persist fail
+      vi.mocked(fsPromises.writeFile).mockRejectedValue(new Error('Write failed'));
+
+      // Should not throw — the entry is deleted from cache even if persist fails
+      const deleted = await store.delete('pr-123');
+      expect(deleted).toBe(true);
+
+      // Entry should be removed from in-memory cache
+      const entry = await store.get('pr-123');
+      expect(entry).toBeNull();
+    });
   });
 
   // ---- list / listByPurpose ----

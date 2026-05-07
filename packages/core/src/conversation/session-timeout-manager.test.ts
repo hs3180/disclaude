@@ -81,6 +81,32 @@ describe('SessionTimeoutManager', () => {
       // Stop without ever starting a check
       await manager.stop();
     });
+
+    it('should recover from check errors', async () => {
+      let checkCount = 0;
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => {
+          checkCount++;
+          if (checkCount <= 1) {
+            throw new Error('Simulated check error');
+          }
+          return [];
+        },
+      });
+      const manager = new SessionTimeoutManager(
+        { enabled: true, checkIntervalMinutes: 1 },
+        callbacks,
+        logger,
+      );
+
+      // First check should throw (getActiveSessions throws synchronously)
+      expect(() => manager.runCheck()).toThrow('Simulated check error');
+
+      // Second check should succeed (error was transient)
+      const result = await manager.checkNow();
+      expect(result).toBeDefined();
+      expect(result!.idleClosed).toEqual([]);
+    });
   });
 
   describe('executeCheck - Phase 1: Idle timeout', () => {
@@ -415,6 +441,58 @@ describe('SessionTimeoutManager', () => {
       // = ['chat-2', 'chat-4'] - ['chat-1', 'chat-3'] - ['chat-2'] = ['chat-4']
       // 1 remaining < maxSessions 2, so no eviction
       expect(result!.evicted).toEqual([]);
+    });
+  });
+
+  describe('Phase 2 edge cases', () => {
+    it('should skip eviction when session starts processing between phases', async () => {
+      const now = Date.now();
+      const processingIds = new Set(['chat-3']);
+
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-1', 'chat-2', 'chat-3'],
+        getLastActivity: (chatId: string) => {
+          switch (chatId) {
+            case 'chat-1': return now - 5 * 60 * 1000;
+            case 'chat-2': return now - 10 * 60 * 1000;
+            case 'chat-3': return now - 20 * 60 * 1000;  // Oldest, eviction target
+            default: return now;
+          }
+        },
+        isProcessing: (chatId: string) => processingIds.has(chatId),
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes: 60, maxSessions: 1 },
+        callbacks,
+        logger,
+      );
+
+      // chat-3 is oldest and should be evicted, but becomes processing during eviction
+      const result = await manager.checkNow();
+
+      // chat-3 should be skipped from eviction because it's processing
+      expect(result!.evicted).not.toContain('chat-3');
+    });
+
+    it('should handle closeSession throwing an error gracefully', async () => {
+      const now = Date.now();
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-1'],
+        getLastActivity: () => now - 60 * 60 * 1000, // 60 min idle
+        isProcessing: () => false,
+        closeSession: () => { throw new Error('Close failed'); },
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes: 30 },
+        callbacks,
+        logger,
+      );
+
+      // Should not throw even when closeSession throws
+      const result = await manager.checkNow();
+      expect(result!.idleClosed).toContain('chat-1');
     });
   });
 });

@@ -81,6 +81,18 @@ describe('ChatStore', () => {
       const store = await createStoreWithRecords([]);
       expect(store).toBeDefined();
     });
+
+    it('should handle readdir permission error gracefully', async () => {
+      // Simulate a non-ENOENT error (e.g., permission denied)
+      const permError = new Error('Permission denied') as NodeJS.ErrnoException;
+      permError.code = 'EACCES';
+      vi.mocked(fsPromises.readdir).mockRejectedValue(permError);
+
+      // Should not throw — the store initializes with empty cache
+      const store = new ChatStore({ storeDir });
+      const result = await store.listTempChats();
+      expect(result).toEqual([]);
+    });
   });
 
   describe('getTempChat', () => {

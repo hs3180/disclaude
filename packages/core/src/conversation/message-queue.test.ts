@@ -176,4 +176,49 @@ describe('MessageQueue', () => {
       expect(queue.length()).toBe(1);
     });
   });
+
+  describe('close with waiting consumer', () => {
+    it('should resolve pending consumer when closed', async () => {
+      const consumer = queue.consume();
+      const messages: QueuedMessage[] = [];
+
+      // Start consuming in background
+      const consumePromise = (async () => {
+        for await (const msg of consumer) {
+          messages.push(msg);
+        }
+      })();
+
+      // Give consumer time to start waiting
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Close without pushing any messages
+      queue.close();
+
+      await consumePromise;
+      expect(messages).toHaveLength(0);
+    });
+
+    it('should handle concurrent push and close correctly', async () => {
+      const consumer = queue.consume();
+      const messages: QueuedMessage[] = [];
+
+      const consumePromise = (async () => {
+        for await (const msg of consumer) {
+          messages.push(msg);
+        }
+      })();
+
+      // Give consumer time to start waiting
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Push a message, then immediately close
+      queue.push({ text: 'Last', messageId: 'msg-1' });
+      queue.close();
+
+      await consumePromise;
+      expect(messages).toHaveLength(1);
+      expect(messages[0].text).toBe('Last');
+    });
+  });
 });
