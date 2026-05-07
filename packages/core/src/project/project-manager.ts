@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -73,6 +74,14 @@ export class ProjectManager {
   private chatProjectMap: Map<string, string> = new Map();
   /** Reverse index: instance name → Set of bound chatIds (O(1) lookup) */
   private instanceChatIds: Map<string, Set<string>> = new Map();
+
+  /**
+   * Static project configs loaded from disclaude.config.yaml (Issue #3332).
+   * Key = project key, Value = ProjectConfig.
+   */
+  private projectConfigs: Map<string, ProjectConfig> = new Map();
+  /** Reverse index: chatId → project key for O(1) lookup (Issue #3332) */
+  private chatIdToProjectKey: Map<string, string> = new Map();
 
   /** Path to .disclaude directory */
   private readonly dataDir: string;
@@ -140,6 +149,92 @@ export class ProjectManager {
         }
       }
     }
+  }
+
+  // ───────────────────────────────────────────
+  // ProjectConfig Loading (Issue #3332)
+  // ───────────────────────────────────────────
+
+  /**
+   * Load static project configurations from disclaude.config.yaml.
+   *
+   * Validates each config entry and builds lookup indices.
+   * Must be called after construction to enable project-scoped agent binding.
+   *
+   * @param configs - Array of ProjectConfig from the config file
+   * @returns ProjectResult with the number of loaded configs
+   */
+  loadProjectConfigs(configs: ProjectConfig[]): ProjectResult<number> {
+    if (!Array.isArray(configs)) {
+      return { ok: false, error: 'projects 配置必须是数组' };
+    }
+
+    let loaded = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < configs.length; i++) {
+      const config = configs[i];
+      const validationError = this.validateProjectConfig(config, i);
+      if (validationError) {
+        errors.push(validationError);
+        continue;
+      }
+
+      // Resolve relative workingDir to absolute (relative to workspaceDir)
+      const resolvedWorkingDir = this.resolveProjectWorkingDir(config.workingDir);
+
+      const resolvedConfig: ProjectConfig = {
+        ...config,
+        workingDir: resolvedWorkingDir,
+      };
+
+      this.projectConfigs.set(config.key, resolvedConfig);
+      this.chatIdToProjectKey.set(config.chatId, config.key);
+      loaded++;
+    }
+
+    if (errors.length > 0) {
+      // Return partial success with warnings logged
+      if (loaded === 0) {
+        return { ok: false, error: `所有 projects 配置无效: ${errors.join('; ')}` };
+      }
+      // Partial load — return success but log warnings
+    }
+
+    return { ok: true, data: loaded };
+  }
+
+  /**
+   * Get a project config by its key.
+   *
+   * @param key - Project key (e.g. "hs3180/disclaude")
+   * @returns ProjectConfig if found, undefined otherwise
+   */
+  getProjectConfig(key: string): ProjectConfig | undefined {
+    return this.projectConfigs.get(key);
+  }
+
+  /**
+   * Get a project config by the bound chatId.
+   *
+   * Used by CwdProvider to resolve cwd for a given chatId.
+   *
+   * @param chatId - The chat session identifier
+   * @returns ProjectConfig if the chatId is bound to a project, undefined otherwise
+   */
+  getProjectConfigByChatId(chatId: string): ProjectConfig | undefined {
+    const key = this.chatIdToProjectKey.get(chatId);
+    if (!key) {return undefined;}
+    return this.projectConfigs.get(key);
+  }
+
+  /**
+   * Get all loaded project configs.
+   *
+   * @returns Array of all ProjectConfig entries
+   */
+  getAllProjectConfigs(): ProjectConfig[] {
+    return Array.from(this.projectConfigs.values());
   }
 
   // ───────────────────────────────────────────
@@ -407,11 +502,22 @@ export class ProjectManager {
    * Create a CwdProvider closure bound to this ProjectManager.
    *
    * Injected into ChatAgent for dynamic cwd resolution.
+   * Resolution priority (Issue #3332):
+   * 1. Static ProjectConfig (chatId → project config → workingDir)
+   * 2. Dynamic instance binding (chatId → instance → workingDir)
+   * 3. Default (undefined → SDK falls back to getWorkspaceDir())
    *
    * @returns CwdProvider function
    */
   createCwdProvider(): CwdProvider {
     return (chatId: string): string | undefined => {
+      // Priority 1: Check static ProjectConfig binding (Issue #3332)
+      const projectConfig = this.getProjectConfigByChatId(chatId);
+      if (projectConfig) {
+        return projectConfig.workingDir;
+      }
+
+      // Priority 2: Check dynamic instance binding
       const active = this.getActive(chatId);
       // Return undefined for default → SDK falls back to getWorkspaceDir()
       if (active.name === 'default') {
@@ -702,5 +808,57 @@ export class ProjectManager {
       return 'chatId 不能为空';
     }
     return null;
+  }
+
+  // ───────────────────────────────────────────
+  // ProjectConfig Helpers (Issue #3332)
+  // ───────────────────────────────────────────
+
+  /**
+   * Validate a ProjectConfig entry.
+   *
+   * @param config - ProjectConfig to validate
+   * @param index - Index in the config array (for error messages)
+   * @returns Error message string, or null if valid
+   */
+  private validateProjectConfig(config: unknown, index: number): string | null {
+    if (!config || typeof config !== 'object') {
+      return `projects[${index}]: 配置必须是对象`;
+    }
+    const c = config as Record<string, unknown>;
+    if (typeof c.key !== 'string' || c.key.length === 0) {
+      return `projects[${index}]: key 必须是非空字符串`;
+    }
+    if (typeof c.workingDir !== 'string' || c.workingDir.length === 0) {
+      return `projects[${index}]: workingDir 必须是非空字符串`;
+    }
+    if (typeof c.chatId !== 'string' || c.chatId.length === 0) {
+      return `projects[${index}]: chatId 必须是非空字符串`;
+    }
+    if (c.modelTier !== undefined && c.modelTier !== 'low' && c.modelTier !== 'high') {
+      return `projects[${index}]: modelTier 只能是 "low" 或 "high"`;
+    }
+    if (c.idleTimeoutMs !== undefined && (typeof c.idleTimeoutMs !== 'number' || c.idleTimeoutMs <= 0)) {
+      return `projects[${index}]: idleTimeoutMs 必须是正整数`;
+    }
+    return null;
+  }
+
+  /**
+   * Resolve a project workingDir to an absolute path.
+   *
+   * Relative paths are resolved relative to workspaceDir.
+   * Absolute paths are used as-is.
+   *
+   * @param workingDir - Working directory path (may be relative)
+   * @returns Absolute working directory path
+   */
+  private resolveProjectWorkingDir(workingDir: string): string {
+    if (workingDir.startsWith('/')) {
+      return workingDir;
+    }
+    // Relative path — resolve from workspaceDir
+    const ws = this.workspaceDir.replace(/\/+$/, '');
+    return `${ws}/${workingDir}`.replace(/\/+$/, '');
   }
 }

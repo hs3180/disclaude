@@ -21,6 +21,23 @@ workspace:
   dir: "./workspace"
 
 # -----------------------------------------------------------------------------
+# Project-Scoped Agent Configuration (Issue #3332)
+# -----------------------------------------------------------------------------
+# Define static project configurations for project-scoped ChatAgent binding.
+# Each project binds a specific chatId to a working directory, so the
+# ChatAgent operates within that project's context (CLAUDE.md, etc.).
+#
+# The agent's SDK session will use the project's workingDir as its cwd,
+# allowing it to discover and follow the project's CLAUDE.md instructions.
+#
+# projects:
+#   - key: "my-project"                    # Unique project key
+#     workingDir: "./my-project"           # Project root (relative to workspace)
+#     chatId: "oc_xxxxxxxxxxxxx"           # Bound chat session ID
+#     modelTier: "low"                     # Optional: "low" or "high" model tier
+#     idleTimeoutMs: 1800000               # Optional: idle timeout (default: 30min)
+
+# -----------------------------------------------------------------------------
 # Agent/AI Configuration
 # -----------------------------------------------------------------------------
 agent:

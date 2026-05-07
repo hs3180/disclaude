@@ -50,6 +50,19 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         displayName: '读书助手',
       },
     },
+    projects: [
+      {
+        key: 'test-project',
+        workingDir: './test-project',
+        chatId: 'oc_test_chat_001',
+        modelTier: 'low' as const,
+      },
+      {
+        key: 'another-project',
+        workingDir: '/absolute/path',
+        chatId: 'oc_test_chat_002',
+      },
+    ],
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
 }));
@@ -223,6 +236,26 @@ describe('Config', () => {
       expect(templates!['book-reader']).toBeDefined();
       // description is optional
       expect(templates!['book-reader'].description).toBeUndefined();
+    });
+  });
+
+  describe('getProjectsConfig (Issue #3332)', () => {
+    it('should return project configs from config file', () => {
+      const projects = Config.getProjectsConfig();
+      expect(projects).toBeDefined();
+      expect(projects).toHaveLength(2);
+    });
+
+    it('should return project configs with correct structure', () => {
+      const projects = Config.getProjectsConfig();
+      expect(projects![0].key).toBe('test-project');
+      expect(projects![0].workingDir).toBe('./test-project');
+      expect(projects![0].chatId).toBe('oc_test_chat_001');
+      expect(projects![0].modelTier).toBe('low');
+      expect(projects![1].key).toBe('another-project');
+      expect(projects![1].workingDir).toBe('/absolute/path');
+      expect(projects![1].chatId).toBe('oc_test_chat_002');
+      expect(projects![1].modelTier).toBeUndefined();
     });
   });
 

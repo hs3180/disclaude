@@ -321,11 +321,12 @@ export {
   type DebugGroup,
 } from './control/index.js';
 
-// Project module — unified per-chatId Agent context switching (Issue #1916, Issue #2227)
+// Project module — unified per-chatId Agent context switching (Issue #1916, Issue #2227, Issue #3332)
 export type {
   CwdProvider,
   InstanceInfo,
   PersistedInstance,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,

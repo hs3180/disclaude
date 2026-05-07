@@ -122,6 +122,56 @@ export interface InstanceInfo {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProjectConfig (Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Static project configuration for project-scoped ChatAgent binding.
+ *
+ * Defined in `disclaude.config.yaml` under the `projects:` key.
+ * Each project binds a specific chatId to a working directory,
+ * so the ChatAgent operates within that project's context (CLAUDE.md, etc.).
+ *
+ * Unlike template-based instances (created at runtime via `/project create`),
+ * ProjectConfig entries are static declarations loaded at startup.
+ *
+ * @see Issue #3332 (Phase 2: Project-scoped ChatAgent with chatId binding)
+ *
+ * ```yaml
+ * projects:
+ *   - key: "hs3180/disclaude"
+ *     workingDir: "."
+ *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+ *     modelTier: "low"
+ * ```
+ */
+export interface ProjectConfig {
+  /** Project key (unique identifier, e.g. "hs3180/disclaude") */
+  key: string;
+
+  /** Project root directory (Agent discovers CLAUDE.md here) */
+  workingDir: string;
+
+  /** Bound chatId — agent output goes to this chat */
+  chatId: string;
+
+  /**
+   * Model tier for this project's agent.
+   * - `'low'`: Scheduled tasks, simple operations
+   * - `'high'`: Evaluators, complex analysis
+   * Falls back to default model if omitted.
+   */
+  modelTier?: 'low' | 'high';
+
+  /**
+   * Agent idle timeout in milliseconds.
+   * After this period of inactivity, the agent session may be cleaned up.
+   * Default: 30 minutes (1800000 ms).
+   */
+  idleTimeoutMs?: number;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // CwdProvider
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

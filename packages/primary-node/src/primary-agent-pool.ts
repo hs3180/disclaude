@@ -8,10 +8,14 @@
  * message building (e.g., Feishu sections). This decouples Feishu-specific
  * logic from the core agent runtime.
  *
+ * Issue #3332: Accepts optional ProjectManager for project-scoped ChatAgent
+ * binding. When provided, agents are created with a CwdProvider that resolves
+ * the working directory from the project config.
+ *
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type ProjectManager } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -45,8 +49,25 @@ export class PrimaryAgentPool {
   private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;
 
+  /** Cached CwdProvider created from the ProjectManager (Issue #3332) */
+  private cachedCwdProvider?: CwdProvider;
+
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
+  }
+
+  /**
+   * Set the ProjectManager for project-scoped ChatAgent binding.
+   *
+   * Must be called before creating any ChatAgent instances.
+   * Creates a CwdProvider from the ProjectManager and injects it
+   * into all newly created ChatAgent instances.
+   *
+   * @see Issue #3332
+   * @param pm - ProjectManager instance
+   */
+  setProjectManager(pm: ProjectManager): void {
+    this.cachedCwdProvider = pm.createCwdProvider();
   }
 
   /**
@@ -61,6 +82,7 @@ export class PrimaryAgentPool {
     if (!agent) {
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        ...(this.cachedCwdProvider && { cwdProvider: this.cachedCwdProvider }),
       });
       this.agents.set(chatId, agent);
     }

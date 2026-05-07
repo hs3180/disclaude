@@ -1186,3 +1186,210 @@ describe('ProjectManager — persist failure rollback', () => {
     restoreWritePermissions(workspaceDir);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProjectConfig Loading & Lookup (Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager loadProjectConfigs (Issue #3332)', () => {
+  it('should load valid project configs and build lookup indices', () => {
+    const pm = new ProjectManager(createOptions());
+    const result = pm.loadProjectConfigs([
+      {
+        key: 'my-project',
+        workingDir: '.',
+        chatId: 'oc_chat001',
+        modelTier: 'low',
+      },
+      {
+        key: 'another-project',
+        workingDir: '/absolute/path',
+        chatId: 'oc_chat002',
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toBe(2);
+    }
+
+    // Lookup by key
+    const config1 = pm.getProjectConfig('my-project');
+    expect(config1).toBeDefined();
+    expect(config1!.key).toBe('my-project');
+    expect(config1!.modelTier).toBe('low');
+
+    const config2 = pm.getProjectConfig('another-project');
+    expect(config2).toBeDefined();
+    expect(config2!.workingDir).toBe('/absolute/path');
+
+    // Lookup by chatId
+    const byChatId1 = pm.getProjectConfigByChatId('oc_chat001');
+    expect(byChatId1).toBeDefined();
+    expect(byChatId1!.key).toBe('my-project');
+
+    const byChatId2 = pm.getProjectConfigByChatId('oc_chat002');
+    expect(byChatId2).toBeDefined();
+    expect(byChatId2!.key).toBe('another-project');
+
+    // Non-existent lookup
+    expect(pm.getProjectConfig('non-existent')).toBeUndefined();
+    expect(pm.getProjectConfigByChatId('oc_nonexistent')).toBeUndefined();
+  });
+
+  it('should resolve relative workingDir to absolute path', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+    pm.loadProjectConfigs([
+      { key: 'rel-path', workingDir: './my-project', chatId: 'oc_chat1' },
+    ]);
+
+    const config = pm.getProjectConfig('rel-path');
+    expect(config).toBeDefined();
+    expect(config!.workingDir).toContain(opts.workspaceDir);
+    expect(config!.workingDir).toContain('my-project');
+  });
+
+  it('should keep absolute workingDir as-is', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'abs-path', workingDir: '/opt/projects/my-project', chatId: 'oc_chat1' },
+    ]);
+
+    const config = pm.getProjectConfig('abs-path');
+    expect(config).toBeDefined();
+    expect(config!.workingDir).toBe('/opt/projects/my-project');
+  });
+
+  it('should reject invalid project configs', () => {
+    const pm = new ProjectManager(createOptions());
+
+    // Missing key
+    const r1 = pm.loadProjectConfigs([
+      { key: '', workingDir: '.', chatId: 'oc_1' } as any,
+    ]);
+    expect(r1.ok).toBe(false);
+
+    // Missing workingDir
+    const r2 = pm.loadProjectConfigs([
+      { key: 'test', workingDir: '', chatId: 'oc_1' } as any,
+    ]);
+    expect(r2.ok).toBe(false);
+
+    // Missing chatId
+    const r3 = pm.loadProjectConfigs([
+      { key: 'test', workingDir: '.', chatId: '' } as any,
+    ]);
+    expect(r3.ok).toBe(false);
+
+    // Invalid modelTier
+    const r4 = pm.loadProjectConfigs([
+      { key: 'test', workingDir: '.', chatId: 'oc_1', modelTier: 'invalid' as any },
+    ]);
+    expect(r4.ok).toBe(false);
+
+    // Invalid idleTimeoutMs
+    const r5 = pm.loadProjectConfigs([
+      { key: 'test', workingDir: '.', chatId: 'oc_1', idleTimeoutMs: -1 },
+    ]);
+    expect(r5.ok).toBe(false);
+  });
+
+  it('should reject non-array input', () => {
+    const pm = new ProjectManager(createOptions());
+    const result = pm.loadProjectConfigs('not an array' as any);
+    expect(result.ok).toBe(false);
+  });
+
+  it('should handle partial valid configs', () => {
+    const pm = new ProjectManager(createOptions());
+    const result = pm.loadProjectConfigs([
+      { key: 'valid', workingDir: '.', chatId: 'oc_1' },
+      { key: '', workingDir: '.', chatId: 'oc_2' } as any, // invalid
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toBe(1);
+    }
+    expect(pm.getProjectConfig('valid')).toBeDefined();
+    expect(pm.getProjectConfigByChatId('oc_1')).toBeDefined();
+    expect(pm.getProjectConfigByChatId('oc_2')).toBeUndefined();
+  });
+
+  it('should return all project configs', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'project-a', workingDir: '.', chatId: 'oc_1' },
+      { key: 'project-b', workingDir: '.', chatId: 'oc_2' },
+    ]);
+
+    const all = pm.getAllProjectConfigs();
+    expect(all).toHaveLength(2);
+    const keys = all.map(c => c.key).sort();
+    expect(keys).toEqual(['project-a', 'project-b']);
+  });
+
+  it('should handle empty array', () => {
+    const pm = new ProjectManager(createOptions());
+    const result = pm.loadProjectConfigs([]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toBe(0);
+    }
+    expect(pm.getAllProjectConfigs()).toHaveLength(0);
+  });
+});
+
+describe('ProjectManager createCwdProvider with ProjectConfig (Issue #3332)', () => {
+  it('should resolve cwd from static project config', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+    pm.loadProjectConfigs([
+      { key: 'my-project', workingDir: '/project/dir', chatId: 'oc_chat1' },
+    ]);
+
+    const cwdProvider = pm.createCwdProvider();
+    expect(cwdProvider('oc_chat1')).toBe('/project/dir');
+  });
+
+  it('should fall back to dynamic instance when no static config matches', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+    pm.loadProjectConfigs([
+      { key: 'my-project', workingDir: '/project/dir', chatId: 'oc_chat1' },
+    ]);
+
+    // Create a dynamic instance for another chatId
+    pm.create('oc_chat2', 'research', 'my-research');
+
+    const cwdProvider = pm.createCwdProvider();
+    // Static config takes priority for oc_chat1
+    expect(cwdProvider('oc_chat1')).toBe('/project/dir');
+    // Dynamic instance for oc_chat2
+    expect(cwdProvider('oc_chat2')).toContain('my-research');
+    // Default for unknown chatId
+    expect(cwdProvider('oc_unknown')).toBeUndefined();
+  });
+
+  it('should prioritize static config over dynamic instance for same chatId', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+    pm.loadProjectConfigs([
+      { key: 'my-project', workingDir: '/project/dir', chatId: 'oc_chat1' },
+    ]);
+
+    // Also bind to a dynamic instance (unlikely in practice, but should work)
+    pm.create('oc_chat1', 'research', 'my-research');
+
+    const cwdProvider = pm.createCwdProvider();
+    // Static config should take priority
+    expect(cwdProvider('oc_chat1')).toBe('/project/dir');
+  });
+
+  it('should return undefined for unbound chatId', () => {
+    const pm = new ProjectManager(createOptions());
+    const cwdProvider = pm.createCwdProvider();
+    expect(cwdProvider('oc_unbound')).toBeUndefined();
+  });
+});

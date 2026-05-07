@@ -24,7 +24,7 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
-import type { ProjectTemplatesConfig } from '../project/types.js';
+import type { ProjectTemplatesConfig, ProjectConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -570,6 +570,20 @@ export class Config {
    */
   static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
     return fileConfigOnly.projectTemplates as ProjectTemplatesConfig | undefined;
+  }
+
+  /**
+   * Get static project configurations from config file.
+   *
+   * Returns the `projects` section from disclaude.config.yaml,
+   * which defines project-scoped ChatAgent bindings.
+   * Returns undefined if no projects are configured.
+   *
+   * @see Issue #3332
+   * @returns Array of ProjectConfig, or undefined
+   */
+  static getProjectsConfig(): ProjectConfig[] | undefined {
+    return fileConfigOnly.projects as ProjectConfig[] | undefined;
   }
 }
 

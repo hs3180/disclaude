@@ -391,6 +391,28 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+
+  /**
+   * Static project configurations for project-scoped ChatAgent binding (Issue #3332).
+   *
+   * Each project binds a specific chatId to a working directory,
+   * so the ChatAgent operates within that project's context.
+   *
+   * ```yaml
+   * projects:
+   *   - key: "hs3180/disclaude"
+   *     workingDir: "."
+   *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+   *     modelTier: "low"
+   * ```
+   */
+  projects?: Array<{
+    key: string;
+    workingDir: string;
+    chatId: string;
+    modelTier?: 'low' | 'high';
+    idleTimeoutMs?: number;
+  }>;
 }
 
 /**
