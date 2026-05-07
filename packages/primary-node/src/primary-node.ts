@@ -358,6 +358,10 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Start the Primary Node.
+   *
+   * Issue #3361: Scheduler initialization is now non-fatal.
+   * If scheduler fails, PrimaryNode still starts (Feishu, REST channels work).
+   * Scheduler status is logged and queryable via getSchedulerStatus().
    */
   async start(): Promise<void> {
     if (this.running) {
@@ -371,7 +375,18 @@ export class PrimaryNode extends EventEmitter {
     await this.startIpcServer();
 
     // Initialize Scheduler (Issue #1377)
-    await this.initScheduler();
+    // Issue #3361: Wrap in try-catch to prevent scheduler failure from
+    // blocking the entire PrimaryNode startup. Main channels (Feishu, REST)
+    // should still work even if the scheduler is down.
+    try {
+      await this.initScheduler();
+    } catch (error) {
+      logger.error(
+        { err: error, nodeId: this.localNodeId },
+        '⚠️ Scheduler initialization failed — scheduled tasks will not run. ' +
+        'PrimaryNode continues without scheduler. Check logs above for details.'
+      );
+    }
 
     this.running = true;
     this.emit('started');
@@ -409,18 +424,29 @@ export class PrimaryNode extends EventEmitter {
    *
    * Issue #1377: Scheduler integration for Primary Node
    * Issue #1382: Use unified createScheduleExecutor for task execution
+   * Issue #3361: Added step-by-step logging for diagnostics.
+   *   Each initialization phase logs success/failure explicitly so that
+   *   operators can pinpoint which step failed when scheduler appears silent.
    */
   protected async initScheduler(): Promise<void> {
     const workspaceDir = Config.getWorkspaceDir();
     const schedulesDir = path.join(workspaceDir, 'schedules');
     const cooldownDir = path.join(schedulesDir, '.cooldown');
 
-    // Initialize CooldownManager
+    logger.info({ schedulesDir }, 'Initializing scheduler...');
+
+    // Step 1: Initialize CooldownManager
+    logger.info('Scheduler init step 1/5: Initializing CooldownManager');
     this.cooldownManager = new CooldownManager({ cooldownDir });
+    logger.info({ cooldownDir }, 'Scheduler init step 1/5: ✓ CooldownManager ready');
 
-    // Initialize ScheduleManager
+    // Step 2: Initialize ScheduleManager
+    logger.info('Scheduler init step 2/5: Initializing ScheduleManager');
     this.scheduleManager = new ScheduleManager({ schedulesDir });
+    logger.info({ schedulesDir }, 'Scheduler init step 2/5: ✓ ScheduleManager ready');
 
+    // Step 3: Create executor and callbacks
+    logger.info('Scheduler init step 3/5: Creating schedule executor');
     // Issue #1382: Create callbacks for scheduler
     // Issue #1384: Fixed sendMessage to construct proper OutgoingMessage object
     const schedulerCallbacks: SchedulerCallbacks = {
@@ -451,8 +477,10 @@ export class PrimaryNode extends EventEmitter {
       },
       callbacks: schedulerCallbacks,
     });
+    logger.info('Scheduler init step 3/5: ✓ Schedule executor created');
 
-    // Initialize Scheduler
+    // Step 4: Initialize Scheduler and schedule tasks
+    logger.info('Scheduler init step 4/5: Creating Scheduler and loading tasks');
     this.scheduler = new Scheduler({
       scheduleManager: this.scheduleManager,
       cooldownManager: this.cooldownManager,
@@ -460,7 +488,16 @@ export class PrimaryNode extends EventEmitter {
       executor,
     });
 
-    // Initialize file watcher for hot reload
+    await this.scheduler.start();
+    const activeJobCount = this.scheduler.getActiveJobs().length;
+    logger.info(
+      { activeJobCount },
+      'Scheduler init step 4/5: ✓ Scheduler started with %d active task(s)',
+      activeJobCount
+    );
+
+    // Step 5: Initialize file watcher for hot reload
+    logger.info('Scheduler init step 5/5: Starting file watcher');
     this.scheduleFileWatcher = new ScheduleFileWatcher({
       schedulesDir,
       onFileAdded: (task: ScheduledTask) => {
@@ -477,13 +514,15 @@ export class PrimaryNode extends EventEmitter {
       },
     });
 
-    // Start scheduler and file watcher
-    await this.scheduler.start();
     await this.scheduleFileWatcher.start();
+    logger.info('Scheduler init step 5/5: ✓ File watcher started');
 
-    console.log('✓ Scheduler started');
+    console.log(`✓ Scheduler started (${activeJobCount} task(s))`);
     console.log('✓ Schedule file watcher started');
-    logger.info('Scheduler initialized');
+    logger.info(
+      { schedulesDir, activeJobCount },
+      'Scheduler fully initialized'
+    );
   }
 
   /**
@@ -507,5 +546,33 @@ export class PrimaryNode extends EventEmitter {
    */
   getScheduleManager(): ScheduleManager | undefined {
     return this.scheduleManager;
+  }
+
+  /**
+   * Get scheduler status for health monitoring.
+   * Issue #3361: Exposes scheduler health so operators can detect
+   * silent failures without digging through log files.
+   *
+   * @returns Structured scheduler status object
+   */
+  getSchedulerStatus(): {
+    initialized: boolean;
+    running: boolean;
+    activeJobCount: number;
+    activeJobs: Array<{ taskId: string; cron: string; name: string }>;
+    fileWatcherRunning: boolean;
+  } {
+    const activeJobs = this.scheduler?.getActiveJobs() ?? [];
+    return {
+      initialized: this.scheduler !== undefined,
+      running: this.scheduler?.isRunning() ?? false,
+      activeJobCount: activeJobs.length,
+      activeJobs: activeJobs.map(j => ({
+        taskId: j.taskId,
+        cron: j.task.cron,
+        name: j.task.name,
+      })),
+      fileWatcherRunning: this.scheduleFileWatcher?.isRunning() ?? false,
+    };
   }
 }
