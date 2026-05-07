@@ -11,6 +11,7 @@ import {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -120,5 +121,50 @@ describe('buildLocationAwarenessGuidance', () => {
     expect(result).toContain('timezone');
     expect(result).toContain('IP address');
     expect(result).toContain('Wi-Fi');
+  });
+});
+
+describe('buildTaskRecordGuidance', () => {
+  it('should include task recording section header', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('Task Execution Recording');
+  });
+
+  it('should specify storage location', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('.claude/task-records.md');
+  });
+
+  it('should include record format with required fields', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('**Type**');
+    expect(result).toContain('**Estimated Time**');
+    expect(result).toContain('**Estimation Basis**');
+    expect(result).toContain('**Actual Time**');
+    expect(result).toContain('**Review**');
+  });
+
+  it('should include example entries', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('YYYY-MM-DD');
+    expect(result).toContain('bugfix');
+    expect(result).toContain('feature');
+  });
+
+  it('should include guidance on when to record', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('significant task');
+    expect(result).toContain('feature');
+    expect(result).toContain('bug fix');
+  });
+
+  it('should instruct agent to read existing records before estimating', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('Read existing records before estimating');
+  });
+
+  it('should mention creating file if not exists', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('Create the file if it does not exist');
   });
 });
