@@ -81,11 +81,23 @@ let currentLogDest: any = null;
  * @internal
  */
 export function resetLogger(): void {
+  // Destroy the passthrough stream if it exists
   if (logPassthrough) {
     logPassthrough.destroy();
     logPassthrough = null;
-    currentLogDest = null;
   }
+  // Close the log destination stream (pino-roll, file destination, etc.)
+  // Don't close stdout — it's the default and should persist.
+  if (currentLogDest && currentLogDest !== process.stdout) {
+    try {
+      if (typeof currentLogDest.destroy === 'function') {
+        currentLogDest.destroy();
+      }
+    } catch {
+      // Ignore errors during cleanup — the stream may already be closed
+    }
+  }
+  currentLogDest = null;
   rootLogger = null;
 }
 
@@ -349,6 +361,7 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
   if (shouldFileLog) {
     try {
       logStream = await setupFileLogging(logDir);
+      currentLogDest = logStream; // Track for cleanup in resetLogger()
     } catch (error) {
       console.warn('Failed to setup file logging:', error);
     }

@@ -171,7 +171,12 @@ describe('logger', () => {
         logger.info('pino-roll file logging test');
       }).not.toThrow();
 
-      // Cleanup
+      // Flush pending writes and reset logger before cleanup
+      // to prevent pino-roll from writing to a deleted directory (ENOENT error)
+      await flushLogger();
+      resetLogger();
+
+      // Cleanup: remove temp directory
       const fs = await import('fs');
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
