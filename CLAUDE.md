@@ -408,7 +408,9 @@ Current implementation uses in-memory sessions:
 ### 5. Tool Configuration
 
 Tools are configured via `disallowedTools` in the agent classes:
-- **ChatAgent** (`packages/primary-node/src/agents/chat-agent.ts`): Uses `disallowedTools: ['EnterPlanMode']`
+- **ChatAgent** (`packages/primary-node/src/agents/chat-agent.ts`): Uses `disallowedTools: ['EnterPlanMode', 'AskUserQuestion']`
+  - `EnterPlanMode`: Blocks plan-mode entry to keep agent in execution mode
+  - `AskUserQuestion`: Blocks SDK's built-in question tool to prevent agent loop blocking; disclaude uses interactive cards instead
 - **BaseAgent**: Provides `createSdkOptions()` for SDK configuration
 
 To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.startAgentLoop()` or `ChatAgent.runOnce()`.
