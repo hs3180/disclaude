@@ -43,6 +43,7 @@ const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
 // only stderr (for uncaught Node.js crashes) uses launchd's StandardErrorPath.
 const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
 const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
+const STDOUT_LOG = resolve(LOG_DIR, 'launchd-stdout.log');
 const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -132,8 +133,11 @@ function generatePlist() {
   const caffeinatePath = getCaffeinatePath();
   const programArgs = buildProgramArguments(nodePath, caffeinatePath);
 
-  // Issue #2934: Removed StandardOutPath — application logs go through
-  // pino file transport with pino-roll rotation (triggered by LOG_TO_FILE env var).
+  // Issue #2934: Application logs go through pino file transport with
+  // pino-roll rotation (triggered by LOG_TO_FILE env var).
+  // Issue #3360: Added StandardOutPath as fallback — when pino file logging
+  // fails (e.g. #3359 pinoRoll error), console.log/stdout output is still
+  // captured instead of being silently discarded.
   // StandardErrorPath is kept for uncaught Node.js crash diagnostics.
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -158,6 +162,9 @@ ${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
 
   <key>StandardErrorPath</key>
   <string>${STDERR_LOG}</string>
+
+  <key>StandardOutPath</key>
+  <string>${STDOUT_LOG}</string>
 
   <key>EnvironmentVariables</key>
   <dict>
@@ -185,6 +192,7 @@ ${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
   console.log(`  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
   console.log(`  App log: ${APP_LOG} (pino-roll rotated)`);
+  console.log(`  Stdout: ${STDOUT_LOG} (launchd fallback log)`);
   console.log(`  Stderr: ${STDERR_LOG} (launchd crash log)`);
 }
 
@@ -264,6 +272,10 @@ function cmdLogs() {
   try {
     run(`tail -n ${n} ${APP_LOG}`, { silent: true });
   } catch {}
+  console.log(`\n=== stdout (last ${n} lines) ===`);
+  try {
+    run(`tail -n ${n} ${STDOUT_LOG}`, { silent: true });
+  } catch {}
   console.log(`\n=== stderr (last ${n} lines) ===`);
   try {
     run(`tail -n ${n} ${STDERR_LOG}`, { silent: true });
@@ -276,6 +288,7 @@ function cmdStatus() {
     console.log(result.trim());
     console.log(`\nPlist: ${PLIST_PATH}`);
     console.log(`App log: ${APP_LOG} (pino-roll rotated)`);
+    console.log(`Stdout: ${STDOUT_LOG} (launchd fallback log)`);
     console.log(`Stderr: ${STDERR_LOG} (launchd crash log)`);
   } else {
     console.log('Service is NOT loaded.');
