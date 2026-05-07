@@ -53,6 +53,14 @@ export {
   unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 
+// Tools - Task Progress (Issue #857: Deep task progress reporting)
+export {
+  get_task_status,
+  list_active_tasks,
+  type TaskProgressResult,
+  type TaskProgressInfo,
+} from './tools/task-progress.js';
+
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
