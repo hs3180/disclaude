@@ -678,6 +678,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   private startAgentLoop(): void {
     const chatId = this.boundChatId;
+    const startMs = Date.now(); // Issue #3292: timing for agent startup diagnostics
+    this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: 0 });
 
     // Issue #955: Trigger background loading of persisted history
     if (!this.historyLoaded) {
@@ -734,6 +736,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.queryHandle = handle;
     this.isSessionActive = true;
+    this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: Date.now() - startMs, ok: true });
 
     // Process SDK messages in background
     this.processIterator(iterator).catch(async (err) => {
