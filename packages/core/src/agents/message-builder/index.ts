@@ -24,4 +24,5 @@ export {
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvAwarenessGuidance,
 } from './guidance.js';
