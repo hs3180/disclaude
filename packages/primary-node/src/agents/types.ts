@@ -9,7 +9,7 @@
  * callbacks that satisfy this interface.
  */
 
-import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions } from '@disclaude/core';
+import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, CwdProvider } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -115,6 +115,21 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * options when creating ChatAgent instances.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Dynamic cwd resolution provider for project-scoped agents.
+   *
+   * When provided, the ChatAgent will use this function to resolve
+   * its working directory based on the bound chatId. This enables
+   * per-chatId cwd switching for project-bound agents without
+   * modifying the processMessage flow.
+   *
+   * Resolution: cwdProvider(chatId) → workingDir string, or undefined
+   * for default workspace.
+   *
+   * Issue #3332: Project-scoped ChatAgent with chatId binding.
+   */
+  cwdProvider?: CwdProvider;
 
 }
 

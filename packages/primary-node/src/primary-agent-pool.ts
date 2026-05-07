@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -33,6 +33,19 @@ export interface PrimaryAgentPoolOptions {
    * Example: createFeishuMessageBuilderOptions() for Feishu channels.
    */
   messageBuilderOptions?: MessageBuilderOptions;
+
+  /**
+   * Dynamic cwd resolution provider for project-scoped agents.
+   *
+   * When provided, ChatAgent instances will use this function to resolve
+   * their working directory based on the bound chatId. This enables
+   * per-chatId cwd switching for project-bound agents.
+   *
+   * Typically created by `ProjectManager.createCwdProvider()`.
+   *
+   * Issue #3332: Project-scoped ChatAgent with chatId binding.
+   */
+  cwdProvider?: CwdProvider;
 }
 
 /**
@@ -61,6 +74,7 @@ export class PrimaryAgentPool {
     if (!agent) {
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
+        cwdProvider: this.options.cwdProvider,
       });
       this.agents.set(chatId, agent);
     }

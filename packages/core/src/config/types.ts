@@ -324,6 +324,37 @@ export interface SessionRestoreConfig {
 }
 
 /**
+ * Project configuration entry for disclaude.config.yaml.
+ *
+ * Defines a static binding between a project key and a chatId for
+ * NonUserMessage routing. When a system-driven message arrives for
+ * the project, it's routed to the bound ChatAgent.
+ *
+ * Issue #3332: Project-scoped ChatAgent with chatId binding.
+ *
+ * @example
+ * ```yaml
+ * projects:
+ *   - key: "hs3180/disclaude"
+ *     workingDir: "."
+ *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+ *     modelTier: "low"
+ * ```
+ */
+export interface ProjectConfigEntry {
+  /** Project key — unique identifier for routing (e.g., 'owner/repo') */
+  key: string;
+  /** Project working directory (relative to workspace root or absolute) */
+  workingDir: string;
+  /** Bound chat ID — agent output goes here */
+  chatId: string;
+  /** Default model tier for this project's agents (optional) */
+  modelTier?: 'low' | 'default' | 'high';
+  /** Agent idle timeout in milliseconds (optional, default: 30min) */
+  idleTimeoutMs?: number;
+}
+
+/**
  * Session timeout configuration (Issue #1313).
  * Controls automatic cleanup of idle sessions to release resources.
  */
@@ -376,6 +407,8 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /** Project configurations for NonUserMessage routing (Issue #3332) */
+  projects?: ProjectConfigEntry[];
 }
 
 /**

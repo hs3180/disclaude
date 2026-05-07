@@ -267,6 +267,21 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Project Configurations (Issue #3332)
+# -----------------------------------------------------------------------------
+# Static project bindings for NonUserMessage routing.
+# Each project defines a binding between a project key and a chatId,
+# enabling system-driven messages (scheduled tasks, A2A events) to be
+# routed to a specific ChatAgent with a dedicated working directory.
+#
+# projects:
+#   - key: "owner/repo"
+#     workingDir: "."                    # Relative to workspace root (or absolute)
+#     chatId: "oc_xxx"                   # Bound chat — agent replies go here
+#     modelTier: "low"                   # Optional: low, default, or high
+#     idleTimeoutMs: 1800000             # Optional: idle timeout (default: 30min)
+
 # =============================================================================
 # Notes
 # =============================================================================

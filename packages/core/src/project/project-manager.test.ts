@@ -1186,3 +1186,197 @@ describe('ProjectManager — persist failure rollback', () => {
     restoreWritePermissions(workspaceDir);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Project Config Methods (Phase 2 — Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager registerProjectConfig()', () => {
+  let pm: ProjectManager;
+
+  beforeEach(() => {
+    pm = new ProjectManager(createOptions());
+  });
+
+  it('should register a project config', () => {
+    pm.registerProjectConfig({
+      key: 'owner/repo',
+      workingDir: '/tmp/test-project',
+      chatId: 'oc_chat_1',
+    });
+
+    const config = pm.getProjectConfig('owner/repo');
+    expect(config).toBeDefined();
+    expect(config!.key).toBe('owner/repo');
+    expect(config!.chatId).toBe('oc_chat_1');
+    expect(config!.workingDir).toBe('/tmp/test-project');
+  });
+
+  it('should register multiple project configs', () => {
+    pm.registerProjectConfig({ key: 'owner/repo1', workingDir: '/tmp/r1', chatId: 'oc_1' });
+    pm.registerProjectConfig({ key: 'owner/repo2', workingDir: '/tmp/r2', chatId: 'oc_2' });
+
+    expect(pm.getAllProjectConfigs()).toHaveLength(2);
+  });
+
+  it('should update chatId reverse mapping when re-registering', () => {
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/r', chatId: 'oc_old' });
+    expect(pm.getProjectConfigByChatId('oc_old')).toBeDefined();
+
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/r', chatId: 'oc_new' });
+
+    expect(pm.getProjectConfigByChatId('oc_old')).toBeUndefined();
+    expect(pm.getProjectConfigByChatId('oc_new')).toBeDefined();
+    expect(pm.getProjectConfigByChatId('oc_new')!.key).toBe('owner/repo');
+  });
+
+  it('should throw for empty key', () => {
+    expect(() => pm.registerProjectConfig({ key: '', workingDir: '/tmp', chatId: 'oc_1' }))
+      .toThrow('projectKey cannot be empty');
+  });
+
+  it('should throw for empty chatId', () => {
+    expect(() => pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp', chatId: '' }))
+      .toThrow('chatId cannot be empty');
+  });
+
+  it('should throw for empty workingDir', () => {
+    expect(() => pm.registerProjectConfig({ key: 'owner/repo', workingDir: '', chatId: 'oc_1' }))
+      .toThrow('workingDir cannot be empty');
+  });
+
+  it('should store optional modelTier', () => {
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/r', chatId: 'oc_1', modelTier: 'low' });
+    const config = pm.getProjectConfig('owner/repo');
+    expect(config!.modelTier).toBe('low');
+  });
+
+  it('should store optional idleTimeoutMs', () => {
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/r', chatId: 'oc_1', idleTimeoutMs: 60000 });
+    const config = pm.getProjectConfig('owner/repo');
+    expect(config!.idleTimeoutMs).toBe(60000);
+  });
+});
+
+describe('ProjectManager loadProjectConfigs()', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+  });
+
+  it('should load project configs from YAML entries', () => {
+    pm.loadProjectConfigs([
+      { key: 'owner/repo1', workingDir: '/tmp/r1', chatId: 'oc_1' },
+      { key: 'owner/repo2', workingDir: '/tmp/r2', chatId: 'oc_2' },
+    ]);
+
+    expect(pm.getAllProjectConfigs()).toHaveLength(2);
+    expect(pm.getProjectConfig('owner/repo1')).toBeDefined();
+    expect(pm.getProjectConfig('owner/repo2')).toBeDefined();
+  });
+
+  it('should resolve relative workingDir from workspaceDir', () => {
+    pm.loadProjectConfigs([
+      { key: 'owner/repo', workingDir: '.', chatId: 'oc_1' },
+    ]);
+
+    const config = pm.getProjectConfig('owner/repo');
+    expect(config!.workingDir).toBe(workspaceDir);
+  });
+
+  it('should resolve relative workingDir with subdirectory', () => {
+    pm.loadProjectConfigs([
+      { key: 'owner/repo', workingDir: './repos/project', chatId: 'oc_1' },
+    ]);
+
+    const config = pm.getProjectConfig('owner/repo');
+    expect(config!.workingDir).toBe(`${workspaceDir}/repos/project`);
+  });
+
+  it('should keep absolute workingDir as-is', () => {
+    pm.loadProjectConfigs([
+      { key: 'owner/repo', workingDir: '/absolute/path', chatId: 'oc_1' },
+    ]);
+
+    const config = pm.getProjectConfig('owner/repo');
+    expect(config!.workingDir).toBe('/absolute/path');
+  });
+
+  it('should handle empty array', () => {
+    pm.loadProjectConfigs([]);
+    expect(pm.getAllProjectConfigs()).toHaveLength(0);
+  });
+});
+
+describe('ProjectManager getProjectConfigByChatId()', () => {
+  let pm: ProjectManager;
+
+  beforeEach(() => {
+    pm = new ProjectManager(createOptions());
+  });
+
+  it('should look up project config by chatId', () => {
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/r', chatId: 'oc_chat_1' });
+
+    const config = pm.getProjectConfigByChatId('oc_chat_1');
+    expect(config).toBeDefined();
+    expect(config!.key).toBe('owner/repo');
+  });
+
+  it('should return undefined for unknown chatId', () => {
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/r', chatId: 'oc_chat_1' });
+
+    expect(pm.getProjectConfigByChatId('unknown_chat')).toBeUndefined();
+  });
+});
+
+describe('ProjectManager createCwdProvider() with project configs', () => {
+  let pm: ProjectManager;
+  let workspaceDir: string;
+  let cwdProvider: (chatId: string) => string | undefined;
+
+  beforeEach(() => {
+    const opts = createOptions();
+    ({ workspaceDir } = opts);
+    pm = new ProjectManager(opts);
+    cwdProvider = pm.createCwdProvider();
+  });
+
+  it('should resolve cwd from project config', () => {
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/repo', chatId: 'oc_project_chat' });
+
+    expect(cwdProvider('oc_project_chat')).toBe('/tmp/repo');
+  });
+
+  it('should resolve cwd from dynamic instance before project config', () => {
+    // Dynamic instance
+    pm.create('oc_chat_1', 'research', 'my-research');
+
+    // Also register project config for same chatId
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/repo', chatId: 'oc_chat_1' });
+
+    // Dynamic instance should take precedence
+    expect(cwdProvider('oc_chat_1')).toBe(join(workspaceDir, 'projects/my-research'));
+  });
+
+  it('should return undefined when neither instance nor project config exists', () => {
+    expect(cwdProvider('unknown_chat')).toBeUndefined();
+  });
+
+  it('should return undefined for default workspace', () => {
+    // No bindings at all → default → undefined
+    expect(cwdProvider('chat_no_binding')).toBeUndefined();
+  });
+
+  it('should dynamically update when project config is registered', () => {
+    expect(cwdProvider('oc_project_chat')).toBeUndefined();
+
+    pm.registerProjectConfig({ key: 'owner/repo', workingDir: '/tmp/repo', chatId: 'oc_project_chat' });
+
+    expect(cwdProvider('oc_project_chat')).toBe('/tmp/repo');
+  });
+});
