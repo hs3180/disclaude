@@ -42,3 +42,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Report Progress (Issue #857)
+export { report_progress } from './report-progress.js';

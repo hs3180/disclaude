@@ -7,6 +7,7 @@
  * {task_id}/
  *   ├── task.md
  *   ├── final_result.md (created by ChatAgent when task is COMPLETE)
+ *   ├── progress.md (created by report_progress MCP tool, Issue #857)
  *   └── iterations/
  *       ├── iter-1/
  *       │   ├── evaluation.md (created by ChatAgent)
@@ -28,6 +29,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
+import type { TaskProgress } from './types.js';
 
 const logger = createLogger('TaskFileManager');
 
@@ -506,5 +508,136 @@ export class TaskFileManager {
    */
   getFinalResultPath(taskId: string): string {
     return path.join(this.getTaskDir(taskId), 'final_result.md');
+  }
+
+  // ===== Progress Tracking Methods (Issue #857) =====
+
+  /**
+   * Get the path to progress.md for a task.
+   *
+   * @param taskId - Task identifier
+   * @returns Absolute path to progress.md
+   */
+  getProgressPath(taskId: string): string {
+    return path.join(this.getTaskDir(taskId), 'progress.md');
+  }
+
+  /**
+   * Write progress.md for a task.
+   *
+   * Creates or updates the progress file with current task progress.
+   *
+   * @param taskId - Task identifier
+   * @param progress - Task progress data
+   */
+  async writeProgress(taskId: string, progress: TaskProgress): Promise<void> {
+    const progressPath = this.getProgressPath(taskId);
+
+    const content = `# Task Progress
+
+**Task ID**: ${progress.taskId}
+**Status**: ${progress.status}
+**Progress**: ${progress.progress}%
+**Started**: ${progress.startedAt}
+**Updated**: ${progress.updatedAt}
+
+## Current Activity
+
+${progress.message}
+
+## Completed Steps
+
+${progress.completedSteps.map(s => `- ✅ ${s}`).join('\n') || '- None yet'}
+
+## Remaining Steps
+
+${progress.remainingSteps.map(s => `- ⬜ ${s}`).join('\n') || '- None'}
+
+---
+
+*Progress updated at ${progress.updatedAt}*
+`;
+
+    try {
+      await fs.writeFile(progressPath, content, 'utf-8');
+      logger.debug({ taskId, progress: progress.progress }, 'Progress written');
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to write progress');
+      throw error;
+    }
+  }
+
+  /**
+   * Read progress.md for a task.
+   *
+   * @param taskId - Task identifier
+   * @returns Task progress data, or null if no progress file exists
+   */
+  async readProgress(taskId: string): Promise<TaskProgress | null> {
+    const progressPath = this.getProgressPath(taskId);
+
+    try {
+      const content = await fs.readFile(progressPath, 'utf-8');
+      return this.parseProgressMd(content, taskId);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Check if progress.md exists for a task.
+   *
+   * @param taskId - Task identifier
+   * @returns True if progress.md exists
+   */
+  async hasProgress(taskId: string): Promise<boolean> {
+    const progressPath = this.getProgressPath(taskId);
+    try {
+      await fs.access(progressPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Parse progress.md content into TaskProgress object.
+   *
+   * @param content - Markdown content of progress.md
+   * @param taskId - Task identifier
+   * @returns Parsed TaskProgress object
+   */
+  private parseProgressMd(content: string, taskId: string): TaskProgress {
+    const getFieldValue = (field: string): string => {
+      const match = content.match(new RegExp(`\\*\\*${field}\\*\\*: (.+)`));
+      return match ? match[1].trim() : '';
+    };
+
+    const getSectionItems = (sectionHeader: string): string[] => {
+      const regex = new RegExp(`## ${sectionHeader}\\n+([\\s\\S]*?)(?=\\n## |\\n---|$)`);
+      const match = content.match(regex);
+      if (!match) {return [];}
+      return match[1]
+        .split('\n')
+        .map(line => line.replace(/^-\s*(✅|⬜)\s*/, '').trim())
+        .filter(line => line.length > 0 && line !== '- None yet' && line !== '- None' && line !== 'None yet' && line !== 'None');
+    };
+
+    const progressStr = getFieldValue('Progress');
+    const progressNum = parseInt(progressStr, 10);
+    const statusStr = getFieldValue('Status');
+
+    return {
+      taskId,
+      progress: isNaN(progressNum) ? 0 : Math.min(100, Math.max(0, progressNum)),
+      status: (['in_progress', 'completed', 'failed', 'paused'].includes(statusStr)
+        ? statusStr
+        : 'in_progress') as TaskProgress['status'],
+      message: '',
+      completedSteps: getSectionItems('Completed Steps'),
+      remainingSteps: getSectionItems('Remaining Steps'),
+      updatedAt: getFieldValue('Updated') || new Date().toISOString(),
+      startedAt: getFieldValue('Started') || new Date().toISOString(),
+    };
   }
 }

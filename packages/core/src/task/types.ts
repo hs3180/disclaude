@@ -33,3 +33,34 @@ export interface TaskDefinitionDetails {
   constraints: string[];
   quality_criteria: string[];
 }
+
+/**
+ * Task progress status.
+ * @since Issue #857
+ */
+export type TaskProgressStatus = 'in_progress' | 'completed' | 'failed' | 'paused';
+
+/**
+ * Task progress update data.
+ * Written to progress.md in the task directory.
+ *
+ * @since Issue #857
+ */
+export interface TaskProgress {
+  /** Task identifier (messageId) */
+  taskId: string;
+  /** Progress percentage (0-100) */
+  progress: number;
+  /** Current status */
+  status: TaskProgressStatus;
+  /** Human-readable description of current activity */
+  message: string;
+  /** List of completed steps */
+  completedSteps: string[];
+  /** List of remaining steps */
+  remainingSteps: string[];
+  /** ISO 8601 timestamp when progress was last updated */
+  updatedAt: string;
+  /** ISO 8601 timestamp when task started */
+  startedAt: string;
+}

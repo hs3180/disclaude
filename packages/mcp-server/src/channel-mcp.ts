@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  report_progress,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -29,6 +30,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { report_progress } from './tools/report-progress.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -148,6 +150,35 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  report_progress: {
+    description: 'Report task progress to the user. Sends a progress card and persists progress to the task directory.',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'Task identifier (messageId)' },
+        chatId: { type: 'string', description: 'Target chat ID' },
+        progress: { type: 'number', description: 'Progress percentage (0-100)' },
+        message: { type: 'string', description: 'Human-readable description of current activity' },
+        completedSteps: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of completed steps',
+        },
+        remainingSteps: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of remaining steps',
+        },
+        status: {
+          type: 'string',
+          enum: ['in_progress', 'completed', 'failed', 'paused'],
+          description: 'Task status (default: in_progress)',
+        },
+      },
+      required: ['taskId', 'chatId', 'progress', 'message'],
+    },
+    handler: report_progress,
   },
 };
 
@@ -462,6 +493,80 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'report_progress',
+    description: `Report task progress to the user during long-running tasks.
+
+Sends a visual progress card to the chat and persists progress to the task directory.
+The Agent decides when to report progress (intelligent approach).
+
+## When to Use
+- During long-running tasks (code refactoring, multi-file changes)
+- After completing a significant step
+- When encountering errors or delays
+- Before and after running tests
+
+## Parameters
+- **taskId**: Task identifier (messageId) (string)
+- **chatId**: Target chat ID (string)
+- **progress**: Progress percentage 0-100 (number)
+- **message**: Description of current activity (string)
+- **completedSteps**: List of completed steps (string[], optional)
+- **remainingSteps**: List of remaining steps (string[], optional)
+- **status**: Task status - "in_progress" | "completed" | "failed" | "paused" (optional, default: in_progress)
+
+## Example
+\`\`\`json
+{
+  "taskId": "om_abc123",
+  "chatId": "oc_xxx",
+  "progress": 45,
+  "message": "Refactoring authentication module",
+  "completedSteps": ["Analyzed existing code", "Created new auth interface"],
+  "remainingSteps": ["Implement new auth flow", "Update tests", "Run integration tests"],
+  "status": "in_progress"
+}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task identifier (messageId)'),
+      chatId: z.string().describe('Target chat ID'),
+      progress: z.number().min(0).max(100).describe('Progress percentage (0-100)'),
+      message: z.string().describe('Human-readable description of current activity'),
+      completedSteps: z.array(z.string()).optional().describe('List of completed steps'),
+      remainingSteps: z.array(z.string()).optional().describe('List of remaining steps'),
+      status: z.enum(['in_progress', 'completed', 'failed', 'paused']).optional().describe('Task status'),
+    }),
+    handler: async ({ taskId, chatId, progress, message, completedSteps, remainingSteps, status }: {
+      taskId: string;
+      chatId: string;
+      progress: number;
+      message: string;
+      completedSteps?: string[];
+      remainingSteps?: string[];
+      status?: 'in_progress' | 'completed' | 'failed' | 'paused';
+    }) => {
+      // Issue #1641 P1: Validate chatId format
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await report_progress({
+          taskId,
+          chatId,
+          progress,
+          message,
+          completedSteps,
+          remainingSteps,
+          status,
+        });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Progress report failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
   },
