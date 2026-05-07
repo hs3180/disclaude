@@ -492,8 +492,7 @@ export class PrimaryNode extends EventEmitter {
     const activeJobCount = this.scheduler.getActiveJobs().length;
     logger.info(
       { activeJobCount },
-      'Scheduler init step 4/5: ✓ Scheduler started with %d active task(s)',
-      activeJobCount
+      'Scheduler init step 4/5: ✓ Scheduler started'
     );
 
     // Step 5: Initialize file watcher for hot reload
@@ -517,8 +516,6 @@ export class PrimaryNode extends EventEmitter {
     await this.scheduleFileWatcher.start();
     logger.info('Scheduler init step 5/5: ✓ File watcher started');
 
-    console.log(`✓ Scheduler started (${activeJobCount} task(s))`);
-    console.log('✓ Schedule file watcher started');
     logger.info(
       { schedulesDir, activeJobCount },
       'Scheduler fully initialized'
