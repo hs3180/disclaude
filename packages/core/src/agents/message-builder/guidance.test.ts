@@ -13,6 +13,7 @@ import {
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvAwarenessGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -166,5 +167,46 @@ describe('buildTaskRecordGuidance', () => {
   it('should mention creating file if not exists', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('Create the file if it does not exist');
+  });
+});
+
+describe('buildRuntimeEnvAwarenessGuidance', () => {
+  it('should include runtime-env awareness section header', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('Runtime Environment Variables');
+  });
+
+  it('should explain the runtime-env file mechanism', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('shared runtime environment variables');
+  });
+
+  it('should list common variables with their purposes', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should explain how to access variables', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('process.env');
+  });
+
+  it('should include security warning about not exposing tokens', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('Never echo token values');
+  });
+
+  it('should mention token expiry checking', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+    expect(result).toContain('expired');
+    expect(result).toContain('refreshed');
+  });
+
+  it('should explain shared nature of runtime-env', () => {
+    const result = buildRuntimeEnvAwarenessGuidance();
+    expect(result).toContain('shared across all agents');
   });
 });

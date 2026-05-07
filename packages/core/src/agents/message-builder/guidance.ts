@@ -298,3 +298,48 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess and shares state
+ * with the main process via `.runtime-env` file. This guidance informs
+ * the agent about available runtime environment variables so it can
+ * proactively use them (e.g., GitHub tokens, API credentials).
+ *
+ * The runtime-env variables are automatically loaded into process.env
+ * at agent startup via BaseAgent.createSdkOptions(), so the agent can
+ * access them directly as environment variables.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvAwarenessGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+**You have access to shared runtime environment variables.**
+
+The main process and your subprocess share state via a \`.runtime-env\` file in the workspace directory. These variables are automatically loaded into your \`process.env\` at startup.
+
+### Common Variables
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| \`GH_TOKEN\` | GitHub API token (auto-refreshed by github-jwt-auth skill) | \`ghs_xxxxxxxxxxxx\` |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiration timestamp (ISO 8601) | \`2026-05-07T12:00:00Z\` |
+
+### How to Use
+
+- **Read**: Access directly via \`process.env.GH_TOKEN\` or in bash via \`$GH_TOKEN\`
+- **Check expiry**: Before using \`GH_TOKEN\`, check if \`GH_TOKEN_EXPIRES_AT\` is still in the future. If expired, inform the user that the token needs to be refreshed.
+- **Do NOT expose**: Never echo token values in your response. Use them only for API calls.
+
+### Important Notes
+
+- These variables are **shared across all agents** in the workspace — writes are visible to other agents after they restart
+- The \`.runtime-env\` file is a simple KEY=VALUE format — do not store structured data in it
+- If you need to pass structured data between processes, consider using the project's shared memory mechanisms instead`;
+}

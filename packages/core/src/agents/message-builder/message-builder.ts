@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, task record, location awareness)
+ *   ├── Guidance sections (next-step, output format, task record, location awareness, runtime-env awareness)
  *   └── User message + attachments
  * ```
  *
@@ -36,6 +36,7 @@ import {
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvAwarenessGuidance,
 } from './guidance.js';
 
 /**
@@ -50,6 +51,7 @@ import {
  * - Output format guidance (Issue #962)
  * - Task record guidance (Issue #1234)
  * - Location awareness guidance (Issue #1198)
+ * - Runtime-env awareness guidance (Issue #1371)
  *
  * Channel-specific content is injected via the options callbacks.
  */
@@ -140,6 +142,7 @@ export class MessageBuilder {
     const outputFormatGuidance = buildOutputFormatGuidance();
     const taskRecordGuidance = buildTaskRecordGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
+    const runtimeEnvAwarenessGuidance = buildRuntimeEnvAwarenessGuidance();
 
     // Compose all sections
     const sections: string[] = [];
@@ -168,6 +171,7 @@ export class MessageBuilder {
     sections.push(outputFormatGuidance);
     sections.push(taskRecordGuidance);
     sections.push(locationAwarenessGuidance);
+    sections.push(runtimeEnvAwarenessGuidance);
 
     const preamble = sections.join('\n');
 
