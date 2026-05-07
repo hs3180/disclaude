@@ -176,6 +176,16 @@ export {
   type InteractiveContext,
 } from './interactive-context.js';
 
+// Trigger mode and mention detection (Issue #1626 P3)
+export {
+  TriggerModeManager,
+  type TriggerModeRecord,
+} from './channels/feishu/passive-mode.js';
+export {
+  MentionDetector,
+  type BotInfo,
+} from './channels/feishu/mention-detector.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 
