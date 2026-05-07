@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
+  buildETALearningGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -166,5 +167,62 @@ describe('buildTaskRecordGuidance', () => {
   it('should mention creating file if not exists', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('Create the file if it does not exist');
+  });
+});
+
+describe('buildETALearningGuidance', () => {
+  it('should include ETA learning section header', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('ETA Learning');
+  });
+
+  it('should specify rules file location', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('.claude/eta-rules.md');
+  });
+
+  it('should include initial template with task type baselines', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Task Type Baselines');
+    expect(result).toContain('bugfix');
+    expect(result).toContain('feature-small');
+    expect(result).toContain('refactoring');
+  });
+
+  it('should include adjustment rule format', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('baseline × {multiplier}');
+    expect(result).toContain('Learned from:');
+  });
+
+  it('should specify update triggers', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('50% deviation');
+    expect(result).toContain('New task type');
+    expect(result).toContain('Repeated pattern');
+  });
+
+  it('should include example rule addition', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('async error handling');
+    expect(result).toContain('baseline × 1.5');
+  });
+
+  it('should instruct agent to read rules before estimating', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Read rules before estimating');
+    expect(result).toContain('eta-rules.md');
+    expect(result).toContain('task-records.md');
+  });
+
+  it('should instruct agent to create file if not exists', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Create the file if it does not exist');
+  });
+
+  it('should include underestimation and overestimation tracking', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Underestimation Patterns');
+    expect(result).toContain('Overestimation Patterns');
   });
 });

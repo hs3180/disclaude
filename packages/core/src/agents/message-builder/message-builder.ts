@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, task record, location awareness)
+ *   ├── Guidance sections (next-step, output format, task record, ETA learning, location awareness)
  *   └── User message + attachments
  * ```
  *
@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
+  buildETALearningGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -48,7 +49,8 @@ import {
  * - Chat history context
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
- * - Task record guidance (Issue #1234)
+ * - Task record guidance (Issue #1234 Phase 1)
+ * - ETA learning guidance (Issue #1234 Phase 2)
  * - Location awareness guidance (Issue #1198)
  *
  * Channel-specific content is injected via the options callbacks.
@@ -139,6 +141,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const taskRecordGuidance = buildTaskRecordGuidance();
+    const etaLearningGuidance = buildETALearningGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
     // Compose all sections
@@ -167,6 +170,7 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(taskRecordGuidance);
+    sections.push(etaLearningGuidance);
     sections.push(locationAwarenessGuidance);
 
     const preamble = sections.join('\n');
