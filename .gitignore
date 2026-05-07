@@ -52,6 +52,10 @@ Thumbs.db
 # Task records
 tasks/
 
+# Project state directory (local state, not committed)
+# Issue #3335: project-state.json and other local data
+.disclaude/
+
 # Workspace directory (keep directory structure, ignore contents)
 workspace/*
 !workspace/.gitkeep

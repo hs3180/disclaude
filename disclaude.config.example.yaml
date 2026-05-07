@@ -256,6 +256,24 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Project-Bound Agent Configuration (Issue #3335)
+# -----------------------------------------------------------------------------
+# Configure project-bound agents with dedicated chat bindings.
+# Each project gets its own ChatAgent instance that maintains state
+# in .disclaude/project-state.json within its working directory.
+#
+# State is file-based: agents read/write state via standard file tools.
+# Admin commands: /project status, /project trigger, /project stop, /project list
+#
+# projects:
+#   entries:
+#     - key: "owner/repo"             # Project key (unique identifier)
+#       workingDir: "."               # Working directory relative to disclaude root
+#       chatId: "oc_xxx"              # Bound chat ID for project agent
+#       modelTier: "low"              # Model tier: high, low, multimodal
+#       idleTimeoutMs: 1800000        # Idle timeout before agent disposal (default: 30min)
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.
