@@ -75,6 +75,9 @@ export {
   setupAgentsInWorkspace,
 } from './agents-setup.js';
 
+// Timing (Issue #3292)
+export { withTiming } from './timing.js';
+
 // File Utils (Issue #1637)
 export {
   detectFileExtension,

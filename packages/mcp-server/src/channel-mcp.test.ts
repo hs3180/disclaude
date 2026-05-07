@@ -33,6 +33,8 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
+  // Issue #3292: withTiming passthrough — timing wrapper just delegates to fn
+  withTiming: (_logger: unknown, _label: string, _chatId: unknown, fn: () => Promise<unknown>) => fn(),
   getIpcClient: vi.fn(),
   getIpcSocketPath: vi.fn(),
   Config: { get: vi.fn() },
