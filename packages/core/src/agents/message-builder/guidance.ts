@@ -185,6 +185,86 @@ When you need to present structured data (status, metrics, analysis results, etc
 }
 
 /**
+ * Build the task record guidance section.
+ *
+ * Issue #1234: Instructs the agent to record task execution information
+ * in a Markdown file for future ETA estimation. The agent records
+ * estimated time, actual time, and review notes after completing
+ * significant tasks.
+ *
+ * Phase 1 of the task ETA system: task record format and guidance.
+ * Records are stored as unstructured Markdown in `.claude/task-records.md`.
+ *
+ * @returns Formatted task record guidance section
+ */
+export function buildTaskRecordGuidance(): string {
+  return `
+
+---
+
+## Task Execution Recording
+
+**After completing each significant task, record the execution information.**
+
+### When to Record
+
+Record a task entry when you have completed a meaningful unit of work, such as:
+- Implementing a feature or bug fix
+- Conducting research or analysis
+- Running tests or diagnostics
+- Any task that took more than a few minutes
+
+### Storage Location
+
+Append entries to \`.claude/task-records.md\` in the current working directory.
+Create the file if it does not exist.
+
+### Record Format
+
+Append each task as a new \`##\` section with today's date and task description:
+
+\`\`\`markdown
+## YYYY-MM-DD {Brief Task Description}
+
+- **Type**: {bugfix | feature | refactoring | research | test | docs | chore}
+- **Estimated Time**: {Your estimate before starting}
+- **Estimation Basis**: {Why you estimated this time — reference similar past tasks or complexity factors}
+- **Actual Time**: {How long it actually took}
+- **Review**: {What went well, what was underestimated, lessons learned}
+\`\`\`
+
+### Example
+
+\`\`\`markdown
+# Task Records
+
+## 2026-05-07 Fix WebSocket Reconnection Bug
+
+- **Type**: bugfix
+- **Estimated Time**: 30 minutes
+- **Estimation Basis**: Similar to the previous connection timeout fix, mostly error handling
+- **Actual Time**: 45 minutes
+- **Review**: Underestimated the edge case where multiple reconnects fire simultaneously. Need to add debouncing logic next time.
+
+## 2026-05-07 Add Markdown Export Feature
+
+- **Type**: feature
+- **Estimated Time**: 1 hour
+- **Estimation Basis**: Need data query + format conversion + file download, similar to the report feature
+- **Actual Time**: 55 minutes
+- **Review**: Estimation was accurate. The existing format helpers made conversion straightforward.
+\`\`\`
+
+### Guidelines
+
+- **Be honest about estimates**: Even rough estimates help build estimation accuracy over time
+- **Include estimation basis**: Reference similar past tasks or specific complexity factors
+- **Keep reviews concise**: One or two sentences about what was learned
+- **Do NOT skip recording**: Consistent records are essential for improving future estimates
+- **Read existing records before estimating**: Check \`task-records.md\` for similar past tasks to improve your estimate`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
