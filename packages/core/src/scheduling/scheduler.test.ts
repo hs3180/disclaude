@@ -12,6 +12,7 @@ import { Scheduler, type SchedulerCallbacks, type TaskExecutor } from './schedul
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
+import type { INonUserMessageRouter, RouteResult, NonUserMessage } from '../non-user-message/types.js';
 
 function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -580,6 +581,190 @@ describe('Scheduler', () => {
 
       expect(scheduler.getActiveJobs()).toHaveLength(2);
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
+    });
+  });
+
+  // Issue #3333: NonUserMessage routing for project-bound tasks
+  describe('projectKey routing (Issue #3333)', () => {
+    let mockRouter: Mock<INonUserMessageRouter['route']>;
+
+    function createSchedulerWithRouter(): Scheduler {
+      mockRouter = vi.fn().mockResolvedValue({ ok: true } as RouteResult);
+
+      return new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        nonUserMessageRouter: { route: mockRouter },
+      });
+    }
+
+    it('should route via NonUserMessageRouter when task has projectKey', async () => {
+      const task = createTask({
+        id: 'project-1',
+        projectKey: 'hs3180/disclaude',
+      });
+      const schedWithRouter = createSchedulerWithRouter();
+      schedWithRouter.addTask(task);
+
+      const jobs = schedWithRouter.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouter).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Verify the message structure
+      const [message] = mockRouter.mock.calls[0] as [NonUserMessage];
+      expect(message.type).toBe('scheduled');
+      expect(message.source).toBe('scheduler:project-1');
+      expect(message.projectKey).toBe('hs3180/disclaude');
+      expect(message.payload).toContain('Run tests');
+      expect(message.payload).toContain('Scheduled Task Execution Context');
+      expect(message.priority).toBe('normal');
+      expect(message.createdAt).toBeDefined();
+      expect(message.id).toBeDefined();
+
+      // Short-lived executor should NOT be called
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should map modelTier to message priority', async () => {
+      const task = createTask({
+        id: 'priority-high',
+        projectKey: 'hs3180/disclaude',
+        modelTier: 'high',
+      });
+      const schedWithRouter = createSchedulerWithRouter();
+      schedWithRouter.addTask(task);
+
+      const jobs = schedWithRouter.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouter).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      const [message] = mockRouter.mock.calls[0] as [NonUserMessage];
+      expect(message.priority).toBe('high');
+    });
+
+    it('should send start notification with projectKey info when routing', async () => {
+      const task = createTask({
+        id: 'notify-project',
+        projectKey: 'hs3180/disclaude',
+      });
+      const schedWithRouter = createSchedulerWithRouter();
+      schedWithRouter.addTask(task);
+
+      const jobs = schedWithRouter.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('project: hs3180/disclaude'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should throw when router returns failure', async () => {
+      const task = createTask({
+        id: 'router-fail',
+        projectKey: 'nonexistent/project',
+      });
+
+      // Create router mock that returns failure BEFORE creating scheduler
+      const failRouter = vi.fn().mockResolvedValue({ ok: false, error: 'Project not found' } as RouteResult);
+      const schedWithRouter = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        nonUserMessageRouter: { route: failRouter },
+      });
+
+      schedWithRouter.addTask(task);
+
+      const jobs = schedWithRouter.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Project not found'),
+      );
+    });
+
+    it('should fall back to short-lived agent when projectKey is set but no router', async () => {
+      // Scheduler without nonUserMessageRouter
+      const task = createTask({
+        id: 'no-router',
+        projectKey: 'hs3180/disclaude',
+      });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      await jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Router doesn't exist, so short-lived agent is used
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
+    it('should use short-lived agent when task has no projectKey', async () => {
+      const task = createTask({ id: 'no-project-key' });
+      const schedWithRouter = createSchedulerWithRouter();
+      schedWithRouter.addTask(task);
+
+      const jobs = schedWithRouter.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Router should NOT be called
+      expect(mockRouter).not.toHaveBeenCalled();
+    });
+
+    it('should clear running state when router fails', async () => {
+      const task = createTask({
+        id: 'router-crash',
+        projectKey: 'hs3180/disclaude',
+      });
+
+      // Create router mock that throws BEFORE creating scheduler
+      const crashRouter = vi.fn().mockRejectedValue(new Error('Router crashed'));
+      const schedWithRouter = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        nonUserMessageRouter: { route: crashRouter },
+      });
+
+      schedWithRouter.addTask(task);
+
+      const jobs = schedWithRouter.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(schedWithRouter.isTaskRunning('router-crash')).toBe(false);
+      }, { timeout: 2000 });
     });
   });
 });

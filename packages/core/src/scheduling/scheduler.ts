@@ -24,11 +24,13 @@
  */
 
 import { CronJob } from 'cron';
+import { randomUUID } from 'crypto';
 import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { ModelTier } from '../config/types.js';
+import type { INonUserMessageRouter, NonUserMessage, NonUserMessagePriority } from '../non-user-message/types.js';
 
 const logger = createLogger('Scheduler');
 
@@ -69,16 +71,26 @@ export type TaskExecutor = (chatId: string, prompt: string, userId?: string, mod
  * Uses executor function for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
  * Issue #1041: Uses dependency injection for executor.
+ * Issue #3333: Added nonUserMessageRouter for project-bound task routing.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
   /** Callbacks for sending messages */
   callbacks: SchedulerCallbacks;
-  /** Task executor function */
+  /** Task executor function (for tasks without projectKey) */
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * NonUserMessageRouter for project-bound task routing.
+   *
+   * When provided, tasks with `projectKey` will be routed via the router
+   * to a persistent project-bound ChatAgent instead of creating a short-lived agent.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage (Phase 3 of RFC #3329).
+   */
+  nonUserMessageRouter?: INonUserMessageRouter;
 }
 
 /**
@@ -117,6 +129,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private nonUserMessageRouter?: INonUserMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -127,6 +140,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.nonUserMessageRouter = options.nonUserMessageRouter;
     logger.info('Scheduler created');
   }
 
@@ -246,6 +260,8 @@ ${task.prompt}`;
    * ChatAgent is disposed after execution to free resources.
    * Issue #869: Added cooldown period check before execution.
    * Issue #1041: Uses injected executor function.
+   * Issue #3333: When task has `projectKey`, routes via NonUserMessageRouter
+   *   to a persistent project-bound ChatAgent instead of creating a short-lived agent.
    *
    * @param task - Task to execute
    */
@@ -289,19 +305,12 @@ ${task.prompt}`;
     this.runningTasks.add(task.id);
 
     try {
-      // Send start notification
-      await this.callbacks.sendMessage(
-        task.chatId,
-        `⏰ 定时任务「${task.name}」开始执行...`
-      );
-
-      // Build wrapped prompt with anti-recursion instructions
-      const wrappedPrompt = this.buildScheduledTaskPrompt(task);
-
-      // Issue #1041: Use injected executor function
-      // Issue #1338: Pass model override for per-task model selection
-      // Issue #3059: Pass modelTier for tier-based model resolution
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier);
+      // Issue #3333: Route via NonUserMessageRouter when projectKey is set
+      if (task.projectKey && this.nonUserMessageRouter) {
+        await this.executeViaRouter(task);
+      } else {
+        await this.executeViaShortLivedAgent(task);
+      }
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 
@@ -323,6 +332,102 @@ ${task.prompt}`;
         await this.cooldownManager.recordExecution(task.id, task.cooldownPeriod);
         logger.debug({ taskId: task.id, cooldownPeriod: task.cooldownPeriod }, 'Recorded task execution for cooldown');
       }
+    }
+  }
+
+  /**
+   * Execute a task by routing it as a NonUserMessage to a project-bound ChatAgent.
+   *
+   * Issue #3333: Project-bound agents maintain context between scheduled executions,
+   * unlike short-lived agents which start fresh each time.
+   *
+   * @param task - Task with projectKey set
+   */
+  private async executeViaRouter(task: ScheduledTask): Promise<void> {
+    // Defensive check: this method is only called when both projectKey and router are set
+    if (!task.projectKey || !this.nonUserMessageRouter) {
+      throw new Error('executeViaRouter called without projectKey or router');
+    }
+    const { projectKey } = task;
+    const router = this.nonUserMessageRouter;
+
+    // Send start notification
+    await this.callbacks.sendMessage(
+      task.chatId,
+      `⏰ 定时任务「${task.name}」开始执行 (project: ${projectKey})...`
+    );
+
+    // Build wrapped prompt with anti-recursion instructions
+    const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
+    // Construct NonUserMessage for routing
+    const message: NonUserMessage = {
+      id: randomUUID(),
+      type: 'scheduled',
+      source: `scheduler:${task.id}`,
+      projectKey,
+      payload: wrappedPrompt,
+      priority: this.resolveMessagePriority(task),
+      createdAt: new Date().toISOString(),
+    };
+
+    logger.info(
+      { taskId: task.id, projectKey, messageId: message.id },
+      'Routing scheduled task via NonUserMessageRouter'
+    );
+
+    const result = await router.route(message);
+
+    if (!result.ok) {
+      throw new Error(`NonUserMessage routing failed: ${result.error ?? 'unknown error'}`);
+    }
+
+    logger.info(
+      { taskId: task.id, projectKey: task.projectKey, messageId: message.id },
+      'NonUserMessage routed successfully'
+    );
+  }
+
+  /**
+   * Execute a task using the existing short-lived agent path.
+   *
+   * This is the original execution path that creates a fresh ChatAgent
+   * for each execution and disposes it afterward.
+   *
+   * @param task - Task without projectKey (or no router configured)
+   */
+  private async executeViaShortLivedAgent(task: ScheduledTask): Promise<void> {
+    // Send start notification
+    await this.callbacks.sendMessage(
+      task.chatId,
+      `⏰ 定时任务「${task.name}」开始执行...`
+    );
+
+    // Build wrapped prompt with anti-recursion instructions
+    const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
+    // Issue #1041: Use injected executor function
+    // Issue #1338: Pass model override for per-task model selection
+    // Issue #3059: Pass modelTier for tier-based model resolution
+    await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier);
+  }
+
+  /**
+   * Resolve NonUserMessage priority from task configuration.
+   *
+   * Maps task model tier to message priority for queue ordering.
+   * This allows high-priority tasks to be processed before normal ones.
+   *
+   * @param task - Scheduled task
+   * @returns Message priority level
+   */
+  private resolveMessagePriority(task: ScheduledTask): NonUserMessagePriority {
+    // Future: could be a configurable field on the task itself
+    // For now, map model tier to priority as a reasonable default
+    switch (task.modelTier) {
+      case 'high': return 'high';
+      case 'low': return 'low';
+      default: return 'normal';
     }
   }
 
