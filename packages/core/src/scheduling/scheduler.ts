@@ -33,6 +33,31 @@ import type { ModelTier } from '../config/types.js';
 const logger = createLogger('Scheduler');
 
 /**
+ * Default timeout for scheduled task execution.
+ * 30 minutes — generous enough for long-running agent tasks,
+ * but prevents indefinite hangs that block subsequent executions.
+ *
+ * Issue #3346: Timeout protection for scheduled tasks.
+ */
+const DEFAULT_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Error thrown when a scheduled task exceeds its timeout.
+ *
+ * Issue #3346: Timeout protection for scheduled tasks.
+ */
+export class TaskTimeoutError extends Error {
+  /** The timeout duration in milliseconds */
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Scheduled task timed out after ${timeoutMs}ms`);
+    this.name = 'TaskTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
  * Active cron job entry.
  */
 interface ActiveJob {
@@ -301,18 +326,45 @@ ${task.prompt}`;
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection
       // Issue #3059: Pass modelTier for tier-based model resolution
-      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier);
+      // Issue #3346: Wrap with timeout to prevent indefinite hangs
+      const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
+      });
+
+      try {
+        await Promise.race([
+          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+          timeoutPromise,
+        ]);
+      } finally {
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+      }
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
+      const isTimeout = error instanceof TaskTimeoutError;
+
+      if (isTimeout) {
+        logger.warn(
+          { taskId: task.id, name: task.name, timeoutMs: error.timeoutMs },
+          'Scheduled task timed out'
+        );
+      } else {
+        logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
+      }
 
       // Send error notification
       await this.callbacks.sendMessage(
         task.chatId,
-        `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
+        isTimeout
+          ? `⏰ 定时任务「${task.name}」执行超时 (${error.timeoutMs / 1000}s)`
+          : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
       );
     } finally {
       // Always remove from running tasks

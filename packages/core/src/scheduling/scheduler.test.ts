@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { Scheduler, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -580,6 +580,124 @@ describe('Scheduler', () => {
 
       expect(scheduler.getActiveJobs()).toHaveLength(2);
       expect(scheduler.getActiveJobs().map(j => j.taskId)).not.toContain('rm-2');
+    });
+  });
+
+  describe('executeTask timeout protection (Issue #3346)', () => {
+    /** Helper: fire a cron job and wait for async side-effects */
+    function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
+      void jobs[0].job.fireOnTick();
+    }
+
+    it('should timeout when executor hangs beyond timeoutMs', async () => {
+      // Create an executor that never resolves
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      // Use a very short timeout for testing (50ms)
+      const task = createTask({ id: 'timeout-1', timeoutMs: 50 });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行超时'),
+        );
+      }, { timeout: 3000 });
+    });
+
+    it('should clear running state after timeout', async () => {
+      // Create an executor that never resolves
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const task = createTask({ id: 'timeout-cleanup', timeoutMs: 50 });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('timeout-cleanup')).toBe(false);
+      }, { timeout: 3000 });
+    });
+
+    it('should use default timeout when timeoutMs is not specified', async () => {
+      // Executor completes quickly (no timeout)
+      mockExecutor.mockResolvedValueOnce(undefined);
+
+      const task = createTask({ id: 'no-timeout' });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Should complete without timeout error
+      expect(mockCallbacks.sendMessage).not.toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('执行超时'),
+      );
+    });
+
+    it('should allow subsequent execution after timeout clears running state', async () => {
+      // First execution hangs, then timeout fires
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+      // Second execution succeeds
+      mockExecutor.mockResolvedValueOnce(undefined);
+
+      const task = createTask({ id: 'timeout-retry', timeoutMs: 50, blocking: true });
+      scheduler.addTask(task);
+
+      // First trigger - will timeout
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('timeout-retry')).toBe(false);
+      }, { timeout: 3000 });
+
+      // Second trigger - should execute normally since running state was cleared
+      fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+
+    it('should include timeout duration in error notification', async () => {
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const task = createTask({ id: 'timeout-msg', timeoutMs: 100 });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('0.1s'),
+        );
+      }, { timeout: 3000 });
+    });
+  });
+
+  describe('TaskTimeoutError', () => {
+    it('should have correct name and message', () => {
+      const error = new TaskTimeoutError(30000);
+      expect(error.name).toBe('TaskTimeoutError');
+      expect(error.message).toContain('30000ms');
+      expect(error.timeoutMs).toBe(30000);
+    });
+
+    it('should be an instance of Error', () => {
+      const error = new TaskTimeoutError(5000);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toBeInstanceOf(TaskTimeoutError);
     });
   });
 });
