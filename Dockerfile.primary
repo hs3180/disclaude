@@ -19,6 +19,7 @@
 ARG DOCKER_IMAGE_PREFIX=
 ARG APK_MIRROR=dl-cdn.alpinelinux.org
 ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG PIP_INDEX_URL
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder
@@ -64,6 +65,7 @@ FROM ${DOCKER_IMAGE_PREFIX}library/node:22-alpine AS production
 # Re-declare build args for use in this stage
 ARG APK_MIRROR
 ARG NPM_REGISTRY
+ARG PIP_INDEX_URL
 
 WORKDIR /app
 
@@ -80,7 +82,8 @@ RUN apk add --no-cache \
     py3-pip
 
 # Install common Python data analysis packages
-RUN pip3 install --no-cache-dir --break-system-packages matplotlib numpy
+# PIP_INDEX_URL: override PyPI mirror (default: official https://pypi.org/simple)
+RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} matplotlib numpy
 
 # Install GitHub CLI (gh)
 RUN apk add --no-cache github-cli
