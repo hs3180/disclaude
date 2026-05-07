@@ -69,8 +69,8 @@ export interface ChannelSetupContext {
   /** Control handler context (for adding trigger mode etc.) */
   controlHandlerContext: {
     triggerMode?: {
-      getMode(chatId: string): 'mention' | 'always';
-      setMode(chatId: string, mode: 'mention' | 'always'): void;
+      getMode(chatId: string): 'mention' | 'always' | 'auto';
+      setMode(chatId: string, mode: 'mention' | 'always' | 'auto'): void;
     };
   };
   /** Logger instance */

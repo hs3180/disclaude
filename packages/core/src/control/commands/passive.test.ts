@@ -19,7 +19,7 @@ function createCommand(args?: string | string[], chatId = 'test-chat-id'): Contr
 }
 
 /** 创建测试用的 mode manager mock */
-function createModeManagerMock(initialMode: TriggerMode = 'mention') {
+function createModeManagerMock(initialMode: TriggerMode = 'auto') {
   let currentMode: TriggerMode = initialMode;
   return {
     getMode: vi.fn((_chatId: string) => currentMode),
@@ -99,10 +99,36 @@ describe('handleTrigger (Issue #2291)', () => {
       expect(result.message).toContain('全响应');
       expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
     });
+
+    it('should set auto mode with "auto" (Issue #3345)', () => {
+      const command = createCommand('auto');
+      const context = createContext();
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
+
+      const result = handleTrigger(command, context) as ControlResponse;
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('自动');
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'auto');
+    });
   });
 
-  describe('no argument (toggle)', () => {
-    it('should toggle from mention to always', () => {
+  describe('no argument (cycle)', () => {
+    it('should cycle from auto to mention', () => {
+      const command = createCommand();
+      const context = createContext();
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
+      triggerMode.getMode = vi.fn().mockReturnValue('auto');
+
+      const result = handleTrigger(command, context) as ControlResponse;
+
+      expect(result.success).toBe(true);
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
+    });
+
+    it('should cycle from mention to always', () => {
       const command = createCommand();
       const context = createContext();
       const { triggerMode } = context;
@@ -115,7 +141,7 @@ describe('handleTrigger (Issue #2291)', () => {
       expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
     });
 
-    it('should toggle from always to mention', () => {
+    it('should cycle from always to auto', () => {
       const command = createCommand();
       const context = createContext();
       const { triggerMode } = context;
@@ -125,7 +151,7 @@ describe('handleTrigger (Issue #2291)', () => {
       const result = handleTrigger(command, context) as ControlResponse;
 
       expect(result.success).toBe(true);
-      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'auto');
     });
   });
 

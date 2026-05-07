@@ -146,16 +146,15 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       actionText?: string
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
 
-    // 2. Set up trigger mode adapter (Issue #2291: enum-based interface)
-    // Adapter bridges semantics between the command handler's enum values
-    // and TriggerModeManager's internal boolean state:
-    //   'mention' → isTriggerEnabled=false (mention-only)
-    //   'always'  → isTriggerEnabled=true  (respond to all)
+    // 2. Set up trigger mode adapter (Issue #2291: enum-based interface, #3345: 'auto' mode)
+    // Adapter delegates to TriggerModeManager's native enum-based getMode/setMode.
+    // The manager handles 'auto' mode resolution internally.
+    const triggerModeManager = feishuChannel.getTriggerModeManager();
     const triggerModeAdapter = {
-      getMode: (chatId: string): 'mention' | 'always' =>
-        feishuChannel.isTriggerEnabled(chatId) ? 'always' : 'mention',
-      setMode: (chatId: string, mode: 'mention' | 'always') =>
-        feishuChannel.setTriggerEnabled(chatId, mode === 'always'),
+      getMode: (chatId: string): 'mention' | 'always' | 'auto' =>
+        triggerModeManager.getMode(chatId),
+      setMode: (chatId: string, mode: 'mention' | 'always' | 'auto') =>
+        triggerModeManager.setMode(chatId, mode),
     };
     context.controlHandlerContext.triggerMode = triggerModeAdapter;
 
