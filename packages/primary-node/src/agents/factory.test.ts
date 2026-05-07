@@ -9,8 +9,7 @@
  * 3. createChatAgent() with legacy pattern (callbacks, options)
  * 4. createChatAgent() rejects unknown agent names
  * 5. toChatAgentCallbacks() correctly converts SchedulerCallbacks
- * 6. Model resolution priority (explicit model > tier > default)
- * 7. Config override merging (apiKey, provider, apiBaseUrl, permissionMode)
+ * 6. Config override merging (apiKey, provider, apiBaseUrl, permissionMode)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -89,6 +88,8 @@ describe('AgentFactory', () => {
       expect(config.provider).toBe('anthropic');
       expect(config.apiBaseUrl).toBe('https://default.api.com');
       expect(config.permissionMode).toBe('bypassPermissions');
+      // Model tier resolution should not be invoked when no tier is specified
+      expect(Config.getModelForTier).not.toHaveBeenCalled();
     });
 
     it('should merge options with default config', () => {
@@ -269,57 +270,6 @@ describe('AgentFactory', () => {
       const result = toChatAgentCallbacks(schedulerCallbacks);
 
       await expect(result.onDone?.('chat-1')).resolves.toBeUndefined();
-    });
-  });
-
-  // ==========================================================================
-  // Model resolution priority (tested via createAgent)
-  // ==========================================================================
-
-  describe('model resolution', () => {
-    it('should prioritize explicit model over tier model', () => {
-      const callbacks = createMockCallbacks();
-      vi.mocked(Config.getModelForTier).mockReturnValue('tier-model');
-
-      AgentFactory.createAgent('chat-test', callbacks, {
-        model: 'my-explicit-model',
-        modelTier: 'high',
-      });
-
-      expect(getLastConfig().model).toBe('my-explicit-model');
-      expect(Config.getModelForTier).not.toHaveBeenCalled();
-    });
-
-    it('should use tier model when explicit model is not set', () => {
-      const callbacks = createMockCallbacks();
-      vi.mocked(Config.getModelForTier).mockReturnValue('high-tier-model');
-
-      AgentFactory.createAgent('chat-test', callbacks, {
-        modelTier: 'high',
-      });
-
-      expect(getLastConfig().model).toBe('high-tier-model');
-      expect(Config.getModelForTier).toHaveBeenCalledWith('high');
-    });
-
-    it('should fall back to default config model when neither model nor tier is set', () => {
-      const callbacks = createMockCallbacks();
-
-      AgentFactory.createAgent('chat-test', callbacks);
-
-      expect(getLastConfig().model).toBe('default-model');
-      expect(Config.getModelForTier).not.toHaveBeenCalled();
-    });
-
-    it('should fall back to default config model when tier returns undefined', () => {
-      const callbacks = createMockCallbacks();
-      vi.mocked(Config.getModelForTier).mockReturnValue(undefined);
-
-      AgentFactory.createAgent('chat-test', callbacks, {
-        modelTier: 'multimodal',
-      });
-
-      expect(getLastConfig().model).toBe('default-model');
     });
   });
 
