@@ -700,7 +700,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Build SDK options using BaseAgent's createSdkOptions
     const sdkOptions = this.createSdkOptions({
-      disallowedTools: ['EnterPlanMode'],
+      disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
       mcpServers,
     });
 
