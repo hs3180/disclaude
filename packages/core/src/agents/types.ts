@@ -150,6 +150,29 @@ export interface ChatAgent extends Disposable {
   ): void;
 
   /**
+   * Execute a one-shot task via the unified streaming path.
+   *
+   * Unlike processMessage() which is non-blocking, runOnce() sets onceMode=true
+   * internally so that processIterator closes the channel and resolves
+   * taskCompletionPromise after receiving the first result message.
+   *
+   * Issue #3369: This is the correct entry point for scheduled task execution,
+   * ensuring taskComplete resolves properly instead of hanging forever.
+   *
+   * @param chatId - Chat/conversation ID (must match boundChatId)
+   * @param text - Message text
+   * @param messageId - Optional message identifier (auto-generated if omitted)
+   * @param senderOpenId - Optional sender's open_id
+   * @returns Promise that resolves when the task completes
+   */
+  runOnce(
+    chatId: string,
+    text: string,
+    messageId?: string,
+    senderOpenId?: string
+  ): Promise<void>;
+
+  /**
    * Promise that resolves when the current task completes.
    *
    * Set when a session is started (via processMessage or startAgentLoop).
