@@ -21,7 +21,7 @@
  */
 
 import http from 'node:http';
-import { createLogger, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
+import { createLogger, withTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, BaseChannel } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 
 const logger = createLogger('RestChannel');
@@ -423,19 +423,19 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = req.url?.split('?')[0] || '/';
 
-    // Route requests
+    // Health check: skip timing wrapper (lightweight endpoint)
     if (url === '/api/health' && req.method === 'GET') {
       this.handleHealth(req, res);
       return;
     }
 
     if (url === '/api/chat' && req.method === 'POST') {
-      await this.handleChat(req, res, false);
+      await withTiming(logger, 'http:POST /api/chat', undefined, () => this.handleChat(req, res, false));
       return;
     }
 
     if (url === '/api/chat/sync' && req.method === 'POST') {
-      await this.handleChat(req, res, true);
+      await withTiming(logger, 'http:POST /api/chat/sync', undefined, () => this.handleChat(req, res, true));
       return;
     }
 
@@ -443,19 +443,19 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     const asyncChatMatch = url.match(/^\/api\/chat\/([^/]+)$/);
     if (asyncChatMatch && req.method === 'POST') {
       const [, chatId] = asyncChatMatch;
-      await this.handleAsyncChat(req, res, chatId);
+      await withTiming(logger, `http:POST /api/chat/${chatId}`, chatId, () => this.handleAsyncChat(req, res, chatId));
       return;
     }
 
     // Control endpoints
     if (url === '/api/control' && req.method === 'POST') {
-      await this.handleControl(req, res);
+      await withTiming(logger, 'http:POST /api/control', undefined, () => this.handleControl(req, res));
       return;
     }
 
     // File upload endpoint
     if (url === '/api/files/upload' && req.method === 'POST') {
-      await this.handleFileUpload(req, res);
+      await withTiming(logger, 'http:POST /api/files/upload', undefined, () => this.handleFileUpload(req, res));
       return;
     }
 
@@ -464,9 +464,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     if (fileMatch && req.method === 'GET') {
       const [, fileId, downloadSuffix] = fileMatch;
       if (downloadSuffix === '/download') {
-        await this.handleFileDownload(req, res, fileId);
+        await withTiming(logger, `http:GET /api/files/${fileId}/download`, undefined, () => this.handleFileDownload(req, res, fileId));
       } else {
-        await this.handleFileInfo(req, res, fileId);
+        await withTiming(logger, `http:GET /api/files/${fileId}`, undefined, () => this.handleFileInfo(req, res, fileId));
       }
       return;
     }
