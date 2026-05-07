@@ -168,6 +168,23 @@ run_suite() {
     fi
     _SUITE_COUNT=$((_SUITE_COUNT + 1))
 
+    # Issue #3378: Verify server health before each suite (except the first).
+    # Long-running suites can degrade server state (EventEmitter listener leaks,
+    # memory pressure). If the health check fails, restart the server before
+    # running the next suite.
+    if [ $_SUITE_COUNT -gt 1 ]; then
+        if ! is_server_running; then
+            log_warn "Server not healthy before '$name' — restarting..."
+            stop_server
+            sleep 2
+            start_server || {
+                log_error "Failed to restart server before '$name'"
+                return 1
+            }
+            log_info "Server restarted successfully, proceeding with '$name'"
+        fi
+    fi
+
     run_test_script "$script" "$name"
 }
 

@@ -22,6 +22,76 @@ import { createLogger } from '../../../utils/logger.js';
 const logger = createLogger('ClaudeSDKProvider');
 
 // ============================================================================
+// Process Listener Cleanup (Issue #3378)
+// ============================================================================
+
+/**
+ * Event names on `process` that the Claude Agent SDK registers listeners for.
+ * The SDK accumulates these listeners across queries without proper cleanup,
+ * causing MaxListenersExceededWarning after multiple queries.
+ */
+const SDK_PROCESS_EVENTS = ['exit', 'SIGINT', 'SIGTERM'] as const;
+
+/**
+ * Snapshot of process listeners for a set of events.
+ * Used to detect and clean up listeners added by the SDK during a query.
+ */
+interface ProcessListenerSnapshot {
+  /** Map of event name → array of listener functions at snapshot time */
+  listeners: Map<string, Set<(...args: unknown[]) => void>>;
+}
+
+/**
+ * Capture a snapshot of current process listeners for SDK-monitored events.
+ * Call this BEFORE invoking `query()` to establish a baseline.
+ */
+function snapshotProcessListeners(): ProcessListenerSnapshot {
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  for (const event of SDK_PROCESS_EVENTS) {
+    // Cast through unknown because Node.js typings don't allow 'exit' as a
+    // valid argument to process.listeners() / process.off() — but it works
+    // at runtime and is exactly what the SDK registers.
+    const current = (process as unknown as { listeners(e: string): ((...args: unknown[]) => void)[] }).listeners(event);
+    listeners.set(event, new Set(current));
+  }
+  return { listeners };
+}
+
+/**
+ * Remove process listeners that were added AFTER the snapshot was taken.
+ *
+ * The Claude Agent SDK registers `process.on('exit'|'SIGINT'|'SIGTERM')` handlers
+ * during each `query()` call but fails to remove them after the query completes.
+ * Over time (e.g., across multiple integration test suites sharing a single server),
+ * these listeners accumulate past Node.js's default limit of 10, triggering
+ * `MaxListenersExceededWarning` and degrading server performance.
+ *
+ * This function restores the listener state to what it was before the query,
+ * effectively cleaning up the SDK's leaked listeners.
+ */
+function cleanupNewProcessListeners(snapshot: ProcessListenerSnapshot): void {
+  let cleaned = 0;
+  for (const event of SDK_PROCESS_EVENTS) {
+    const before = snapshot.listeners.get(event);
+    if (!before) {continue;}
+    const after = (process as unknown as { listeners(e: string): ((...args: unknown[]) => void)[] }).listeners(event);
+    for (const listener of after) {
+      if (!before.has(listener)) {
+        try {
+          (process as unknown as { off(e: string, fn: (...args: unknown[]) => void): void }).off(event, listener);
+          cleaned++;
+        } catch {
+          // Ignore errors during cleanup — listener may have already been removed
+        }
+      }
+    }
+  }
+  if (cleaned > 0) {
+    logger.debug({ cleaned }, 'Cleaned up SDK-registered process listeners');
+  }
+}
+
+// ============================================================================
 // stderr 捕获工具（Issue #2920）
 // ============================================================================
 
@@ -155,6 +225,12 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       throw new Error('Provider has been disposed');
     }
 
+    // Issue #3378: Snapshot process listeners BEFORE calling SDK query().
+    // The SDK registers process.on('exit'|'SIGINT'|'SIGTERM') handlers during
+    // each query but fails to clean them up. We restore the baseline after
+    // the query completes to prevent listener accumulation.
+    const listenerSnapshot = snapshotProcessListeners();
+
     // Issue #2920: 创建 stderr 捕获器
     const stderrCapture = new StderrCapture();
 
@@ -193,6 +269,16 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     // 创建消息适配迭代器
     let messageCount = 0;
+    // Issue #3378: Track whether listener cleanup has been performed to avoid
+    // running it twice (once from iterator finally, once from handle.close).
+    let listenersCleanedUp = false;
+    const cleanupListeners = () => {
+      if (!listenersCleanedUp) {
+        listenersCleanedUp = true;
+        cleanupNewProcessListeners(listenerSnapshot);
+      }
+    };
+
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
       try {
         let firstMessageMs: number | undefined;
@@ -236,6 +322,11 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           'adaptIterator error'
         );
         throw error;
+      } finally {
+        // Issue #3378: Clean up SDK-registered process listeners after query completes.
+        // This prevents listener accumulation across multiple queries in long-running
+        // processes (e.g., integration test server).
+        cleanupListeners();
       }
     }
 
@@ -245,11 +336,16 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           if ('close' in queryResult && typeof queryResult.close === 'function') {
             queryResult.close();
           }
+          // Issue #3378: Also clean up listeners when handle is explicitly closed,
+          // in case the iterator wasn't fully consumed.
+          cleanupListeners();
         },
         cancel: () => {
           if ('cancel' in queryResult && typeof queryResult.cancel === 'function') {
             queryResult.cancel();
           }
+          // Issue #3378: Clean up listeners on cancel as well.
+          cleanupListeners();
         },
         sessionId: undefined,
       },
