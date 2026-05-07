@@ -166,6 +166,12 @@ describe('BaseAgent', () => {
       });
     });
 
+    it('should set settingSources to full set for vibe coding compliance (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      expect(options.settingSources).toEqual(['user', 'project', 'local']);
+    });
+
     it('should include model if specified', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.model).toBe('claude-3-5-sonnet-20241022');
