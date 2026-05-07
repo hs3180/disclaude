@@ -328,13 +328,21 @@ ${task.prompt}`;
       // Issue #3059: Pass modelTier for tier-based model resolution
       // Issue #3346: Wrap with timeout to prevent indefinite hangs
       const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
+      });
 
-      await Promise.race([
-        this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs)
-        ),
-      ]);
+      try {
+        await Promise.race([
+          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+          timeoutPromise,
+        ]);
+      } finally {
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+      }
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
 
@@ -352,12 +360,11 @@ ${task.prompt}`;
       }
 
       // Send error notification
-      const notificationPrefix = isTimeout
-        ? `⏰ 定时任务「${task.name}」执行超时 (${error.timeoutMs / 1000}s)`
-        : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`;
       await this.callbacks.sendMessage(
         task.chatId,
-        notificationPrefix
+        isTimeout
+          ? `⏰ 定时任务「${task.name}」执行超时 (${error.timeoutMs / 1000}s)`
+          : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
       );
     } finally {
       // Always remove from running tasks
