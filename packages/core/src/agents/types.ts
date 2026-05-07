@@ -164,6 +164,23 @@ export interface ChatAgent extends Disposable {
   readonly taskComplete?: Promise<void>;
 
   /**
+   * Execute a one-shot query that completes after a single SDK turn.
+   *
+   * Unlike processMessage() which is non-blocking, runOnce() enables once-mode
+   * internally, ensuring the channel closes after the first `result` message
+   * and the returned Promise resolves when the task is complete.
+   *
+   * Issue #3369: This is the correct entry point for scheduled task execution,
+   * replacing the broken processMessage() + await taskComplete pattern.
+   *
+   * @param chatId - Chat/conversation ID (must match bound chatId)
+   * @param text - Message text
+   * @param messageId - Optional unique message identifier
+   * @param senderOpenId - Optional sender's open_id for @ mentions
+   */
+  runOnce(chatId: string, text: string, messageId?: string, senderOpenId?: string): Promise<void>;
+
+  /**
    * Reset the agent session.
    * Clears conversation history and state.
    *
