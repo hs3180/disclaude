@@ -265,6 +265,112 @@ Append each task as a new \`##\` section with today's date and task description:
 }
 
 /**
+ * Build the ETA learning guidance section.
+ *
+ * Issue #1234 Phase 2: Instructs the agent to maintain an `eta-rules.md`
+ * file with estimation rules learned from task records. After each task
+ * recording, the agent analyzes estimation accuracy and updates rules
+ * incrementally.
+ *
+ * Phase 2 of the task ETA system: learning from task records to improve
+ * estimation accuracy over time. Rules are stored as unstructured Markdown
+ * in `.claude/eta-rules.md`.
+ *
+ * @returns Formatted ETA learning guidance section
+ */
+export function buildETALearningGuidance(): string {
+  return `
+
+---
+
+## ETA Learning
+
+**After recording a task entry, update the estimation rules based on what you learned.**
+
+### Rules File
+
+Maintain \`.claude/eta-rules.md\` in the current working directory.
+Create the file if it does not exist.
+
+### Initial Template
+
+When creating \`eta-rules.md\` for the first time, use this structure:
+
+\`\`\`markdown
+# ETA Estimation Rules
+
+## Task Type Baselines
+
+| Type | Baseline Time | Notes |
+|------|---------------|-------|
+| bugfix | 15-30 minutes | Depends on reproduction difficulty |
+| feature-small | 30-60 minutes | Single functionality point |
+| feature-medium | 2-4 hours | Multiple components involved |
+| refactoring | Varies by scope | Assess impact area first |
+| research | 30-90 minutes | Depends on domain familiarity |
+| test | 15-45 minutes | Depends on test complexity |
+| docs | 15-30 minutes | Straightforward writing |
+| chore | 5-15 minutes | Routine maintenance |
+
+## Adjustment Rules
+
+*(Add rules here as you learn from task records)*
+
+## Underestimation Patterns
+
+*(Track which task characteristics tend to be underestimated)*
+
+## Overestimation Patterns
+
+*(Track which task characteristics tend to be overestimated)*
+
+## Last Updated: YYYY-MM-DD
+\`\`\`
+
+### Update Triggers
+
+Update \`eta-rules.md\` after recording a task when **any** of these apply:
+
+1. **Actual time differed significantly from estimate** (≥ 50% deviation)
+2. **New task type** encountered for the first time
+3. **New complexity factor** discovered (e.g., "async logic always takes longer")
+4. **Repeated pattern** noticed across 2+ similar tasks (e.g., "refactoring auth modules consistently takes 2x baseline")
+
+### How to Update
+
+1. **Read existing rules** before making changes
+2. **Adjust baseline times** if recent tasks consistently deviate in one direction
+3. **Add new adjustment rules** when you discover a pattern, using this format:
+
+\`\`\`markdown
+- **{Pattern Description}** → baseline × {multiplier} {+/- offset}
+  - Learned from: {reference to specific task or tasks}
+  - Date added: YYYY-MM-DD
+\`\`\`
+
+4. **Record underestimation/overestimation patterns** in the corresponding sections
+5. **Update the "Last Updated" date**
+
+### Example Rule Addition
+
+After completing a task where you underestimated the complexity of async error handling:
+
+\`\`\`markdown
+- **Involves async error handling** → baseline × 1.5
+  - Learned from: 2026-05-07 WebSocket reconnection bug (estimated 30m, actual 45m)
+  - Date added: 2026-05-07
+\`\`\`
+
+### Guidelines
+
+- **Rules should be concise**: One-line pattern + multiplier, with a source reference
+- **Don't over-specify**: Keep rules general enough to apply to similar future tasks
+- **Remove stale rules**: If a rule hasn't been referenced in recent estimates, consider removing it
+- **Multipliers should be conservative**: Start with small adjustments (× 1.2-1.5) and refine over time
+- **Read rules before estimating**: Always check \`eta-rules.md\` and \`task-records.md\` when starting a new task`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate
