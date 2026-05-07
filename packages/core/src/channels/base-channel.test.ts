@@ -66,6 +66,16 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
   get testIsRunning(): boolean {
     return (this as unknown as { isRunning: boolean }).isRunning;
   }
+
+  /** Expose emitMessage for testing */
+  testEmitMessage(message: Parameters<MessageHandler>[0]): Promise<void> {
+    return this.emitMessage(message);
+  }
+
+  /** Expose emitControl for testing */
+  testEmitControl(command: Parameters<ControlHandler>[0]): Promise<import('../types/channel.js').ControlResponse> {
+    return this.emitControl(command);
+  }
 }
 
 function createTestChannel(config?: Partial<TestChannelConfig>): TestChannel {
@@ -319,6 +329,108 @@ describe('BaseChannel', () => {
       const channel = createTestChannel();
       const caps = channel.getCapabilities();
       expect(caps).toBeDefined();
+    });
+  });
+
+  describe('emitMessage', () => {
+    it('should call registered message handler with the message', async () => {
+      const channel = createTestChannel();
+      const handler: MessageHandler = vi.fn();
+      channel.onMessage(handler);
+
+      const incomingMessage = {
+        chatId: 'chat-1',
+        messageId: 'msg-1',
+        text: 'Hello',
+        userId: 'user-1',
+      };
+
+      await channel.testEmitMessage(incomingMessage);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledWith(incomingMessage);
+    });
+
+    it('should not throw when no message handler is registered', async () => {
+      const channel = createTestChannel();
+
+      // Should not throw — just logs a warning
+      await expect(
+        channel.testEmitMessage({
+          chatId: 'chat-1',
+          messageId: 'msg-1',
+          text: 'Hello',
+          userId: 'user-1',
+        })
+      ).resolves.toBeUndefined();
+    });
+
+    it('should await the message handler result', async () => {
+      const channel = createTestChannel();
+      let handlerResolved = false;
+      const handler: MessageHandler = vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        handlerResolved = true;
+      });
+      channel.onMessage(handler);
+
+      await channel.testEmitMessage({
+        chatId: 'chat-1',
+        messageId: 'msg-1',
+        text: 'Hello',
+        userId: 'user-1',
+      });
+
+      expect(handlerResolved).toBe(true);
+    });
+  });
+
+  describe('emitControl', () => {
+    it('should call registered control handler and return response', async () => {
+      const channel = createTestChannel();
+      const handler: ControlHandler = vi.fn(() => Promise.resolve({
+        success: true,
+        data: { result: 'ok' },
+      }));
+      channel.onControl(handler);
+
+      const command = {
+        type: 'status' as const,
+        chatId: 'chat-1',
+      };
+
+      const response = await channel.testEmitControl(command);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledWith(command);
+      expect(response.success).toBe(true);
+      expect(response.data).toEqual({ result: 'ok' });
+    });
+
+    it('should return error response when no control handler is registered', async () => {
+      const channel = createTestChannel();
+
+      const command = {
+        type: 'status' as const,
+        chatId: 'chat-1',
+      };
+
+      const response = await channel.testEmitControl(command);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('No control handler registered');
+    });
+  });
+
+  describe('setStatus', () => {
+    it('should update status via setStatus', async () => {
+      const channel = createTestChannel();
+      await channel.start();
+      expect(channel.status).toBe('running');
+
+      // Use the exposed setter to test the protected setStatus method
+      (channel as unknown as { setStatus: (s: string) => void }).setStatus('error');
+      expect(channel.status).toBe('error');
     });
   });
 });
