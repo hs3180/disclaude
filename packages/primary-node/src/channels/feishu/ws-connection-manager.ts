@@ -203,6 +203,10 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
   private readonly reconnectMaxDelayMs: number;
   private readonly reconnectMaxAttempts: number;
 
+  // Issue #3292: Timing for reconnect cycle diagnostics
+  private reconnectStartMs: number = 0;
+  private lastStateChangeMs: number = 0;
+
   // DNS pre-check (Issue #2259)
   private readonly dnsCheckHost: string;
 
@@ -314,6 +318,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
    */
   private async connectFresh(): Promise<boolean> {
     const sdkLogger = this.config.sdkLogger ?? createDefaultSdkLogger();
+    const connectStartMs = Date.now(); // Issue #3292: track connection attempt timing
+    logger.debug({ timing: 'ws:connect', attempt: this.reconnectAttempt, elapsedMs: 0 });
 
     try {
       this.wsClient = new this.larkSDK.WSClient({
@@ -358,10 +364,16 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
       this.reconnectAttempt = 0;
       this.transitionTo('connected');
 
-      logger.info('WebSocket connection established');
+      logger.info(
+        { timing: 'ws:connect', attempt: this.reconnectAttempt, elapsedMs: Date.now() - connectStartMs, ok: true },
+        'WebSocket connection established',
+      );
       return true;
     } catch (error) {
-      logger.error({ err: error, attempt: this.reconnectAttempt }, 'Failed to establish WebSocket connection');
+      logger.error(
+        { err: error, attempt: this.reconnectAttempt, timing: 'ws:connect', elapsedMs: Date.now() - connectStartMs, ok: false },
+        'Failed to establish WebSocket connection',
+      );
       this.closeClient();
       return false;
     }
@@ -401,6 +413,8 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     }
 
     this.isReconnecting = true;
+    this.reconnectStartMs = Date.now(); // Issue #3292: track reconnect start
+    logger.info({ timing: 'ws:reconnect', elapsedMs: 0 });
     this.transitionTo('reconnecting');
 
     // Terminate the dead connection
@@ -417,8 +431,9 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     this.clearReconnectTimer();
 
     if (this.reconnectMaxAttempts >= 0 && this.reconnectAttempt >= this.reconnectMaxAttempts) {
+      const reconnectDurationMs = Date.now() - this.reconnectStartMs; // Issue #3292
       logger.error(
-        { attempt: this.reconnectAttempt, maxAttempts: this.reconnectMaxAttempts },
+        { attempt: this.reconnectAttempt, maxAttempts: this.reconnectMaxAttempts, timing: 'ws:reconnect', elapsedMs: reconnectDurationMs, ok: false },
         'Max reconnect attempts exhausted',
       );
       this.isReconnecting = false;
@@ -484,7 +499,11 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
 
     if (success) {
       this.isReconnecting = false;
-      logger.info({ attempt: this.reconnectAttempt }, 'Reconnected successfully');
+      const reconnectDurationMs = Date.now() - this.reconnectStartMs; // Issue #3292
+      logger.info(
+        { attempt: this.reconnectAttempt, timing: 'ws:reconnect', elapsedMs: reconnectDurationMs, ok: true },
+        'Reconnected successfully',
+      );
       this.emit('reconnected', this.reconnectAttempt);
     } else {
       logger.warn(
@@ -527,8 +546,11 @@ export class WsConnectionManager extends EventEmitter<WsConnectionManagerEvents>
     }
     const oldState = this._state;
     this._state = newState;
+    const now = Date.now();
+    const sinceLastChangeMs = this.lastStateChangeMs ? now - this.lastStateChangeMs : undefined;
+    this.lastStateChangeMs = now;
     logger.info(
-      { oldState, newState, reconnectAttempt: this.reconnectAttempt },
+      { oldState, newState, reconnectAttempt: this.reconnectAttempt, timing: 'ws:stateChange', sinceLastChangeMs },
       'Connection state changed',
     );
     this.emit('stateChange', newState);
