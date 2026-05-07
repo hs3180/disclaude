@@ -7,7 +7,7 @@
  */
 
 // Types
-export type { TaskDefinitionDetails, TaskMessageType } from './types.js';
+export type { TaskDefinitionDetails, TaskMessageType, TaskType, TaskRecord } from './types.js';
 
 // Dialogue Message Tracker
 export { DialogueMessageTracker } from './dialogue-message-tracker.js';
@@ -17,3 +17,6 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Record Manager (Issue #1234 Phase 1)
+export { TaskRecordManager, type TaskRecordManagerConfig, type ParsedTaskRecord } from './task-record-manager.js';
