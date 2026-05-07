@@ -160,7 +160,10 @@ export abstract class BaseAgent implements Disposable {
       cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['project'],
+      // Issue #2890: Full settingSources to ensure vibe coding compliance.
+      // Matches claude-agent-acp reference: loads user-level skills/commands/memory,
+      // project-level settings, and local overrides.
+      settingSources: ['user', 'project', 'local'],
     };
 
     // Add allowed/disallowed tools
