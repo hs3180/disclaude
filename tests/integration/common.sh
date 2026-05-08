@@ -980,6 +980,7 @@ main_test_suite() {
 # =============================================================================
 
 # Test health check endpoint - shared by all integration tests
+# Issue #3378: Also logs process exit listener count for leak monitoring.
 # Usage: test_health_check
 test_health_check() {
     log_info "Testing: GET /api/health"
@@ -990,6 +991,19 @@ test_health_check() {
 
     if [ "$RESPONSE_STATUS" = "200" ] && echo "$RESPONSE_BODY" | grep -q '"status":"ok"'; then
         log_pass "Health check returns 200 with status: ok"
+
+        # Issue #3378: Log exit listener count for leak monitoring.
+        # Normal range is 1-3; values > 8 indicate ProcessTransport leak.
+        local exit_count
+        exit_count=$(echo "$RESPONSE_BODY" | grep -o '"exit":[0-9]*' | grep -o '[0-9]*')
+        if [ -n "$exit_count" ]; then
+            if [ "$exit_count" -gt 8 ] 2>/dev/null; then
+                log_warn "Process exit listener count is high: $exit_count (possible leak)"
+            else
+                log_debug "Process exit listener count: $exit_count"
+            fi
+        fi
+
         return 0
     else
         log_fail "Health check returned status $RESPONSE_STATUS (expected 200)"
