@@ -725,6 +725,23 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // the rejection regardless of this no-op catch handler.
     this.taskCompletionPromise.catch(() => {});
 
+    // Issue #3378: Close any existing query handle and channel before creating new ones.
+    // When the agent loop restarts after an unexpected iterator end, the previous
+    // query handle may not have been fully cleaned up, leaking process exit listeners
+    // registered by the Claude Agent SDK's ProcessTransport (process.on('exit', handler)).
+    // Each leaked handle adds one exit listener — after enough restarts this triggers
+    // MaxListenersExceededWarning and degrades server stability.
+    if (this.queryHandle) {
+      this.logger.warn({ chatId }, 'Closing orphaned query handle before creating new agent loop');
+      this.queryHandle.close();
+      this.queryHandle = undefined;
+    }
+    if (this.channel) {
+      this.logger.warn({ chatId }, 'Closing orphaned channel before creating new agent loop');
+      this.channel.close();
+      this.channel = undefined;
+    }
+
     // Create message channel
     this.channel = new MessageChannel();
 

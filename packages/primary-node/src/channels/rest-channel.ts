@@ -484,6 +484,14 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       status: 'ok',
       channel: this.name,
       id: this.id,
+      // Issue #3378: Expose exit listener count for integration test health monitoring.
+      // The Claude Agent SDK's ProcessTransport registers a process.on('exit') listener
+      // per query session. If these leak (e.g., agent loop restart without cleanup),
+      // the count grows, eventually triggering MaxListenersExceededWarning (default limit: 10).
+      // Integration tests can poll this to detect degradation and restart the server.
+      diagnostics: {
+        exitListenerCount: process.listenerCount('exit'),
+      },
     }));
   }
 

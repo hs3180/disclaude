@@ -166,6 +166,19 @@ run_suite() {
         log_info "Waiting ${INTER_SUITE_DELAY}s before next suite (rate limit avoidance)..."
         sleep "$INTER_SUITE_DELAY"
     fi
+
+    # Issue #3378: Check server health between suites.
+    # The Claude Agent SDK registers process.on('exit') listeners per query session.
+    # If these accumulate (e.g., from agent loop restarts), MaxListenersExceededWarning
+    # is triggered and subsequent tests fail with HTTP 500/000.
+    # Checking health and restarting the server prevents cascading failures.
+    if [ $_SUITE_COUNT -gt 0 ]; then
+        if ! ensure_server_healthy; then
+            log_error "Server health check failed and restart was unsuccessful"
+            # Continue anyway — the test itself will report the failure
+        fi
+    fi
+
     _SUITE_COUNT=$((_SUITE_COUNT + 1))
 
     run_test_script "$script" "$name"

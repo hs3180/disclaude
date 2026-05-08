@@ -97,6 +97,10 @@ log_debug() {
 # Server Management Functions
 # =============================================================================
 
+# Exit listener threshold for health monitoring (Issue #3378)
+# Default Node.js maxListeners is 10; we use 8 as early warning threshold.
+EXIT_LISTENER_THRESHOLD="${EXIT_LISTENER_THRESHOLD:-8}"
+
 # Check if a port is in use
 # Returns: 0 if port is in use, 1 if port is free
 is_port_in_use() {
@@ -117,6 +121,80 @@ is_port_in_use() {
 # Returns: 0 if server is running and healthy, 1 otherwise
 is_server_running() {
     curl -s "${API_URL}/api/health" > /dev/null 2>&1
+}
+
+# Check server health based on exit listener count (Issue #3378)
+# The Claude Agent SDK's ProcessTransport registers process.on('exit') listeners
+# per query session. If these leak, the count grows, eventually triggering
+# MaxListenersExceededWarning and degrading server stability.
+#
+# Returns:
+#   0 (healthy)  - exit listener count below threshold
+#   1 (degraded) - exit listener count at or above threshold (server should be restarted)
+#   2 (unknown)  - could not determine listener count (server may not support diagnostics)
+check_server_exit_listeners() {
+    local health_response
+    health_response=$(curl -s "${API_URL}/api/health" 2>/dev/null)
+
+    if [ -z "$health_response" ]; then
+        return 2
+    fi
+
+    # Extract exitListenerCount from diagnostics field
+    local listener_count
+    listener_count=$(echo "$health_response" | grep -o '"exitListenerCount":[0-9]*' | grep -o '[0-9]*')
+
+    if [ -z "$listener_count" ]; then
+        # Server doesn't expose diagnostics yet — check server log for MaxListenersExceededWarning
+        if [ -f "${SERVER_LOG}" ] && tail -100 "${SERVER_LOG}" 2>/dev/null | grep -q "MaxListenersExceededWarning"; then
+            log_warn "MaxListenersExceededWarning detected in server logs"
+            return 1
+        fi
+        return 0
+    fi
+
+    if [ "$listener_count" -ge "$EXIT_LISTENER_THRESHOLD" ]; then
+        log_warn "Exit listener count (${listener_count}) >= threshold (${EXIT_LISTENER_THRESHOLD})"
+        return 1
+    fi
+
+    log_debug "Server health OK: ${listener_count} exit listeners (threshold: ${EXIT_LISTENER_THRESHOLD})"
+    return 0
+}
+
+# Check server log for MaxListenersExceededWarning (Issue #3378)
+# Returns: 0 if warning found, 1 if not found
+check_max_listeners_warning() {
+    if [ -f "${SERVER_LOG}" ] && grep -q "MaxListenersExceededWarning" "${SERVER_LOG}" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# Ensure server is healthy; restart if degraded (Issue #3378)
+# This should be called between test suites to prevent cascading failures
+# from accumulated exit listener leaks.
+ensure_server_healthy() {
+    check_server_exit_listeners
+    local exit_code=$?
+
+    if [ "$exit_code" -eq 0 ]; then
+        return 0  # Healthy
+    fi
+
+    log_warn "Server health degraded (exit listener leak detected), restarting server..."
+
+    # Stop current server
+    stop_server
+
+    # Wait a moment for cleanup
+    sleep 2
+
+    # Start fresh server
+    start_server || return 1
+
+    log_info "Server restarted successfully after health degradation"
+    return 0
 }
 
 # Wait for port to be released

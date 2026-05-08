@@ -188,6 +188,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       options: sdkOptions as Parameters<typeof query>[0]['options'],
     });
 
+    // Issue #3378: Log exit listener count after SDK query creation.
+    // The Claude Agent SDK's ProcessTransport registers a process.on('exit') listener
+    // for each query. Monitoring this count helps detect listener leaks.
+    logger.info(
+      { exitListenerCount: process.listenerCount('exit') },
+      'SDK query created (exit listener count)'
+    );
+
     // Issue #3003: Track SDK query timing for diagnostics
     const queryStartMs = Date.now();
 
