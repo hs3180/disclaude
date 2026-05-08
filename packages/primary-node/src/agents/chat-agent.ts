@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData, type CwdProvider } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -88,6 +88,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private firstMessageHistoryLoaded = false;
   private firstMessageHistoryLoadPromise?: Promise<void>;
 
+  // Issue #1916 Phase 2: CwdProvider for project context switching
+  private cwdProvider?: CwdProvider;
+
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
   // `result` message and resolves the completion promise, enabling blocking
@@ -130,6 +133,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   getChatId(): string {
     return this.boundChatId;
+  }
+
+  /**
+   * Set a CwdProvider for dynamic working directory resolution.
+   *
+   * Issue #1916 Phase 2: When set, startAgentLoop() queries this provider
+   * to get the project-specific cwd. Returns undefined for default project
+   * → SDK falls back to getWorkspaceDir().
+   *
+   * @param provider - Callback that resolves chatId to working directory
+   */
+  setCwdProvider(provider: CwdProvider): void {
+    this.cwdProvider = provider;
   }
 
   /**
@@ -699,9 +715,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const mcpServers = this.buildMcpServers(false);
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1916 Phase 2: Inject project cwd via CwdProvider
+    const projectCwd = this.cwdProvider?.(this.boundChatId);
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
       mcpServers,
+      ...(projectCwd && { cwd: projectCwd }),
     });
 
     this.logger.info(

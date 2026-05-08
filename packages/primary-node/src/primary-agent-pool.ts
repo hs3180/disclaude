@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions } from '@disclaude/core';
+import { type MessageBuilderOptions, type ProjectManager, type CwdProvider } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -45,8 +45,23 @@ export class PrimaryAgentPool {
   private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;
 
+  /** Issue #1916 Phase 2: ProjectManager for CwdProvider injection */
+  private projectManager?: ProjectManager;
+
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
+  }
+
+  /**
+   * Set the ProjectManager instance for CwdProvider injection.
+   *
+   * Issue #1916 Phase 2: When set, newly created ChatAgents will receive
+   * a CwdProvider that resolves the project-specific working directory.
+   *
+   * @param pm - ProjectManager instance
+   */
+  setProjectManager(pm: ProjectManager): void {
+    this.projectManager = pm;
   }
 
   /**
@@ -62,6 +77,21 @@ export class PrimaryAgentPool {
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
       });
+
+      // Issue #1916 Phase 2: Inject CwdProvider for project context switching
+      if (this.projectManager) {
+        const pm = this.projectManager;
+        const cwdProvider: CwdProvider = (id: string) => {
+          const active = pm.getActive(id);
+          // Return undefined for default → SDK falls back to getWorkspaceDir()
+          if (active.name === 'default') {
+            return undefined;
+          }
+          return active.workingDir;
+        };
+        agent.setCwdProvider(cwdProvider);
+      }
+
       this.agents.set(chatId, agent);
     }
     return agent;

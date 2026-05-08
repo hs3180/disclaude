@@ -7,6 +7,7 @@
 import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
+import type { ProjectResult, ProjectContextConfig, ProjectTemplate, InstanceInfo } from '../project/types.js';
 
 /**
  * Debug 组信息
@@ -46,6 +47,16 @@ export interface ControlHandlerContext {
 
   /** 日志记录器 */
   logger?: Logger;
+
+  /** ProjectManager 实例（可选） (Issue #1916 Phase 2: /project command) */
+  projectManager?: {
+    getActive(chatId: string): ProjectContextConfig;
+    create(chatId: string, templateName: string, name: string): ProjectResult<ProjectContextConfig>;
+    use(chatId: string, name: string): ProjectResult<ProjectContextConfig>;
+    reset(chatId: string): ProjectResult<ProjectContextConfig>;
+    listTemplates(): ProjectTemplate[];
+    listInstances(): InstanceInfo[];
+  };
 }
 
 /**
