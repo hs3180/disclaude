@@ -131,3 +131,25 @@ export type {
   IAttachmentManager,
   IPlatformAdapter,
 } from './adapter.js';
+
+// Unified Message types (Issue #3331, RFC #3329 Phase 1)
+export type {
+  Message,
+  UserMessage,
+  SystemMessage,
+  AgentMessage as UnifiedAgentMessage,
+  AnyMessage,
+  UserMessageAttachment,
+  SystemTrigger,
+  MessageModelTier,
+} from './unified-message.js';
+
+export {
+  isUserMessage,
+  isSystemMessage,
+  isAgentMessage as isUnifiedAgentMessage,
+  generateMessageId,
+  createUnifiedUserMessage,
+  createSystemMessage,
+  createAgentMessage as createUnifiedAgentMessage,
+} from './unified-message.js';

@@ -346,3 +346,14 @@ export {
   discoveryResultToConfig,
   discoverTemplatesAsConfig,
 } from './project/index.js';
+
+// Unified Message module (Issue #3331, RFC #3329 Phase 1)
+export {
+  UnifiedMessageRouter,
+  type RouteableAgent,
+  type RouteableAgentPool,
+  type ProjectConfigResolver,
+  type ProjectRoutingInfo,
+  type UnifiedMessageRouterConfig,
+  type RouteResult,
+} from './message/index.js';
