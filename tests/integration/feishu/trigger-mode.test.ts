@@ -25,7 +25,6 @@ import {
   MentionDetector,
   type BotInfo,
 } from '@disclaude/primary-node';
-import type { TriggerMode } from '@disclaude/core';
 
 // ---------------------------------------------------------------------------
 // Helpers — construct Feishu mention structures for testing
