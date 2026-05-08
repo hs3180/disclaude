@@ -64,16 +64,9 @@ export class TriggerModeManager {
   /**
    * Per-chat trigger mode setting (enum-based).
    * Key: chatId, Value: the explicitly set trigger mode.
-   * If a chatId is not in this map, it uses the default ('auto' for group chats).
+   * If a chatId is not in this map, it uses the default ('auto').
    */
   private modeSettings: Map<string, TriggerMode> = new Map();
-
-  /**
-   * Trigger mode state storage (legacy boolean).
-   * Key: chatId, Value: true if trigger mode is enabled (bot responds to all messages)
-   * @deprecated Kept for backward compatibility with code that uses boolean API.
-   */
-  private triggerEnabled: Map<string, boolean> = new Map();
 
   /**
    * Auto-detected small groups (≤2 members: bot + 1 user).
@@ -82,6 +75,28 @@ export class TriggerModeManager {
    * even if more members join later (Issue #2052).
    */
   private smallGroups: Set<string> = new Set();
+
+  /**
+   * Get the configured trigger mode for a chat.
+   * Returns the explicit mode, or 'auto' as default (Issue #3345).
+   *
+   * @param chatId - Chat ID to check
+   * @returns The configured trigger mode
+   */
+  getMode(chatId: string): TriggerMode {
+    return this.modeSettings.get(chatId) ?? 'auto';
+  }
+
+  /**
+   * Set the trigger mode for a chat.
+   *
+   * @param chatId - Chat ID to configure
+   * @param mode - The trigger mode to set
+   */
+  setMode(chatId: string, mode: TriggerMode): void {
+    this.modeSettings.set(chatId, mode);
+    logger.info({ chatId, mode }, 'Trigger mode set for chat');
+  }
 
   /**
    * Check if trigger mode is effectively enabled for a specific chat.
@@ -96,54 +111,10 @@ export class TriggerModeManager {
    * @returns true if trigger mode is enabled (bot responds to all messages)
    */
   isTriggerEnabled(chatId: string): boolean {
-    const mode = this.getEffectiveMode(chatId);
+    const mode = this.getMode(chatId);
     if (mode === 'always') {return true;}
     if (mode === 'auto') {return this.smallGroups.has(chatId);}
     return false; // 'mention'
-  }
-
-  /**
-   * Get the effective trigger mode for a chat, resolving 'auto' to actual behavior.
-   *
-   * @param chatId - Chat ID to check
-   * @returns The effective mode: 'mention' or 'always'
-   */
-  private getEffectiveMode(chatId: string): TriggerMode {
-    const mode = this.modeSettings.get(chatId);
-    if (mode) {return mode;}
-    // Legacy boolean API: if triggerEnabled is set, map to mode
-    if (this.triggerEnabled.get(chatId) === true) {return 'always';}
-    // Default is 'auto' for group chats (Issue #3345)
-    return 'auto';
-  }
-
-  /**
-   * Get the configured trigger mode for a chat (enum-based interface).
-   * Returns the explicit mode, or 'auto' as default (Issue #3345).
-   *
-   * @param chatId - Chat ID to check
-   * @returns The configured trigger mode
-   */
-  getMode(chatId: string): TriggerMode {
-    const mode = this.modeSettings.get(chatId);
-    if (mode) {return mode;}
-    // Legacy boolean API: if triggerEnabled is set, map to mode
-    if (this.triggerEnabled.get(chatId) === true) {return 'always';}
-    // Default is 'auto' (Issue #3345)
-    return 'auto';
-  }
-
-  /**
-   * Set the trigger mode for a chat (enum-based interface).
-   *
-   * @param chatId - Chat ID to configure
-   * @param mode - The trigger mode to set
-   */
-  setMode(chatId: string, mode: TriggerMode): void {
-    this.modeSettings.set(chatId, mode);
-    // Keep legacy boolean in sync
-    this.triggerEnabled.delete(chatId);
-    logger.info({ chatId, mode }, 'Trigger mode set for chat');
   }
 
   /**
@@ -174,34 +145,36 @@ export class TriggerModeManager {
   /**
    * Set trigger mode state for a specific chat (legacy boolean API).
    *
+   * Maps boolean to enum internally: enabled→'always', disabled→remove (revert to 'auto').
+   *
    * @param chatId - Chat ID to configure
    * @param enabled - true to enable trigger mode (respond to all messages)
+   *
+   * @deprecated Use setMode() instead (Issue #3345).
    */
   setTriggerEnabled(chatId: string, enabled: boolean): void {
     if (enabled) {
-      this.triggerEnabled.set(chatId, true);
+      this.modeSettings.set(chatId, 'always');
       logger.info({ chatId }, 'Trigger mode enabled for chat');
     } else {
-      this.triggerEnabled.delete(chatId);
+      this.modeSettings.delete(chatId);
       logger.info({ chatId }, 'Trigger mode disabled for chat');
     }
   }
 
   /**
    * Get all chats with trigger mode enabled.
-   * Includes both manually enabled and auto-detected small groups.
+   * Includes both manually enabled (mode='always') and auto-detected small groups.
    *
    * @returns Array of chat IDs with trigger mode enabled
    */
   getTriggerEnabledChats(): string[] {
-    const manual = Array.from(this.triggerEnabled.keys());
-    const auto = Array.from(this.smallGroups.keys());
-    // Also include chats with mode 'always'
     const alwaysChats = Array.from(this.modeSettings.entries())
       .filter(([, mode]) => mode === 'always')
       .map(([chatId]) => chatId);
+    const auto = Array.from(this.smallGroups.keys());
     // Deduplicate
-    const all = new Set([...manual, ...auto, ...alwaysChats]);
+    const all = new Set([...alwaysChats, ...auto]);
     return Array.from(all);
   }
 
@@ -229,13 +202,12 @@ export class TriggerModeManager {
         // Issue #3345: Store the mode setting for all enum values
         this.modeSettings.set(record.chatId, record.triggerMode);
         if (record.triggerMode === 'always') {
-          this.triggerEnabled.set(record.chatId, true);
           loaded++;
         }
         // 'auto' and 'mention' don't force-enable
       } else if (record.passiveMode === false) {
         // Legacy: passiveMode:false means trigger mode enabled
-        this.triggerEnabled.set(record.chatId, true);
+        this.modeSettings.set(record.chatId, 'always');
         loaded++;
       }
       // Issue #3345: Records without triggerMode or passiveMode
