@@ -15,6 +15,7 @@
  * @see Issue #2291 — triggerMode enum
  * @see Issue #2052 — Auto-enable trigger mode for small groups
  * @see Issue #2069 — Declarative trigger mode via persisted records
+ * @see Issue #3345 — 'auto' trigger mode for intelligent group size detection
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -24,6 +25,7 @@ import {
   MentionDetector,
   type BotInfo,
 } from '@disclaude/primary-node';
+import type { TriggerMode } from '@disclaude/core';
 
 // ---------------------------------------------------------------------------
 // Helpers — construct Feishu mention structures for testing
@@ -194,6 +196,44 @@ describe('TriggerModeManager', () => {
     expect(enabled).toContain('oc_small');
     expect(enabled).toContain('oc_persisted');
   });
+
+  // -----------------------------------------------------------------------
+  // Auto mode — enum-based API (Issue #3345)
+  // -----------------------------------------------------------------------
+
+  it('should default to auto mode for unknown chats', () => {
+    expect(manager.getMode('oc_new')).toBe('auto');
+  });
+
+  it('should not trigger in auto mode for non-small groups', () => {
+    expect(manager.isTriggerEnabled('oc_auto_large')).toBe(false);
+  });
+
+  it('should trigger in auto mode when chat is marked as small group', () => {
+    manager.markAsSmallGroup('oc_auto_small');
+    expect(manager.isTriggerEnabled('oc_auto_small')).toBe(true);
+  });
+
+  it('should override auto mode with explicit mention mode', () => {
+    manager.markAsSmallGroup('oc_auto_small');
+    manager.setMode('oc_auto_small', 'mention');
+    // Even though small group, explicit mention mode disables auto-trigger
+    expect(manager.isTriggerEnabled('oc_auto_small')).toBe(false);
+  });
+
+  it('should override auto mode with explicit always mode', () => {
+    manager.setMode('oc_auto_explicit', 'always');
+    expect(manager.isTriggerEnabled('oc_auto_explicit')).toBe(true);
+  });
+
+  it('should load auto mode from records without force-enabling', () => {
+    const records: TriggerModeRecord[] = [
+      { chatId: 'oc_auto_record', triggerMode: 'auto' },
+    ];
+    const count = manager.initFromRecords(records);
+    expect(count).toBe(0); // auto mode is not force-enabled
+    expect(manager.getMode('oc_auto_record')).toBe('auto');
+  });
 });
 
 // ===========================================================================
@@ -339,7 +379,7 @@ describe('Trigger mode filtering (TriggerModeManager + MentionDetector combined)
    * In a group chat, if trigger mode is disabled and the bot is not mentioned,
    * the message should be filtered (skipped).
    *
-   * This mirrors the logic in MessageHandler lines 854-868.
+   * This mirrors the logic in MessageHandler.
    */
   function shouldFilterMessage(params: {
     chatType: 'p2p' | 'group';
@@ -356,11 +396,7 @@ describe('Trigger mode filtering (TriggerModeManager + MentionDetector combined)
     // Mirror MessageHandler logic: filter group chat messages without @mention
     // unless trigger mode is enabled or it's a /trigger command
     if (isGroupChat && !botMentioned && !isTriggerCommand && !triggerEnabled) {
-      // Small group auto-detection happens here in real code
-      // We test this separately in TriggerModeManager tests
-      if (!triggerManager.isTriggerEnabled(chatId)) {
-        return true; // message should be filtered
-      }
+      return true; // message should be filtered
     }
 
     return false; // message should be processed
@@ -436,7 +472,7 @@ describe('Trigger mode filtering (TriggerModeManager + MentionDetector combined)
 
   it('should apply different modes to different chats independently', () => {
     triggerManager.setTriggerEnabled('oc_chat_always', true);
-    // oc_chat_mention stays in default (mention mode)
+    // oc_chat_mention stays in default (auto mode, but not small group → filtered)
 
     // Chat with always mode — no mention needed
     expect(shouldFilterMessage({
@@ -444,18 +480,47 @@ describe('Trigger mode filtering (TriggerModeManager + MentionDetector combined)
       chatId: 'oc_chat_always',
     })).toBe(false);
 
-    // Chat with mention mode — filtered without mention
+    // Chat with auto mode (not small group) — filtered without mention
     expect(shouldFilterMessage({
       chatType: 'group',
       chatId: 'oc_chat_mention',
     })).toBe(true);
 
-    // Chat with mention mode — processed with mention
+    // Chat with auto mode — processed with mention
     const mentions = [makeMention('cli_bot_id', '@_bot')];
     expect(shouldFilterMessage({
       chatType: 'group',
       chatId: 'oc_chat_mention',
       mentions,
     })).toBe(false);
+  });
+
+  // -----------------------------------------------------------------------
+  // auto mode — combined filtering (Issue #3345)
+  // -----------------------------------------------------------------------
+
+  it('should filter group message in auto mode for non-small groups', () => {
+    // Default is auto mode, but not marked as small group → filtered
+    expect(shouldFilterMessage({
+      chatType: 'group',
+      chatId: 'oc_auto_large',
+    })).toBe(true);
+  });
+
+  it('should process group message in auto mode for small groups', () => {
+    triggerManager.markAsSmallGroup('oc_auto_small');
+    expect(shouldFilterMessage({
+      chatType: 'group',
+      chatId: 'oc_auto_small',
+    })).toBe(false);
+  });
+
+  it('should filter group message in explicit mention mode even for small groups', () => {
+    triggerManager.markAsSmallGroup('oc_explicit_mention');
+    triggerManager.setMode('oc_explicit_mention', 'mention');
+    expect(shouldFilterMessage({
+      chatType: 'group',
+      chatId: 'oc_explicit_mention',
+    })).toBe(true);
   });
 });
