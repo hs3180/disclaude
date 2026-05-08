@@ -27,12 +27,16 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  ProcessLock,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import net from 'node:net';
+import path from 'node:path';
+import { homedir } from 'node:os';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -109,6 +113,17 @@ async function main(): Promise<void> {
   // logger (created at module level) to pino-roll with rotation.
   await initLogger();
 
+  // Issue #3417: Acquire process lock to prevent multiple concurrent instances.
+  // When launchd restarts after a crash, the old process may still be exiting.
+  // The PID file lock ensures only one instance runs at a time.
+  const lockfilePath = process.env.LOCKFILE_PATH
+    ?? path.resolve(process.env.LOG_DIR ?? path.join(homedir(), 'Library/Logs/disclaude'), 'disclaude.pid');
+  const processLock = new ProcessLock({ lockfilePath, logger });
+  if (!processLock.acquire()) {
+    console.error('Error: Another instance is already running. Exiting.');
+    process.exit(1);
+  }
+
   // Load configuration if provided
   if (options.configPath) {
     logger.info({ path: options.configPath }, 'Loading configuration file');
@@ -146,6 +161,26 @@ async function main(): Promise<void> {
   // Derive IPC host from REST channel config if available
   const restEntry = channelEntries.find((e) => e.type === 'rest');
   const host = (restEntry?.config as { host?: string } | undefined)?.host || '0.0.0.0';
+
+  // Issue #3417: Pre-check REST port availability before binding.
+  // If the old process hasn't fully exited yet, the port may still be in use.
+  // Wait with retries to give the old process time to release the port.
+  if (restEntry) {
+    const restConf = restEntry.config as { port: number; host: string };
+    const portReady = await waitForPortAvailable(restConf.port, restConf.host, {
+      maxRetries: 10,
+      intervalMs: 1000,
+    });
+    if (!portReady) {
+      logger.error(
+        { port: restConf.port, host: restConf.host },
+        'Port is still in use after waiting. Another instance may be running.'
+      );
+      console.error(`Error: Port ${restConf.port} is still in use after waiting. Exiting.`);
+      processLock.release();
+      process.exit(1);
+    }
+  }
 
   logger.info(
     { channels: channelEntries.map((e) => e.type) },
@@ -231,6 +266,8 @@ async function main(): Promise<void> {
       agentPool.disposeAll();
       await lifecycleManager.stopAll();
       await primaryNode.stop();
+      // Issue #3417: Release process lock on shutdown so next instance can start immediately.
+      processLock.release();
       logger.info('Primary Node stopped');
 
       // Issue #3416: Flush all buffered log entries to disk before exiting.
@@ -243,6 +280,7 @@ async function main(): Promise<void> {
       logger.error({ err: error }, 'Error during shutdown');
       // Best-effort flush even on error
       await flushLogger().catch(() => {});
+      processLock.release();
       process.exit(1);
     }
   };
@@ -289,6 +327,89 @@ main().catch((error) => {
   console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
   process.exit(1);
 });
+
+// ============================================================================
+// Port Availability Check (Issue #3417)
+// ============================================================================
+
+/**
+ * Options for waitForPortAvailable.
+ */
+interface PortCheckOptions {
+  /** Maximum number of retries (default: 10) */
+  maxRetries?: number;
+  /** Delay between retries in ms (default: 1000) */
+  intervalMs?: number;
+}
+
+/**
+ * Check if a TCP port is available (not in use by another process).
+ *
+ * Attempts to create a temporary connection to the port. If the connection
+ * is refused, the port is available. If it succeeds, something is listening.
+ *
+ * @returns `true` if port is available, `false` if still in use after all retries
+ */
+async function waitForPortAvailable(
+  port: number,
+  host: string,
+  options: PortCheckOptions = {}
+): Promise<boolean> {
+  const { maxRetries = 10, intervalMs = 1000 } = options;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const available = await isPortAvailable(port, host);
+    if (available) {
+      if (attempt > 0) {
+        logger.info({ port, host, attempts: attempt }, 'Port is now available');
+      }
+      return true;
+    }
+
+    if (attempt < maxRetries) {
+      logger.info(
+        { port, host, attempt: attempt + 1, maxRetries },
+        'Port is in use, waiting for old process to release...'
+      );
+      await sleep(intervalMs);
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check if a specific port is available on the given host.
+ *
+ * Uses a temporary net.Server to test if the port can be bound.
+ * If binding succeeds, the port is available (server is immediately closed).
+ * If binding fails with EADDRINUSE, the port is occupied.
+ */
+function isPortAvailable(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+        resolve(false);
+      } else {
+        // Unexpected error — treat as available to avoid blocking startup
+        logger.warn({ err, port, host }, 'Unexpected error checking port availability');
+        resolve(true);
+      }
+    });
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, host);
+  });
+}
+
+/**
+ * Simple sleep utility.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // ============================================================================
 // Config Resolution Utilities

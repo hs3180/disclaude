@@ -160,6 +160,9 @@ ${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
   <key>KeepAlive</key>
   <true/>
 
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
   <key>StandardErrorPath</key>
   <string>${STDERR_LOG}</string>
 
