@@ -405,7 +405,7 @@ export class PrimaryNode extends EventEmitter {
     logger.info({ nodeId: this.localNodeId }, 'Stopping PrimaryNode');
 
     // Stop Scheduler (Issue #1377)
-    this.stopScheduler();
+    await this.stopScheduler();
 
     // Stop IPC server (Issue #1042)
     await this.stopIpcServer();
@@ -524,10 +524,11 @@ export class PrimaryNode extends EventEmitter {
 
   /**
    * Stop the scheduler.
+   * Issue #3415: Made async to allow graceful shutdown of running tasks.
    */
-  protected stopScheduler(): void {
+  protected async stopScheduler(): Promise<void> {
     this.scheduleFileWatcher?.stop();
-    this.scheduler?.stop();
+    await this.scheduler?.stop();
     logger.info('Scheduler stopped');
   }
 

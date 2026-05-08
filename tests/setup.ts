@@ -5,12 +5,75 @@
  * real external network requests. All external HTTP calls are blocked
  * by default, except for localhost connections.
  *
+ * Issue #3415: Added SIGTERM/SIGINT handlers for graceful test process
+ * shutdown. When the test runner is terminated (e.g., by CI timeout or
+ * user interrupt), registered cleanup callbacks are invoked before exit.
+ *
  * @see Issue #920 - Test isolation infrastructure
  * @see Issue #918 - Four-layer defense architecture
+ * @see Issue #3415 - Test process graceful exit & cron cleanup
  */
 
 import nock from 'nock';
 import { beforeAll, afterAll, afterEach } from 'vitest';
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown registry (Issue #3415)
+// ---------------------------------------------------------------------------
+
+/**
+ * Registered cleanup callbacks invoked on SIGTERM/SIGINT.
+ * Tests that create long-lived resources (cron jobs, servers, timers)
+ * should register a cleanup function here.
+ */
+const cleanupCallbacks: Array<() => void | Promise<void>> = [];
+
+/**
+ * Register a cleanup callback to be invoked on graceful shutdown.
+ *
+ * @example
+ * ```typescript
+ * import { onGracefulShutdown } from '../tests/setup.js';
+ *
+ * const scheduler = new Scheduler({ ... });
+ * onGracefulShutdown(() => scheduler.stop());
+ * ```
+ */
+export function onGracefulShutdown(callback: () => void | Promise<void>): void {
+  cleanupCallbacks.push(callback);
+}
+
+let isShuttingDown = false;
+
+/**
+ * Graceful shutdown handler — invoked on SIGTERM or SIGINT.
+ * Runs all registered cleanup callbacks sequentially, then exits.
+ */
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  // eslint-disable-next-line no-console
+  console.log(`\n[Test Setup] Received ${signal}, running ${cleanupCallbacks.length} cleanup callback(s)...`);
+
+  for (const cb of cleanupCallbacks) {
+    try {
+      await cb();
+    } catch {
+      // Best-effort cleanup — don't let one failure block the rest
+    }
+  }
+
+  process.exit(signal === 'SIGINT' ? 130 : 143); // Standard exit codes
+}
+
+// Register signal handlers (only in test process, not workers)
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+
+// ---------------------------------------------------------------------------
+// Network isolation (nock)
+// ---------------------------------------------------------------------------
 
 /**
  * Block all external network requests by default.

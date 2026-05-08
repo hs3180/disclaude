@@ -177,18 +177,65 @@ export class Scheduler {
   }
 
   /**
-   * Stop the scheduler.
-   * Stops all active cron jobs.
+   * Graceful shutdown timeout for waiting on running tasks.
+   * After this period, running tasks are abandoned.
+   *
+   * Issue #3415: Ensures test processes exit cleanly by waiting
+   * for in-flight task executions to complete.
    */
-  stop(): void {
+  private static readonly GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5000;
+
+  /**
+   * Stop the scheduler.
+   * Stops all active cron jobs and waits for running tasks to complete.
+   *
+   * Issue #3415: Made async to allow graceful shutdown of in-flight
+   * task executions. Previously fire-and-forget, which caused test
+   * processes to be killed (SIGKILL) before cron cleanup could finish.
+   *
+   * @param timeoutMs - Optional timeout in ms to wait for running tasks
+   *   (default: 5000ms). Set to 0 to skip waiting.
+   */
+  async stop(timeoutMs?: number): Promise<void> {
     this.running = false;
 
+    // Stop all cron timers first (prevents new executions)
     for (const [taskId, entry] of this.activeJobs) {
-      void entry.job.stop();
+      entry.job.stop();
       logger.debug({ taskId }, 'Stopped cron job');
     }
 
     this.activeJobs.clear();
+
+    // Wait for currently running tasks to complete (graceful shutdown)
+    const waitTimeout = timeoutMs ?? Scheduler.GRACEFUL_SHUTDOWN_TIMEOUT_MS;
+    if (this.runningTasks.size > 0 && waitTimeout > 0) {
+      logger.info(
+        { taskIds: Array.from(this.runningTasks), timeoutMs: waitTimeout },
+        'Waiting for running tasks to complete...'
+      );
+
+      await new Promise<void>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (this.runningTasks.size === 0) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 50);
+
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          if (this.runningTasks.size > 0) {
+            logger.warn(
+              { taskIds: Array.from(this.runningTasks) },
+              'Graceful shutdown timed out, abandoning running tasks'
+            );
+          }
+          resolve();
+        }, waitTimeout);
+      });
+    }
+
     logger.info('Scheduler stopped');
   }
 
@@ -231,7 +278,7 @@ export class Scheduler {
   removeTask(taskId: string): void {
     const entry = this.activeJobs.get(taskId);
     if (entry) {
-      void entry.job.stop();
+      entry.job.stop();
       this.activeJobs.delete(taskId);
       logger.info({ taskId }, 'Removed scheduled task');
     }
