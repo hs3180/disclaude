@@ -36,7 +36,7 @@ export interface ControlHandlerContext {
     clearDebugGroup(): DebugGroup | null;
   };
 
-  /** 触发模式管理（可选） (Issue #2291: enum-based interface) */
+  /** 触发模式管理（可选） (Issue #2291: enum-based interface, #3345: 'auto' mode) */
   triggerMode?: {
     /** Get the current trigger mode for a chat */
     getMode(chatId: string): TriggerMode;

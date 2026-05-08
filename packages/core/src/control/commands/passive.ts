@@ -7,6 +7,7 @@ interface ModeMessages {
   unavailable: string;
   mentionEnabled: string;
   alwaysEnabled: string;
+  autoEnabled: string;
   invalidArgs: string;
 }
 
@@ -15,28 +16,43 @@ const TRIGGER_MESSAGES: ModeMessages = {
   unavailable: '⚠️ 触发模式功能当前不可用。请检查频道配置是否正确。',
   mentionEnabled: '🔕 仅 @触发模式已开启（bot 仅响应 @提及）',
   alwaysEnabled: '🔔 全响应模式已开启（bot 响应所有消息）',
-  invalidArgs: '⚠️ 无效参数。用法: `/trigger [mention|always]`',
+  autoEnabled: '🔄 自动模式已开启（小群自动全响应，大群仅 @触发）',
+  invalidArgs: '⚠️ 无效参数。用法: `/trigger [mention|always|auto]`',
 };
 
 /**
- * Parse trigger mode argument (Issue #2291).
+ * Get the user-facing message for a given trigger mode.
+ */
+function getMessageForMode(mode: TriggerMode, messages: ModeMessages): string {
+  switch (mode) {
+    case 'mention': return messages.mentionEnabled;
+    case 'always': return messages.alwaysEnabled;
+    case 'auto': return messages.autoEnabled;
+  }
+}
+
+/**
+ * Parse trigger mode argument (Issue #2291, #3345).
  *
  * Mapping:
  * - 'mention' → 'mention' (mention-only)
  * - 'always' → 'always' (respond to all)
+ * - 'auto' → 'auto' (intelligent group size detection)
  */
 function parseTriggerArg(arg: string): TriggerMode | null {
   switch (arg) {
     case 'mention': return 'mention';
     case 'always': return 'always';
+    case 'auto': return 'auto';
     default: return null;
   }
 }
 
 /**
- * Internal mode toggle handler (Issue #2193, #2291).
+ * Internal mode toggle handler (Issue #2193, #2291, #3345).
  *
  * Issue #2291: Uses enum-based `getMode`/`setMode` interface.
+ * Issue #3345: Supports 'auto' mode with cycle toggle.
  */
 function handleModeToggle(
   command: ControlCommand,
@@ -70,7 +86,7 @@ function handleModeToggle(
       modeManager.setMode(chatId, mode);
       return {
         success: true,
-        message: mode === 'mention' ? messages.mentionEnabled : messages.alwaysEnabled,
+        message: getMessageForMode(mode, messages),
       };
     }
 
@@ -81,13 +97,15 @@ function handleModeToggle(
     };
   }
 
-  // No argument — toggle current state (mention ↔ always)
+  // No argument — cycle through modes: auto → mention → always → auto
   const current = modeManager.getMode(chatId);
-  const newMode: TriggerMode = current === 'mention' ? 'always' : 'mention';
+  const modeOrder: TriggerMode[] = ['auto', 'mention', 'always'];
+  const currentIndex = modeOrder.indexOf(current);
+  const newMode = modeOrder[(currentIndex + 1) % modeOrder.length];
   modeManager.setMode(chatId, newMode);
   return {
     success: true,
-    message: newMode === 'mention' ? messages.mentionEnabled : messages.alwaysEnabled,
+    message: getMessageForMode(newMode, messages),
   };
 }
 

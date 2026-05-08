@@ -238,13 +238,16 @@ export interface TransportConfig {
 /**
  * Trigger mode for group chat message handling.
  * Issue #2291: Upgraded from boolean to enum for extensibility.
+ * Issue #3345: Added 'auto' mode for intelligent group size detection.
  *
- * - `'mention'`: Bot only responds to @mentions (default behavior)
+ * - `'mention'`: Bot only responds to @mentions
  * - `'always'`: Bot responds to all messages
+ * - `'auto'`: Automatically switches between 'always' and 'mention' based on group size
+ *   (≤2 members: 'always', >2 members: 'mention'). Default for group chats.
  *
  * Future extensions may include `'regex'`, `'schedule'`, etc.
  */
-export type TriggerMode = 'mention' | 'always';
+export type TriggerMode = 'mention' | 'always' | 'auto';
 
 /**
  * Filter reason types for message filtering.

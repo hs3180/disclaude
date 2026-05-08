@@ -146,21 +146,18 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       actionText?: string
     ) => contextStore.generatePrompt(messageId, chatId, actionValue, actionText);
 
-    // 2. Set up trigger mode adapter (Issue #2291: enum-based interface)
-    // Adapter bridges semantics between the command handler's enum values
-    // and TriggerModeManager's internal boolean state:
-    //   'mention' → isTriggerEnabled=false (mention-only)
-    //   'always'  → isTriggerEnabled=true  (respond to all)
+    // 2. Set up trigger mode adapter (Issue #2291: enum-based interface, #3345: 'auto' mode)
+    // Adapter delegates directly to TriggerModeManager which now supports
+    // 'auto', 'mention', and 'always' modes natively.
+    const triggerModeManager = feishuChannel.getTriggerModeManager();
     const triggerModeAdapter = {
-      getMode: (chatId: string): 'mention' | 'always' =>
-        feishuChannel.isTriggerEnabled(chatId) ? 'always' : 'mention',
-      setMode: (chatId: string, mode: 'mention' | 'always') =>
-        feishuChannel.setTriggerEnabled(chatId, mode === 'always'),
+      getMode: (chatId: string) => triggerModeManager.getMode(chatId),
+      setMode: (chatId: string, mode: 'auto' | 'mention' | 'always') => triggerModeManager.setMode(chatId, mode),
     };
     context.controlHandlerContext.triggerMode = triggerModeAdapter;
 
-    // 2b. Issue #2291: Initialize trigger mode from persisted temp chat records.
-    // Supports both new `triggerMode` enum and legacy `passiveMode` boolean.
+    // 2b. Issue #2291, #3345: Initialize trigger mode from persisted temp chat records.
+    // Supports 'auto', 'mention', 'always' enum values and legacy `passiveMode` boolean.
     const chatStore = context.primaryNode.getChatStore();
     chatStore.listTempChats().then(records => {
       const triggerModeManager = feishuChannel.getTriggerModeManager();

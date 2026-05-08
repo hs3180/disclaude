@@ -51,11 +51,12 @@ export interface TempChatRecord {
    */
   passiveMode?: boolean;
   /**
-   * Trigger mode configuration for this chat (Issue #2291).
+   * Trigger mode configuration for this chat (Issue #2291, #3345).
    *
-   * - `'mention'`: Bot only responds to @mentions (default)
+   * - `'mention'`: Bot only responds to @mentions
    * - `'always'`: Bot responds to all messages
-   * - `undefined`: Use default behavior (`'mention'`)
+   * - `'auto'`: Automatically switches based on group size (default for group chats)
+   * - `undefined`: Use default behavior (`'auto'`)
    */
   triggerMode?: TriggerMode;
 }

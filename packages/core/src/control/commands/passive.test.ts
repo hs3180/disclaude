@@ -1,6 +1,7 @@
 /**
  * Tests for /trigger command handler (packages/core/src/control/commands/passive.ts)
  * Issue #2291: Upgraded to enum-based trigger mode (mention | always)
+ * Issue #3345: Added 'auto' mode for intelligent group size detection
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -19,7 +20,7 @@ function createCommand(args?: string | string[], chatId = 'test-chat-id'): Contr
 }
 
 /** 创建测试用的 mode manager mock */
-function createModeManagerMock(initialMode: TriggerMode = 'mention') {
+function createModeManagerMock(initialMode: TriggerMode = 'auto') {
   let currentMode: TriggerMode = initialMode;
   return {
     getMode: vi.fn((_chatId: string) => currentMode),
@@ -42,7 +43,7 @@ function createContext(overrides?: Partial<ControlHandlerContext>): ControlHandl
   };
 }
 
-describe('handleTrigger (Issue #2291)', () => {
+describe('handleTrigger (Issue #2291, #3345)', () => {
   describe('triggerMode not available', () => {
     it('should return failure when triggerMode is undefined', () => {
       const command = createCommand();
@@ -60,7 +61,7 @@ describe('handleTrigger (Issue #2291)', () => {
     });
   });
 
-  describe('enum arguments (Issue #2291)', () => {
+  describe('enum arguments (Issue #2291, #3345)', () => {
     it('should set mention mode with "mention"', () => {
       const command = createCommand('mention');
       const context = createContext();
@@ -87,6 +88,19 @@ describe('handleTrigger (Issue #2291)', () => {
       expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
     });
 
+    it('should set auto mode with "auto"', () => {
+      const command = createCommand('auto');
+      const context = createContext();
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
+
+      const result = handleTrigger(command, context) as ControlResponse;
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('自动模式');
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'auto');
+    });
+
     it('should support array args with enum values (Feishu format)', () => {
       const command = createCommand(['always']);
       const context = createContext();
@@ -101,8 +115,21 @@ describe('handleTrigger (Issue #2291)', () => {
     });
   });
 
-  describe('no argument (toggle)', () => {
-    it('should toggle from mention to always', () => {
+  describe('no argument (cycle toggle, Issue #3345)', () => {
+    it('should cycle from auto to mention', () => {
+      const command = createCommand();
+      const context = createContext();
+      const { triggerMode } = context;
+      if (!triggerMode) {throw new Error('triggerMode is required');}
+      triggerMode.getMode = vi.fn().mockReturnValue('auto');
+
+      const result = handleTrigger(command, context) as ControlResponse;
+
+      expect(result.success).toBe(true);
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
+    });
+
+    it('should cycle from mention to always', () => {
       const command = createCommand();
       const context = createContext();
       const { triggerMode } = context;
@@ -115,7 +142,7 @@ describe('handleTrigger (Issue #2291)', () => {
       expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'always');
     });
 
-    it('should toggle from always to mention', () => {
+    it('should cycle from always back to auto', () => {
       const command = createCommand();
       const context = createContext();
       const { triggerMode } = context;
@@ -125,7 +152,7 @@ describe('handleTrigger (Issue #2291)', () => {
       const result = handleTrigger(command, context) as ControlResponse;
 
       expect(result.success).toBe(true);
-      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'mention');
+      expect(triggerMode.setMode).toHaveBeenCalledWith('test-chat-id', 'auto');
     });
   });
 
@@ -143,13 +170,14 @@ describe('handleTrigger (Issue #2291)', () => {
       expect(triggerMode.setMode).not.toHaveBeenCalled();
     });
 
-    it('should show /trigger usage hint in error message', () => {
+    it('should show /trigger usage hint with auto option in error message', () => {
       const command = createCommand('bad');
       const context = createContext();
 
       const result = handleTrigger(command, context) as ControlResponse;
 
       expect(result.message).toContain('/trigger');
+      expect(result.message).toContain('auto');
     });
   });
 });
