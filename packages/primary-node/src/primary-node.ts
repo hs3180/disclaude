@@ -96,6 +96,24 @@ export interface PrimaryNodeOptions {
 
   /** REST channel port */
   restPort?: number;
+
+  /**
+   * Override workspace directory for test isolation.
+   * When set, all workspace-dependent paths (schedules, temp-chats, etc.)
+   * resolve relative to this directory instead of Config.getWorkspaceDir().
+   *
+   * @see Issue #3414 - Test isolation for workspace/schedules
+   */
+  workspaceDir?: string;
+
+  /**
+   * Skip scheduler initialization entirely.
+   * Useful for tests that don't need scheduled tasks, preventing
+   * real cron jobs from being loaded from the workspace.
+   *
+   * @see Issue #3414 - Test isolation for workspace/schedules
+   */
+  skipSchedules?: boolean;
 }
 
 /**
@@ -159,12 +177,33 @@ export class PrimaryNode extends EventEmitter {
   // Temp chat data store (Issue #1703)
   protected chatStore: ChatStore;
 
+  /**
+   * Resolved workspace directory.
+   * Falls back to Config.getWorkspaceDir() when not overridden via options.
+   *
+   * @see Issue #3414 - Test isolation for workspace/schedules
+   */
+  protected readonly workspaceDir: string;
+
+  /**
+   * Whether to skip scheduler initialization.
+   * When true, initScheduler() is a no-op in start().
+   *
+   * @see Issue #3414 - Test isolation for workspace/schedules
+   */
+  protected readonly skipSchedules: boolean;
+
   constructor(config: PrimaryNodeOptions = {}) {
     super();
     this.port = config.port || 3001;
     this.host = config.host || '0.0.0.0';
     this.localNodeId = config.nodeId || `primary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.localExecEnabled = config.enableLocalExec !== false;
+
+    // Issue #3414: Allow overriding workspace directory for test isolation.
+    // Falls back to Config.getWorkspaceDir() for production use.
+    this.workspaceDir = config.workspaceDir || Config.getWorkspaceDir();
+    this.skipSchedules = config.skipSchedules ?? false;
 
     // Initialize CardActionRouter (Issue #2939: removed remote node stubs)
     this.cardActionRouter = new CardActionRouter();
@@ -181,8 +220,8 @@ export class PrimaryNode extends EventEmitter {
     // Initialize ChatStore for temp chat record management (Issue #1703)
     // Note: TempChatLifecycleService was removed per Issue #2067 direction update.
     // ChatStore is retained for use by channel wiring (wired-descriptors.ts).
-    const workspaceDir = Config.getWorkspaceDir();
-    const tempChatStoreDir = path.join(workspaceDir, 'schedules', '.temp-chats');
+    // Issue #3414: Use instance-level workspaceDir for isolation.
+    const tempChatStoreDir = path.join(this.workspaceDir, 'schedules', '.temp-chats');
     this.chatStore = new ChatStore({ storeDir: tempChatStoreDir });
 
     logger.info({
@@ -378,14 +417,19 @@ export class PrimaryNode extends EventEmitter {
     // Issue #3361: Wrap in try-catch to prevent scheduler failure from
     // blocking the entire PrimaryNode startup. Main channels (Feishu, REST)
     // should still work even if the scheduler is down.
-    try {
-      await this.initScheduler();
-    } catch (error) {
-      logger.error(
-        { err: error, nodeId: this.localNodeId },
-        '⚠️ Scheduler initialization failed — scheduled tasks will not run. ' +
-        'PrimaryNode continues without scheduler. Check logs above for details.'
-      );
+    // Issue #3414: Skip scheduler when skipSchedules is set (test isolation).
+    if (this.skipSchedules) {
+      logger.info({ nodeId: this.localNodeId }, 'Scheduler skipped (skipSchedules=true)');
+    } else {
+      try {
+        await this.initScheduler();
+      } catch (error) {
+        logger.error(
+          { err: error, nodeId: this.localNodeId },
+          '⚠️ Scheduler initialization failed — scheduled tasks will not run. ' +
+          'PrimaryNode continues without scheduler. Check logs above for details.'
+        );
+      }
     }
 
     this.running = true;
@@ -429,8 +473,8 @@ export class PrimaryNode extends EventEmitter {
    *   operators can pinpoint which step failed when scheduler appears silent.
    */
   protected async initScheduler(): Promise<void> {
-    const workspaceDir = Config.getWorkspaceDir();
-    const schedulesDir = path.join(workspaceDir, 'schedules');
+    // Issue #3414: Use instance-level workspaceDir for isolation.
+    const schedulesDir = path.join(this.workspaceDir, 'schedules');
     const cooldownDir = path.join(schedulesDir, '.cooldown');
 
     logger.info({ schedulesDir }, 'Initializing scheduler...');
