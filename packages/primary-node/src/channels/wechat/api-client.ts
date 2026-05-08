@@ -11,6 +11,7 @@
  * - GET  ilink/bot/get_qrcode_status   - Long-poll QR login status (35s)
  * - POST ilink/bot/sendmessage         - Send a message
  * - POST ilink/bot/getupdates          - Long-poll for incoming messages
+ * - POST ilink/bot/typing              - Send typing indicator
  *
  * @module channels/wechat/api-client
  * @see Issue #1473 - WeChat Channel MVP
@@ -18,7 +19,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import type { WeChatGetUpdatesResponse } from './types.js';
+import type { WeChatGetUpdatesResponse, WeChatTypingResponse } from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -250,6 +251,44 @@ export class WeChatApiClient {
         return [];
       }
       throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Typing indicator (Issue #1556 Phase 3.2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send a typing indicator to a user.
+   *
+   * POST /ilink/bot/typing
+   *
+   * Informs the user that the bot is processing their message.
+   * Failures are non-fatal and logged as warnings.
+   *
+   * @param params - Typing indicator parameters
+   */
+  async sendTyping(params: { to: string }): Promise<void> {
+    const { to } = params;
+
+    const body = {
+      to_user_id: to,
+    };
+
+    try {
+      await this.postJson<WeChatTypingResponse>(
+        'ilink/bot/typing',
+        body,
+        { timeoutMs: 5_000 }, // Short timeout for typing indicator
+      );
+      logger.debug({ to }, 'Typing indicator sent');
+    } catch (error) {
+      // Typing indicator failure should not block message processing
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        { err: errMsg, to },
+        'Failed to send typing indicator (non-fatal)',
+      );
     }
   }
 

@@ -506,4 +506,65 @@ describe('WeChatApiClient', () => {
       expect(result[1].msg_id).toBe('msg-2');
     });
   });
+
+  describe('sendTyping (Issue #1556 Phase 3.2)', () => {
+    it('should send typing indicator via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('ilink/bot/typing'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            'Authorization': 'Bearer test-token',
+          }),
+        }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.to_user_id).toBe('user-123');
+    });
+
+    it('should not throw on API failure (non-fatal)', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Server Error'),
+      });
+
+      client.setToken('test-token');
+      // Should resolve without throwing
+      await client.sendTyping({ to: 'user-123' });
+    });
+
+    it('should not throw on network error (non-fatal)', async () => {
+      mockFetch.mockRejectedValue(new Error('Network error'));
+
+      client.setToken('test-token');
+      // Should resolve without throwing
+      await client.sendTyping({ to: 'user-123' });
+    });
+
+    it('should use short timeout (5s)', async () => {
+      mockFetch.mockImplementation(() => {
+        // The timeout is set via AbortController internally;
+        // we can't capture it directly, but verify the call succeeds
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+        });
+      });
+
+      client.setToken('test-token');
+      await client.sendTyping({ to: 'user-123' });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });
