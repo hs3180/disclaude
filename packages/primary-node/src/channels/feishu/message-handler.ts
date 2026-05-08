@@ -851,12 +851,13 @@ export class MessageHandler {
     const botMentioned = this.mentionDetector.isBotMentioned(mentions);
     const textWithoutMentions = stripLeadingMentions(text, mentions);
 
-    // Group chat trigger mode (Issue #2291: triggerMode enum)
+    // Group chat trigger mode (Issue #2291: triggerMode enum, #3345: 'auto' mode)
     // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
     const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
     if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand && !this.triggerModeManager.isTriggerEnabled(chat_id)) {
-      // Check if this is a small group on first encounter
-      if (!this.triggerModeManager.isSmallGroup(chat_id)) {
+      // Issue #3345: Only check small group detection in 'auto' mode
+      // In 'mention' mode, user explicitly wants mention-only regardless of group size
+      if (this.triggerModeManager.getMode(chat_id) === 'auto' && !this.triggerModeManager.isSmallGroup(chat_id)) {
         await this.checkAndAutoDisableSmallGroup(chat_id);
       }
       // Re-check after potential auto-detection
