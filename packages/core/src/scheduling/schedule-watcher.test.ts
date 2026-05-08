@@ -220,6 +220,33 @@ describe('ScheduleFileScanner', () => {
       expect(task!.model).toBeUndefined();
     });
 
+    it('should parse projectKey field when specified (Issue #3333)', async () => {
+      const content = [
+        '---',
+        'name: "Daily Repo Maintenance"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_project"',
+        'projectKey: "hs3180/disclaude"',
+        '---',
+        '',
+        'Check for new issues and PRs.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/project-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBe('hs3180/disclaude');
+    });
+
+    it('should default projectKey to undefined when not specified (Issue #3333)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-project/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBeUndefined();
+    });
+
     it('should parse quoted model value (stripping quotes)', async () => {
       const content = [
         '---',
@@ -501,6 +528,41 @@ describe('ScheduleFileScanner', () => {
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
       expect(writtenContent).not.toContain('model:');
+    });
+
+    it('should write projectKey field when present (Issue #3333)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-project',
+        name: 'Project Task',
+        cron: '0 9 * * *',
+        prompt: 'Project maintenance',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        projectKey: 'hs3180/disclaude',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('projectKey: "hs3180/disclaude"');
+    });
+
+    it('should not write projectKey field when undefined (Issue #3333)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-project',
+        name: 'Regular Task',
+        cron: '0 0 * * *',
+        prompt: 'Regular task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('projectKey:');
     });
 
     it('should handle task IDs without schedule- prefix', async () => {

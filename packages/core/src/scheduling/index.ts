@@ -67,9 +67,13 @@ export {
 export {
   Scheduler,
   TaskTimeoutError,
+  TaskNotFoundError,
   type SchedulerCallbacks,
   type TaskExecutor,
   type SchedulerOptions,
+  // Issue #3333: Scheduler integration with NonUserMessage
+  type ScheduledMessageRouter,
+  type ScheduledMessageRouteResult,
 } from './scheduler.js';
 
 // Schedule Executor (Issue #1382, Issue #2941: ChatAgent-only)

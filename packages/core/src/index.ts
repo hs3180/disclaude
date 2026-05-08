@@ -220,6 +220,10 @@ export {
   type SchedulerCallbacks,
   type TaskExecutor,
   type SchedulerOptions,
+  // Issue #3333: Scheduler integration with NonUserMessage
+  type ScheduledMessageRouter,
+  type ScheduledMessageRouteResult,
+  TaskNotFoundError,
   type OnFileAdded,
   type OnFileChanged,
   type OnFileRemoved,

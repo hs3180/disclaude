@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+import { Scheduler, TaskTimeoutError, TaskNotFoundError, type SchedulerCallbacks, type TaskExecutor, type ScheduledMessageRouter } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -698,6 +698,257 @@ describe('Scheduler', () => {
       const error = new TaskTimeoutError(5000);
       expect(error).toBeInstanceOf(Error);
       expect(error).toBeInstanceOf(TaskTimeoutError);
+    });
+  });
+
+  // ───────────────────────────────────────────
+  // Issue #3333: Scheduler integration with NonUserMessage
+  // ───────────────────────────────────────────
+
+  describe('project-bound routing (Issue #3333)', () => {
+    let mockMessageRouter: Mock<ScheduledMessageRouter['route']>;
+
+    /** Helper: fire a cron job and wait for async side-effects */
+    function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
+      void jobs[0].job.fireOnTick();
+    }
+
+    beforeEach(() => {
+      mockMessageRouter = vi.fn().mockResolvedValue({ ok: true, chatId: 'oc_project_chat' });
+    });
+
+    it('should route via messageRouter when task has projectKey', async () => {
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: { route: mockMessageRouter },
+      });
+
+      const task = createTask({
+        id: 'project-1',
+        projectKey: 'owner/repo',
+      });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockMessageRouter).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Executor should NOT be called for project-bound tasks
+      expect(mockExecutor).not.toHaveBeenCalled();
+
+      // Verify messageRouter was called with correct args
+      expect(mockMessageRouter).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectKey: 'owner/repo',
+          trigger: 'scheduled',
+          taskName: 'Test Task',
+        }),
+      );
+
+      // Verify payload contains anti-recursion instructions
+      const [[callArgs]] = mockMessageRouter.mock.calls;
+      expect(callArgs.payload).toContain('Scheduled Task Execution Context');
+      expect(callArgs.payload).toContain('Run tests');
+    });
+
+    it('should pass modelTier to messageRouter', async () => {
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: { route: mockMessageRouter },
+      });
+
+      const task = createTask({
+        id: 'project-tier',
+        projectKey: 'owner/repo',
+        modelTier: 'low',
+      });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockMessageRouter).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockMessageRouter).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelTier: 'low',
+        }),
+      );
+    });
+
+    it('should use executor when projectKey is not set', async () => {
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: { route: mockMessageRouter },
+      });
+
+      // Task without projectKey → should use executor path
+      const task = createTask({ id: 'no-project' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Router should NOT be called
+      expect(mockMessageRouter).not.toHaveBeenCalled();
+    });
+
+    it('should use executor when messageRouter is not provided', async () => {
+      // Scheduler without messageRouter (backward compatible)
+      const task = createTask({
+        id: 'no-router',
+        projectKey: 'owner/repo',
+      });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should send project-bound start notification', async () => {
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: { route: mockMessageRouter },
+      });
+
+      const task = createTask({
+        id: 'project-notify',
+        projectKey: 'hs3180/disclaude',
+      });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('项目代理: hs3180/disclaude'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should handle messageRouter failure', async () => {
+      mockMessageRouter.mockResolvedValueOnce({ ok: false, error: 'Project not found' });
+
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: { route: mockMessageRouter },
+      });
+
+      const task = createTask({
+        id: 'project-fail',
+        projectKey: 'missing/project',
+      });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should timeout project-bound tasks', async () => {
+      mockMessageRouter.mockReturnValueOnce(new Promise(() => {}));
+
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: { route: mockMessageRouter },
+      });
+
+      const task = createTask({
+        id: 'project-timeout',
+        projectKey: 'owner/repo',
+        timeoutMs: 50,
+      });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      await fireAndWait(jobs);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行超时'),
+        );
+      }, { timeout: 3000 });
+    });
+  });
+
+  describe('triggerTask (Issue #3333)', () => {
+    it('should trigger task by ID', async () => {
+      const task = createTask({ id: 'trigger-1' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      await scheduler.triggerTask('trigger-1');
+
+      expect(mockScheduleManager.get).toHaveBeenCalledWith('trigger-1');
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should trigger project-bound task via messageRouter', async () => {
+      const mockRoute = vi.fn().mockResolvedValue({ ok: true, chatId: 'oc_project' });
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: { route: mockRoute },
+      });
+
+      const task = createTask({ id: 'trigger-project', projectKey: 'owner/repo' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      await routerScheduler.triggerTask('trigger-project');
+
+      await vi.waitFor(() => {
+        expect(mockRoute).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockRoute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          trigger: 'scheduled',
+          projectKey: 'owner/repo',
+        }),
+      );
+    });
+
+    it('should throw TaskNotFoundError when task does not exist', async () => {
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(undefined);
+
+      await expect(scheduler.triggerTask('nonexistent')).rejects.toThrow(TaskNotFoundError);
+      await expect(scheduler.triggerTask('nonexistent')).rejects.toThrow('Scheduled task not found: nonexistent');
+    });
+
+    it('TaskNotFoundError should have taskId property', () => {
+      const error = new TaskNotFoundError('task-xyz');
+      expect(error.name).toBe('TaskNotFoundError');
+      expect(error.taskId).toBe('task-xyz');
+      expect(error).toBeInstanceOf(Error);
     });
   });
 });

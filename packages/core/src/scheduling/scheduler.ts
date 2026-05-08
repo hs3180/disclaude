@@ -15,9 +15,16 @@
  * - Allows scheduler to be migrated independently
  * - Migrated from @disclaude/worker-node to @disclaude/core
  *
+ * Issue #3333: Scheduler integration with NonUserMessage.
+ * - Tasks with `projectKey` route via ScheduledMessageRouter to project-bound agents
+ * - Tasks without `projectKey` use existing short-lived agent path (backward compatible)
+ * - Added `triggerTask()` for manual on-demand execution
+ *
  * Features:
  * - Dynamic task scheduling
  * - Integration with executor function for task execution
+ * - Project-bound routing via ScheduledMessageRouter
+ * - Manual task triggering via triggerTask()
  * - Automatic reload of tasks on schedule changes
  *
  * @module @disclaude/core/scheduling
@@ -58,6 +65,22 @@ export class TaskTimeoutError extends Error {
 }
 
 /**
+ * Error thrown when a task is not found.
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage.
+ */
+export class TaskNotFoundError extends Error {
+  /** The task ID that was not found */
+  readonly taskId: string;
+
+  constructor(taskId: string) {
+    super(`Scheduled task not found: ${taskId}`);
+    this.name = 'TaskNotFoundError';
+    this.taskId = taskId;
+  }
+}
+
+/**
  * Active cron job entry.
  */
 interface ActiveJob {
@@ -88,22 +111,84 @@ export interface SchedulerCallbacks {
 export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string, modelTier?: ModelTier) => Promise<void>;
 
 /**
+ * Result of routing a scheduled message via ScheduledMessageRouter.
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage.
+ */
+export interface ScheduledMessageRouteResult {
+  /** Whether routing succeeded */
+  ok: boolean;
+  /** Chat ID the message was routed to (on success) */
+  chatId?: string;
+  /** Error description (on failure) */
+  error?: string;
+}
+
+/**
+ * ScheduledMessageRouter — abstraction for routing scheduled tasks to
+ * project-bound ChatAgent instances.
+ *
+ * This interface decouples the Scheduler from the concrete UnifiedMessageRouter
+ * (Phase 1, Issue #3331). The application layer wires the implementation at startup:
+ *
+ * ```typescript
+ * const messageRouter: ScheduledMessageRouter = {
+ *   route: async (options) => {
+ *     const message = createSystemMessage({ ... });
+ *     return unifiedMessageRouter.route(message);
+ *   },
+ * };
+ * ```
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage.
+ */
+export interface ScheduledMessageRouter {
+  /**
+   * Route a scheduled task to its target project-bound agent.
+   *
+   * @param options - Routing options
+   * @param options.projectKey - Target project key (e.g., 'owner/repo')
+   * @param options.payload - Task prompt content
+   * @param options.taskName - Name of the scheduled task
+   * @param options.trigger - Trigger type ('scheduled' | 'command')
+   * @param options.modelTier - Optional model tier override
+   * @returns Route result indicating success/failure
+   */
+  route(options: {
+    projectKey: string;
+    payload: string;
+    taskName: string;
+    trigger: 'scheduled' | 'command';
+    modelTier?: ModelTier;
+  }): Promise<ScheduledMessageRouteResult>;
+}
+
+/**
  * Scheduler options.
  *
  * Issue #711: No longer requires AgentPool.
  * Uses executor function for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
  * Issue #1041: Uses dependency injection for executor.
+ * Issue #3333: Added optional messageRouter for project-bound agent routing.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
   /** Callbacks for sending messages */
   callbacks: SchedulerCallbacks;
-  /** Task executor function */
+  /** Task executor function (used when projectKey is not set) */
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Optional message router for project-bound agent routing.
+   * When a task has `projectKey` and a router is provided, the task is routed
+   * to the existing project-bound ChatAgent instead of creating a short-lived one.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   */
+  messageRouter?: ScheduledMessageRouter;
 }
 
 /**
@@ -142,6 +227,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private messageRouter?: ScheduledMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -152,7 +238,8 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
-    logger.info('Scheduler created');
+    this.messageRouter = options.messageRouter;
+    logger.info({ hasMessageRouter: !!this.messageRouter }, 'Scheduler created');
   }
 
   /**
@@ -271,6 +358,7 @@ ${task.prompt}`;
    * ChatAgent is disposed after execution to free resources.
    * Issue #869: Added cooldown period check before execution.
    * Issue #1041: Uses injected executor function.
+   * Issue #3333: Routes via messageRouter when projectKey is set.
    *
    * @param task - Task to execute
    */
@@ -314,34 +402,11 @@ ${task.prompt}`;
     this.runningTasks.add(task.id);
 
     try {
-      // Send start notification
-      await this.callbacks.sendMessage(
-        task.chatId,
-        `⏰ 定时任务「${task.name}」开始执行...`
-      );
-
-      // Build wrapped prompt with anti-recursion instructions
-      const wrappedPrompt = this.buildScheduledTaskPrompt(task);
-
-      // Issue #1041: Use injected executor function
-      // Issue #1338: Pass model override for per-task model selection
-      // Issue #3059: Pass modelTier for tier-based model resolution
-      // Issue #3346: Wrap with timeout to prevent indefinite hangs
-      const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
-      });
-
-      try {
-        await Promise.race([
-          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
-          timeoutPromise,
-        ]);
-      } finally {
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId);
-        }
+      // Issue #3333: Route via messageRouter when projectKey is set
+      if (task.projectKey && this.messageRouter) {
+        await this.executeViaRouter(task);
+      } else {
+        await this.executeViaExecutor(task);
       }
 
       logger.info({ taskId: task.id }, 'Scheduled task completed');
@@ -376,6 +441,132 @@ ${task.prompt}`;
         logger.debug({ taskId: task.id, cooldownPeriod: task.cooldownPeriod }, 'Recorded task execution for cooldown');
       }
     }
+  }
+
+  /**
+   * Execute a task via the ScheduledMessageRouter (project-bound agent path).
+   *
+   * When a task has `projectKey`, it is routed to an existing project-bound
+   * ChatAgent instead of creating a short-lived agent. This enables stateful
+   * scheduled runs where the agent maintains context between executions.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   *
+   * @param task - Task with projectKey to route
+   */
+  private async executeViaRouter(task: ScheduledTask): Promise<void> {
+    // Send start notification
+    await this.callbacks.sendMessage(
+      task.chatId,
+      `⏰ 定时任务「${task.name}」开始执行（项目代理: ${task.projectKey}）...`
+    );
+
+    // Build wrapped prompt with anti-recursion instructions
+    const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
+    // Route via messageRouter to project-bound agent
+    // Issue #3346: Wrap with timeout to prevent indefinite hangs
+    const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
+    });
+
+    try {
+      // Guard: executeViaRouter is only called when both are present
+      const router = this.messageRouter;
+      const {projectKey} = task;
+      if (!router || !projectKey) {
+        throw new Error('executeViaRouter called without messageRouter or projectKey');
+      }
+
+      const routeResult = await Promise.race([
+        router.route({
+          projectKey,
+          payload: wrappedPrompt,
+          taskName: task.name,
+          trigger: 'scheduled',
+          modelTier: task.modelTier,
+        }),
+        timeoutPromise,
+      ]);
+
+      // Check if routing itself failed (distinct from agent execution failure)
+      if (!routeResult.ok) {
+        throw new Error(`Message routing failed: ${routeResult.error ?? 'unknown error'}`);
+      }
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  /**
+   * Execute a task via the injected executor (short-lived agent path).
+   *
+   * This is the original execution path — creates a fresh ChatAgent,
+   * runs the task, and disposes the agent. No state is preserved between runs.
+   *
+   * Issue #1041: Uses injected executor function.
+   *
+   * @param task - Task to execute via short-lived agent
+   */
+  private async executeViaExecutor(task: ScheduledTask): Promise<void> {
+    // Send start notification
+    await this.callbacks.sendMessage(
+      task.chatId,
+      `⏰ 定时任务「${task.name}」开始执行...`
+    );
+
+    // Build wrapped prompt with anti-recursion instructions
+    const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
+    // Issue #1041: Use injected executor function
+    // Issue #1338: Pass model override for per-task model selection
+    // Issue #3059: Pass modelTier for tier-based model resolution
+    // Issue #3346: Wrap with timeout to prevent indefinite hangs
+    const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
+    });
+
+    try {
+      await Promise.race([
+        this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+        timeoutPromise,
+      ]);
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  /**
+   * Manually trigger a scheduled task by its task ID.
+   *
+   * The task is loaded from ScheduleManager and executed immediately,
+   * bypassing the cron schedule. Cooldown and blocking checks still apply.
+   *
+   * This enables on-demand execution from admin commands or external triggers:
+   * ```typescript
+   * await scheduler.triggerTask('schedule-daily-maintenance');
+   * ```
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   *
+   * @param taskId - ID of the task to trigger
+   * @throws {TaskNotFoundError} If the task does not exist
+   */
+  async triggerTask(taskId: string): Promise<void> {
+    const task = await this.scheduleManager.get(taskId);
+    if (!task) {
+      throw new TaskNotFoundError(taskId);
+    }
+    logger.info({ taskId, name: task.name }, 'Manually triggering scheduled task');
+    await this.executeTask(task);
   }
 
   /**
