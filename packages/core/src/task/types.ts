@@ -33,3 +33,43 @@ export interface TaskDefinitionDetails {
   constraints: string[];
   quality_criteria: string[];
 }
+
+/**
+ * Task type classification for ETA estimation records.
+ * Used by TaskRecordManager to categorize task execution history.
+ */
+export type TaskRecordType =
+  | 'bugfix'        // Bug fix
+  | 'feature'       // New feature
+  | 'refactoring'   // Code refactoring
+  | 'research'      // Research or analysis
+  | 'test'          // Writing or running tests
+  | 'docs'          // Documentation
+  | 'chore';        // Maintenance tasks
+
+/**
+ * Task execution record for ETA estimation (Issue #1234 Phase 1).
+ *
+ * Records are stored as unstructured Markdown in `.claude/task-records.md`.
+ * Each record captures estimation vs actual time, enabling future ETA predictions
+ * to learn from historical patterns.
+ *
+ * Design principle: Non-structured Markdown storage, not structured data.
+ * The agent records these entries after completing significant tasks.
+ */
+export interface TaskRecord {
+  /** Date of task execution (YYYY-MM-DD) */
+  date: string;
+  /** Brief description of the task */
+  title: string;
+  /** Task type classification */
+  type: TaskRecordType;
+  /** Time estimate made before starting the task */
+  estimatedTime: string;
+  /** Reasoning behind the estimate — reference similar past tasks or complexity factors */
+  estimationBasis: string;
+  /** How long the task actually took */
+  actualTime: string;
+  /** Retrospective: what went well, what was underestimated, lessons learned */
+  review: string;
+}
