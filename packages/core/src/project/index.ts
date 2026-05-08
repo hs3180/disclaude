@@ -30,3 +30,12 @@ export type {
 } from './template-discovery.js';
 
 export { ProjectManager } from './project-manager.js';
+
+export type {
+  IssueStateEntry,
+  PrStateEntry,
+  ProjectSyncState,
+  ProjectState,
+} from './project-state.js';
+
+export { ProjectStateStore } from './project-state.js';

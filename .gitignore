@@ -45,6 +45,10 @@ Thumbs.db
 # Claude Code
 .claude/
 
+# Disclaude local state (project state files, persistence data)
+# Issue #3335: per-project operational state, not committed to git
+.disclaude/
+
 # Playwright MCP
 .playwright-mcp/
 .mcp.json
