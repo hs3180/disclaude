@@ -168,6 +168,17 @@ run_suite() {
     fi
     _SUITE_COUNT=$((_SUITE_COUNT + 1))
 
+    # Issue #3378: Check server health before each test suite.
+    # Long-running tests (e.g., Use Case 2 ~109s) can degrade server state,
+    # causing subsequent suites to fail with HTTP 500/000. Restart if needed.
+    if [ $_SUITE_COUNT -gt 1 ]; then
+        log_info "Checking server health before next suite..."
+        if ! ensure_server_healthy; then
+            log_error "Server health check failed and restart unsuccessful, aborting"
+            return 1
+        fi
+    fi
+
     run_test_script "$script" "$name"
 }
 

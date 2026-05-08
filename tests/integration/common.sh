@@ -217,6 +217,54 @@ stop_server() {
     fi
 }
 
+# Issue #3378: Deep health check that detects server degradation.
+# A simple /api/health ping may succeed even when the server is degraded
+# (e.g., after long-running tests that cause listener accumulation).
+# This function checks multiple indicators of server health.
+# Returns: 0 if healthy, 1 if degraded
+check_server_health() {
+    local health_url="${API_URL}/api/health"
+
+    # Check 1: Basic health endpoint
+    local health_response
+    health_response=$(curl -s --connect-timeout 5 --max-time 10 "$health_url" 2>&1)
+    if [ -z "$health_response" ] || ! echo "$health_response" | grep -q '"status":"ok"'; then
+        log_warn "Server health check failed: no valid response from ${health_url}"
+        return 1
+    fi
+
+    # Check 2: Check server log for degradation signs
+    if [ -f "${SERVER_LOG}" ]; then
+        # Check for MaxListenersExceededWarning in recent logs
+        if tail -100 "${SERVER_LOG}" 2>/dev/null | grep -q "MaxListenersExceededWarning"; then
+            log_warn "Server health check: MaxListenersExceededWarning detected in server logs"
+            # This is a warning sign but not necessarily fatal - log it but don't fail
+        fi
+    fi
+
+    return 0
+}
+
+# Issue #3378: Restart server if health check indicates degradation.
+# Returns: 0 if server is healthy (either was already healthy or restarted successfully), 1 on failure
+ensure_server_healthy() {
+    if ! is_server_running; then
+        log_info "Server not running, starting fresh..."
+        start_server || return 1
+        return 0
+    fi
+
+    if check_server_health; then
+        log_debug "Server health check passed"
+        return 0
+    fi
+
+    log_warn "Server appears degraded, restarting..."
+    stop_server
+    sleep 2
+    start_server || return 1
+}
+
 # Show server logs for debugging
 show_server_logs() {
     if [ -f "${SERVER_LOG}" ]; then

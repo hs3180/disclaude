@@ -580,11 +580,23 @@ export class UnixSocketIpcServer {
    *
    * Issue #1355: Ensures socket files are cleaned up on SIGTERM/SIGINT
    * to prevent stale files after PM2 restarts or process crashes.
+   * Issue #3378: Log warning when SIGINT/SIGTERM listener count approaches
+   * the default max (10) to aid early detection of listener leaks.
    */
   private registerProcessExitCleanup(): void {
     this.boundCleanupHandler = () => {
       void this.stop();
     };
+
+    // Issue #3378: Warn if listener count is getting high before adding more
+    const sigintCount = process.listenerCount('SIGINT');
+    const sigtermCount = process.listenerCount('SIGTERM');
+    if (sigintCount >= 8 || sigtermCount >= 8) {
+      logger.warn(
+        { sigintListeners: sigintCount, sigtermListeners: sigtermCount },
+        'High signal listener count detected — possible listener leak'
+      );
+    }
 
     process.on('SIGTERM', this.boundCleanupHandler);
     process.on('SIGINT', this.boundCleanupHandler);

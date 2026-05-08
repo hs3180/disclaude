@@ -220,11 +220,20 @@ async function main(): Promise<void> {
   }
 
   // Handle graceful shutdown
+  // Issue #3378: Remove signal handlers during shutdown to prevent
+  // MaxListenersExceededWarning from listener accumulation during
+  // integration tests that share a single server process.
   let isShuttingDown = false;
   const shutdown = async (): Promise<void> => {
     if (isShuttingDown) {return;}
     isShuttingDown = true;
     logger.info('Shutting down Primary Node...');
+
+    // Issue #3378: Remove signal handlers to prevent listener accumulation.
+    // Without this, repeated start/stop cycles (e.g., in integration tests)
+    // accumulate listeners until MaxListenersExceededWarning is triggered.
+    process.off('SIGINT', shutdown);
+    process.off('SIGTERM', shutdown);
 
     try {
       agentPool.disposeAll();
