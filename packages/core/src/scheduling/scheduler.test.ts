@@ -700,4 +700,227 @@ describe('Scheduler', () => {
       expect(error).toBeInstanceOf(TaskTimeoutError);
     });
   });
+
+  // ───────────────────────────────────────────
+  // Issue #3247: triggerTask() core method
+  // ───────────────────────────────────────────
+
+  describe('triggerTask (Issue #3247)', () => {
+    it('should trigger task found in activeJobs (phase 1 lookup)', async () => {
+      const task = createTask({ id: 'trigger-active' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerTask('trigger-active');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Verify executor received correct parameters
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Run tests'),
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
+    it('should trigger task found via scheduleManager (phase 2 fallback)', async () => {
+      const task = createTask({ id: 'trigger-disk' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      // Task is NOT added to activeJobs, so it falls back to scheduleManager
+      const result = await scheduler.triggerTask('trigger-disk');
+
+      expect(result).toBe(true);
+      expect(mockScheduleManager.get).toHaveBeenCalledWith('trigger-disk');
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should prefer activeJobs over scheduleManager when task is in both', async () => {
+      const activeTask = createTask({ id: 'trigger-pref', name: 'Active Version' });
+      const diskTask = createTask({ id: 'trigger-pref', name: 'Disk Version' });
+
+      scheduler.addTask(activeTask);
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(diskTask);
+
+      const result = await scheduler.triggerTask('trigger-pref');
+
+      expect(result).toBe(true);
+      // scheduleManager.get should NOT be called since activeJobs matched first
+      expect(mockScheduleManager.get).not.toHaveBeenCalled();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Verify it was the active version that was executed
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Active Version'),
+      );
+    });
+
+    it('should return false when task is not found anywhere', async () => {
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(undefined);
+
+      const result = await scheduler.triggerTask('nonexistent');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return false when task is found but disabled', async () => {
+      const disabledTask = createTask({ id: 'trigger-disabled', enabled: false });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(disabledTask);
+
+      const result = await scheduler.triggerTask('trigger-disabled');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should inherit blocking mechanism from executeTask', async () => {
+      // Create a blocking task with an executor that takes time
+      const blockingExecutor = vi.fn().mockReturnValue(new Promise(() => {})); // never resolves
+      const blockingScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: blockingExecutor,
+      });
+
+      const task = createTask({ id: 'trigger-block', blocking: true });
+      blockingScheduler.addTask(task);
+
+      // Trigger via cron fireOnTick (non-awaited) so execution runs in background
+      const jobs = blockingScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait until the task is marked as running
+      await vi.waitFor(() => {
+        expect(blockingScheduler.isTaskRunning('trigger-block')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Task is now running — triggerTask should find the task but executeTask skips due to blocking
+      const result = await blockingScheduler.triggerTask('trigger-block');
+      expect(result).toBe(true); // triggerTask found the task in activeJobs
+      // But executor was NOT called again — still only 1 call from the first trigger
+      expect(blockingExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should inherit cooldown mechanism from executeTask', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date(),
+          cooldownEndsAt: new Date(Date.now() + 60000),
+          remainingMs: 60000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'trigger-cd', cooldownPeriod: 60000 });
+      cooldownScheduler.addTask(task);
+
+      const result = await cooldownScheduler.triggerTask('trigger-cd');
+
+      expect(result).toBe(true); // Task was found and trigger initiated
+      // But executor should NOT be called due to cooldown
+      expect(mockExecutor).not.toHaveBeenCalled();
+      // Cooldown notification should be sent
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('冷静期'),
+      );
+    });
+
+    it('should inherit error handling from executeTask', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('trigger failure'));
+
+      const task = createTask({ id: 'trigger-err' });
+      scheduler.addTask(task);
+
+      // triggerTask should NOT throw — error is handled by executeTask
+      const result = await scheduler.triggerTask('trigger-err');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should inherit timeout protection from executeTask', async () => {
+      mockExecutor.mockReturnValueOnce(new Promise(() => {})); // never resolves
+
+      const task = createTask({ id: 'trigger-timeout', timeoutMs: 50 });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerTask('trigger-timeout');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行超时'),
+        );
+      }, { timeout: 3000 });
+    });
+
+    it('should wrap prompt with anti-recursion instructions', async () => {
+      const task = createTask({ id: 'trigger-wrap', name: 'Manual Task', prompt: 'Do manual work' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-wrap');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('Manual Task');
+      expect(promptArg).toContain('Do manual work');
+    });
+
+    it('should pass model and modelTier to executor via executeTask', async () => {
+      const task = createTask({
+        id: 'trigger-model',
+        createdBy: 'user-42',
+        model: 'claude-sonnet-4',
+        modelTier: 'low',
+      });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-model');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        'user-42',
+        'claude-sonnet-4',
+        'low',
+      );
+    });
+  });
 });
