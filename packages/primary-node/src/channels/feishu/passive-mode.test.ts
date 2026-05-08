@@ -223,4 +223,113 @@ describe('TriggerModeManager', () => {
       expect(manager.isSmallGroup('oc_small')).toBe(true);
     });
   });
+
+  describe('auto mode (Issue #3345)', () => {
+    it('should default to auto mode for unknown chats', () => {
+      const manager = new TriggerModeManager();
+      expect(manager.getMode('oc_new')).toBe('auto');
+    });
+
+    it('should not trigger in auto mode for non-small groups', () => {
+      const manager = new TriggerModeManager();
+      expect(manager.isTriggerEnabled('oc_new')).toBe(false);
+    });
+
+    it('should trigger in auto mode when marked as small group', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.isTriggerEnabled('oc_small')).toBe(true);
+    });
+
+    it('should not trigger in mention mode even for small groups', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      manager.setMode('oc_small', 'mention');
+      expect(manager.isTriggerEnabled('oc_small')).toBe(false);
+    });
+
+    it('should always trigger in always mode regardless of group size', () => {
+      const manager = new TriggerModeManager();
+      manager.setMode('oc_large', 'always');
+      expect(manager.isTriggerEnabled('oc_large')).toBe(true);
+    });
+
+    it('should support setMode with auto value', () => {
+      const manager = new TriggerModeManager();
+      manager.setMode('oc_chat', 'auto');
+      expect(manager.getMode('oc_chat')).toBe('auto');
+    });
+
+    it('should support getMode with enum-based interface', () => {
+      const manager = new TriggerModeManager();
+      manager.setMode('oc_always', 'always');
+      manager.setMode('oc_mention', 'mention');
+      manager.setMode('oc_auto', 'auto');
+
+      expect(manager.getMode('oc_always')).toBe('always');
+      expect(manager.getMode('oc_mention')).toBe('mention');
+      expect(manager.getMode('oc_auto')).toBe('auto');
+    });
+
+    it('should load auto mode from records without force-enabling', () => {
+      const manager = new TriggerModeManager();
+      const records = [
+        { chatId: 'oc_auto', triggerMode: 'auto' as const },
+      ];
+
+      const loaded = manager.initFromRecords(records);
+      // auto mode should not count as force-enabled
+      expect(loaded).toBe(0);
+      // But mode should be stored
+      expect(manager.getMode('oc_auto')).toBe('auto');
+      // Not enabled because not a small group
+      expect(manager.isTriggerEnabled('oc_auto')).toBe(false);
+    });
+
+    it('should load old records without triggerMode as auto default', () => {
+      const manager = new TriggerModeManager();
+      const records = [
+        { chatId: 'oc_old' },
+      ];
+
+      const loaded = manager.initFromRecords(records);
+      expect(loaded).toBe(0);
+      // Default is auto
+      expect(manager.getMode('oc_old')).toBe('auto');
+    });
+
+    it('should still load always mode records as force-enabled', () => {
+      const manager = new TriggerModeManager();
+      const records = [
+        { chatId: 'oc_always', triggerMode: 'always' as const },
+      ];
+
+      const loaded = manager.initFromRecords(records);
+      expect(loaded).toBe(1);
+      expect(manager.isTriggerEnabled('oc_always')).toBe(true);
+    });
+
+    it('should still load legacy passiveMode:false as force-enabled', () => {
+      const manager = new TriggerModeManager();
+      const records = [
+        { chatId: 'oc_legacy', passiveMode: false },
+      ];
+
+      const loaded = manager.initFromRecords(records);
+      expect(loaded).toBe(1);
+      expect(manager.isTriggerEnabled('oc_legacy')).toBe(true);
+    });
+
+    it('should include always-mode chats in getTriggerEnabledChats', () => {
+      const manager = new TriggerModeManager();
+      manager.setMode('oc_always', 'always');
+      manager.setMode('oc_mention', 'mention');
+      manager.setMode('oc_auto', 'auto');
+
+      const enabled = manager.getTriggerEnabledChats();
+      expect(enabled).toContain('oc_always');
+      expect(enabled).not.toContain('oc_mention');
+      expect(enabled).not.toContain('oc_auto');
+    });
+  });
 });
