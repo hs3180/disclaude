@@ -24,6 +24,7 @@ import {
   setLogLevel,
   isLevelEnabled,
   flushLogger,
+  closeLogger,
 } from './logger.js';
 
 describe('logger', () => {
@@ -376,7 +377,7 @@ describe('logger', () => {
       await expect(flushLogger()).resolves.toBeUndefined();
     });
 
-    it('should resolve after a timeout when root logger exists', async () => {
+    it('should resolve for stdout logger without delay', async () => {
       process.env.NODE_ENV = 'test';
       await initLogger();
 
@@ -384,8 +385,49 @@ describe('logger', () => {
       await flushLogger();
       const elapsed = Date.now() - start;
 
-      // flushLogger waits 100ms for pino to flush
-      expect(elapsed).toBeGreaterThanOrEqual(90);
+      // Issue #3416: flushLogger no longer uses setTimeout(100ms) — it
+      // calls SonicBoom.flush() on the file stream. For stdout logger
+      // (test environment), there is no file stream, so it resolves fast.
+      expect(elapsed).toBeLessThan(50);
+    });
+
+    it('should flush pino-roll stream when file logging is active', async () => {
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-flush-${Date.now()}`;
+      const logger = await initLogger({
+        fileLogging: true,
+        logDir: tmpDir,
+      });
+
+      // Write some data
+      logger.info('before flush');
+
+      // Should not throw
+      await expect(flushLogger()).resolves.toBeUndefined();
+
+      // Cleanup
+      await flushLogger();
+      const fs = await import('fs');
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+  });
+
+  describe('closeLogger', () => {
+    it('should flush and reset the logger', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger();
+      expect(getRootLogger()).toBeDefined();
+
+      await closeLogger();
+
+      // After close, root logger should be null — getRootLogger creates a new one
+      const newLogger = getRootLogger();
+      expect(newLogger).toBeDefined();
+    });
+
+    it('should handle being called when no logger exists', async () => {
+      resetLogger();
+      await expect(closeLogger()).resolves.toBeUndefined();
     });
   });
 
@@ -502,6 +544,20 @@ describe('logger', () => {
       const second = await initLogger({ level: 'debug' });
       expect(second).not.toBe(first);
       expect(second.level).toBe('debug');
+    });
+
+    it('should properly destroy currentLogDest on resetLogger', async () => {
+      // Issue #3416: Verify resetLogger destroys the file stream, not just PassThrough
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-reset-${Date.now()}`;
+      await initLogger({ fileLogging: true, logDir: tmpDir });
+
+      // resetLogger should not throw even with file streams active
+      expect(() => resetLogger()).not.toThrow();
+
+      // Cleanup
+      const fs = await import('fs');
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
     it('should handle concurrent createLogger calls after reset', () => {

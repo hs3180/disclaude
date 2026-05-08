@@ -22,6 +22,7 @@ import {
   createDefaultRuntimeContext,
   createLogger,
   initLogger,
+  flushLogger,
   Config,
   type DisclaudeConfigWithChannels,
   createControlHandler,
@@ -231,9 +232,17 @@ async function main(): Promise<void> {
       await lifecycleManager.stopAll();
       await primaryNode.stop();
       logger.info('Primary Node stopped');
+
+      // Issue #3416: Flush all buffered log entries to disk before exiting.
+      // Without this, pino's async SonicBoom writes may be lost, causing
+      // log truncation and corruption in production (especially with pino-roll rotation).
+      await flushLogger();
+
       process.exit(0);
     } catch (error) {
       logger.error({ err: error }, 'Error during shutdown');
+      // Best-effort flush even on error
+      await flushLogger().catch(() => {});
       process.exit(1);
     }
   };

@@ -12,6 +12,7 @@ export {
   setLogLevel,
   isLevelEnabled,
   flushLogger,
+  closeLogger,
 } from './logger.js';
 
 // Error Handler
