@@ -95,6 +95,14 @@ export type {
   PermissionMode,
   SystemPromptPreset,
 
+  // 权限回调 (Issue #2890)
+  CanUseTool,
+  PermissionResult,
+  PermissionUpdate,
+  PermissionUpdateDestination,
+  PermissionBehavior,
+  PermissionRuleValue,
+
   // 查询结果
   QueryHandle,
   StreamQueryResult,

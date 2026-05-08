@@ -74,6 +74,13 @@ export type {
   PermissionMode,
   QueryHandle,
   StreamQueryResult,
+  // Permission callback types (Issue #2890)
+  CanUseTool,
+  PermissionResult,
+  PermissionUpdate,
+  PermissionUpdateDestination,
+  PermissionBehavior,
+  PermissionRuleValue,
   // Stats types
   QueryUsageStats,
   ProviderInfo,

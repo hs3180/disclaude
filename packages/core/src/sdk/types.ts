@@ -168,11 +168,72 @@ export interface InlineMcpServerConfig {
 export type McpServerConfig = StdioMcpServerConfig | InlineMcpServerConfig;
 
 // ============================================================================
-// 查询选项
+// 权限回调（Issue #2890: canUseTool 集成）
 // ============================================================================
 
 /** 权限模式 */
 export type PermissionMode = 'default' | 'bypassPermissions';
+
+/** 权限规则值 */
+export interface PermissionRuleValue {
+  toolName: string;
+  ruleContent?: string;
+}
+
+/** 权限行为 */
+export type PermissionBehavior = 'allow' | 'deny';
+
+/** 权限更新目标 */
+export type PermissionUpdateDestination =
+  | 'userSettings'
+  | 'projectSettings'
+  | 'localSettings'
+  | 'session'
+  | 'cliArg';
+
+/** 权限更新操作 */
+export type PermissionUpdate =
+  | { type: 'addRules'; rules: PermissionRuleValue[]; behavior: PermissionBehavior; destination: PermissionUpdateDestination }
+  | { type: 'replaceRules'; rules: PermissionRuleValue[]; behavior: PermissionBehavior; destination: PermissionUpdateDestination }
+  | { type: 'removeRules'; rules: PermissionRuleValue[]; behavior: PermissionBehavior; destination: PermissionUpdateDestination }
+  | { type: 'setMode'; mode: PermissionMode; destination: PermissionUpdateDestination }
+  | { type: 'addDirectories'; directories: string[]; destination: PermissionUpdateDestination }
+  | { type: 'removeDirectories'; directories: string[]; destination: PermissionUpdateDestination };
+
+/** 权限回调结果 */
+export type PermissionResult =
+  | { behavior: 'allow'; updatedInput?: Record<string, unknown>; updatedPermissions?: PermissionUpdate[]; toolUseID?: string }
+  | { behavior: 'deny'; message: string; interrupt?: boolean; toolUseID?: string };
+
+/**
+ * 工具使用权限回调（Issue #2890）
+ *
+ * 在每次工具执行前调用，决定是否允许该操作。
+ * 参考 claude-agent-acp 的实现模式，支持：
+ * - allow: 允许工具执行
+ * - deny: 拒绝工具执行并显示原因
+ *
+ * 此回调使飞书渠道可以实现交互式权限确认（如工具审批卡片），
+ * 同时保持 bypassPermissions 模式下自动批准所有操作。
+ */
+export type CanUseTool = (
+  toolName: string,
+  input: Record<string, unknown>,
+  options: {
+    /** 中断信号 */
+    signal: AbortSignal;
+    /** 权限更新建议 */
+    suggestions?: PermissionUpdate[];
+    /** 被阻止的文件路径 */
+    blockedPath?: string;
+    /** 触发权限请求的原因 */
+    decisionReason?: string;
+    /** 工具调用唯一 ID */
+    toolUseID: string;
+    /** 子 Agent ID（如适用） */
+    agentID?: string;
+  },
+) => Promise<PermissionResult>;
 
 /** System prompt preset 配置 */
 export interface SystemPromptPreset {
@@ -213,6 +274,17 @@ export interface AgentQueryOptions {
    * Provider 层将其传递给 SDK 的 stderr 选项。
    */
   stderr?: (data: string) => void;
+  /**
+   * 工具使用权限回调（Issue #2890）
+   *
+   * 在每次工具执行前调用，决定是否允许该操作。
+   * 当未提供时，SDK 将使用 permissionMode 决定行为：
+   * - `bypassPermissions`（默认）: 自动批准所有操作
+   * - `default`: 使用 SDK 内置的权限提示
+   *
+   * 提供此回调后，可实现自定义权限确认流程（如飞书卡片审批）。
+   */
+  canUseTool?: CanUseTool;
 }
 
 // ============================================================================

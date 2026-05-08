@@ -43,6 +43,14 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * Tool permission callback (Issue #2890)
+   *
+   * When provided, this callback is invoked before each tool execution
+   * to determine if the operation should be allowed.
+   * When omitted, SDK uses permissionMode to decide behavior.
+   */
+  canUseTool?: import('../sdk/types.js').CanUseTool;
 }
 
 /**
@@ -169,6 +177,11 @@ export abstract class BaseAgent implements Disposable {
     }
     if (extra.disallowedTools) {
       options.disallowedTools = extra.disallowedTools;
+    }
+
+    // Add canUseTool permission callback (Issue #2890)
+    if (extra.canUseTool) {
+      options.canUseTool = extra.canUseTool;
     }
 
     // Add MCP servers (convert to SDK format)

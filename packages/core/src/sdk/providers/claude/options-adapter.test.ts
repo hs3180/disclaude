@@ -165,6 +165,27 @@ describe('adaptOptions', () => {
 
     expect(result.systemPrompt).toBeUndefined();
   });
+
+  it('should pass through canUseTool callback (Issue #2890)', () => {
+    const canUseTool = async () => {
+      await Promise.resolve();
+      return { behavior: 'allow' as const };
+    };
+    const result = adaptOptions({
+      settingSources: ['project'],
+      canUseTool,
+    });
+
+    expect(result.canUseTool).toBe(canUseTool);
+  });
+
+  it('should not include canUseTool when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.canUseTool).toBeUndefined();
+  });
 });
 
 describe('adaptInput', () => {

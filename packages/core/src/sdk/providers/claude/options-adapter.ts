@@ -30,6 +30,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.permissionMode = options.permissionMode;
   }
 
+  // 权限回调 (Issue #2890): 直接传递 canUseTool 到 SDK
+  if (options.canUseTool) {
+    sdkOptions.canUseTool = options.canUseTool;
+  }
+
   // System prompt 配置 (Issue #2890)
   if (options.systemPrompt) {
     sdkOptions.systemPrompt = options.systemPrompt;
