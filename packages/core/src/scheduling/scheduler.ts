@@ -379,6 +379,43 @@ ${task.prompt}`;
   }
 
   /**
+   * Manually trigger a scheduled task for immediate execution.
+   * Bypasses the cron schedule and runs the task right away.
+   *
+   * Uses two-phase lookup:
+   * 1. Check activeJobs (in-memory cron jobs) for fast access
+   * 2. Fall back to ScheduleManager.get() (disk) for tasks not currently scheduled
+   *
+   * Reuses executeTask() which automatically inherits blocking, cooldown,
+   * error handling, timeout, and notification logic.
+   *
+   * Issue #3247: triggerTask() core method.
+   *
+   * @param taskId - ID of the task to trigger
+   * @returns true if task was found and triggered, false if not found or disabled
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    // Phase 1: Look up in active jobs (fast, in-memory)
+    const activeEntry = this.activeJobs.get(taskId);
+    if (activeEntry) {
+      logger.info({ taskId, name: activeEntry.task.name, source: 'activeJobs' }, 'Manually triggering task');
+      await this.executeTask(activeEntry.task);
+      return true;
+    }
+
+    // Phase 2: Fall back to ScheduleManager (disk lookup)
+    const task = await this.scheduleManager.get(taskId);
+    if (!task || !task.enabled) {
+      logger.info({ taskId, found: !!task, enabled: task?.enabled }, 'Task not found or disabled, skipping trigger');
+      return false;
+    }
+
+    logger.info({ taskId, name: task.name, source: 'scheduleManager' }, 'Manually triggering task');
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
    * Reload all tasks from ScheduleManager.
    * Useful after external changes to the schedule storage.
    */
