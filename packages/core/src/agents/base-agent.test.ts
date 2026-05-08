@@ -342,13 +342,131 @@ describe('BaseAgent', () => {
 
       const result = agent.testCreateQueryStream(inputStream, defaultOptions);
 
-      // Consume the iterator to trigger input conversion
+      // Consume the output iterator (empty, but ensures stream is set up)
       for await (const _ of result.iterator) {
         // consume
       }
 
       // The input to queryStream should be an async generator
       expect(capturedInput).toBeDefined();
+    });
+
+    it('should convert string content in input messages (Issue #1617)', async () => {
+      let capturedInput: AsyncGenerator<unknown> | undefined;
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      mockSdkProvider.queryStream.mockImplementation((input: unknown) => {
+        capturedInput = input as AsyncGenerator<unknown>;
+        return {
+          handle: mockHandle,
+          iterator: (async function* () {
+            // empty — we only care about input conversion
+          })(),
+        };
+      });
+
+      const inputStream = createMockInput([
+        {
+          type: 'user' as const,
+          message: { role: 'user' as const, content: 'Hello string' },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
+        },
+      ]);
+
+      agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      // Manually consume the captured input to trigger convertInput()
+      expect(capturedInput).toBeDefined();
+      const converted: unknown[] = [];
+      for await (const item of capturedInput!) {
+        converted.push(item);
+      }
+
+      expect(converted).toHaveLength(1);
+      expect(converted[0]).toEqual({
+        role: 'user',
+        content: 'Hello string',
+      });
+    });
+
+    it('should JSON.stringify non-string content in input messages (Issue #1617)', async () => {
+      let capturedInput: AsyncGenerator<unknown> | undefined;
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      mockSdkProvider.queryStream.mockImplementation((input: unknown) => {
+        capturedInput = input as AsyncGenerator<unknown>;
+        return {
+          handle: mockHandle,
+          iterator: (async function* () {
+            // empty
+          })(),
+        };
+      });
+
+      const inputStream = createMockInput([
+        {
+          type: 'user' as const,
+          message: {
+            role: 'user' as const,
+            content: [{ type: 'text' as const, text: 'Hello' }],
+          },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
+        },
+      ]);
+
+      agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      expect(capturedInput).toBeDefined();
+      const converted: unknown[] = [];
+      for await (const item of capturedInput!) {
+        converted.push(item);
+      }
+
+      expect(converted).toHaveLength(1);
+      expect(converted[0]).toEqual({
+        role: 'user',
+        content: JSON.stringify([{ type: 'text', text: 'Hello' }]),
+      });
+    });
+
+    it('should handle null/undefined content by stringifying empty (Issue #1617)', async () => {
+      let capturedInput: AsyncGenerator<unknown> | undefined;
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      mockSdkProvider.queryStream.mockImplementation((input: unknown) => {
+        capturedInput = input as AsyncGenerator<unknown>;
+        return {
+          handle: mockHandle,
+          iterator: (async function* () {
+            // empty
+          })(),
+        };
+      });
+
+      const inputStream = createMockInput([
+        {
+          type: 'user' as const,
+          message: { role: 'user' as const, content: undefined as unknown as string },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
+        },
+      ]);
+
+      agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      expect(capturedInput).toBeDefined();
+      const converted: unknown[] = [];
+      for await (const item of capturedInput!) {
+        converted.push(item);
+      }
+
+      expect(converted).toHaveLength(1);
+      expect(converted[0]).toEqual({
+        role: 'user',
+        content: JSON.stringify(''),  // undefined content → '' → JSON.stringify('')
+      });
     });
 
     it('should handle StreamingUserMessage with ContentBlock array', async () => {
