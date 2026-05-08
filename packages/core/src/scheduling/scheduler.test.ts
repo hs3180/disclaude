@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor, type ScheduledMessageRouter } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -698,6 +698,296 @@ describe('Scheduler', () => {
       const error = new TaskTimeoutError(5000);
       expect(error).toBeInstanceOf(Error);
       expect(error).toBeInstanceOf(TaskTimeoutError);
+    });
+  });
+
+  // ───────────────────────────────────────────
+  // Issue #3333: Project-bound routing
+  // ───────────────────────────────────────────
+
+  describe('Project-bound routing with projectKey (Issue #3333)', () => {
+    /** Helper: fire a cron job and wait for async side-effects */
+    function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
+      void jobs[0].job.fireOnTick();
+    }
+
+    let mockRouter: ScheduledMessageRouter;
+
+    beforeEach(() => {
+      mockRouter = {
+        routeScheduledMessage: vi.fn().mockResolvedValue({
+          ok: true,
+          chatId: 'oc_project_chat',
+        }),
+      };
+    });
+
+    it('should route via messageRouter when projectKey is set', async () => {
+      const task = createTask({ id: 'proj-1', projectKey: 'owner/repo' });
+
+      const projScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: mockRouter,
+      });
+
+      projScheduler.addTask(task);
+      const jobs = projScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockRouter.routeScheduledMessage).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockRouter.routeScheduledMessage).toHaveBeenCalledWith(
+        'owner/repo',
+        expect.stringContaining('Run tests'),
+        'Test Task',
+        undefined, // modelTier
+      );
+
+      // Executor should NOT be called
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should pass modelTier to messageRouter when set', async () => {
+      const task = createTask({
+        id: 'proj-tier',
+        projectKey: 'owner/repo',
+        modelTier: 'low',
+      });
+
+      const projScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: mockRouter,
+      });
+
+      projScheduler.addTask(task);
+      const jobs = projScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockRouter.routeScheduledMessage).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockRouter.routeScheduledMessage).toHaveBeenCalledWith(
+        'owner/repo',
+        expect.any(String),
+        'Test Task',
+        'low', // modelTier
+      );
+    });
+
+    it('should fall back to executor when messageRouter is not configured', async () => {
+      const task = createTask({ id: 'proj-fallback', projectKey: 'owner/repo' });
+
+      // Scheduler without messageRouter
+      const fallbackScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+      });
+
+      fallbackScheduler.addTask(task);
+      const jobs = fallbackScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Executor should be called as fallback
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('Run tests'),
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
+    it('should send error notification when routing fails', async () => {
+      mockRouter = {
+        routeScheduledMessage: vi.fn().mockResolvedValue({
+          ok: false,
+          error: 'Project not found: unknown/repo',
+        }),
+      };
+
+      const task = createTask({ id: 'proj-fail', projectKey: 'unknown/repo' });
+
+      const projScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: mockRouter,
+      });
+
+      projScheduler.addTask(task);
+      const jobs = projScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+
+      // Executor should NOT be called
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect cooldown for project-bound tasks', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date(),
+          cooldownEndsAt: new Date(Date.now() + 30000),
+          remainingMs: 30000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const task = createTask({
+        id: 'proj-cooldown',
+        projectKey: 'owner/repo',
+        cooldownPeriod: 60000,
+      });
+
+      const projScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: mockRouter,
+        cooldownManager: mockCooldownManager,
+      });
+
+      projScheduler.addTask(task);
+      const jobs = projScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('冷静期'),
+        );
+      }, { timeout: 2000 });
+
+      // Router should NOT be called — task is in cooldown
+      expect(mockRouter.routeScheduledMessage).not.toHaveBeenCalled();
+    });
+
+    it('should respect blocking for project-bound tasks', async () => {
+      const task = createTask({
+        id: 'proj-blocking',
+        projectKey: 'owner/repo',
+        blocking: true,
+      });
+
+      const projScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: mockRouter,
+      });
+
+      // Simulate running task
+      (projScheduler as unknown as { runningTasks: Set<string> }).runningTasks.add('proj-blocking');
+
+      projScheduler.addTask(task);
+      const jobs = projScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      // Give it a moment to process
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Router should NOT be called — task is blocked
+      expect(mockRouter.routeScheduledMessage).not.toHaveBeenCalled();
+    });
+
+    it('should wrap prompt with anti-recursion for project-bound tasks', async () => {
+      const task = createTask({
+        id: 'proj-prompt',
+        name: 'Daily Sync',
+        prompt: 'Check for new issues',
+        projectKey: 'owner/repo',
+      });
+
+      const projScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: mockRouter,
+      });
+
+      projScheduler.addTask(task);
+      const jobs = projScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockRouter.routeScheduledMessage).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = (mockRouter.routeScheduledMessage as Mock).mock.calls[0];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('Daily Sync');
+      expect(promptArg).toContain('Check for new issues');
+    });
+
+    it('should clear running state after project-bound task completes', async () => {
+      const task = createTask({ id: 'proj-state', projectKey: 'owner/repo' });
+
+      const projScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: mockRouter,
+      });
+
+      projScheduler.addTask(task);
+      const jobs = projScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(projScheduler.isTaskRunning('proj-state')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should timeout project-bound tasks that hang', async () => {
+      mockRouter = {
+        routeScheduledMessage: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
+      };
+
+      const task = createTask({
+        id: 'proj-timeout',
+        projectKey: 'owner/repo',
+        timeoutMs: 50, // very short timeout for testing
+      });
+
+      const projScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        messageRouter: mockRouter,
+      });
+
+      projScheduler.addTask(task);
+      const jobs = projScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行超时'),
+        );
+      }, { timeout: 3000 });
     });
   });
 });

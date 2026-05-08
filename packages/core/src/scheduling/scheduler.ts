@@ -88,22 +88,75 @@ export interface SchedulerCallbacks {
 export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string, modelTier?: ModelTier) => Promise<void>;
 
 /**
+ * Result of routing a scheduled message to a project-bound agent.
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage (Phase 3).
+ */
+export interface ScheduledRouteResult {
+  /** Whether the message was routed successfully */
+  ok: boolean;
+  /** Target chatId where the message was routed */
+  chatId?: string;
+  /** Error message if routing failed */
+  error?: string;
+}
+
+/**
+ * Minimal interface for routing scheduled messages to project-bound agents.
+ *
+ * This decouples the Scheduler from the concrete UnifiedMessageRouter (Phase 1).
+ * When Phase 1 is merged, UnifiedMessageRouter can implement this interface
+ * directly or through a thin adapter.
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage (Phase 3).
+ */
+export interface ScheduledMessageRouter {
+  /**
+   * Route a scheduled message to a project-bound agent.
+   *
+   * @param projectKey - Target project identifier (e.g., 'owner/repo')
+   * @param payload - The task prompt to deliver
+   * @param taskName - Name of the scheduled task (for logging/traceability)
+   * @param modelTier - Optional model tier override
+   * @returns Route result with status and target chatId
+   */
+  routeScheduledMessage(
+    projectKey: string,
+    payload: string,
+    taskName: string,
+    modelTier?: string,
+  ): Promise<ScheduledRouteResult>;
+}
+
+/**
  * Scheduler options.
  *
  * Issue #711: No longer requires AgentPool.
  * Uses executor function for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
  * Issue #1041: Uses dependency injection for executor.
+ * Issue #3333: Added messageRouter for project-bound agent routing.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
   /** Callbacks for sending messages */
   callbacks: SchedulerCallbacks;
-  /** Task executor function */
+  /** Task executor function (used when projectKey is not set) */
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Message router for project-bound agent routing.
+   *
+   * When provided and a task has a `projectKey`, the scheduler routes the
+   * message through this router instead of creating a short-lived agent.
+   * This enables stateful scheduled execution with context maintained
+   * between runs.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage (Phase 3).
+   */
+  messageRouter?: ScheduledMessageRouter;
 }
 
 /**
@@ -142,6 +195,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private messageRouter?: ScheduledMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -152,6 +206,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.messageRouter = options.messageRouter;
     logger.info('Scheduler created');
   }
 
@@ -323,9 +378,11 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
-      // Issue #1041: Use injected executor function
-      // Issue #1338: Pass model override for per-task model selection
-      // Issue #3059: Pass modelTier for tier-based model resolution
+      // Issue #3333: Route via MessageRouter for project-bound tasks.
+      // When projectKey is set and messageRouter is available, route through
+      // the UnifiedMessageRouter to a project-bound ChatAgent instead of
+      // creating a short-lived agent. This enables stateful execution with
+      // context maintained between scheduled runs.
       // Issue #3346: Wrap with timeout to prevent indefinite hangs
       const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -335,7 +392,7 @@ ${task.prompt}`;
 
       try {
         await Promise.race([
-          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+          this.executeTaskCore(task, wrappedPrompt),
           timeoutPromise,
         ]);
       } finally {
@@ -375,6 +432,60 @@ ${task.prompt}`;
         await this.cooldownManager.recordExecution(task.id, task.cooldownPeriod);
         logger.debug({ taskId: task.id, cooldownPeriod: task.cooldownPeriod }, 'Recorded task execution for cooldown');
       }
+    }
+  }
+
+  /**
+   * Core execution logic — routes through the appropriate execution path.
+   *
+   * Issue #3333: When `projectKey` is set and `messageRouter` is available,
+   * the task is routed via the UnifiedMessageRouter to a project-bound ChatAgent.
+   * This enables stateful execution with context maintained between runs.
+   *
+   * When `projectKey` is not set (or messageRouter is unavailable), falls back
+   * to the existing short-lived agent executor for full backward compatibility.
+   *
+   * @param task - Task to execute
+   * @param wrappedPrompt - Prompt wrapped with anti-recursion instructions
+   */
+  private async executeTaskCore(task: ScheduledTask, wrappedPrompt: string): Promise<void> {
+    if (task.projectKey && this.messageRouter) {
+      // Project-bound routing: route via UnifiedMessageRouter
+      logger.info(
+        { taskId: task.id, name: task.name, projectKey: task.projectKey },
+        'Routing scheduled task via MessageRouter to project-bound agent'
+      );
+
+      const result = await this.messageRouter.routeScheduledMessage(
+        task.projectKey,
+        wrappedPrompt,
+        task.name,
+        task.modelTier,
+      );
+
+      if (!result.ok) {
+        throw new Error(
+          `Failed to route scheduled task to project "${task.projectKey}": ${result.error ?? 'unknown error'}`
+        );
+      }
+
+      logger.info(
+        { taskId: task.id, name: task.name, projectKey: task.projectKey, chatId: result.chatId },
+        'Scheduled task routed to project-bound agent'
+      );
+    } else {
+      // Legacy path: short-lived agent executor (backward compatible)
+      // Issue #1041: Use injected executor function
+      // Issue #1338: Pass model override for per-task model selection
+      // Issue #3059: Pass modelTier for tier-based model resolution
+      if (task.projectKey && !this.messageRouter) {
+        logger.warn(
+          { taskId: task.id, name: task.name, projectKey: task.projectKey },
+          'Task has projectKey but no messageRouter configured — falling back to executor'
+        );
+      }
+
+      await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier);
     }
   }
 

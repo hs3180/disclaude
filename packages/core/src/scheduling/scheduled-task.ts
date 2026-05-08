@@ -62,4 +62,18 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
+  /**
+   * Target project key for project-bound agent routing.
+   *
+   * When set, the scheduled task creates a SystemMessage and routes it
+   * via UnifiedMessageRouter to the project-bound ChatAgent, enabling
+   * stateful execution with context maintained between scheduled runs.
+   *
+   * When not set, the existing short-lived agent path is used (backward compatible).
+   *
+   * Defined in schedule markdown frontmatter (e.g., `projectKey: "owner/repo"`).
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage (Phase 3).
+   */
+  projectKey?: string;
 }
