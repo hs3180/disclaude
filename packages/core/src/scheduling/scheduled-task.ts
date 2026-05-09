@@ -62,4 +62,17 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
+  /**
+   * Project key for project-bound scheduled tasks.
+   * When set, the scheduled task routes through an existing project-bound
+   * ChatAgent instead of creating a short-lived agent.
+   *
+   * The ChatAgent uses the project's working directory as its cwd and
+   * maintains state between scheduled executions.
+   *
+   * Defined in schedule markdown frontmatter (e.g., `projectKey: "owner/repo"`).
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   */
+  projectKey?: string;
 }

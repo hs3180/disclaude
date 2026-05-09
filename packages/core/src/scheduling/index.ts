@@ -69,6 +69,7 @@ export {
   TaskTimeoutError,
   type SchedulerCallbacks,
   type TaskExecutor,
+  type ProjectBoundTaskExecutor,
   type SchedulerOptions,
 } from './scheduler.js';
 

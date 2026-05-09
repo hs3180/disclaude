@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor, type ProjectBoundTaskExecutor } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -786,6 +786,210 @@ describe('Scheduler', () => {
       const error = new TaskTimeoutError(5000);
       expect(error).toBeInstanceOf(Error);
       expect(error).toBeInstanceOf(TaskTimeoutError);
+    });
+  });
+
+  describe('project-bound execution (Issue #3333)', () => {
+    let mockProjectBoundExecutor: Mock<ProjectBoundTaskExecutor>;
+
+    beforeEach(() => {
+      mockProjectBoundExecutor = vi.fn().mockResolvedValue(undefined);
+    });
+
+    it('should use projectBoundExecutor when task has projectKey', async () => {
+      const projectScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        projectBoundExecutor: mockProjectBoundExecutor,
+      });
+
+      const task = createTask({
+        id: 'project-1',
+        projectKey: 'owner/repo',
+      });
+      projectScheduler.addTask(task);
+
+      const jobs = projectScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockProjectBoundExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Default executor should NOT be called
+      expect(mockExecutor).not.toHaveBeenCalled();
+
+      // projectBoundExecutor should receive projectKey, prompt, name, modelTier
+      expect(mockProjectBoundExecutor).toHaveBeenCalledWith(
+        'owner/repo',
+        expect.stringContaining('Run tests'),
+        'Test Task',
+        undefined,
+      );
+    });
+
+    it('should pass modelTier to projectBoundExecutor', async () => {
+      const projectScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        projectBoundExecutor: mockProjectBoundExecutor,
+      });
+
+      const task = createTask({
+        id: 'project-tier',
+        projectKey: 'owner/repo',
+        modelTier: 'low',
+      });
+      projectScheduler.addTask(task);
+
+      const jobs = projectScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockProjectBoundExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockProjectBoundExecutor).toHaveBeenCalledWith(
+        'owner/repo',
+        expect.any(String),
+        'Test Task',
+        'low',
+      );
+    });
+
+    it('should fall back to default executor when no projectBoundExecutor', async () => {
+      // scheduler (no projectBoundExecutor) is created in beforeEach
+      const task = createTask({
+        id: 'no-pbe',
+        projectKey: 'owner/repo',
+      });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Default executor should be called with chatId from task
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
+    it('should fall back to default executor when task has no projectKey', async () => {
+      const projectScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        projectBoundExecutor: mockProjectBoundExecutor,
+      });
+
+      // Task without projectKey
+      const task = createTask({ id: 'no-pk' });
+      projectScheduler.addTask(task);
+
+      const jobs = projectScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Default executor should be called
+      expect(mockProjectBoundExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should handle projectBoundExecutor errors', async () => {
+      mockProjectBoundExecutor.mockRejectedValueOnce(new Error('Project not found'));
+
+      const projectScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        projectBoundExecutor: mockProjectBoundExecutor,
+      });
+
+      const task = createTask({
+        id: 'project-err',
+        projectKey: 'nonexistent/repo',
+      });
+      projectScheduler.addTask(task);
+
+      const jobs = projectScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should apply timeout to projectBoundExecutor', async () => {
+      mockProjectBoundExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const projectScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        projectBoundExecutor: mockProjectBoundExecutor,
+      });
+
+      const task = createTask({
+        id: 'project-timeout',
+        projectKey: 'owner/repo',
+        timeoutMs: 50,
+      });
+      projectScheduler.addTask(task);
+
+      const jobs = projectScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行超时'),
+        );
+      }, { timeout: 3000 });
+    });
+
+    it('should wrap prompt with anti-recursion for project-bound tasks', async () => {
+      const projectScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        projectBoundExecutor: mockProjectBoundExecutor,
+      });
+
+      const task = createTask({
+        id: 'project-wrap',
+        projectKey: 'owner/repo',
+        name: 'Daily Sync',
+        prompt: 'Check for new issues',
+      });
+      projectScheduler.addTask(task);
+
+      const jobs = projectScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockProjectBoundExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Extract the prompt argument (second positional arg) from the first call
+      const firstCallArgs = mockProjectBoundExecutor.mock.calls[0] as unknown as string[];
+      // eslint-disable-next-line prefer-destructuring
+      const promptArg = firstCallArgs[1];
+      expect(promptArg).toContain('Check for new issues');
     });
   });
 });

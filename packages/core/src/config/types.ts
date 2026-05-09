@@ -349,6 +349,24 @@ export interface SessionTimeoutConfig {
 export type RunMode = 'comm' | 'exec';
 
 /**
+ * Project configuration for project-bound agent binding.
+ * Maps a project key to a chatId and working directory,
+ * enabling scheduled tasks to route to persistent project-bound agents.
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage.
+ */
+export interface ProjectConfig {
+  /** Project key identifier (e.g., "owner/repo") */
+  key: string;
+  /** Working directory for the project */
+  workingDir: string;
+  /** Chat ID bound to this project (agent replies go here) */
+  chatId: string;
+  /** Default model tier for project-bound tasks (optional) */
+  modelTier?: ModelTier;
+}
+
+/**
  * Main configuration interface (core).
  *
  * This represents the structure of disclaude.config.yaml WITHOUT channel-specific config.
@@ -394,6 +412,20 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+  /**
+   * Project configurations for project-bound agent binding.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   *
+   * ```yaml
+   * projects:
+   *   - key: "hs3180/disclaude"
+   *     workingDir: "."
+   *     chatId: "oc_xxx"
+   *     modelTier: "low"
+   * ```
+   */
+  projects?: ProjectConfig[];
 }
 
 /**

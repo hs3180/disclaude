@@ -88,6 +88,25 @@ export interface SchedulerCallbacks {
 export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string, modelTier?: ModelTier) => Promise<void>;
 
 /**
+ * Project-bound task executor function type.
+ * Used when a scheduled task has a `projectKey` — routes through an existing
+ * project-bound ChatAgent instead of creating a short-lived one.
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage.
+ *
+ * @param projectKey - Project key identifying the target project
+ * @param prompt - The task prompt to execute
+ * @param taskName - Name of the scheduled task (for logging/messaging)
+ * @param modelTier - Optional model tier override
+ */
+export type ProjectBoundTaskExecutor = (
+  projectKey: string,
+  prompt: string,
+  taskName: string,
+  modelTier?: ModelTier,
+) => Promise<void>;
+
+/**
  * Scheduler options.
  *
  * Issue #711: No longer requires AgentPool.
@@ -104,6 +123,14 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Project-bound task executor for tasks with `projectKey`.
+   * When provided, tasks with `projectKey` will be routed through this
+   * executor instead of the default short-lived agent path.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   */
+  projectBoundExecutor?: ProjectBoundTaskExecutor;
 }
 
 /**
@@ -142,6 +169,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private projectBoundExecutor?: ProjectBoundTaskExecutor;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -162,6 +190,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.projectBoundExecutor = options.projectBoundExecutor;
     logger.info('Scheduler created');
   }
 
@@ -381,9 +410,6 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
-      // Issue #1041: Use injected executor function
-      // Issue #1338: Pass model override for per-task model selection
-      // Issue #3059: Pass modelTier for tier-based model resolution
       // Issue #3346: Wrap with timeout to prevent indefinite hangs
       const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -392,10 +418,23 @@ ${task.prompt}`;
       });
 
       try {
-        await Promise.race([
-          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
-          timeoutPromise,
-        ]);
+        // Issue #3333: Route project-bound tasks through project-bound executor.
+        // When a task has projectKey and projectBoundExecutor is available,
+        // use the project-bound path instead of the short-lived agent path.
+        if (task.projectKey && this.projectBoundExecutor) {
+          await Promise.race([
+            this.projectBoundExecutor(task.projectKey, wrappedPrompt, task.name, task.modelTier),
+            timeoutPromise,
+          ]);
+        } else {
+          // Issue #1041: Use injected executor function (short-lived agent)
+          // Issue #1338: Pass model override for per-task model selection
+          // Issue #3059: Pass modelTier for tier-based model resolution
+          await Promise.race([
+            this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+            timeoutPromise,
+          ]);
+        }
       } finally {
         if (timeoutId !== undefined) {
           clearTimeout(timeoutId);

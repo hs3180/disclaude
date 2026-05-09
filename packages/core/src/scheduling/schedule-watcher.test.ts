@@ -347,6 +347,23 @@ describe('ScheduleFileScanner', () => {
       expect(task!.sourceFile).toBe(`${MOCK_DIR}/test/SCHEDULE.md`);
       expect(task!.fileMtime).toEqual(new Date('2026-03-20T12:00:00Z'));
     });
+
+    it('should parse projectKey field (Issue #3333)', async () => {
+      const content = makeScheduleContent({ projectKey: 'owner/repo' });
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/project-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBe('owner/repo');
+    });
+
+    it('should have undefined projectKey when not specified (Issue #3333)', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-project/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBeUndefined();
+    });
   });
 
   describe('scanAll', () => {
@@ -501,6 +518,41 @@ describe('ScheduleFileScanner', () => {
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
       expect(writtenContent).not.toContain('model:');
+    });
+
+    it('should write projectKey field when present (Issue #3333)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-project',
+        name: 'Project Task',
+        cron: '0 9 * * *',
+        prompt: 'Daily sync',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        projectKey: 'owner/repo',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('projectKey: "owner/repo"');
+    });
+
+    it('should not write projectKey field when undefined (Issue #3333)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-project',
+        name: 'No Project Task',
+        cron: '0 9 * * *',
+        prompt: 'Normal task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('projectKey:');
     });
 
     it('should handle task IDs without schedule- prefix', async () => {

@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectConfig,
 } from './types.js';
 import type { ProjectTemplatesConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
@@ -582,6 +583,17 @@ export class Config {
    */
   static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
     return fileConfigOnly.projectTemplates as ProjectTemplatesConfig | undefined;
+  }
+
+  /**
+   * Get project configurations for project-bound agent binding.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   *
+   * @returns Array of ProjectConfig entries from disclaude.config.yaml
+   */
+  static getProjectConfigs(): ProjectConfig[] {
+    return fileConfigOnly.projects || [];
   }
 }
 

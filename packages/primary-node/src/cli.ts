@@ -255,6 +255,47 @@ async function main(): Promise<void> {
     await lifecycleManager.createAndWireByType(type, config);
   }
 
+  // Issue #3333: Create project-bound executor for project-keyed scheduled tasks.
+  // Resolves projectKey → chatId from config, then routes through PrimaryAgentPool.
+  const projectConfigs = Config.getProjectConfigs();
+  if (projectConfigs.length > 0) {
+    const projectConfigMap = new Map(projectConfigs.map(p => [p.key, p]));
+    primaryNode.setProjectBoundExecutor(async (projectKey, prompt, _taskName, _modelTier) => {
+      const projectConfig = projectConfigMap.get(projectKey);
+      if (!projectConfig) {
+        throw new Error(`Project not found: ${projectKey}`);
+      }
+
+      // Get channel for callbacks
+      const channel = primaryNode.getChannelManager().getFirstChannel();
+      if (!channel) {
+        throw new Error('No channel available for project-bound task');
+      }
+
+      const {chatId} = projectConfig;
+      const callbacks: import('./agents/types.js').ChatAgentCallbacks = {
+        sendMessage: async (cid: string, text: string) => {
+          await channel.sendMessage({ type: 'text', chatId: cid, text });
+        },
+        sendCard: async (cid: string, card: Record<string, unknown>) => {
+          await channel.sendMessage({ type: 'card', chatId: cid, card });
+        },
+        sendFile: async (cid: string, filePath: string) => {
+          await channel.sendMessage({ type: 'file', chatId: cid, filePath });
+        },
+        onDone: () => {},
+      };
+
+      const agent = agentPool.getOrCreateChatAgent(chatId, callbacks);
+      const messageId = `sched-${Date.now()}`;
+      await agent.runOnce(chatId, prompt, messageId);
+    });
+    logger.info(
+      { projects: projectConfigs.map(p => p.key) },
+      'Project-bound executor configured for scheduler',
+    );
+  }
+
   // Handle graceful shutdown
   let isShuttingDown = false;
   const shutdown = async (): Promise<void> => {

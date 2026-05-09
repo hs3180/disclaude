@@ -51,6 +51,8 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
+  // Issue #3333: Project-bound task executor
+  type ProjectBoundTaskExecutor,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
 } from '@disclaude/core';
@@ -152,6 +154,8 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
+  // Issue #3333: Project-bound task executor (set before start())
+  protected projectBoundExecutor?: ProjectBoundTaskExecutor;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
@@ -486,6 +490,8 @@ export class PrimaryNode extends EventEmitter {
       cooldownManager: this.cooldownManager,
       callbacks: schedulerCallbacks,
       executor,
+      // Issue #3333: Pass project-bound executor for project-keyed tasks
+      projectBoundExecutor: this.projectBoundExecutor,
     });
 
     await this.scheduler.start();
@@ -537,6 +543,18 @@ export class PrimaryNode extends EventEmitter {
    */
   getScheduler(): Scheduler | undefined {
     return this.scheduler;
+  }
+
+  /**
+   * Set the project-bound task executor for scheduled tasks with projectKey.
+   * Must be called before start() to take effect.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   *
+   * @param executor - Project-bound task executor function
+   */
+  setProjectBoundExecutor(executor: ProjectBoundTaskExecutor): void {
+    this.projectBoundExecutor = executor;
   }
 
   /**

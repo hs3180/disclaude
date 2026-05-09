@@ -102,6 +102,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'lastExecutedAt':
       case 'model':
       case 'modelTier':
+      case 'projectKey':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -238,6 +239,7 @@ export class ScheduleFileScanner {
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
         modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
+        projectKey: frontmatter['projectKey'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -260,6 +262,11 @@ export class ScheduleFileScanner {
         } else {
           logger.info({ taskId: task.id, name: task.name, modelTier: task.modelTier }, 'Schedule task will use model tier');
         }
+      }
+
+      // Issue #3333: Log projectKey usage
+      if (task.projectKey) {
+        logger.info({ taskId: task.id, name: task.name, projectKey: task.projectKey }, 'Schedule task will route to project-bound agent');
       }
 
       logger.debug({ taskId: task.id, name: task.name }, 'Parsed schedule file');
@@ -312,6 +319,9 @@ export class ScheduleFileScanner {
     }
     if (task.modelTier) {
       frontmatter.push(`modelTier: "${task.modelTier}"`);
+    }
+    if (task.projectKey) {
+      frontmatter.push(`projectKey: "${task.projectKey}"`);
     }
 
     frontmatter.push('---', '');

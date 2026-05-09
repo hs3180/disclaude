@@ -256,6 +256,19 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Project Configuration (Issue #3333)
+# -----------------------------------------------------------------------------
+# Project-bound agent bindings for scheduled tasks.
+# When a schedule has a projectKey, the task routes to the bound agent
+# instead of creating a short-lived one.
+#
+# projects:
+#   - key: "owner/repo"
+#     workingDir: "."
+#     chatId: "oc_xxx"
+#     modelTier: "low"        # Optional: default model tier for this project
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.
