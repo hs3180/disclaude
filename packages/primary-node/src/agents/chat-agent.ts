@@ -1210,13 +1210,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // registered by ProcessTransport. cancel() only stops iteration but leaves
     // the exit listener registered, causing leaks when the agent loop restarts
     // (which creates a new ProcessTransport with a new exit listener).
+    if (this.channel) {
+      this.logger.info({ chatId: this.boundChatId }, 'stop: closing channel');
+      this.channel.close();
+      this.channel = undefined;
+    }
     this.queryHandle.close();
     this.queryHandle = undefined;
 
     // Note: We do NOT set isSessionActive to false here.
     // The session remains active; processIterator will detect the ended iterator
     // and restart via startAgentLoop(), which creates a fresh query and channel.
-    // The old channel is closed by startAgentLoop() on restart.
 
     return true;
   }
