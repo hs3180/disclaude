@@ -39,6 +39,10 @@ TIMEOUT="${TIMEOUT:-30}"
 CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
 SERVER_PID=""
 
+# Temporary workspace for test isolation (Issue #3414)
+# Created in start_server(), cleaned up in stop_server()
+TEST_WORKSPACE_DIR=""
+
 # Log file in current working directory
 SERVER_LOG="disclaude-test-server.log"
 
@@ -172,6 +176,12 @@ start_server() {
 
     cd "$PROJECT_ROOT"
 
+    # Create temporary workspace for test isolation (Issue #3414)
+    # This prevents the test server from loading production schedules
+    TEST_WORKSPACE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/disclaude-integration-test-XXXXXX")
+    export DISCLAUDE_WORKSPACE_DIR="$TEST_WORKSPACE_DIR"
+    log_info "Using isolated workspace: ${TEST_WORKSPACE_DIR}"
+
     # Build config argument if provided
     local config_arg=""
     if [ -n "$CONFIG_PATH" ]; then
@@ -214,6 +224,13 @@ stop_server() {
 
         # Wait for port to be released
         wait_for_port_release "$REST_PORT" 10 || true
+    fi
+
+    # Clean up temporary workspace (Issue #3414)
+    if [ -n "$TEST_WORKSPACE_DIR" ] && [ -d "$TEST_WORKSPACE_DIR" ]; then
+        rm -rf "$TEST_WORKSPACE_DIR" 2>/dev/null || true
+        unset DISCLAUDE_WORKSPACE_DIR
+        TEST_WORKSPACE_DIR=""
     fi
 }
 

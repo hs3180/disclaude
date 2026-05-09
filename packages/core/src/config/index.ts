@@ -103,13 +103,18 @@ export class Config {
   // Workspace configuration
   // Resolve to absolute path to ensure getWorkspaceDir() always returns absolute path.
   // Relative paths are resolved against the config file's directory (not process.cwd()).
+  //
+  // Priority: DISCLAUDE_WORKSPACE_DIR env var > config file > default (config dir)
+  // The env var override enables test isolation without modifying production code
+  // interfaces (Issue #3414).
   private static readonly CONFIG_DIR = fileConfig._source
     ? path.dirname(fileConfig._source)
     : process.cwd();
   private static readonly RAW_WORKSPACE_DIR = fileConfigOnly.workspace?.dir || Config.CONFIG_DIR;
-  static readonly WORKSPACE_DIR = path.isAbsolute(Config.RAW_WORKSPACE_DIR)
-    ? Config.RAW_WORKSPACE_DIR
-    : path.resolve(Config.CONFIG_DIR, Config.RAW_WORKSPACE_DIR);
+  static readonly WORKSPACE_DIR = process.env.DISCLAUDE_WORKSPACE_DIR
+    || (path.isAbsolute(Config.RAW_WORKSPACE_DIR)
+      ? Config.RAW_WORKSPACE_DIR
+      : path.resolve(Config.CONFIG_DIR, Config.RAW_WORKSPACE_DIR));
 
   // Feishu/Lark configuration (from config file)
   static readonly FEISHU_APP_ID = fileConfigOnly.feishu?.appId || '';
@@ -218,7 +223,10 @@ export class Config {
    */
   static getWorkspaceDir(): string {
     const workspaceDir = this.WORKSPACE_DIR;
-    logger.debug({ workspaceDir, source: this.CONFIG_LOADED ? 'config-file' : 'default' }, 'Using workspace directory');
+    const source = process.env.DISCLAUDE_WORKSPACE_DIR
+      ? 'env-override'
+      : (this.CONFIG_LOADED ? 'config-file' : 'default');
+    logger.debug({ workspaceDir, source }, 'Using workspace directory');
     return workspaceDir;
   }
 

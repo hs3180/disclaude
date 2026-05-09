@@ -5,12 +5,33 @@
  * real external network requests. All external HTTP calls are blocked
  * by default, except for localhost connections.
  *
+ * Also provides workspace isolation for unit tests: each test run uses
+ * a temporary workspace directory so that the Scheduler never loads
+ * production schedule files.
+ *
  * @see Issue #920 - Test isolation infrastructure
  * @see Issue #918 - Four-layer defense architecture
+ * @see Issue #3414 - Workspace/schedule isolation for tests
  */
 
+import os from 'os';
+import path from 'path';
+import { mkdtempSync, rmSync } from 'fs';
 import nock from 'nock';
 import { beforeAll, afterAll, afterEach } from 'vitest';
+
+/**
+ * Temporary workspace directory for test isolation.
+ * Set DISCLAUDE_WORKSPACE_DIR so that Config.getWorkspaceDir() returns
+ * an isolated path instead of the production workspace.
+ * @see Issue #3414
+ */
+let testWorkspaceDir: string | undefined;
+
+if (!process.env.DISCLAUDE_WORKSPACE_DIR) {
+  testWorkspaceDir = mkdtempSync(path.join(os.tmpdir(), 'disclaude-test-'));
+  process.env.DISCLAUDE_WORKSPACE_DIR = testWorkspaceDir;
+}
 
 /**
  * Block all external network requests by default.
@@ -34,9 +55,17 @@ afterEach(() => {
 
 /**
  * Restore network connectivity after all tests.
+ * Clean up temporary workspace directory (Issue #3414).
  */
 afterAll(() => {
   nock.restore();
+  if (testWorkspaceDir) {
+    try {
+      rmSync(testWorkspaceDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; temp dirs are cleaned by OS anyway
+    }
+  }
 });
 
 /**
