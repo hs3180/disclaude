@@ -130,3 +130,65 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Headless Chromium with CDP endpoint for browser automation.
+  # Use --profile playwright to start: docker compose --profile playwright up -d
+  #
+  # The primary container uses network_mode: host, so it connects to this
+  # container via PLAYWRIGHT_CDP_URL (default: ws://localhost:3000).
+  #
+  # Requirements:
+  #   - Set PLAYWRIGHT_CDP_URL in docker-source.env or disclaude.config.yaml
+  #   - The Playwright MCP server in the primary container must be configured
+  #     to connect to this CDP endpoint instead of launching its own browser.
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Start headless Chromium with CDP (Chrome DevTools Protocol) endpoint.
+    # The Playwright image has browsers installed at /ms-playwright/.
+    # We find Chromium dynamically and start it with --remote-debugging-port.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        CHROMIUM=$$(find /ms-playwright -name "chrome" -type f -path "*/chrome-linux/*" | head -1)
+        if [ -z "$$CHROMIUM" ]; then
+          echo "ERROR: Chromium not found in /ms-playwright/" >&2
+          exit 1
+        fi
+        echo "Starting Chromium: $$CHROMIUM"
+        exec "$$CHROMIUM" \
+          --headless=new \
+          --no-sandbox \
+          --disable-setuid-sandbox \
+          --disable-dev-shm-usage \
+          --disable-gpu \
+          --remote-debugging-port=3000 \
+          --remote-debugging-address=0.0.0.0 \
+          about:blank
+
+    ports:
+      - "${PLAYWRIGHT_CDP_PORT:-3000}:3000"
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/json/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    profiles:
+      - playwright
