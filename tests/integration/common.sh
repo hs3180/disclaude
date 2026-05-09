@@ -42,6 +42,11 @@ SERVER_PID=""
 # Log file in current working directory
 SERVER_LOG="disclaude-test-server.log"
 
+# Test workspace directory for isolation (Issue #3414)
+# Each test run gets its own isolated workspace to prevent Scheduler
+# from loading production schedule configs.
+TEST_WORKSPACE=""
+
 # =============================================================================
 # Colors for Output
 # =============================================================================
@@ -172,6 +177,14 @@ start_server() {
 
     cd "$PROJECT_ROOT"
 
+    # Create isolated test workspace (Issue #3414)
+    # This prevents tests from loading production schedule configs.
+    if [ -z "$TEST_WORKSPACE" ]; then
+        TEST_WORKSPACE=$(mktemp -d "${TMPDIR:-/tmp}/disclaude-test-workspace.XXXXXX")
+        export DISCLAUDE_WORKSPACE_DIR="$TEST_WORKSPACE"
+        log_info "Created isolated test workspace: ${TEST_WORKSPACE}"
+    fi
+
     # Build config argument if provided
     local config_arg=""
     if [ -n "$CONFIG_PATH" ]; then
@@ -232,6 +245,14 @@ show_server_logs() {
 cleanup() {
     log_info "Cleaning up..."
     stop_server
+
+    # Clean up isolated test workspace (Issue #3414)
+    if [ -n "$TEST_WORKSPACE" ] && [ -d "$TEST_WORKSPACE" ]; then
+        log_info "Removing test workspace: ${TEST_WORKSPACE}"
+        rm -rf "$TEST_WORKSPACE"
+        unset DISCLAUDE_WORKSPACE_DIR
+        TEST_WORKSPACE=""
+    fi
 }
 
 # Register cleanup handler (call this in your test script)
