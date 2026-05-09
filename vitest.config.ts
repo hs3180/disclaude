@@ -83,6 +83,5 @@ export default defineConfig({
       include: ['src/**/*.ts', 'packages/**/*.ts'],
     },
     setupFiles: ['./tests/setup.ts'],
-    globalTeardown: ['./tests/globalTeardown.ts'],
   },
 });

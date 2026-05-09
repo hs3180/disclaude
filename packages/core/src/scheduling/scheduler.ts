@@ -146,6 +146,16 @@ export class Scheduler {
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
+  /**
+   * Resolves when all running tasks have completed.
+   * Created lazily when the first task starts; resolved and cleared when
+   * runningTasks drains to zero. Used by stop() for graceful shutdown
+   * without polling.
+   *
+   * Issue #3415.
+   */
+  private _drainPromise: Promise<void> | null = null;
+  private _drainResolve: (() => void) | null = null;
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -207,24 +217,17 @@ export class Scheduler {
 
     this.activeJobs.clear();
 
-    // Wait for currently running tasks to complete (graceful shutdown)
+    // Wait for currently running tasks to complete (graceful shutdown).
+    // Issue #3415: Uses a drain promise instead of polling.
     const waitTimeout = timeoutMs ?? Scheduler.GRACEFUL_SHUTDOWN_TIMEOUT_MS;
-    if (this.runningTasks.size > 0 && waitTimeout > 0) {
+    if (this._drainPromise && waitTimeout > 0) {
       logger.info(
         { taskIds: Array.from(this.runningTasks), timeoutMs: waitTimeout },
         'Waiting for running tasks to complete...'
       );
 
-      await new Promise<void>((resolve) => {
-        const checkInterval = setInterval(() => {
-          if (this.runningTasks.size === 0) {
-            clearInterval(checkInterval);
-            resolve();
-          }
-        }, 50);
-
+      const timeoutPromise = new Promise<void>((resolve) => {
         setTimeout(() => {
-          clearInterval(checkInterval);
           if (this.runningTasks.size > 0) {
             logger.warn(
               { taskIds: Array.from(this.runningTasks) },
@@ -234,6 +237,8 @@ export class Scheduler {
           resolve();
         }, waitTimeout);
       });
+
+      await Promise.race([this._drainPromise, timeoutPromise]);
     }
 
     logger.info('Scheduler stopped');
@@ -359,6 +364,12 @@ ${task.prompt}`;
 
     // Mark task as running
     this.runningTasks.add(task.id);
+    // Create drain promise if this is the first running task
+    if (!this._drainPromise) {
+      this._drainPromise = new Promise<void>((resolve) => {
+        this._drainResolve = resolve;
+      });
+    }
 
     try {
       // Send start notification
@@ -416,6 +427,13 @@ ${task.prompt}`;
     } finally {
       // Always remove from running tasks
       this.runningTasks.delete(task.id);
+
+      // Resolve drain promise when all tasks have completed
+      if (this.runningTasks.size === 0 && this._drainResolve) {
+        this._drainResolve();
+        this._drainPromise = null;
+        this._drainResolve = null;
+      }
 
       // Issue #869: Record execution for cooldown period
       if (task.cooldownPeriod && this.cooldownManager) {
