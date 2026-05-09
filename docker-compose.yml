@@ -37,7 +37,11 @@ services:
       args:
         APK_MIRROR: ${APK_MIRROR:-dl-cdn.alpinelinux.org}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
         DOCKER_IMAGE_PREFIX: ${DOCKER_IMAGE_PREFIX:-}
+    env_file:
+      - path: docker-source.env
+        required: false
     image: disclaude:primary
     container_name: disclaude-primary
     restart: unless-stopped
