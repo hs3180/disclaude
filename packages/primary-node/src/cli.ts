@@ -25,6 +25,7 @@ import {
   flushLogger,
   Config,
   type DisclaudeConfigWithChannels,
+  type LogLevel,
   createControlHandler,
   type ControlHandlerContext,
   ProcessLock,
@@ -111,7 +112,13 @@ async function main(): Promise<void> {
   // Issue #2934: Initialize logger with file rotation support.
   // When LOG_TO_FILE=true (set by launchd), this upgrades the sync file
   // logger (created at module level) to pino-roll with rotation.
-  await initLogger();
+  // Issue #3416: Pass logging config from YAML so LOG_LEVEL, LOG_ROTATE,
+  // and LOG_FILE settings are respected by the logger.
+  await initLogger({
+    level: Config.LOG_LEVEL as LogLevel | undefined,
+    rotate: Config.LOG_ROTATE,
+    logFile: Config.LOG_FILE,
+  });
 
   // Issue #3417: Acquire process lock to prevent multiple concurrent instances.
   // When launchd restarts after a crash, the old process may still be exiting.

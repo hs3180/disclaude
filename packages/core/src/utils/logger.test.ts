@@ -192,6 +192,42 @@ describe('logger', () => {
         logger.info('pino-roll file logging test');
       }).not.toThrow();
     });
+
+    it('should use plain pino.destination when rotate is false', async () => {
+      // Issue #3416: When rotate is disabled, logger should NOT use pino-roll
+      process.env.NODE_ENV = 'production';
+
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockImplementation((() => undefined) as any);
+
+      const logger = await initLogger({
+        fileLogging: true,
+        logDir: '/tmp/test-logs-norotate',
+        rotate: false,
+      });
+
+      expect(logger).toBeDefined();
+      expect(() => {
+        logger.info('no-rotation file logging test');
+      }).not.toThrow();
+    });
+
+    it('should use custom log file path when logFile is set', async () => {
+      process.env.NODE_ENV = 'production';
+
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockImplementation((() => undefined) as any);
+
+      const logger = await initLogger({
+        fileLogging: true,
+        logFile: '/custom/path/my-app.log',
+      });
+
+      expect(logger).toBeDefined();
+      expect(() => {
+        logger.info('custom log file path test');
+      }).not.toThrow();
+    });
   });
 
   describe('createLogger', () => {

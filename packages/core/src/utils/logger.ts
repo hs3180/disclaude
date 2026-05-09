@@ -40,6 +40,18 @@ export interface LoggerConfig {
   redact?: string[];
   /** Additional metadata to include in all logs */
   metadata?: Record<string, unknown>;
+  /**
+   * Enable log rotation via pino-roll.
+   * When false, uses plain pino.destination() without rotation.
+   * This provides a fallback when pino-roll causes compatibility issues.
+   * (default: true in production)
+   */
+  rotate?: boolean;
+  /**
+   * Custom log file path. When set, overrides the default
+   * `{logDir}/disclaude-combined.log` path.
+   */
+  logFile?: string;
 }
 
 /**
@@ -220,19 +232,49 @@ function getProductionConfig(): LoggerOptions {
 }
 
 /**
- * Setup file logging with rotation
+ * Setup file logging with optional rotation.
  *
- * Note: Dynamic import of pino-roll to avoid build issues
+ * When `rotate` is true (default), uses pino-roll for log rotation.
+ * When `rotate` is false, uses plain pino.destination() without rotation,
+ * providing a fallback when pino-roll causes compatibility issues (Issue #3416).
+ *
+ * @param logDir - Directory for log files
+ * @param options - Additional options: rotate, logFile
  */
 async function setupFileLogging(
-  logDir: string
+  logDir: string,
+  options: { rotate?: boolean; logFile?: string } = {}
 ): Promise<NodeJS.WritableStream> {
   try {
-    // Create logs directory if it doesn't exist
-    const logsPath = path.resolve(process.cwd(), logDir);
+    // Determine log file path
+    let logFilePath: string;
+    if (options.logFile) {
+      // Use custom log file path from config
+      logFilePath = path.resolve(process.cwd(), options.logFile);
+      const logFileDir = path.dirname(logFilePath);
+      if (!fs.existsSync(logFileDir)) {
+        fs.mkdirSync(logFileDir, { recursive: true });
+      }
+    } else {
+      // Default: {logDir}/disclaude-combined.log
+      const logsPath = path.resolve(process.cwd(), logDir);
+      if (!fs.existsSync(logsPath)) {
+        fs.mkdirSync(logsPath, { recursive: true });
+      }
+      logFilePath = path.join(logsPath, 'disclaude-combined.log');
+    }
 
-    if (!fs.existsSync(logsPath)) {
-      fs.mkdirSync(logsPath, { recursive: true });
+    // When rotation is disabled, use plain pino.destination (no pino-roll)
+    if (options.rotate === false) {
+      const dest = pino.destination({ dest: logFilePath, sync: false, mkdir: true });
+      (dest as unknown as NodeJS.EventEmitter).on('error', (err: Error) => {
+        if (rootLogger && !flushInProgress) {
+          rootLogger.error({ err }, 'Log file destination error');
+        } else {
+          console.warn('Log file destination error:', err.message);
+        }
+      });
+      return dest as unknown as NodeJS.WritableStream;
     }
 
     // Dynamic import of pino-roll — CJS module requires .default access (Issue #3359)
@@ -243,9 +285,8 @@ async function setupFileLogging(
 
     // Combined log file with rotation
     // pino-roll v4 API: single options object { file, size, limit, ... }
-    const logFile = path.join(logsPath, 'disclaude-combined.log');
     const rollStream = await pinoRoll({
-      file: logFile,
+      file: logFilePath,
       size: '10M',
       limit: { count: 30 },
     });
@@ -351,7 +392,10 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
     // upgrade the destination from plain file to pino-roll with rotation.
     if (shouldFileLog && logPassthrough && currentLogDest) {
       try {
-        const rollStream = await setupFileLogging(logDir);
+        const rollStream = await setupFileLogging(logDir, {
+          rotate: config.rotate,
+          logFile: config.logFile,
+        });
 
         // Issue #3416: Properly flush and close the old destination before
         // switching. The old pino.destination() SonicBoom may have buffered
@@ -398,7 +442,10 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
 
   if (shouldFileLog) {
     try {
-      logStream = await setupFileLogging(logDir);
+      logStream = await setupFileLogging(logDir, {
+        rotate: config.rotate,
+        logFile: config.logFile,
+      });
     } catch (error) {
       console.warn('Failed to setup file logging:', error);
     }
