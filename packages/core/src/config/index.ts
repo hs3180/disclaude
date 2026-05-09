@@ -147,6 +147,9 @@ export class Config {
           // Agents configuration - loaded from package installation directory
           static readonly AGENTS_DIR = Config.getBuiltinDir('agents');
 
+  // Project configurations for A2A task delegation (Issue #3334)
+  static readonly PROJECTS = fileConfigOnly.projects;
+
   /**
    * Get a built-in resource directory from package installation.
    * Shared resolution logic for skills, agents, and other bundled resources.

@@ -53,6 +53,9 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #3334: A2A messaging
+  A2AQueue,
+  type A2AEnqueueHandler,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
@@ -158,6 +161,9 @@ export class PrimaryNode extends EventEmitter {
 
   // Temp chat data store (Issue #1703)
   protected chatStore: ChatStore;
+
+  // A2A queue for agent-to-agent task delegation (Issue #3334)
+  protected a2aQueue: A2AQueue | null = null;
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -294,11 +300,14 @@ export class PrimaryNode extends EventEmitter {
     const contextStore = this.interactiveContextStore;
 
     // Create the request handler with Feishu handlers container
+    // Issue #3334: Pass A2A enqueue handler for agent-to-agent task delegation
+    const a2aEnqueueHandler = this.createA2AEnqueueHandler();
     const requestHandler = createInteractiveMessageHandler(
       (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
         contextStore.register(messageId, chatId, actionPrompts);
       },
-      this.feishuHandlersContainer
+      this.feishuHandlersContainer,
+      a2aEnqueueHandler
     );
 
     this.ipcServer = new UnixSocketIpcServer(requestHandler, {
@@ -340,6 +349,52 @@ export class PrimaryNode extends EventEmitter {
   registerFeishuHandlers(handlers: FeishuApiHandlers): void {
     this.feishuHandlersContainer.handlers = handlers;
     logger.info('Feishu API handlers registered for IPC');
+  }
+
+  /**
+   * Create the A2A enqueue handler for IPC requests.
+   *
+   * Issue #3334: Uses A2AQueue for queuing, rate limiting, and anti-recursion protection.
+   * Project resolution reads from disclaude.config.yaml `projects` section.
+   * Will be enhanced when PR #3440 (Project-scoped ChatAgent) is merged.
+   */
+  protected createA2AEnqueueHandler(): A2AEnqueueHandler | undefined {
+    // Initialize A2A queue with a project resolver
+    if (!this.a2aQueue) {
+      const projectResolver = {
+        resolve: (projectKey: string): string | undefined => {
+          // Read projects from config file
+          // Format: projects: [{ key: "...", chatId: "...", ... }]
+          // Forward-compatible with PR #3440 (Project-scoped ChatAgent)
+          const configAny = Config as unknown as Record<string, unknown>;
+          const projects = configAny.PROJECTS;
+          if (Array.isArray(projects)) {
+            const entry = projects.find(
+              (p: Record<string, unknown>) => p.key === projectKey
+            ) as Record<string, unknown> | undefined;
+            if (entry?.chatId && typeof entry.chatId === 'string') {
+              return entry.chatId;
+            }
+          }
+          return undefined;
+        },
+      };
+
+      this.a2aQueue = new A2AQueue({ projectResolver });
+      logger.info('A2A queue initialized for agent-to-agent task delegation');
+    }
+
+    const queue = this.a2aQueue;
+    // queue is guaranteed to be initialized at this point
+    if (!queue) {return undefined;}
+
+    return (params) => {
+      return Promise.resolve(queue.enqueue(params.sourceChatId, {
+        projectKey: params.projectKey,
+        payload: params.payload,
+        priority: params.priority,
+      }));
+    };
   }
 
   /**

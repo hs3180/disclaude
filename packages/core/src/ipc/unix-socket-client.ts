@@ -684,6 +684,41 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // A2A task delegation (Issue #3334)
+  // ============================================================================
+
+  /**
+   * Enqueue an A2A task via IPC.
+   * Issue #3334: Agent-to-Agent task delegation.
+   *
+   * @param params - Task parameters including sourceChatId, projectKey, payload, priority
+   */
+  async enqueueTask(
+    params: {
+      sourceChatId: string;
+      projectKey: string;
+      payload: string;
+      priority?: 'low' | 'normal' | 'high';
+    }
+  ): Promise<{ success: boolean; message: string; taskId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('enqueueTask', params);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, params }, 'enqueueTask failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, message: err.message, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

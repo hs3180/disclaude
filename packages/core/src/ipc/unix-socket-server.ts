@@ -109,16 +109,31 @@ export interface ChannelHandlersContainer {
 export type FeishuHandlersContainer = ChannelHandlersContainer;
 
 /**
+ * A2A enqueue handler type (Issue #3334).
+ *
+ * Called by the IPC layer when an enqueueTask request is received.
+ * Returns the enqueue result.
+ */
+export type A2AEnqueueHandler = (params: {
+  sourceChatId: string;
+  projectKey: string;
+  payload: string;
+  priority?: 'low' | 'normal' | 'high';
+}) => Promise<{ success: boolean; message: string; taskId?: string }>;
+
+/**
  * Create an IPC request handler for channel API operations.
  *
  * Issue #1120: Uses ChannelHandlersContainer for dynamic handler registration.
  * Issue #1573 (Phase 4): Removed InteractiveMessageHandlers — state management
  * dispatch cases removed; only registerActionPrompts callback remains for
  * internal use by the sendInteractive handler.
+ * Issue #3334: Added a2aEnqueueHandler for A2A task delegation.
  */
 export function createInteractiveMessageHandler(
   registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => void,
-  channelHandlersContainer?: ChannelHandlersContainer
+  channelHandlersContainer?: ChannelHandlersContainer,
+  a2aEnqueueHandler?: A2AEnqueueHandler
 ): IpcRequestHandler {
 
   return async (request: IpcRequest): Promise<IpcResponse> => {
@@ -307,6 +322,26 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // A2A task delegation (Issue #3334)
+        case 'enqueueTask': {
+          if (!a2aEnqueueHandler) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'A2A task delegation not available',
+            };
+          }
+          const { sourceChatId, projectKey, payload, priority } =
+            request.payload as IpcRequestPayloads['enqueueTask'];
+          try {
+            const result = await a2aEnqueueHandler({ sourceChatId, projectKey, payload, priority });
+            return { id: request.id, success: result.success, payload: result };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

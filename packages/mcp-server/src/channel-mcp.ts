@@ -9,7 +9,7 @@
  */
 
 import { z } from 'zod';
-import { getProvider, createLogger, withTiming, type SdkInlineToolDefinition } from '@disclaude/core';
+import { getProvider, createLogger, withTiming, getIpcClient, type SdkInlineToolDefinition } from '@disclaude/core';
 import {
   send_text,
   send_card,
@@ -464,6 +464,73 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  // Issue #3334: A2A task delegation
+  {
+    name: 'enqueue_task',
+    description: `Delegate a task to a project-bound agent (Agent-to-Agent messaging).
+
+Use this tool to delegate work to another agent that is bound to a different project. The target agent will process the task asynchronously and reply to its own bound chat.
+
+## Parameters
+- **projectKey**: The target project key (must be a configured project)
+- **payload**: The task instruction to send to the target agent
+- **priority**: Task priority — 'low', 'normal' (default), or 'high'
+- **sourceChatId**: Your current chat ID (from the Chat ID in your context)
+
+## Behavior
+- Non-blocking: returns immediately after enqueueing
+- Anti-recursion: cannot enqueue to your own project
+- Rate limited: max 10 tasks per source per minute
+
+## Example
+\`\`\`json
+{
+  "projectKey": "hs3180/disclaude",
+  "payload": "Triage all open issues and prioritize by severity",
+  "priority": "high",
+  "sourceChatId": "oc_abc123"
+}
+\`\`\``,
+    parameters: z.object({
+      projectKey: z.string().describe('Target project key'),
+      payload: z.string().describe('Task instruction to send to the target agent'),
+      priority: z.enum(['low', 'normal', 'high']).optional().describe('Task priority (default: normal)'),
+      sourceChatId: z.string().describe('Your current chat ID (from context)'),
+    }),
+    handler: async ({ projectKey, payload, priority, sourceChatId }: {
+      projectKey: string;
+      payload: string;
+      priority?: 'low' | 'normal' | 'high';
+      sourceChatId: string;
+    }) => await withTiming(timingLogger, 'mcp:enqueue_task', sourceChatId, async () => {
+      if (!projectKey || projectKey.trim().length === 0) {
+        return toolError('projectKey is required');
+      }
+      if (!payload || payload.trim().length === 0) {
+        return toolError('payload is required');
+      }
+      if (!sourceChatId || sourceChatId.trim().length === 0) {
+        return toolError('sourceChatId is required (use the Chat ID from your context)');
+      }
+
+      try {
+        const ipcClient = getIpcClient();
+        const result = await ipcClient.enqueueTask({
+          sourceChatId,
+          projectKey,
+          payload,
+          priority: priority ?? 'normal',
+        });
+
+        if (result.success) {
+          return toolSuccess(result.message);
+        }
+        return toolError(result.message);
+      } catch (error) {
+        return toolError(`enqueue_task failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },

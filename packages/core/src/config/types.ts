@@ -394,6 +394,30 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+
+  /**
+   * Project configurations for agent-to-agent task delegation (Issue #3334).
+   *
+   * Maps project keys to chatId bindings, enabling agents to delegate
+   * tasks to project-bound agents via the `enqueue_task` tool.
+   *
+   * ```yaml
+   * projects:
+   *   - key: "hs3180/disclaude"
+   *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+   *     workingDir: "."
+   * ```
+   */
+  projects?: Array<{
+    /** Project key (unique identifier) */
+    key: string;
+    /** Bound chatId for the project agent */
+    chatId: string;
+    /** Working directory for the project */
+    workingDir?: string;
+    /** Model tier for the project agent */
+    modelTier?: 'low' | 'normal' | 'high';
+  }>;
 }
 
 /**

@@ -282,6 +282,27 @@ export {
   createDoneMessage,
 } from './messaging/index.js';
 
+// A2A Messaging (Issue #3334: Agent-to-Agent task delegation)
+export type {
+  A2ATask,
+  A2APriority,
+  A2ATaskStatus,
+  EnqueueTaskParams,
+  EnqueueTaskResult,
+  A2ARateLimitConfig,
+  A2AProjectResolver,
+  A2AAgentPool,
+} from './messaging/index.js';
+
+export {
+  isValidA2APriority,
+  generateTaskId,
+  DEFAULT_A2A_RATE_LIMIT,
+  A2AQueue,
+  type A2ADeliveryCallback,
+  type A2AQueueConfig,
+} from './messaging/index.js';
+
 // Channels module (Issue #1041 - migrated from primary-node)
 export { BaseChannel } from './channels/index.js';
 

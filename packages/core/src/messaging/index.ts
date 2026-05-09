@@ -36,3 +36,27 @@ export {
   createCardMessage,
   createDoneMessage,
 } from './universal-message.js';
+
+// A2A Messaging (Issue #3334: Agent-to-Agent task delegation)
+export type {
+  A2ATask,
+  A2APriority,
+  A2ATaskStatus,
+  EnqueueTaskParams,
+  EnqueueTaskResult,
+  A2ARateLimitConfig,
+  A2AProjectResolver,
+  A2AAgentPool,
+} from './a2a-types.js';
+
+export {
+  isValidA2APriority,
+  generateTaskId,
+  DEFAULT_A2A_RATE_LIMIT,
+} from './a2a-types.js';
+
+export {
+  A2AQueue,
+  type A2ADeliveryCallback,
+  type A2AQueueConfig,
+} from './a2a-queue.js';

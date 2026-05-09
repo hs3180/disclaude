@@ -33,6 +33,7 @@ export {
   type ChannelHandlersContainer,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
+  type A2AEnqueueHandler,
 } from './unix-socket-server.js';
 
 // Client implementation

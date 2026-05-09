@@ -24,7 +24,9 @@ export type IpcRequestType =
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // A2A task delegation (Issue #3334)
+  | 'enqueueTask';
 
 /**
  * IPC request payload types.
@@ -78,6 +80,17 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // A2A task delegation (Issue #3334)
+  enqueueTask: {
+    /** Source chatId (the agent creating this task) */
+    sourceChatId: string;
+    /** Target project key */
+    projectKey: string;
+    /** Task instruction payload */
+    payload: string;
+    /** Priority level (default: 'normal') */
+    priority?: 'low' | 'normal' | 'high';
+  };
 }
 
 /**
@@ -122,6 +135,12 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // A2A task delegation (Issue #3334)
+  enqueueTask: {
+    success: boolean;
+    message: string;
+    taskId?: string;
   };
 }
 
