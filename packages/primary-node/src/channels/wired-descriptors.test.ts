@@ -9,11 +9,12 @@
 
  
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
   WECHAT_WIRED_DESCRIPTOR,
+  BUILTIN_WIRED_DESCRIPTORS,
 } from './wired-descriptors.js';
 import type {
   ChannelSetupContext,
@@ -326,6 +327,257 @@ describe('WiredChannelDescriptors', () => {
         type: 'text',
         text: '❌ Error: Agent processing failed',
       });
+    });
+  });
+
+  describe('FEISHU_WIRED_DESCRIPTOR.setup() (Issue #1594 Phase 2)', () => {
+    let mockFeishuChannel: any;
+    let mockConfig: any;
+    let mockContext: ChannelSetupContext;
+    let mockChatStore: any;
+    let mockTriggerModeManager: any;
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+
+      mockTriggerModeManager = {
+        getMode: vi.fn().mockReturnValue('auto'),
+        setMode: vi.fn(),
+        initFromRecords: vi.fn().mockReturnValue(0),
+      };
+
+      mockFeishuChannel = {
+        ...createMockChannel('feishu'),
+        getTriggerModeManager: vi.fn().mockReturnValue(mockTriggerModeManager),
+        uploadImage: vi.fn().mockResolvedValue('img_key'),
+        sendMessage: vi.fn().mockResolvedValue('msg_123'),
+      };
+
+      mockChatStore = {
+        listTempChats: vi.fn().mockResolvedValue([]),
+        markTempChatResponded: vi.fn().mockResolvedValue(true),
+      };
+
+      mockConfig = { appId: 'test-id', appSecret: 'test-secret' };
+
+      mockContext = createMockContext({
+        primaryNode: {
+          getInteractiveContextStore: vi.fn().mockReturnValue({
+            generatePrompt: vi.fn().mockReturnValue('Generated prompt'),
+          }),
+          registerFeishuHandlers: vi.fn(),
+          getChatStore: vi.fn().mockReturnValue(mockChatStore),
+        } as any,
+      });
+    });
+
+    it('should set up action prompt resolver on config', () => {
+      const mockGeneratePrompt = vi.fn().mockReturnValue('[User] selected option');
+      (mockContext.primaryNode as any).getInteractiveContextStore = vi.fn().mockReturnValue({
+        generatePrompt: mockGeneratePrompt,
+      });
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+
+      expect(mockConfig.resolveActionPrompt).toBeDefined();
+      const result = mockConfig.resolveActionPrompt('msg-1', 'chat-1', 'action-1', 'Option 1');
+      expect(mockGeneratePrompt).toHaveBeenCalledWith('msg-1', 'chat-1', 'action-1', 'Option 1');
+      expect(result).toBe('[User] selected option');
+    });
+
+    it('should set up trigger mode adapter from channel manager', () => {
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+
+      expect(mockFeishuChannel.getTriggerModeManager).toHaveBeenCalled();
+      expect(mockContext.controlHandlerContext.triggerMode).toBeDefined();
+
+      // Test getMode delegates to TriggerModeManager
+      const adapter = mockContext.controlHandlerContext.triggerMode!;
+      adapter.getMode('chat-1');
+      expect(mockTriggerModeManager.getMode).toHaveBeenCalledWith('chat-1');
+
+      // Test setMode delegates to TriggerModeManager
+      adapter.setMode('chat-1', 'always');
+      expect(mockTriggerModeManager.setMode).toHaveBeenCalledWith('chat-1', 'always');
+    });
+
+    it('should initialize trigger mode from chat store records', async () => {
+      const records = [
+        { chatId: 'chat-1', triggerMode: 'always' as const, passiveMode: false, createdAt: Date.now() },
+        { chatId: 'chat-2', triggerMode: undefined, passiveMode: true, createdAt: Date.now() },
+      ];
+      mockChatStore.listTempChats.mockResolvedValue(records);
+      mockTriggerModeManager.initFromRecords.mockReturnValue(2);
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+
+      // Wait for async init to complete
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(mockChatStore.listTempChats).toHaveBeenCalled();
+      expect(mockTriggerModeManager.initFromRecords).toHaveBeenCalledWith(
+        records.map(r => ({ chatId: r.chatId, triggerMode: r.triggerMode, passiveMode: r.passiveMode }))
+      );
+    });
+
+    it('should handle chat store init failure gracefully', async () => {
+      mockChatStore.listTempChats.mockRejectedValue(new Error('Store unavailable'));
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+
+      // Wait for async init to complete
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) }),
+        'Failed to initialize trigger mode from chat store'
+      );
+    });
+
+    it('should register Feishu IPC handlers', () => {
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+
+      const registerMock = (mockContext.primaryNode as any).registerFeishuHandlers;
+      const [[handlers]] = registerMock.mock.calls;
+      expect(handlers.sendMessage).toBeTypeOf('function');
+      expect(handlers.sendCard).toBeTypeOf('function');
+      expect(handlers.uploadFile).toBeTypeOf('function');
+      expect(handlers.uploadImage).toBeTypeOf('function');
+      expect(handlers.sendInteractive).toBeTypeOf('function');
+      expect(handlers.listTempChats).toBeTypeOf('function');
+      expect(handlers.markChatResponded).toBeTypeOf('function');
+      expect(mockLogger.info).toHaveBeenCalledWith('Feishu IPC handlers registered via descriptor setup');
+    });
+
+    it('should handle sendInteractive with valid params', async () => {
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+
+      const registerMock = (mockContext.primaryNode as any).registerFeishuHandlers;
+      const [[handlers]] = registerMock.mock.calls;
+
+      const result = await handlers.sendInteractive('chat-1', {
+        question: 'Which option?',
+        options: [
+          { text: 'Option A', value: 'a', type: 'primary' as const },
+          { text: 'Option B', value: 'b' },
+        ],
+        title: 'Choose',
+      });
+
+      expect(result.messageId).toBe('msg_123');
+      expect(result.actionPrompts).toBeDefined();
+      expect(Object.keys(result.actionPrompts)).toContain('a');
+      expect(Object.keys(result.actionPrompts)).toContain('b');
+    });
+
+    it('should use custom actionPrompts when provided in sendInteractive', async () => {
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+
+      const registerMock = (mockContext.primaryNode as any).registerFeishuHandlers;
+      const [[handlers]] = registerMock.mock.calls;
+
+      const customPrompts = { 'a': '[User] chose A', 'b': '[User] chose B' };
+      const result = await handlers.sendInteractive('chat-1', {
+        question: 'Pick one',
+        options: [
+          { text: 'A', value: 'a' },
+          { text: 'B', value: 'b' },
+        ],
+        actionPrompts: customPrompts,
+      });
+
+      expect(result.actionPrompts).toEqual(customPrompts);
+    });
+
+    it('should reject sendInteractive with invalid params', async () => {
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+
+      const registerMock = (mockContext.primaryNode as any).registerFeishuHandlers;
+      const [[handlers]] = registerMock.mock.calls;
+
+      await expect(
+        handlers.sendInteractive('chat-1', {
+          question: '',
+          options: [],
+        })
+      ).rejects.toThrow('Invalid interactive params');
+    });
+
+    it('should fall back to synthetic messageId when sendMessage returns nothing', async () => {
+      mockFeishuChannel.sendMessage.mockResolvedValue(undefined);
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+      const registerMock = (mockContext.primaryNode as any).registerFeishuHandlers;
+      const [[handlers]] = registerMock.mock.calls;
+
+      const result = await handlers.sendInteractive('chat-1', {
+        question: 'Q?',
+        options: [{ text: 'OK', value: 'ok' }],
+      });
+
+      expect(result.messageId).toMatch(/^interactive_chat-1_\d+$/);
+    });
+
+    it('should handle uploadImage IPC handler', async () => {
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+      const registerMock = (mockContext.primaryNode as any).registerFeishuHandlers;
+      const [[handlers]] = registerMock.mock.calls;
+
+      const result = await handlers.uploadImage('/tmp/test.png');
+      expect(mockFeishuChannel.uploadImage).toHaveBeenCalledWith('/tmp/test.png');
+      expect(result).toBe('img_key');
+    });
+
+    it('should list temp chats via IPC handler', async () => {
+      const now = Date.now();
+      mockChatStore.listTempChats.mockResolvedValue([
+        { chatId: 'chat-1', createdAt: now, expiresAt: now + 3600000, creatorChatId: 'creator-1', response: 'yes' },
+        { chatId: 'chat-2', createdAt: now, expiresAt: now + 3600000, creatorChatId: 'creator-2' },
+      ]);
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+      const registerMock = (mockContext.primaryNode as any).registerFeishuHandlers;
+      const [[handlers]] = registerMock.mock.calls;
+
+      const result = await handlers.listTempChats();
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        chatId: 'chat-1',
+        createdAt: now,
+        expiresAt: now + 3600000,
+        creatorChatId: 'creator-1',
+        responded: true,
+      });
+      expect(result[1].responded).toBe(false);
+    });
+
+    it('should mark chat as responded via IPC handler', async () => {
+      mockChatStore.markTempChatResponded.mockResolvedValue(true);
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(mockFeishuChannel, mockConfig, mockContext);
+      const registerMock = (mockContext.primaryNode as any).registerFeishuHandlers;
+      const [[handlers]] = registerMock.mock.calls;
+
+      const result = await handlers.markChatResponded('chat-1', {
+        selectedValue: 'option-a',
+        responder: 'user-1',
+        repliedAt: new Date().toISOString(),
+      });
+
+      expect(mockChatStore.markTempChatResponded).toHaveBeenCalled();
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('BUILTIN_WIRED_DESCRIPTORS', () => {
+    it('should contain REST and Feishu descriptors', () => {
+      expect(BUILTIN_WIRED_DESCRIPTORS).toHaveLength(2);
+      expect(BUILTIN_WIRED_DESCRIPTORS.map(d => d.type)).toContain('rest');
+      expect(BUILTIN_WIRED_DESCRIPTORS.map(d => d.type)).toContain('feishu');
+    });
+
+    it('should NOT contain WeChat descriptor (Issue #1638: dynamic registration only)', () => {
+      expect(BUILTIN_WIRED_DESCRIPTORS.map(d => d.type)).not.toContain('wechat');
     });
   });
 });
