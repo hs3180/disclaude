@@ -158,13 +158,20 @@ start_server() {
         if ! wait_for_port_release "$REST_PORT" 15; then
             log_error "Port ${REST_PORT} is still in use, cannot start server"
             # Try to kill any process using the port
+            # Issue #3415: Use SIGTERM first, then SIGKILL as fallback
             if command -v lsof &> /dev/null; then
                 local pid_using_port
                 pid_using_port=$(lsof -t -i:"$REST_PORT" 2>/dev/null | head -1)
                 if [ -n "$pid_using_port" ]; then
-                    log_warn "Killing process $pid_using_port using port ${REST_PORT}"
-                    kill -9 "$pid_using_port" 2>/dev/null || true
+                    log_warn "Sending SIGTERM to process $pid_using_port using port ${REST_PORT}"
+                    kill -TERM "$pid_using_port" 2>/dev/null || true
                     sleep 2
+                    # Check if still running before SIGKILL
+                    if kill -0 "$pid_using_port" 2>/dev/null; then
+                        log_warn "Process still alive, sending SIGKILL"
+                        kill -9 "$pid_using_port" 2>/dev/null || true
+                        sleep 2
+                    fi
                 fi
             fi
         fi
@@ -205,11 +212,31 @@ start_server() {
 }
 
 # Stop the test server
+# Issue #3415: Send SIGTERM first for graceful shutdown, then SIGKILL as fallback
 stop_server() {
     if [ -n "$SERVER_PID" ]; then
         log_info "Stopping test server (PID: ${SERVER_PID})..."
-        kill $SERVER_PID 2>/dev/null || true
-        wait $SERVER_PID 2>/dev/null || true
+
+        # Send SIGTERM for graceful shutdown (allows cron cleanup, log flush, etc.)
+        kill -TERM "$SERVER_PID" 2>/dev/null || true
+
+        # Wait up to 5 seconds for graceful exit
+        local graceful_wait=0
+        while [ $graceful_wait -lt 5 ]; do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+            graceful_wait=$((graceful_wait + 1))
+        done
+
+        # If still running, force kill
+        if kill -0 "$SERVER_PID" 2>/dev/null; then
+            log_warn "Server did not exit gracefully after 5s, sending SIGKILL"
+            kill -9 "$SERVER_PID" 2>/dev/null || true
+        fi
+
+        wait "$SERVER_PID" 2>/dev/null || true
         SERVER_PID=""
 
         # Wait for port to be released

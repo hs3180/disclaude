@@ -108,14 +108,14 @@ describe('Scheduler', () => {
       await scheduler.start();
       expect(scheduler.getActiveJobs()).toHaveLength(1);
 
-      scheduler.stop();
+      await scheduler.stop();
 
       expect(scheduler.isRunning()).toBe(false);
       expect(scheduler.getActiveJobs()).toHaveLength(0);
     });
 
-    it('should handle stop when not running', () => {
-      expect(() => scheduler.stop()).not.toThrow();
+    it('should handle stop when not running', async () => {
+      await expect(scheduler.stop()).resolves.toBeUndefined();
     });
 
     it('should not schedule disabled tasks on start', async () => {
@@ -136,6 +136,94 @@ describe('Scheduler', () => {
 
       // The task should not be scheduled (CronJob would throw)
       expect(scheduler.getActiveJobs()).toHaveLength(0);
+    });
+
+    it('should wait for running tasks to complete on stop (Issue #3415)', async () => {
+      const task = createTask({ id: 'graceful-stop-1' });
+      scheduler.addTask(task);
+
+      // Start a task execution that takes 200ms
+      mockExecutor.mockImplementationOnce(() => new Promise(resolve => setTimeout(resolve, 200)));
+
+      // Fire the cron job to start execution
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait for execution to start
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('graceful-stop-1')).toBe(true);
+      }, { timeout: 1000 });
+
+      // Stop should wait for the running task to complete
+      const stopPromise = scheduler.stop(2000);
+
+      // Task should still be tracked as running immediately after stop() call
+      expect(scheduler.isRunning()).toBe(false);
+      expect(scheduler.getActiveJobs()).toHaveLength(0);
+
+      // Stop should eventually resolve after task completes
+      await stopPromise;
+
+      // Running task should be cleared after completion
+      expect(scheduler.isTaskRunning('graceful-stop-1')).toBe(false);
+    });
+
+    it('should timeout waiting for running tasks if they exceed shutdown timeout (Issue #3415)', async () => {
+      const task = createTask({ id: 'timeout-stop-1' });
+      scheduler.addTask(task);
+
+      // Start a task that never completes
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('timeout-stop-1')).toBe(true);
+      }, { timeout: 1000 });
+
+      // Stop with a very short timeout (50ms)
+      const start = Date.now();
+      await scheduler.stop(50);
+      const elapsed = Date.now() - start;
+
+      // Should have waited approximately 50ms before giving up
+      expect(elapsed).toBeGreaterThanOrEqual(40);
+      expect(elapsed).toBeLessThan(500); // generous upper bound
+    });
+
+    it('should skip waiting when no tasks are running (Issue #3415)', async () => {
+      const task = createTask({ id: 'quick-stop-1' });
+      scheduler.addTask(task);
+
+      // No task is running, stop should complete immediately
+      const start = Date.now();
+      await scheduler.stop();
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(100); // should be near-instant
+      expect(scheduler.isRunning()).toBe(false);
+    });
+
+    it('should skip waiting when timeout is 0 (Issue #3415)', async () => {
+      const task = createTask({ id: 'instant-stop-1' });
+      scheduler.addTask(task);
+
+      // Start a task that never completes
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('instant-stop-1')).toBe(true);
+      }, { timeout: 1000 });
+
+      // Stop with timeout 0 — should skip waiting
+      const start = Date.now();
+      await scheduler.stop(0);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(50); // should be near-instant
     });
   });
 
