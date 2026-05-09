@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import path from 'path';
 
 // Mock with sessionRestore config to test both branches
 const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
@@ -185,6 +186,45 @@ describe('Config', () => {
     it('should resolve path relative to workspace', () => {
       const resolved = Config.resolveWorkspace('subdir/file.txt');
       expect(resolved).toContain('subdir/file.txt');
+    });
+  });
+
+  describe('getWorkspaceDir', () => {
+    it('should return workspace dir from config file by default', () => {
+      const wsDir = Config.getWorkspaceDir();
+      expect(wsDir).toBe('/test/workspace');
+    });
+
+    it('should return env var override when DISCLAUDE_WORKSPACE_DIR is set', () => {
+      process.env.DISCLAUDE_WORKSPACE_DIR = '/tmp/test-isolated-workspace';
+      try {
+        const wsDir = Config.getWorkspaceDir();
+        expect(wsDir).toBe('/tmp/test-isolated-workspace');
+      } finally {
+        delete process.env.DISCLAUDE_WORKSPACE_DIR;
+      }
+    });
+
+    it('should resolve relative env var path to absolute', () => {
+      process.env.DISCLAUDE_WORKSPACE_DIR = 'relative/workspace';
+      try {
+        const wsDir = Config.getWorkspaceDir();
+        expect(path.isAbsolute(wsDir)).toBe(true);
+        expect(wsDir).toContain('relative/workspace');
+      } finally {
+        delete process.env.DISCLAUDE_WORKSPACE_DIR;
+      }
+    });
+
+    it('should fall back to config when env var is empty string', () => {
+      process.env.DISCLAUDE_WORKSPACE_DIR = '';
+      try {
+        const wsDir = Config.getWorkspaceDir();
+        // Empty string is falsy, should fall back to config
+        expect(wsDir).toBe('/test/workspace');
+      } finally {
+        delete process.env.DISCLAUDE_WORKSPACE_DIR;
+      }
     });
   });
 

@@ -214,9 +214,21 @@ export class Config {
   /**
    * Get the workspace directory.
    *
+   * Supports environment variable override via `DISCLAUDE_WORKSPACE_DIR`.
+   * When set, the env var takes precedence over config file and defaults.
+   * This enables test isolation without modifying production code interfaces.
+   *
    * @returns Absolute path to the workspace directory
+   * @see Issue #3414
    */
   static getWorkspaceDir(): string {
+    // Allow override via environment variable for test isolation
+    if (process.env.DISCLAUDE_WORKSPACE_DIR) {
+      const overrideDir = path.resolve(process.env.DISCLAUDE_WORKSPACE_DIR);
+      logger.debug({ workspaceDir: overrideDir, source: 'environment-variable' }, 'Using workspace directory');
+      return overrideDir;
+    }
+
     const workspaceDir = this.WORKSPACE_DIR;
     logger.debug({ workspaceDir, source: this.CONFIG_LOADED ? 'config-file' : 'default' }, 'Using workspace directory');
     return workspaceDir;
