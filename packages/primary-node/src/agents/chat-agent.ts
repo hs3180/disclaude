@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData, type CwdProvider } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -62,6 +62,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private readonly boundChatId: string;
 
   private readonly callbacks: ChatAgentCallbacks;
+
+  /** Dynamic cwd resolver for project-scoped working directory (Issue #3332) */
+  private readonly cwdProvider?: CwdProvider;
 
   // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
   private queryHandle?: QueryHandle;
@@ -103,6 +106,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+
+    // Issue #3332: Store CwdProvider for project-scoped cwd resolution
+    this.cwdProvider = config.cwdProvider;
 
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
@@ -699,9 +705,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const mcpServers = this.buildMcpServers(false);
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #3332: Resolve project-scoped cwd from CwdProvider
+    const projectCwd = this.cwdProvider?.(this.boundChatId);
     const sdkOptions = this.createSdkOptions({
       disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
       mcpServers,
+      cwd: projectCwd,
     });
 
     this.logger.info(

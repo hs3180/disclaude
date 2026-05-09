@@ -13,6 +13,7 @@ import type {
   CwdProvider,
   InstanceInfo,
   PersistedInstance,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -213,6 +214,46 @@ describe('CwdProvider', () => {
   it('should accept provider that always returns a path', () => {
     const provider: CwdProvider = () => '/workspace';
     expect(provider('any-id')).toBe('/workspace');
+  });
+});
+
+describe('ProjectConfig — Issue #3332', () => {
+  it('should accept minimal config with required fields', () => {
+    const config: ProjectConfig = {
+      key: 'hs3180/disclaude',
+      workingDir: '/path/to/repo',
+      chatId: 'oc_3d14c151cc209fd7ac1176a2b7ecbc30',
+    };
+    expect(config.key).toBe('hs3180/disclaude');
+    expect(config.workingDir).toBe('/path/to/repo');
+    expect(config.chatId).toBe('oc_3d14c151cc209fd7ac1176a2b7ecbc30');
+    expect(config.modelTier).toBeUndefined();
+    expect(config.idleTimeoutMs).toBeUndefined();
+  });
+
+  it('should accept full config with all optional fields', () => {
+    const config: ProjectConfig = {
+      key: 'hs3180/disclaude',
+      workingDir: '.',
+      chatId: 'oc_abc123',
+      modelTier: 'low',
+      idleTimeoutMs: 1800000,
+    };
+    expect(config.modelTier).toBe('low');
+    expect(config.idleTimeoutMs).toBe(1800000);
+  });
+
+  it('should accept all valid modelTier values', () => {
+    const tiers: Array<'low' | 'default' | 'high'> = ['low', 'default', 'high'];
+    for (const tier of tiers) {
+      const config: ProjectConfig = {
+        key: 'test',
+        workingDir: '/test',
+        chatId: 'oc_test',
+        modelTier: tier,
+      };
+      expect(config.modelTier).toBe(tier);
+    }
   });
 });
 

@@ -256,6 +256,24 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Project-scoped Agent Configuration (Issue #3332)
+# -----------------------------------------------------------------------------
+# Pre-configure projects to bind specific chatIds to working directories.
+# ChatAgent instances for the configured chatIds will automatically use
+# the project's working directory as their cwd (where CLAUDE.md is discovered).
+#
+# This is complementary to the runtime /project command:
+# - Config projects: static, defined at deploy time (this section)
+# - Template instances: dynamic, created by users at runtime
+#
+# projects:
+#   - key: "hs3180/disclaude"
+#     workingDir: "."                    # Relative to disclaude root
+#     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+#     modelTier: "low"                   # Optional: low/default/high
+#     # idleTimeoutMs: 1800000           # Optional: agent idle timeout (default: 30min)
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.

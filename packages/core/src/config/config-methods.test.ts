@@ -50,6 +50,19 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
         displayName: '读书助手',
       },
     },
+    projects: [
+      {
+        key: 'hs3180/disclaude',
+        workingDir: '.',
+        chatId: 'oc_test_chat_id',
+        modelTier: 'low' as const,
+      },
+      {
+        key: 'other/project',
+        workingDir: '/projects/other',
+        chatId: 'oc_other_chat_id',
+      },
+    ],
   })),
   mockGetPreloadedConfig: vi.fn(() => null),
 }));
@@ -223,6 +236,24 @@ describe('Config', () => {
       expect(templates!['book-reader']).toBeDefined();
       // description is optional
       expect(templates!['book-reader'].description).toBeUndefined();
+    });
+  });
+
+  describe('getProjectConfigs — Issue #3332', () => {
+    it('should return project configs from config file', () => {
+      const configs = Config.getProjectConfigs();
+      expect(configs).toBeDefined();
+      expect(configs).toHaveLength(2);
+    });
+
+    it('should return configs with correct structure', () => {
+      const configs = Config.getProjectConfigs()!;
+      expect(configs[0].key).toBe('hs3180/disclaude');
+      expect(configs[0].workingDir).toBe('.');
+      expect(configs[0].chatId).toBe('oc_test_chat_id');
+      expect(configs[0].modelTier).toBe('low');
+      expect(configs[1].key).toBe('other/project');
+      expect(configs[1].modelTier).toBeUndefined();
     });
   });
 

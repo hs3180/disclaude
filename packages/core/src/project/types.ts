@@ -122,6 +122,48 @@ export interface InstanceInfo {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Project Config (Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Pre-configured project binding for config-driven Agent context switching.
+ *
+ * Defined in `disclaude.config.yaml` under `projects:`, each entry maps
+ * a project key to a specific chatId and working directory. At startup,
+ * ProjectManager loads these entries and makes them available to CwdProvider,
+ * so that ChatAgent instances bound to the configured chatId automatically
+ * use the project's working directory as their cwd.
+ *
+ * Unlike the runtime instance system (templates → instances → chatId bindings),
+ * ProjectConfig entries are static and defined at deploy time.
+ *
+ * @see Issue #3332 (Project-scoped ChatAgent with chatId binding)
+ */
+export interface ProjectConfig {
+  /** Unique project key (e.g., 'hs3180/disclaude') */
+  key: string;
+
+  /** Project root directory — Agent discovers CLAUDE.md here */
+  workingDir: string;
+
+  /** Bound chatId — Agent output goes to this chat */
+  chatId: string;
+
+  /**
+   * Model tier for the project's ChatAgent.
+   * When set, the Agent created for this project uses the tier-specific model.
+   */
+  modelTier?: 'low' | 'default' | 'high';
+
+  /**
+   * Agent idle timeout in milliseconds.
+   * After this period of inactivity, the Agent can be disposed to free resources.
+   * Default: undefined (use system default)
+   */
+  idleTimeoutMs?: number;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // CwdProvider
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

@@ -571,6 +571,26 @@ export class Config {
   static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
     return fileConfigOnly.projectTemplates as ProjectTemplatesConfig | undefined;
   }
+
+  /**
+   * Get pre-configured projects from config file.
+   *
+   * Returns the `projects` section from disclaude.config.yaml,
+   * which defines static project-to-chatId bindings for Agent context switching.
+   * Returns undefined if no projects are configured.
+   *
+   * @see Issue #3332 (Project-scoped ChatAgent with chatId binding)
+   * @returns Array of ProjectConfig entries, or undefined
+   */
+  static getProjectConfigs(): Array<{
+    key: string;
+    workingDir: string;
+    chatId: string;
+    modelTier?: 'low' | 'default' | 'high';
+    idleTimeoutMs?: number;
+  }> | undefined {
+    return fileConfigOnly.projects;
+  }
 }
 
 // ============================================================================

@@ -394,6 +394,35 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+
+  /**
+   * Pre-configured projects for config-driven Agent context switching.
+   *
+   * Each project entry binds a unique key to a chatId and working directory.
+   * At startup, ProjectManager loads these entries so that ChatAgent instances
+   * for the configured chatId automatically use the project's cwd.
+   *
+   * This is complementary to the runtime instance system (templates):
+   * - Config projects: static, defined at deploy time
+   * - Template instances: dynamic, created by users at runtime
+   *
+   * ```yaml
+   * projects:
+   *   - key: "hs3180/disclaude"
+   *     workingDir: "."
+   *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+   *     modelTier: "low"
+   * ```
+   *
+   * @see Issue #3332 (Project-scoped ChatAgent with chatId binding)
+   */
+  projects?: Array<{
+    key: string;
+    workingDir: string;
+    chatId: string;
+    modelTier?: 'low' | 'default' | 'high';
+    idleTimeoutMs?: number;
+  }>;
 }
 
 /**

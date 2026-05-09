@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -73,6 +74,15 @@ export class ProjectManager {
   private chatProjectMap: Map<string, string> = new Map();
   /** Reverse index: instance name → Set of bound chatIds (O(1) lookup) */
   private instanceChatIds: Map<string, Set<string>> = new Map();
+
+  /**
+   * Pre-configured projects loaded from `disclaude.config.yaml` under `projects:`.
+   * Maps project key → ProjectConfig. Also indexed by chatId for fast lookup.
+   * @see Issue #3332 (Project-scoped ChatAgent with chatId binding)
+   */
+  private projectConfigs = new Map<string, ProjectConfig>();
+  /** Reverse index: chatId → project key for O(1) lookup by chatId */
+  private chatIdToProjectKey = new Map<string, string>();
 
   /** Path to .disclaude directory */
   private readonly dataDir: string;
@@ -417,6 +427,120 @@ export class ProjectManager {
   }
 
   // ───────────────────────────────────────────
+  // Project Config Methods (Issue #3332)
+  // ───────────────────────────────────────────
+
+  /**
+   * Load pre-configured projects from `disclaude.config.yaml`.
+   *
+   * Each project entry binds a key to a chatId and working directory.
+   * This is called once at startup after the config file is loaded.
+   *
+   * Validation rules:
+   * - `key` must be non-empty and unique
+   * - `workingDir` must be non-empty
+   * - `chatId` must be non-empty
+   * - `modelTier` (if present) must be one of 'low' | 'default' | 'high'
+   * - `idleTimeoutMs` (if present) must be a positive number
+   *
+   * Invalid entries are skipped with a warning (don't block startup).
+   *
+   * @param configs - Array of ProjectConfig entries from config file
+   * @returns number of successfully loaded entries
+   */
+  loadProjectConfigs(configs: ProjectConfig[]): number {
+    let loaded = 0;
+    for (const config of configs) {
+      const validationError = this.validateProjectConfig(config);
+      if (validationError) {
+        // Log warning but don't block startup
+        console.warn(`[ProjectManager] Skipping invalid project config "${config.key}": ${validationError}`);
+        continue;
+      }
+
+      // Check for duplicate keys
+      if (this.projectConfigs.has(config.key)) {
+        console.warn(`[ProjectManager] Skipping duplicate project config key: "${config.key}"`);
+        continue;
+      }
+
+      // Check for duplicate chatIds
+      if (this.chatIdToProjectKey.has(config.chatId)) {
+        console.warn(`[ProjectManager] Skipping project "${config.key}": chatId "${config.chatId}" already bound to project "${this.chatIdToProjectKey.get(config.chatId)}"`);
+        continue;
+      }
+
+      this.projectConfigs.set(config.key, config);
+      this.chatIdToProjectKey.set(config.chatId, config.key);
+      loaded++;
+    }
+    return loaded;
+  }
+
+  /**
+   * Get a pre-configured project by its key.
+   *
+   * @param key - Project key (e.g., 'hs3180/disclaude')
+   * @returns ProjectConfig if found, undefined otherwise
+   */
+  getProjectConfig(key: string): ProjectConfig | undefined {
+    return this.projectConfigs.get(key);
+  }
+
+  /**
+   * Get all pre-configured projects.
+   *
+   * @returns Array of all loaded ProjectConfig entries
+   */
+  getAllProjectConfigs(): ProjectConfig[] {
+    return Array.from(this.projectConfigs.values());
+  }
+
+  /**
+   * Get a pre-configured project by its bound chatId.
+   *
+   * @param chatId - Chat session identifier
+   * @returns ProjectConfig if a project is bound to this chatId, undefined otherwise
+   */
+  getProjectConfigByChatId(chatId: string): ProjectConfig | undefined {
+    const key = this.chatIdToProjectKey.get(chatId);
+    if (key) {
+      return this.projectConfigs.get(key);
+    }
+    return undefined;
+  }
+
+  /**
+   * Bind a chatId to a pre-configured project.
+   *
+   * This is an explicit binding action that overrides any existing binding.
+   * Use this for dynamic re-binding at runtime (e.g., admin command).
+   *
+   * @param key - Project key
+   * @param chatId - Chat session identifier to bind
+   * @returns ProjectResult with the ProjectConfig on success
+   */
+  bindProject(key: string, chatId: string): ProjectResult<ProjectConfig> {
+    const config = this.projectConfigs.get(key);
+    if (!config) {
+      return { ok: false, error: `项目 "${key}" 不存在` };
+    }
+
+    if (!chatId || chatId.length === 0) {
+      return { ok: false, error: 'chatId 不能为空' };
+    }
+
+    // Remove old chatId binding if exists
+    this.chatIdToProjectKey.delete(config.chatId);
+
+    // Update config with new chatId
+    config.chatId = chatId;
+    this.chatIdToProjectKey.set(chatId, key);
+
+    return { ok: true, data: { ...config } };
+  }
+
+  // ───────────────────────────────────────────
   // CwdProvider Factory
   // ───────────────────────────────────────────
 
@@ -425,10 +549,22 @@ export class ProjectManager {
    *
    * Injected into ChatAgent for dynamic cwd resolution.
    *
+   * Resolution priority:
+   * 1. Pre-configured project (config-driven, Issue #3332)
+   * 2. Runtime instance binding (template-based)
+   * 3. Default (undefined → SDK falls back to getWorkspaceDir())
+   *
    * @returns CwdProvider function
    */
   createCwdProvider(): CwdProvider {
     return (chatId: string): string | undefined => {
+      // Priority 1: Check pre-configured projects (Issue #3332)
+      const projectConfig = this.getProjectConfigByChatId(chatId);
+      if (projectConfig) {
+        return projectConfig.workingDir;
+      }
+
+      // Priority 2: Check runtime instance binding
       const active = this.getActive(chatId);
       // Return undefined for default → SDK falls back to getWorkspaceDir()
       if (active.name === 'default') {
@@ -808,6 +944,31 @@ export class ProjectManager {
   private validateChatId(chatId: string): string | null {
     if (!chatId || chatId.length === 0) {
       return 'chatId 不能为空';
+    }
+    return null;
+  }
+
+  /**
+   * Validate a ProjectConfig entry.
+   *
+   * @param config - ProjectConfig to validate
+   * @returns Error message string, or null if valid
+   */
+  private validateProjectConfig(config: ProjectConfig): string | null {
+    if (!config.key || config.key.length === 0) {
+      return '项目 key 不能为空';
+    }
+    if (!config.workingDir || config.workingDir.length === 0) {
+      return '项目 workingDir 不能为空';
+    }
+    if (!config.chatId || config.chatId.length === 0) {
+      return '项目 chatId 不能为空';
+    }
+    if (config.modelTier !== undefined && !['low', 'default', 'high'].includes(config.modelTier)) {
+      return `无效的 modelTier: "${config.modelTier}"（必须是 low/default/high）`;
+    }
+    if (config.idleTimeoutMs !== undefined && (typeof config.idleTimeoutMs !== 'number' || config.idleTimeoutMs <= 0)) {
+      return 'idleTimeoutMs 必须是正数';
     }
     return null;
   }

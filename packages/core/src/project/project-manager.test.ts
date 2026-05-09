@@ -1382,3 +1382,227 @@ describe('ProjectManager create() — filesystem with persistence round-trip', (
     expect(existsSync(join(workspaceDir, 'projects', 'my-research', 'CLAUDE.md'))).toBe(true);
   });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Project Config (Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager loadProjectConfigs() — Issue #3332', () => {
+  let pm: ProjectManager;
+
+  beforeEach(() => {
+    pm = new ProjectManager(createOptions());
+  });
+
+  it('should load valid project configs', () => {
+    const loaded = pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a' },
+      { key: 'repo/b', workingDir: '/projects/b', chatId: 'oc_chat_b', modelTier: 'low' },
+    ]);
+    expect(loaded).toBe(2);
+  });
+
+  it('should skip configs with empty key', () => {
+    const loaded = pm.loadProjectConfigs([
+      { key: '', workingDir: '/projects/a', chatId: 'oc_chat_a' },
+    ]);
+    expect(loaded).toBe(0);
+  });
+
+  it('should skip configs with empty workingDir', () => {
+    const loaded = pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '', chatId: 'oc_chat_a' },
+    ]);
+    expect(loaded).toBe(0);
+  });
+
+  it('should skip configs with empty chatId', () => {
+    const loaded = pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: '' },
+    ]);
+    expect(loaded).toBe(0);
+  });
+
+  it('should skip configs with invalid modelTier', () => {
+    const loaded = pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a', modelTier: 'invalid' as 'low' },
+    ]);
+    expect(loaded).toBe(0);
+  });
+
+  it('should skip configs with non-positive idleTimeoutMs', () => {
+    const loaded = pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a', idleTimeoutMs: -100 },
+    ]);
+    expect(loaded).toBe(0);
+  });
+
+  it('should skip duplicate keys', () => {
+    const loaded = pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a' },
+      { key: 'repo/a', workingDir: '/projects/b', chatId: 'oc_chat_b' },
+    ]);
+    expect(loaded).toBe(1);
+  });
+
+  it('should skip duplicate chatIds', () => {
+    const loaded = pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a' },
+      { key: 'repo/b', workingDir: '/projects/b', chatId: 'oc_chat_a' },
+    ]);
+    expect(loaded).toBe(1);
+  });
+
+  it('should return 0 for empty array', () => {
+    const loaded = pm.loadProjectConfigs([]);
+    expect(loaded).toBe(0);
+  });
+});
+
+describe('ProjectManager getProjectConfig() — Issue #3332', () => {
+  it('should return config by key', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a', modelTier: 'low' },
+    ]);
+
+    const config = pm.getProjectConfig('repo/a');
+    expect(config).toBeDefined();
+    expect(config!.key).toBe('repo/a');
+    expect(config!.workingDir).toBe('/projects/a');
+    expect(config!.chatId).toBe('oc_chat_a');
+    expect(config!.modelTier).toBe('low');
+  });
+
+  it('should return undefined for unknown key', () => {
+    const pm = new ProjectManager(createOptions());
+    expect(pm.getProjectConfig('unknown')).toBeUndefined();
+  });
+});
+
+describe('ProjectManager getAllProjectConfigs() — Issue #3332', () => {
+  it('should return all loaded configs', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a' },
+      { key: 'repo/b', workingDir: '/projects/b', chatId: 'oc_chat_b' },
+    ]);
+
+    const configs = pm.getAllProjectConfigs();
+    expect(configs).toHaveLength(2);
+    expect(configs.map(c => c.key).sort()).toEqual(['repo/a', 'repo/b']);
+  });
+
+  it('should return empty array when no configs loaded', () => {
+    const pm = new ProjectManager(createOptions());
+    expect(pm.getAllProjectConfigs()).toEqual([]);
+  });
+});
+
+describe('ProjectManager getProjectConfigByChatId() — Issue #3332', () => {
+  it('should return config by chatId', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a' },
+    ]);
+
+    const config = pm.getProjectConfigByChatId('oc_chat_a');
+    expect(config).toBeDefined();
+    expect(config!.key).toBe('repo/a');
+  });
+
+  it('should return undefined for unknown chatId', () => {
+    const pm = new ProjectManager(createOptions());
+    expect(pm.getProjectConfigByChatId('unknown')).toBeUndefined();
+  });
+});
+
+describe('ProjectManager bindProject() — Issue #3332', () => {
+  it('should bind a chatId to an existing project', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_old' },
+    ]);
+
+    const result = pm.bindProject('repo/a', 'oc_chat_new');
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.data.chatId).toBe('oc_chat_new');
+
+    // Old chatId should no longer resolve
+    expect(pm.getProjectConfigByChatId('oc_chat_old')).toBeUndefined();
+    // New chatId should resolve
+    expect(pm.getProjectConfigByChatId('oc_chat_new')).toBeDefined();
+  });
+
+  it('should return error for unknown project key', () => {
+    const pm = new ProjectManager(createOptions());
+    const result = pm.bindProject('unknown', 'oc_chat');
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toContain('不存在');
+  });
+
+  it('should return error for empty chatId', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a' },
+    ]);
+
+    const result = pm.bindProject('repo/a', '');
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toContain('不能为空');
+  });
+});
+
+describe('ProjectManager createCwdProvider() with project configs — Issue #3332', () => {
+  it('should resolve cwd from project config', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_project_chat' },
+    ]);
+    const cwdProvider = pm.createCwdProvider();
+
+    expect(cwdProvider('oc_project_chat')).toBe('/projects/a');
+  });
+
+  it('should prioritize project config over runtime instance', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+    pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/config-a', chatId: 'oc_chat_1' },
+    ]);
+
+    // Also create a runtime instance bound to the same chatId
+    pm.create('oc_chat_1', 'research', 'my-research');
+
+    const cwdProvider = pm.createCwdProvider();
+    // Project config should take priority
+    expect(cwdProvider('oc_chat_1')).toBe('/projects/config-a');
+  });
+
+  it('should fall back to runtime instance when no project config', () => {
+    const opts = createOptions();
+    const pm = new ProjectManager(opts);
+    // No project config for this chatId
+    pm.create('oc_chat_1', 'research', 'my-research');
+
+    const cwdProvider = pm.createCwdProvider();
+    expect(cwdProvider('oc_chat_1')).toBe(join(opts.workspaceDir, 'projects/my-research'));
+  });
+
+  it('should return undefined for unbound chatId', () => {
+    const pm = new ProjectManager(createOptions());
+    const cwdProvider = pm.createCwdProvider();
+    expect(cwdProvider('unbound_chat')).toBeUndefined();
+  });
+
+  it('should return undefined when project config workingDir is set but chatId is different', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.loadProjectConfigs([
+      { key: 'repo/a', workingDir: '/projects/a', chatId: 'oc_chat_a' },
+    ]);
+    const cwdProvider = pm.createCwdProvider();
+
+    // Different chatId should not match
+    expect(cwdProvider('oc_chat_b')).toBeUndefined();
+  });
+});

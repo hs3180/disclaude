@@ -26,6 +26,7 @@ import {
   type DisclaudeConfigWithChannels,
   createControlHandler,
   type ControlHandlerContext,
+  ProjectManager,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -175,8 +176,23 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #3332: Inject CwdProvider from ProjectManager for project-scoped cwd resolution
+  const projectManager = new ProjectManager({
+    workspaceDir: Config.getWorkspaceDir(),
+    packageDir: Config.getWorkspaceDir(),
+    templatesConfig: Config.getProjectTemplatesConfig(),
+  });
+
+  // Load pre-configured projects from config (Issue #3332)
+  const projectConfigs = Config.getProjectConfigs();
+  if (projectConfigs && projectConfigs.length > 0) {
+    const loaded = projectManager.loadProjectConfigs(projectConfigs);
+    logger.info({ total: projectConfigs.length, loaded }, 'Loaded pre-configured projects');
+  }
+
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    cwdProvider: projectManager.createCwdProvider(),
   });
 
   // Create unified control handler context
