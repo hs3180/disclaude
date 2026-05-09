@@ -123,7 +123,7 @@ export type ControlCommandType =
   | 'debug'
   // Trigger mode control (Issue #511, renamed #2193)
   | 'trigger'
-  // Project management commands (Issue #3335)
+  // Project management commands (Issue #3335, #1916)
   | 'project';
 
 /**

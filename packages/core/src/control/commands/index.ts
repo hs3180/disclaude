@@ -21,7 +21,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'list-nodes', handler: handleListNodes, description: '查看执行节点' },
   { type: 'debug', handler: handleDebug, description: '切换 Debug 群设置' },
   { type: 'trigger', handler: handleTrigger, description: '切换触发模式', usage: '/trigger [mention|always]' },
-  { type: 'project', handler: handleProject, description: '项目管理命令', usage: '/project [list|info|status]' },
+  { type: 'project', handler: handleProject, description: '项目管理命令', usage: '/project [list|info|status|templates|create|use|reset]' },
 ];
 
 /**

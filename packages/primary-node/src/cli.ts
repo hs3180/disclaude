@@ -28,6 +28,7 @@ import {
   createControlHandler,
   type ControlHandlerContext,
   ProcessLock,
+  ProjectManager,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -211,8 +212,16 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #1916 Phase 2: Also inject CwdProvider from ProjectManager
+  const projectManager = new ProjectManager({
+    workspaceDir: Config.getWorkspaceDir(),
+    packageDir: path.dirname(Config.SKILLS_DIR),
+    templatesConfig: Config.getProjectTemplatesConfig(),
+  });
+
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    cwdProvider: projectManager.createCwdProvider(),
   });
 
   // Create unified control handler context
@@ -227,6 +236,7 @@ async function main(): Promise<void> {
       setDebugGroup: (chatId: string, name?: string) => primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
     },
+    projectManager,
     logger,
   };
 
