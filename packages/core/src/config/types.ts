@@ -394,6 +394,24 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+
+  /**
+   * WorkBuddy configuration — local Agent process management (Issue #3442).
+   *
+   * WorkBuddy runs Claude Code Agent subprocesses on the user's local machine,
+   * enabling remote control of local toolchains (e.g., WeChat DevTools CLI).
+   *
+   * ```yaml
+   * workbuddy:
+   *   projects:
+   *     my-miniprogram:
+   *       cwd: /Users/dev/my-miniprogram
+   *       chatId: oc_xxxx
+   *       tools:
+   *         - wechat-devtools
+   * ```
+   */
+  workbuddy?: import('../workbuddy/types.js').WorkBuddyConfig;
 }
 
 /**

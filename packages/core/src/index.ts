@@ -346,3 +346,18 @@ export {
   discoveryResultToConfig,
   discoverTemplatesAsConfig,
 } from './project/index.js';
+
+// WorkBuddy module — local Agent process management (Issue #3442)
+export type {
+  WorkBuddyStatus,
+  WorkBuddyProjectConfig,
+  WorkBuddyConfig,
+  WorkBuddyInstance,
+  WorkBuddyCommandType,
+  WorkBuddyCommand,
+  WorkBuddyCommandResponse,
+  WorkBuddyCallbacks,
+  WorkBuddyManagerOptions,
+} from './workbuddy/index.js';
+
+export { WorkBuddyManager } from './workbuddy/index.js';

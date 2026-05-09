@@ -267,6 +267,27 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# WorkBuddy Configuration (Issue #3442)
+# -----------------------------------------------------------------------------
+# WorkBuddy runs Claude Code Agent subprocesses on the user's local machine,
+# enabling remote control of local toolchains (e.g., WeChat DevTools CLI).
+#
+# Each project defines a local working directory and optional settings.
+# WorkBuddy processes are managed by WorkBuddyManager (spawn, health check, stop).
+#
+# workbuddy:
+#   projects:
+#     my-miniprogram:
+#       cwd: /Users/dev/my-miniprogram
+#       chatId: oc_xxxx               # Optional: bind to a Feishu group
+#       tools:
+#         - wechat-devtools            # Enable WeChat DevTools integration
+#       env:
+#         WECHAT_DEVTOOLS_PATH: /Applications/wechatwebdevtools.app
+#       # model: claude-sonnet-4-20250514    # Optional: override model
+#       # permissionMode: bypassPermissions   # Optional: override permission mode
+
 # =============================================================================
 # Notes
 # =============================================================================
