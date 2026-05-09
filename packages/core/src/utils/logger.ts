@@ -73,10 +73,15 @@ let logPassthrough: PassThrough | null = null;
 // pino.destination() returns SonicBoom, pino-roll returns WritableStream
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let currentLogDest: any = null;
+// Recursion guard for error handlers that may try to log during flush
+let flushInProgress = false;
 
 /**
  * Reset the root logger instance.
  * This is primarily useful for testing.
+ *
+ * Issue #3416: Properly destroy currentLogDest (SonicBoom stream) to
+ * prevent file handle leaks and concurrent writes to log files.
  *
  * @internal
  */
@@ -84,8 +89,15 @@ export function resetLogger(): void {
   if (logPassthrough) {
     logPassthrough.destroy();
     logPassthrough = null;
-    currentLogDest = null;
   }
+  // Issue #3416: Destroy the underlying file stream to release file handles.
+  // Without this, pino.destination() / pino-roll SonicBoom streams are
+  // orphaned — they keep file descriptors open and may write buffered data
+  // to a file that pino-roll has already rotated away.
+  if (currentLogDest && typeof currentLogDest.destroy === 'function') {
+    currentLogDest.destroy();
+  }
+  currentLogDest = null;
   rootLogger = null;
 }
 
@@ -238,6 +250,18 @@ async function setupFileLogging(
       limit: { count: 30 },
     });
 
+    // Issue #3416: Handle stream errors to prevent unhandled exceptions
+    // from crashing the process. pino-roll emits 'error' on rotation failures,
+    // file system issues, etc. Use rootLogger when available (with recursion
+    // guard since the logger itself might be the source of the error).
+    (rollStream as unknown as NodeJS.EventEmitter).on('error', (err: Error) => {
+      if (rootLogger && !flushInProgress) {
+        rootLogger.error({ err }, 'pino-roll stream error');
+      } else {
+        console.warn('pino-roll stream error:', err.message);
+      }
+    });
+
     return rollStream as unknown as NodeJS.WritableStream;
   } catch (error) {
     // If pino-roll fails, fall back to stdout
@@ -328,9 +352,35 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
     if (shouldFileLog && logPassthrough && currentLogDest) {
       try {
         const rollStream = await setupFileLogging(logDir);
-        // Swap destination: unpipe old, pipe new
-        logPassthrough.unpipe(currentLogDest);
+
+        // Issue #3416: Properly flush and close the old destination before
+        // switching. The old pino.destination() SonicBoom may have buffered
+        // writes that haven't reached disk yet. Without flushing:
+        //   1. Buffered data is silently lost
+        //   2. The old file handle stays open, causing concurrent access
+        //      when pino-roll opens the same log file path
+        //   3. If pino-roll rotates the file, the old fd still points to
+        //      the renamed file — writes go to the wrong file
+        const oldDest = currentLogDest;
+        logPassthrough.unpipe(oldDest);
+
+        // Flush the old destination to ensure all buffered writes reach disk
+        await new Promise<void>((resolve) => {
+          if (typeof oldDest.flush === 'function' && !oldDest.destroyed) {
+            oldDest.flush(() => resolve());
+          } else {
+            resolve();
+          }
+        });
+
+        // Destroy the old file handle to release the fd
+        if (typeof oldDest.destroy === 'function' && !oldDest.destroyed) {
+          oldDest.destroy();
+        }
+
+        // Now pipe to the new pino-roll stream
         logPassthrough.pipe(rollStream);
+
         // Update log level in case it changed
         if (config.level) {
           rootLogger.level = config.level;
@@ -478,14 +528,78 @@ export function isLevelEnabled(level: LogLevel): boolean {
 /**
  * Flush any pending log entries
  *
+ * Issue #3416: Uses SonicBoom's flush() method instead of setTimeout.
+ * The previous setTimeout(100ms) approach was unreliable — it neither
+ * guaranteed flush completion nor respected backpressure. This could
+ * cause log truncation when the process exits before buffered writes
+ * reach the filesystem.
+ *
+ * Flushes both the PassThrough proxy (if active) and the underlying
+ * file stream (pino-roll / pino.destination).
+ *
  * Useful for ensuring logs are written before process exit.
  */
 export function flushLogger(): Promise<void> {
-  if (rootLogger) {
-    return new Promise((resolve) => {
-      // Pino uses async writes, give it time to flush
-      setTimeout(resolve, 100);
-    });
+  if (!rootLogger) {
+    return Promise.resolve();
   }
-  return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const pending: Promise<void>[] = [];
+
+    // Flush the PassThrough proxy — this pushes buffered chunks downstream
+    if (logPassthrough && !logPassthrough.destroyed) {
+      try {
+        logPassthrough.resume();
+      } catch {
+        // PassThrough may already be ended
+      }
+    }
+
+    // Flush the underlying file stream (SonicBoom) if it has a flush method
+    if (currentLogDest && typeof currentLogDest.flush === 'function' && !currentLogDest.destroyed) {
+      pending.push(
+        new Promise<void>((res) => {
+          currentLogDest.flush((err?: Error | null) => {
+            if (err) {
+              // Use rootLogger when safe, fallback to console.warn during flush
+              if (rootLogger && !flushInProgress) {
+                rootLogger.error({ err }, 'Logger flush error');
+              } else {
+                console.warn('Logger flush error:', err.message);
+              }
+            }
+            res();
+          });
+        })
+      );
+    }
+
+    if (pending.length > 0) {
+      flushInProgress = true;
+      void Promise.all(pending).then(() => {
+        flushInProgress = false;
+        resolve();
+      });
+    } else {
+      // No file stream to flush — resolve immediately
+      resolve();
+    }
+  });
+}
+
+/**
+ * Flush and close the logger, releasing all file handles.
+ *
+ * Issue #3416: Provides a clean shutdown path for the logger. Use this
+ * before process.exit() to ensure all buffered log entries are written
+ * to disk and file handles are released.
+ *
+ * After calling this, the logger can be re-initialized with initLogger().
+ *
+ * @returns Promise that resolves when all streams are flushed and closed
+ */
+export async function closeLogger(): Promise<void> {
+  await flushLogger();
+  resetLogger();
 }
