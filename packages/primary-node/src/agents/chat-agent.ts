@@ -442,12 +442,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           continue;
         }
 
-        // Cancel old query to prevent orphaned processIterator from sending
+        // Close old query to prevent orphaned processIterator from sending
         // duplicate messages while the new session starts.
+        // Issue #3378: Must use close() (not cancel()) to remove the exit listener
+        // registered by ProcessTransport. cancel() only stops iteration but leaves
+        // the exit listener, causing leaks on repeated retries.
         if (this.queryHandle) {
-          this.logger.info({ chatId }, 'handleInput: cancelling old queryHandle before retry');
-          this.queryHandle.cancel();
+          this.logger.info({ chatId }, 'handleInput: closing old queryHandle before retry');
+          this.queryHandle.close();
           this.queryHandle = undefined;
+        }
+        if (this.channel) {
+          this.logger.info({ chatId }, 'handleInput: closing old channel before retry');
+          this.channel.close();
+          this.channel = undefined;
         }
 
         this.logger.warn({ chatId, messageId }, 'handleInput: first push failed, attempting session restart');
@@ -1198,13 +1206,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // restarts (via processIterator → startAgentLoop).
     }
 
-    // Cancel the current query (not close, to allow continuation)
-    this.queryHandle.cancel();
+    // Issue #3378: Close the current query (not cancel) to remove the exit listener
+    // registered by ProcessTransport. cancel() only stops iteration but leaves
+    // the exit listener registered, causing leaks when the agent loop restarts
+    // (which creates a new ProcessTransport with a new exit listener).
+    if (this.channel) {
+      this.logger.info({ chatId: this.boundChatId }, 'stop: closing channel');
+      this.channel.close();
+      this.channel = undefined;
+    }
+    this.queryHandle.close();
     this.queryHandle = undefined;
 
-    // Note: We do NOT set isSessionActive to false here
-    // The session remains active, just the current query is cancelled
-    // The channel is preserved so new messages can still be sent
+    // Note: We do NOT set isSessionActive to false here.
+    // The session remains active; processIterator will detect the ended iterator
+    // and restart via startAgentLoop(), which creates a fresh query and channel.
 
     return true;
   }
