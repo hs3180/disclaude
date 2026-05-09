@@ -314,6 +314,106 @@ describe('BaseChannel', () => {
     });
   });
 
+  describe('emitMessage (protected)', () => {
+    it('should call registered message handler', async () => {
+      const channel = createTestChannel();
+      const handler: MessageHandler = vi.fn();
+      channel.onMessage(handler);
+
+      const message = { chatId: 'chat-1', messageId: 'msg-1', text: 'Hello', senderOpenId: 'user-1' };
+      await (channel as unknown as { emitMessage: (m: Parameters<MessageHandler>[0]) => Promise<void> }).emitMessage(message);
+
+      expect(handler).toHaveBeenCalledWith(message);
+    });
+
+    it('should warn when no message handler is registered', async () => {
+      const channel = createTestChannel();
+
+      // emitMessage without handler should not throw, just log a warning
+      const message = { chatId: 'chat-1', messageId: 'msg-1', text: 'Hello', senderOpenId: 'user-1' };
+      await expect(
+        (channel as unknown as { emitMessage: (m: Parameters<MessageHandler>[0]) => Promise<void> }).emitMessage(message)
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('emitControl (protected)', () => {
+    it('should call registered control handler and return response', async () => {
+      const channel = createTestChannel();
+      const response = { success: true, data: { nodes: [] } };
+      const handler: ControlHandler = vi.fn().mockResolvedValue(response);
+      channel.onControl(handler);
+
+      const command = { type: 'list-nodes' as const };
+      const result = await (channel as unknown as { emitControl: (c: Parameters<ControlHandler>[0]) => Promise<typeof response> }).emitControl(command);
+
+      expect(handler).toHaveBeenCalledWith(command);
+      expect(result).toEqual(response);
+    });
+
+    it('should return error response when no control handler is registered', async () => {
+      const channel = createTestChannel();
+
+      const command = { type: 'status' as const };
+      const result = await (channel as unknown as { emitControl: (c: Parameters<ControlHandler>[0]) => Promise<unknown> }).emitControl(command);
+
+      expect(result).toEqual({ success: false, error: 'No control handler registered' });
+    });
+  });
+
+  describe('start edge cases', () => {
+    it('should be no-op when already starting', async () => {
+      const channel = createTestChannel();
+      // Manually set status to 'starting' to simulate race condition
+      (channel as unknown as { setStatus: (s: string) => void }).setStatus('starting');
+
+      await channel.start();
+      // doStart should NOT have been called since status was already 'starting'
+      expect(channel.doStartCalls).toBe(0);
+    });
+  });
+
+  describe('stop edge cases', () => {
+    it('should be no-op when already stopping', async () => {
+      const channel = createTestChannel();
+      await channel.start();
+      // Manually set status to 'stopping' to simulate race condition
+      (channel as unknown as { setStatus: (s: string) => void }).setStatus('stopping');
+
+      await channel.stop();
+      // doStop should NOT have been called since status was already 'stopping'
+      expect(channel.doStopCalls).toBe(0);
+    });
+  });
+
+  describe('setStatus (protected)', () => {
+    it('should update status via setStatus', () => {
+      const channel = createTestChannel();
+      expect(channel.status).toBe('stopped');
+
+      (channel as unknown as { setStatus: (s: string) => void }).setStatus('running');
+      expect(channel.status).toBe('running');
+    });
+  });
+
+  describe('sendMessage with return value', () => {
+    it('should return messageId when doSendMessage returns one', async () => {
+      class ChannelWithMessageId extends TestChannel {
+        // eslint-disable-next-line require-await
+        protected override async doSendMessage(): Promise<string> {
+          return 'platform-msg-123';
+        }
+      }
+      const channel = new ChannelWithMessageId(
+        { id: 'test-channel' }, 'default-id', 'TestChannel'
+      );
+      await channel.start();
+
+      const result = await channel.sendMessage({ chatId: 'chat-1', type: 'text', text: 'Hello' });
+      expect(result).toBe('platform-msg-123');
+    });
+  });
+
   describe('getCapabilities', () => {
     it('should return default capabilities', () => {
       const channel = createTestChannel();

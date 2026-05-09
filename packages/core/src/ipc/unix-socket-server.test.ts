@@ -676,5 +676,71 @@ describe('UnixSocketIpcServer', () => {
 
       await server.stop();
     });
+
+    it('should return error response when handler throws in handleMessage', async () => {
+      // Create a handler that throws for all request types
+      const throwingHandler = vi.fn().mockRejectedValue(new Error('Handler crashed'));
+      const mockHandlers = createMockHandlersContainer({
+        sendMessage: throwingHandler,
+      });
+      const handler = createInteractiveMessageHandler(vi.fn(), mockHandlers);
+      const server = createTrackedServer(handler);
+
+      await server.start();
+
+      const { createConnection } = await import('net');
+
+      const response = await new Promise<string>((resolve, reject) => {
+        const client = createConnection(socketPath, () => {
+          client.write(`${JSON.stringify({
+            type: 'sendMessage',
+            id: 'err-1',
+            payload: { chatId: 'chat-1', text: 'Hello' },
+          })}\n`);
+        });
+
+        let buffer = '';
+        client.on('data', (data: Buffer) => {
+          buffer += data.toString();
+          if (buffer.includes('\n')) {
+            client.destroy();
+            resolve(buffer.trim());
+          }
+        });
+
+        client.on('error', reject);
+        setTimeout(() => { client.destroy(); reject(new Error('Timeout')); }, 2000);
+      });
+
+      const parsed = JSON.parse(response) as IpcResponse;
+      expect(parsed.id).toBe('err-1');
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toBe('Handler crashed');
+
+      await server.stop();
+    });
+
+    it('should handle connection error event gracefully', async () => {
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = createTrackedServer(handler);
+
+      await server.start();
+
+      // Connect a client and then force-destroy the socket to trigger error event
+      const { createConnection } = await import('net');
+
+      const client = createConnection(socketPath, () => {
+        // Immediately destroy the connection to trigger server-side error/close
+        client.destroy();
+      });
+
+      // Wait a bit for the server to process the connection and error
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Server should still be running
+      expect(server.isRunning()).toBe(true);
+
+      await server.stop();
+    });
   });
 });

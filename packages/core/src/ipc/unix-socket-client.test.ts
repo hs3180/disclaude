@@ -435,6 +435,106 @@ describe('UnixSocketIpcClient', () => {
     });
   });
 
+  describe('markChatResponded', () => {
+    it('should return success when server handles markChatResponded', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({ messageId: 'm1', actionPrompts: {} }),
+          markChatResponded: vi.fn().mockResolvedValue({ success: true }),
+        },
+      };
+      const { socketPath: serverSocketPath } = await startTrackedServer(tempDir, activeServers, mockHandlers, 'mark');
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.markChatResponded('chat-1', {
+        selectedValue: 'confirm',
+        responder: 'user-1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(true);
+
+      await client.disconnect();
+    });
+
+    it('should return ipc_unavailable error type when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.markChatResponded('chat-1', {
+        selectedValue: 'confirm',
+        responder: 'user-1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+
+    it('should return ipc_timeout error type on timeout', async () => {
+      // Create a server that never responds to trigger timeout
+      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
+      const hangingHandler = vi.fn().mockImplementation(async (req: { type: string; id: string }) => {
+        if (req.type === 'markChatResponded') {
+          // Never resolve — simulate a hanging handler
+          await new Promise(() => {});
+        }
+        return { id: req.id, success: true, payload: {} };
+      });
+      const serverSocketPath = uniqueSocketPath(tempDir, 'hang');
+      const server = new UnixSocketIpcServer(hangingHandler, { socketPath: serverSocketPath });
+      await server.start();
+      activeServers.push(() => server.stop());
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 200,
+        maxRetries: 1,
+      });
+
+      const result = await client.markChatResponded('chat-1', {
+        selectedValue: 'confirm',
+        responder: 'user-1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+    });
+
+    it('should return ipc_request_failed error type when request fails', async () => {
+      const errorResponse = { id: '1', success: false, error: 'Not supported' };
+      const errorHandler = vi.fn().mockResolvedValue(errorResponse);
+      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
+      const serverSocketPath = uniqueSocketPath(tempDir, 'fail');
+      const server = new UnixSocketIpcServer(errorHandler, { socketPath: serverSocketPath });
+      await server.start();
+      activeServers.push(() => server.stop());
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.markChatResponded('chat-1', {
+        selectedValue: 'confirm',
+        responder: 'user-1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_request_failed');
+    });
+  });
+
   describe('availability', () => {
     it('should return available when connected', async () => {
       const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
