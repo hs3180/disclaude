@@ -51,6 +51,15 @@ describe('CooldownManager', () => {
       expect(result).toBe(false);
     });
 
+    it('should return false when effective cooldown is zero', async () => {
+      // Record execution with stored cooldownPeriod = 0
+      await manager.recordExecution('task-1', 0);
+
+      // No override provided — effectiveCooldown = 0 from record
+      const result = await manager.isInCooldown('task-1');
+      expect(result).toBe(false);
+    });
+
     it('should return true for task in cooldown', async () => {
       await manager.recordExecution('task-1', 60000);
       const result = await manager.isInCooldown('task-1');
@@ -148,6 +157,16 @@ describe('CooldownManager', () => {
       expect(status.lastExecutionTime).not.toBeNull();
       expect(status.cooldownEndsAt).not.toBeNull();
       expect(status.remainingMs).toBeGreaterThan(0);
+    });
+
+    it('should return null cooldownEndsAt when effective cooldown is zero', async () => {
+      await manager.recordExecution('task-1', 60000);
+
+      // Override with zero cooldown — cooldownEndsAt should be null
+      const status = await manager.getCooldownStatus('task-1', 0);
+      expect(status.cooldownEndsAt).toBeNull();
+      expect(status.remainingMs).toBe(0);
+      expect(status.isInCooldown).toBe(false);
     });
   });
 

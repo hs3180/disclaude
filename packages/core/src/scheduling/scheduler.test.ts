@@ -774,6 +774,126 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('blocking mechanism', () => {
+    it('should skip execution when blocking task is already running', async () => {
+      // Use a never-resolving executor to keep the task running
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const task = createTask({ id: 'blocking-1', blocking: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // First trigger — starts execution
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-1')).toBe(true);
+      }, { timeout: 1000 });
+
+      // Executor was called once
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+
+      // Second trigger — should skip because task is still running
+      void jobs[0].job.fireOnTick();
+
+      // Wait a bit for the async handler to run
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Executor should still only have been called once (skipped)
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+      expect(scheduler.isTaskRunning('blocking-1')).toBe(true);
+    });
+
+    it('should allow non-blocking task to execute concurrently', async () => {
+      // Use a never-resolving executor to keep the task running
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+      mockExecutor.mockResolvedValueOnce(undefined);
+
+      const task = createTask({ id: 'non-blocking-1', blocking: false });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // First trigger — starts execution
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('non-blocking-1')).toBe(true);
+      }, { timeout: 1000 });
+
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+
+      // Second trigger — should also execute because blocking is false
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('drain promise resolution', () => {
+    it('should resolve drain promise when last running task completes', async () => {
+      let resolveExecution: () => void;
+      const executionPromise = new Promise<void>(resolve => { resolveExecution = resolve; });
+      mockExecutor.mockReturnValueOnce(executionPromise);
+
+      const task = createTask({ id: 'drain-test' });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('drain-test')).toBe(true);
+      }, { timeout: 1000 });
+
+      // Task is running — isAnyTaskRunning should be true
+      expect(scheduler.isAnyTaskRunning()).toBe(true);
+
+      // Complete the task
+      resolveExecution!();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('drain-test')).toBe(false);
+      }, { timeout: 1000 });
+
+      // After task completes, isAnyTaskRunning should be false
+      expect(scheduler.isAnyTaskRunning()).toBe(false);
+      expect(scheduler.getRunningTaskIds()).toEqual([]);
+    });
+
+    it('should resolve drain promise when one of two tasks completes', async () => {
+      let resolveFirst: () => void;
+      const firstPromise = new Promise<void>(resolve => { resolveFirst = resolve; });
+      mockExecutor.mockReturnValueOnce(firstPromise);
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const task1 = createTask({ id: 'drain-1' });
+      const task2 = createTask({ id: 'drain-2' });
+      scheduler.addTask(task1);
+      scheduler.addTask(task2);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // Start both tasks
+      void jobs[0].job.fireOnTick();
+      void jobs[1].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('drain-1')).toBe(true);
+        expect(scheduler.isTaskRunning('drain-2')).toBe(true);
+      }, { timeout: 1000 });
+
+      // Complete first task — second still running
+      resolveFirst!();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // drain-1 should be cleared, drain-2 still running
+      expect(scheduler.isTaskRunning('drain-1')).toBe(false);
+      expect(scheduler.isTaskRunning('drain-2')).toBe(true);
+      expect(scheduler.getRunningTaskIds()).toEqual(['drain-2']);
+    });
+  });
+
   describe('TaskTimeoutError', () => {
     it('should have correct name and message', () => {
       const error = new TaskTimeoutError(30000);

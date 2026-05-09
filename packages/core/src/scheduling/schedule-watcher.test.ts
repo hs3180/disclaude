@@ -347,6 +347,122 @@ describe('ScheduleFileScanner', () => {
       expect(task!.sourceFile).toBe(`${MOCK_DIR}/test/SCHEDULE.md`);
       expect(task!.fileMtime).toEqual(new Date('2026-03-20T12:00:00Z'));
     });
+
+    it('should default blocking to true when not specified', async () => {
+      const content = [
+        '---',
+        'name: "Default Blocking"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_test"',
+        '---',
+        '',
+        'Task content.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/default-blocking/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.blocking).toBe(true);
+    });
+
+    it('should parse modelTier field when specified (Issue #3059)', async () => {
+      const content = [
+        '---',
+        'name: "Low Tier Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_tier"',
+        'modelTier: "low"',
+        '---',
+        '',
+        'Low tier task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/tier-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBe('low');
+      expect(task!.model).toBeUndefined();
+    });
+
+    it('should warn and ignore invalid modelTier value', async () => {
+      const content = [
+        '---',
+        'name: "Invalid Tier Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_invalid"',
+        'modelTier: "invalid-tier"',
+        '---',
+        '',
+        'Task with invalid tier.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/invalid-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBeUndefined();
+    });
+
+    it('should parse both model and modelTier when both present (Issue #3059)', async () => {
+      const content = [
+        '---',
+        'name: "Both Model Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_both"',
+        'model: "claude-sonnet-4"',
+        'modelTier: "high"',
+        '---',
+        '',
+        'Task with both.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/both-model/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.model).toBe('claude-sonnet-4');
+      expect(task!.modelTier).toBe('high');
+    });
+
+    it('should parse timeoutMs field when specified (Issue #3346)', async () => {
+      const content = [
+        '---',
+        'name: "Timeout Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_timeout"',
+        'timeoutMs: 60000',
+        '---',
+        '',
+        'Task with timeout.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/timeout-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.timeoutMs).toBe(60000);
+    });
+
+    it('should handle frontmatter line without colon gracefully', async () => {
+      const content = [
+        '---',
+        'name: "Colon Test"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_colon"',
+        'this line has no colon',
+        '---',
+        '',
+        'Task content.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-colon/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.name).toBe('Colon Test');
+    });
   });
 
   describe('scanAll', () => {
@@ -501,6 +617,42 @@ describe('ScheduleFileScanner', () => {
 
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
       expect(writtenContent).not.toContain('model:');
+    });
+
+    it('should write timeoutMs field when present (Issue #3346)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-timeout',
+        name: 'Timeout Task',
+        cron: '0 * * * *',
+        prompt: 'Task with timeout',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        timeoutMs: 60000,
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('timeoutMs: 60000');
+    });
+
+    it('should write modelTier field when present (Issue #3059)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-tier',
+        name: 'Tier Task',
+        cron: '0 * * * *',
+        prompt: 'Task with tier',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        modelTier: 'low',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('modelTier: "low"');
     });
 
     it('should handle task IDs without schedule- prefix', async () => {
