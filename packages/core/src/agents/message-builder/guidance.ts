@@ -298,3 +298,61 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: Informs the agent about runtime environment variables
+ * available for cross-process state sharing. The agent runs in an SDK
+ * subprocess, so in-memory singletons from the main process are not
+ * accessible. Runtime env vars bridge this gap via a file-based mechanism.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Variables
+
+The system uses a file-based mechanism (\`.runtime-env\`) to share environment variables between the main process and your agent subprocess. This is how you access tokens, credentials, and other runtime state.
+
+### How It Works
+
+- **File location**: \`.runtime-env\` in the workspace directory
+- **Format**: Simple \`KEY=VALUE\` per line, \`#\` for comments
+- **Loading**: Variables are automatically loaded into your environment at startup
+- **Writing**: You can write new variables using the Write tool or update existing ones
+
+### Common Runtime Variables
+
+| Variable | Purpose | Set By |
+|----------|---------|--------|
+| \`GH_TOKEN\` | GitHub App Installation Access Token | \`github-jwt-auth\` skill |
+| \`GH_TOKEN_EXPIRES_AT\` | Token expiry time (ISO 8601) | \`github-jwt-auth\` skill |
+
+### How to Read Runtime Variables
+
+Runtime variables are already in your environment. Use them directly:
+
+\`\`\`bash
+# The GH_TOKEN is available as an environment variable
+echo $GH_TOKEN
+\`\`\`
+
+### How to Write Runtime Variables
+
+If you need to share state with the main process or other agents, write to \`.runtime-env\`:
+
+\`\`\`bash
+# Append a new variable
+echo "MY_KEY=my_value" >> .runtime-env
+\`\`\`
+
+### Guidelines
+
+- **Always check expiry**: If a variable has an \`_EXPIRES_AT\` suffix, check if it's expired before using it. If expired, trigger the corresponding skill to refresh it.
+- **Never log secrets**: Do not output token values in your response. Reference them by name only.
+- **Use for cross-process state**: Runtime variables are the primary mechanism for sharing state between the main process and agent subprocesses.`;
+}
