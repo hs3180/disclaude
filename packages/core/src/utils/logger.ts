@@ -73,6 +73,8 @@ let logPassthrough: PassThrough | null = null;
 // pino.destination() returns SonicBoom, pino-roll returns WritableStream
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let currentLogDest: any = null;
+// Recursion guard for error handlers that may try to log during flush
+let flushInProgress = false;
 
 /**
  * Reset the root logger instance.
@@ -250,9 +252,14 @@ async function setupFileLogging(
 
     // Issue #3416: Handle stream errors to prevent unhandled exceptions
     // from crashing the process. pino-roll emits 'error' on rotation failures,
-    // file system issues, etc.
+    // file system issues, etc. Use rootLogger when available (with recursion
+    // guard since the logger itself might be the source of the error).
     (rollStream as unknown as NodeJS.EventEmitter).on('error', (err: Error) => {
-      console.warn('pino-roll stream error:', err.message);
+      if (rootLogger && !flushInProgress) {
+        rootLogger.error({ err }, 'pino-roll stream error');
+      } else {
+        console.warn('pino-roll stream error:', err.message);
+      }
     });
 
     return rollStream as unknown as NodeJS.WritableStream;
@@ -555,8 +562,12 @@ export function flushLogger(): Promise<void> {
         new Promise<void>((res) => {
           currentLogDest.flush((err?: Error | null) => {
             if (err) {
-              // Log the error but don't block shutdown
-              console.warn('Logger flush error:', err.message);
+              // Use rootLogger when safe, fallback to console.warn during flush
+              if (rootLogger && !flushInProgress) {
+                rootLogger.error({ err }, 'Logger flush error');
+              } else {
+                console.warn('Logger flush error:', err.message);
+              }
             }
             res();
           });
@@ -565,7 +576,11 @@ export function flushLogger(): Promise<void> {
     }
 
     if (pending.length > 0) {
-      void Promise.all(pending).then(() => resolve());
+      flushInProgress = true;
+      void Promise.all(pending).then(() => {
+        flushInProgress = false;
+        resolve();
+      });
     } else {
       // No file stream to flush — resolve immediately
       resolve();
