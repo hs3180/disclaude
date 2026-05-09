@@ -3,7 +3,7 @@
  *
  * @module channels/wechat
  * @see Issue #1473 - WeChat Channel MVP
- * @see Issue #1556 - WeChat Channel Feature Enhancement
+ * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1 + 3.2)
  */
 
 export { WeChatChannel } from './wechat-channel.js';
@@ -18,4 +18,5 @@ export type {
   WeChatMessageItem,
   WeChatUpdate,
   WeChatGetUpdatesResponse,
+  WeChatCdnUploadResponse,
 } from './types.js';

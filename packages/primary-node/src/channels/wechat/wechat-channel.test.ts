@@ -17,6 +17,9 @@ const mockSendTyping = vi.fn().mockResolvedValue(undefined);
 const mockSetToken = vi.fn();
 const mockHasToken = vi.fn().mockReturnValue(true);
 const mockGetUpdates = vi.fn().mockResolvedValue([]);
+const mockUploadMedia = vi.fn().mockResolvedValue({ url: 'https://cdn.example.com/file.png', fileKey: 'key-1' });
+const mockSendImage = vi.fn().mockResolvedValue(undefined);
+const mockSendFile = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./api-client.js', () => ({
   WeChatApiClient: vi.fn().mockImplementation(() => ({
@@ -25,6 +28,9 @@ vi.mock('./api-client.js', () => ({
     setToken: mockSetToken,
     hasToken: mockHasToken,
     getUpdates: mockGetUpdates,
+    uploadMedia: mockUploadMedia,
+    sendImage: mockSendImage,
+    sendFile: mockSendFile,
   })),
 }));
 
@@ -99,11 +105,11 @@ describe('WeChatChannel', () => {
       expect(caps).toEqual({
         supportsCard: false,
         supportsThread: false,
-        supportsFile: false,
+        supportsFile: true,
         supportsMarkdown: false,
         supportsMention: false,
         supportsUpdate: false,
-        supportedMcpTools: ['send_text'],
+        supportedMcpTools: ['send_text', 'send_file'],
       });
     });
   });
@@ -201,17 +207,20 @@ describe('WeChatChannel', () => {
       expect(mockSendText).not.toHaveBeenCalled();
     });
 
-    it('should ignore unsupported message types', async () => {
+    it('should throw if file message has no filePath', async () => {
       const channel = new WeChatChannel({ token: 'test-token' });
-      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+      const mockClient = {
+        sendText: mockSendText,
+        uploadMedia: mockUploadMedia,
+        sendImage: mockSendImage,
+        sendFile: mockSendFile,
+        hasToken: mockHasToken,
+      };
+      (channel as any).client = mockClient;
 
-      await (channel as any).doSendMessage({
-        chatId: 'chat-1',
-        type: 'file',
-        filePath: '/tmp/test.txt',
-      });
-
-      expect(mockSendText).not.toHaveBeenCalled();
+      await expect(
+        (channel as any).doSendMessage({ chatId: 'chat-1', type: 'file' })
+      ).rejects.toThrow('File path is required');
     });
 
     it('should ignore done signal type', async () => {
@@ -221,6 +230,18 @@ describe('WeChatChannel', () => {
       await (channel as any).doSendMessage({
         chatId: 'chat-1',
         type: 'done',
+      });
+
+      expect(mockSendText).not.toHaveBeenCalled();
+    });
+
+    it('should ignore truly unsupported message types', async () => {
+      const channel = new WeChatChannel({ token: 'test-token' });
+      (channel as any).client = { sendText: mockSendText, hasToken: mockHasToken };
+
+      await (channel as any).doSendMessage({
+        chatId: 'chat-1',
+        type: 'audio' as any,
       });
 
       expect(mockSendText).not.toHaveBeenCalled();
