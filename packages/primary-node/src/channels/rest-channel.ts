@@ -479,11 +479,17 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
    * Handle health check request.
    */
   private handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): void {
+    // Issue #3378: Include process exit listener count in health check for
+    // monitoring process.on("exit") leaks from Claude Agent SDK's ProcessTransport.
+    const exitListenerCount = process.listenerCount('exit');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
       channel: this.name,
       id: this.id,
+      listeners: {
+        exit: exitListenerCount,
+      },
     }));
   }
 

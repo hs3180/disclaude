@@ -681,6 +681,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const startMs = Date.now(); // Issue #3292: timing for agent startup diagnostics
     this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: 0 });
 
+    // Issue #3378: Close any previous query/channel before starting a new one.
+    // Each SDK query registers process.on("exit", handler) via ProcessTransport.
+    // If the old handle is overwritten without close(), the exit listener leaks
+    // and accumulates across restart cycles, eventually triggering
+    // MaxListenersExceededWarning (11 exit listeners added to [process]).
+    if (this.queryHandle) {
+      this.logger.info({ chatId }, 'Closing previous query handle before starting new loop');
+      this.queryHandle.close();
+      this.queryHandle = undefined;
+    }
+    if (this.channel) {
+      this.logger.info({ chatId }, 'Closing previous message channel before starting new loop');
+      this.channel.close();
+      this.channel = undefined;
+    }
+
     // Issue #955: Trigger background loading of persisted history
     if (!this.historyLoaded) {
       this.loadPersistedHistory().catch((err) => {
@@ -736,7 +752,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.queryHandle = handle;
     this.isSessionActive = true;
-    this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: Date.now() - startMs, ok: true });
+
+    // Issue #3378: Log process exit listener count for leak monitoring.
+    // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
+    // Normal range is 1-3; values > 8 indicate a leak.
+    const exitListenerCount = process.listenerCount('exit');
+    if (exitListenerCount > 5) {
+      this.logger.warn(
+        { chatId, exitListenerCount, timing: 'agent:startLoop' },
+        'Process exit listener count is elevated — possible ProcessTransport leak'
+      );
+    }
+    this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: Date.now() - startMs, exitListenerCount, ok: true });
 
     // Process SDK messages in background
     this.processIterator(iterator).catch(async (err) => {
