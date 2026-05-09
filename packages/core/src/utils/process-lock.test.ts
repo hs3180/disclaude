@@ -7,7 +7,7 @@
  * @module utils/process-lock.test
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -152,6 +152,83 @@ describe('ProcessLock', () => {
       expect(lock.acquire()).toBe(true);
       expect(lock.isAcquired).toBe(true);
       expect(fs.readFileSync(lockfilePath, 'utf-8').trim()).toBe(String(process.pid));
+    });
+  });
+
+  describe('acquire — stale PID file removal failure', () => {
+    it('should still acquire lock when unlinkSync fails on stale PID file', () => {
+      // Write a stale PID (process not running)
+      const stalePid = 99999999;
+      fs.writeFileSync(lockfilePath, String(stalePid), 'utf-8');
+
+      // Make unlinkSync fail (e.g., permission denied)
+      const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
+        throw new Error('EACCES: permission denied');
+      });
+
+      const lock = new ProcessLock({ lockfilePath, logger });
+      const result = lock.acquire();
+
+      // Should still acquire (overwrites the file via writeFileSync)
+      expect(result).toBe(true);
+      expect(lock.isAcquired).toBe(true);
+      expect(fs.readFileSync(lockfilePath, 'utf-8').trim()).toBe(String(process.pid));
+
+      unlinkSpy.mockRestore();
+    });
+  });
+
+  describe('release — error handling', () => {
+    it('should handle file system errors during release gracefully', () => {
+      const lock = new ProcessLock({ lockfilePath, logger });
+      lock.acquire();
+      expect(lock.isAcquired).toBe(true);
+
+      // Make existsSync throw during release
+      const existsSpy = vi.spyOn(fs, 'existsSync').mockImplementation(() => {
+        throw new Error('FS error');
+      });
+
+      // Should not throw
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.isAcquired).toBe(false);
+
+      existsSpy.mockRestore();
+    });
+
+    it('should handle missing PID file during release', () => {
+      const lock = new ProcessLock({ lockfilePath, logger });
+      lock.acquire();
+
+      // Delete the file externally
+      fs.unlinkSync(lockfilePath);
+      expect(fs.existsSync(lockfilePath)).toBe(false);
+
+      // Should not throw
+      expect(() => lock.release()).not.toThrow();
+      expect(lock.isAcquired).toBe(false);
+    });
+  });
+
+  describe('acquire — readPidFile edge cases', () => {
+    it('should acquire when PID file disappears between existsSync and readPidFile', () => {
+      // Write a stale PID
+      const stalePid = 99999999;
+      fs.writeFileSync(lockfilePath, String(stalePid), 'utf-8');
+
+      // Make readFileSync throw (simulating file disappearing between checks)
+      const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
+        throw new Error('ENOENT: file not found');
+      });
+
+      const lock = new ProcessLock({ lockfilePath, logger });
+      const result = lock.acquire();
+
+      // Should still acquire (readPidFile returns null, treated as stale)
+      expect(result).toBe(true);
+      expect(lock.isAcquired).toBe(true);
+
+      readSpy.mockRestore();
     });
   });
 });

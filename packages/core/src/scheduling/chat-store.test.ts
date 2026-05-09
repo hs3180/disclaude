@@ -329,5 +329,51 @@ describe('ChatStore', () => {
       expect(chat).not.toBeNull();
       expect(chat!.triggerMode).toBe('always');
     });
+
+    it('should log error when readdir fails with non-ENOENT error', async () => {
+      const permissionError = new Error('Permission denied') as NodeJS.ErrnoException;
+      permissionError.code = 'EACCES';
+      vi.mocked(fsPromises.readdir).mockRejectedValue(permissionError);
+
+      const store = new ChatStore({ storeDir });
+      // Should not throw — handles error gracefully
+      const chats = await store.listTempChats();
+      expect(chats).toEqual([]);
+    });
+
+    it('should skip files that fail to parse', async () => {
+      vi.mocked(fsPromises.readdir).mockResolvedValue(['bad.json', 'good.json'] as any);
+      vi.mocked(fsPromises.readFile).mockImplementation((filePath: unknown) => {
+        const pathStr = (filePath as string).toString();
+        if (pathStr.includes('bad.json')) {
+          return Promise.resolve('not valid json{{{');
+        }
+        return Promise.resolve(JSON.stringify(
+          makeRecord({ chatId: 'oc_good' })
+        ));
+      });
+
+      const store = new ChatStore({ storeDir });
+      const chats = await store.listTempChats();
+      // Only the valid record should be loaded
+      expect(chats).toHaveLength(1);
+      expect(chats[0].chatId).toBe('oc_good');
+    });
+  });
+
+  describe('removeTempChat — error handling', () => {
+    it('should log error when unlink fails with non-ENOENT error', async () => {
+      const store = await createStoreWithRecords([
+        makeRecord({ chatId: 'oc_test1' }),
+      ]);
+
+      const permError = new Error('Permission denied') as NodeJS.ErrnoException;
+      permError.code = 'EACCES';
+      vi.mocked(fsPromises.unlink).mockRejectedValue(permError);
+
+      // Should not throw, still returns true (removed from memory)
+      const result = await store.removeTempChat('oc_test1');
+      expect(result).toBe(true);
+    });
   });
 });
