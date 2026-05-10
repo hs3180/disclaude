@@ -380,6 +380,13 @@ export interface DisclaudeConfig {
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
   /**
+   * WorkBuddy configuration for remote local-agent control (Issue #3442).
+   *
+   * Enables remote control of WorkBuddy instances running in local development
+   * environments, supporting WeChat mini program build, preview, and upload.
+   */
+  workbuddy?: import('../wechat-devtools/types.js').WorkBuddyConfig;
+  /**
    * Project template configuration overrides (Issue #2227).
    *
    * Extends or overrides auto-discovered templates with display metadata.

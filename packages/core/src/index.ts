@@ -367,3 +367,32 @@ export {
   STATE_FILE_NAME,
   STATE_VERSION,
 } from './project/index.js';
+
+// WeChat DevTools CLI module (Issue #3442 — WorkBuddy Phase 0)
+export type {
+  WeChatProjectConfig,
+  WeChatDevToolsConfig,
+  WorkBuddyConfig,
+  WeChatDevToolsCommand,
+  PreviewOptions,
+  UploadOptions,
+  OpenOptions,
+  CloseOptions,
+  BuildNpmOptions,
+  CacheOptions,
+  CacheOperation,
+  CliResult as WeChatCliResult,
+  PreviewResult,
+  UploadResult,
+  OpenResult as WeChatOpenResult,
+  CacheResult,
+} from './wechat-devtools/index.js';
+
+export {
+  WECHAT_DEVTOOLS_DEFAULT_PATHS,
+  WeChatDevToolsNotFoundError,
+  WeChatDevToolsCliError,
+  discoverCliPath,
+  WeChatDevToolsCli,
+  isWeChatDevToolsAvailable,
+} from './wechat-devtools/index.js';
