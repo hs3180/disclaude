@@ -70,6 +70,8 @@ export {
   type SchedulerCallbacks,
   type TaskExecutor,
   type SchedulerOptions,
+  type SchedulerMessageRouter,
+  type SchedulerSystemMessage,
 } from './scheduler.js';
 
 // Schedule Executor (Issue #1382, Issue #2941: ChatAgent-only)

@@ -220,6 +220,8 @@ export {
   type SchedulerCallbacks,
   type TaskExecutor,
   type SchedulerOptions,
+  type SchedulerMessageRouter,
+  type SchedulerSystemMessage,
   type OnFileAdded,
   type OnFileChanged,
   type OnFileRemoved,

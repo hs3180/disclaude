@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor } from './scheduler.js';
+import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor, type SchedulerMessageRouter } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -786,6 +786,227 @@ describe('Scheduler', () => {
       const error = new TaskTimeoutError(5000);
       expect(error).toBeInstanceOf(Error);
       expect(error).toBeInstanceOf(TaskTimeoutError);
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Project-bound Task Routing (Issue #3333)
+  // ──────────────────────────────────────────────
+
+  describe('executeTask with projectKey (Issue #3333)', () => {
+    let mockRouteScheduledTask: Mock<(projectKey: string, message: import('./scheduler.js').SchedulerSystemMessage) => Promise<void>>;
+
+    function createProjectScheduler(overrides: { cooldownManager?: CooldownManager } = {}) {
+      mockRouteScheduledTask = vi.fn().mockResolvedValue(undefined);
+      const router = {
+        routeScheduledTask: mockRouteScheduledTask,
+      } as SchedulerMessageRouter;
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: overrides.cooldownManager,
+        messageRouter: router,
+      });
+
+      return s;
+    }
+
+    it('should route via messageRouter when projectKey is set', async () => {
+      const projScheduler = createProjectScheduler();
+      const task = createTask({
+        id: 'proj-1',
+        name: 'Project Task',
+        projectKey: 'owner/repo',
+        prompt: 'Check for new issues',
+      });
+      projScheduler.addTask(task);
+
+      const jobs = projScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouteScheduledTask).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Verify the call arguments
+      expect(mockRouteScheduledTask).toHaveBeenCalledWith(
+        'owner/repo',
+        expect.objectContaining({
+          trigger: 'scheduled',
+          taskName: 'Project Task',
+          id: expect.stringMatching(/^sched-\d+$/),
+          createdAt: expect.any(String),
+        }),
+      );
+      // Verify payload content separately (too long for objectContaining)
+      // eslint-disable-next-line prefer-destructuring
+      const { payload } = mockRouteScheduledTask.mock.calls[0][1];
+      expect(payload).toContain('Check for new issues');
+      expect(payload).toContain('Scheduled Task Execution Context');
+
+      // Executor should NOT be called (routed via messageRouter)
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should use existing executor when projectKey is not set', async () => {
+      const projScheduler = createProjectScheduler();
+      const task = createTask({ id: 'no-proj-1' }); // no projectKey
+      projScheduler.addTask(task);
+
+      const jobs = projScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // messageRouter should NOT be called
+      expect(mockRouteScheduledTask).not.toHaveBeenCalled();
+    });
+
+    it('should use existing executor when messageRouter is not provided', async () => {
+      // Scheduler without messageRouter
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+      });
+
+      const task = createTask({
+        id: 'no-router-1',
+        projectKey: 'owner/repo',
+      });
+      s.addTask(task);
+
+      const jobs = s.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should send error notification when messageRouter fails', async () => {
+      const projScheduler = createProjectScheduler();
+      mockRouteScheduledTask.mockRejectedValueOnce(
+        new Error('Project not found: missing/repo')
+      );
+
+      const task = createTask({
+        id: 'proj-fail-1',
+        name: 'Fail Task',
+        projectKey: 'missing/repo',
+        chatId: 'oc_chat',
+      });
+      projScheduler.addTask(task);
+
+      const jobs = projScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_chat',
+          expect.stringContaining('路由失败'),
+        );
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_chat',
+        expect.stringContaining('missing/repo'),
+      );
+    });
+
+    it('should pass modelTier in the routed message', async () => {
+      const projScheduler = createProjectScheduler();
+      const task = createTask({
+        id: 'proj-tier-1',
+        projectKey: 'owner/repo',
+        modelTier: 'low',
+      });
+      projScheduler.addTask(task);
+
+      const jobs = projScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouteScheduledTask).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockRouteScheduledTask).toHaveBeenCalledWith(
+        'owner/repo',
+        expect.objectContaining({
+          modelTier: 'low',
+        }),
+      );
+    });
+
+    it('should respect blocking for project-bound tasks', async () => {
+      const projScheduler = createProjectScheduler();
+      mockRouteScheduledTask.mockReturnValue(new Promise(() => {})); // never resolves
+
+      const task = createTask({
+        id: 'proj-block-1',
+        projectKey: 'owner/repo',
+        blocking: true,
+      });
+      projScheduler.addTask(task);
+
+      const jobs = projScheduler.getActiveJobs();
+
+      // First trigger
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(projScheduler.isTaskRunning('proj-block-1')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger while still running should be skipped
+      void jobs[0].job.fireOnTick();
+      await new Promise(r => setTimeout(r, 100));
+
+      // Should only have been called once (blocking prevented second)
+      expect(mockRouteScheduledTask).toHaveBeenCalledTimes(1);
+    });
+
+    it('should clear running state after project task completes', async () => {
+      const projScheduler = createProjectScheduler();
+      const task = createTask({
+        id: 'proj-cleanup-1',
+        projectKey: 'owner/repo',
+      });
+      projScheduler.addTask(task);
+
+      const jobs = projScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(projScheduler.isTaskRunning('proj-cleanup-1')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should record cooldown after project task completes', async () => {
+      const mockCooldown = {
+        isInCooldown: vi.fn().mockResolvedValue(false),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue(null),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const projScheduler = createProjectScheduler({ cooldownManager: mockCooldown });
+      const task = createTask({
+        id: 'proj-cd-1',
+        projectKey: 'owner/repo',
+        cooldownPeriod: 60000,
+      });
+      projScheduler.addTask(task);
+
+      const jobs = projScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockCooldown.recordExecution).toHaveBeenCalledWith('proj-cd-1', 60000);
+      }, { timeout: 2000 });
     });
   });
 });

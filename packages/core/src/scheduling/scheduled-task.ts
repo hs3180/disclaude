@@ -62,4 +62,18 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
+  /**
+   * Optional project key for routing via MessageRouter.
+   *
+   * When set, the scheduled task creates a SystemMessage and routes it
+   * through the MessageRouter to a project-bound ChatAgent, enabling
+   * stateful execution with context continuity between runs.
+   *
+   * When not set, the existing short-lived agent path is used (backward compatible).
+   *
+   * Defined in schedule markdown frontmatter (e.g., `projectKey: "hs3180/disclaude"`).
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   */
+  projectKey?: string;
 }

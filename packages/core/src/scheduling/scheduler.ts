@@ -88,6 +88,52 @@ export interface SchedulerCallbacks {
 export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string, modelTier?: ModelTier) => Promise<void>;
 
 /**
+ * Interface for routing scheduled tasks to project-bound agents.
+ *
+ * This is a minimal interface that decouples the Scheduler from the
+ * full MessageRouter (Issue #3331). When projectKey is set on a
+ * scheduled task, the Scheduler delegates routing to this interface.
+ *
+ * Will be replaced by the full MessageRouter when Issue #3331 merges.
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage.
+ */
+export interface SchedulerMessageRouter {
+  /**
+   * Route a scheduled task to a project-bound agent.
+   *
+   * @param projectKey - Target project key (e.g., 'hs3180/disclaude')
+   * @param message - The system message to route
+   * @throws Error if projectKey not found in project configuration
+   */
+  routeScheduledTask(projectKey: string, message: SchedulerSystemMessage): Promise<void>;
+}
+
+/**
+ * System message for scheduled task routing.
+ *
+ * Minimal type representing a scheduled task message that will be
+ * routed through SchedulerMessageRouter to a project-bound agent.
+ * Will be replaced by SystemMessage from unified-message.ts when #3331 merges.
+ *
+ * Issue #3333: Scheduler integration with NonUserMessage.
+ */
+export interface SchedulerSystemMessage {
+  /** Unique message identifier */
+  id: string;
+  /** Trigger type (always 'scheduled' for scheduler messages) */
+  trigger: 'scheduled';
+  /** Task name for identification */
+  taskName: string;
+  /** Instruction text to be processed by ChatAgent */
+  payload: string;
+  /** Optional model tier override */
+  modelTier?: ModelTier;
+  /** ISO 8601 creation timestamp */
+  createdAt: string;
+}
+
+/**
  * Scheduler options.
  *
  * Issue #711: No longer requires AgentPool.
@@ -104,6 +150,16 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Message router for project-bound task routing.
+   *
+   * When provided, tasks with projectKey will be routed through this
+   * router to project-bound agents instead of using the short-lived
+   * agent executor.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   */
+  messageRouter?: SchedulerMessageRouter;
 }
 
 /**
@@ -142,6 +198,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private messageRouter?: SchedulerMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -162,6 +219,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.messageRouter = options.messageRouter;
     logger.info('Scheduler created');
   }
 
@@ -316,6 +374,80 @@ ${task.prompt}`;
   }
 
   /**
+   * Execute a project-bound scheduled task via MessageRouter.
+   *
+   * Routes the task as a SystemMessage to a project-bound ChatAgent,
+   * enabling stateful execution with context continuity between runs.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   *
+   * @param task - Task with projectKey set
+   */
+  private async executeProjectTask(task: ScheduledTask): Promise<void> {
+    // Check blocking mechanism
+    if (task.blocking && this.runningTasks.has(task.id)) {
+      logger.info(
+        { taskId: task.id, name: task.name },
+        'Project task skipped - previous execution still running'
+      );
+      return;
+    }
+
+    logger.info(
+      { taskId: task.id, name: task.name, projectKey: task.projectKey },
+      'Executing project-bound scheduled task'
+    );
+
+    this.runningTasks.add(task.id);
+    if (!this._drainPromise) {
+      this._drainPromise = new Promise<void>((resolve) => {
+        this._drainResolve = resolve;
+      });
+    }
+
+    try {
+      // Build wrapped prompt with anti-recursion instructions
+      const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
+      const message: SchedulerSystemMessage = {
+        id: `sched-${Date.now()}`,
+        trigger: 'scheduled',
+        taskName: task.name,
+        payload: wrappedPrompt,
+        modelTier: task.modelTier,
+        createdAt: new Date().toISOString(),
+      };
+
+      // Safe assertions: executeProjectTask is only called when both are defined
+      const { messageRouter: router, projectKey } = { messageRouter: this.messageRouter, projectKey: task.projectKey };
+      if (!router || !projectKey) { return; }
+      await router.routeScheduledTask(projectKey, message);
+
+      logger.info({ taskId: task.id }, 'Project-bound scheduled task routed');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, taskId: task.id, projectKey: task.projectKey }, 'Project-bound scheduled task failed');
+
+      await this.callbacks.sendMessage(
+        task.chatId,
+        `❌ 定时任务「${task.name}」路由失败 (project: ${task.projectKey}): ${errorMessage}`
+      );
+    } finally {
+      this.runningTasks.delete(task.id);
+
+      if (this.runningTasks.size === 0 && this._drainResolve) {
+        this._drainResolve();
+        this._drainPromise = null;
+        this._drainResolve = null;
+      }
+
+      if (task.cooldownPeriod && this.cooldownManager) {
+        await this.cooldownManager.recordExecution(task.id, task.cooldownPeriod);
+      }
+    }
+  }
+
+  /**
    * Execute a scheduled task.
    * Called by cron job when the schedule triggers.
    *
@@ -323,10 +455,16 @@ ${task.prompt}`;
    * ChatAgent is disposed after execution to free resources.
    * Issue #869: Added cooldown period check before execution.
    * Issue #1041: Uses injected executor function.
+   * Issue #3333: Routes via MessageRouter when projectKey is set.
    *
    * @param task - Task to execute
    */
   private async executeTask(task: ScheduledTask): Promise<void> {
+    // Issue #3333: Route via MessageRouter when projectKey is set
+    if (task.projectKey && this.messageRouter) {
+      return this.executeProjectTask(task);
+    }
+
     // Issue #869: Check cooldown period first
     if (task.cooldownPeriod && this.cooldownManager) {
       const isInCooldown = await this.cooldownManager.isInCooldown(task.id, task.cooldownPeriod);
