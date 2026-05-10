@@ -38,7 +38,7 @@ function handleList(context: ControlHandlerContext): ControlResponse {
   if (instances.length === 0) {
     return {
       success: true,
-      message: '📋 **项目实例列表**\n\n暂无项目实例。使用 `/project create <template> <name>` 创建。',
+      message: '📋 **项目实例列表**\n\n暂无项目实例。',
     };
   }
 

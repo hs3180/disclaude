@@ -326,6 +326,11 @@ describe('isValidProjectState', () => {
     expect(isValidProjectState(state)).toBe(false);
   });
 
+  it('should reject wrong version number', () => {
+    const state = { version: 99, projectKey: 'test', lastActive: 'now', sync: {}, issues: {}, prs: {} };
+    expect(isValidProjectState(state)).toBe(false);
+  });
+
   it('should reject missing projectKey', () => {
     const state = { version: 1, lastActive: 'now', sync: {}, issues: {}, prs: {} };
     expect(isValidProjectState(state)).toBe(false);

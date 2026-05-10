@@ -270,7 +270,7 @@ export function isValidProjectState(data: unknown): data is ProjectState {
   const obj = data as Record<string, unknown>;
 
   // Required fields
-  if (typeof obj.version !== 'number') {return false;}
+  if (obj.version !== STATE_VERSION) {return false;}
   if (typeof obj.projectKey !== 'string') {return false;}
   if (typeof obj.lastActive !== 'string') {return false;}
   if (typeof obj.sync !== 'object' || obj.sync === null) {return false;}
