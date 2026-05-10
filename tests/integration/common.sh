@@ -42,6 +42,11 @@ SERVER_PID=""
 # Log file in current working directory
 SERVER_LOG="disclaude-test-server.log"
 
+# PID lock file for test server isolation (Issue #3496)
+# Must differ from production default (~/Library/Logs/disclaude/disclaude.pid)
+# to prevent conflicts when running integration tests alongside a live instance.
+TEST_LOCKFILE_PATH="${TMPDIR:-/tmp}/disclaude-test-server.pid"
+
 # Test workspace directory for isolation (Issue #3414)
 # Each test run gets its own isolated workspace to prevent Scheduler
 # from loading production schedule configs.
@@ -201,6 +206,8 @@ start_server() {
 
     # Start server in background (using new primary-node CLI)
     # Note: Port and host are read from config file (channels.rest.port, channels.rest.host)
+    # Issue #3496: Use isolated PID lock file to avoid conflict with production instance.
+    LOCKFILE_PATH="$TEST_LOCKFILE_PATH" \
     node packages/primary-node/dist/cli.js start ${config_arg} > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
@@ -272,6 +279,12 @@ show_server_logs() {
 cleanup() {
     log_info "Cleaning up..."
     stop_server
+
+    # Clean up test PID lock file (Issue #3496)
+    if [ -f "$TEST_LOCKFILE_PATH" ]; then
+        log_info "Removing test PID lock file: ${TEST_LOCKFILE_PATH}"
+        rm -f "$TEST_LOCKFILE_PATH"
+    fi
 
     # Clean up isolated test workspace (Issue #3414)
     if [ -n "$TEST_WORKSPACE" ] && [ -d "$TEST_WORKSPACE" ]; then
