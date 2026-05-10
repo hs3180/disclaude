@@ -166,6 +166,21 @@ describe('BaseAgent', () => {
       });
     });
 
+    it('should set tools to claude_code preset (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      expect(options.tools).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+      });
+    });
+
+    it('should use full settingSources: user, project, local (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      expect(options.settingSources).toEqual(['user', 'project', 'local']);
+    });
+
     it('should include model if specified', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.model).toBe('claude-3-5-sonnet-20241022');
