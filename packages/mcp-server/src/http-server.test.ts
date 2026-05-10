@@ -137,11 +137,12 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
+    const data = await response.json() as Record<string, unknown>;
     expect(data.jsonrpc).toBe('2.0');
     expect(data.id).toBe(1);
-    expect(data.result.protocolVersion).toBe('2024-11-05');
-    expect(data.result.capabilities).toEqual({ tools: {} });
+    const result = data.result as Record<string, unknown>;
+    expect(result.protocolVersion).toBe('2024-11-05');
+    expect(result.capabilities).toEqual({ tools: {} });
   });
 
   it('should handle tools/list request', async () => {
@@ -156,9 +157,10 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
-    expect(data.result.tools).toBeInstanceOf(Array);
-    expect(data.result.tools.length).toBeGreaterThan(0);
+    const data = await response.json() as Record<string, unknown>;
+    const result = data.result as Record<string, unknown>;
+    expect(result.tools).toBeInstanceOf(Array);
+    expect((result.tools as unknown[]).length).toBeGreaterThan(0);
   });
 
   it('should handle ping request', async () => {
@@ -173,7 +175,7 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
+    const data = await response.json() as Record<string, unknown>;
     expect(data.result).toEqual({});
   });
 
@@ -197,9 +199,10 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
-    expect(data.result).toBeDefined();
-    expect(data.result.content).toBeInstanceOf(Array);
+    const data = await response.json() as Record<string, unknown>;
+    const result = data.result as Record<string, unknown>;
+    expect(result).toBeDefined();
+    expect(result.content).toBeInstanceOf(Array);
   });
 
   it('should return error for unknown method', async () => {
@@ -214,8 +217,9 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
-    expect(data.error.code).toBe(-32601);
+    const data = await response.json() as Record<string, unknown>;
+    const error = data.error as Record<string, unknown>;
+    expect(error.code).toBe(-32601);
   });
 
   it('should handle notification (no id) with 204', async () => {
@@ -239,8 +243,9 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
-    expect(data.error.code).toBe(-32700);
-    expect(data.error.message).toContain('Parse error');
+    const data = await response.json() as Record<string, unknown>;
+    const error = data.error as Record<string, unknown>;
+    expect(error.code).toBe(-32700);
+    expect(error.message).toContain('Parse error');
   });
 });

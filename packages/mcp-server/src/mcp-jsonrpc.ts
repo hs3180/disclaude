@@ -139,14 +139,20 @@ Primary Node builds the card from raw parameters (question, options).
 // JSON-RPC response helpers
 // ============================================================================
 
+/** Shape returned by toolSuccess / toolError. */
+export interface ToolResult {
+  content: Array<{ type: 'text'; text: string }>;
+  isError?: boolean;
+}
+
 /** Send a tool success result. */
-export function toolSuccess(text: string) {
-  return { content: [{ type: 'text' as const, text }] };
+export function toolSuccess(text: string): ToolResult {
+  return { content: [{ type: 'text', text }] };
 }
 
 /** Send a tool error result. */
-export function toolError(text: string) {
-  return { content: [{ type: 'text' as const, text }], isError: true as const };
+export function toolError(text: string): ToolResult {
+  return { content: [{ type: 'text', text }], isError: true };
 }
 
 // ============================================================================
@@ -156,7 +162,7 @@ export function toolError(text: string) {
 /**
  * Handle a tools/call request.
  */
-export async function handleToolCall(name: string, args: Record<string, unknown>) {
+export async function handleToolCall(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   switch (name) {
     case 'send_text': {
       if (typeof args.text !== 'string') {return toolError('Invalid text: must be a string');}
