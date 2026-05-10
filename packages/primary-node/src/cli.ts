@@ -131,6 +131,7 @@ async function main(): Promise<void> {
     if (!config._fromFile) {
       logger.error({ path: options.configPath }, 'Failed to load configuration file');
       console.error(`Error: Could not load configuration file: ${options.configPath}`);
+      processLock.release();
       process.exit(1);
     }
     setLoadedConfig(config);
@@ -155,6 +156,7 @@ async function main(): Promise<void> {
     console.error('Error: At least one channel must be configured.');
     console.error('  - For Feishu: set feishu.appId and feishu.appSecret');
     console.error('  - For REST: set channels.rest.port, host, and fileStorageDir');
+    processLock.release();
     process.exit(1);
   }
 
@@ -206,6 +208,7 @@ async function main(): Promise<void> {
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error('Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.');
+    processLock.release();
     process.exit(1);
   }
 
@@ -317,6 +320,7 @@ async function main(): Promise<void> {
   } catch (error) {
     logger.error({ err: error }, 'Failed to start Primary Node');
     console.error('Failed to start Primary Node:', error instanceof Error ? error.message : String(error));
+    processLock.release();
     process.exit(1);
   }
 }
