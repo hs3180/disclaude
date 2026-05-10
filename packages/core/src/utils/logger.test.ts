@@ -28,20 +28,6 @@ import {
   closeLogger,
 } from './logger.js';
 
-/**
- * Mock pino-roll module to prevent real filesystem side effects in tests.
- * Returns an in-memory PassThrough stream instead of writing to real files.
- *
- * This eliminates the ENOENT unhandled error caused by pino-roll's internal
- * stream writing to files after test cleanup.
- */
-vi.mock('pino-roll', async () => {
-  const { PassThrough } = await import('node:stream');
-  return {
-    default: () => new PassThrough(),
-  };
-});
-
 describe('logger', () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalLogLevel = process.env.LOG_LEVEL;
@@ -170,9 +156,9 @@ describe('logger', () => {
       expect(logger).toBeDefined();
     });
 
-    it('should successfully initialize file logging with pino-roll', async () => {
-      // Issue #3359: Verify pino-roll CJS/ESM interop works correctly
-      // pino-roll module is mocked at file level — no real files are created
+    it('should successfully initialize file logging', async () => {
+      // Issue #3416: Verify file logging works with pino.destination()
+      // (pino-roll removed, rotation delegated to system tools)
       process.env.NODE_ENV = 'production';
 
       // Mock filesystem to prevent real directory creation
@@ -189,7 +175,7 @@ describe('logger', () => {
 
       // Verify logs can be written without error
       expect(() => {
-        logger.info('pino-roll file logging test');
+        logger.info('file logging test');
       }).not.toThrow();
     });
   });
@@ -407,9 +393,14 @@ describe('logger', () => {
       expect(elapsed).toBeLessThan(50);
     });
 
-    it('should flush pino-roll stream when file logging is active', async () => {
+    it('should flush file stream when file logging is active', async () => {
       process.env.NODE_ENV = 'production';
       const tmpDir = `/tmp/test-flush-${Date.now()}`;
+
+      // Mock filesystem to prevent real directory creation
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockImplementation((() => undefined) as any);
+
       const logger = await initLogger({
         fileLogging: true,
         logDir: tmpDir,
@@ -420,11 +411,6 @@ describe('logger', () => {
 
       // Should not throw
       await expect(flushLogger()).resolves.toBeUndefined();
-
-      // Cleanup
-      await flushLogger();
-      const fs = await import('fs');
-      fs.rmSync(tmpDir, { recursive: true, force: true });
     });
   });
 
@@ -535,9 +521,9 @@ describe('logger', () => {
       const logger1 = await initLogger({ level: 'debug' });
       const logger2 = await initLogger({ level: 'error' });
 
-      // Second call should return the same singleton (first config wins)
+      // Second call returns the same singleton and updates the level
       expect(logger1).toBe(logger2);
-      expect(logger1.level).toBe('debug');
+      expect(logger1.level).toBe('error');
     });
 
     it('should handle createLogger with empty metadata', () => {
@@ -563,17 +549,18 @@ describe('logger', () => {
     });
 
     it('should properly destroy currentLogDest on resetLogger', async () => {
-      // Issue #3416: Verify resetLogger destroys the file stream, not just PassThrough
+      // Verify resetLogger destroys the file stream, not just PassThrough
       process.env.NODE_ENV = 'production';
       const tmpDir = `/tmp/test-reset-${Date.now()}`;
+
+      // Mock filesystem to prevent real directory creation
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockImplementation((() => undefined) as any);
+
       await initLogger({ fileLogging: true, logDir: tmpDir });
 
       // resetLogger should not throw even with file streams active
       expect(() => resetLogger()).not.toThrow();
-
-      // Cleanup
-      const fs = await import('fs');
-      fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
     it('should handle concurrent createLogger calls after reset', () => {
