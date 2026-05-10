@@ -289,8 +289,8 @@ function handleStatus(
         message: `❌ 项目实例 "${targetName}" 不存在`,
       };
     }
-    workingDir = target.workingDir;
-    displayName = target.name;
+    ({ workingDir } = target);
+    ({ name: displayName } = target);
   } else {
     const active = pm.getActive(chatId);
     if (active.name === 'default') {
@@ -299,8 +299,8 @@ function handleStatus(
         message: '📂 当前会话未绑定项目（使用 default 工作空间）',
       };
     }
-    workingDir = active.workingDir;
-    displayName = active.name;
+    ({ workingDir } = active);
+    ({ name: displayName } = active);
   }
 
   const state = readProjectState(workingDir);
