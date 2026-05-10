@@ -17,6 +17,9 @@
 #   # source docker-source.env && docker compose build
 #   docker compose up -d
 #
+#   # Optional: Start with Playwright browser container
+#   docker compose --profile playwright up -d
+#
 #   # View logs
 #   docker compose logs -f
 #
@@ -130,3 +133,64 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Headless Chromium with CDP endpoint for browser automation (site-miner).
+  # Use --profile playwright to start: docker compose --profile playwright up -d
+  #
+  # Prerequisites:
+  #   1. Configure mcpServers.playwright in disclaude.config.yaml
+  #   2. Set --cdp-endpoint to http://localhost:9222 (or ${CDP_PORT})
+  #
+  # Usage:
+  #   docker compose --profile playwright up -d
+  #   docker compose --profile playwright logs -f playwright
+  #   docker compose --profile playwright down
+  #
+  playwright:
+    image: ${DOCKER_IMAGE_PREFIX}mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Launch headless Chromium with CDP on port 9222
+    # Resolves Chromium binary path via Playwright's internal API
+    command:
+      - /bin/sh
+      - -c
+      - |
+        CHROME=$$(node -e "console.log(require('playwright-core').chromium.executablePath())")
+        exec "$$CHROME" --headless=new --no-sandbox --disable-dev-shm-usage \
+          --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 \
+          --disable-gpu --hide-scrollbars --mute-audio --no-first-run \
+          about:blank
+
+    # Primary uses network_mode: host, so expose CDP port on host
+    ports:
+      - "${CDP_PORT:-9222}:9222"
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9222/json/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    profiles:
+      - playwright
