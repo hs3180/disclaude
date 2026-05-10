@@ -56,6 +56,7 @@ function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSet
   return {
     agentPool: {
       getOrCreateChatAgent: vi.fn().mockReturnValue({ processMessage: vi.fn() }),
+      disposeIdle: vi.fn().mockReturnValue(0),
     },
     controlHandler: vi.fn() as unknown as ControlHandler,
     controlHandlerContext: {},

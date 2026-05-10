@@ -53,6 +53,14 @@ export interface RestChannelConfig extends ChannelConfig {
   fileStorageServiceProvider?: () => Promise<{ FileStorageService: new (config: { storageDir: string; maxFileSize: number }) => IFileStorageService }>;
   /** API prefix for routes (default: '/api') */
   apiPrefix?: string;
+  /**
+   * Issue #3378: Callback to dispose idle agents.
+   * Called by the admin disposal endpoint to clean up ChatAgents
+   * that have been idle for too long, releasing their SDK exit listeners.
+   * @param idleTimeoutMs - Idle threshold in milliseconds
+   * @returns Number of disposed agents
+   */
+  disposeIdleAgents?: (idleTimeoutMs: number) => number;
 }
 
 /**
@@ -471,6 +479,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       return;
     }
 
+    // Issue #3378: Admin endpoint to dispose idle agents
+    // Frees SDK exit listeners that accumulate from ProcessTransport.
+    if (url === '/api/admin/agents/dispose-idle' && req.method === 'POST') {
+      await withTiming(logger, 'http:POST /api/admin/agents/dispose-idle', undefined, () => this.handleDisposeIdleAgents(req, res));
+      return;
+    }
+
     // 404 for unknown routes
     this.sendError(res, 404, 'Not found');
   }
@@ -490,6 +505,52 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       listeners: {
         exit: exitListenerCount,
       },
+    }));
+  }
+
+  /**
+   * Issue #3378: Handle admin request to dispose idle agents.
+   *
+   * POST /api/admin/agents/dispose-idle
+   * Body (optional): { "idleTimeoutMs": 60000 }
+   *
+   * Disposes ChatAgents that have had no activity for the specified duration.
+   * This releases SDK exit listeners from ProcessTransport, preventing
+   * MaxListenersExceededWarning when many agents accumulate.
+   */
+  private async handleDisposeIdleAgents(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!this.config.disposeIdleAgents) {
+      this.sendError(res, 501, 'Agent disposal not configured');
+      return;
+    }
+
+    let idleTimeoutMs = 60_000; // Default: 1 minute
+    const body = await this.readBody(req);
+    if (body) {
+      try {
+        const { idleTimeoutMs: parsedTimeout } = JSON.parse(body) as { idleTimeoutMs?: number };
+        if (parsedTimeout && typeof parsedTimeout === 'number' && parsedTimeout > 0) {
+          idleTimeoutMs = parsedTimeout;
+        }
+      } catch {
+        // Use default timeout if body is invalid
+      }
+    }
+
+    const disposedCount = this.config.disposeIdleAgents(idleTimeoutMs);
+    const exitListenerCount = process.listenerCount('exit');
+
+    logger.info(
+      { disposedCount, idleTimeoutMs, remainingAgents: 'unknown', exitListenerCount },
+      'Admin: idle agents disposed'
+    );
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      disposedCount,
+      idleTimeoutMs,
+      listeners: { exit: exitListenerCount },
     }));
   }
 

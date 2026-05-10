@@ -58,6 +58,7 @@ function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSet
   return {
     agentPool: {
       getOrCreateChatAgent: vi.fn().mockReturnValue({ processMessage: vi.fn() }),
+      disposeIdle: vi.fn().mockReturnValue(0),
     },
     controlHandler: vi.fn() as unknown as ControlHandler,
     controlHandlerContext: {},
@@ -275,6 +276,7 @@ describe('WiredChannelDescriptors', () => {
       const context = createMockContext({
         agentPool: {
           getOrCreateChatAgent: vi.fn().mockReturnValue(mockAgent),
+          disposeIdle: vi.fn().mockReturnValue(0),
         },
       });
       const callbacksFactory = WECHAT_WIRED_DESCRIPTOR.createCallbacks(mockChannel, context);
@@ -306,6 +308,7 @@ describe('WiredChannelDescriptors', () => {
       const context = createMockContext({
         agentPool: {
           getOrCreateChatAgent: vi.fn().mockReturnValue(mockAgent),
+          disposeIdle: vi.fn().mockReturnValue(0),
         },
       });
       const callbacksFactory = WECHAT_WIRED_DESCRIPTOR.createCallbacks(mockChannel, context);

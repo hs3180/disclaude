@@ -193,6 +193,18 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
     // 创建消息适配迭代器
     let messageCount = 0;
+
+    // Issue #3378: Track whether queryResult.close() has been called to prevent
+    // double-close when both adaptIterator's finally block and handle.close() run.
+    let closed = false;
+
+    const safeClose = (): void => {
+      if (!closed && 'close' in queryResult && typeof queryResult.close === 'function') {
+        queryResult.close();
+        closed = true;
+      }
+    };
+
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
       try {
         let firstMessageMs: number | undefined;
@@ -236,16 +248,18 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           'adaptIterator error'
         );
         throw error;
+      } finally {
+        // Issue #3378: Ensure SDK exit listener is cleaned up when iterator ends.
+        // Claude Agent SDK's ProcessTransport registers process.on('exit', handler)
+        // per query(). If we don't close() when the iterator finishes (normally or
+        // by error), the exit listener leaks and accumulates across sessions.
+        safeClose();
       }
     }
 
     return {
       handle: {
-        close: () => {
-          if ('close' in queryResult && typeof queryResult.close === 'function') {
-            queryResult.close();
-          }
-        },
+        close: safeClose,
         cancel: () => {
           if ('cancel' in queryResult && typeof queryResult.cancel === 'function') {
             queryResult.cancel();

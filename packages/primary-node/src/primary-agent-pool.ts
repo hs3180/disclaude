@@ -43,6 +43,8 @@ export interface PrimaryAgentPoolOptions {
  */
 export class PrimaryAgentPool {
   private readonly agents = new Map<string, ChatAgent>();
+  /** Issue #3378: Track last activity time per chatId for idle eviction. */
+  private readonly activityTimestamps = new Map<string, number>();
   private readonly options: PrimaryAgentPoolOptions;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
@@ -64,6 +66,8 @@ export class PrimaryAgentPool {
       });
       this.agents.set(chatId, agent);
     }
+    // Issue #3378: Track activity for idle eviction
+    this.activityTimestamps.set(chatId, Date.now());
     return agent;
   }
 
@@ -103,5 +107,33 @@ export class PrimaryAgentPool {
       agent.dispose();
     }
     this.agents.clear();
+    this.activityTimestamps.clear();
+  }
+
+  /**
+   * Dispose ChatAgents that have been idle for longer than the specified timeout.
+   * Issue #3378: Releases SDK exit listeners from idle agents, preventing
+   * MaxListenersExceededWarning when many agents accumulate.
+   *
+   * @param idleTimeoutMs - Idle threshold in milliseconds
+   * @returns Number of disposed agents
+   */
+  disposeIdle(idleTimeoutMs: number): number {
+    const now = Date.now();
+    let disposedCount = 0;
+
+    for (const [chatId, lastActivity] of this.activityTimestamps) {
+      if (now - lastActivity > idleTimeoutMs) {
+        const agent = this.agents.get(chatId);
+        if (agent) {
+          agent.dispose();
+          this.agents.delete(chatId);
+        }
+        this.activityTimestamps.delete(chatId);
+        disposedCount++;
+      }
+    }
+
+    return disposedCount;
   }
 }

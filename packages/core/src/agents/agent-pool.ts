@@ -55,6 +55,8 @@ export interface AgentPoolConfig {
 export class AgentPool {
   private readonly chatAgentFactory: ChatAgentFactory;
   private readonly chatAgents = new Map<string, ChatAgent>();
+  /** Issue #3378: Track last activity time per chatId for idle eviction. */
+  private readonly activityTimestamps = new Map<string, number>();
   private readonly log: Logger;
 
   constructor(config: AgentPoolConfig) {
@@ -78,6 +80,8 @@ export class AgentPool {
       agent = this.chatAgentFactory(chatId);
       this.chatAgents.set(chatId, agent);
     }
+    // Issue #3378: Track activity for idle eviction
+    this.activityTimestamps.set(chatId, Date.now());
     return agent;
   }
 
@@ -181,6 +185,7 @@ export class AgentPool {
     // Clear map first
     const agents = Array.from(this.chatAgents.entries());
     this.chatAgents.clear();
+    this.activityTimestamps.clear();
 
     // Then dispose all agents
     for (const [chatId, agent] of agents) {
@@ -193,5 +198,38 @@ export class AgentPool {
     }
 
     this.log.info('All ChatAgents disposed');
+  }
+
+  /**
+   * Dispose ChatAgents that have been idle (no activity) for longer than the
+   * specified timeout. Issue #3378: Each active ChatAgent holds a queryHandle
+   * with a process.on('exit') listener from the Claude Agent SDK's
+   * ProcessTransport. Disposing idle agents releases these listeners, preventing
+   * MaxListenersExceededWarning when many agents accumulate (e.g., during
+   * integration tests).
+   *
+   * @param idleTimeoutMs - Idle threshold in milliseconds. Agents with no
+   *   activity in the last `idleTimeoutMs` will be disposed.
+   * @returns Number of disposed agents
+   */
+  disposeIdle(idleTimeoutMs: number): number {
+    const now = Date.now();
+    let disposedCount = 0;
+
+    for (const [chatId, lastActivity] of this.activityTimestamps) {
+      if (now - lastActivity > idleTimeoutMs) {
+        this.dispose(chatId);
+        disposedCount++;
+      }
+    }
+
+    if (disposedCount > 0) {
+      this.log.info(
+        { disposedCount, remainingAgents: this.chatAgents.size, idleTimeoutMs },
+        'Idle agent eviction completed'
+      );
+    }
+
+    return disposedCount;
   }
 }

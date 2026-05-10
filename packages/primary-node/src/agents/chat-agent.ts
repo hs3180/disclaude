@@ -539,6 +539,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     } finally {
       // Clean up once-mode state
       this.onceMode = false;
+
+      // Issue #3378: Close queryHandle after onceMode completes.
+      // In onceMode, processIterator closes the channel and sets isSessionActive=false,
+      // but does NOT close the queryHandle. The SDK's ProcessTransport exit listener
+      // would leak if we don't close it here.
+      if (this.queryHandle) {
+        this.logger.info({ chatId }, 'runOnce: closing queryHandle to clean up exit listener');
+        this.queryHandle.close();
+        this.queryHandle = undefined;
+      }
     }
   }
 

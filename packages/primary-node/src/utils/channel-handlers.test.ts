@@ -55,6 +55,7 @@ function createMockWiredContext(overrides?: Partial<WiredContext>): WiredContext
       getOrCreateChatAgent: vi.fn().mockReturnValue({
         processMessage: vi.fn(),
       }),
+      disposeIdle: vi.fn().mockReturnValue(0),
     },
     controlHandler: vi.fn(),
     controlHandlerContext: {},

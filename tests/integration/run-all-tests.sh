@@ -184,6 +184,36 @@ check_server_health_detailed() {
     fi
 }
 
+# Issue #3378: Dispose idle agents between test suites.
+# Each ChatAgent holds a queryHandle with a process.on('exit') listener from
+# the Claude Agent SDK's ProcessTransport. Disposing idle agents between suites
+# releases these listeners, preventing MaxListenersExceededWarning.
+dispose_idle_agents() {
+    local idle_timeout_ms="${1:-60000}"  # Default: 1 minute
+    local result
+    result=$(make_request "POST" "/api/admin/agents/dispose-idle" "{\"idleTimeoutMs\": $idle_timeout_ms}" 2>/dev/null) || {
+        log_debug "Agent disposal endpoint not available (non-fatal)"
+        return 0
+    }
+
+    local status
+    status=$(echo "$result" | cut -d'|' -f1)
+
+    if [ "$status" = "200" ]; then
+        local body
+        body=$(echo "$result" | cut -d'|' -f2-)
+        local disposed
+        disposed=$(echo "$body" | grep -o '"disposedCount":[0-9]*' | grep -o '[0-9]*')
+        if [ -n "$disposed" ] && [ "$disposed" -gt 0 ] 2>/dev/null; then
+            log_info "Disposed $disposed idle agent(s) (idleTimeout: ${idle_timeout_ms}ms)"
+        else
+            log_debug "No idle agents to dispose"
+        fi
+    else
+        log_debug "Agent disposal returned HTTP $status (non-fatal)"
+    fi
+}
+
 run_suite() {
     local script="$1"
     local name="$2"
@@ -197,6 +227,10 @@ run_suite() {
 
     # Issue #3378: Check server health between suites for listener leak monitoring
     check_server_health_detailed
+
+    # Issue #3378: Dispose idle agents to prevent exit listener accumulation.
+    # Use a short timeout (30s) so agents from previous suites are cleaned up.
+    dispose_idle_agents 30000
 
     run_test_script "$script" "$name"
 }

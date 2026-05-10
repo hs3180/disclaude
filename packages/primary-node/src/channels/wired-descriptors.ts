@@ -71,6 +71,14 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
       channelName: 'REST channel',
       sendDoneSignal: true,
     }),
+
+  // Issue #3378: Wire agent pool disposal to REST channel config.
+  // This enables the admin disposal endpoint to evict idle agents.
+  augmentConfig: (config, context) => ({
+    ...config,
+    disposeIdleAgents: (idleTimeoutMs: number) =>
+      context.agentPool.disposeIdle(idleTimeoutMs),
+  }),
 };
 
 // ============================================================================

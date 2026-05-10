@@ -63,6 +63,8 @@ export interface ChannelSetupContext {
   /** Agent pool for creating chat agents */
   agentPool: {
     getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
+    /** Issue #3378: Dispose idle agents to release SDK exit listeners */
+    disposeIdle: (idleTimeoutMs: number) => number;
   };
   /** Unified control handler for all channels */
   controlHandler: ControlHandler;
@@ -138,6 +140,18 @@ export interface WiredChannelDescriptor<TConfig extends ChannelConfig = ChannelC
     config: TConfig,
     context: ChannelSetupContext
   ) => void | Promise<void>;
+
+  /**
+   * Config augmentation hook (Issue #3378).
+   *
+   * Called before the channel is created, allowing the descriptor to enrich
+   * the config with context-dependent values (e.g., agent pool callbacks).
+   * Returns an augmented config that is passed to the factory.
+   */
+  augmentConfig?: (
+    config: TConfig,
+    context: ChannelSetupContext
+  ) => TConfig;
 }
 
 // ============================================================================
@@ -231,7 +245,12 @@ export class ChannelLifecycleManager {
     descriptor: WiredChannelDescriptor<TConfig>,
     config: TConfig
   ): Promise<IChannel> {
-    const channel = descriptor.factory(config);
+    // Issue #3378: Allow descriptor to augment config before creating the channel
+    const effectiveConfig = descriptor.augmentConfig
+      ? descriptor.augmentConfig(config, this.context)
+      : config;
+
+    const channel = descriptor.factory(effectiveConfig);
 
     // Register with ChannelManager
     this.channelManager.register(channel);
