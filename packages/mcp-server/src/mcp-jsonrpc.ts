@@ -139,14 +139,20 @@ Primary Node builds the card from raw parameters (question, options).
 // JSON-RPC response helpers
 // ============================================================================
 
+/** Shape returned by toolSuccess / toolError. */
+export interface ToolResult {
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+}
+
 /** Send a tool success result. */
-export function toolSuccess(text: string) {
-  return { content: [{ type: 'text' as const, text }] };
+export function toolSuccess(text: string): ToolResult {
+  return { content: [{ type: 'text', text }] };
 }
 
 /** Send a tool error result. */
-export function toolError(text: string) {
-  return { content: [{ type: 'text' as const, text }], isError: true as const };
+export function toolError(text: string): ToolResult {
+  return { content: [{ type: 'text', text }], isError: true };
 }
 
 // ============================================================================
