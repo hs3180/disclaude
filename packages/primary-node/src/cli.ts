@@ -220,6 +220,8 @@ async function main(): Promise<void> {
     agentPool: {
       reset: (chatId: string) => agentPool.reset(chatId),
       stop: (chatId: string) => agentPool.stop(chatId),
+      dispose: (chatId: string) => agentPool.dispose(chatId),
+      has: (chatId: string) => agentPool.has(chatId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),

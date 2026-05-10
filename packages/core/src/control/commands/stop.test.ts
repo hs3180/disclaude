@@ -8,6 +8,8 @@ describe('handleStop', () => {
     agentPool: {
       reset: vi.fn(),
       stop: vi.fn(),
+      dispose: vi.fn().mockReturnValue(false),
+      has: vi.fn().mockReturnValue(false),
     },
     node: {
       nodeId: 'test-node',
@@ -23,6 +25,8 @@ describe('handleStop', () => {
       agentPool: {
         reset: vi.fn(),
         stop: vi.fn(() => true),
+        dispose: vi.fn().mockReturnValue(false),
+        has: vi.fn().mockReturnValue(false),
       },
     });
 
@@ -49,6 +53,8 @@ describe('handleStop', () => {
       agentPool: {
         reset: vi.fn(),
         stop: vi.fn(() => false),
+        dispose: vi.fn().mockReturnValue(false),
+        has: vi.fn().mockReturnValue(false),
       },
     });
 
@@ -74,6 +80,8 @@ describe('handleStop', () => {
       agentPool: {
         reset: vi.fn(),
         stop: vi.fn(() => true),
+        dispose: vi.fn().mockReturnValue(false),
+        has: vi.fn().mockReturnValue(false),
       },
     });
 

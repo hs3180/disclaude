@@ -11,7 +11,7 @@ import type { ControlHandlerContext } from '../types.js';
 
 function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   return {
-    agentPool: { reset: vi.fn(), stop: vi.fn().mockReturnValue(true) },
+    agentPool: { reset: vi.fn(), stop: vi.fn().mockReturnValue(true), dispose: vi.fn().mockReturnValue(false), has: vi.fn().mockReturnValue(false) },
     node: {
       nodeId: 'node-1',
       getDebugGroup: vi.fn().mockReturnValue(null),

@@ -27,6 +27,10 @@ export interface ControlHandlerContext {
     reset(chatId: string): void;
     /** Issue #1349: Stop current query without resetting session */
     stop(chatId: string): boolean;
+    /** Dispose ChatAgent for a chatId (remove from pool and release resources) */
+    dispose(chatId: string): boolean;
+    /** Check if a ChatAgent exists for a chatId */
+    has(chatId: string): boolean;
   };
 
   /** 节点相关能力 */
@@ -47,6 +51,12 @@ export interface ControlHandlerContext {
 
   /** ProjectManager for /project commands (Issue #3335) */
   projectManager?: ProjectManager;
+
+  /**
+   * Trigger a task for a project agent (Issue #3335).
+   * Sends a prompt to the ChatAgent bound to the given chatId.
+   */
+  triggerAgent?: (chatId: string, prompt: string) => Promise<void>;
 
   /** 日志记录器 */
   logger?: Logger;

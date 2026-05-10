@@ -21,6 +21,7 @@ export const handleHelp: CommandHandler = (
       '| `/status` | 查看服务状态 | `/status` |',
       '| `/restart` | 重启 Agent 实例 | `/restart` |',
       '| `/trigger` | 切换触发模式 | `/trigger [mention\\|always]` |',
+      '| `/project` | 项目管理 | `/project list\\|info\\|status\\|stop\\|trigger` |',
       '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',
       '| `/debug` | 设置/取消 Debug 群 | `/debug` |',
     ].join('\n'),

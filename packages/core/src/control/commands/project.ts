@@ -7,9 +7,8 @@
  * - `list` — List all project instances and their bindings
  * - `status [projectKey]` — Show project agent status and state summary
  * - `info` — Show current chat's active project info
- *
- * Note: `trigger` and `stop` subcommands require Phase 2 (Issue #3332)
- * for project-scoped ChatAgent support and are not yet implemented.
+ * - `stop <name>` — Stop and dispose a project agent from the pool
+ * - `trigger <name> [prompt]` — Trigger a task for a project agent
  *
  * @see Issue #3335 (Project state persistence and admin commands)
  */
@@ -179,6 +178,131 @@ function handleStatus(command: ControlCommand, context: ControlHandlerContext): 
   };
 }
 
+/**
+ * `/project stop <name>` — Stop and dispose a project agent from the pool.
+ *
+ * Finds the project instance by name, then disposes all ChatAgents
+ * for chatIds bound to that instance.
+ */
+function handleStop(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const targetName = (command.data?.name as string) ?? '';
+  if (!targetName) {
+    return {
+      success: false,
+      error: '用法: /project stop <name>（请指定项目名称）',
+    };
+  }
+
+  const instances = pm.listInstances();
+  const target = instances.find((i) => i.name === targetName);
+  if (!target) {
+    return {
+      success: false,
+      error: `项目实例 "${targetName}" 不存在`,
+    };
+  }
+
+  // Dispose all ChatAgents bound to this project instance
+  const disposedChatIds: string[] = [];
+  const notActiveChatIds: string[] = [];
+
+  for (const chatId of target.chatIds) {
+    if (context.agentPool.has(chatId)) {
+      context.agentPool.dispose(chatId);
+      disposedChatIds.push(chatId);
+    } else {
+      notActiveChatIds.push(chatId);
+    }
+  }
+
+  const lines = [`🛑 **项目 ${targetName} 已停止**`];
+  if (disposedChatIds.length > 0) {
+    lines.push(`已释放 ${disposedChatIds.length} 个 Agent 会话`);
+  }
+  if (notActiveChatIds.length > 0) {
+    lines.push(`${notActiveChatIds.length} 个会话无活跃 Agent（已跳过）`);
+  }
+
+  return {
+    success: true,
+    message: lines.join('\n'),
+  };
+}
+
+/**
+ * `/project trigger <name> [prompt]` — Trigger a task for a project agent.
+ *
+ * Finds the project instance by name, gets the first bound chatId,
+ * and sends a prompt to the ChatAgent for that chatId.
+ *
+ * Uses the `triggerAgent` callback from context. If no prompt is provided,
+ * sends a default "check project status" prompt.
+ */
+async function handleTrigger(command: ControlCommand, context: ControlHandlerContext): Promise<ControlResponse> {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const targetName = (command.data?.name as string) ?? '';
+  if (!targetName) {
+    return {
+      success: false,
+      error: '用法: /project trigger <name> [prompt]（请指定项目名称）',
+    };
+  }
+
+  if (!context.triggerAgent) {
+    return {
+      success: false,
+      error: 'triggerAgent 未配置（当前运行环境不支持触发项目任务）',
+    };
+  }
+
+  const instances = pm.listInstances();
+  const target = instances.find((i) => i.name === targetName);
+  if (!target) {
+    return {
+      success: false,
+      error: `项目实例 "${targetName}" 不存在`,
+    };
+  }
+
+  if (target.chatIds.length === 0) {
+    return {
+      success: false,
+      error: `项目 "${targetName}" 没有绑定任何会话，无法触发任务`,
+    };
+  }
+
+  const [chatId] = target.chatIds;
+  const prompt = (command.data?.prompt as string) ?? '请检查项目状态并汇报';
+
+  try {
+    await context.triggerAgent(chatId, prompt);
+    return {
+      success: true,
+      message: `🚀 **项目 ${targetName} 任务已触发**\n\n目标会话: ${chatId}\n任务: ${prompt}`,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: `触发任务失败: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Main Handler
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -191,7 +315,7 @@ function handleStatus(command: ControlCommand, context: ControlHandlerContext): 
 export const handleProject: CommandHandler = (
   command: ControlCommand,
   context: ControlHandlerContext,
-): ControlResponse => {
+): Promise<ControlResponse> | ControlResponse => {
   const subcommand = (command.data?.subcommand as string) ?? 'info';
 
   switch (subcommand) {
@@ -201,10 +325,14 @@ export const handleProject: CommandHandler = (
       return handleInfo(command, context);
     case 'status':
       return handleStatus(command, context);
+    case 'stop':
+      return handleStop(command, context);
+    case 'trigger':
+      return handleTrigger(command, context);
     default:
       return {
         success: false,
-        error: `未知子命令: ${subcommand}。可用: list, info, status`,
+        error: `未知子命令: ${subcommand}。可用: list, info, status, stop, trigger`,
       };
   }
 };

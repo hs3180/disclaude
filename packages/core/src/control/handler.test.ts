@@ -18,6 +18,8 @@ function createMockContext(): ControlHandlerContext {
     agentPool: {
       reset: vi.fn(),
       stop: vi.fn(),
+      dispose: vi.fn().mockReturnValue(false),
+      has: vi.fn().mockReturnValue(false),
     },
     node: {
       nodeId: 'test-node',

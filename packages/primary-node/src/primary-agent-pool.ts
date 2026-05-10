@@ -104,4 +104,30 @@ export class PrimaryAgentPool {
     }
     this.agents.clear();
   }
+
+  /**
+   * Dispose a single ChatAgent by chatId.
+   *
+   * @param chatId - Chat ID to dispose
+   * @returns true if an agent was disposed, false if not found
+   */
+  dispose(chatId: string): boolean {
+    const agent = this.agents.get(chatId);
+    if (!agent) {
+      return false;
+    }
+    this.agents.delete(chatId);
+    agent.dispose();
+    return true;
+  }
+
+  /**
+   * Check if a ChatAgent exists for the given chatId.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if an agent exists
+   */
+  has(chatId: string): boolean {
+    return this.agents.has(chatId);
+  }
 }

@@ -6,12 +6,14 @@
  * - `list` — list all instances
  * - `info` — show current chat's active project
  * - `status` — show detailed status for a project
+ * - `stop` — stop and dispose a project agent
+ * - `trigger` — trigger a task for a project agent
  * - Error cases (no ProjectManager, unknown subcommand, missing instance)
  *
  * @see Issue #3335 (Project state persistence)
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -61,6 +63,8 @@ function createTestContext(overrides?: Partial<ControlHandlerContext>): ControlH
     agentPool: {
       reset: () => {},
       stop: () => false,
+      dispose: () => false,
+      has: () => false,
     },
     node: {
       nodeId: 'test-node',
@@ -273,6 +277,138 @@ describe('handleProject', () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('default');
+    });
+  });
+
+  describe('/project stop', () => {
+    it('should return error when no name provided', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'stop'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('请指定项目名称');
+    });
+
+    it('should return error for non-existent project', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'stop', { name: 'no-such-project' }), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('不存在');
+    });
+
+    it('should dispose agents for project with active agents', async () => {
+      const disposeFn = vi.fn().mockReturnValue(true);
+      const hasFn = vi.fn().mockReturnValue(true);
+      const ctx = createTestContext({
+        agentPool: {
+          reset: () => {},
+          stop: () => false,
+          dispose: disposeFn,
+          has: hasFn,
+        },
+      });
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
+
+      const result = await invoke(makeCommand('chat-1', 'stop', { name: 'my-project' }), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已停止');
+      expect(result.message).toContain('已释放 1 个 Agent 会话');
+      expect(disposeFn).toHaveBeenCalledWith('chat-1');
+    });
+
+    it('should report skipped chatIds with no active agent', async () => {
+      const hasFn = vi.fn().mockReturnValue(false);
+      const disposeFn = vi.fn().mockReturnValue(false);
+      const ctx = createTestContext({
+        agentPool: {
+          reset: () => {},
+          stop: () => false,
+          dispose: disposeFn,
+          has: hasFn,
+        },
+      });
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'idle-project');
+
+      const result = await invoke(makeCommand('chat-1', 'stop', { name: 'idle-project' }), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('1 个会话无活跃 Agent');
+      expect(disposeFn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('/project trigger', () => {
+    it('should return error when no name provided', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'trigger'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('请指定项目名称');
+    });
+
+    it('should return error when triggerAgent is not configured', async () => {
+      const ctx = createTestContext();
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
+
+      const result = await invoke(makeCommand('chat-1', 'trigger', { name: 'my-project' }), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('triggerAgent 未配置');
+    });
+
+    it('should return error for project with no bound chatIds', async () => {
+      const triggerFn = vi.fn().mockResolvedValue(undefined);
+      const ctx = createTestContext({ triggerAgent: triggerFn });
+      // Create project bound to chat-1 but query from chat-2 with explicit name
+      // Use a separate chat so chatIds are bound correctly
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'bound-project');
+
+      // Now unbind chat-1 to create a project with no chatIds
+      ctx.projectManager!.reset('chat-1');
+
+      const result = await invoke(makeCommand('chat-2', 'trigger', { name: 'bound-project' }), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('没有绑定任何会话');
+    });
+
+    it('should trigger agent with default prompt', async () => {
+      const triggerFn = vi.fn().mockResolvedValue(undefined);
+      const ctx = createTestContext({ triggerAgent: triggerFn });
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
+
+      const result = await invoke(makeCommand('chat-1', 'trigger', { name: 'my-project' }), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('任务已触发');
+      expect(triggerFn).toHaveBeenCalledWith('chat-1', '请检查项目状态并汇报');
+    });
+
+    it('should trigger agent with custom prompt', async () => {
+      const triggerFn = vi.fn().mockResolvedValue(undefined);
+      const ctx = createTestContext({ triggerAgent: triggerFn });
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
+
+      const result = await invoke(
+        makeCommand('chat-1', 'trigger', { name: 'my-project', prompt: 'run tests' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(triggerFn).toHaveBeenCalledWith('chat-1', 'run tests');
+    });
+
+    it('should return error when triggerAgent throws', async () => {
+      const triggerFn = vi.fn().mockRejectedValue(new Error('Agent busy'));
+      const ctx = createTestContext({ triggerAgent: triggerFn });
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
+
+      const result = await invoke(makeCommand('chat-1', 'trigger', { name: 'my-project' }), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Agent busy');
     });
   });
 });
