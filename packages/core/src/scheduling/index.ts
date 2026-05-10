@@ -10,6 +10,7 @@
  * - ScheduleFileWatcher: Hot reload for schedule files
  * - ScheduleManager: Query operations for scheduled tasks
  * - Scheduler: Cron-based task execution (with dependency injection)
+ * - ChatArchiveStore: Persistent archive for completed temp chats (Issue #2191)
  * - ScheduleExecutor: Unified executor factory (Issue #1382)
  *
  * @module @disclaude/core/scheduling
@@ -71,6 +72,16 @@ export {
   type TaskExecutor,
   type SchedulerOptions,
 } from './scheduler.js';
+
+// Chat Archive (Issue #2191: unified group chat records)
+export {
+  ChatArchiveStore,
+  type ArchiveStatus,
+  type ChatSummary,
+  type ArchivedChatRecord,
+  type ArchiveIndexEntry,
+  type ChatArchiveStoreOptions,
+} from './chat-archive-store.js';
 
 // Schedule Executor (Issue #1382, Issue #2941: ChatAgent-only)
 export {
