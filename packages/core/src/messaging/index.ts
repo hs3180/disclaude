@@ -36,3 +36,22 @@ export {
   createCardMessage,
   createDoneMessage,
 } from './universal-message.js';
+
+// NonUserMessage types and router (Issue #3331)
+export type {
+  NonUserMessage,
+  NonUserMessageType,
+  NonUserMessagePriority,
+  RouteResult,
+} from './non-user-message.js';
+
+export {
+  RouteError,
+} from './non-user-message.js';
+
+export {
+  NonUserMessageRouter,
+  StaticProjectResolver,
+  type NonUserMessageRouterConfig,
+  type ProjectResolver,
+} from './non-user-message-router.js';

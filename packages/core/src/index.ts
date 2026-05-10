@@ -282,6 +282,22 @@ export {
   createDoneMessage,
 } from './messaging/index.js';
 
+// NonUserMessage types and router (Issue #3331)
+export type {
+  NonUserMessage,
+  NonUserMessageType,
+  NonUserMessagePriority,
+  RouteResult,
+} from './messaging/index.js';
+
+export {
+  RouteError,
+  NonUserMessageRouter,
+  StaticProjectResolver,
+  type NonUserMessageRouterConfig,
+  type ProjectResolver,
+} from './messaging/index.js';
+
 // Channels module (Issue #1041 - migrated from primary-node)
 export { BaseChannel } from './channels/index.js';
 
