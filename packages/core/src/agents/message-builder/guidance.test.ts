@@ -13,6 +13,7 @@ import {
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -166,5 +167,46 @@ describe('buildTaskRecordGuidance', () => {
   it('should mention creating file if not exists', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('Create the file if it does not exist');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime environment section header', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment');
+    expect(result).toContain('.runtime-env');
+  });
+
+  it('should explain cross-process state sharing', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('cross-process state sharing');
+  });
+
+  it('should list known runtime-env variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should explain how to read variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('process.env');
+    expect(result).toContain('Read the file directly');
+  });
+
+  it('should explain how to write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should include security notes', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.gitignore');
+    expect(result).toContain('expiration');
+  });
+
+  it('should mention token refresh guidance', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('github-jwt-auth');
   });
 });
