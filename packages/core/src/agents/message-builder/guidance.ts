@@ -265,6 +265,95 @@ Append each task as a new \`##\` section with today's date and task description:
 }
 
 /**
+ * Build the ETA rules guidance section.
+ *
+ * Issue #1234 Phase 2: Instructs the agent to maintain an estimation
+ * rules document that evolves based on task execution history.
+ *
+ * The agent reads `.claude/eta-rules.md` before estimating tasks and
+ * updates it after recognizing patterns in task records.
+ *
+ * @returns Formatted ETA rules guidance section
+ */
+export function buildETARulesGuidance(): string {
+  return `
+
+---
+
+## ETA Estimation Rules
+
+**Before estimating a new task, check the estimation rules for improved accuracy.**
+
+### Rules File Location
+
+Read \`.claude/eta-rules.md\` in the current working directory.
+Create it with the initial template below if it does not exist.
+
+### How to Use Rules When Estimating
+
+1. **Read** \`.claude/eta-rules.md\` and \`.claude/task-records.md\` before estimating
+2. **Find similar past tasks** in task-records by type, keywords, or scope
+3. **Apply matching rules** (e.g., if the task involves auth, multiply baseline by 1.5)
+4. **Record your estimate** with the reasoning in the task record
+
+### How to Update Rules After Task Completion
+
+After recording 3+ tasks of the same type, if you notice a consistent pattern:
+
+- Tasks of type X are consistently underestimated by Y% → adjust the baseline
+- A new complexity factor (e.g., "involves async logic") keeps appearing → add a new rule
+- A rule no longer applies → remove or update it
+
+**Append new findings to the "Lessons Learned" section of \`eta-rules.md\`.**
+
+### Initial Template for \`eta-rules.md\`
+
+\`\`\`markdown
+# ETA Estimation Rules
+
+## Task Type Baselines
+
+| Type | Baseline | Notes |
+|------|----------|-------|
+| bugfix | 15-30 min | Depends on reproduction difficulty |
+| feature-small | 30-60 min | Single component, clear scope |
+| feature-medium | 2-4 hours | Multiple components, some design needed |
+| feature-large | 4-8 hours | Cross-cutting, needs architectural thought |
+| refactoring | 30 min - 2 hours | Depends on blast radius |
+| test | 15-45 min | Depends on test scope |
+| docs | 15-30 min | Usually straightforward |
+| research | 30-60 min | Exploratory, uncertain |
+
+## Complexity Multipliers
+
+| Factor | Multiplier | When to Apply |
+|--------|-----------|---------------|
+| Involves authentication/security | × 1.5 | Any auth, token, or permission logic |
+| Modifies core/shared modules | × 2.0 | High blast radius, many dependents |
+| Has existing reference code | × 0.7 | Can copy/adapt a known pattern |
+| Involves third-party API | × 1.5 | Integration + debugging overhead |
+| New concept / first time | × 1.5 | No prior experience to draw from |
+| Well-defined acceptance criteria | × 0.8 | Clear scope, less design needed |
+
+## Lessons Learned
+
+*(Add entries here as you complete tasks and discover patterns)*
+
+## Recent Updates
+
+- *(Initial version — rules will evolve as task records accumulate)*
+\`\`\`
+
+### Guidelines
+
+- **Rules are living documents**: Update them when patterns emerge from task records
+- **Keep rules simple**: Natural language, easy to understand and modify
+- **Reference source tasks**: When adding a rule, note which task(s) taught you this
+- **Don't over-engineer rules**: A handful of useful rules beats a comprehensive but unused set
+- **Be conservative**: Better to underestimate slightly than to overestimate significantly`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

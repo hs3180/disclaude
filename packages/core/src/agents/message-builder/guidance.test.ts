@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
+  buildETARulesGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -166,5 +167,65 @@ describe('buildTaskRecordGuidance', () => {
   it('should mention creating file if not exists', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('Create the file if it does not exist');
+  });
+});
+
+describe('buildETARulesGuidance', () => {
+  it('should include ETA rules section header', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('ETA Estimation Rules');
+  });
+
+  it('should specify rules file location', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('.claude/eta-rules.md');
+  });
+
+  it('should include task type baselines', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('bugfix');
+    expect(result).toContain('feature-small');
+    expect(result).toContain('refactoring');
+    expect(result).toContain('test');
+  });
+
+  it('should include complexity multipliers', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('× 1.5');
+    expect(result).toContain('authentication');
+    expect(result).toContain('third-party API');
+  });
+
+  it('should instruct agent to read rules before estimating', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('Read');
+    expect(result).toContain('eta-rules.md');
+    expect(result).toContain('task-records.md');
+    expect(result).toContain('before estimating');
+  });
+
+  it('should instruct agent to update rules after pattern recognition', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('Update');
+    expect(result).toContain('Lessons Learned');
+  });
+
+  it('should include initial template for eta-rules.md', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('ETA Estimation Rules');
+    expect(result).toContain('Task Type Baselines');
+    expect(result).toContain('Complexity Multipliers');
+    expect(result).toContain('Lessons Learned');
+  });
+
+  it('should mention creating rules file if not exists', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('Create it with the initial template');
+  });
+
+  it('should reference Issue #1234 Phase 2', () => {
+    const result = buildETARulesGuidance();
+    expect(result).toContain('ETA');
+    expect(result).toContain('estimation rules');
   });
 });
