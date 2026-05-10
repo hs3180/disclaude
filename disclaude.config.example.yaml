@@ -256,6 +256,20 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# Project-scoped ChatAgent Configuration (Issue #3332)
+# -----------------------------------------------------------------------------
+# Define projects with chatId binding for project-scoped ChatAgent instances.
+# Each project binds to a specific chatId and working directory, enabling
+# the agent to operate within that project's context (CLAUDE.md, etc.).
+#
+# projects:
+#   - key: "owner/repo"               # Unique project identifier
+#     workingDir: "."                  # Project root (relative to disclaude root)
+#     chatId: "oc_xxx"                 # Feishu chatId — agent replies go here
+#     modelTier: "low"                 # Model tier: low (default) | default | high
+#     idleTimeoutMs: 1800000           # Agent idle timeout (default: 30 minutes)
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.

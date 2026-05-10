@@ -21,7 +21,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProjectManager } from './project-manager.js';
-import type { ProjectManagerOptions } from './types.js';
+import type { ProjectConfig, ProjectManagerOptions } from './types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Test Fixtures
@@ -1380,5 +1380,183 @@ describe('ProjectManager create() — filesystem with persistence round-trip', (
 
     // Filesystem should still be intact
     expect(existsSync(join(workspaceDir, 'projects', 'my-research', 'CLAUDE.md'))).toBe(true);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Project Config Methods (Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe('ProjectManager project config (Issue #3332)', () => {
+  const sampleProjects: ProjectConfig[] = [
+    {
+      key: 'owner/repo',
+      workingDir: '.',
+      chatId: 'oc_project_chat_1',
+      modelTier: 'low',
+      idleTimeoutMs: 1800000,
+    },
+    {
+      key: 'other/project',
+      workingDir: '/absolute/path/to/project',
+      chatId: 'oc_project_chat_2',
+    },
+  ];
+
+  it('should load project configs from options', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+
+    const config = pm.getProjectConfig('owner/repo');
+    expect(config).toBeDefined();
+    expect(config!.key).toBe('owner/repo');
+    expect(config!.chatId).toBe('oc_project_chat_1');
+    expect(config!.modelTier).toBe('low');
+    expect(config!.workingDir).toContain('/'); // resolved to absolute
+  });
+
+  it('should return undefined for unknown project key', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+    expect(pm.getProjectConfig('nonexistent')).toBeUndefined();
+  });
+
+  it('should resolve relative workingDir to absolute', () => {
+    const opts = createOptions({ projects: sampleProjects });
+    const pm = new ProjectManager(opts);
+
+    const config = pm.getProjectConfig('owner/repo');
+    expect(config!.workingDir).toBe(opts.workspaceDir);
+  });
+
+  it('should keep absolute workingDir unchanged', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+
+    const config = pm.getProjectConfig('other/project');
+    expect(config!.workingDir).toBe('/absolute/path/to/project');
+  });
+
+  it('should apply default modelTier and idleTimeoutMs', () => {
+    const pm = new ProjectManager(createOptions({ projects: [
+      { key: 'test/proj', workingDir: '.', chatId: 'oc_test' },
+    ]}));
+
+    const config = pm.getProjectConfig('test/proj');
+    expect(config!.modelTier).toBe('low');
+    expect(config!.idleTimeoutMs).toBe(30 * 60 * 1000);
+  });
+
+  it('should return all project configs', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+    const all = pm.getAllProjectConfigs();
+    expect(all).toHaveLength(2);
+  });
+
+  it('should return empty array when no projects configured', () => {
+    const pm = new ProjectManager(createOptions());
+    expect(pm.getAllProjectConfigs()).toEqual([]);
+  });
+
+  it('should skip invalid project entries (missing key/chatId/workingDir)', () => {
+    const pm = new ProjectManager(createOptions({ projects: [
+      { key: '', workingDir: '.', chatId: 'oc_1' },           // empty key
+      { key: 'valid', workingDir: '', chatId: 'oc_2' },       // empty workingDir
+      { key: 'also-valid', workingDir: '.', chatId: '' },     // empty chatId
+      { key: 'good', workingDir: '.', chatId: 'oc_good' },    // valid
+    ] as any}));
+
+    expect(pm.getAllProjectConfigs()).toHaveLength(1);
+    expect(pm.getProjectConfig('good')).toBeDefined();
+  });
+
+  it('should look up project config by chatId', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+
+    const config = pm.getProjectConfigByChatId('oc_project_chat_1');
+    expect(config).toBeDefined();
+    expect(config!.key).toBe('owner/repo');
+  });
+
+  it('should return undefined for unknown chatId', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+    expect(pm.getProjectConfigByChatId('oc_nonexistent')).toBeUndefined();
+  });
+});
+
+describe('ProjectManager bindProject() (Issue #3332)', () => {
+  const sampleProjects: ProjectConfig[] = [
+    { key: 'owner/repo', workingDir: '.', chatId: 'oc_primary' },
+  ];
+
+  it('should bind a chatId to a project', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+    const result = pm.bindProject('owner/repo', 'oc_new_chat');
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.data.key).toBe('owner/repo');
+  });
+
+  it('should allow looking up bound project via chatId after bindProject()', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+    pm.bindProject('owner/repo', 'oc_bound_chat');
+
+    const config = pm.getProjectConfigByChatId('oc_bound_chat');
+    expect(config).toBeDefined();
+    expect(config!.key).toBe('owner/repo');
+  });
+
+  it('should return error for unknown project key', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+    const result = pm.bindProject('nonexistent', 'oc_chat');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('不存在');
+    }
+  });
+
+  it('should return error for empty chatId', () => {
+    const pm = new ProjectManager(createOptions({ projects: sampleProjects }));
+    const result = pm.bindProject('owner/repo', '');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('chatId');
+    }
+  });
+});
+
+describe('ProjectManager CwdProvider with project config (Issue #3332)', () => {
+  it('should return project workingDir for project-bound chatId', () => {
+    const opts = createOptions({ projects: [
+      { key: 'test/proj', workingDir: '/custom/project/dir', chatId: 'oc_project_chat' },
+    ]});
+    const pm = new ProjectManager(opts);
+    const cwdProvider = pm.createCwdProvider();
+
+    expect(cwdProvider('oc_project_chat')).toBe('/custom/project/dir');
+  });
+
+  it('should fall back to instance-based cwd for non-project chatIds', () => {
+    const pm = new ProjectManager(createOptions());
+    pm.create('chat_1', 'research', 'my-instance');
+
+    const cwdProvider = pm.createCwdProvider();
+    const cwd = cwdProvider('chat_1');
+    expect(cwd).toBeDefined();
+    expect(cwd).toContain('projects/my-instance');
+  });
+
+  it('should return undefined for default chatId (no project, no instance)', () => {
+    const pm = new ProjectManager(createOptions());
+    const cwdProvider = pm.createCwdProvider();
+    expect(cwdProvider('unknown_chat')).toBeUndefined();
+  });
+
+  it('should prioritize project config over instance binding', () => {
+    const opts = createOptions({ projects: [
+      { key: 'proj', workingDir: '/project/dir', chatId: 'chat_1' },
+    ]});
+    const pm = new ProjectManager(opts);
+    pm.create('chat_1', 'research', 'my-instance');
+
+    const cwdProvider = pm.createCwdProvider();
+    // Project config takes priority
+    expect(cwdProvider('chat_1')).toBe('/project/dir');
   });
 });

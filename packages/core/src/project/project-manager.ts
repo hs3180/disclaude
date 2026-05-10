@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path';
 import type {
   CwdProvider,
   InstanceInfo,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -74,6 +75,11 @@ export class ProjectManager {
   /** Reverse index: instance name → Set of bound chatIds (O(1) lookup) */
   private instanceChatIds: Map<string, Set<string>> = new Map();
 
+  /** Project configs from disclaude.config.yaml (Issue #3332) */
+  private projectConfigs: Map<string, ProjectConfig> = new Map();
+  /** Reverse lookup: chatId → project key (Issue #3332) */
+  private chatProjectKeyMap: Map<string, string> = new Map();
+
   /** Path to .disclaude directory */
   private readonly dataDir: string;
   /** Path to projects.json */
@@ -89,6 +95,9 @@ export class ProjectManager {
     this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
 
     this.init(options.templatesConfig);
+
+    // Load project configs from config (Issue #3332)
+    this.loadProjectConfigs(options.projects);
 
     // Restore persisted state after templates are loaded
     this.loadPersistedData();
@@ -417,6 +426,101 @@ export class ProjectManager {
   }
 
   // ───────────────────────────────────────────
+  // Project Config Methods (Issue #3332)
+  // ───────────────────────────────────────────
+
+  /**
+   * Get a project config by its unique key.
+   *
+   * @param projectKey - Project key (e.g. 'hs3180/disclaude')
+   * @returns ProjectConfig if found, undefined otherwise
+   */
+  getProjectConfig(projectKey: string): ProjectConfig | undefined {
+    return this.projectConfigs.get(projectKey);
+  }
+
+  /**
+   * Get all configured project configs.
+   *
+   * @returns Array of ProjectConfig
+   */
+  getAllProjectConfigs(): ProjectConfig[] {
+    return Array.from(this.projectConfigs.values());
+  }
+
+  /**
+   * Get a project config by its bound chatId.
+   *
+   * Useful for looking up which project a chatId is bound to.
+   *
+   * @param chatId - Chat session identifier
+   * @returns ProjectConfig if chatId is bound to a project, undefined otherwise
+   */
+  getProjectConfigByChatId(chatId: string): ProjectConfig | undefined {
+    const projectKey = this.chatProjectKeyMap.get(chatId);
+    if (!projectKey) {return undefined;}
+    return this.projectConfigs.get(projectKey);
+  }
+
+  /**
+   * Bind a chatId to a project by its key.
+   *
+   * This creates the association between a chatId and a project config,
+   * enabling project-scoped ChatAgent creation for that chatId.
+   *
+   * @param projectKey - Project key to bind to
+   * @param chatId - Chat session identifier to bind
+   * @returns ProjectResult indicating success or failure
+   */
+  bindProject(projectKey: string, chatId: string): ProjectResult<ProjectConfig> {
+    const config = this.projectConfigs.get(projectKey);
+    if (!config) {
+      return { ok: false, error: `项目 "${projectKey}" 不存在` };
+    }
+
+    if (!chatId || chatId.length === 0) {
+      return { ok: false, error: 'chatId 不能为空' };
+    }
+
+    // If the config already has a chatId and it's different, warn but allow
+    // (a project can be bound to multiple chats via bindProject)
+    this.chatProjectKeyMap.set(chatId, projectKey);
+
+    return { ok: true, data: config };
+  }
+
+  /**
+   * Load project configs from the config file into internal maps.
+   *
+   * @param projects - Array of ProjectConfig entries from config
+   */
+  private loadProjectConfigs(projects?: ProjectConfig[]): void {
+    if (!projects || projects.length === 0) {return;}
+
+    for (const project of projects) {
+      if (!project.key || !project.chatId || !project.workingDir) {
+        continue; // Skip invalid entries
+      }
+
+      // Resolve relative workingDir to absolute path
+      const resolvedWorkingDir = project.workingDir.startsWith('/')
+        ? project.workingDir
+        : resolve(this.workspaceDir, project.workingDir);
+
+      const config: ProjectConfig = {
+        key: project.key,
+        workingDir: resolvedWorkingDir,
+        chatId: project.chatId,
+        modelTier: project.modelTier ?? 'low',
+        idleTimeoutMs: project.idleTimeoutMs ?? 30 * 60 * 1000,
+      };
+
+      this.projectConfigs.set(project.key, config);
+      this.chatProjectKeyMap.set(project.chatId, project.key);
+    }
+  }
+
+  // ───────────────────────────────────────────
   // CwdProvider Factory
   // ───────────────────────────────────────────
 
@@ -429,6 +533,13 @@ export class ProjectManager {
    */
   createCwdProvider(): CwdProvider {
     return (chatId: string): string | undefined => {
+      // Issue #3332: Check project config first (project-scoped chatId binding)
+      const projectConfig = this.getProjectConfigByChatId(chatId);
+      if (projectConfig) {
+        return projectConfig.workingDir;
+      }
+
+      // Fall back to instance-based cwd resolution
       const active = this.getActive(chatId);
       // Return undefined for default → SDK falls back to getWorkspaceDir()
       if (active.name === 'default') {

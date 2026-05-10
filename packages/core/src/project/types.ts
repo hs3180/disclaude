@@ -122,6 +122,39 @@ export interface InstanceInfo {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Project Config (Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Project configuration for project-scoped ChatAgent with chatId binding.
+ *
+ * Defined in `disclaude.config.yaml` under the `projects:` key.
+ * Each project binds a ChatAgent to a specific chatId and working directory,
+ * enabling the agent to operate within that project's context.
+ *
+ * @see Issue #3332 (Project-scoped ChatAgent with chatId binding)
+ */
+export interface ProjectConfig {
+  /** Project key (unique identifier, e.g. 'hs3180/disclaude') */
+  key: string;
+
+  /**
+   * Project root working directory.
+   * Relative paths are resolved relative to the disclaude root directory.
+   */
+  workingDir: string;
+
+  /** Bound chatId — agent output (send_text, send_card, etc.) goes here */
+  chatId: string;
+
+  /** Model tier for this project's agents (default: 'low') */
+  modelTier?: 'low' | 'default' | 'high';
+
+  /** Agent idle timeout in milliseconds (default: 1800000 = 30min) */
+  idleTimeoutMs?: number;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // CwdProvider
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -198,4 +231,14 @@ export interface ProjectManagerOptions {
    * When omitted, templates are auto-discovered from `{packageDir}/templates/`.
    */
   templatesConfig?: ProjectTemplatesConfig;
+
+  /**
+   * Project configurations for project-scoped ChatAgent with chatId binding.
+   *
+   * When provided, ProjectManager supports project lookup by key and
+   * chatId binding for project-scoped agent creation.
+   *
+   * @see Issue #3332
+   */
+  projects?: ProjectConfig[];
 }
