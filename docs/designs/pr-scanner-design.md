@@ -1,9 +1,10 @@
 # PR Scanner Design Document
 
 > Issue: #393 - feat: 定时扫描 PR 并创建讨论群聊 (0.4)
-> Version: v0.4
-> Status: Draft
-> Created: 2026-03-02
+> Issue: #3383 - feat(0.4.1): PR Review 临时群聊 — 基于 Message + project-bound Agent
+> Version: v0.5
+> Status: Active
+> Updated: 2026-05-10
 
 ## 1. Overview
 
@@ -11,17 +12,18 @@
 
 Design a scheduled task that:
 - Periodically scans open PRs in the repository
-- Creates group chats for new PRs
-- Provides PR details and enables interactive discussion
-- Supports PR actions through commands
+- Creates group chats for new PRs via `lark-cli`
+- Performs automated PR review (diff analysis, code quality assessment)
+- Sends review cards to per-PR review groups
+- Tracks PR-to-chatId mappings for idempotent operation
 
 ### 1.2 Scope
 
 This document covers:
-- Complete workflow analysis
-- Infrastructure dependencies
-- Implementation phases
-- Technical design decisions
+- Complete workflow from scan → review → notification
+- Infrastructure dependencies and their current status
+- Implementation phases with actual deliverables
+- Migration path to 0.4.1 Message-based architecture
 
 ## 2. Workflow Analysis
 
@@ -29,12 +31,12 @@ This document covers:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        PR Scanner Workflow                          │
+│                     PR Scanner + Review Workflow                     │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  ┌──────────┐    ┌──────────────┐    ┌──────────────────┐          │
 │  │  Cron    │───>│  Scan Open   │───>│  Compare with    │          │
-│  │  Trigger │    │  PRs         │    │  History         │          │
+│  │  Trigger │    │  PRs         │    │  Mapping Table   │          │
 │  └──────────┘    └──────────────┘    └──────────────────┘          │
 │                                              │                      │
 │                                              ▼                      │
@@ -46,25 +48,38 @@ This document covers:
 │                               │                             │      │
 │                               ▼ No                          ▼ Yes  │
 │                        ┌───────────┐               ┌──────────────┐│
-│                        │  Do       │               │  For Each    ││
-│                        │  Nothing  │               │  New PR      ││
-│                        └───────────┘               └──────────────┘│
-│                                                          │         │
-│                                                          ▼         │
+│                        │  Check    │               │  For Each    ││
+│                        │  Closed   │               │  New PR      ││
+│                        │  PRs      │               └──────────────┘│
+│                        └───────────┘                       │       │
+│                                                            ▼       │
 │                                               ┌──────────────────┐ │
-│                                               │  Create Group    │ │
-│                                               │  Chat            │ │
+│                                               │  Create Review   │ │
+│                                               │  Group (lark-cli)│ │
 │                                               └──────────────────┘ │
 │                                                          │         │
 │                                                          ▼         │
 │                                               ┌──────────────────┐ │
-│                                               │  Send PR Info    │ │
+│                                               │  Get PR Diff     │ │
+│                                               │  & Details       │ │
+│                                               └──────────────────┘ │
+│                                                          │         │
+│                                                          ▼         │
+│                                               ┌──────────────────┐ │
+│                                               │  Auto Review     │ │
+│                                               │  (AI Analysis)   │ │
+│                                               └──────────────────┘ │
+│                                                          │         │
+│                                                          ▼         │
+│                                               ┌──────────────────┐ │
+│                                               │  Send Review     │ │
 │                                               │  Card            │ │
 │                                               └──────────────────┘ │
 │                                                          │         │
 │                                                          ▼         │
 │                                               ┌──────────────────┐ │
-│                                               │  Update History  │ │
+│                                               │  Update Mapping  │ │
+│                                               │  & Notify Ctrl   │ │
 │                                               └──────────────────┘ │
 │                                                                    │
 └─────────────────────────────────────────────────────────────────────┘
@@ -74,139 +89,141 @@ This document covers:
 
 | Step | Action | Tool/API | Notes |
 |------|--------|----------|-------|
-| 1 | Get open PRs | `gh pr list --state open` | Use gh CLI |
-| 2 | Load history | Read from storage | JSON file in workspace |
-| 3 | Compare | In-memory diff | Identify new PR numbers |
-| 4 | Get PR details | `gh pr view {number}` | Title, body, author, status |
-| 5 | Create chat | ChatOps `createDiscussionChat()` | PR #423 dependency |
-| 6 | Send info | `send_user_feedback` | Interactive card |
-| 7 | Update history | Write to storage | Append new PR numbers |
+| 1 | Read mapping table | `cat workspace/bot-chat-mapping.json` | BotChatMappingStore |
+| 2 | Get open PRs | `gh pr list --state open` | Use gh CLI |
+| 3 | Compare | In-memory diff | New vs existing mappings |
+| 4 | Check closed PRs | `gh pr list --state closed` | Log status changes |
+| 5 | Create review group | `lark-cli im chat create` | Per-PR group |
+| 6 | Get PR details | `gh pr view {number}` | Title, body, author, stats |
+| 7 | Get PR diff | `gh pr diff {number}` | Full diff or stat summary |
+| 8 | Auto review | Agent AI analysis | Generate structured review |
+| 9 | Send review card | `send_card` / `send_interactive` | To review group |
+| 10 | Notify control channel | `send_text` | Summary to chatId |
+| 11 | Update mapping | Write to bot-chat-mapping.json | Atomic write |
 
 ## 3. Infrastructure Dependencies
 
 ### 3.1 Dependency Matrix
 
-| Dependency | Status | PR/Issue | Blocking | Notes |
-|------------|--------|----------|----------|-------|
-| Scheduler | ✅ Ready | #357 | No | Already implemented |
-| ChatOps (createDiscussionChat) | ⏳ Pending | PR #423 | **Yes** | Group chat creation |
-| FeedbackController | ⏳ Pending | PR #412 | Partial | Interactive cards |
-| PR State Storage | ❓ Needed | This doc | No | Simple JSON file |
+| Dependency | Status | Module/Issue | Notes |
+|------------|--------|-------------|-------|
+| Scheduler | ✅ Ready | `packages/core/scheduling` | Cron-based, ChatAgent.runOnce() |
+| BotChatMappingStore | ✅ Ready | `packages/core/scheduling` | PR-to-chatId mapping, rebuild support |
+| Group Creation | ✅ Ready | `lark-cli im chat create` | CLI-based, no code dependency |
+| PR Info | ✅ Ready | `gh` CLI | View, diff, list |
+| Review Cards | ✅ Ready | MCP `send_card` / `send_interactive` | Via MCP tools |
+| ChatAgent | ✅ Ready | `packages/core/agents` | Short-lived per execution |
 
-### 3.2 ChatOps API (PR #423)
+### 3.2 Architecture: Current vs Future
 
-```typescript
-// Required function from PR #423
-import { createDiscussionChat } from './platforms/feishu/chat-ops.js';
+| Dimension | Current (v0.5) | Future (0.4.1, #3383) |
+|-----------|----------------|----------------------|
+| **Execution** | ChatAgent.runOnce() with SKILL.md instructions | SystemMessage → MessageRouter → project-bound ChatAgent |
+| **Behavior** | SKILL.md-driven (agent reads instructions) | CLAUDE.md-driven per project |
+| **State** | BotChatMappingStore file | Same + project-scoped context |
+| **Group creation** | lark-cli CLI | MCP tool or lark-cli |
+| **Review quality** | Agent AI analysis | Same, but with conversation context |
+| **Routing** | chatId in schedule config | projectKey-based routing |
 
-// Usage in schedule prompt
-const chatId = await createDiscussionChat(client, {
-  topic: `PR #${prNumber}: ${prTitle}`,
-  members: [prAuthor, ...reviewers],
-});
-```
+The current implementation covers all core functionality. The 0.4.1 migration would primarily improve:
+- Persistent conversation context (agent remembers previous reviews)
+- Project-scoped configuration (projectKey in config)
+- SystemMessage routing (webhook/IPC triggers instead of cron-only)
 
-**Status**: PR #423 is open and unmerged. This is a **blocking dependency**.
+## 4. Implementation Phases
 
-### 3.3 FeedbackController Integration (PR #412)
+### Phase 1: Basic Scanner + Notification ✅ Available
 
-```typescript
-// Optional: Use FeedbackController for interactive actions
-// After PR #412 merges
+**Goal**: Scan PRs and send notifications to existing chat
 
-FeedbackController.createChannel({ type: 'existing', chatId })
-  .sendMessage(prInfoCard)
-  .collectFeedback({
-    options: ['Merge', 'Close', 'Request Changes', 'Later']
-  })
-  .getDecision();
-```
+**Deliverables**:
+- ✅ Scheduler infrastructure (`packages/core/scheduling`)
+- ✅ Schedule markdown format
+- ✅ `gh pr list` based scanning
+- ✅ Notification via MCP send tools
 
-**Status**: PR #412 is open. Not blocking, but enables better UX.
+### Phase 2: Group Chat Creation + Mapping ✅ Available
 
-### 3.4 PR State Storage
+**Goal**: Create dedicated review group for each PR
 
-**Design Decision**: Use simple JSON file in workspace
+**Deliverables**:
+- ✅ BotChatMappingStore (`packages/core/scheduling/bot-chat-mapping.ts`)
+- ✅ lark-cli group creation
+- ✅ Atomic mapping writes
+- ✅ Concurrent group limit
+- ✅ Self-healing via `rebuildFromGroupList()`
+
+### Phase 3: Automated Review + Cards ✅ Available
+
+**Goal**: Perform automated PR review and send review cards
+
+**Deliverables**:
+- ✅ PR diff retrieval (`gh pr diff`)
+- ✅ Large diff fallback (`gh pr diff --stat`)
+- ✅ Structured review generation (AI analysis)
+- ✅ Review grading (Approve / Request Changes / Comment)
+- ✅ Review card sending via MCP tools
+- ✅ Control channel notification
+
+### Phase 4: Interactive Actions ⏳ Future
+
+**Goal**: Support PR actions through interactive card buttons
+
+**Requirements**:
+- Interactive card action handling
+- PR action execution (merge, close, request changes)
+
+**Not yet planned — depends on usage feedback from Phase 1-3.**
+
+## 5. Technical Design
+
+### 5.1 Data Storage
+
+**BotChatMappingStore** (`workspace/bot-chat-mapping.json`):
 
 ```json
-// workspace/pr-scanner-history.json
 {
-  "lastScan": "2026-03-02T10:00:00Z",
-  "processedPRs": [439, 437, 436, 434, 427, 423, 412],
-  "prChats": {
-    "440": "oc_xxxx"
+  "pr-123": {
+    "chatId": "oc_xxx",
+    "createdAt": "2026-05-10T00:00:00Z",
+    "purpose": "pr-review"
   }
 }
 ```
 
-**Rationale**:
-- Simple implementation
-- No database needed
-- Easy to debug
-- Portable across environments
+**Design principles**:
+- Mapping table is a cache — rebuildable from Feishu API
+- Key format: `pr-{number}` → `purposeFromKey()` infers `pr-review`
+- Group name format: `PR #{number} · {title前30字}` → `parseGroupNameToKey()` parses key
+- Atomic file writes via temp file + rename
 
-## 4. Implementation Phases
+### 5.2 Review Card Format
 
-### Phase 1: Basic Scanner (No Group Chat) ✅ Can implement now
-
-**Goal**: Scan PRs and send notifications to existing chat
-
-**Requirements**:
-- ✅ Scheduler infrastructure
-- ✅ `send_user_feedback` tool
-
-**Schedule File**:
 ```markdown
----
-name: "PR Scanner (Basic)"
-cron: "0 */30 * * * *"
-enabled: true
-blocking: true
-chatId: "oc_notification_chat"
----
+## PR #{number}: {title}
 
-# PR Scanner - Basic Version
+👤 {author} · 🌿 {headRef} → {baseRef}
+📊 +{additions} -{deletions} ({changedFiles} files)
 
-Scan for new PRs and send notifications.
+### Review: {分级}
 
-## Steps
+**变更概要**: {summary}
+**关键改动**: {keyChanges}
+**潜在问题**: {potentialIssues}
+**建议**: {suggestions}
 
-1. Run `gh pr list --state open --json number` to get open PRs
-2. Read workspace/pr-scanner-history.json
-3. Compare to find new PRs
-4. For each new PR:
-   - Run `gh pr view {number}` to get details
-   - Use send_user_feedback to notify
-5. Update history file
+🔗 https://github.com/{repo}/pull/{number}
 ```
 
-### Phase 2: Group Chat Creation ⏳ Blocked by PR #423
+### 5.3 Review Grading Criteria
 
-**Goal**: Create dedicated group chat for each PR
+| Grade | Criteria |
+|-------|----------|
+| ✅ **Approve** | Changes are clear, well-tested, no major issues |
+| ⚠️ **Request Changes** | Bugs, security issues, or significant design problems |
+| 💬 **Comment** | Suggestions for improvement, non-blocking |
 
-**Requirements**:
-- ⏳ ChatOps `createDiscussionChat()` (PR #423)
-
-**Additional Steps**:
-1. Call `createDiscussionChat()` for new PRs
-2. Store chat ID mapping in history
-3. Send PR info to new chat
-
-### Phase 3: Interactive Actions ⏳ Blocked by PR #412
-
-**Goal**: Support PR actions through interactive cards
-
-**Requirements**:
-- ⏳ FeedbackController (PR #412)
-
-**Additional Features**:
-- Action buttons: Merge, Close, Request Changes
-- Collect user decisions
-- Execute actions via `gh` CLI
-
-## 5. Technical Design
-
-### 5.1 Schedule File Structure
+### 5.4 Schedule Configuration
 
 ```markdown
 ---
@@ -214,135 +231,52 @@ name: "PR Scanner"
 cron: "0 */30 * * * *"
 enabled: true
 blocking: true
-chatId: "oc_admin_chat"
+modelTier: "low"
+chatId: "oc_control_channel"
 ---
-
-# PR Scanner Task
-
-Scan repository for new PRs and create discussion chats.
-
-## Configuration
-
-- Repository: hs3180/disclaude
-- Scan interval: Every 30 minutes
-- Admin chat: For notifications and errors
-
-## Execution Steps
-
-1. **Scan Open PRs**
-   ```bash
-   gh pr list --repo hs3180/disclaude --state open --json number,title,author
-   ```
-
-2. **Load History**
-   Read from workspace/pr-scanner-history.json
-
-3. **Identify New PRs**
-   Compare current PRs with history
-
-4. **Process Each New PR**
-   - Get detailed info: `gh pr view {number}`
-   - Create group chat (requires ChatOps)
-   - Send PR info card
-   - Update history
-
-5. **Update History**
-   Save to workspace/pr-scanner-history.json
-
-## Error Handling
-
-- If gh CLI fails: Log error, send notification to admin chat
-- If chat creation fails: Fall back to admin chat notification
-- If history file corrupt: Reset and start fresh
 ```
 
-### 5.2 History File Schema
+The `modelTier: "low"` setting uses the low-cost model tier for routine scanning.
+Review quality relies on the agent's AI analysis capabilities.
 
-```typescript
-interface PRScannerHistory {
-  lastScan: string;           // ISO timestamp
-  processedPRs: number[];     // PR numbers already processed
-  prChats: Record<number, string>;  // PR number -> chat ID mapping
-  errors: Array<{
-    timestamp: string;
-    prNumber?: number;
-    error: string;
-  }>;
-}
-```
-
-### 5.3 PR Info Card Template
-
-```markdown
-## PR #{number}: {title}
-
-**Author**: {author}
-**Status**: {mergeable ? 'Ready' : 'Has Conflicts'}
-**Checks**: {ciStatus}
-
-### Description
-{body}
-
-### Files Changed
-{files}
-
-### Actions
-- [ ] Merge
-- [ ] Close
-- [ ] Request Changes
-- [ ] Comment
-```
-
-## 6. Implementation Checklist
-
-### Ready to Implement (Phase 1)
-- [x] Scheduler infrastructure exists
-- [x] `send_user_feedback` available
-- [ ] Create schedule file `pr-scanner.md`
-- [ ] Create history file schema
-- [ ] Test with notification-only mode
-
-### Blocked (Phase 2)
-- [ ] Wait for PR #423 (ChatOps) to merge
-- [ ] Add group chat creation
-- [ ] Test group chat flow
-
-### Blocked (Phase 3)
-- [ ] Wait for PR #412 (FeedbackController) to merge
-- [ ] Add interactive action buttons
-- [ ] Implement action execution
-
-## 7. Testing Plan
+## 6. Testing Plan
 
 ### Unit Tests
-- [ ] History file read/write
-- [ ] PR comparison logic
-- [ ] Card template generation
+
+Existing tests cover the infrastructure:
+- ✅ BotChatMappingStore (`packages/core/src/scheduling/bot-chat-mapping.test.ts`)
+- ✅ Scheduler (`packages/core/src/scheduling/scheduler.test.ts`)
+- ✅ ScheduleExecutor (`packages/core/src/scheduling/schedule-executor.test.ts`)
+- ✅ ChatStore (`packages/core/src/scheduling/chat-store.test.ts`)
 
 ### Integration Tests
-- [ ] Full scan cycle (no new PRs)
-- [ ] New PR detection
-- [ ] Notification sending
-- [ ] Group chat creation (after PR #423)
 
-### Manual Tests
-- [ ] Run schedule manually
-- [ ] Verify notifications appear
-- [ ] Verify group chats created correctly
+Manual verification needed:
+- [ ] Full scan cycle with no new PRs
+- [ ] New PR detection and group creation
+- [ ] Review card delivery to review groups
+- [ ] Control channel notification
+- [ ] Closed PR detection
+- [ ] Concurrent limit enforcement
 
-## 8. Risks and Mitigations
+## 7. Migration to 0.4.1 Architecture (#3383)
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| PR #423 not merged | Cannot create group chats | Phase 1 uses existing chat |
-| GitHub API rate limits | Scan failures | Add rate limit handling |
-| History file corruption | Lost state | Backup before write |
-| Multiple PRs at once | Spam | Batch notifications |
+When the 0.4.0/0.4.1 infrastructure (#3329, #3332, #3333) merges, the PR Scanner can migrate to:
 
-## 9. References
+1. **projectKey-based config**: Schedule references a project key instead of hardcoded chatId
+2. **SystemMessage routing**: Webhooks can trigger PR scanning on push events
+3. **Persistent ChatAgent**: Agent maintains conversation context across scans
+4. **CLAUDE.md-driven behavior**: Per-project review rules and preferences
+
+The current SKILL.md-based approach is forward-compatible — the same instructions can be moved into a project CLAUDE.md when project-bound agents become available.
+
+## 8. References
 
 - Issue #393: feat: 定时扫描 PR 并创建讨论群聊
-- Issue #357: 智能定时任务推荐系统
-- PR #423: feat(feishu): add ChatOps utility (pending)
-- PR #412: feat(feedback): add FeedbackController (pending)
-- PR #421: Previous attempt (closed - lacked design analysis)
+- Issue #2945: PR Scanner v2 (Parent)
+- Issue #2947: BotChatMappingStore
+- Issue #3383: PR Review 临时群聊 — 0.4.1 architecture
+- Issue #2191: 临时群聊讨论 (0.4.1 核心用例)
+- Issue #3329: RFC: Message — Unified Agent Input Abstraction
+- Skill: `skills/pr-scanner/SKILL.md`
+- Design: `docs/designs/pr-scanner-design.md`
