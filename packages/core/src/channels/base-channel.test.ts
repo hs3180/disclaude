@@ -14,9 +14,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { BaseChannel } from './base-channel.js';
 import type {
   ChannelConfig,
+  ChannelStatus,
   OutgoingMessage,
   MessageHandler,
   ControlHandler,
+  ControlResponse,
 } from '../types/channel.js';
 
 // ============================================================================
@@ -33,6 +35,7 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
   public shouldFailStart = false;
   public shouldFailStop = false;
   public shouldFailSend = false;
+  public sendMessageResult: string | void = undefined;
 
   // eslint-disable-next-line require-await
   protected async doStart(): Promise<void> {
@@ -51,11 +54,12 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
   }
 
   // eslint-disable-next-line require-await
-  protected async doSendMessage(message: OutgoingMessage): Promise<void> {
+  protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
     this.doSendMessageCalls.push(message);
     if (this.shouldFailSend) {
       throw new Error('Send failed');
     }
+    return this.sendMessageResult;
   }
 
   protected checkHealth(): boolean {
@@ -65,6 +69,21 @@ class TestChannel extends BaseChannel<TestChannelConfig> {
   /** Expose isRunning for testing */
   get testIsRunning(): boolean {
     return (this as unknown as { isRunning: boolean }).isRunning;
+  }
+
+  /** Expose setStatus for testing */
+  public testSetStatus(status: ChannelStatus): void {
+    this.setStatus(status);
+  }
+
+  /** Expose emitMessage for testing */
+  public testEmitMessage(message: Parameters<MessageHandler>[0]): Promise<void> {
+    return this.emitMessage(message);
+  }
+
+  /** Expose emitControl for testing */
+  public testEmitControl(command: Parameters<ControlHandler>[0]): Promise<ControlResponse> {
+    return this.emitControl(command);
   }
 }
 
@@ -319,6 +338,115 @@ describe('BaseChannel', () => {
       const channel = createTestChannel();
       const caps = channel.getCapabilities();
       expect(caps).toBeDefined();
+    });
+  });
+
+  describe('sendMessage return value', () => {
+    it('should return the messageId from doSendMessage', async () => {
+      const channel = createTestChannel();
+      channel.sendMessageResult = 'platform-msg-123';
+      await channel.start();
+
+      const message: OutgoingMessage = { chatId: 'chat-1', type: 'text', text: 'Hello' };
+      const result = await channel.sendMessage(message);
+
+      expect(result).toBe('platform-msg-123');
+    });
+
+    it('should return undefined when doSendMessage returns void', async () => {
+      const channel = createTestChannel();
+      await channel.start();
+
+      const message: OutgoingMessage = { chatId: 'chat-1', type: 'text', text: 'Hello' };
+      const result = await channel.sendMessage(message);
+
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('stop error handling', () => {
+    it('should emit error event on stop failure', async () => {
+      const channel = createTestChannel();
+      await channel.start();
+      channel.shouldFailStop = true;
+      const errorListener = vi.fn();
+      channel.on('error', errorListener);
+
+      await expect(channel.stop()).rejects.toThrow('Stop failed');
+      expect(errorListener).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('setStatus', () => {
+    it('should update internal status', () => {
+      const channel = createTestChannel();
+      expect(channel.status).toBe('stopped');
+      channel.testSetStatus('starting');
+      expect(channel.status).toBe('starting');
+    });
+
+    it('should track old and new status', () => {
+      const channel = createTestChannel();
+      channel.testSetStatus('running');
+      expect(channel.status).toBe('running');
+      channel.testSetStatus('stopped');
+      expect(channel.status).toBe('stopped');
+    });
+  });
+
+  describe('emitMessage', () => {
+    it('should call registered message handler', async () => {
+      const channel = createTestChannel();
+      const handler: MessageHandler = vi.fn();
+      channel.onMessage(handler);
+
+      const message = {
+        messageId: 'msg-1',
+        chatId: 'chat-1',
+        content: 'hello',
+        messageType: 'text' as const,
+      };
+      await channel.testEmitMessage(message);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledWith(message);
+    });
+
+    it('should handle missing message handler gracefully', async () => {
+      const channel = createTestChannel();
+      // No handler registered — should not throw
+      const message = {
+        messageId: 'msg-1',
+        chatId: 'chat-1',
+        content: 'hello',
+        messageType: 'text' as const,
+      };
+      await expect(channel.testEmitMessage(message)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('emitControl', () => {
+    it('should call registered control handler and return response', async () => {
+      const channel = createTestChannel();
+      const response: ControlResponse = { success: true, message: 'ok' };
+      const handler: ControlHandler = vi.fn().mockResolvedValue(response);
+      channel.onControl(handler);
+
+      const command = { type: 'status' as const, chatId: 'chat-1' };
+      const result = await channel.testEmitControl(command);
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledWith(command);
+      expect(result).toEqual(response);
+    });
+
+    it('should return failure response when no control handler is registered', async () => {
+      const channel = createTestChannel();
+      // No handler registered
+      const command = { type: 'status' as const, chatId: 'chat-1' };
+      const result = await channel.testEmitControl(command);
+
+      expect(result).toEqual({ success: false, error: 'No control handler registered' });
     });
   });
 });
