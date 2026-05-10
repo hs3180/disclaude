@@ -325,13 +325,19 @@ export {
 export type {
   CwdProvider,
   InstanceInfo,
+  IssueTriageStatus,
   PersistedInstance,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
+  ProjectState,
+  ProjectStateIssueEntry,
+  ProjectStatePrEntry,
+  ProjectStateSync,
   ProjectTemplate,
   ProjectTemplatesConfig,
   ProjectsPersistData,
+  PrReviewStatus,
 } from './project/index.js';
 
 export type {
@@ -345,4 +351,19 @@ export {
   discoverTemplates,
   discoveryResultToConfig,
   discoverTemplatesAsConfig,
+  // Project state utilities (Issue #3335)
+  createDefaultState,
+  getStateDir,
+  getStateFilePath,
+  isValidIssueEntry,
+  isValidProjectState,
+  isValidPrEntry,
+  readProjectState,
+  updateSyncTimestamp,
+  upsertIssue,
+  upsertPr,
+  writeProjectState,
+  STATE_DIR_NAME,
+  STATE_FILE_NAME,
+  STATE_VERSION,
 } from './project/index.js';
