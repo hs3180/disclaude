@@ -63,6 +63,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   private readonly callbacks: ChatAgentCallbacks;
 
+  // Issue #1916: Dynamic cwd resolution for project-scoped Agent context switching
+  private readonly cwdProvider?: (chatId: string) => string | undefined;
+
   // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
   private queryHandle?: QueryHandle;
   private channel?: MessageChannel;
@@ -103,6 +106,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+    this.cwdProvider = config.cwdProvider;
 
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
@@ -723,7 +727,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const mcpServers = this.buildMcpServers(false);
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
+    const projectCwd = this.cwdProvider?.(chatId);
     const sdkOptions = this.createSdkOptions({
+      cwd: projectCwd,
       disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
       mcpServers,
     });
