@@ -32,6 +32,12 @@ import {
   handleToolCall,
   handleJsonRpc,
 } from './mcp-jsonrpc.js';
+
+/** Type for tool call results (success or error). */
+type ToolCallResult = {
+  content: { type: string; text: string }[];
+  isError?: boolean;
+};
 import {
   send_text,
   send_card,
@@ -128,7 +134,7 @@ describe('handleToolCall', () => {
   // ----- send_text -----
   describe('send_text', () => {
     it('should return error when text is not a string', async () => {
-      const result = await handleToolCall('send_text', {
+      const result: ToolCallResult = await handleToolCall('send_text', {
         text: 123,
         chatId: 'oc_test',
       });
@@ -137,13 +143,13 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when chatId is missing', async () => {
-      const result = await handleToolCall('send_text', { text: 'hi' });
+      const result: ToolCallResult = await handleToolCall('send_text', { text: 'hi' });
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid chatId');
     });
 
     it('should return error when chatId is empty string', async () => {
-      const result = await handleToolCall('send_text', {
+      const result: ToolCallResult = await handleToolCall('send_text', {
         text: 'hi',
         chatId: '',
       });
@@ -156,7 +162,7 @@ describe('handleToolCall', () => {
         success: true,
         message: 'sent',
       });
-      const result = await handleToolCall('send_text', {
+      const result: ToolCallResult = await handleToolCall('send_text', {
         text: 'hello',
         chatId: 'oc_test',
       });
@@ -194,7 +200,7 @@ describe('handleToolCall', () => {
         success: false,
         message: 'IPC error',
       });
-      const result = await handleToolCall('send_text', {
+      const result: ToolCallResult = await handleToolCall('send_text', {
         text: 'hello',
         chatId: 'oc_test',
       });
@@ -206,7 +212,7 @@ describe('handleToolCall', () => {
   // ----- send_card -----
   describe('send_card', () => {
     it('should return error when card is null', async () => {
-      const result = await handleToolCall('send_card', {
+      const result: ToolCallResult = await handleToolCall('send_card', {
         card: null,
         chatId: 'oc_test',
       });
@@ -215,7 +221,7 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when card is an array', async () => {
-      const result = await handleToolCall('send_card', {
+      const result: ToolCallResult = await handleToolCall('send_card', {
         card: [],
         chatId: 'oc_test',
       });
@@ -224,7 +230,7 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when card is a string', async () => {
-      const result = await handleToolCall('send_card', {
+      const result: ToolCallResult = await handleToolCall('send_card', {
         card: 'not a card',
         chatId: 'oc_test',
       });
@@ -233,7 +239,7 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when chatId is missing', async () => {
-      const result = await handleToolCall('send_card', {
+      const result: ToolCallResult = await handleToolCall('send_card', {
         card: { config: {} },
       });
       expect(result.isError).toBe(true);
@@ -243,7 +249,7 @@ describe('handleToolCall', () => {
     it('should return error when card fails validation', async () => {
       const { isValidFeishuCard } = await import('./utils/card-validator.js');
       vi.mocked(isValidFeishuCard).mockReturnValue(false);
-      const result = await handleToolCall('send_card', {
+      const result: ToolCallResult = await handleToolCall('send_card', {
         card: { bad: true },
         chatId: 'oc_test',
       });
@@ -258,7 +264,7 @@ describe('handleToolCall', () => {
         success: true,
         message: 'Card sent',
       });
-      const result = await handleToolCall('send_card', {
+      const result: ToolCallResult = await handleToolCall('send_card', {
         card: { config: {}, header: {}, elements: [] },
         chatId: 'oc_test',
       });
@@ -270,7 +276,7 @@ describe('handleToolCall', () => {
   // ----- send_interactive -----
   describe('send_interactive', () => {
     it('should return error when question is empty', async () => {
-      const result = await handleToolCall('send_interactive', {
+      const result: ToolCallResult = await handleToolCall('send_interactive', {
         question: '',
         options: [{ text: 'A', value: 'a' }],
         chatId: 'oc_test',
@@ -280,7 +286,7 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when question is not a string', async () => {
-      const result = await handleToolCall('send_interactive', {
+      const result: ToolCallResult = await handleToolCall('send_interactive', {
         question: 42,
         options: [{ text: 'A', value: 'a' }],
         chatId: 'oc_test',
@@ -290,7 +296,7 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when options is not an array', async () => {
-      const result = await handleToolCall('send_interactive', {
+      const result: ToolCallResult = await handleToolCall('send_interactive', {
         question: 'Pick one',
         options: 'not-array',
         chatId: 'oc_test',
@@ -300,7 +306,7 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when options is empty array', async () => {
-      const result = await handleToolCall('send_interactive', {
+      const result: ToolCallResult = await handleToolCall('send_interactive', {
         question: 'Pick one',
         options: [],
         chatId: 'oc_test',
@@ -310,7 +316,7 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when chatId is missing', async () => {
-      const result = await handleToolCall('send_interactive', {
+      const result: ToolCallResult = await handleToolCall('send_interactive', {
         question: 'Pick one',
         options: [{ text: 'A', value: 'a' }],
       });
@@ -346,7 +352,7 @@ describe('handleToolCall', () => {
   // ----- send_file -----
   describe('send_file', () => {
     it('should return error when filePath is not a string', async () => {
-      const result = await handleToolCall('send_file', {
+      const result: ToolCallResult = await handleToolCall('send_file', {
         filePath: 42,
         chatId: 'oc_test',
       });
@@ -355,7 +361,7 @@ describe('handleToolCall', () => {
     });
 
     it('should return error when chatId is missing', async () => {
-      const result = await handleToolCall('send_file', {
+      const result: ToolCallResult = await handleToolCall('send_file', {
         filePath: '/path/to/file',
       });
       expect(result.isError).toBe(true);
@@ -367,7 +373,7 @@ describe('handleToolCall', () => {
         success: true,
         message: 'test.pdf uploaded',
       });
-      const result = await handleToolCall('send_file', {
+      const result: ToolCallResult = await handleToolCall('send_file', {
         filePath: '/path/to/test.pdf',
         chatId: 'oc_test',
       });
@@ -380,7 +386,7 @@ describe('handleToolCall', () => {
         success: false,
         message: 'Upload failed',
       });
-      const result = await handleToolCall('send_file', {
+      const result: ToolCallResult = await handleToolCall('send_file', {
         filePath: '/path/to/file',
         chatId: 'oc_test',
       });
@@ -391,7 +397,7 @@ describe('handleToolCall', () => {
   // ----- unknown tool -----
   describe('unknown tool', () => {
     it('should return error for unknown tool name', async () => {
-      const result = await handleToolCall('nonexistent_tool', {});
+      const result: ToolCallResult = await handleToolCall('nonexistent_tool', {});
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Unknown tool');
     });
