@@ -44,6 +44,8 @@ const mocked_send_card = vi.mocked(send_card);
 const mocked_send_interactive = vi.mocked(send_interactive_message);
 const mocked_send_file = vi.mocked(send_file);
 
+
+type ToolCallResult = { content: { type: string; text: string }[]; isError?: boolean };
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -131,13 +133,13 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_text', {
         text: 123,
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid text');
     });
 
     it('should return error when chatId is missing', async () => {
-      const result = await handleToolCall('send_text', { text: 'hi' });
+      const result = await handleToolCall('send_text', { text: 'hi' }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid chatId');
     });
@@ -146,7 +148,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_text', {
         text: 'hi',
         chatId: '',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid chatId');
     });
@@ -159,7 +161,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_text', {
         text: 'hello',
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain('sent');
       expect(mocked_send_text).toHaveBeenCalledWith({
@@ -197,7 +199,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_text', {
         text: 'hello',
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('IPC error');
     });
@@ -209,7 +211,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_card', {
         card: null,
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid card');
     });
@@ -218,7 +220,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_card', {
         card: [],
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid card');
     });
@@ -227,7 +229,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_card', {
         card: 'not a card',
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid card');
     });
@@ -235,7 +237,7 @@ describe('handleToolCall', () => {
     it('should return error when chatId is missing', async () => {
       const result = await handleToolCall('send_card', {
         card: { config: {} },
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid chatId');
     });
@@ -246,7 +248,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_card', {
         card: { bad: true },
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid card structure');
     });
@@ -261,7 +263,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_card', {
         card: { config: {}, header: {}, elements: [] },
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain('Card sent');
     });
@@ -274,7 +276,7 @@ describe('handleToolCall', () => {
         question: '',
         options: [{ text: 'A', value: 'a' }],
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid question');
     });
@@ -284,7 +286,7 @@ describe('handleToolCall', () => {
         question: 42,
         options: [{ text: 'A', value: 'a' }],
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid question');
     });
@@ -294,7 +296,7 @@ describe('handleToolCall', () => {
         question: 'Pick one',
         options: 'not-array',
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid options');
     });
@@ -304,7 +306,7 @@ describe('handleToolCall', () => {
         question: 'Pick one',
         options: [],
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid options');
     });
@@ -313,7 +315,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_interactive', {
         question: 'Pick one',
         options: [{ text: 'A', value: 'a' }],
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid chatId');
     });
@@ -349,7 +351,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_file', {
         filePath: 42,
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid filePath');
     });
@@ -357,7 +359,7 @@ describe('handleToolCall', () => {
     it('should return error when chatId is missing', async () => {
       const result = await handleToolCall('send_file', {
         filePath: '/path/to/file',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Invalid chatId');
     });
@@ -370,7 +372,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_file', {
         filePath: '/path/to/test.pdf',
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain('File sent: test.pdf uploaded');
     });
@@ -383,7 +385,7 @@ describe('handleToolCall', () => {
       const result = await handleToolCall('send_file', {
         filePath: '/path/to/file',
         chatId: 'oc_test',
-      });
+      }) as ToolCallResult;
       expect(result.isError).toBe(true);
     });
   });
@@ -391,7 +393,7 @@ describe('handleToolCall', () => {
   // ----- unknown tool -----
   describe('unknown tool', () => {
     it('should return error for unknown tool name', async () => {
-      const result = await handleToolCall('nonexistent_tool', {});
+      const result = await handleToolCall('nonexistent_tool', {}) as ToolCallResult;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Unknown tool');
     });

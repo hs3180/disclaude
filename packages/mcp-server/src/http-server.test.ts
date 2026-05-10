@@ -27,6 +27,14 @@ import { send_text } from './index.js';
 
 const mocked_send_text = vi.mocked(send_text);
 
+
+type ApiResponse = {
+  jsonrpc: string;
+  id: number | string | null;
+  result: Record<string, any>;
+  error: { code: number; message: string };
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -137,7 +145,7 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
+    const data = await response.json() as ApiResponse;
     expect(data.jsonrpc).toBe('2.0');
     expect(data.id).toBe(1);
     expect(data.result.protocolVersion).toBe('2024-11-05');
@@ -156,7 +164,7 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
+    const data = await response.json() as ApiResponse;
     expect(data.result.tools).toBeInstanceOf(Array);
     expect(data.result.tools.length).toBeGreaterThan(0);
   });
@@ -173,7 +181,7 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
+    const data = await response.json() as ApiResponse;
     expect(data.result).toEqual({});
   });
 
@@ -197,7 +205,7 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
+    const data = await response.json() as ApiResponse;
     expect(data.result).toBeDefined();
     expect(data.result.content).toBeInstanceOf(Array);
   });
@@ -214,7 +222,7 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
+    const data = await response.json() as ApiResponse;
     expect(data.error.code).toBe(-32601);
   });
 
@@ -239,7 +247,7 @@ describe('HttpMcpServer JSON-RPC handling', () => {
     });
 
     expect(response.status).toBe(200);
-    const data = await response.json();
+    const data = await response.json() as ApiResponse;
     expect(data.error.code).toBe(-32700);
     expect(data.error.message).toContain('Parse error');
   });
