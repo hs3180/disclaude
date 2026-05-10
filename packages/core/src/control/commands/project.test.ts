@@ -2,13 +2,18 @@
  * Unit tests for /project command handler.
  *
  * Tests cover:
- * - Subcommand dispatching
+ * - Subcommand dispatching (via parseArgs / data.args)
  * - `list` — list all instances
  * - `info` — show current chat's active project
+ * - `templates` — list available templates
+ * - `create` — create instance from template
+ * - `use` — switch to an existing instance
+ * - `reset` — revert to default project
  * - `status` — show detailed status for a project
  * - Error cases (no ProjectManager, unknown subcommand, missing instance)
  *
  * @see Issue #3335 (Project state persistence)
+ * @see Issue #1916 Phase 2 (ProjectManager integration)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -73,15 +78,18 @@ function createTestContext(overrides?: Partial<ControlHandlerContext>): ControlH
   };
 }
 
+/**
+ * Build a /project command using the data.args format.
+ * parseArgs reads `command.data?.args` — either a string or string[].
+ */
 function makeCommand(
   chatId: string,
-  subcommand: string,
-  data?: Record<string, unknown>,
+  args?: string | string[],
 ): ControlCommand {
   return {
     type: 'project',
     chatId,
-    data: { subcommand, ...data },
+    data: args !== null && args !== undefined ? { args } : undefined,
   };
 }
 
@@ -104,7 +112,7 @@ describe('handleProject', () => {
       const result = await invoke(makeCommand('chat-1', 'unknown-sub'), ctx);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('未知子命令');
+      expect(result.message).toContain('未知子命令');
     });
   });
 
@@ -116,28 +124,18 @@ describe('handleProject', () => {
       const result = await invoke(makeCommand('chat-1', 'list'), ctx);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('ProjectManager 未配置');
+      expect(result.message).toContain('不可用');
     });
   });
 
-  describe('/project list', () => {
-    it('should show empty list message when no instances', async () => {
+  describe('/project (default → info)', () => {
+    it('should default to "info" when no args specified', async () => {
       const ctx = createTestContext();
-      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+      const cmd: ControlCommand = { type: 'project', chatId: 'chat-1' };
+      const result = await invoke(cmd, ctx);
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('暂无项目实例');
-    });
-
-    it('should list existing instances', async () => {
-      const ctx = createTestContext();
-      ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
-
-      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('my-project');
-      expect(result.message).toContain('test-tpl');
+      expect(result.message).toContain('default');
     });
   });
 
@@ -192,6 +190,111 @@ describe('handleProject', () => {
     });
   });
 
+  describe('/project list', () => {
+    it('should show empty list message when no instances', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('暂无项目实例');
+    });
+
+    it('should list existing instances', async () => {
+      const ctx = createTestContext();
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
+
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-project');
+      expect(result.message).toContain('test-tpl');
+    });
+  });
+
+  describe('/project templates', () => {
+    it('should list available templates', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'templates'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('test-tpl');
+    });
+  });
+
+  describe('/project create', () => {
+    it('should create instance from template', async () => {
+      const ctx = createTestContext();
+
+      const result = await invoke(makeCommand('chat-1', ['create', 'test-tpl', 'new-proj']), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('new-proj');
+      expect(result.message).toContain('已创建');
+    });
+
+    it('should return error for missing arguments', async () => {
+      const ctx = createTestContext();
+
+      const result = await invoke(makeCommand('chat-1', ['create', 'test-tpl']), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('用法');
+    });
+
+    it('should return error for duplicate name', async () => {
+      const ctx = createTestContext();
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'dup-name');
+
+      const result = await invoke(makeCommand('chat-1', ['create', 'test-tpl', 'dup-name']), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('创建失败');
+    });
+  });
+
+  describe('/project use', () => {
+    it('should switch to an existing instance', async () => {
+      const ctx = createTestContext();
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'target-proj');
+
+      const result = await invoke(makeCommand('chat-2', ['use', 'target-proj']), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('target-proj');
+      expect(result.message).toContain('已切换');
+    });
+
+    it('should return error for missing instance name', async () => {
+      const ctx = createTestContext();
+
+      const result = await invoke(makeCommand('chat-1', ['use']), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('用法');
+    });
+
+    it('should return error for non-existent instance', async () => {
+      const ctx = createTestContext();
+
+      const result = await invoke(makeCommand('chat-1', ['use', 'no-such']), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('切换失败');
+    });
+  });
+
+  describe('/project reset', () => {
+    it('should reset to default project', async () => {
+      const ctx = createTestContext();
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'some-proj');
+
+      const result = await invoke(makeCommand('chat-1', 'reset'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('default');
+    });
+  });
+
   describe('/project status', () => {
     it('should show status for current project when no name given', async () => {
       const ctx = createTestContext();
@@ -209,7 +312,7 @@ describe('handleProject', () => {
       const createResult = ctx.projectManager!.create('chat-1', 'test-tpl', 'target-project');
       expect(createResult.ok).toBe(true);
 
-      const result = await invoke(makeCommand('chat-2', 'status', { name: 'target-project' }), ctx);
+      const result = await invoke(makeCommand('chat-2', ['status', 'target-project']), ctx);
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('target-project');
@@ -218,10 +321,10 @@ describe('handleProject', () => {
     it('should return error for non-existent project name', async () => {
       const ctx = createTestContext();
 
-      const result = await invoke(makeCommand('chat-1', 'status', { name: 'non-existent' }), ctx);
+      const result = await invoke(makeCommand('chat-1', ['status', 'non-existent']), ctx);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('不存在');
+      expect(result.message).toContain('不存在');
     });
 
     it('should show default message when unbound chat queries status', async () => {
@@ -262,17 +365,6 @@ describe('handleProject', () => {
       expect(result.message).toContain('Second');
       expect(result.message).toContain('PR One');
       expect(result.message).toContain('test/repo');
-    });
-  });
-
-  describe('default subcommand', () => {
-    it('should default to "info" when no subcommand specified', async () => {
-      const ctx = createTestContext();
-      const cmd: ControlCommand = { type: 'project', chatId: 'chat-1' };
-      const result = await invoke(cmd, ctx);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('default');
     });
   });
 });
