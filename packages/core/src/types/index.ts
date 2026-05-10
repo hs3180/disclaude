@@ -122,6 +122,28 @@ export type {
 
 export { getNodeCapabilities } from './primary-node.js';
 
+// Unified Message types (RFC #3329, Issue #3331)
+export type {
+  Message,
+  UserMessage,
+  SystemMessage,
+  A2AMessage,
+  AnyMessage,
+  NonUserMessage,
+  MessageSource,
+  SystemTrigger,
+  MessagePriority,
+  ProjectLookupResult,
+  ProjectLookup,
+} from './unified-message.js';
+
+export {
+  isUserMessage,
+  isSystemMessage,
+  isA2AMessage,
+  isNonUserMessage,
+} from './unified-message.js';
+
 // Adapter types (Issue #1040)
 export type {
   FileAttachment,

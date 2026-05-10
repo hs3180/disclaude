@@ -136,6 +136,13 @@ export {
   AgentPool,
 } from './agents/agent-pool.js';
 
+// Message Router (RFC #3329, Issue #3331)
+export {
+  type MessageRouterConfig,
+  type MessageRouterAgentPool,
+  MessageRouter,
+} from './agents/message-router.js';
+
 // Base Agent
 export {
   type SdkOptionsExtra,
