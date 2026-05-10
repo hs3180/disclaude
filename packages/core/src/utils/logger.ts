@@ -86,6 +86,8 @@ let flushInProgress = false;
  * @internal
  */
 export function resetLogger(): void {
+  // Stop rotation timer before destroying streams
+  stopRotation();
   if (logPassthrough) {
     logPassthrough.destroy();
     logPassthrough = null;
@@ -220,53 +222,193 @@ function getProductionConfig(): LoggerOptions {
 }
 
 /**
- * Setup file logging with rotation
+ * Setup file logging with custom rotation.
  *
- * Note: Dynamic import of pino-roll to avoid build issues
+ * Issue #3416: Replaced pino-roll with a custom rotation mechanism.
+ * pino-roll v4.0.0 had a race condition where data could leak between
+ * files during rotation — SonicBoom's reopen() did not flush remaining
+ * buffer before switching files, causing log truncation and corruption.
+ *
+ * The custom implementation uses pino.destination() (SonicBoom) directly
+ * and manages rotation externally via a periodic size check. Rotation
+ * is performed through the PassThrough proxy, ensuring:
+ *   1. All buffered data is flushed before the file is rotated
+ *   2. No concurrent writes happen during rotation
+ *   3. File handles are properly released before renaming
  */
-async function setupFileLogging(
+function setupFileLogging(
   logDir: string
-): Promise<NodeJS.WritableStream> {
+): NodeJS.WritableStream {
   try {
-    // Create logs directory if it doesn't exist
     const logsPath = path.resolve(process.cwd(), logDir);
-
     if (!fs.existsSync(logsPath)) {
       fs.mkdirSync(logsPath, { recursive: true });
     }
 
-    // Dynamic import of pino-roll — CJS module requires .default access (Issue #3359)
-    const pinoRollModule = await import('pino-roll');
-    const pinoRoll = typeof pinoRollModule.default === 'function'
-      ? pinoRollModule.default
-      : pinoRollModule as unknown as typeof pinoRollModule.default;
-
-    // Combined log file with rotation
-    // pino-roll v4 API: single options object { file, size, limit, ... }
     const logFile = path.join(logsPath, 'disclaude-combined.log');
-    const rollStream = await pinoRoll({
-      file: logFile,
-      size: '10M',
-      limit: { count: 30 },
-    });
+    const dest = pino.destination({ dest: logFile, sync: false, mkdir: true });
 
-    // Issue #3416: Handle stream errors to prevent unhandled exceptions
-    // from crashing the process. pino-roll emits 'error' on rotation failures,
-    // file system issues, etc. Use rootLogger when available (with recursion
-    // guard since the logger itself might be the source of the error).
-    (rollStream as unknown as NodeJS.EventEmitter).on('error', (err: Error) => {
+    (dest as unknown as NodeJS.EventEmitter).on('error', (err: Error) => {
       if (rootLogger && !flushInProgress) {
-        rootLogger.error({ err }, 'pino-roll stream error');
+        rootLogger.error({ err }, 'File log stream error');
       } else {
-        console.warn('pino-roll stream error:', err.message);
+        console.warn('File log stream error:', err.message);
       }
     });
 
-    return rollStream as unknown as NodeJS.WritableStream;
+    // Start rotation manager
+    startRotation(logFile, 10 * 1024 * 1024, 30);
+
+    return dest as unknown as NodeJS.WritableStream;
   } catch (error) {
-    // If pino-roll fails, fall back to stdout
     console.warn('Failed to setup file logging, falling back to stdout:', error);
     return process.stdout;
+  }
+}
+
+/**
+ * Rotation state
+ */
+let rotationTimer: ReturnType<typeof setInterval> | null = null;
+let rotationConfig: { logFile: string; maxSize: number; maxFiles: number } | null = null;
+
+/**
+ * Start periodic rotation checks.
+ * Checks file size every 30 seconds and rotates if needed.
+ */
+function startRotation(logFile: string, maxSize: number, maxFiles: number): void {
+  stopRotation();
+  rotationConfig = { logFile, maxSize, maxFiles };
+  rotationTimer = setInterval(() => checkAndRotate(), 30_000);
+  if (rotationTimer.unref) {
+    rotationTimer.unref();
+  }
+}
+
+/**
+ * Stop the rotation timer.
+ */
+function stopRotation(): void {
+  if (rotationTimer) {
+    clearInterval(rotationTimer);
+    rotationTimer = null;
+  }
+}
+
+/**
+ * Check if rotation is needed and perform it.
+ *
+ * Rotation sequence:
+ * 1. Check actual file size on disk
+ * 2. If size >= maxSize, initiate rotation via the PassThrough proxy
+ * 3. Unpipe PassThrough from current dest (stops new writes)
+ * 4. Flush and destroy the current dest
+ * 5. Shift rotated files (.1 → .2, .2 → .3, etc.)
+ * 6. Create new dest and pipe PassThrough to it
+ */
+function checkAndRotate(): void {
+  if (!rotationConfig || !logPassthrough || !currentLogDest) {
+    return;
+  }
+
+  const { logFile, maxSize, maxFiles } = rotationConfig;
+
+  try {
+    const size = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0;
+    if (size < maxSize) {
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  // Rotation needed
+  const oldDest = currentLogDest;
+  logPassthrough.unpipe(oldDest);
+
+  // Flush buffered data to disk — all pending writes complete before rotation
+  if (typeof oldDest.flush === 'function' && !oldDest.destroyed) {
+    try {
+      // Use flushSync for guaranteed completion (rotation is already synchronous)
+      oldDest.flushSync();
+    } catch {
+      // Fallback: best-effort async flush
+       
+      try { oldDest.flush(() => {}); } catch { /* ignore */ }
+    }
+  }
+
+  // Destroy old file handle
+  if (typeof oldDest.destroy === 'function' && !oldDest.destroyed) {
+    oldDest.destroy();
+  }
+
+  // Shift rotated files
+  shiftLogFiles(logFile, maxFiles);
+
+  // Create new destination
+  const newDest = pino.destination({ dest: logFile, sync: false, mkdir: true });
+
+  (newDest as unknown as NodeJS.EventEmitter).on('error', (err: Error) => {
+    if (rootLogger && !flushInProgress) {
+      rootLogger.error({ err }, 'File log stream error after rotation');
+    } else {
+      console.warn('File log stream error after rotation:', err.message);
+    }
+  });
+
+  logPassthrough.pipe(newDest as unknown as NodeJS.WritableStream);
+  currentLogDest = newDest;
+
+  if (rootLogger) {
+    rootLogger.info({ logFile, maxSize: `${maxSize / 1024 / 1024  }M` }, 'Log file rotated');
+  }
+}
+
+/**
+ * Shift rotated log files.
+ *
+ * Naming scheme:
+ *   disclaude-combined.log      ← current (always this name)
+ *   disclaude-combined.log.1    ← most recent rotation
+ *   disclaude-combined.log.2    ← second most recent
+ *   ...                         ← up to maxFiles
+ *
+ * Steps:
+ * 1. Delete the oldest file if it exceeds maxFiles
+ * 2. Rename .N-1 → .N (descending order to avoid overwriting)
+ * 3. Rename current → .1
+ */
+function shiftLogFiles(logFile: string, maxFiles: number): void {
+  // Delete oldest if it exceeds limit
+  const oldest = `${logFile}.${maxFiles}`;
+  try {
+    if (fs.existsSync(oldest)) {
+      fs.unlinkSync(oldest);
+    }
+  } catch {
+    // Best-effort deletion
+  }
+
+  // Shift existing rotated files (descending to avoid collision)
+  for (let i = maxFiles - 1; i >= 1; i--) {
+    const from = `${logFile}.${i}`;
+    const to = `${logFile}.${i + 1}`;
+    try {
+      if (fs.existsSync(from)) {
+        fs.renameSync(from, to);
+      }
+    } catch {
+      // Best-effort rename
+    }
+  }
+
+  // Rename current log file to .1
+  try {
+    fs.renameSync(logFile, `${logFile}.1`);
+  } catch {
+    // If rename fails, the new dest will append to the existing file
+    // This is non-fatal — logs continue, just without rotation
   }
 }
 
@@ -347,20 +489,13 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
 
   if (rootLogger) {
     // Root logger already exists (created by createLogger() at module level).
-    // Issue #2934: If LOG_TO_FILE is set and we have a PassThrough stream,
-    // upgrade the destination from plain file to pino-roll with rotation.
+    // Issue #2934/#3416: If LOG_TO_FILE is set and we have a PassThrough stream,
+    // upgrade the destination from plain file to rotating file logging.
     if (shouldFileLog && logPassthrough && currentLogDest) {
       try {
-        const rollStream = await setupFileLogging(logDir);
+        const newDest = setupFileLogging(logDir);
 
-        // Issue #3416: Properly flush and close the old destination before
-        // switching. The old pino.destination() SonicBoom may have buffered
-        // writes that haven't reached disk yet. Without flushing:
-        //   1. Buffered data is silently lost
-        //   2. The old file handle stays open, causing concurrent access
-        //      when pino-roll opens the same log file path
-        //   3. If pino-roll rotates the file, the old fd still points to
-        //      the renamed file — writes go to the wrong file
+        // Properly flush and close the old destination before switching.
         const oldDest = currentLogDest;
         logPassthrough.unpipe(oldDest);
 
@@ -378,16 +513,16 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
           oldDest.destroy();
         }
 
-        // Now pipe to the new pino-roll stream
-        logPassthrough.pipe(rollStream);
+        // Now pipe to the new rotating file stream
+        logPassthrough.pipe(newDest);
 
         // Update log level in case it changed
         if (config.level) {
           rootLogger.level = config.level;
         }
-        currentLogDest = rollStream;
+        currentLogDest = newDest;
       } catch (error) {
-        console.warn('Failed to upgrade to pino-roll:', error);
+        console.warn('Failed to upgrade to rotating file logging:', error);
       }
     }
     return rootLogger;
@@ -398,7 +533,8 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
 
   if (shouldFileLog) {
     try {
-      logStream = await setupFileLogging(logDir);
+      logStream = setupFileLogging(logDir);
+      currentLogDest = logStream;
     } catch (error) {
       console.warn('Failed to setup file logging:', error);
     }

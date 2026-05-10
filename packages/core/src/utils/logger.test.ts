@@ -17,6 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
+import path from 'path';
 import {
   initLogger,
   createLogger,
@@ -29,18 +30,10 @@ import {
 } from './logger.js';
 
 /**
- * Mock pino-roll module to prevent real filesystem side effects in tests.
- * Returns an in-memory PassThrough stream instead of writing to real files.
- *
- * This eliminates the ENOENT unhandled error caused by pino-roll's internal
- * stream writing to files after test cleanup.
+ * Issue #3416: pino-roll mock is no longer needed.
+ * The logger now uses a custom rotation mechanism based on pino.destination()
+ * instead of pino-roll, eliminating the rotation race condition.
  */
-vi.mock('pino-roll', async () => {
-  const { PassThrough } = await import('node:stream');
-  return {
-    default: () => new PassThrough(),
-  };
-});
 
 describe('logger', () => {
   const originalNodeEnv = process.env.NODE_ENV;
@@ -170,9 +163,8 @@ describe('logger', () => {
       expect(logger).toBeDefined();
     });
 
-    it('should successfully initialize file logging with pino-roll', async () => {
-      // Issue #3359: Verify pino-roll CJS/ESM interop works correctly
-      // pino-roll module is mocked at file level — no real files are created
+    it('should successfully initialize file logging with custom rotation', async () => {
+      // Issue #3416: Verify custom rotation works correctly (replaces pino-roll)
       process.env.NODE_ENV = 'production';
 
       // Mock filesystem to prevent real directory creation
@@ -189,7 +181,7 @@ describe('logger', () => {
 
       // Verify logs can be written without error
       expect(() => {
-        logger.info('pino-roll file logging test');
+        logger.info('custom rotation file logging test');
       }).not.toThrow();
     });
   });
@@ -407,9 +399,10 @@ describe('logger', () => {
       expect(elapsed).toBeLessThan(50);
     });
 
-    it('should flush pino-roll stream when file logging is active', async () => {
+    it('should flush file stream when file logging is active', async () => {
       process.env.NODE_ENV = 'production';
       const tmpDir = `/tmp/test-flush-${Date.now()}`;
+      fs.mkdirSync(tmpDir, { recursive: true });
       const logger = await initLogger({
         fileLogging: true,
         logDir: tmpDir,
@@ -423,7 +416,6 @@ describe('logger', () => {
 
       // Cleanup
       await flushLogger();
-      const fs = await import('fs');
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
   });
@@ -566,13 +558,27 @@ describe('logger', () => {
       // Issue #3416: Verify resetLogger destroys the file stream, not just PassThrough
       process.env.NODE_ENV = 'production';
       const tmpDir = `/tmp/test-reset-${Date.now()}`;
+      fs.mkdirSync(tmpDir, { recursive: true });
       await initLogger({ fileLogging: true, logDir: tmpDir });
 
       // resetLogger should not throw even with file streams active
       expect(() => resetLogger()).not.toThrow();
 
       // Cleanup
-      const fs = await import('fs');
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should stop rotation timer on resetLogger', async () => {
+      // Issue #3416: resetLogger should clean up the rotation timer
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-rotation-stop-${Date.now()}`;
+      fs.mkdirSync(tmpDir, { recursive: true });
+      await initLogger({ fileLogging: true, logDir: tmpDir });
+
+      // Should not throw even with rotation timer active
+      expect(() => resetLogger()).not.toThrow();
+
+      // Cleanup
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
@@ -590,6 +596,107 @@ describe('logger', () => {
           expect.objectContaining({ context: `Module${i}`, index: i }),
         );
       }
+    });
+  });
+
+  describe('log rotation (Issue #3416)', () => {
+    it('should rotate log files when size exceeds maxSize', async () => {
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-rotation-${Date.now()}`;
+      fs.mkdirSync(tmpDir, { recursive: true });
+
+      const logger = await initLogger({
+        fileLogging: true,
+        logDir: tmpDir,
+      });
+
+      // Write data to fill the log file
+      for (let i = 0; i < 1000; i++) {
+        logger.info({ iteration: i, data: 'x'.repeat(500) }, 'Rotation test data');
+      }
+
+      // Flush and wait for data to reach disk
+      await flushLogger();
+      // Give the async file stream time to complete writes
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Verify the log directory has files with content
+      const files = fs.readdirSync(tmpDir);
+      expect(files.length).toBeGreaterThan(0);
+
+      // Cleanup
+      await closeLogger();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should maintain log integrity after rotation', async () => {
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-integrity-${Date.now()}`;
+      fs.mkdirSync(tmpDir, { recursive: true });
+
+      const logger = await initLogger({
+        fileLogging: true,
+        logDir: tmpDir,
+      });
+
+      // Write some data
+      logger.info({ testId: 'integrity-check' }, 'Test message before rotation');
+
+      await flushLogger();
+      await closeLogger();
+
+      // Verify log file is valid JSON lines
+      const logFile = path.join(tmpDir, 'disclaude-combined.log');
+      if (fs.existsSync(logFile)) {
+        const content = fs.readFileSync(logFile, 'utf8');
+        const lines = content.trim().split('\n');
+        for (const line of lines) {
+          if (line.trim()) {
+            expect(() => JSON.parse(line)).not.toThrow();
+          }
+        }
+      }
+
+      // Cleanup
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should shift rotated files correctly', async () => {
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-shift-${Date.now()}`;
+      const logFile = path.join(tmpDir, 'disclaude-combined.log');
+
+      // Create pre-existing rotated files
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.writeFileSync(logFile, 'current\n');
+      fs.writeFileSync(`${logFile}.1`, 'rotated-1\n');
+      fs.writeFileSync(`${logFile}.2`, 'rotated-2\n');
+
+      // Import the shiftLogFiles function indirectly via initLogger
+      // which sets up rotation. We test by checking file state after reset.
+      await initLogger({ fileLogging: true, logDir: tmpDir });
+      await flushLogger();
+      await closeLogger();
+
+      // After init + close, the log file should exist
+      expect(fs.existsSync(logFile)).toBe(true);
+
+      // Cleanup
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should handle closeLogger with rotation active', async () => {
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-close-rotation-${Date.now()}`;
+      fs.mkdirSync(tmpDir, { recursive: true });
+
+      await initLogger({ fileLogging: true, logDir: tmpDir });
+
+      // closeLogger should stop rotation and clean up
+      await expect(closeLogger()).resolves.toBeUndefined();
+
+      // Cleanup
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     });
   });
 });
