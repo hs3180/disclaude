@@ -8,14 +8,37 @@
 export type {
   CwdProvider,
   InstanceInfo,
+  IssueTriageStatus,
   PersistedInstance,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
+  ProjectState,
+  ProjectStateIssueEntry,
+  ProjectStatePrEntry,
+  ProjectStateSync,
   ProjectTemplate,
   ProjectTemplatesConfig,
   ProjectsPersistData,
+  PrReviewStatus,
 } from './types.js';
+
+export {
+  createDefaultState,
+  getStateDir,
+  getStateFilePath,
+  isValidIssueEntry,
+  isValidProjectState,
+  isValidPrEntry,
+  readProjectState,
+  updateSyncTimestamp,
+  upsertIssue,
+  upsertPr,
+  writeProjectState,
+  STATE_DIR_NAME,
+  STATE_FILE_NAME,
+  STATE_VERSION,
+} from './project-state.js';
 
 export {
   discoverTemplates,
