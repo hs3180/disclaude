@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
+  buildETALearningGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -139,6 +140,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const taskRecordGuidance = buildTaskRecordGuidance();
+    const etaLearningGuidance = buildETALearningGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
     // Compose all sections
@@ -167,6 +169,7 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(taskRecordGuidance);
+    sections.push(etaLearningGuidance);
     sections.push(locationAwarenessGuidance);
 
     const preamble = sections.join('\n');

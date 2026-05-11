@@ -85,6 +85,25 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Location Awareness');
     });
 
+    it('should include task record guidance for regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Task Execution Recording');
+    });
+
+    it('should include ETA learning guidance for regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('ETA Estimation Learning');
+      expect(result).toContain('eta-rules.md');
+    });
+
     it('should not include guidance sections for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',
@@ -93,6 +112,8 @@ describe('MessageBuilder', () => {
 
       expect(result).not.toContain('Next Steps After Response');
       expect(result).not.toContain('Output Format Requirements');
+      expect(result).not.toContain('Task Execution Recording');
+      expect(result).not.toContain('ETA Estimation Learning');
       expect(result).not.toContain('Location Awareness');
     });
   });

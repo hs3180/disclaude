@@ -12,6 +12,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
+  buildETALearningGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -166,5 +167,63 @@ describe('buildTaskRecordGuidance', () => {
   it('should mention creating file if not exists', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('Create the file if it does not exist');
+  });
+});
+
+describe('buildETALearningGuidance', () => {
+  it('should include ETA learning section header', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('ETA Estimation Learning');
+  });
+
+  it('should specify rules file location', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('.claude/eta-rules.md');
+  });
+
+  it('should include task type baselines', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Task Type Baselines');
+    expect(result).toContain('bugfix');
+    expect(result).toContain('feature');
+  });
+
+  it('should include multipliers', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Multipliers');
+    expect(result).toContain('Auth/security');
+    expect(result).toContain('baseline');
+  });
+
+  it('should include bias analysis', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Bias Analysis');
+    expect(result).toContain('underestimated');
+    expect(result).toContain('overestimated');
+  });
+
+  it('should instruct when to update rules', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('When to Update Rules');
+    expect(result).toContain('task-records.md');
+  });
+
+  it('should instruct when to use rules', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('When to Use Rules');
+    expect(result).toContain('eta-rules.md');
+    expect(result).toContain('task-records.md');
+  });
+
+  it('should mention creating file if not exists', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Create the file if it does not exist');
+  });
+
+  it('should include practical guidelines', () => {
+    const result = buildETALearningGuidance();
+    expect(result).toContain('Start simple');
+    expect(result).toContain('Keep it practical');
+    expect(result).toContain('No false precision');
   });
 });

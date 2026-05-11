@@ -265,6 +265,90 @@ Append each task as a new \`##\` section with today's date and task description:
 }
 
 /**
+ * Build the ETA learning guidance section.
+ *
+ * Issue #1234 Phase 2: Instructs the agent to maintain estimation
+ * rules in Markdown format. The agent learns from past task records
+ * and updates rules incrementally to improve future time estimates.
+ *
+ * Works in conjunction with `buildTaskRecordGuidance()` (Phase 1):
+ * - Phase 1 records task execution data in `.claude/task-records.md`
+ * - Phase 2 maintains estimation rules in `.claude/eta-rules.md`
+ *
+ * @returns Formatted ETA learning guidance section
+ */
+export function buildETALearningGuidance(): string {
+  return `
+
+---
+
+## ETA Estimation Learning
+
+**Use and maintain estimation rules to improve task time estimates.**
+
+### Rules File
+
+Maintain estimation rules in \`.claude/eta-rules.md\` in the current working directory.
+Create the file if it does not exist.
+
+### Rules Format
+
+\`\`\`markdown
+# ETA Estimation Rules
+
+## Task Type Baselines
+
+| Type | Baseline | Notes |
+|------|----------|-------|
+| bugfix | 15-30min | Depends on reproduction difficulty |
+| feature-small | 30-60min | Single functionality point |
+| feature-medium | 2-4h | Multiple components involved |
+| refactoring | Varies | Assess scope first |
+| test | 20-45min | Depends on integration complexity |
+| research | 30-90min | Open-ended, hard to predict |
+
+## Multipliers
+
+1. **Auth/security related** → baseline × 1.5
+2. **Modifying core modules** → baseline × 2
+3. **Existing reference code** → baseline × 0.7
+4. **Third-party API integration** → baseline × 1.5 + debug buffer
+5. **Cross-cutting changes** → baseline × 1.3
+
+## Bias Analysis
+
+- **Often underestimated**: async logic, state management, edge cases
+- **Often overestimated**: simple CRUD, config changes, documentation
+
+## Changelog
+
+- YYYY-MM-DD: Initial rules from task history analysis
+\`\`\`
+
+### When to Update Rules
+
+After each significant task, review your record in \`task-records.md\` and update rules if:
+- The actual time deviated significantly from the estimate (>50% off)
+- You discovered a new pattern or multiplier not yet captured
+- The task type is not yet in the baselines table
+
+### When to Use Rules
+
+Before estimating a new task:
+1. **Read** \`.claude/eta-rules.md\` to check existing baselines and multipliers
+2. **Search** \`.claude/task-records.md\` for similar past tasks
+3. **Apply** relevant rules and adjust based on current context
+4. **State** your estimation reasoning so future reviews can improve the rules
+
+### Guidelines
+
+- **Start simple**: A few baseline entries are enough — rules grow organically
+- **Keep it practical**: Only add rules that genuinely help predict better
+- **Review periodically**: Remove outdated rules, adjust baselines based on recent data
+- **No false precision**: Use ranges (e.g., "30-60min") rather than exact numbers`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

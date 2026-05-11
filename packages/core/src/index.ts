@@ -151,6 +151,8 @@ export {
   buildPersistedHistorySection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
+  buildTaskRecordGuidance,
+  buildETALearningGuidance,
   buildLocationAwarenessGuidance,
   type MessageData,
   type MessageBuilderContext,
