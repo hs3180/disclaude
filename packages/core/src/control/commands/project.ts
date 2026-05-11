@@ -146,7 +146,14 @@ export const handleProject: CommandHandler = (
   command: ControlCommand,
   context: ControlHandlerContext,
 ): ControlResponse => {
-  const subcommand = (command.data?.subcommand as string) ?? 'info';
+  // Support both structured data (subcommand field) and CLI args array
+  const args = command.data?.args as string[] | undefined;
+  const subcommand = (command.data?.subcommand as string) ?? args?.[0] ?? 'info';
+
+  // Inject workingDir from args[1] if not already provided (for CLI-style invocation)
+  if (args && args.length >= 2 && args[0] === 'use' && !command.data?.workingDir) {
+    command.data = { ...command.data, workingDir: args.slice(1).join(' ') };
+  }
 
   switch (subcommand) {
     case 'use':
