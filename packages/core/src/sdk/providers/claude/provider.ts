@@ -133,7 +133,7 @@ export function isStartupFailure(messageCount: number, elapsedMs: number): boole
  */
 export class ClaudeSDKProvider implements IAgentSDKProvider {
   readonly name = 'claude';
-  readonly version = '0.2.19';
+  readonly version = '0.2.139';
 
   private disposed = false;
 
@@ -206,7 +206,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
               { messageCount, messageType: message.type, ttftMs: now - queryStartMs },
               'SDK first message received (TTFT)'
             );
-          } else if (message.type === 'assistant' || message.type === 'tool_use') {
+          } else if (message.type === 'assistant') {
             // Log timing for significant messages (not every system message)
             logger.info(
               { messageCount, messageType: message.type, elapsedMs: now - queryStartMs },
