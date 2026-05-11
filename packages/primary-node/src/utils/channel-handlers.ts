@@ -133,6 +133,12 @@ export function createChannelCallbacksFactory(
         },
     // Issue #1863: Wire getChatHistory callback for session restoration
     getChatHistory: options?.getChatHistory,
+    // Issue #3530: Wire getCapabilities so buildMcpServers can correctly
+    // include/exclude channel MCP tools based on actual channel support.
+    // Without this, supportedMcpTools is always undefined and channel-mcp
+    // (send_text, etc.) is always included — even for REST channel where
+    // these tools route through Feishu IPC and fail with test credentials.
+    getCapabilities: (_chatId: string) => channel.getCapabilities(),
   });
 }
 
