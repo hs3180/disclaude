@@ -11,6 +11,7 @@
  * @module agents/base-agent
  */
 
+import path from 'node:path';
 import {
   getProvider,
   type IAgentSDKProvider,
@@ -160,7 +161,7 @@ export abstract class BaseAgent implements Disposable {
       cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['project'],
+      settingSources: ['project', 'user'],
     };
 
     // Add allowed/disallowed tools
@@ -185,6 +186,9 @@ export abstract class BaseAgent implements Disposable {
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
     }
+    // Point CLAUDE_CONFIG_DIR to workspace .claude so skills are found
+    // even when cwd changes via /project (Issue #3532)
+    globalEnv.CLAUDE_CONFIG_DIR = path.join(this.getWorkspaceDir(), '.claude');
     options.env = buildSdkEnv(
       this.apiKey,
       this.apiBaseUrl,

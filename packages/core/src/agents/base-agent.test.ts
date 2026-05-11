@@ -266,7 +266,7 @@ describe('BaseAgent', () => {
     const defaultOptions = {
       cwd: '/workspace',
       permissionMode: 'bypassPermissions' as const,
-      settingSources: ['project'],
+      settingSources: ['project', 'user'],
     };
 
     async function* createMockInput(messages: StreamingUserMessage[]): AsyncGenerator<StreamingUserMessage> {
