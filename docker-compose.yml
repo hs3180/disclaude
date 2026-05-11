@@ -130,3 +130,70 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Headless Chromium with CDP endpoint for browser automation (site-miner, etc.)
+  # Disabled by default — start with: docker compose --profile playwright up -d
+  # The primary container (network_mode: host) connects via http://localhost:9222
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.58.2-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Use host networking so primary container can reach CDP on localhost
+    network_mode: host
+
+    # Run headless Chromium with CDP enabled
+    entrypoint: ["sh", "-e", "-c"]
+    command:
+      - |
+        CDP_PORT="$${CDP_PORT:-9222}"
+        CHROME_BIN="$(find /ms-playwright -name chrome -path '*/chrome-linux/*' | head -1)"
+        if [ -z "$$CHROME_BIN" ]; then
+          echo "ERROR: Chromium binary not found in /ms-playwright/" >&2
+          exit 1
+        fi
+        echo "Starting Chromium CDP on port $$CDP_PORT..."
+        exec "$$CHROME_BIN" \
+          --headless=new \
+          --no-sandbox \
+          --disable-setuid-sandbox \
+          --disable-dev-shm-usage \
+          --disable-gpu \
+          --disable-software-rasterizer \
+          --disable-background-networking \
+          --disable-default-apps \
+          --disable-extensions \
+          --disable-sync \
+          --disable-translate \
+          --hide-scrollbars \
+          --mute-audio \
+          --no-first-run \
+          --safebrowsing-disable-auto-update \
+          --remote-debugging-port="$$CDP_PORT" \
+          --remote-debugging-address=0.0.0.0 \
+          about:blank
+
+    environment:
+      - CDP_PORT=${CDP_PORT:-9222}
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:$${CDP_PORT:-9222}/json/version || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    profiles:
+      - playwright
