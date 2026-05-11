@@ -176,6 +176,15 @@ export {
   type InteractiveContext,
 } from './interactive-context.js';
 
+// Feishu channel internals (Issue #1626 P3: trigger mode integration tests)
+export {
+  TriggerModeManager,
+  type TriggerModeRecord,
+  MentionDetector,
+  type BotInfo,
+  type MessageCallbacks,
+} from './channels/feishu/index.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 

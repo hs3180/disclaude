@@ -12,6 +12,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./channels/feishu": {
+      "import": "./dist/channels/feishu/index.js",
+      "types": "./dist/channels/feishu/index.d.ts"
     }
   },
   "scripts": {
