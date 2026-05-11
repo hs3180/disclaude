@@ -11,8 +11,8 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import type {
   CwdProvider,
   ProjectContextConfig,
@@ -81,7 +81,7 @@ export class ProjectManager {
     const workingDir = this.bindings.get(chatId);
     if (workingDir) {
       return {
-        name: workingDir,
+        name: basename(workingDir),
         workingDir,
       };
     }
@@ -117,14 +117,6 @@ export class ProjectManager {
     // Resolve relative paths against workspaceDir
     const resolvedDir = resolve(this.workspaceDir, workingDir);
 
-    // Validate that the directory exists
-    if (!existsSync(resolvedDir)) {
-      return { ok: false, error: `目录不存在: ${resolvedDir}` };
-    }
-    if (!statSync(resolvedDir).isDirectory()) {
-      return { ok: false, error: `路径不是目录: ${resolvedDir}` };
-    }
-
     // Save pre-mutation state for rollback
     const oldDir = this.bindings.get(chatId);
 
@@ -145,7 +137,7 @@ export class ProjectManager {
     return {
       ok: true,
       data: {
-        name: resolvedDir,
+        name: basename(resolvedDir),
         workingDir: resolvedDir,
       },
     };
@@ -285,8 +277,8 @@ export class ProjectManager {
    */
   loadPersistedData(): ProjectResult<void> {
     if (!existsSync(this.persistPath)) {
-      // First run — no persisted data. Try migrating from old projects.json.
-      return this.migrateFromProjectsJson();
+      // First run — no persisted data
+      return { ok: true, data: undefined };
     }
 
     try {
@@ -327,62 +319,6 @@ export class ProjectManager {
    */
   getWorkspaceDir(): string {
     return this.workspaceDir;
-  }
-
-  // ───────────────────────────────────────────
-  // Migration
-  // ───────────────────────────────────────────
-
-  /**
-   * Attempt to migrate bindings from the old `projects.json` format.
-   *
-   * Old format stored instances + chatProjectMap separately.
-   * New format stores direct chatId → workingDir bindings.
-   *
-   * Migration is best-effort: if the old file doesn't exist or is
-   * malformed, silently skip.
-   */
-  private migrateFromProjectsJson(): ProjectResult<void> {
-    const oldPath = resolve(this.dataDir, 'projects.json');
-    if (!existsSync(oldPath)) {
-      return { ok: true, data: undefined };
-    }
-
-    try {
-      const raw = readFileSync(oldPath, 'utf8');
-      const data = JSON.parse(raw) as unknown;
-
-      if (typeof data !== 'object' || data === null) {
-        return { ok: true, data: undefined };
-      }
-
-      const obj = data as Record<string, unknown>;
-
-      // Try old format: { projects: { name: { ... } }, chatProjectMap: { chatId: name } }
-      // or alternative format: { instances: { name: { workingDir, ... } }, chatProjectMap: { chatId: name } }
-      const instances = (obj.projects ?? obj.instances) as Record<string, { workingDir?: string }> | undefined;
-      const chatProjectMap = obj.chatProjectMap as Record<string, string> | undefined;
-
-      if (instances && chatProjectMap && typeof instances === 'object' && typeof chatProjectMap === 'object') {
-        let migrated = 0;
-        for (const [chatId, instanceName] of Object.entries(chatProjectMap)) {
-          const instance = instances[instanceName];
-          if (instance?.workingDir) {
-            this.bindings.set(chatId, instance.workingDir);
-            migrated++;
-          }
-        }
-        if (migrated > 0) {
-          // Persist migrated data in new format
-          this.persist();
-        }
-      }
-
-      return { ok: true, data: undefined };
-    } catch {
-      // Malformed old file — skip
-      return { ok: true, data: undefined };
-    }
   }
 
   // ───────────────────────────────────────────

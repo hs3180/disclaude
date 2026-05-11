@@ -6,19 +6,15 @@
  * and discriminated union behavior.
  *
  * @see Issue #2223
+ * @see Issue #3519 (simplified /project command)
  */
 
 import { describe, it, expect } from 'vitest';
 import type {
   CwdProvider,
-  InstanceInfo,
-  PersistedInstance,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
-  ProjectTemplate,
-  ProjectTemplatesConfig,
-  ProjectsPersistData,
 } from './types.js';
 
 describe('ProjectResult<T> discriminated union', () => {
@@ -26,13 +22,13 @@ describe('ProjectResult<T> discriminated union', () => {
     const result: ProjectResult<ProjectContextConfig> = {
       ok: true,
       data: {
-        name: '/workspace/projects/my-research',
+        name: 'my-research',
         workingDir: '/workspace/projects/my-research',
       },
     };
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.name).toBe('/workspace/projects/my-research');
+      expect(result.data.name).toBe('my-research');
       expect(result.data.workingDir).toBe('/workspace/projects/my-research');
     }
   });
@@ -40,11 +36,11 @@ describe('ProjectResult<T> discriminated union', () => {
   it('should accept failure result', () => {
     const result: ProjectResult<ProjectContextConfig> = {
       ok: false,
-      error: '模板不存在',
+      error: '目录不存在',
     };
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toBe('模板不存在');
+      expect(result.error).toBe('目录不存在');
     }
   });
 
@@ -64,21 +60,6 @@ describe('ProjectResult<T> discriminated union', () => {
     const result: ProjectResult<void> = { ok: true, data: undefined };
     expect(result.ok).toBe(true);
   });
-
-  it('should work with array data type', () => {
-    const result: ProjectResult<ProjectTemplate[]> = {
-      ok: true,
-      data: [
-        { name: 'research', displayName: '研究模式' },
-        { name: 'book-reader' },
-      ],
-    };
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.data).toHaveLength(2);
-      expect(result.data[0].name).toBe('research');
-    }
-  });
 });
 
 describe('ProjectContextConfig', () => {
@@ -93,108 +74,11 @@ describe('ProjectContextConfig', () => {
 
   it('should accept bound project config', () => {
     const config: ProjectContextConfig = {
-      name: '/workspace/projects/my-research',
-      workingDir: '/workspace/projects/my-research',
-    };
-    expect(config.name).toBe('/workspace/projects/my-research');
-    expect(config.workingDir).toBe('/workspace/projects/my-research');
-  });
-});
-
-describe('InstanceInfo', () => {
-  it('should accept valid instance info', () => {
-    const info: InstanceInfo = {
       name: 'my-research',
-      templateName: 'research',
-      chatIds: ['oc_abc123', 'oc_def456'],
       workingDir: '/workspace/projects/my-research',
-      createdAt: '2026-04-09T10:00:00Z',
     };
-    expect(info.name).toBe('my-research');
-    expect(info.chatIds).toHaveLength(2);
-  });
-
-  it('should accept instance with no bindings', () => {
-    const info: InstanceInfo = {
-      name: 'orphan-project',
-      templateName: 'research',
-      chatIds: [],
-      workingDir: '/workspace/projects/orphan-project',
-      createdAt: '2026-04-09T10:00:00Z',
-    };
-    expect(info.chatIds).toHaveLength(0);
-  });
-});
-
-describe('ProjectTemplate', () => {
-  it('should accept template with all fields', () => {
-    const template: ProjectTemplate = {
-      name: 'research',
-      displayName: '研究模式',
-      description: '专注研究的独立空间',
-    };
-    expect(template.name).toBe('research');
-    expect(template.displayName).toBe('研究模式');
-  });
-
-  it('should accept template with only name', () => {
-    const template: ProjectTemplate = {
-      name: 'book-reader',
-    };
-    expect(template.name).toBe('book-reader');
-    expect(template.displayName).toBeUndefined();
-    expect(template.description).toBeUndefined();
-  });
-});
-
-describe('ProjectTemplatesConfig', () => {
-  it('should match disclaude.config.yaml format', () => {
-    const config: ProjectTemplatesConfig = {
-      research: {
-        displayName: '研究模式',
-        description: '专注研究的独立空间',
-      },
-      'book-reader': {
-        displayName: '读书助手',
-      },
-    };
-    expect(Object.keys(config)).toHaveLength(2);
-    expect(config.research?.displayName).toBe('研究模式');
-  });
-
-  it('should accept empty config', () => {
-    const config: ProjectTemplatesConfig = {};
-    expect(Object.keys(config)).toHaveLength(0);
-  });
-});
-
-describe('ProjectsPersistData', () => {
-  it('should represent full persistence schema', () => {
-    const data: ProjectsPersistData = {
-      instances: {
-        'my-research': {
-          name: 'my-research',
-          templateName: 'research',
-          workingDir: '/workspace/projects/my-research',
-          createdAt: '2026-04-09T10:00:00Z',
-        },
-      },
-      chatProjectMap: {
-        'oc_abc123': 'my-research',
-        'oc_def456': 'my-research',
-      },
-    };
-    expect(Object.keys(data.instances)).toHaveLength(1);
-    expect(Object.keys(data.chatProjectMap)).toHaveLength(2);
-  });
-
-  it('should accept empty persistence (fresh state)', () => {
-    const data: ProjectsPersistData = {
-      instances: {},
-      chatProjectMap: {},
-    };
-    expect(Object.keys(data.instances)).toHaveLength(0);
-    expect(Object.keys(data.chatProjectMap)).toHaveLength(0);
+    expect(config.name).toBe('my-research');
+    expect(config.workingDir).toBe('/workspace/projects/my-research');
   });
 });
 
@@ -220,27 +104,5 @@ describe('ProjectManagerOptions', () => {
       workspaceDir: '/workspace',
     };
     expect(options.workspaceDir).toBe('/workspace');
-  });
-});
-
-describe('PersistedInstance', () => {
-  it('should be assignable from InstanceInfo (structural compatibility)', () => {
-    const info: InstanceInfo = {
-      name: 'my-research',
-      templateName: 'research',
-      chatIds: ['oc_abc'],
-      workingDir: '/workspace/projects/my-research',
-      createdAt: '2026-04-09T10:00:00Z',
-    };
-
-    // PersistedInstance is a subset of InstanceInfo (minus chatIds)
-    const persisted: PersistedInstance = {
-      name: info.name,
-      templateName: info.templateName,
-      workingDir: info.workingDir,
-      createdAt: info.createdAt,
-    };
-    expect(persisted.name).toBe(info.name);
-    expect(persisted.templateName).toBe(info.templateName);
   });
 });

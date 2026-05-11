@@ -124,12 +124,14 @@ describe('handleProject', () => {
 
     it('should show bound working directory', async () => {
       const ctx = createTestContext();
-      ctx.projectManager!.use('chat-1', '/my-project');
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+      ctx.projectManager!.use('chat-1', projectDir);
 
       const result = await invoke(makeCommand('chat-1', 'info'), ctx);
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('/my-project');
+      expect(result.message).toContain('my-project');
     });
 
     it('should include state summary when project state exists', async () => {
@@ -182,19 +184,24 @@ describe('handleProject', () => {
         },
       });
 
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+
       const result = await invoke(
-        makeCommand('chat-1', 'use', { workingDir: '/my-project' }),
+        makeCommand('chat-1', 'use', { workingDir: projectDir }),
         ctx,
       );
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('/my-project');
+      expect(result.message).toContain('my-project');
       expect(result.message).toContain('已切换');
       expect(resetCalls).toContain('chat-1');
     });
 
     it('should bind to relative path resolved against workspace', async () => {
       const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'projects', 'my-app');
+      mkdirSync(projectDir, { recursive: true });
 
       const result = await invoke(
         makeCommand('chat-1', 'use', { workingDir: 'projects/my-app' }),
@@ -235,7 +242,9 @@ describe('handleProject', () => {
         },
       });
 
-      ctx.projectManager!.use('chat-1', '/project');
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'project');
+      mkdirSync(projectDir, { recursive: true });
+      ctx.projectManager!.use('chat-1', projectDir);
 
       const result = await invoke(makeCommand('chat-1', 'reset'), ctx);
 

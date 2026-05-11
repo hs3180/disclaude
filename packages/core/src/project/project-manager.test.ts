@@ -8,7 +8,6 @@
  * - Path traversal protection
  * - CwdProvider factory
  * - Persistence (atomic write, load, restore, corruption handling)
- * - Migration from old projects.json format
  * - Edge cases (empty inputs, re-binding, etc.)
  *
  * @see Issue #3519 (simplify /project command)
@@ -72,7 +71,7 @@ describe('ProjectManager', () => {
 
       // Create a new instance pointing to the same workspace
       const pm2 = new ProjectManager(opts);
-      expect(pm2.getActive('chat-1').name).toBe('/some/dir');
+      expect(pm2.getActive('chat-1').name).toBe('dir');
     });
   });
 
@@ -354,62 +353,6 @@ describe('ProjectManager', () => {
       expect(existsSync(tmpPath)).toBe(false);
       // Final file should exist
       expect(existsSync(pm.getPersistPath())).toBe(true);
-    });
-  });
-
-  describe('migration from projects.json', () => {
-    it('should migrate bindings from old projects.json format', () => {
-      const opts = createOptions();
-      const dataDir = join(opts.workspaceDir, '.disclaude');
-      mkdirSync(dataDir, { recursive: true });
-
-      // Write old format
-      writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
-        projects: {
-          'my-project': {
-            templateName: 'research',
-            workingDir: '/workspace/projects/my-project',
-            createdAt: '2026-01-01T00:00:00Z',
-          },
-        },
-        chatProjectMap: {
-          'oc_chat1': 'my-project',
-        },
-      }));
-
-      const pm = new ProjectManager(opts);
-      expect(pm.getActive('oc_chat1').workingDir).toBe('/workspace/projects/my-project');
-
-      // Should also create new format file
-      expect(existsSync(join(dataDir, 'project-bindings.json'))).toBe(true);
-    });
-
-    it('should handle old format with instances key', () => {
-      const opts = createOptions();
-      const dataDir = join(opts.workspaceDir, '.disclaude');
-      mkdirSync(dataDir, { recursive: true });
-
-      writeFileSync(join(dataDir, 'projects.json'), JSON.stringify({
-        instances: {
-          'project-a': {
-            workingDir: '/path/to/a',
-            templateName: 'test',
-            createdAt: '2026-01-01T00:00:00Z',
-          },
-        },
-        chatProjectMap: {
-          'oc_chat1': 'project-a',
-        },
-      }));
-
-      const pm = new ProjectManager(opts);
-      expect(pm.getActive('oc_chat1').workingDir).toBe('/path/to/a');
-    });
-
-    it('should skip migration when no old file exists', () => {
-      const opts = createOptions();
-      const pm = new ProjectManager(opts);
-      expect(pm.getActive('chat-1').name).toBe('default');
     });
   });
 

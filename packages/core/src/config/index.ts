@@ -24,7 +24,6 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
-import type { ProjectTemplatesConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -580,8 +579,8 @@ export class Config {
    * @see Issue #2227
    * @returns Project template configuration, or undefined
    */
-  static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
-    return fileConfigOnly.projectTemplates as ProjectTemplatesConfig | undefined;
+  static getProjectTemplatesConfig(): Record<string, { displayName?: string; description?: string }> | undefined {
+    return fileConfigOnly.projectTemplates as Record<string, { displayName?: string; description?: string }> | undefined;
   }
 }
 
