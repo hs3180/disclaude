@@ -335,3 +335,25 @@ describe('discoverTemplatesAsConfig', () => {
     });
   });
 });
+
+describe('built-in templates', () => {
+  it('should discover the research template from primary-node package', () => {
+    const primaryNodeDir = path.resolve(__dirname, '../../../../primary-node');
+    const templatesDir = path.join(primaryNodeDir, 'templates');
+
+    // Skip if running in an environment without the primary-node package
+    if (!fs.existsSync(templatesDir)) {
+      return;
+    }
+
+    const result = discoverTemplates(primaryNodeDir);
+
+    expect(result.errors).toEqual([]);
+    expect(result.templates.length).toBeGreaterThanOrEqual(1);
+
+    const researchTemplate = result.templates.find((t) => t.name === 'research');
+    expect(researchTemplate).toBeDefined();
+    expect(researchTemplate!.displayName).toBe('研究模式');
+    expect(researchTemplate!.description).toBeTruthy();
+  });
+});
