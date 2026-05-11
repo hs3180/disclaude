@@ -130,3 +130,70 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Provides a headless Chromium browser with CDP endpoint for browser automation.
+  # Use --profile playwright to start: docker compose --profile playwright up -d
+  #
+  # The Playwright container exposes a CDP WebSocket endpoint that the Primary
+  # Node can connect to for browser automation tasks (e.g., site-miner agent).
+  #
+  # Configure the CDP URL via docker-source.env:
+  #   PLAYWRIGHT_CDP_URL=ws://localhost:9222
+  #
+  playwright:
+    image: ${DOCKER_IMAGE_PREFIX:-}mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.52.0-noble}
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Use host network so Primary Node can access CDP endpoint via localhost
+    network_mode: host
+
+    environment:
+      - CDP_PORT=${PLAYWRIGHT_CDP_PORT:-9222}
+
+    # Launch Chromium with CDP enabled, matching the flags used in
+    # scripts/start-playwright-cdp.sh for local development
+    command: >
+      sh -c 'exec chromium
+        --headless=new
+        --no-sandbox
+        --disable-setuid-sandbox
+        --disable-dev-shm-usage
+        --remote-debugging-port=$${CDP_PORT}
+        --remote-debugging-address=0.0.0.0
+        --disable-gpu
+        --disable-software-rasterizer
+        --disable-background-networking
+        --disable-default-apps
+        --disable-extensions
+        --disable-sync
+        --disable-translate
+        --hide-scrollbars
+        --metrics-recording-only
+        --mute-audio
+        --no-first-run
+        --safebrowsing-disable-auto-update
+        --disable-features=site-per-process
+        about:blank'
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:$${CDP_PORT}/json/version || wget -qO- http://localhost:$${CDP_PORT}/json/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    profiles:
+      - playwright
