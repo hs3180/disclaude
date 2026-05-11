@@ -230,6 +230,37 @@ describe('handleProject', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('路径遍历');
     });
+
+    it('should accept args array from CLI-style invocation', async () => {
+      const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+
+      // Simulate the data format sent by message-handler.ts:
+      // data: { args: ['use', 'my-project'], rawText: '/project use my-project' }
+      const result = await invoke(
+        makeCommand('chat-1', 'use', { args: ['use', 'my-project'], rawText: '/project use my-project' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-project');
+      expect(result.message).toContain('已切换');
+    });
+
+    it('should accept args with multi-segment path', async () => {
+      const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'projects', 'my-app');
+      mkdirSync(projectDir, { recursive: true });
+
+      const result = await invoke(
+        makeCommand('chat-1', 'use', { args: ['use', 'projects/my-app'], rawText: '/project use projects/my-app' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('projects/my-app');
+    });
   });
 
   describe('/project reset', () => {
