@@ -141,6 +141,42 @@ run_test_script() {
             if [ $attempt -lt $max_attempts ]; then
                 local delay=$((RETRY_INITIAL_DELAY * RETRY_BACKOFF ** (attempt - 1)))
                 log_warn "$name failed (attempt ${attempt}/${max_attempts}), retrying in ${delay}s (exponential backoff)..."
+
+                # Issue #3530: Restart server between retries if unhealthy.
+                # When the server crashes or becomes unstable (e.g., exit listener
+                # accumulation from Claude Agent SDK's ProcessTransport), subsequent
+                # retries against the same server will also fail with HTTP 000.
+                # Restarting the server gives each retry a clean state.
+                local needs_restart=false
+                if ! is_server_running; then
+                    log_warn "Server is not responding, restarting before retry..."
+                    needs_restart=true
+                else
+                    # Also check for exit listener accumulation (Issue #3378).
+                    # High exit listener count indicates ProcessTransport leak which
+                    # can cause server instability.
+                    local health_result
+                    health_result=$(make_request "GET" "/api/health" 2>/dev/null) || true
+                    local health_body
+                    health_body=$(echo "$health_result" | cut -d'|' -f2-)
+                    local exit_count
+                    exit_count=$(echo "$health_body" | grep -o '"exit":[0-9]*' | grep -o '[0-9]*')
+                    if [ -n "$exit_count" ] && [ "$exit_count" -gt "${EXIT_LISTENER_THRESHOLD:-10}" ] 2>/dev/null; then
+                        log_warn "Server has high exit listener count ($exit_count), restarting before retry..."
+                        needs_restart=true
+                    fi
+                fi
+
+                if [ "$needs_restart" = true ]; then
+                    stop_server 2>/dev/null || true
+                    sleep 2
+                    if start_server; then
+                        log_info "Server restarted successfully for retry ${attempt}"
+                    else
+                        log_error "Failed to restart server for retry ${attempt}"
+                    fi
+                fi
+
                 sleep "$delay"
             fi
         fi

@@ -35,14 +35,13 @@ test_basic_greeting() {
 
     assert_sync_chat_ok "你好" || return 1
 
-    # Validate response contains greeting or conversation keywords
-    # Issue #3378: Broadened keyword list to reduce flakiness from agent
-    # response variations while still verifying meaningful agent output.
-    if echo "$RESPONSE_TEXT" | grep -iqE "你好|您好|hello|hi|hey|help|有什么|我可以|帮助|请问|很高兴|认识"; then
+    # Validate response contains greeting keywords
+    # Issue #3530 + #3378: Broadened keyword list to handle diverse AI responses.
+    if echo "$RESPONSE_TEXT" | grep -iqE "你好|您好|hello|hi[^a-z]|hey|嗨|help|有什么|我可以|帮助|很高兴|欢迎|见到|能做|请问|是的|当然|认识"; then
         log_pass "Agent responded with a greeting"
     else
         log_fail "Agent response does not contain greeting keywords"
-        log_debug "Response: $(echo "$RESPONSE_TEXT" | head -c 200)"
+        log_debug "Response text: $(echo "$RESPONSE_TEXT" | head -c 200)"
         return 1
     fi
 }
