@@ -1,50 +1,35 @@
 /**
- * ProjectManager — core in-memory + persistent logic for per-chatId Agent context switching.
+ * ProjectManager — simplified per-chatId working directory binding.
  *
- * Manages project templates, instances, and chatId bindings in memory,
- * with atomic persistence to `{workspace}/.disclaude/projects.json`.
+ * Manages chatId → workingDir mappings in memory with atomic persistence
+ * to `{workspace}/.disclaude/project-bindings.json`.
  *
- * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
- * @see Issue #2225 (Sub-Issue C — persistence layer)
+ * Simplified design (Issue #3519): No templates or instances.
+ * A project = an arbitrary working directory. ChatId binds directly to a path.
+ *
+ * @see Issue #3519 (simplify /project command)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import type {
   CwdProvider,
-  InstanceInfo,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
-  ProjectTemplate,
-  ProjectTemplatesConfig,
-  ProjectsPersistData,
 } from './types.js';
-import { discoverTemplates } from './template-discovery.js';
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Validation Constants
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/** Maximum allowed length for instance names */
-const MAX_NAME_LENGTH = 64;
-
-/** Characters forbidden in instance names */
-const FORBIDDEN_NAME_CHARS = /[\x00\\/]/;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Internal Types
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * Internal representation of a project instance (in-memory only).
+ * Persistence schema for `.disclaude/project-bindings.json`.
  */
-interface ProjectInstance {
-  name: string;
-  templateName: string;
-  workingDir: string;
-  createdAt: string;
+interface ProjectBindingsData {
+  version: number;
+  bindings: Record<string, string>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -52,94 +37,34 @@ interface ProjectInstance {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * Manages project templates, instances, and chatId bindings in pure memory.
+ * Manages chatId → workingDir bindings with persistence.
  *
  * Lifecycle:
- * 1. Construct with `ProjectManagerOptions`
- * 2. Call `init()` (or `init(templatesConfig)`) to load templates
- * 3. Use `create()`, `use()`, `getActive()`, `reset()` to manage projects
+ * 1. Construct with `{ workspaceDir }`
+ * 2. Bindings are loaded from `.disclaude/project-bindings.json` automatically
+ * 3. Use `use()`, `reset()`, `getActive()` to manage bindings
  * 4. Call `createCwdProvider()` to get a CwdProvider for Agent injection
- *
- * Zero-config: if no templates are configured, behavior is identical to
- * the current system (all chatIds use workspace root as cwd).
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  /** Package directory containing `templates/` for auto-discovery */
-  private readonly packageDir: string;
-  private templates: Map<string, ProjectTemplate> = new Map();
-  private instances: Map<string, ProjectInstance> = new Map();
-  /** chatId → instance name binding */
-  private chatProjectMap: Map<string, string> = new Map();
-  /** Reverse index: instance name → Set of bound chatIds (O(1) lookup) */
-  private instanceChatIds: Map<string, Set<string>> = new Map();
+  /** chatId → workingDir binding */
+  private bindings: Map<string, string> = new Map();
 
   /** Path to .disclaude directory */
   private readonly dataDir: string;
-  /** Path to projects.json */
+  /** Path to project-bindings.json */
   private readonly persistPath: string;
   /** Path to temporary file used during atomic write */
   private readonly persistTmpPath: string;
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
-    this.packageDir = options.packageDir;
-    this.dataDir = join(options.workspaceDir, '.disclaude');
-    this.persistPath = join(this.dataDir, 'projects.json');
-    this.persistTmpPath = join(this.dataDir, 'projects.json.tmp');
+    this.dataDir = resolve(options.workspaceDir, '.disclaude');
+    this.persistPath = resolve(this.dataDir, 'project-bindings.json');
+    this.persistTmpPath = resolve(this.dataDir, 'project-bindings.json.tmp');
 
-    this.init(options.templatesConfig);
-
-    // Restore persisted state after templates are loaded
+    // Restore persisted state
     this.loadPersistedData();
-  }
-
-  // ───────────────────────────────────────────
-  // Initialization
-  // ───────────────────────────────────────────
-
-  /**
-   * Initialize (or re-initialize) templates.
-   *
-   * Auto-discovers templates from `{packageDir}/templates/` first,
-   * then applies config overrides on top.
-   *
-   * Does NOT clear existing instances or bindings — templates can be
-   * hot-reloaded without losing runtime state.
-   *
-   * @param templatesConfig - Optional template configuration overrides (from disclaude.config.yaml)
-   */
-  init(templatesConfig?: ProjectTemplatesConfig): void {
-    this.templates.clear();
-
-    // Phase 1: Auto-discover templates from {packageDir}/templates/
-    const discovered = discoverTemplates(this.packageDir);
-    for (const template of discovered.templates) {
-      this.templates.set(template.name, {
-        name: template.name,
-        displayName: template.displayName,
-        description: template.description,
-      });
-    }
-
-    // Phase 2: Apply config overrides on top of discovered templates
-    if (templatesConfig) {
-      for (const [name, meta] of Object.entries(templatesConfig)) {
-        const existing = this.templates.get(name);
-        if (existing) {
-          // Override metadata for discovered template
-          existing.displayName = meta.displayName ?? existing.displayName;
-          existing.description = meta.description ?? existing.description;
-        } else {
-          // Add virtual template (not on disk, config-only)
-          this.templates.set(name, {
-            name,
-            displayName: meta.displayName,
-            description: meta.description,
-          });
-        }
-      }
-    }
   }
 
   // ───────────────────────────────────────────
@@ -149,31 +74,16 @@ export class ProjectManager {
   /**
    * Get the active project context for a chatId.
    *
-   * Stale binding self-healing: if the bound instance no longer exists,
-   * the binding is automatically removed and the default context is returned.
-   *
    * @param chatId - Chat session identifier
    * @returns ProjectContextConfig for the active project (or default)
    */
   getActive(chatId: string): ProjectContextConfig {
-    // Check for explicit binding
-    const boundName = this.chatProjectMap.get(chatId);
-    if (boundName) {
-      const instance = this.instances.get(boundName);
-      if (instance) {
-        return {
-          name: instance.name,
-          templateName: instance.templateName,
-          workingDir: instance.workingDir,
-        };
-      }
-
-      // Stale binding self-healing: instance was removed, clean up binding
-      this.chatProjectMap.delete(chatId);
-      this.removeFromReverseIndex(boundName, chatId);
-      // Best-effort persist: self-healing should not block the caller.
-      // If persist fails, in-memory cleanup still takes effect for this session.
-      this.persist();
+    const workingDir = this.bindings.get(chatId);
+    if (workingDir) {
+      return {
+        name: basename(workingDir),
+        workingDir,
+      };
     }
 
     // Default: workspace root
@@ -184,141 +94,42 @@ export class ProjectManager {
   }
 
   /**
-   * Create a new project instance from a template.
+   * Bind a chatId to a working directory.
    *
-   * Creates the working directory at `{workspaceDir}/projects/{name}/` and
-   * copies `CLAUDE.md` from the template directory.
-   *
-   * If filesystem operations fail, the in-memory mutation and persisted state
-   * are rolled back and an error is returned.
-   * If persist fails, the in-memory mutation is rolled back and an error is returned.
-   *
-   * @param chatId - Chat session requesting creation
-   * @param templateName - Template to instantiate from
-   * @param name - Unique name for the new instance
-   * @returns ProjectResult with ProjectContextConfig on success
-   */
-  create(chatId: string, templateName: string, name: string): ProjectResult<ProjectContextConfig> {
-    // Validate inputs
-    const nameError = this.validateInstanceName(name);
-    if (nameError) {
-      return { ok: false, error: nameError };
-    }
-
-    const chatIdError = this.validateChatId(chatId);
-    if (chatIdError) {
-      return { ok: false, error: chatIdError };
-    }
-
-    // Check template exists
-    if (!this.templates.has(templateName)) {
-      return { ok: false, error: `模板 "${templateName}" 不存在` };
-    }
-
-    // Check name uniqueness
-    if (this.instances.has(name)) {
-      return { ok: false, error: `实例 "${name}" 已存在` };
-    }
-
-    const workingDir = this.resolveWorkingDir(name);
-    const instance: ProjectInstance = {
-      name,
-      templateName,
-      workingDir,
-      createdAt: new Date().toISOString(),
-    };
-
-    // Save pre-mutation state for rollback
-    const prevBinding = this.chatProjectMap.get(chatId);
-
-    this.instances.set(name, instance);
-    this.chatProjectMap.set(chatId, name);
-    this.addToReverseIndex(name, chatId);
-
-    // Persist after mutation; rollback on failure
-    const persistResult = this.persist();
-    if (!persistResult.ok) {
-      // Rollback in-memory state
-      this.instances.delete(name);
-      if (prevBinding !== undefined) {
-        this.chatProjectMap.set(chatId, prevBinding);
-      } else {
-        this.chatProjectMap.delete(chatId);
-      }
-      this.removeFromReverseIndex(name, chatId);
-      return { ok: false, error: persistResult.error };
-    }
-
-    // Filesystem operations: create directory + copy CLAUDE.md (Sub-Issue D)
-    const fsResult = this.instantiateFromTemplate(name, templateName);
-    if (!fsResult.ok) {
-      // Rollback in-memory state and persist
-      this.instances.delete(name);
-      if (prevBinding !== undefined) {
-        this.chatProjectMap.set(chatId, prevBinding);
-      } else {
-        this.chatProjectMap.delete(chatId);
-      }
-      this.removeFromReverseIndex(name, chatId);
-      this.persist(); // Best-effort persist of rolled-back state
-      return { ok: false, error: fsResult.error };
-    }
-
-    return {
-      ok: true,
-      data: {
-        name: instance.name,
-        templateName: instance.templateName,
-        workingDir: instance.workingDir,
-      },
-    };
-  }
-
-  /**
-   * Bind a chatId to an existing instance.
-   *
-   * If persist fails, the in-memory mutation is rolled back and an error is returned.
+   * Resolves relative paths against the workspace directory.
+   * Validates that the directory path doesn't contain path traversal patterns.
    *
    * @param chatId - Chat session requesting binding
-   * @param name - Instance name to bind to
+   * @param workingDir - Working directory path (relative or absolute)
    * @returns ProjectResult with ProjectContextConfig on success
    */
-  use(chatId: string, name: string): ProjectResult<ProjectContextConfig> {
+  use(chatId: string, workingDir: string): ProjectResult<ProjectContextConfig> {
     const chatIdError = this.validateChatId(chatId);
     if (chatIdError) {
       return { ok: false, error: chatIdError };
     }
 
-    const instance = this.instances.get(name);
-    if (!instance) {
-      return { ok: false, error: `实例 "${name}" 不存在` };
+    const dirError = this.validateWorkingDir(workingDir);
+    if (dirError) {
+      return { ok: false, error: dirError };
     }
+
+    // Resolve relative paths against workspaceDir
+    const resolvedDir = resolve(this.workspaceDir, workingDir);
 
     // Save pre-mutation state for rollback
-    const oldName = this.chatProjectMap.get(chatId);
-    const isRebinding = oldName !== undefined && oldName !== name;
+    const oldDir = this.bindings.get(chatId);
 
-    // Remove from old instance's reverse index if rebinding
-    if (isRebinding) {
-      this.removeFromReverseIndex(oldName, chatId);
-    }
-
-    this.chatProjectMap.set(chatId, name);
-    this.addToReverseIndex(name, chatId);
+    this.bindings.set(chatId, resolvedDir);
 
     // Persist after mutation; rollback on failure
     const persistResult = this.persist();
     if (!persistResult.ok) {
       // Rollback in-memory state
-      this.removeFromReverseIndex(name, chatId);
-      if (isRebinding) {
-        // Restore old reverse index entry
-        this.addToReverseIndex(oldName, chatId);
-      }
-      if (oldName !== undefined) {
-        this.chatProjectMap.set(chatId, oldName);
+      if (oldDir !== undefined) {
+        this.bindings.set(chatId, oldDir);
       } else {
-        this.chatProjectMap.delete(chatId);
+        this.bindings.delete(chatId);
       }
       return { ok: false, error: persistResult.error };
     }
@@ -326,17 +137,14 @@ export class ProjectManager {
     return {
       ok: true,
       data: {
-        name: instance.name,
-        templateName: instance.templateName,
-        workingDir: instance.workingDir,
+        name: basename(resolvedDir),
+        workingDir: resolvedDir,
       },
     };
   }
 
   /**
-   * Reset a chatId's binding, reverting to default project.
-   *
-   * If persist fails, the in-memory mutation is rolled back and an error is returned.
+   * Reset a chatId's binding, reverting to default workspace.
    *
    * @param chatId - Chat session to reset
    * @returns ProjectResult with default ProjectContextConfig
@@ -348,20 +156,16 @@ export class ProjectManager {
     }
 
     // Save pre-mutation state for rollback
-    const boundName = this.chatProjectMap.get(chatId);
+    const boundDir = this.bindings.get(chatId);
 
-    this.chatProjectMap.delete(chatId);
-    if (boundName) {
-      this.removeFromReverseIndex(boundName, chatId);
-    }
+    this.bindings.delete(chatId);
 
     // Persist after mutation; rollback on failure
     const persistResult = this.persist();
     if (!persistResult.ok) {
       // Rollback in-memory state
-      if (boundName) {
-        this.chatProjectMap.set(chatId, boundName);
-        this.addToReverseIndex(boundName, chatId);
+      if (boundDir) {
+        this.bindings.set(chatId, boundDir);
       }
       return { ok: false, error: persistResult.error };
     }
@@ -380,40 +184,15 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * List all available templates.
+   * List all current bindings.
    *
-   * @returns Array of templates sorted by name
+   * @returns Array of { chatId, workingDir } objects
    */
-  listTemplates(): ProjectTemplate[] {
-    return Array.from(this.templates.values()).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-  }
-
-  /**
-   * List all instances with their binding information.
-   *
-   * Does NOT include the implicit "default" project.
-   *
-   * @returns Array of InstanceInfo sorted by creation time
-   */
-  listInstances(): InstanceInfo[] {
-    const result: InstanceInfo[] = [];
-
-    for (const instance of this.instances.values()) {
-      const chatIds = this.getBoundChatIds(instance.name);
-      result.push({
-        name: instance.name,
-        templateName: instance.templateName,
-        chatIds,
-        workingDir: instance.workingDir,
-        createdAt: instance.createdAt,
-      });
-    }
-
-    return result.sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt),
-    );
+  listBindings(): Array<{ chatId: string; workingDir: string }> {
+    return Array.from(this.bindings.entries()).map(([chatId, workingDir]) => ({
+      chatId,
+      workingDir,
+    }));
   }
 
   // ───────────────────────────────────────────
@@ -439,15 +218,11 @@ export class ProjectManager {
   }
 
   // ───────────────────────────────────────────
-  // Persistence Methods (Sub-Issue C)
+  // Persistence
   // ───────────────────────────────────────────
 
   /**
-   * Persist current in-memory state to disk using atomic write-then-rename.
-   *
-   * Writes to a `.tmp` file first, then renames to the final path.
-   * If rename fails, the `.tmp` file is cleaned up.
-   * Creates `.disclaude/` directory if it doesn't exist.
+   * Persist current bindings to disk using atomic write-then-rename.
    *
    * @returns ProjectResult indicating success or failure
    */
@@ -458,24 +233,13 @@ export class ProjectManager {
         mkdirSync(this.dataDir, { recursive: true });
       }
 
-      const data: ProjectsPersistData = {
-        instances: {},
-        chatProjectMap: {},
+      const data: ProjectBindingsData = {
+        version: 1,
+        bindings: {},
       };
 
-      // Serialize instances
-      for (const [name, instance] of this.instances.entries()) {
-        data.instances[name] = {
-          name: instance.name,
-          templateName: instance.templateName,
-          workingDir: instance.workingDir,
-          createdAt: instance.createdAt,
-        };
-      }
-
-      // Serialize bindings
-      for (const [chatId, boundName] of this.chatProjectMap.entries()) {
-        data.chatProjectMap[chatId] = boundName;
+      for (const [chatId, workingDir] of this.bindings.entries()) {
+        data.bindings[chatId] = workingDir;
       }
 
       // Atomic write: write to .tmp, then rename
@@ -507,18 +271,9 @@ export class ProjectManager {
   }
 
   /**
-   * Load persisted data from disk and restore in-memory state.
+   * Load persisted bindings from disk.
    *
-   * Schema validation:
-   * - `instances` must be an object with valid `workingDir` (string) and `createdAt` (non-empty string)
-   * - `chatProjectMap` must be an object with string values
-   *
-   * Corrupted or invalid files are handled gracefully:
-   * - File not found → silently skip (first run)
-   * - Invalid JSON → log error, skip (don't crash)
-   * - Schema validation failure → skip invalid entries
-   *
-   * @returns ProjectResult indicating success or failure
+   * Gracefully handles missing/corrupted files.
    */
   loadPersistedData(): ProjectResult<void> {
     if (!existsSync(this.persistPath)) {
@@ -531,146 +286,39 @@ export class ProjectManager {
       const data = JSON.parse(raw) as unknown;
 
       if (!this.validatePersistSchema(data)) {
-        return { ok: false, error: 'projects.json 格式无效，已跳过恢复' };
+        return { ok: false, error: 'project-bindings.json 格式无效，已跳过恢复' };
       }
 
-      const persisted = data as ProjectsPersistData;
+      const persisted = data as ProjectBindingsData;
 
-      // Restore instances (skip invalid entries)
-      for (const [name, inst] of Object.entries(persisted.instances)) {
-        if (
-          typeof inst !== 'object' || inst === null ||
-          typeof inst.workingDir !== 'string' || inst.workingDir.length === 0 ||
-          typeof inst.createdAt !== 'string' || inst.createdAt.length === 0 ||
-          typeof inst.templateName !== 'string'
-        ) {
-          continue; // Skip invalid entry
-        }
-        this.instances.set(name, {
-          name: inst.name,
-          templateName: inst.templateName,
-          workingDir: inst.workingDir,
-          createdAt: inst.createdAt,
-        });
-      }
-
-      // Restore bindings (only for instances that were successfully loaded)
-      for (const [chatId, boundName] of Object.entries(persisted.chatProjectMap)) {
-        if (typeof boundName === 'string' && this.instances.has(boundName)) {
-          this.chatProjectMap.set(chatId, boundName);
-          // Rebuild reverse index for O(1) listInstances() lookups
-          this.addToReverseIndex(boundName, chatId);
+      // Restore bindings
+      for (const [chatId, workingDir] of Object.entries(persisted.bindings)) {
+        if (typeof workingDir === 'string' && workingDir.length > 0) {
+          this.bindings.set(chatId, workingDir);
         }
       }
 
       return { ok: true, data: undefined };
     } catch (err) {
-      // Corrupted file — don't crash, just skip
       return {
         ok: false,
-        error: `读取 projects.json 失败: ${err instanceof Error ? err.message : String(err)}`,
+        error: `读取 project-bindings.json 失败: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
   }
 
   /**
    * Get the persist file path (for testing/debugging).
-   *
-   * @returns Absolute path to projects.json
    */
   getPersistPath(): string {
     return this.persistPath;
   }
 
-  // ───────────────────────────────────────────
-  // Filesystem Operations (Sub-Issue D — Issue #2226)
-  // ───────────────────────────────────────────
-
   /**
-   * Instantiate a project from its template on the filesystem.
-   *
-   * Creates the working directory at `{workspaceDir}/projects/{name}/`
-   * and copies CLAUDE.md from the template directory.
-   *
-   * Rollback: if CLAUDE.md copy fails, the created directory is removed.
-   *
-   * @param name - Instance name (already validated)
-   * @param templateName - Template name (already validated to exist)
-   * @returns ProjectResult indicating success or failure
+   * Get the workspace directory (for testing/debugging).
    */
-  private instantiateFromTemplate(name: string, templateName: string): ProjectResult<void> {
-    const workingDir = this.resolveWorkingDir(name);
-
-    // Path traversal protection: verify resolved path is within workspaceDir
-    const resolvedWorkingDir = resolve(workingDir);
-    const resolvedWorkspaceDir = resolve(this.workspaceDir);
-    if (
-      !resolvedWorkingDir.startsWith(`${resolvedWorkspaceDir}/`) &&
-      resolvedWorkingDir !== resolvedWorkspaceDir
-    ) {
-      return {
-        ok: false,
-        error: `工作目录路径越界: ${resolvedWorkingDir} 不在 ${resolvedWorkspaceDir} 内`,
-      };
-    }
-
-    // Create working directory
-    try {
-      mkdirSync(workingDir, { recursive: true });
-    } catch (err) {
-      return {
-        ok: false,
-        error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-
-    // Copy CLAUDE.md from template
-    const copyResult = this.copyClaudeMd(templateName, workingDir);
-    if (!copyResult.ok) {
-      // Rollback: remove the directory we just created
-      try {
-        rmSync(workingDir, { recursive: true, force: true });
-      } catch {
-        // Best-effort cleanup — don't mask the original error
-      }
-      return { ok: false, error: copyResult.error };
-    }
-
-    return { ok: true, data: undefined };
-  }
-
-  /**
-   * Copy CLAUDE.md from the template directory to the instance working directory.
-   *
-   * Source: `{packageDir}/templates/{templateName}/CLAUDE.md`
-   * Target: `{workingDir}/CLAUDE.md`
-   *
-   * - When packageDir has no templates directory, the instance is created without CLAUDE.md (skip, no error)
-   * - When template CLAUDE.md doesn't exist on disk (virtual template), skip silently
-   * - When template directory exists but CLAUDE.md is unreadable, return error
-   *
-   * @param templateName - Template name
-   * @param targetDir - Target instance working directory
-   * @returns ProjectResult indicating success or failure
-   */
-  private copyClaudeMd(templateName: string, targetDir: string): ProjectResult<void> {
-    const sourcePath = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
-
-    // If no CLAUDE.md in template (virtual template or packageDir not configured), skip silently
-    if (!existsSync(sourcePath)) {
-      return { ok: true, data: undefined };
-    }
-
-    try {
-      copyFileSync(sourcePath, join(targetDir, 'CLAUDE.md'));
-    } catch (err) {
-      return {
-        ok: false,
-        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-
-    return { ok: true, data: undefined };
+  getWorkspaceDir(): string {
+    return this.workspaceDir;
   }
 
   // ───────────────────────────────────────────
@@ -678,137 +326,50 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Resolve the working directory for an instance.
-   *
-   * Pattern: `{workspaceDir}/projects/{name}/`
-   *
-   * @param name - Instance name
-   * @returns Absolute working directory path
-   */
-  private resolveWorkingDir(name: string): string {
-    // Use simple path join (path traversal already validated in create())
-    // Avoid importing `path` to keep this module filesystem-free
-    const ws = this.workspaceDir.replace(/\/+$/, '');
-    return `${ws}/projects/${name}`;
-  }
-
-  /**
-   * Get all chatIds bound to a specific instance.
-   *
-   * Uses reverse index for O(1) lookup per instance.
-   *
-   * @param instanceName - Instance name to look up
-   * @returns Array of bound chatIds
-   */
-  private getBoundChatIds(instanceName: string): string[] {
-    const set = this.instanceChatIds.get(instanceName);
-    return set ? [...set] : [];
-  }
-
-  /**
-   * Add a chatId to an instance's reverse index set.
-   */
-  private addToReverseIndex(instanceName: string, chatId: string): void {
-    let set = this.instanceChatIds.get(instanceName);
-    if (!set) {
-      set = new Set();
-      this.instanceChatIds.set(instanceName, set);
-    }
-    set.add(chatId);
-  }
-
-  /**
-   * Remove a chatId from an instance's reverse index set.
-   * Cleans up empty sets to avoid memory leaks.
-   */
-  private removeFromReverseIndex(instanceName: string, chatId: string): void {
-    const set = this.instanceChatIds.get(instanceName);
-    if (set) {
-      set.delete(chatId);
-      if (set.size === 0) {
-        this.instanceChatIds.delete(instanceName);
-      }
-    }
-  }
-
-  // ───────────────────────────────────────────
-  // Persistence Helpers
-  // ───────────────────────────────────────────
-
-  /**
    * Validate the top-level schema of persisted data.
-   *
-   * Checks that `instances` and `chatProjectMap` are objects (not null, not arrays).
-   * Individual entry validation is done during restoration.
-   *
-   * @param data - Parsed JSON data to validate
-   * @returns true if schema is structurally valid
    */
-  private validatePersistSchema(data: unknown): data is ProjectsPersistData {
+  private validatePersistSchema(data: unknown): data is ProjectBindingsData {
     if (typeof data !== 'object' || data === null) {
       return false;
     }
     const obj = data as Record<string, unknown>;
-    if (typeof obj.instances !== 'object' || obj.instances === null || Array.isArray(obj.instances)) {
+    if (obj.version !== 1) {
       return false;
     }
-    if (typeof obj.chatProjectMap !== 'object' || obj.chatProjectMap === null || Array.isArray(obj.chatProjectMap)) {
+    if (typeof obj.bindings !== 'object' || obj.bindings === null || Array.isArray(obj.bindings)) {
       return false;
     }
     return true;
   }
 
-  // ───────────────────────────────────────────
-  // Validation
-  // ───────────────────────────────────────────
-
-  /**
-   * Validate an instance name.
-   *
-   * Rules:
-   * - Must be non-empty
-   * - Must not be "default" (reserved)
-   * - Must not contain ".." (path traversal)
-   * - Must not contain "/" or "\" (path separators)
-   * - Must not contain null bytes
-   * - Must not exceed 64 characters
-   * - Must not be whitespace-only
-   *
-   * @param name - Instance name to validate
-   * @returns Error message string, or null if valid
-   */
-  private validateInstanceName(name: string): string | null {
-    if (!name || name.length === 0) {
-      return '实例名称不能为空';
-    }
-    if (name === 'default') {
-      return '"default" 是保留名称，不能用作实例名';
-    }
-    if (name === '..' || name.includes('..')) {
-      return '实例名称不能包含 ".."（路径遍历防护）';
-    }
-    if (FORBIDDEN_NAME_CHARS.test(name)) {
-      return '实例名称不能包含 /、\\ 或空字节';
-    }
-    if (name.trim().length === 0) {
-      return '实例名称不能仅包含空白字符';
-    }
-    if (name.length > MAX_NAME_LENGTH) {
-      return `实例名称不能超过 ${MAX_NAME_LENGTH} 个字符`;
-    }
-    return null;
-  }
-
   /**
    * Validate a chatId.
-   *
-   * @param chatId - Chat session identifier
-   * @returns Error message string, or null if valid
    */
   private validateChatId(chatId: string): string | null {
     if (!chatId || chatId.length === 0) {
       return 'chatId 不能为空';
     }
+    return null;
+  }
+
+  /**
+   * Validate a working directory path.
+   */
+  private validateWorkingDir(workingDir: string): string | null {
+    if (!workingDir || workingDir.trim().length === 0) {
+      return '工作目录路径不能为空';
+    }
+
+    // Path traversal protection
+    if (workingDir.includes('..')) {
+      return '工作目录路径不能包含 ".."（路径遍历防护）';
+    }
+
+    // Null byte protection
+    if (workingDir.includes('\0')) {
+      return '工作目录路径不能包含空字节';
+    }
+
     return null;
   }
 }

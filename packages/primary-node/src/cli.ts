@@ -38,7 +38,6 @@ import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
-import { fileURLToPath } from 'node:url';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -216,18 +215,13 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
-  // Issue #1916: Inject CwdProvider from ProjectManager for project-scoped context
+  // Issue #3519: Simplified ProjectManager — chatId → workingDir binding
   const workspaceDir = Config.getWorkspaceDir();
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const packageDir = path.resolve(__dirname, '..');
-  const templatesConfig = Config.getProjectTemplatesConfig();
 
   const projectManager = new ProjectManager({
     workspaceDir,
-    packageDir,
-    templatesConfig,
   });
-  logger.info({ workspaceDir, packageDir }, 'ProjectManager initialized');
+  logger.info({ workspaceDir }, 'ProjectManager initialized');
 
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),

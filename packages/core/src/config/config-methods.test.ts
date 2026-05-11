@@ -240,32 +240,6 @@ describe('Config', () => {
     });
   });
 
-  describe('getProjectTemplatesConfig', () => {
-    it('should return project templates from config file', () => {
-      const templates = Config.getProjectTemplatesConfig();
-      expect(templates).toBeDefined();
-      expect(templates).toEqual({
-        research: {
-          displayName: '研究模式',
-          description: '专注研究的独立空间',
-        },
-        'book-reader': {
-          displayName: '读书助手',
-        },
-      });
-    });
-
-    it('should return template entries with correct structure', () => {
-      const templates = Config.getProjectTemplatesConfig();
-      expect(templates!.research).toBeDefined();
-      expect(templates!.research.displayName).toBe('研究模式');
-      expect(templates!.research.description).toBe('专注研究的独立空间');
-      expect(templates!['book-reader']).toBeDefined();
-      // description is optional
-      expect(templates!['book-reader'].description).toBeUndefined();
-    });
-  });
-
   describe('static properties', () => {
     it('should have GLM configuration from config file', () => {
       expect(Config.GLM_API_KEY).toBe('test-glm-key');
