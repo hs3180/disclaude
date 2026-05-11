@@ -298,6 +298,22 @@ export {
   type ProjectResolver,
 } from './messaging/index.js';
 
+// A2A messaging (Issue #3334)
+export type {
+  A2AConfig,
+  A2AEnqueueResult,
+  A2ARateLimitConfig,
+  EnqueueTaskParams,
+} from './messaging/index.js';
+
+export {
+  DEFAULT_A2A_RATE_LIMIT,
+  A2ARateLimiter,
+  createA2AEnqueueHandler,
+  ENQUEUE_TASK_DESCRIPTION,
+  ENQUEUE_TASK_PARAMETERS,
+} from './messaging/index.js';
+
 // Channels module (Issue #1041 - migrated from primary-node)
 export { BaseChannel } from './channels/index.js';
 
