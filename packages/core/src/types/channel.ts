@@ -127,17 +127,44 @@ export type ControlCommandType =
   | 'project';
 
 /**
- * Control command from user to agent.
+ * Typed data schema for each command type (Issue #3529).
+ *
+ * Commands with specific data needs define their schema here.
+ * Commands without entries accept no data (`undefined`).
  */
-export interface ControlCommand {
+export interface CommandDataMap {
+  /** /trigger — trigger mode toggle */
+  trigger: { mode?: string };
+  /** /project — project management */
+  project: { subcommand: string; workingDir?: string };
+}
+
+/**
+ * Resolve the data type for a given command type.
+ * Returns the mapped type if defined in CommandDataMap, otherwise undefined.
+ */
+export type CommandData<T extends ControlCommandType> =
+  T extends keyof CommandDataMap ? CommandDataMap[T] : undefined;
+
+/**
+ * Control command from user to agent.
+ *
+ * Generic over the command type for compile-time data safety (Issue #3529).
+ * - When T is a specific command type (e.g. `'project'`), `data` is typed accordingly.
+ * - When T is omitted (dispatcher usage), `data` accepts `Record<string, unknown>`
+ *   for backward compatibility with REST channel and generic dispatch.
+ */
+export interface ControlCommand<T extends ControlCommandType = ControlCommandType> {
   /** Command type */
-  type: ControlCommandType;
+  type: T;
 
   /** Target chat ID */
   chatId: string;
 
-  /** Additional command data */
-  data?: Record<string, unknown>;
+  /** Typed command data — shape depends on the command type */
+  data?: [T] extends [never] ? never :
+    T extends keyof CommandDataMap ? CommandDataMap[T] :
+    Record<string, unknown>;
 
   /** Target node ID for switch-node command */
   targetNodeId?: string;

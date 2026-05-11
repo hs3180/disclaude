@@ -92,6 +92,9 @@ export type {
   ChannelFactory,
   ChannelCapabilities,
   ChannelDescriptor,
+  // Issue #3529: Typed command data
+  CommandDataMap,
+  CommandData,
 } from './channel.js';
 
 export { DEFAULT_CHANNEL_CAPABILITIES } from './channel.js';

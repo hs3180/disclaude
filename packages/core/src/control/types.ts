@@ -53,19 +53,19 @@ export interface ControlHandlerContext {
 }
 
 /**
- * 单个命令的处理函数
+ * 单个命令的处理函数 (Issue #3529: generic over command type for typed data)
  */
-export type CommandHandler = (
-  command: ControlCommand,
+export type CommandHandler<T extends ControlCommandType = ControlCommandType> = (
+  command: ControlCommand<T>,
   context: ControlHandlerContext
 ) => Promise<ControlResponse> | ControlResponse;
 
 /**
  * 命令定义
  */
-export interface CommandDefinition {
-  type: ControlCommandType;
-  handler: CommandHandler;
+export interface CommandDefinition<T extends ControlCommandType = ControlCommandType> {
+  type: T;
+  handler: CommandHandler<T>;
   description: string;
   usage?: string;
 }

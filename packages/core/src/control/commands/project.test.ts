@@ -70,17 +70,17 @@ function makeCommand(
   chatId: string,
   subcommand: string,
   data?: Record<string, unknown>,
-): ControlCommand {
+): ControlCommand<'project'> {
   return {
     type: 'project',
     chatId,
-    data: { subcommand, ...data },
+    data: { subcommand, ...data } as ControlCommand<'project'>['data'],
   };
 }
 
 /** Resolve the possibly-async handler result */
 async function invoke(
-  cmd: ControlCommand,
+  cmd: ControlCommand<'project'>,
   ctx: ControlHandlerContext,
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   return await handleProject(cmd, ctx);
@@ -166,7 +166,7 @@ describe('handleProject', () => {
   describe('default subcommand', () => {
     it('should default to "info" when no subcommand specified', async () => {
       const ctx = createTestContext();
-      const cmd: ControlCommand = { type: 'project', chatId: 'chat-1' };
+      const cmd: ControlCommand<'project'> = { type: 'project', chatId: 'chat-1' };
       const result = await invoke(cmd, ctx);
 
       expect(result.success).toBe(true);
@@ -231,15 +231,16 @@ describe('handleProject', () => {
       expect(result.error).toContain('路径遍历');
     });
 
-    it('should accept args array from CLI-style invocation', async () => {
+    it('should accept pre-normalized data (simulating message-handler flow)', async () => {
       const ctx = createTestContext();
       const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
       mkdirSync(projectDir, { recursive: true });
 
-      // Simulate the data format sent by message-handler.ts:
-      // data: { args: ['use', 'my-project'], rawText: '/project use my-project' }
+      // After Issue #3529: data is normalized before reaching the handler.
+      // message-handler sends { args: ['use', 'my-project'] },
+      // normalizeCommandData converts to { subcommand: 'use', workingDir: 'my-project' }
       const result = await invoke(
-        makeCommand('chat-1', 'use', { args: ['use', 'my-project'], rawText: '/project use my-project' }),
+        makeCommand('chat-1', 'use', { workingDir: 'my-project' }),
         ctx,
       );
 
@@ -248,13 +249,13 @@ describe('handleProject', () => {
       expect(result.message).toContain('已切换');
     });
 
-    it('should accept args with multi-segment path', async () => {
+    it('should accept multi-segment path', async () => {
       const ctx = createTestContext();
       const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'projects', 'my-app');
       mkdirSync(projectDir, { recursive: true });
 
       const result = await invoke(
-        makeCommand('chat-1', 'use', { args: ['use', 'projects/my-app'], rawText: '/project use projects/my-app' }),
+        makeCommand('chat-1', 'use', { workingDir: 'projects/my-app' }),
         ctx,
       );
 

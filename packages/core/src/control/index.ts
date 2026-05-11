@@ -9,3 +9,4 @@
 export * from './types.js';
 export { createControlHandler } from './handler.js';
 export { commandRegistry, getHandler } from './commands/index.js';
+export { normalizeCommandData, createControlCommand } from './normalize.js';

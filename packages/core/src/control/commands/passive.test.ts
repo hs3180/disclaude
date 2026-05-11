@@ -9,12 +9,16 @@ import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext } from '../types.js';
 import type { TriggerMode } from '../../config/types.js';
 
-/** 创建测试用的 control command */
-function createCommand(args?: string | string[], chatId = 'test-chat-id'): ControlCommand {
+/** 创建测试用的 control command (typed for trigger) */
+function createCommand(args?: string | string[], chatId = 'test-chat-id'): ControlCommand<'trigger'> {
+  // Simulate normalized data: mode is extracted from args
+  const mode = args !== undefined
+    ? (Array.isArray(args) ? args[0] : args)
+    : undefined;
   return {
     type: 'trigger',
     chatId,
-    data: args !== undefined ? { args } : undefined,
+    data: mode !== undefined ? { mode } : undefined,
   };
 }
 
