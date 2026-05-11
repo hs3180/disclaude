@@ -4,10 +4,15 @@
  * Tests cover:
  * - Subcommand dispatching
  * - `list` — list all instances
+ * - `templates` — list available templates
+ * - `create` — create a new project instance
+ * - `use` — bind chat to existing instance
+ * - `reset` — reset chat to default
  * - `info` — show current chat's active project
  * - `status` — show detailed status for a project
  * - Error cases (no ProjectManager, unknown subcommand, missing instance)
  *
+ * @see Issue #1916 (unified ProjectContext system)
  * @see Issue #3335 (Project state persistence)
  */
 
@@ -273,6 +278,177 @@ describe('handleProject', () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('default');
+    });
+  });
+
+  describe('/project templates', () => {
+    it('should list discovered templates', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'templates'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('test-tpl');
+    });
+
+    it('should show empty message when no templates', async () => {
+      const workspaceDir = createTempDir();
+      const packageDir = join(workspaceDir, 'pkg');
+      mkdirSync(join(packageDir, 'templates'), { recursive: true });
+
+      const pm = new ProjectManager({ workspaceDir, packageDir });
+      const ctx: ControlHandlerContext = {
+        agentPool: { reset: () => {}, stop: () => false },
+        node: { nodeId: 'test-node', getDebugGroup: () => null, setDebugGroup: () => {}, clearDebugGroup: () => null },
+        projectManager: pm,
+      };
+
+      const result = await invoke(makeCommand('chat-1', 'templates'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('暂无模板');
+    });
+  });
+
+  describe('/project create', () => {
+    it('should create a new project instance', async () => {
+      const resetCalls: string[] = [];
+      const ctx = createTestContext({
+        agentPool: {
+          reset: (chatId: string) => { resetCalls.push(chatId); },
+          stop: () => false,
+        },
+      });
+
+      const result = await invoke(
+        makeCommand('chat-1', 'create', { templateName: 'test-tpl', instanceName: 'my-proj' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-proj');
+      expect(result.message).toContain('已创建');
+      expect(resetCalls).toContain('chat-1');
+    });
+
+    it('should return error when template name is missing', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(
+        makeCommand('chat-1', 'create', { instanceName: 'my-proj' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('template');
+    });
+
+    it('should return error when instance name is missing', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(
+        makeCommand('chat-1', 'create', { templateName: 'test-tpl' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('name');
+    });
+
+    it('should return error for non-existent template', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(
+        makeCommand('chat-1', 'create', { templateName: 'non-existent', instanceName: 'my-proj' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('不存在');
+    });
+
+    it('should return error for duplicate instance name', async () => {
+      const ctx = createTestContext();
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'existing-proj');
+
+      const result = await invoke(
+        makeCommand('chat-2', 'create', { templateName: 'test-tpl', instanceName: 'existing-proj' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('已存在');
+    });
+  });
+
+  describe('/project use', () => {
+    it('should bind chat to existing instance', async () => {
+      const resetCalls: string[] = [];
+      const ctx = createTestContext({
+        agentPool: {
+          reset: (chatId: string) => { resetCalls.push(chatId); },
+          stop: () => false,
+        },
+      });
+
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'shared-proj');
+
+      const result = await invoke(
+        makeCommand('chat-2', 'use', { instanceName: 'shared-proj' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('shared-proj');
+      expect(result.message).toContain('已切换');
+      expect(resetCalls).toContain('chat-2');
+    });
+
+    it('should return error when instance name is missing', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'use'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('name');
+    });
+
+    it('should return error for non-existent instance', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(
+        makeCommand('chat-1', 'use', { instanceName: 'no-such' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('不存在');
+    });
+  });
+
+  describe('/project reset', () => {
+    it('should reset chat to default project', async () => {
+      const resetCalls: string[] = [];
+      const ctx = createTestContext({
+        agentPool: {
+          reset: (chatId: string) => { resetCalls.push(chatId); },
+          stop: () => false,
+        },
+      });
+
+      ctx.projectManager!.create('chat-1', 'test-tpl', 'temp-proj');
+
+      const result = await invoke(makeCommand('chat-1', 'reset'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已重置');
+      expect(resetCalls).toContain('chat-1');
+
+      // Verify binding was removed
+      const active = ctx.projectManager!.getActive('chat-1');
+      expect(active.name).toBe('default');
+    });
+
+    it('should succeed even when already on default', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'reset'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已重置');
     });
   });
 });
