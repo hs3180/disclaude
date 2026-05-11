@@ -82,17 +82,11 @@ export type ProjectTemplatesConfig = Record<
  *
  * Source:
  * - default: implicitly built-in, workingDir = workspace root
- * - others: instantiated from template, user-specified name
- *
- * Note: CLAUDE.md is only copied from template at instantiation time.
- * chatId → name binding is managed by `chatProjectMap`, not stored on the instance.
+ * - others: bound working directory via `/project use`
  */
 export interface ProjectContextConfig {
-  /** Instance name (user-specified at creation, globally unique) */
+  /** Project name (workingDir path for bound projects, 'default' for unbound) */
   name: string;
-
-  /** Source template name (set at instantiation time, undefined for "default") */
-  templateName?: string;
 
   /** Instance working directory (Agent discovers CLAUDE.md here) */
   workingDir: string;
@@ -264,20 +258,9 @@ export interface ProjectState {
 /**
  * Options for constructing a ProjectManager instance.
  *
- * @see Issue #2224 (Sub-Issue B — ProjectManager core logic)
+ * @see Issue #3519 (simplified /project command)
  */
 export interface ProjectManagerOptions {
-  /** Workspace root directory (parent of `projects/` instances dir) */
+  /** Workspace root directory (default working directory when no binding exists) */
   workspaceDir: string;
-
-  /** Package directory (contains `templates/` with built-in CLAUDE.md files) */
-  packageDir: string;
-
-  /**
-   * Template configuration overrides from disclaude.config.yaml.
-   *
-   * When provided, these entries override/extend auto-discovered templates.
-   * When omitted, templates are auto-discovered from `{packageDir}/templates/`.
-   */
-  templatesConfig?: ProjectTemplatesConfig;
 }
