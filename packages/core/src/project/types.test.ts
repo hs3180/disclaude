@@ -26,14 +26,13 @@ describe('ProjectResult<T> discriminated union', () => {
     const result: ProjectResult<ProjectContextConfig> = {
       ok: true,
       data: {
-        name: 'my-research',
-        templateName: 'research',
+        name: '/workspace/projects/my-research',
         workingDir: '/workspace/projects/my-research',
       },
     };
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.name).toBe('my-research');
+      expect(result.data.name).toBe('/workspace/projects/my-research');
       expect(result.data.workingDir).toBe('/workspace/projects/my-research');
     }
   });
@@ -83,23 +82,22 @@ describe('ProjectResult<T> discriminated union', () => {
 });
 
 describe('ProjectContextConfig', () => {
-  it('should accept minimal config (default project)', () => {
+  it('should accept default config', () => {
     const config: ProjectContextConfig = {
       name: 'default',
       workingDir: '/workspace',
     };
     expect(config.name).toBe('default');
-    expect(config.templateName).toBeUndefined();
+    expect(config.workingDir).toBe('/workspace');
   });
 
-  it('should accept full config', () => {
+  it('should accept bound project config', () => {
     const config: ProjectContextConfig = {
-      name: 'my-research',
-      templateName: 'research',
+      name: '/workspace/projects/my-research',
       workingDir: '/workspace/projects/my-research',
     };
-    expect(config.name).toBe('my-research');
-    expect(config.templateName).toBe('research');
+    expect(config.name).toBe('/workspace/projects/my-research');
+    expect(config.workingDir).toBe('/workspace/projects/my-research');
   });
 });
 
@@ -220,26 +218,8 @@ describe('ProjectManagerOptions', () => {
   it('should accept valid constructor options', () => {
     const options: ProjectManagerOptions = {
       workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
-      templatesConfig: {
-        research: {
-          displayName: '研究模式',
-          description: '专注研究的独立空间',
-        },
-      },
     };
     expect(options.workspaceDir).toBe('/workspace');
-    expect(options.packageDir).toBe('/app/packages/core');
-    expect(Object.keys(options.templatesConfig!)).toHaveLength(1);
-  });
-
-  it('should accept options without templatesConfig (auto-discovery)', () => {
-    const options: ProjectManagerOptions = {
-      workspaceDir: '/workspace',
-      packageDir: '/app/packages/core',
-    };
-    expect(options.workspaceDir).toBe('/workspace');
-    expect(options.templatesConfig).toBeUndefined();
   });
 });
 

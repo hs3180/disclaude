@@ -11,7 +11,7 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type {
   CwdProvider,
@@ -116,6 +116,14 @@ export class ProjectManager {
 
     // Resolve relative paths against workspaceDir
     const resolvedDir = resolve(this.workspaceDir, workingDir);
+
+    // Validate that the directory exists
+    if (!existsSync(resolvedDir)) {
+      return { ok: false, error: `目录不存在: ${resolvedDir}` };
+    }
+    if (!statSync(resolvedDir).isDirectory()) {
+      return { ok: false, error: `路径不是目录: ${resolvedDir}` };
+    }
 
     // Save pre-mutation state for rollback
     const oldDir = this.bindings.get(chatId);

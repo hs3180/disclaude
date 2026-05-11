@@ -15,6 +15,7 @@
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext, CommandHandler } from '../types.js';
 import { readProjectState } from '../../project/project-state.js';
+import { basename } from 'node:path';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Subcommand Handlers
@@ -50,7 +51,7 @@ function handleInfo(command: ControlCommand, context: ControlHandlerContext): Co
   return {
     success: true,
     message: [
-      '📂 **当前项目**: 已绑定',
+      `📂 **当前项目**: ${basename(active.workingDir)}`,
       `**工作目录**: \`${active.workingDir}\``,
       '',
       '**状态摘要**:',
