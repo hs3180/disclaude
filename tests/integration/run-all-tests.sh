@@ -198,7 +198,15 @@ run_suite() {
     # Issue #3378: Check server health between suites for listener leak monitoring
     check_server_health_detailed
 
-    run_test_script "$script" "$name"
+    local suite_result=0
+    run_test_script "$script" "$name" || suite_result=$?
+
+    # Issue #3378: After each suite, check if exit listener count is elevated.
+    # If so, restart the server to prevent leaked listeners from causing
+    # cascading failures in subsequent test suites.
+    restart_server_if_unhealthy
+
+    return $suite_result
 }
 
 # =============================================================================
