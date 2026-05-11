@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawn } from 'node:child_process';
 import { ProcessLock } from './process-lock.js';
 import type { Logger } from 'pino';
 import { createLogger } from './logger.js';
@@ -133,6 +134,42 @@ describe('ProcessLock', () => {
       // File should still exist because PID doesn't match
       expect(fs.existsSync(lockfilePath)).toBe(true);
       expect(fs.readFileSync(lockfilePath, 'utf-8').trim()).toBe('99999');
+    });
+  });
+
+  describe('PID recycling protection (Issue #3494)', () => {
+    it('should detect PID recycling and treat as stale (Linux)', () => {
+      // On non-Linux, this test effectively skips the cmdline check.
+      if (process.platform !== 'linux') {
+        return;
+      }
+
+      // Spawn a non-Node process (sleep) to simulate PID recycling.
+      // Its PID is alive but it's not a Node.js process → stale lock.
+      const child = spawn('sleep', ['5'], { stdio: 'ignore' });
+      try {
+        fs.writeFileSync(lockfilePath, String(child.pid!), 'utf-8');
+
+        const lock = new ProcessLock({ lockfilePath, logger });
+        const result = lock.acquire();
+
+        // sleep process is running but is not a Node.js process → stale
+        expect(result).toBe(true);
+        expect(lock.isAcquired).toBe(true);
+        expect(fs.readFileSync(lockfilePath, 'utf-8').trim()).toBe(String(process.pid));
+      } finally {
+        child.kill();
+      }
+    });
+
+    it('should detect our own PID as running and refuse', () => {
+      // Write our own PID — this IS a node/disclaude-related process
+      fs.writeFileSync(lockfilePath, String(process.pid), 'utf-8');
+
+      const lock = new ProcessLock({ lockfilePath, logger });
+      const result = lock.acquire();
+
+      expect(result).toBe(false);
     });
   });
 
