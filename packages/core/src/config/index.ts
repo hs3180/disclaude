@@ -569,19 +569,6 @@ export class Config {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
 
-  /**
-   * Get project template configuration from config file.
-   *
-   * Returns the `projectTemplates` section from disclaude.config.yaml,
-   * which overrides/extends auto-discovered templates with display metadata.
-   * Returns undefined if no projectTemplates are configured (auto-discovery only).
-   *
-   * @see Issue #2227
-   * @returns Project template configuration, or undefined
-   */
-  static getProjectTemplatesConfig(): Record<string, { displayName?: string; description?: string }> | undefined {
-    return fileConfigOnly.projectTemplates as Record<string, { displayName?: string; description?: string }> | undefined;
-  }
 }
 
 // ============================================================================
