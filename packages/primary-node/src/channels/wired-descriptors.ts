@@ -280,7 +280,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
   defaultCapabilities: {
     supportsCard: false,
     supportsThread: false,
-    supportsFile: false,
+    supportsFile: true,
     supportsMarkdown: false,
     supportsMention: false,
     supportsUpdate: false,
