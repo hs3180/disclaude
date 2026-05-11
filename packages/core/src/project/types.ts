@@ -143,6 +143,31 @@ export interface ProjectState {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Project Configuration (Issue #3332)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Pre-configured project definition loaded from disclaude.config.yaml.
+ *
+ * Each project defines a binding between a project key, a working directory,
+ * and a designated chatId where the project-bound agent operates.
+ *
+ * @see Issue #3332 (Project-scoped ChatAgent with chatId binding)
+ */
+export interface ProjectConfig {
+  /** Unique project key (e.g., 'hs3180/disclaude') */
+  key: string;
+  /** Project root directory (relative paths resolved against workspaceDir) */
+  workingDir: string;
+  /** Bound chat — agent output goes here */
+  chatId: string;
+  /** Model tier for the project-bound agent (default: uses global default) */
+  modelTier?: 'high' | 'low' | 'multimodal';
+  /** Agent idle timeout in milliseconds (default: 30min = 1800000) */
+  idleTimeoutMs?: number;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constructor Options
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -150,8 +175,19 @@ export interface ProjectState {
  * Options for constructing a ProjectManager instance.
  *
  * @see Issue #3519 (simplified /project command)
+ * @see Issue #3332 (project configs from config file)
  */
 export interface ProjectManagerOptions {
   /** Workspace root directory (default working directory when no binding exists) */
   workspaceDir: string;
+  /**
+   * Pre-configured project definitions loaded from disclaude.config.yaml.
+   *
+   * When provided, ProjectManager auto-binds each project's chatId to its
+   * workingDir at construction time. These bindings coexist with user-initiated
+   * bindings from the `/project use` command.
+   *
+   * @see Issue #3332
+   */
+  projects?: ProjectConfig[];
 }

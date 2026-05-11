@@ -15,6 +15,7 @@ import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileS
 import { basename, resolve } from 'node:path';
 import type {
   CwdProvider,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -49,6 +50,8 @@ export class ProjectManager {
   private readonly workspaceDir: string;
   /** chatId → workingDir binding */
   private bindings: Map<string, string> = new Map();
+  /** project key → ProjectConfig mapping (from YAML config) */
+  private readonly projectConfigs: Map<string, ProjectConfig> = new Map();
 
   /** Path to .disclaude directory */
   private readonly dataDir: string;
@@ -65,6 +68,11 @@ export class ProjectManager {
 
     // Restore persisted state
     this.loadPersistedData();
+
+    // Load project configs and auto-bind their chatIds (Issue #3332)
+    if (options.projects && options.projects.length > 0) {
+      this.loadProjectConfigs(options.projects);
+    }
   }
 
   // ───────────────────────────────────────────
@@ -215,6 +223,57 @@ export class ProjectManager {
       }
       return active.workingDir;
     };
+  }
+
+  // ───────────────────────────────────────────
+  // Project Config Methods (Issue #3332)
+  // ───────────────────────────────────────────
+
+  /**
+   * Get a project configuration by its key.
+   *
+   * @param projectKey - The project key (e.g., 'hs3180/disclaude')
+   * @returns ProjectConfig if found, undefined otherwise
+   */
+  getProjectConfig(projectKey: string): ProjectConfig | undefined {
+    return this.projectConfigs.get(projectKey);
+  }
+
+  /**
+   * Get all loaded project configurations.
+   *
+   * @returns Array of all ProjectConfig objects
+   */
+  getAllProjectConfigs(): ProjectConfig[] {
+    return Array.from(this.projectConfigs.values());
+  }
+
+  /**
+   * Load project configurations and auto-bind their chatIds.
+   *
+   * Called during construction when projects are provided in config.
+   * Each project's chatId is automatically bound to the project's workingDir.
+   * User-initiated bindings (from persisted data) take precedence — project
+   * config bindings only apply if no explicit binding already exists.
+   *
+   * @param projects - Array of ProjectConfig from YAML config
+   */
+  loadProjectConfigs(projects: ProjectConfig[]): void {
+    for (const project of projects) {
+      // Validate required fields
+      if (!project.key || !project.workingDir || !project.chatId) {
+        continue;
+      }
+
+      // Store project config
+      this.projectConfigs.set(project.key, project);
+
+      // Auto-bind chatId only if no existing binding (user binding takes precedence)
+      if (!this.bindings.has(project.chatId)) {
+        const resolvedDir = resolve(this.workspaceDir, project.workingDir);
+        this.bindings.set(project.chatId, resolvedDir);
+      }
+    }
   }
 
   // ───────────────────────────────────────────

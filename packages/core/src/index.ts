@@ -322,9 +322,11 @@ export {
 } from './control/index.js';
 
 // Project module — simplified per-chatId working directory binding (Issue #3519)
+// Project configs for project-scoped ChatAgent (Issue #3332)
 export type {
   CwdProvider,
   IssueTriageStatus,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,

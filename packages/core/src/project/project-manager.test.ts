@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProjectManager } from './project-manager.js';
-import type { ProjectManagerOptions } from './types.js';
+import type { ProjectConfig, ProjectManagerOptions } from './types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Test Fixtures
@@ -385,6 +385,132 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const pm = new ProjectManager(opts);
       expect(pm.getWorkspaceDir()).toBe(opts.workspaceDir);
+    });
+  });
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Issue #3332: Project Config Tests
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  describe('project configs (Issue #3332)', () => {
+    it('should load project configs and auto-bind chatIds', () => {
+      const opts = createOptions();
+      const projects: ProjectConfig[] = [
+        { key: 'owner/repo', workingDir: '.', chatId: 'oc_chat1' },
+        { key: 'other/project', workingDir: '/absolute/path', chatId: 'oc_chat2' },
+      ];
+      const pm = new ProjectManager({ ...opts, projects });
+
+      // chatIds should be auto-bound
+      expect(pm.getActive('oc_chat1').workingDir).toBe(resolve(opts.workspaceDir, '.'));
+      expect(pm.getActive('oc_chat2').workingDir).toBe('/absolute/path');
+    });
+
+    it('should look up project config by key', () => {
+      const opts = createOptions();
+      const projects: ProjectConfig[] = [
+        { key: 'owner/repo', workingDir: '.', chatId: 'oc_chat1', modelTier: 'low' },
+      ];
+      const pm = new ProjectManager({ ...opts, projects });
+
+      const config = pm.getProjectConfig('owner/repo');
+      expect(config).toBeDefined();
+      expect(config!.key).toBe('owner/repo');
+      expect(config!.modelTier).toBe('low');
+    });
+
+    it('should return undefined for unknown project key', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+
+      expect(pm.getProjectConfig('nonexistent')).toBeUndefined();
+    });
+
+    it('should return all project configs', () => {
+      const opts = createOptions();
+      const projects: ProjectConfig[] = [
+        { key: 'owner/repo-a', workingDir: '.', chatId: 'oc_chat1' },
+        { key: 'owner/repo-b', workingDir: './other', chatId: 'oc_chat2' },
+      ];
+      const pm = new ProjectManager({ ...opts, projects });
+
+      const allConfigs = pm.getAllProjectConfigs();
+      expect(allConfigs).toHaveLength(2);
+      expect(allConfigs.map(c => c.key).sort()).toEqual(['owner/repo-a', 'owner/repo-b']);
+    });
+
+    it('should return empty array when no projects configured', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+
+      expect(pm.getAllProjectConfigs()).toEqual([]);
+    });
+
+    it('should not override user-initiated bindings', () => {
+      const opts = createOptions();
+
+      // First, create persisted binding
+      const pm1 = new ProjectManager(opts);
+      pm1.use('oc_chat1', '/user-bound-dir');
+
+      // Now load with project config that has the same chatId
+      const projects: ProjectConfig[] = [
+        { key: 'owner/repo', workingDir: './project-dir', chatId: 'oc_chat1' },
+      ];
+      const pm2 = new ProjectManager({ ...opts, projects });
+
+      // User binding should take precedence
+      expect(pm2.getActive('oc_chat1').workingDir).toBe('/user-bound-dir');
+      // But project config should still be available for lookup
+      expect(pm2.getProjectConfig('owner/repo')).toBeDefined();
+    });
+
+    it('should skip project configs with missing required fields', () => {
+      const opts = createOptions();
+      const projects = [
+        { key: 'valid/project', workingDir: '.', chatId: 'oc_chat1' },
+        { key: '', workingDir: '.', chatId: 'oc_chat2' }, // empty key
+        { key: 'no-dir', workingDir: '', chatId: 'oc_chat3' }, // empty workingDir
+        { key: 'no-chatid', workingDir: '.', chatId: '' }, // empty chatId
+      ] as ProjectConfig[];
+      const pm = new ProjectManager({ ...opts, projects });
+
+      expect(pm.getAllProjectConfigs()).toHaveLength(1);
+      expect(pm.getProjectConfig('valid/project')).toBeDefined();
+    });
+
+    it('should support modelTier and idleTimeoutMs in project config', () => {
+      const opts = createOptions();
+      const projects: ProjectConfig[] = [
+        { key: 'owner/repo', workingDir: '.', chatId: 'oc_chat1', modelTier: 'low', idleTimeoutMs: 60000 },
+      ];
+      const pm = new ProjectManager({ ...opts, projects });
+
+      const config = pm.getProjectConfig('owner/repo');
+      expect(config!.modelTier).toBe('low');
+      expect(config!.idleTimeoutMs).toBe(60000);
+    });
+
+    it('project config bindings should work with CwdProvider', () => {
+      const opts = createOptions();
+      const projects: ProjectConfig[] = [
+        { key: 'owner/repo', workingDir: '/project-dir', chatId: 'oc_chat1' },
+      ];
+      const pm = new ProjectManager({ ...opts, projects });
+      const cwdProvider = pm.createCwdProvider();
+
+      expect(cwdProvider('oc_chat1')).toBe('/project-dir');
+      expect(cwdProvider('unknown-chat')).toBeUndefined();
+    });
+
+    it('should resolve relative workingDir against workspaceDir', () => {
+      const opts = createOptions();
+      const projects: ProjectConfig[] = [
+        { key: 'owner/repo', workingDir: 'subdir/project', chatId: 'oc_chat1' },
+      ];
+      const pm = new ProjectManager({ ...opts, projects });
+
+      expect(pm.getActive('oc_chat1').workingDir).toBe(resolve(opts.workspaceDir, 'subdir/project'));
     });
   });
 });

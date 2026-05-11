@@ -394,6 +394,33 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+  /**
+   * Pre-configured projects for project-scoped ChatAgent binding (Issue #3332).
+   *
+   * Each project defines a key, working directory, and chatId.
+   * The project's chatId is auto-bound to its workingDir at startup,
+   * enabling system-driven agents to operate within a specific project directory.
+   *
+   * ```yaml
+   * projects:
+   *   - key: "hs3180/disclaude"
+   *     workingDir: "."
+   *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+   *     modelTier: "low"
+   * ```
+   */
+  projects?: Array<{
+    /** Unique project key (e.g., 'owner/repo') */
+    key: string;
+    /** Project root directory (relative to workspaceDir) */
+    workingDir: string;
+    /** Bound chatId — agent output goes here */
+    chatId: string;
+    /** Model tier: 'high' | 'low' | 'multimodal' */
+    modelTier?: 'high' | 'low' | 'multimodal';
+    /** Agent idle timeout in milliseconds */
+    idleTimeoutMs?: number;
+  }>;
 }
 
 /**
