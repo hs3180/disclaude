@@ -83,5 +83,13 @@ export { feishuSdkTools } from './channel-mcp.js';
 /** @deprecated Use createChannelMcpServer instead */
 export { createFeishuSdkMcpServer } from './channel-mcp.js';
 
+// A2A MCP Server — Agent-to-Agent task delegation tools (Issue #3334)
+export {
+  a2aToolDefinitions,
+  createA2aMcpServer,
+  initA2aRouter,
+  getA2aRouter,
+} from './a2a-mcp.js';
+
 // Version
 export const MCP_SERVER_VERSION = '0.0.1';

@@ -143,6 +143,13 @@ export {
   MessageRouter,
 } from './agents/message-router.js';
 
+// A2A Router — Agent-to-Agent task delegation (Issue #3334)
+export {
+  type A2ARouterConfig,
+  type A2AEnqueueCallback,
+  A2ARouter,
+} from './agents/a2a-router.js';
+
 // Base Agent
 export {
   type SdkOptionsExtra,

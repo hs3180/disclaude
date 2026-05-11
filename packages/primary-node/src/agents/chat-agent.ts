@@ -36,7 +36,7 @@
  */
 
 import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
-import { createChannelMcpServer } from '@disclaude/mcp-server';
+import { createChannelMcpServer, createA2aMcpServer, getA2aRouter } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
 // Type alias for backward compatibility within this module
@@ -184,6 +184,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Merge configured external MCP servers from config file
     const configuredMcpServers = Config.getMcpServersConfig();
+
+    // A2A MCP server — Agent-to-Agent task delegation tool (Issue #3334)
+    if (getA2aRouter()) {
+      mcpServers['a2a-mcp'] = createA2aMcpServer();
+    }
     if (configuredMcpServers) {
       for (const [name, config] of Object.entries(configuredMcpServers)) {
         mcpServers[name] = {

@@ -69,6 +69,8 @@ vi.mock('@disclaude/core', () => ({
 
 vi.mock('@disclaude/mcp-server', () => ({
   createChannelMcpServer: vi.fn(() => ({ type: 'inline' })),
+  createA2aMcpServer: vi.fn(() => ({ type: 'inline' })),
+  getA2aRouter: vi.fn(() => null),
 }));
 
 import { ChatAgent } from './chat-agent.js';
