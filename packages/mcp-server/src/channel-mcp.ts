@@ -17,6 +17,7 @@ import {
   send_file,
   setMessageSentCallback
 } from './tools/index.js';
+import { enqueue_task } from './tools/enqueue-task.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
 import { transformCardTables } from './utils/table-converter.js';
 import { resolveCardImages } from './utils/card-image-resolver.js';
@@ -150,6 +151,20 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  enqueue_task: {
+    description: 'Delegate a task to another project-bound agent.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sourceChatId: { type: 'string', description: 'Your own chat ID' },
+        projectKey: { type: 'string', description: 'Target project key' },
+        payload: { type: 'string', description: 'Task instruction' },
+        priority: { type: 'string', enum: ['low', 'normal', 'high'], description: 'Priority' },
+      },
+      required: ['sourceChatId', 'projectKey', 'payload'],
+    },
+    handler: enqueue_task,
   },
 };
 
@@ -464,6 +479,55 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  // ============================================================================
+  // Issue #3334: A2A task delegation — enqueue_task
+  // ============================================================================
+  {
+    name: 'enqueue_task',
+    description: `Delegate a task to another project-bound agent via A2A messaging.
+
+The target agent will receive and process the task in its bound chat.
+This is non-blocking: the tool returns immediately after enqueuing.
+
+## Parameters
+- **sourceChatId**: Your own chat ID (for anti-recursion and traceability)
+- **projectKey**: Target project key (e.g., 'owner/repo')
+- **payload**: Task instruction for the target agent
+- **priority**: Processing priority ('low', 'normal', 'high')
+
+## Safety
+- Anti-recursion: You cannot enqueue a task to your own project
+- Rate limiting: Max N tasks per time window (configurable)
+
+## Example
+\`\`\`json
+{"sourceChatId": "oc_your_chat", "projectKey": "owner/repo", "payload": "Analyze all open issues", "priority": "normal"}
+\`\`\``,
+    parameters: z.object({
+      sourceChatId: z.string().describe('Your own chat ID (for anti-recursion and traceability)'),
+      projectKey: z.string().describe('Target project key (e.g., "owner/repo")'),
+      payload: z.string().describe('Task instruction for the target agent'),
+      priority: z.enum(['low', 'normal', 'high']).optional().describe('Processing priority (default: "normal")'),
+    }),
+    handler: async ({ sourceChatId, projectKey, payload, priority }: {
+      sourceChatId: string;
+      projectKey: string;
+      payload: string;
+      priority?: 'low' | 'normal' | 'high';
+    }) => await withTiming(timingLogger, 'mcp:enqueue_task', sourceChatId, async () => {
+      try {
+        const result = await enqueue_task({
+          sourceChatId,
+          projectKey,
+          payload,
+          priority: priority ?? 'normal',
+        });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`enqueue_task failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },

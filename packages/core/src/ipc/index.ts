@@ -33,6 +33,8 @@ export {
   type ChannelHandlersContainer,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
+  // Issue #3334: A2A task delegation handler type
+  type EnqueueTaskHandler,
 } from './unix-socket-server.js';
 
 // Client implementation

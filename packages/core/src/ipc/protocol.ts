@@ -22,6 +22,8 @@ export type IpcRequestType =
   | 'uploadImage'
   // Raw-param interactive card (Issue #1570: Phase 1 of IPC refactor)
   | 'sendInteractive'
+  // A2A task delegation (Issue #3334)
+  | 'enqueueTask'
   // Temporary chat lifecycle management (Issue #1703)
   | 'listTempChats'
   | 'markChatResponded';
@@ -68,6 +70,13 @@ export interface IpcRequestPayloads {
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
+  // A2A task delegation (Issue #3334)
+  enqueueTask: {
+    sourceChatId: string;
+    projectKey: string;
+    payload: string;
+    priority: 'low' | 'normal' | 'high';
+  };
   // Temporary chat lifecycle management (Issue #1703)
   listTempChats: Record<string, never>;
   markChatResponded: {
@@ -108,6 +117,12 @@ export interface IpcResponsePayloads {
   sendInteractive: {
     success: boolean;
     messageId?: string;
+  };
+  // A2A task delegation (Issue #3334)
+  enqueueTask: {
+    success: boolean;
+    messageId?: string;
+    error?: string;
   };
   // Temporary chat lifecycle management (Issue #1703)
   listTempChats: {

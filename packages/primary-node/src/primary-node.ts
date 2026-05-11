@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #3334: A2A task delegation
+  type EnqueueTaskHandler,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
@@ -146,6 +148,9 @@ export class PrimaryNode extends EventEmitter {
   // IPC Server for MCP Server connections (Issue #1042)
   protected ipcServer: UnixSocketIpcServer | null = null;
   protected feishuHandlersContainer: FeishuHandlersContainer = { handlers: undefined };
+
+  // A2A task delegation (Issue #3334)
+  protected enqueueTaskHandler?: EnqueueTaskHandler;
 
   // Scheduler (Issue #1377)
   protected scheduler?: Scheduler;
@@ -248,6 +253,15 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Register an A2A task enqueue handler.
+   * Issue #3334: Allows external code (cli.ts) to wire NonUserMessageRouter.
+   * Must be called before start() to take effect.
+   */
+  setEnqueueTaskHandler(handler: EnqueueTaskHandler): void {
+    this.enqueueTaskHandler = handler;
+  }
+
+  /**
    * Register a communication channel.
    * Delegates to ChannelManager (Issue #1594: unified channel lifecycle).
    */
@@ -298,7 +312,8 @@ export class PrimaryNode extends EventEmitter {
       (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
         contextStore.register(messageId, chatId, actionPrompts);
       },
-      this.feishuHandlersContainer
+      this.feishuHandlersContainer,
+      this.enqueueTaskHandler
     );
 
     this.ipcServer = new UnixSocketIpcServer(requestHandler, {

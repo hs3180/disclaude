@@ -32,6 +32,7 @@ import {
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
+import { NonUserMessageRouter } from './a2a/non-user-message-router.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
@@ -230,6 +231,16 @@ async function main(): Promise<void> {
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
   });
+
+  // Issue #3334: Initialize A2A NonUserMessageRouter
+  const a2aRouter = new NonUserMessageRouter({
+    agentPool,
+    projectManager,
+  });
+  primaryNode.setEnqueueTaskHandler((sourceChatId, projectKey, payload, priority) => {
+    return a2aRouter.enqueue(sourceChatId, projectKey, payload, priority);
+  });
+  logger.info('NonUserMessageRouter initialized for A2A task delegation');
 
   // Create unified control handler context
   const controlHandlerContext: ControlHandlerContext = {

@@ -51,6 +51,17 @@ export type {
 
 export { createFileRef, createInboundAttachment, createOutboundFile } from './file.js';
 
+// NonUserMessage types (Issue #3334, Issue #3331)
+export type {
+  NonUserMessage,
+  NonUserMessageType,
+  NonUserMessagePriority,
+} from './non-user-message.js';
+export {
+  generateNonUserMessageId,
+  createA2AMessage,
+} from './non-user-message.js';
+
 // Platform types (Feishu-specific)
 export type {
   FeishuCard,

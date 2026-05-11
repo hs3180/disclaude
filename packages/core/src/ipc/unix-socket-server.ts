@@ -109,6 +109,18 @@ export interface ChannelHandlersContainer {
 export type FeishuHandlersContainer = ChannelHandlersContainer;
 
 /**
+ * A2A task enqueue handler (Issue #3334).
+ *
+ * Called when an agent wants to delegate a task to another project-bound agent.
+ */
+export type EnqueueTaskHandler = (
+  sourceChatId: string,
+  projectKey: string,
+  payload: string,
+  priority: 'low' | 'normal' | 'high'
+) => Promise<{ success: boolean; messageId?: string; error?: string }>;
+
+/**
  * Create an IPC request handler for channel API operations.
  *
  * Issue #1120: Uses ChannelHandlersContainer for dynamic handler registration.
@@ -118,7 +130,8 @@ export type FeishuHandlersContainer = ChannelHandlersContainer;
  */
 export function createInteractiveMessageHandler(
   registerActionPrompts: (messageId: string, chatId: string, actionPrompts: Record<string, string>) => void,
-  channelHandlersContainer?: ChannelHandlersContainer
+  channelHandlersContainer?: ChannelHandlersContainer,
+  enqueueTaskHandler?: EnqueueTaskHandler
 ): IpcRequestHandler {
 
   return async (request: IpcRequest): Promise<IpcResponse> => {
@@ -307,6 +320,26 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.markChatResponded(chatId, response);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // A2A task delegation (Issue #3334)
+        case 'enqueueTask': {
+          if (!enqueueTaskHandler) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'A2A task delegation not available',
+            };
+          }
+          const { sourceChatId, projectKey, payload, priority } =
+            request.payload as IpcRequestPayloads['enqueueTask'];
+          try {
+            const result = await enqueueTaskHandler(sourceChatId, projectKey, payload, priority);
+            return { id: request.id, success: result.success, payload: result };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

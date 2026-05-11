@@ -181,3 +181,6 @@ export const PRIMARY_NODE_VERSION = '0.0.1';
 
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';
+
+// A2A messaging module (Issue #3334)
+export * from './a2a/index.js';
