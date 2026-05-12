@@ -302,6 +302,16 @@ async function main(): Promise<void> {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  // Issue #3494: Ensure process lock is released on uncaught exceptions.
+  // Without this, a crash (e.g., logger "sonic boom is not ready yet") leaves
+  // the PID file behind, blocking subsequent starts if the PID gets recycled.
+  process.on('uncaughtException', async (error) => {
+    logger.error({ err: error }, 'Uncaught exception');
+    processLock.release();
+    await flushLogger().catch(() => {});
+    process.exit(1);
+  });
+
   try {
     // Start PrimaryNode
     await primaryNode.start();
