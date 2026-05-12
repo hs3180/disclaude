@@ -131,3 +131,12 @@ export type {
   IAttachmentManager,
   IPlatformAdapter,
 } from './adapter.js';
+
+// NonUserMessage types (Issue #3331, #3333)
+export type {
+  NonUserMessage,
+  NonUserMessagePriority,
+  NonUserMessageRouteResult,
+  ProjectBinding,
+  ProjectLookupFn,
+} from './non-user-message.js';

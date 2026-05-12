@@ -602,6 +602,89 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  describe('projectKey field (Issue #3333)', () => {
+    it('should parse projectKey when specified', async () => {
+      const content = [
+        '---',
+        'name: "Project Task"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_test"',
+        'projectKey: "hs3180/disclaude"',
+        '---',
+        '',
+        'Project-bound task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/project-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBe('hs3180/disclaude');
+    });
+
+    it('should parse quoted projectKey (stripping quotes)', async () => {
+      const content = [
+        '---',
+        'name: "Quoted Project Task"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_test"',
+        'projectKey: "owner/repo"',
+        '---',
+        '',
+        'Task with quoted projectKey.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/quoted-project/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBe('owner/repo');
+    });
+
+    it('should default projectKey to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-project/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBeUndefined();
+    });
+
+    it('should write projectKey field when present', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-project',
+        name: 'Project Task',
+        cron: '0 9 * * *',
+        prompt: 'Project-bound task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        projectKey: 'hs3180/disclaude',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('projectKey: "hs3180/disclaude"');
+    });
+
+    it('should not write projectKey field when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-default',
+        name: 'Default Task',
+        cron: '0 0 * * *',
+        prompt: 'Task without project',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('projectKey:');
+    });
+  });
 });
 
 // ============================================================================

@@ -29,6 +29,8 @@ import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { ModelTier } from '../config/types.js';
+import type { NonUserMessage, NonUserMessagePriority } from '../types/non-user-message.js';
+import type { NonUserMessageRouter } from '../messaging/non-user-message-router.js';
 
 const logger = createLogger('Scheduler');
 
@@ -104,6 +106,14 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * NonUserMessageRouter for project-bound schedule routing.
+   * When a task has `projectKey` set, it routes via this router
+   * instead of the short-lived executor.
+   *
+   * Issue #3333: Scheduler integration with NonUserMessage.
+   */
+  nonUserMessageRouter?: NonUserMessageRouter;
 }
 
 /**
@@ -142,6 +152,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private nonUserMessageRouter?: NonUserMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -162,6 +173,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.nonUserMessageRouter = options.nonUserMessageRouter;
     logger.info('Scheduler created');
   }
 
@@ -381,24 +393,39 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
-      // Issue #1041: Use injected executor function
-      // Issue #1338: Pass model override for per-task model selection
-      // Issue #3059: Pass modelTier for tier-based model resolution
-      // Issue #3346: Wrap with timeout to prevent indefinite hangs
-      const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
-      });
+      // Issue #3333: Route via NonUserMessageRouter when projectKey is set
+      if (task.projectKey && this.nonUserMessageRouter) {
+        const message: NonUserMessage = {
+          id: `sched-${Date.now()}-${task.id}`,
+          type: 'scheduled',
+          source: `scheduler:${task.name}`,
+          projectKey: task.projectKey,
+          payload: wrappedPrompt,
+          priority: (task.modelTier === 'high' ? 'high' : 'normal') as NonUserMessagePriority,
+          createdAt: new Date().toISOString(),
+        };
+        await this.nonUserMessageRouter.route(message);
+        logger.info({ taskId: task.id, projectKey: task.projectKey }, 'Scheduled task routed via NonUserMessageRouter');
+      } else {
+        // Issue #1041: Use injected executor function
+        // Issue #1338: Pass model override for per-task model selection
+        // Issue #3059: Pass modelTier for tier-based model resolution
+        // Issue #3346: Wrap with timeout to prevent indefinite hangs
+        const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
+        });
 
-      try {
-        await Promise.race([
-          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
-          timeoutPromise,
-        ]);
-      } finally {
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId);
+        try {
+          await Promise.race([
+            this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+            timeoutPromise,
+          ]);
+        } finally {
+          if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+          }
         }
       }
 

@@ -788,4 +788,103 @@ describe('Scheduler', () => {
       expect(error).toBeInstanceOf(TaskTimeoutError);
     });
   });
+
+  describe('projectKey routing (Issue #3333)', () => {
+    it('should route via NonUserMessageRouter when projectKey is set', async () => {
+      const mockRoute = vi.fn().mockResolvedValue({ routed: true, chatId: 'chat-1' });
+      const mockRouter = { route: mockRoute };
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        nonUserMessageRouter: mockRouter as any,
+      });
+
+      await s.start();
+
+      const task = createTask({ projectKey: 'hs3180/disclaude' });
+      s.addTask(task);
+
+      // Trigger execution via cron
+      const activeJobs = s.getActiveJobs();
+      expect(activeJobs.length).toBe(1);
+
+      // Manually trigger to avoid waiting for cron
+      await (s as any).executeTask(task);
+
+      expect(mockRoute).toHaveBeenCalledTimes(1);
+      const [routedMessage] = mockRoute.mock.calls[0] as [any];
+      expect(routedMessage.projectKey).toBe('hs3180/disclaude');
+      expect(routedMessage.type).toBe('scheduled');
+      expect(routedMessage.source).toContain('scheduler:Test Task');
+      expect(routedMessage.payload).toContain('Run tests');
+      expect(routedMessage.payload).toContain('Scheduled Task Execution Context');
+      expect(routedMessage.priority).toBe('normal');
+
+      // Executor should NOT have been called
+      expect(mockExecutor).not.toHaveBeenCalled();
+
+      await s.stop(0);
+    });
+
+    it('should use executor when projectKey is not set', async () => {
+      const mockRoute = vi.fn();
+      const mockRouter = { route: mockRoute };
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        nonUserMessageRouter: mockRouter as any,
+      });
+
+      await s.start();
+
+      // Task without projectKey
+      const task = createTask();
+      s.addTask(task);
+
+      await (s as any).executeTask(task);
+
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+      expect(mockRoute).not.toHaveBeenCalled();
+
+      await s.stop(0);
+    });
+
+    it('should use executor when NonUserMessageRouter is not provided', async () => {
+      const task = createTask({ projectKey: 'hs3180/disclaude' });
+      scheduler.addTask(task);
+
+      await (scheduler as any).executeTask(task);
+
+      // Falls back to executor since no router is configured
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should set high priority for high-tier tasks', async () => {
+      const mockRoute = vi.fn().mockResolvedValue({ routed: true, chatId: 'chat-1' });
+      const mockRouter = { route: mockRoute };
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        nonUserMessageRouter: mockRouter as any,
+      });
+
+      await s.start();
+
+      const task = createTask({ projectKey: 'hs3180/disclaude', modelTier: 'high' });
+      s.addTask(task);
+
+      await (s as any).executeTask(task);
+
+      const [routedMessage] = mockRoute.mock.calls[0] as [any];
+      expect(routedMessage.priority).toBe('high');
+
+      await s.stop(0);
+    });
+  });
 });
