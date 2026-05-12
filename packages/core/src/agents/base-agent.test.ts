@@ -522,4 +522,64 @@ describe('BaseAgent', () => {
       expect(options.model).toBeUndefined();
     });
   });
+
+  describe('createSdkOptions - Issue #3532: project-bound CLAUDE_CONFIG_DIR', () => {
+    it('should use settingSources [project] when no cwd override (default)', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.settingSources).toEqual(['project']);
+    });
+
+    it('should use settingSources [project] when cwd equals workspace dir', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/workspace' });
+      expect(options.settingSources).toEqual(['project']);
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+    });
+
+    it('should use settingSources [project, user] when cwd differs from workspace', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
+      expect(options.settingSources).toEqual(['project', 'user']);
+    });
+
+    it('should set CLAUDE_CONFIG_DIR to workspace .claude when project-bound', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
+    });
+
+    it('should NOT set CLAUDE_CONFIG_DIR when not project-bound', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
+      const options = ctxAgent.testCreateSdkOptions();
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+    });
+  });
 });
