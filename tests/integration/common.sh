@@ -309,8 +309,8 @@ restart_server_if_unhealthy() {
     # Stop and restart the server
     stop_server
 
-    # Brief pause to ensure port is released
-    sleep 2
+    # Wait for port to be released before restarting
+    wait_for_port_release "${REST_PORT:-3099}" 10 || true
 
     # Start a fresh server instance
     start_server || {

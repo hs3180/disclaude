@@ -206,6 +206,9 @@ run_suite() {
     # cascading failures in subsequent test suites.
     restart_server_if_unhealthy
 
+    # TODO: After merge with #3448's baseline tracking, reset _EXIT_LISTENER_BASELINE
+    # here when server was restarted, so growth report remains accurate.
+
     return $suite_result
 }
 
