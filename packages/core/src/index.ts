@@ -105,6 +105,16 @@ export {
   clearRuntimeContext,
 } from './agents/types.js';
 
+// A2A Router (Issue #3334: Agent-to-Agent task delegation)
+export {
+  A2ARouter,
+  type A2AMessage,
+  type A2AMessagePriority,
+  type A2ARouterConfig,
+  type ProjectLookupFn,
+  type MessageRouterFn,
+} from './agents/a2a-router.js';
+
 // Message channel
 export { MessageChannel } from './agents/message-channel.js';
 

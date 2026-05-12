@@ -73,6 +73,14 @@ export {
   createChannelMcpServer,
 } from './channel-mcp.js';
 
+// A2A MCP Server (Issue #3334: Agent-to-Agent task delegation)
+export {
+  a2aToolDefinitions,
+  createA2aMcpServer,
+  setA2ARouter,
+  setA2AChatId,
+} from './a2a-mcp.js';
+
 // Deprecated aliases (backward compatibility)
 /** @deprecated Use channelTools instead */
 export { feishuContextTools } from './channel-mcp.js';

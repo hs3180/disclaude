@@ -36,7 +36,7 @@
  */
 
 import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
-import { createChannelMcpServer } from '@disclaude/mcp-server';
+import { createChannelMcpServer, createA2aMcpServer, setA2AChatId } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
 // Type alias for backward compatibility within this module
@@ -184,6 +184,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
         }, 'Configured channel MCP server (inline transport)');
       }
+
+      // Issue #3334: A2A MCP server for Agent-to-Agent task delegation
+      // Set the current chatId context so the enqueue_task handler knows the source
+      setA2AChatId(chatId);
+      mcpServers['a2a-mcp'] = createA2aMcpServer();
     }
 
     // Merge configured external MCP servers from config file
