@@ -82,6 +82,14 @@ const PR_GROUP_NAME_REGEX = /^PR\s+#(\d+)\s*[·•\-–—]\s*/;
  */
 const PR_KEY_PREFIX = 'pr-';
 
+/**
+ * Regex to parse discussion group names.
+ * Expected format: `讨论 · Some topic text`
+ * Captures the topic text for key generation.
+ * The topic is sanitized to create a valid mapping key.
+ */
+const DISCUSSION_GROUP_NAME_REGEX = /^讨论\s*[·•\-–—]\s*(.+)$/;
+
 // ---- Helpers ----
 
 /**
@@ -119,7 +127,17 @@ export function parseGroupNameToKey(groupName: string): string | null {
     return `${PR_KEY_PREFIX}${prMatch[1]}`;
   }
 
-  // Future: add more patterns here for other group types
+  // Discussion group pattern: "讨论 · Topic text" → discussion-{sanitized-topic}
+  const discussionMatch = groupName.match(DISCUSSION_GROUP_NAME_REGEX);
+  if (discussionMatch) {
+    const topic = discussionMatch[1].trim();
+    // Sanitize topic for use as key: keep alphanumeric, CJK, hyphens; replace spaces with hyphens
+    const sanitized = topic
+      .replace(/[\s/\\]+/g, '-')
+      .replace(/[^a-zA-Z0-9\u4e00-\u9fff\-]/g, '')
+      .substring(0, 30);
+    return sanitized ? `discussion-${sanitized}` : null;
+  }
 
   return null;
 }

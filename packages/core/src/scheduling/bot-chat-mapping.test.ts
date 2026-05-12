@@ -341,6 +341,48 @@ describe('BotChatMappingStore', () => {
       expect(entry).not.toBeNull();
     });
 
+    it('should rebuild discussion groups from group names', async () => {
+      const groups = [
+        { chatId: 'oc_disc1', name: '讨论 · 如何优化API性能' },
+        { chatId: 'oc_disc2', name: '讨论 - Sprint规划' },
+      ];
+
+      const result = await store.rebuildFromGroupList(groups);
+
+      expect(result.scanned).toBe(2);
+      expect(result.added).toBe(2);
+
+      const entry = await store.get('discussion-如何优化API性能');
+      expect(entry).not.toBeNull();
+      expect(entry!.chatId).toBe('oc_disc1');
+      expect(entry!.purpose).toBe('discussion');
+
+      const entry2 = await store.get('discussion-Sprint规划');
+      expect(entry2).not.toBeNull();
+      expect(entry2!.chatId).toBe('oc_disc2');
+    });
+
+    it('should handle mixed PR and discussion groups in rebuild', async () => {
+      const groups = [
+        { chatId: 'oc_pr', name: 'PR #123 · Fix bug' },
+        { chatId: 'oc_disc', name: '讨论 · 代码审查流程' },
+        { chatId: 'oc_unknown', name: 'Random group' },
+      ];
+
+      const result = await store.rebuildFromGroupList(groups);
+
+      expect(result.scanned).toBe(3);
+      expect(result.added).toBe(2); // PR + discussion
+
+      const prEntry = await store.get('pr-123');
+      expect(prEntry).not.toBeNull();
+      expect(prEntry!.purpose).toBe('pr-review');
+
+      const discEntry = await store.get('discussion-代码审查流程');
+      expect(discEntry).not.toBeNull();
+      expect(discEntry!.purpose).toBe('discussion');
+    });
+
     it('should handle empty group list (append-only, keeps existing)', async () => {
       await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
 
@@ -514,6 +556,34 @@ describe('parseGroupNameToKey', () => {
 
   it('should return null for empty string', () => {
     expect(parseGroupNameToKey('')).toBeNull();
+  });
+
+  it('should parse discussion group names with middle dot', () => {
+    expect(parseGroupNameToKey('讨论 · 如何优化API性能')).toBe('discussion-如何优化API性能');
+  });
+
+  it('should parse discussion group names with hyphen separator', () => {
+    expect(parseGroupNameToKey('讨论 - Sprint规划')).toBe('discussion-Sprint规划');
+  });
+
+  it('should parse discussion group names with bullet separator', () => {
+    expect(parseGroupNameToKey('讨论 • 代码审查流程')).toBe('discussion-代码审查流程');
+  });
+
+  it('should sanitize special characters in discussion topic', () => {
+    expect(parseGroupNameToKey('讨论 · PR #123 的修复方案')).toBe('discussion-PR-123-的修复方案');
+  });
+
+  it('should truncate long discussion topics to 30 chars', () => {
+    const longTopic = '这是一个非常长的讨论主题用来测试截断功能是否正常工作应该被截断';
+    const result = parseGroupNameToKey(`讨论 · ${longTopic}`);
+    expect(result).not.toBeNull();
+    expect(result!.length).toBeLessThanOrEqual('discussion-'.length + 30);
+  });
+
+  it('should return null for discussion with empty topic', () => {
+    expect(parseGroupNameToKey('讨论 · ')).toBeNull();
+    expect(parseGroupNameToKey('讨论 ·')).toBeNull();
   });
 });
 
