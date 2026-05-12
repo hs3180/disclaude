@@ -165,6 +165,35 @@ describe('adaptOptions', () => {
 
     expect(result.systemPrompt).toBeUndefined();
   });
+
+  it('should pass through tools preset (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      tools: { type: 'preset', preset: 'claude_code' },
+    });
+
+    expect(result.tools).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+    });
+  });
+
+  it('should pass through tools as string array (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      tools: ['Read', 'Write', 'Bash'],
+    });
+
+    expect(result.tools).toEqual(['Read', 'Write', 'Bash']);
+  });
+
+  it('should not include tools when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.tools).toBeUndefined();
+  });
 });
 
 describe('adaptInput', () => {
