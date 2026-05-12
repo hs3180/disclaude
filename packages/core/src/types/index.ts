@@ -134,3 +134,18 @@ export type {
   IAttachmentManager,
   IPlatformAdapter,
 } from './adapter.js';
+
+// Message types (Issue #3329 Phase 1 — Unified Agent Input Abstraction)
+export type {
+  Message,
+  UserMessage,
+  SystemMessage,
+  SystemTrigger,
+  Attachment as MessageAttachment,
+  InputMessage,
+} from './message.js';
+
+export {
+  isUserMessage,
+  isSystemMessage,
+} from './message.js';
