@@ -47,6 +47,11 @@ SERVER_LOG="disclaude-test-server.log"
 # from loading production schedule configs.
 TEST_WORKSPACE=""
 
+# Issue #3494: Isolated lock file for integration tests.
+# Prevents stale production PID files from blocking test server startup.
+# Each test run gets its own lock file in the test workspace.
+LOCKFILE_PATH=""
+
 # =============================================================================
 # Colors for Output
 # =============================================================================
@@ -281,6 +286,14 @@ show_server_logs() {
 cleanup() {
     log_info "Cleaning up..."
     stop_server
+
+    # Issue #3494: Remove isolated test lock file
+    if [ -n "$LOCKFILE_PATH" ] && [ -f "$LOCKFILE_PATH" ]; then
+        log_debug "Removing test lock file: ${LOCKFILE_PATH}"
+        rm -f "$LOCKFILE_PATH"
+        unset LOCKFILE_PATH
+        LOCKFILE_PATH=""
+    fi
 
     # Clean up isolated test workspace (Issue #3414)
     if [ -n "$TEST_WORKSPACE" ] && [ -d "$TEST_WORKSPACE" ]; then
