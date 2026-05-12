@@ -17,3 +17,6 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Records (Issue #1234 Phase 1)
+export { TaskRecordManager, type TaskRecord, type ParsedTaskRecord, type TaskType, type TaskRecordManagerOptions } from './task-records.js';
