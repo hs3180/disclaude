@@ -2,6 +2,9 @@ import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext, CommandHandler } from '../types.js';
 import type { TriggerMode } from '../../config/types.js';
 
+/** Typed command for /trigger handler */
+type TriggerCommand = ControlCommand<'trigger'>;
+
 /** User-facing messages for mode toggle commands */
 interface ModeMessages {
   unavailable: string;
@@ -53,9 +56,10 @@ function getMessageForMode(mode: TriggerMode, messages: ModeMessages): string {
  *
  * Issue #2291: Uses enum-based `getMode`/`setMode` interface.
  * Issue #3345: Supports 'auto' mode.
+ * Issue #3529: Typed command data.
  */
 function handleModeToggle(
-  command: ControlCommand,
+  command: TriggerCommand,
   context: ControlHandlerContext,
   commandName: string,
   messages: ModeMessages,
@@ -75,18 +79,17 @@ function handleModeToggle(
   }
 
   const { chatId } = command;
-  // Args may be passed as string[] (from Feishu message handler) or string (from REST API)
-  const rawArgs = command.data?.args;
-  const args: string | undefined = Array.isArray(rawArgs) ? rawArgs[0] : rawArgs as string | undefined;
+  // Data is now normalized: mode is directly available
+  const mode = command.data?.mode;
 
-  if (args !== undefined) {
-    const mode = parseTriggerArg(args);
-    if (mode !== null) {
+  if (mode !== undefined) {
+    const parsed = parseTriggerArg(mode);
+    if (parsed !== null) {
       // Issue #2291/#3345: Use new enum-based interface
-      modeManager.setMode(chatId, mode);
+      modeManager.setMode(chatId, parsed);
       return {
         success: true,
-        message: getMessageForMode(mode, messages),
+        message: getMessageForMode(parsed, messages),
       };
     }
 
@@ -112,7 +115,7 @@ function handleModeToggle(
 /**
  * /trigger 命令处理 (Issue #2193: renamed from /passive, #3345: added 'auto' mode)
  */
-export const handleTrigger: CommandHandler = (
-  command: ControlCommand,
+export const handleTrigger: CommandHandler<'trigger'> = (
+  command: ControlCommand<'trigger'>,
   context: ControlHandlerContext
 ): ControlResponse => handleModeToggle(command, context, 'trigger', TRIGGER_MESSAGES);

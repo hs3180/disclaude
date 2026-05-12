@@ -315,6 +315,8 @@ export {
   createControlHandler,
   commandRegistry,
   getHandler,
+  createControlCommand,
+  normalizeCommandData,
   type ControlHandlerContext,
   type CommandHandler,
   type CommandDefinition,

@@ -27,6 +27,7 @@ import {
   type ControlCommand,
   type ControlCommandType,
   type ControlResponse,
+  createControlCommand,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
@@ -877,11 +878,11 @@ export class MessageHandler {
       const cmd = command.toLowerCase();
 
       if (this.controlHandler) {
-        const response = await this.callbacks.emitControl({
-          type: cmd as ControlCommandType,
-          chatId: chat_id,
-          data: { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) },
-        });
+        // Issue #3529: Normalize CLI args into typed command data
+        const rawData = { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) };
+        const response = await this.callbacks.emitControl(
+          createControlCommand(cmd as ControlCommandType, chat_id, rawData),
+        );
 
         // Issue #1562: Relay both success messages and error messages from control handler.
         // Previously, success:false responses with error messages were silently dropped,

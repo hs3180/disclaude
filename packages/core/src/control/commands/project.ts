@@ -10,12 +10,16 @@
  *
  * @see Issue #3519 (simplify /project command)
  * @see Issue #1916 (unified ProjectContext system)
+ * @see Issue #3529 (typed command data)
  */
 
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext, CommandHandler } from '../types.js';
 import { readProjectState } from '../../project/project-state.js';
 import { basename } from 'node:path';
+
+/** Typed command for /project handlers */
+type ProjectCommand = ControlCommand<'project'>;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Subcommand Handlers
@@ -24,7 +28,7 @@ import { basename } from 'node:path';
 /**
  * `/project info` — Show current chat's active project.
  */
-function handleInfo(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
+function handleInfo(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
   const pm = context.projectManager;
   if (!pm) {
     return {
@@ -65,7 +69,7 @@ function handleInfo(command: ControlCommand, context: ControlHandlerContext): Co
 /**
  * `/project use <workingDir>` — Bind current chat to a working directory.
  */
-function handleUse(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
+function handleUse(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
   const pm = context.projectManager;
   if (!pm) {
     return {
@@ -74,7 +78,7 @@ function handleUse(command: ControlCommand, context: ControlHandlerContext): Con
     };
   }
 
-  const workingDir = command.data?.workingDir as string | undefined;
+  const workingDir = command.data?.workingDir;
 
   if (!workingDir) {
     return {
@@ -107,7 +111,7 @@ function handleUse(command: ControlCommand, context: ControlHandlerContext): Con
 /**
  * `/project reset` — Reset current chat to default workspace.
  */
-function handleReset(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
+function handleReset(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
   const pm = context.projectManager;
   if (!pm) {
     return {
@@ -141,19 +145,13 @@ function handleReset(command: ControlCommand, context: ControlHandlerContext): C
  * `/project` command handler.
  *
  * Dispatches to subcommands based on `command.data.subcommand`.
+ * Data is normalized by `normalizeCommandData()` before reaching this handler.
  */
-export const handleProject: CommandHandler = (
-  command: ControlCommand,
+export const handleProject: CommandHandler<'project'> = (
+  command: ControlCommand<'project'>,
   context: ControlHandlerContext,
 ): ControlResponse => {
-  // Support both structured data (subcommand field) and CLI args array
-  const args = command.data?.args as string[] | undefined;
-  const subcommand = (command.data?.subcommand as string) ?? args?.[0] ?? 'info';
-
-  // Inject workingDir from args[1] if not already provided (for CLI-style invocation)
-  if (args && args.length >= 2 && args[0] === 'use' && !command.data?.workingDir) {
-    command.data = { ...command.data, workingDir: args.slice(1).join(' ') };
-  }
+  const subcommand = command.data?.subcommand ?? 'info';
 
   switch (subcommand) {
     case 'use':
