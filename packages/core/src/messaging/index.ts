@@ -36,3 +36,13 @@ export {
   createCardMessage,
   createDoneMessage,
 } from './universal-message.js';
+
+// Input Message Router (Issue #3329 Phase 1 — Unified Agent Input Abstraction)
+export {
+  InputMessageRouter,
+  type InputMessageRouterConfig,
+  type ProjectChatIdResolver,
+  type RouteResult,
+  type RouteFallback,
+  type InputRouteResult,
+} from './input-message-router.js';

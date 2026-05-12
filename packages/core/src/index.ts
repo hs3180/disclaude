@@ -280,6 +280,13 @@ export {
   createMarkdownMessage,
   createCardMessage,
   createDoneMessage,
+  // Input Message Router (Issue #3329 Phase 1)
+  InputMessageRouter,
+  type InputMessageRouterConfig,
+  type ProjectChatIdResolver,
+  type RouteResult as InputRouteResultSuccess,
+  type RouteFallback as InputRouteFallback,
+  type InputRouteResult,
 } from './messaging/index.js';
 
 // Channels module (Issue #1041 - migrated from primary-node)
