@@ -680,4 +680,150 @@ describe('ClaudeSDKProvider', () => {
       );
     });
   });
+
+  // --------------------------------------------------------------------------
+  // Process Listener Cleanup (Issue #3378)
+  // --------------------------------------------------------------------------
+
+  describe('process listener cleanup (Issue #3378)', () => {
+    let exitListenersBefore: number;
+    let sigintListenersBefore: number;
+    let sigtermListenersBefore: number;
+
+    beforeEach(() => {
+      // Snapshot current listener counts so we can verify cleanup
+      exitListenersBefore = process.listenerCount('exit');
+      sigintListenersBefore = process.listenerCount('SIGINT');
+      sigtermListenersBefore = process.listenerCount('SIGTERM');
+    });
+
+    afterEach(() => {
+      // Ensure no leaked listeners remain after each test
+      expect(process.listenerCount('exit')).toBe(exitListenersBefore);
+      expect(process.listenerCount('SIGINT')).toBe(sigintListenersBefore);
+      expect(process.listenerCount('SIGTERM')).toBe(sigtermListenersBefore);
+    });
+
+    it('should clean up process listeners after iterator completes normally', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      // Simulate SDK registering extra listeners during query
+      const leakedListener = () => {};
+      mockQuery.mockImplementation(() => {
+        process.on('exit', leakedListener);
+        process.on('SIGINT', leakedListener);
+        return (async function* () {
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Done' }] } };
+        })();
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Test' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+      });
+
+      // Consume the iterator
+      for await (const _ of result.iterator) {
+        // consume
+      }
+
+      // Leaked listeners should have been cleaned up
+      expect(process.listenerCount('exit')).toBe(exitListenersBefore);
+      expect(process.listenerCount('SIGINT')).toBe(sigintListenersBefore);
+    });
+
+    it('should clean up process listeners after handle.close()', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      const leakedListener = () => {};
+      mockQuery.mockImplementation(() => {
+        process.on('exit', leakedListener);
+        return (async function* () {
+          // never yields — simulates a hanging query
+        })();
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Test' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+      });
+
+      // Close without consuming iterator
+      result.handle.close();
+
+      expect(process.listenerCount('exit')).toBe(exitListenersBefore);
+    });
+
+    it('should not remove pre-existing listeners', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      // Register a pre-existing listener
+      const preExisting = () => {};
+      process.on('exit', preExisting);
+      const countWithPreExisting = process.listenerCount('exit');
+
+      mockQuery.mockImplementation(() => {
+        // SDK adds one more
+        process.on('exit', () => {});
+        return (async function* () {
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Ok' }] } };
+        })();
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Test' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+      });
+
+      for await (const _ of result.iterator) {
+        // consume
+      }
+
+      // Pre-existing listener should still be present
+      expect(process.listenerCount('exit')).toBe(countWithPreExisting);
+
+      // Clean up our pre-existing listener
+      process.off('exit', preExisting);
+    });
+
+    it('should not double-clean when both iterator completes and close is called', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      const leakedListener = () => {};
+      mockQuery.mockImplementation(() => {
+        process.on('exit', leakedListener);
+        return (async function* () {
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Hi' }] } };
+        })();
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Test' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['project'],
+      });
+
+      // Consume iterator fully
+      for await (const _ of result.iterator) {
+        // consume
+      }
+
+      // Then also call close (should be a no-op for cleanup)
+      result.handle.close();
+
+      // Should still be at baseline, not below
+      expect(process.listenerCount('exit')).toBe(exitListenersBefore);
+    });
+  });
 });
