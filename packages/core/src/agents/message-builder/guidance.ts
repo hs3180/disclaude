@@ -265,6 +265,59 @@ Append each task as a new \`##\` section with today's date and task description:
 }
 
 /**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: The agent runs in an SDK subprocess and cannot access
+ * in-memory singletons from the main process. The `.runtime-env` file
+ * in the workspace directory provides cross-process state sharing.
+ *
+ * This guidance tells the agent about the runtime-env mechanism so it
+ * can discover and use shared environment variables (e.g., GH_TOKEN).
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+---
+
+## Runtime Environment Awareness
+
+You run in an SDK subprocess, separate from the main process. A file-based mechanism called \`.runtime-env\` enables **cross-process state sharing** between you and the main process.
+
+### What is .runtime-env?
+
+A simple \`KEY=VALUE\` file located at the workspace root (\`.runtime-env\`). Both the main process and your subprocess can read and write it.
+
+### Known Variables
+
+| Variable | Writer | Purpose |
+|----------|--------|---------|
+| \`GH_TOKEN\` | github-jwt-auth skill | GitHub API authentication token |
+| \`GH_TOKEN_EXPIRES_AT\` | github-jwt-auth skill | Token expiration timestamp (ISO 8601) |
+
+Other variables may exist — check \`process.env\` or read \`.runtime-env\` directly.
+
+### How to Read
+
+Runtime-env variables are **pre-loaded into \`process.env\`** at startup. You can access them directly:
+- Use Bash: \`echo $GH_TOKEN\`
+- Use Bash: \`cat .runtime-env\` to see all variables
+
+### How to Write
+
+To share state back to the main process or other agents:
+- Append to \`.runtime-env\` in \`KEY=VALUE\` format using the Write tool or Bash
+- Example: \`echo "MY_VAR=my_value" >> .runtime-env\`
+
+### Notes
+
+- \`.runtime-env\` is already in \`.gitignore\` — do not commit it
+- Token values are sensitive — avoid logging them verbatim
+- Check \`*_EXPIRES_AT\` variables before relying on tokens; trigger a refresh if expired`;
+}
+
+/**
  * Build the location awareness guidance section.
  *
  * Issue #1198: The agent runs on a server that is physically separate

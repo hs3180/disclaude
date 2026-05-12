@@ -19,7 +19,7 @@
  *   │   ├── buildPostHistory() - @ mention section
  *   │   ├── buildToolsSection() - MCP tools
  *   │   └── buildAttachmentExtra() - Image analyzer hints
- *   ├── Guidance sections (next-step, output format, task record, location awareness)
+ *   ├── Guidance sections (next-step, output format, task record, runtime-env awareness, location awareness)
  *   └── User message + attachments
  * ```
  *
@@ -35,6 +35,7 @@ import {
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
+  buildRuntimeEnvGuidance,
   buildLocationAwarenessGuidance,
 } from './guidance.js';
 
@@ -49,6 +50,7 @@ import {
  * - Next-step guidance (Issue #893)
  * - Output format guidance (Issue #962)
  * - Task record guidance (Issue #1234)
+ * - Runtime-env awareness guidance (Issue #1371)
  * - Location awareness guidance (Issue #1198)
  *
  * Channel-specific content is injected via the options callbacks.
@@ -139,6 +141,7 @@ export class MessageBuilder {
     const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const taskRecordGuidance = buildTaskRecordGuidance();
+    const runtimeEnvGuidance = buildRuntimeEnvGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();
 
     // Compose all sections
@@ -167,6 +170,7 @@ export class MessageBuilder {
     sections.push(nextStepGuidance);
     sections.push(outputFormatGuidance);
     sections.push(taskRecordGuidance);
+    sections.push(runtimeEnvGuidance);
     sections.push(locationAwarenessGuidance);
 
     const preamble = sections.join('\n');
