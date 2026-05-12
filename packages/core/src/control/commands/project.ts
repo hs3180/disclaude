@@ -7,6 +7,7 @@
  * - `use <workingDir>` — Bind current chat to a working directory
  * - `reset` — Reset current chat to default workspace
  * - `info` — Show current chat's active project info
+ * - `list` — List all chatId → workingDir bindings
  *
  * @see Issue #3519 (simplify /project command)
  * @see Issue #1916 (unified ProjectContext system)
@@ -105,6 +106,41 @@ function handleUse(command: ControlCommand, context: ControlHandlerContext): Con
 }
 
 /**
+ * `/project list` — List all chatId → workingDir bindings.
+ */
+function handleList(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const bindings = pm.listBindings();
+
+  if (bindings.length === 0) {
+    return {
+      success: true,
+      message: '📂 **项目绑定**: 无（所有会话使用默认工作空间）',
+    };
+  }
+
+  const lines = bindings.map(({ chatId, workingDir }) => {
+    return `- \`${chatId}\` → \`${workingDir}\``;
+  });
+
+  return {
+    success: true,
+    message: [
+      `📂 **项目绑定** (${bindings.length} 个):`,
+      '',
+      ...lines,
+    ].join('\n'),
+  };
+}
+
+/**
  * `/project reset` — Reset current chat to default workspace.
  */
 function handleReset(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
@@ -162,10 +198,12 @@ export const handleProject: CommandHandler = (
       return handleReset(command, context);
     case 'info':
       return handleInfo(command, context);
+    case 'list':
+      return handleList(command, context);
     default:
       return {
         success: false,
-        error: `未知子命令: ${subcommand}。可用: use, reset, info`,
+        error: `未知子命令: ${subcommand}。可用: use, reset, info, list`,
       };
   }
 };

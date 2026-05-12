@@ -263,6 +263,32 @@ describe('handleProject', () => {
     });
   });
 
+  describe('/project list', () => {
+    it('should show empty message when no bindings', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('无');
+    });
+
+    it('should list all bindings', async () => {
+      const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+      ctx.projectManager!.use('chat-1', projectDir);
+      ctx.projectManager!.use('chat-2', ctx.projectManager!.getWorkspaceDir());
+
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('2 个');
+      expect(result.message).toContain('chat-1');
+      expect(result.message).toContain('chat-2');
+      expect(result.message).toContain('my-project');
+    });
+  });
+
   describe('/project reset', () => {
     it('should reset chat to default project', async () => {
       const resetCalls: string[] = [];
