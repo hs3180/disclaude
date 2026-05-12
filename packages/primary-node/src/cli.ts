@@ -329,6 +329,7 @@ async function main(): Promise<void> {
 main().catch((error) => {
   logger.error({ err: error }, 'Unhandled error in main');
   console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
+  processLock.release();
   process.exit(1);
 });
 
