@@ -271,6 +271,62 @@ stop_server() {
     fi
 }
 
+# Issue #3378: Restart the server if process exit listener count is elevated.
+# The Claude Agent SDK's ProcessTransport registers process.on("exit", ...) on each
+# query() call. If close() doesn't fully clean up, listeners accumulate and eventually
+# cause MaxListenersExceededWarning and degraded server stability.
+#
+# This function checks the health endpoint's exit listener count and restarts the
+# server if it exceeds the threshold, ensuring clean state for subsequent test suites.
+#
+# Returns: 0 if no restart needed, 1 if server was restarted
+restart_server_if_unhealthy() {
+    local exit_threshold="${EXIT_LISTENER_THRESHOLD:-10}"
+
+    local result
+    result=$(make_request "GET" "/api/health" 2>/dev/null) || return 0
+
+    local status
+    status=$(echo "$result" | cut -d'|' -f1)
+    local body
+    body=$(echo "$result" | cut -d'|' -f2-)
+
+    if [ "$status" != "200" ]; then
+        log_warn "Health check returned HTTP $status, cannot check listener count"
+        return 0
+    fi
+
+    local exit_count
+    exit_count=$(echo "$body" | grep -o '"exit":[0-9]*' | grep -o '[0-9]*')
+
+    if [ -z "$exit_count" ]; then
+        log_debug "Could not parse exit listener count from health response"
+        return 0
+    fi
+
+    if [ "$exit_count" -le "$exit_threshold" ] 2>/dev/null; then
+        log_debug "Exit listener count ($exit_count) is within threshold ($exit_threshold)"
+        return 0
+    fi
+
+    log_warn "⚠️ Exit listener count ($exit_count) exceeds threshold ($exit_threshold) — restarting server to prevent instability (Issue #3378)"
+
+    # Stop and restart the server
+    stop_server
+
+    # Wait for port to be released before restarting
+    wait_for_port_release "${REST_PORT:-3099}" 10 || true
+
+    # Start a fresh server instance
+    start_server || {
+        log_error "Failed to restart server after unhealthy check"
+        return 1
+    }
+
+    log_info "Server restarted successfully with clean state"
+    return 1
+}
+
 # Show server logs for debugging
 show_server_logs() {
     if [ -f "${SERVER_LOG}" ]; then
