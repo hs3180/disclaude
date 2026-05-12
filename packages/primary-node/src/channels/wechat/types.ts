@@ -121,3 +121,39 @@ export interface WeChatTypingResponse {
   /** Return code (0 = success) */
   ret?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Media upload types (Issue #1556 Phase 3.2 Media Handling)
+// ---------------------------------------------------------------------------
+
+/**
+ * Response from the CDN media upload API.
+ */
+export interface WeChatMediaUploadResponse {
+  /** Return code (0 = success) */
+  ret?: number;
+  /** CDN URL of the uploaded file */
+  cdn_url?: string;
+  /** CDN file key (alternative to cdn_url) */
+  cdn_file_key?: string;
+  /** File size in bytes */
+  file_size?: number;
+}
+
+/**
+ * File extension categories for auto-detecting image vs file.
+ */
+const IMAGE_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'tiff', 'svg',
+]);
+
+/**
+ * Check if a file extension is an image type.
+ */
+export function isImageFile(fileName: string): boolean {
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+/** Maximum file size for media upload (20 MB). */
+export const MAX_MEDIA_FILE_SIZE = 20 * 1024 * 1024;

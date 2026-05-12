@@ -10,7 +10,6 @@
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Media handling (CDN upload) — Issue #1556 Phase 3.3
  * - Thread send support via context_token — Issue #1556 Phase 3.4
  *
  * @module channels/wechat/wechat-channel
@@ -22,7 +21,7 @@ import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabiliti
 import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
-import type { WeChatChannelConfig } from './types.js';
+import { isImageFile, type WeChatChannelConfig } from './types.js';
 
 const logger = createLogger('WeChatChannel');
 
@@ -159,6 +158,30 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       return;
     }
 
+    // File/image sending (Issue #1556 Phase 3.2 Media Handling)
+    if (message.type === 'file' && message.filePath) {
+      const { basename } = await import('path');
+      const fileName = basename(message.filePath);
+      const uploadResult = await this.client.uploadMedia({ filePath: message.filePath });
+
+      if (isImageFile(fileName)) {
+        await this.client.sendImage({
+          to: message.chatId,
+          cdnUrl: uploadResult.cdnUrl,
+          contextToken: message.threadId,
+        });
+      } else {
+        await this.client.sendFile({
+          to: message.chatId,
+          cdnUrl: uploadResult.cdnUrl,
+          fileName,
+          fileSize: uploadResult.fileSize,
+          contextToken: message.threadId,
+        });
+      }
+      return;
+    }
+
     // Unsupported message types
     logger.warn(
       { type: message.type, chatId: message.chatId },
@@ -184,11 +207,11 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
     return {
       supportsCard: false,
       supportsThread: false,
-      supportsFile: false,
+      supportsFile: true,
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text'],
+      supportedMcpTools: ['send_text', 'send_file'],
     };
   }
 

@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WeChatApiClient } from './api-client.js';
+import { isImageFile, MAX_MEDIA_FILE_SIZE } from './types.js';
 
 // Store original fetch
 const originalFetch = globalThis.fetch;
@@ -565,6 +566,214 @@ describe('WeChatApiClient', () => {
       await client.sendTyping({ to: 'user-123' });
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('uploadMedia (Issue #1556 Phase 3.2)', () => {
+    it('should upload a file and return CDN URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ret: 0, cdn_url: 'https://cdn.example.com/file.png', file_size: 1024 }),
+      });
+
+      // Create a temp file for upload test
+      const { writeFile, mkdir, rm } = await import('fs/promises');
+      const tmpDir = `/tmp/wechat-test-${Date.now()}`;
+      await mkdir(tmpDir, { recursive: true });
+      const tmpFile = `${tmpDir}/test.png`;
+      await writeFile(tmpFile, Buffer.from('fake-image-data'));
+
+      try {
+        client.setToken('test-token');
+        const result = await client.uploadMedia({ filePath: tmpFile });
+
+        expect(result.cdnUrl).toBe('https://cdn.example.com/file.png');
+        expect(result.fileSize).toBe(1024);
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('uploadmedia'),
+          expect.objectContaining({ method: 'POST' }),
+        );
+      } finally {
+        await rm(tmpDir, { recursive: true });
+      }
+    });
+
+    it('should reject files exceeding 20MB limit', async () => {
+      const { writeFile, mkdir, rm } = await import('fs/promises');
+      const tmpDir = `/tmp/wechat-test-large-${Date.now()}`;
+      await mkdir(tmpDir, { recursive: true });
+      const tmpFile = `${tmpDir}/large.bin`;
+      // Create a file > 20MB (write 21MB of data)
+      await writeFile(tmpFile, Buffer.alloc(21 * 1024 * 1024));
+
+      try {
+        client.setToken('test-token');
+        await expect(client.uploadMedia({ filePath: tmpFile }))
+          .rejects.toThrow('File too large');
+      } finally {
+        await rm(tmpDir, { recursive: true });
+      }
+    });
+
+    it('should throw when CDN URL is missing in response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ret: 0 }),
+      });
+
+      const { writeFile, mkdir, rm } = await import('fs/promises');
+      const tmpDir = `/tmp/wechat-test-nocdn-${Date.now()}`;
+      await mkdir(tmpDir, { recursive: true });
+      const tmpFile = `${tmpDir}/test.txt`;
+      await writeFile(tmpFile, 'data');
+
+      try {
+        client.setToken('test-token');
+        await expect(client.uploadMedia({ filePath: tmpFile }))
+          .rejects.toThrow('no CDN URL returned');
+      } finally {
+        await rm(tmpDir, { recursive: true });
+      }
+    });
+
+    it('should throw on API error during upload', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Server Error'),
+      });
+
+      const { writeFile, mkdir, rm } = await import('fs/promises');
+      const tmpDir = `/tmp/wechat-test-err-${Date.now()}`;
+      await mkdir(tmpDir, { recursive: true });
+      const tmpFile = `${tmpDir}/test.txt`;
+      await writeFile(tmpFile, 'data');
+
+      try {
+        client.setToken('test-token');
+        await expect(client.uploadMedia({ filePath: tmpFile }))
+          .rejects.toThrow('WeChat media upload error [500]');
+      } finally {
+        await rm(tmpDir, { recursive: true });
+      }
+    });
+  });
+
+  describe('sendImage (Issue #1556 Phase 3.2)', () => {
+    it('should send image message via POST with type=2', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendImage({ to: 'user-1', cdnUrl: 'https://cdn.example.com/img.png' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('sendmessage'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.item_list[0].type).toBe(2);
+      expect(callBody.msg.item_list[0].image_item.url).toBe('https://cdn.example.com/img.png');
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendImage({ to: 'user-1', cdnUrl: 'https://cdn.example.com/img.png', contextToken: 'ctx-1' });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.context_token).toBe('ctx-1');
+    });
+  });
+
+  describe('sendFile (Issue #1556 Phase 3.2)', () => {
+    it('should send file message via POST with type=3', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendFile({ to: 'user-1', cdnUrl: 'https://cdn.example.com/doc.pdf', fileName: 'doc.pdf', fileSize: 2048 });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('sendmessage'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.item_list[0].type).toBe(3);
+      expect(callBody.msg.item_list[0].file_item.url).toBe('https://cdn.example.com/doc.pdf');
+      expect(callBody.msg.item_list[0].file_item.file_name).toBe('doc.pdf');
+      expect(callBody.msg.item_list[0].file_item.file_size).toBe(2048);
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendFile({ to: 'user-1', cdnUrl: 'https://cdn.example.com/doc.pdf', fileName: 'doc.pdf', contextToken: 'ctx-2' });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.context_token).toBe('ctx-2');
+    });
+
+    it('should not include file_size when not provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendFile({ to: 'user-1', cdnUrl: 'https://cdn.example.com/doc.pdf', fileName: 'doc.pdf' });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.item_list[0].file_item.file_size).toBeUndefined();
+    });
+  });
+});
+
+describe('types utilities', () => {
+  describe('isImageFile', () => {
+    it('should detect common image extensions', () => {
+      expect(isImageFile('photo.jpg')).toBe(true);
+      expect(isImageFile('photo.jpeg')).toBe(true);
+      expect(isImageFile('photo.png')).toBe(true);
+      expect(isImageFile('photo.gif')).toBe(true);
+      expect(isImageFile('photo.webp')).toBe(true);
+      expect(isImageFile('photo.bmp')).toBe(true);
+      expect(isImageFile('photo.svg')).toBe(true);
+    });
+
+    it('should be case-insensitive', () => {
+      expect(isImageFile('photo.PNG')).toBe(true);
+      expect(isImageFile('photo.Jpeg')).toBe(true);
+    });
+
+    it('should reject non-image extensions', () => {
+      expect(isImageFile('document.pdf')).toBe(false);
+      expect(isImageFile('archive.zip')).toBe(false);
+      expect(isImageFile('data.csv')).toBe(false);
+    });
+
+    it('should handle files without extension', () => {
+      expect(isImageFile('noextension')).toBe(false);
+    });
+  });
+
+  describe('MAX_MEDIA_FILE_SIZE', () => {
+    it('should be 20 MB', () => {
+      expect(MAX_MEDIA_FILE_SIZE).toBe(20 * 1024 * 1024);
     });
   });
 });
