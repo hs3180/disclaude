@@ -7,6 +7,7 @@
 import type { ControlCommand, ControlResponse, ControlCommandType } from '../types/channel.js';
 import type { Logger } from '../utils/logger.js';
 import type { TriggerMode } from '../config/types.js';
+import type { ProjectManager } from '../project/project-manager.js';
 
 /**
  * Debug 组信息
@@ -36,13 +37,16 @@ export interface ControlHandlerContext {
     clearDebugGroup(): DebugGroup | null;
   };
 
-  /** 触发模式管理（可选） (Issue #2291: enum-based interface) */
+  /** 触发模式管理（可选） (Issue #2291: enum-based interface, #3345: 'auto' mode) */
   triggerMode?: {
     /** Get the current trigger mode for a chat */
     getMode(chatId: string): TriggerMode;
     /** Set the trigger mode for a chat */
     setMode(chatId: string, mode: TriggerMode): void;
   };
+
+  /** ProjectManager for /project commands (Issue #3335) */
+  projectManager?: ProjectManager;
 
   /** 日志记录器 */
   logger?: Logger;

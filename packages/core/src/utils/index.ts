@@ -12,6 +12,7 @@ export {
   setLogLevel,
   isLevelEnabled,
   flushLogger,
+  closeLogger,
 } from './logger.js';
 
 // Error Handler
@@ -86,3 +87,7 @@ export {
   ensureFileExtension,
   ensureFileExtensionFromPath,
 } from './file-utils.js';
+
+// Process Lock (Issue #3417)
+export type { ProcessLockOptions } from './process-lock.js';
+export { ProcessLock } from './process-lock.js';

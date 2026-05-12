@@ -24,7 +24,6 @@ import type {
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
-import type { ProjectTemplatesConfig } from '../project/types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -214,9 +213,21 @@ export class Config {
   /**
    * Get the workspace directory.
    *
+   * Supports environment variable override via `DISCLAUDE_WORKSPACE_DIR`.
+   * When set, the env var takes precedence over config file and defaults.
+   * This enables test isolation without modifying production code interfaces.
+   *
    * @returns Absolute path to the workspace directory
+   * @see Issue #3414
    */
   static getWorkspaceDir(): string {
+    // Allow override via environment variable for test isolation
+    if (process.env.DISCLAUDE_WORKSPACE_DIR) {
+      const overrideDir = path.resolve(process.env.DISCLAUDE_WORKSPACE_DIR);
+      logger.debug({ workspaceDir: overrideDir, source: 'environment-variable' }, 'Using workspace directory');
+      return overrideDir;
+    }
+
     const workspaceDir = this.WORKSPACE_DIR;
     logger.debug({ workspaceDir, source: this.CONFIG_LOADED ? 'config-file' : 'default' }, 'Using workspace directory');
     return workspaceDir;
@@ -558,19 +569,6 @@ export class Config {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
 
-  /**
-   * Get project template configuration from config file.
-   *
-   * Returns the `projectTemplates` section from disclaude.config.yaml,
-   * which overrides/extends auto-discovered templates with display metadata.
-   * Returns undefined if no projectTemplates are configured (auto-discovery only).
-   *
-   * @see Issue #2227
-   * @returns Project template configuration, or undefined
-   */
-  static getProjectTemplatesConfig(): ProjectTemplatesConfig | undefined {
-    return fileConfigOnly.projectTemplates as ProjectTemplatesConfig | undefined;
-  }
 }
 
 // ============================================================================

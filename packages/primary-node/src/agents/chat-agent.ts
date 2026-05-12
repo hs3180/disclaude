@@ -63,6 +63,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   private readonly callbacks: ChatAgentCallbacks;
 
+  // Issue #1916: Dynamic cwd resolution for project-scoped Agent context switching
+  private readonly cwdProvider?: (chatId: string) => string | undefined;
+
   // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
   private queryHandle?: QueryHandle;
   private channel?: MessageChannel;
@@ -103,6 +106,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #644: Bind chatId at construction time
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
+    this.cwdProvider = config.cwdProvider;
 
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
@@ -442,12 +446,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           continue;
         }
 
-        // Cancel old query to prevent orphaned processIterator from sending
+        // Close old query to prevent orphaned processIterator from sending
         // duplicate messages while the new session starts.
+        // Issue #3378: Must use close() (not cancel()) to remove the exit listener
+        // registered by ProcessTransport. cancel() only stops iteration but leaves
+        // the exit listener, causing leaks on repeated retries.
         if (this.queryHandle) {
-          this.logger.info({ chatId }, 'handleInput: cancelling old queryHandle before retry');
-          this.queryHandle.cancel();
+          this.logger.info({ chatId }, 'handleInput: closing old queryHandle before retry');
+          this.queryHandle.close();
           this.queryHandle = undefined;
+        }
+        if (this.channel) {
+          this.logger.info({ chatId }, 'handleInput: closing old channel before retry');
+          this.channel.close();
+          this.channel = undefined;
         }
 
         this.logger.warn({ chatId, messageId }, 'handleInput: first push failed, attempting session restart');
@@ -681,6 +693,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const startMs = Date.now(); // Issue #3292: timing for agent startup diagnostics
     this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: 0 });
 
+    // Issue #3378: Close any previous query/channel before starting a new one.
+    // Each SDK query registers process.on("exit", handler) via ProcessTransport.
+    // If the old handle is overwritten without close(), the exit listener leaks
+    // and accumulates across restart cycles, eventually triggering
+    // MaxListenersExceededWarning (11 exit listeners added to [process]).
+    if (this.queryHandle) {
+      this.logger.info({ chatId }, 'Closing previous query handle before starting new loop');
+      this.queryHandle.close();
+      this.queryHandle = undefined;
+    }
+    if (this.channel) {
+      this.logger.info({ chatId }, 'Closing previous message channel before starting new loop');
+      this.channel.close();
+      this.channel = undefined;
+    }
+
     // Issue #955: Trigger background loading of persisted history
     if (!this.historyLoaded) {
       this.loadPersistedHistory().catch((err) => {
@@ -699,7 +727,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const mcpServers = this.buildMcpServers(false);
 
     // Build SDK options using BaseAgent's createSdkOptions
+    // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
+    const projectCwd = this.cwdProvider?.(chatId);
     const sdkOptions = this.createSdkOptions({
+      cwd: projectCwd,
       disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
       mcpServers,
     });
@@ -736,7 +767,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.queryHandle = handle;
     this.isSessionActive = true;
-    this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: Date.now() - startMs, ok: true });
+
+    // Issue #3378: Log process exit listener count for leak monitoring.
+    // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
+    // Normal range is 1-3; values > 8 indicate a leak.
+    const exitListenerCount = process.listenerCount('exit');
+    if (exitListenerCount > 5) {
+      this.logger.warn(
+        { chatId, exitListenerCount, timing: 'agent:startLoop' },
+        'Process exit listener count is elevated — possible ProcessTransport leak'
+      );
+    }
+    this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: Date.now() - startMs, exitListenerCount, ok: true });
 
     // Process SDK messages in background
     this.processIterator(iterator).catch(async (err) => {
@@ -1171,13 +1213,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // restarts (via processIterator → startAgentLoop).
     }
 
-    // Cancel the current query (not close, to allow continuation)
-    this.queryHandle.cancel();
+    // Issue #3378: Close the current query (not cancel) to remove the exit listener
+    // registered by ProcessTransport. cancel() only stops iteration but leaves
+    // the exit listener registered, causing leaks when the agent loop restarts
+    // (which creates a new ProcessTransport with a new exit listener).
+    if (this.channel) {
+      this.logger.info({ chatId: this.boundChatId }, 'stop: closing channel');
+      this.channel.close();
+      this.channel = undefined;
+    }
+    this.queryHandle.close();
     this.queryHandle = undefined;
 
-    // Note: We do NOT set isSessionActive to false here
-    // The session remains active, just the current query is cancelled
-    // The channel is preserved so new messages can still be sent
+    // Note: We do NOT set isSessionActive to false here.
+    // The session remains active; processIterator will detect the ended iterator
+    // and restart via startAgentLoop(), which creates a fresh query and channel.
 
     return true;
   }

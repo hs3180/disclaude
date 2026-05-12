@@ -396,7 +396,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   /**
    * Get the capabilities of REST channel.
    * REST channel supports cards and markdown, but not threads or files via MCP tools.
-   * Issue #590 Phase 3: Added supportedMcpTools for dynamic prompt adaptation.
+   *
+   * Issue #3530: Removed send_text/send_card/send_interactive/send_file from
+   * supportedMcpTools. These MCP tools route through Feishu IPC (Unix socket →
+   * Feishu API), which fails when Feishu channel is unavailable or has invalid
+   * credentials (e.g., integration test environment). REST channel handles
+   * responses through its own text buffering — the agent should output text
+   * directly, not via send_text MCP tool.
    */
   getCapabilities(): ChannelCapabilities {
     return {
@@ -406,7 +412,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       supportsMarkdown: true,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text', 'send_card', 'send_interactive', 'send_file'],
+      supportedMcpTools: [],
     };
   }
 
@@ -479,11 +485,17 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
    * Handle health check request.
    */
   private handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): void {
+    // Issue #3378: Include process exit listener count in health check for
+    // monitoring process.on("exit") leaks from Claude Agent SDK's ProcessTransport.
+    const exitListenerCount = process.listenerCount('exit');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
       channel: this.name,
       id: this.id,
+      listeners: {
+        exit: exitListenerCount,
+      },
     }));
   }
 

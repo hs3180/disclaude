@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
 import {
   initLogger,
   createLogger,
@@ -24,6 +25,7 @@ import {
   setLogLevel,
   isLevelEnabled,
   flushLogger,
+  closeLogger,
 } from './logger.js';
 
 describe('logger', () => {
@@ -154,13 +156,18 @@ describe('logger', () => {
       expect(logger).toBeDefined();
     });
 
-    it('should successfully initialize file logging with pino-roll', async () => {
-      // Issue #3359: Verify pino-roll CJS/ESM interop works correctly
+    it('should successfully initialize file logging', async () => {
+      // Issue #3416: Verify file logging works with pino.destination()
+      // (pino-roll removed, rotation delegated to system tools)
       process.env.NODE_ENV = 'production';
-      const tmpDir = `/tmp/test-logs-${Date.now()}`;
+
+      // Mock filesystem to prevent real directory creation
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockImplementation((() => undefined) as any);
+
       const logger = await initLogger({
         fileLogging: true,
-        logDir: tmpDir,
+        logDir: '/tmp/test-logs-mock',
       });
 
       expect(logger).toBeDefined();
@@ -168,12 +175,8 @@ describe('logger', () => {
 
       // Verify logs can be written without error
       expect(() => {
-        logger.info('pino-roll file logging test');
+        logger.info('file logging test');
       }).not.toThrow();
-
-      // Cleanup
-      const fs = await import('fs');
-      fs.rmSync(tmpDir, { recursive: true, force: true });
     });
   });
 
@@ -376,7 +379,7 @@ describe('logger', () => {
       await expect(flushLogger()).resolves.toBeUndefined();
     });
 
-    it('should resolve after a timeout when root logger exists', async () => {
+    it('should resolve for stdout logger without delay', async () => {
       process.env.NODE_ENV = 'test';
       await initLogger();
 
@@ -384,8 +387,49 @@ describe('logger', () => {
       await flushLogger();
       const elapsed = Date.now() - start;
 
-      // flushLogger waits 100ms for pino to flush
-      expect(elapsed).toBeGreaterThanOrEqual(90);
+      // Issue #3416: flushLogger no longer uses setTimeout(100ms) — it
+      // calls SonicBoom.flush() on the file stream. For stdout logger
+      // (test environment), there is no file stream, so it resolves fast.
+      expect(elapsed).toBeLessThan(50);
+    });
+
+    it('should flush file stream when file logging is active', async () => {
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-flush-${Date.now()}`;
+
+      // Mock filesystem to prevent real directory creation
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockImplementation((() => undefined) as any);
+
+      const logger = await initLogger({
+        fileLogging: true,
+        logDir: tmpDir,
+      });
+
+      // Write some data
+      logger.info('before flush');
+
+      // Should not throw
+      await expect(flushLogger()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('closeLogger', () => {
+    it('should flush and reset the logger', async () => {
+      process.env.NODE_ENV = 'test';
+      await initLogger();
+      expect(getRootLogger()).toBeDefined();
+
+      await closeLogger();
+
+      // After close, root logger should be null — getRootLogger creates a new one
+      const newLogger = getRootLogger();
+      expect(newLogger).toBeDefined();
+    });
+
+    it('should handle being called when no logger exists', async () => {
+      resetLogger();
+      await expect(closeLogger()).resolves.toBeUndefined();
     });
   });
 
@@ -477,9 +521,9 @@ describe('logger', () => {
       const logger1 = await initLogger({ level: 'debug' });
       const logger2 = await initLogger({ level: 'error' });
 
-      // Second call should return the same singleton (first config wins)
+      // Second call returns the same singleton and updates the level
       expect(logger1).toBe(logger2);
-      expect(logger1.level).toBe('debug');
+      expect(logger1.level).toBe('error');
     });
 
     it('should handle createLogger with empty metadata', () => {
@@ -502,6 +546,21 @@ describe('logger', () => {
       const second = await initLogger({ level: 'debug' });
       expect(second).not.toBe(first);
       expect(second.level).toBe('debug');
+    });
+
+    it('should properly destroy currentLogDest on resetLogger', async () => {
+      // Verify resetLogger destroys the file stream, not just PassThrough
+      process.env.NODE_ENV = 'production';
+      const tmpDir = `/tmp/test-reset-${Date.now()}`;
+
+      // Mock filesystem to prevent real directory creation
+      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+      vi.spyOn(fs, 'mkdirSync').mockImplementation((() => undefined) as any);
+
+      await initLogger({ fileLogging: true, logDir: tmpDir });
+
+      // resetLogger should not throw even with file streams active
+      expect(() => resetLogger()).not.toThrow();
     });
 
     it('should handle concurrent createLogger calls after reset', () => {

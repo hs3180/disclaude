@@ -45,6 +45,9 @@ Thumbs.db
 # Claude Code
 .claude/
 
+# Disclaude project state (Issue #3335)
+.disclaude/
+
 # Playwright MCP
 .playwright-mcp/
 .mcp.json

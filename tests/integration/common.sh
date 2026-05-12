@@ -42,6 +42,16 @@ SERVER_PID=""
 # Log file in current working directory
 SERVER_LOG="disclaude-test-server.log"
 
+# Test workspace directory for isolation (Issue #3414)
+# Each test run gets its own isolated workspace to prevent Scheduler
+# from loading production schedule configs.
+TEST_WORKSPACE=""
+
+# Issue #3494: Isolated lock file for integration tests.
+# Prevents stale production PID files from blocking test server startup.
+# Each test run gets its own lock file in the test workspace.
+LOCKFILE_PATH=""
+
 # =============================================================================
 # Colors for Output
 # =============================================================================
@@ -158,19 +168,43 @@ start_server() {
         if ! wait_for_port_release "$REST_PORT" 15; then
             log_error "Port ${REST_PORT} is still in use, cannot start server"
             # Try to kill any process using the port
+            # Issue #3415: Use SIGTERM first, then SIGKILL as fallback
             if command -v lsof &> /dev/null; then
                 local pid_using_port
                 pid_using_port=$(lsof -t -i:"$REST_PORT" 2>/dev/null | head -1)
                 if [ -n "$pid_using_port" ]; then
-                    log_warn "Killing process $pid_using_port using port ${REST_PORT}"
-                    kill -9 "$pid_using_port" 2>/dev/null || true
+                    log_warn "Sending SIGTERM to process $pid_using_port using port ${REST_PORT}"
+                    kill -TERM "$pid_using_port" 2>/dev/null || true
                     sleep 2
+                    # Check if still running before SIGKILL
+                    if kill -0 "$pid_using_port" 2>/dev/null; then
+                        log_warn "Process still alive, sending SIGKILL"
+                        kill -9 "$pid_using_port" 2>/dev/null || true
+                        sleep 2
+                    fi
                 fi
             fi
         fi
     fi
 
     cd "$PROJECT_ROOT"
+
+    # Create isolated test workspace (Issue #3414)
+    # This prevents tests from loading production schedule configs.
+    if [ -z "$TEST_WORKSPACE" ]; then
+        TEST_WORKSPACE=$(mktemp -d "${TMPDIR:-/tmp}/disclaude-test-workspace.XXXXXX")
+        export DISCLAUDE_WORKSPACE_DIR="$TEST_WORKSPACE"
+        log_info "Created isolated test workspace: ${TEST_WORKSPACE}"
+    fi
+
+    # Issue #3510: Use an isolated PID lock file for the test server.
+    # Without this, the test server shares the production lock file path
+    # and fails to start when a production instance is already running.
+    if [ -z "$TEST_LOCKFILE" ]; then
+        TEST_LOCKFILE="${TEST_WORKSPACE}/disclaude-test-server.pid"
+        export LOCKFILE_PATH="$TEST_LOCKFILE"
+        log_info "Using isolated test lock file: ${TEST_LOCKFILE}"
+    fi
 
     # Build config argument if provided
     local config_arg=""
@@ -205,11 +239,31 @@ start_server() {
 }
 
 # Stop the test server
+# Issue #3415: Send SIGTERM first for graceful shutdown, then SIGKILL as fallback
 stop_server() {
     if [ -n "$SERVER_PID" ]; then
         log_info "Stopping test server (PID: ${SERVER_PID})..."
-        kill $SERVER_PID 2>/dev/null || true
-        wait $SERVER_PID 2>/dev/null || true
+
+        # Send SIGTERM for graceful shutdown (allows cron cleanup, log flush, etc.)
+        kill -TERM "$SERVER_PID" 2>/dev/null || true
+
+        # Wait up to 5 seconds for graceful exit
+        local graceful_wait=0
+        while [ $graceful_wait -lt 5 ]; do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+            graceful_wait=$((graceful_wait + 1))
+        done
+
+        # If still running, force kill
+        if kill -0 "$SERVER_PID" 2>/dev/null; then
+            log_warn "Server did not exit gracefully after 5s, sending SIGKILL"
+            kill -9 "$SERVER_PID" 2>/dev/null || true
+        fi
+
+        wait "$SERVER_PID" 2>/dev/null || true
         SERVER_PID=""
 
         # Wait for port to be released
@@ -232,6 +286,29 @@ show_server_logs() {
 cleanup() {
     log_info "Cleaning up..."
     stop_server
+
+    # Issue #3494: Remove isolated test lock file
+    if [ -n "$LOCKFILE_PATH" ] && [ -f "$LOCKFILE_PATH" ]; then
+        log_debug "Removing test lock file: ${LOCKFILE_PATH}"
+        rm -f "$LOCKFILE_PATH"
+        unset LOCKFILE_PATH
+        LOCKFILE_PATH=""
+    fi
+
+    # Clean up isolated test workspace (Issue #3414)
+    if [ -n "$TEST_WORKSPACE" ] && [ -d "$TEST_WORKSPACE" ]; then
+        log_info "Removing test workspace: ${TEST_WORKSPACE}"
+        rm -rf "$TEST_WORKSPACE"
+        unset DISCLAUDE_WORKSPACE_DIR
+        TEST_WORKSPACE=""
+    fi
+
+    # Clean up test PID lock file (Issue #3510)
+    if [ -n "$TEST_LOCKFILE" ] && [ -f "$TEST_LOCKFILE" ]; then
+        rm -f "$TEST_LOCKFILE"
+        unset LOCKFILE_PATH
+        TEST_LOCKFILE=""
+    fi
 }
 
 # Register cleanup handler (call this in your test script)
@@ -953,6 +1030,7 @@ main_test_suite() {
 # =============================================================================
 
 # Test health check endpoint - shared by all integration tests
+# Issue #3378: Also logs process exit listener count for leak monitoring.
 # Usage: test_health_check
 test_health_check() {
     log_info "Testing: GET /api/health"
@@ -963,6 +1041,19 @@ test_health_check() {
 
     if [ "$RESPONSE_STATUS" = "200" ] && echo "$RESPONSE_BODY" | grep -q '"status":"ok"'; then
         log_pass "Health check returns 200 with status: ok"
+
+        # Issue #3378: Log exit listener count for leak monitoring.
+        # Normal range is 1-3; values > 8 indicate ProcessTransport leak.
+        local exit_count
+        exit_count=$(echo "$RESPONSE_BODY" | grep -o '"exit":[0-9]*' | grep -o '[0-9]*')
+        if [ -n "$exit_count" ]; then
+            if [ "$exit_count" -gt 8 ] 2>/dev/null; then
+                log_warn "Process exit listener count is high: $exit_count (possible leak)"
+            else
+                log_debug "Process exit listener count: $exit_count"
+            fi
+        fi
+
         return 0
     else
         log_fail "Health check returned status $RESPONSE_STATUS (expected 200)"

@@ -5,12 +5,18 @@
  * real external network requests. All external HTTP calls are blocked
  * by default, except for localhost connections.
  *
+ * Also provides automatic resource cleanup after each test file to prevent
+ * orphaned cron jobs and timers from preventing the test process from
+ * exiting gracefully.
+ *
  * @see Issue #920 - Test isolation infrastructure
  * @see Issue #918 - Four-layer defense architecture
+ * @see Issue #3415 - Test process not exiting gracefully, cron not cleaned up
  */
 
 import nock from 'nock';
 import { beforeAll, afterAll, afterEach } from 'vitest';
+import { cleanupAllTracked } from './test-resource-tracker.js';
 
 /**
  * Block all external network requests by default.
@@ -37,6 +43,23 @@ afterEach(() => {
  */
 afterAll(() => {
   nock.restore();
+});
+
+/**
+ * Clean up all tracked test resources after each test file.
+ *
+ * With singleFork mode (all tests in one process), this ensures
+ * resources (schedulers, cron jobs) from the current test file
+ * are cleaned up before the next file runs.
+ *
+ * Prevents orphaned cron jobs from accumulating and keeping the
+ * event loop alive, which would force vitest to SIGKILL the process.
+ *
+ * @see tests/test-resource-tracker.ts for resource tracking API
+ * @see Issue #3415 - Test process not exiting gracefully, cron not cleaned up
+ */
+afterAll(async () => {
+  await cleanupAllTracked();
 });
 
 /**

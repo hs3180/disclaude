@@ -157,6 +157,33 @@ run_test_script() {
 # Delay is skipped before the first suite and after retries
 _SUITE_COUNT=0
 
+# Issue #3378: Check server health including process exit listener count.
+# Logs a warning if exit listeners exceed threshold, helping diagnose
+# ProcessTransport leaks from Claude Agent SDK.
+check_server_health_detailed() {
+    local result
+    result=$(make_request "GET" "/api/health" 2>/dev/null) || return
+
+    local status
+    status=$(echo "$result" | cut -d'|' -f1)
+    local body
+    body=$(echo "$result" | cut -d'|' -f2-)
+
+    if [ "$status" = "200" ]; then
+        local exit_count
+        exit_count=$(echo "$body" | grep -o '"exit":[0-9]*' | grep -o '[0-9]*')
+        if [ -n "$exit_count" ]; then
+            if [ "$exit_count" -gt 8 ] 2>/dev/null; then
+                log_warn "⚠️ Server health check: exit listener count=$exit_count (threshold: 8) — possible ProcessTransport leak"
+            else
+                log_debug "Server health check: exit listeners=$exit_count, status=ok"
+            fi
+        fi
+    else
+        log_warn "Server health check returned HTTP $status"
+    fi
+}
+
 run_suite() {
     local script="$1"
     local name="$2"
@@ -168,22 +195,8 @@ run_suite() {
     fi
     _SUITE_COUNT=$((_SUITE_COUNT + 1))
 
-    # Issue #3378: Verify server health before each suite (except the first).
-    # Long-running suites can degrade server state (EventEmitter listener leaks,
-    # memory pressure). If the health check fails, restart the server before
-    # running the next suite.
-    if [ $_SUITE_COUNT -gt 1 ]; then
-        if ! is_server_running; then
-            log_warn "Server not healthy before '$name' — restarting..."
-            stop_server
-            wait_for_port_release "${REST_PORT:-3456}" 5 2>/dev/null || sleep 1
-            start_server || {
-                log_error "Failed to restart server before '$name'"
-                return 1
-            }
-            log_info "Server restarted successfully, proceeding with '$name'"
-        fi
-    fi
+    # Issue #3378: Check server health between suites for listener leak monitoring
+    check_server_health_detailed
 
     run_test_script "$script" "$name"
 }

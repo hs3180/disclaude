@@ -3,10 +3,13 @@
  *
  * Provides a centralized logging infrastructure using Pino with support for:
  * - Development (pretty print) vs Production (JSON) environments
- * - File rotation with pino-roll
+ * - File logging via pino.destination() (rotation delegated to system tools)
  * - Multiple log levels (trace, debug, info, warn, error, fatal)
  * - Child loggers with context binding
  * - Sensitive data redaction
+ *
+ * Issue #3416: Application-level log rotation (pino-roll) removed.
+ * Use system-level tools (logrotate / newsyslog) for rotation.
  *
  * @module utils/logger
  */
@@ -62,21 +65,25 @@ const SENSITIVE_FIELDS = [
 let rootLogger: Logger | null = null;
 
 /**
- * PassThrough stream for upgrading from sync file logging to pino-roll.
+ * PassThrough stream for deferred file logging setup.
  *
- * Issue #2934: When LOG_TO_FILE=true, createLogger() creates a sync file
- * logger at module level. initLogger() later upgrades the stream to pino-roll
- * (async). The PassThrough acts as a proxy — all child loggers write to it,
- * and it pipes to the current destination (file initially, pino-roll after upgrade).
+ * When LOG_TO_FILE=true, createLogger() creates a sync file logger at module
+ * level. initLogger() later reconfigures the stream with proper async options.
+ * The PassThrough acts as a proxy — all child loggers write to it, and it
+ * pipes to the current destination.
  */
 let logPassthrough: PassThrough | null = null;
-// pino.destination() returns SonicBoom, pino-roll returns WritableStream
+// pino.destination() returns SonicBoom (a NodeJS.WritableStream)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let currentLogDest: any = null;
+// Recursion guard for error handlers that may try to log during flush
+let flushInProgress = false;
 
 /**
  * Reset the root logger instance.
  * This is primarily useful for testing.
+ *
+ * Properly destroys the underlying file stream to prevent file handle leaks.
  *
  * @internal
  */
@@ -84,8 +91,12 @@ export function resetLogger(): void {
   if (logPassthrough) {
     logPassthrough.destroy();
     logPassthrough = null;
-    currentLogDest = null;
   }
+  // Destroy the underlying file stream to release file handles.
+  if (currentLogDest && typeof currentLogDest.destroy === 'function') {
+    currentLogDest.destroy();
+  }
+  currentLogDest = null;
   rootLogger = null;
 }
 
@@ -98,11 +109,7 @@ function isDevelopment(): boolean {
 
 /**
  * Create a PassThrough stream that pipes to a sync file destination.
- * Used by createLogger() and getRootLogger() for synchronous file logging
- * that can later be upgraded to pino-roll by initLogger().
- *
- * Issue #2934: Extracts the repeated LOG_TO_FILE setup logic into a
- * single helper to avoid duplication across createLogger/getRootLogger.
+ * Used by createLogger() and getRootLogger() for synchronous file logging.
  *
  * @returns Object with { passthrough, dest } if file logging is active,
  *          or null if stdout should be used instead.
@@ -208,13 +215,16 @@ function getProductionConfig(): LoggerOptions {
 }
 
 /**
- * Setup file logging with rotation
+ * Setup file logging using pino.destination().
  *
- * Note: Dynamic import of pino-roll to avoid build issues
+ * Issue #3416: Application-level rotation (pino-roll) removed.
+ * The application writes to a single fixed log file. Use system-level
+ * tools (logrotate on Linux, newsyslog on macOS) for rotation,
+ * compression, and cleanup.
  */
-async function setupFileLogging(
+function setupFileLogging(
   logDir: string
-): Promise<NodeJS.WritableStream> {
+): NodeJS.WritableStream {
   try {
     // Create logs directory if it doesn't exist
     const logsPath = path.resolve(process.cwd(), logDir);
@@ -223,24 +233,11 @@ async function setupFileLogging(
       fs.mkdirSync(logsPath, { recursive: true });
     }
 
-    // Dynamic import of pino-roll — CJS module requires .default access (Issue #3359)
-    const pinoRollModule = await import('pino-roll');
-    const pinoRoll = typeof pinoRollModule.default === 'function'
-      ? pinoRollModule.default
-      : pinoRollModule as unknown as typeof pinoRollModule.default;
-
-    // Combined log file with rotation
-    // pino-roll v4 API: single options object { file, size, limit, ... }
     const logFile = path.join(logsPath, 'disclaude-combined.log');
-    const rollStream = await pinoRoll({
-      file: logFile,
-      size: '10M',
-      limit: { count: 30 },
-    });
+    const dest = pino.destination({ dest: logFile, sync: false, mkdir: true });
 
-    return rollStream as unknown as NodeJS.WritableStream;
+    return dest as unknown as NodeJS.WritableStream;
   } catch (error) {
-    // If pino-roll fails, fall back to stdout
     console.warn('Failed to setup file logging, falling back to stdout:', error);
     return process.stdout;
   }
@@ -270,10 +267,6 @@ function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
  * This function creates the singleton root logger instance with
  * environment-specific configuration.
  *
- * Issue #2934: Supports upgrading a sync file logger (created by createLogger()
- * at module level) to pino-roll with rotation. The PassThrough stream proxy
- * ensures all child loggers seamlessly switch to the rotated destination.
- *
  * @param config - Optional logger configuration
  * @returns The root logger instance
  *
@@ -285,7 +278,7 @@ function createRedactionSerializer(fields: string[] = SENSITIVE_FIELDS) {
  * logger.info('Application started');
  * ```
  */
-export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
+export function initLogger(config: LoggerConfig = {}): Logger {
   const isDev = isDevelopment();
   const logDir = config.logDir ?? process.env.LOG_DIR ?? './logs';
 
@@ -322,23 +315,9 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
   const shouldFileLog = (config.fileLogging ?? !isDev) && process.env.NODE_ENV !== 'test';
 
   if (rootLogger) {
-    // Root logger already exists (created by createLogger() at module level).
-    // Issue #2934: If LOG_TO_FILE is set and we have a PassThrough stream,
-    // upgrade the destination from plain file to pino-roll with rotation.
-    if (shouldFileLog && logPassthrough && currentLogDest) {
-      try {
-        const rollStream = await setupFileLogging(logDir);
-        // Swap destination: unpipe old, pipe new
-        logPassthrough.unpipe(currentLogDest);
-        logPassthrough.pipe(rollStream);
-        // Update log level in case it changed
-        if (config.level) {
-          rootLogger.level = config.level;
-        }
-        currentLogDest = rollStream;
-      } catch (error) {
-        console.warn('Failed to upgrade to pino-roll:', error);
-      }
+    // Root logger already exists — update level if changed
+    if (config.level) {
+      rootLogger.level = config.level;
     }
     return rootLogger;
   }
@@ -348,7 +327,7 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
 
   if (shouldFileLog) {
     try {
-      logStream = await setupFileLogging(logDir);
+      logStream = setupFileLogging(logDir);
     } catch (error) {
       console.warn('Failed to setup file logging:', error);
     }
@@ -365,10 +344,6 @@ export async function initLogger(config: LoggerConfig = {}): Promise<Logger> {
  *
  * Child loggers inherit the parent's configuration and automatically
  * include the context field in all log entries.
- *
- * Issue #2934: When LOG_TO_FILE=true env var is set, the root logger is
- * created with a PassThrough stream writing to a file. Later, initLogger()
- * upgrades the destination to pino-roll with rotation.
  *
  * @param context - Module/component name (e.g., 'FeishuBot', 'AgentClient')
  * @param metadata - Additional metadata to include in all logs
@@ -398,7 +373,7 @@ export function createLogger(
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
 
-    // Issue #2934: Use shared helper for LOG_TO_FILE sync file setup
+    // Setup file logging if LOG_TO_FILE is enabled
     const fileSetup = setupSyncFilePassthrough();
     if (fileSetup) {
       logPassthrough = fileSetup.passthrough;
@@ -422,7 +397,7 @@ export function createLogger(
  * Get the root logger instance
  *
  * Returns the existing root logger or initializes it if needed.
- * Issue #2934: Respects LOG_TO_FILE env var for file-based logging.
+ * Respects LOG_TO_FILE env var for file-based logging.
  *
  * @returns The root logger instance
  */
@@ -431,7 +406,6 @@ export function getRootLogger(): Logger {
     const isDev = isDevelopment();
     const options = isDev ? getDevelopmentConfig() : getProductionConfig();
 
-    // Issue #2934: Use shared helper for LOG_TO_FILE sync file setup
     const fileSetup = setupSyncFilePassthrough();
     if (fileSetup) {
       logPassthrough = fileSetup.passthrough;
@@ -478,14 +452,72 @@ export function isLevelEnabled(level: LogLevel): boolean {
 /**
  * Flush any pending log entries
  *
+ * Uses SonicBoom's flush() method to ensure all buffered writes reach
+ * the filesystem. Flushes both the PassThrough proxy (if active) and
+ * the underlying file stream.
+ *
  * Useful for ensuring logs are written before process exit.
  */
 export function flushLogger(): Promise<void> {
-  if (rootLogger) {
-    return new Promise((resolve) => {
-      // Pino uses async writes, give it time to flush
-      setTimeout(resolve, 100);
-    });
+  if (!rootLogger) {
+    return Promise.resolve();
   }
-  return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const pending: Promise<void>[] = [];
+
+    // Flush the PassThrough proxy — this pushes buffered chunks downstream
+    if (logPassthrough && !logPassthrough.destroyed) {
+      try {
+        logPassthrough.resume();
+      } catch {
+        // PassThrough may already be ended
+      }
+    }
+
+    // Flush the underlying file stream (SonicBoom) if it has a flush method
+    if (currentLogDest && typeof currentLogDest.flush === 'function' && !currentLogDest.destroyed) {
+      pending.push(
+        new Promise<void>((res) => {
+          currentLogDest.flush((err?: Error | null) => {
+            if (err) {
+              // Use rootLogger when safe, fallback to console.warn during flush
+              if (rootLogger && !flushInProgress) {
+                rootLogger.error({ err }, 'Logger flush error');
+              } else {
+                console.warn('Logger flush error:', err.message);
+              }
+            }
+            res();
+          });
+        })
+      );
+    }
+
+    if (pending.length > 0) {
+      flushInProgress = true;
+      void Promise.all(pending).then(() => {
+        flushInProgress = false;
+        resolve();
+      });
+    } else {
+      // No file stream to flush — resolve immediately
+      resolve();
+    }
+  });
+}
+
+/**
+ * Flush and close the logger, releasing all file handles.
+ *
+ * Use this before process.exit() to ensure all buffered log entries
+ * are written to disk and file handles are released.
+ *
+ * After calling this, the logger can be re-initialized with initLogger().
+ *
+ * @returns Promise that resolves when all streams are flushed and closed
+ */
+export async function closeLogger(): Promise<void> {
+  await flushLogger();
+  resetLogger();
 }

@@ -321,28 +321,35 @@ export {
   type DebugGroup,
 } from './control/index.js';
 
-// Project module — unified per-chatId Agent context switching (Issue #1916, Issue #2227)
+// Project module — simplified per-chatId working directory binding (Issue #3519)
 export type {
   CwdProvider,
-  InstanceInfo,
-  PersistedInstance,
+  IssueTriageStatus,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
-  ProjectTemplate,
-  ProjectTemplatesConfig,
-  ProjectsPersistData,
-} from './project/index.js';
-
-export type {
-  DiscoveryResult,
-  DiscoveryError,
-  DiscoveryOptions,
+  ProjectState,
+  ProjectStateIssueEntry,
+  ProjectStatePrEntry,
+  ProjectStateSync,
+  PrReviewStatus,
 } from './project/index.js';
 
 export {
   ProjectManager,
-  discoverTemplates,
-  discoveryResultToConfig,
-  discoverTemplatesAsConfig,
+  // Project state utilities (Issue #3335)
+  createDefaultState,
+  getStateDir,
+  getStateFilePath,
+  isValidIssueEntry,
+  isValidProjectState,
+  isValidPrEntry,
+  readProjectState,
+  updateSyncTimestamp,
+  upsertIssue,
+  upsertPr,
+  writeProjectState,
+  STATE_DIR_NAME,
+  STATE_FILE_NAME,
+  STATE_VERSION,
 } from './project/index.js';
