@@ -394,6 +394,23 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+  /**
+   * WorkBuddy configuration for remote local-agent control (Issue #3442).
+   *
+   * Defines projects that can be controlled remotely via WorkBuddy agents
+   * running on the user's local machine.
+   *
+   * ```yaml
+   * workbuddy:
+   *   projects:
+   *     my-miniprogram:
+   *       workingDir: /Users/dev/my-miniprogram
+   *       chatId: oc_xxxx
+   *       tools:
+   *         - wechat-devtools
+   * ```
+   */
+  workbuddy?: import('../workbuddy/types.js').WorkBuddyConfig;
 }
 
 /**
