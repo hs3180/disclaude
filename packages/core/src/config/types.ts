@@ -394,6 +394,26 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+
+  /**
+   * Pre-configured projects with chatId binding (Issue #3329 Phase 5).
+   *
+   * Each project entry defines a working directory, bound chatId, and optional
+   * model tier. These are loaded at startup and can be referenced by key in
+   * admin commands (`/project status`, `/project stop`).
+   *
+   * When a project has a `chatId`, the ProjectManager can auto-bind it on
+   * startup, enabling SystemMessage routing via MessageRouter (Phase 3).
+   *
+   * ```yaml
+   * projects:
+   *   - key: "hs3180/disclaude"
+   *     workingDir: "./repos/disclaude"
+   *     chatId: "oc_xxxx"
+   *     modelTier: "low"
+   * ```
+   */
+  projects?: ProjectConfigEntry[];
 }
 
 /**
@@ -449,4 +469,21 @@ export interface ChannelsConfig {
 export interface DisclaudeConfigWithChannels extends DisclaudeConfig {
   /** Channels configuration */
   channels?: ChannelsConfig;
+}
+
+/**
+ * Pre-configured project entry (Issue #3329 Phase 5).
+ *
+ * Defines a project that can be bound to a chatId and used for
+ * system-driven tasks, scheduled operations, and admin commands.
+ */
+export interface ProjectConfigEntry {
+  /** Unique project key (e.g., 'hs3180/disclaude') */
+  key: string;
+  /** Working directory (relative to workspace or absolute) */
+  workingDir: string;
+  /** Bound chatId — agent replies go here */
+  chatId?: string;
+  /** Model tier for this project's agent */
+  modelTier?: ModelTier;
 }

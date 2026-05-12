@@ -154,4 +154,26 @@ export interface ProjectState {
 export interface ProjectManagerOptions {
   /** Workspace root directory (default working directory when no binding exists) */
   workspaceDir: string;
+  /**
+   * Pre-configured projects from config file (Issue #3329 Phase 5).
+   * Used for lookup by project key and status reporting.
+   */
+  configuredProjects?: ConfiguredProject[];
+}
+
+/**
+ * A pre-configured project loaded from disclaude.config.yaml.
+ * Simplified version of ProjectConfigEntry for internal use.
+ *
+ * @see Issue #3329 Phase 5
+ */
+export interface ConfiguredProject {
+  /** Unique project key (e.g., 'hs3180/disclaude') */
+  key: string;
+  /** Working directory (resolved to absolute path) */
+  workingDir: string;
+  /** Bound chatId — agent replies go here */
+  chatId?: string;
+  /** Model tier for this project's agent */
+  modelTier?: string;
 }

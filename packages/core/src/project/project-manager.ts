@@ -12,9 +12,10 @@
  */
 
 import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { basename, resolve, isAbsolute } from 'node:path';
 import type {
   CwdProvider,
+  ConfiguredProject,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -49,6 +50,8 @@ export class ProjectManager {
   private readonly workspaceDir: string;
   /** chatId → workingDir binding */
   private bindings: Map<string, string> = new Map();
+  /** Pre-configured projects from config (Issue #3329 Phase 5) */
+  private readonly configuredProjects: Map<string, ConfiguredProject> = new Map();
 
   /** Path to .disclaude directory */
   private readonly dataDir: string;
@@ -62,6 +65,16 @@ export class ProjectManager {
     this.dataDir = resolve(options.workspaceDir, '.disclaude');
     this.persistPath = resolve(this.dataDir, 'project-bindings.json');
     this.persistTmpPath = resolve(this.dataDir, 'project-bindings.json.tmp');
+
+    // Load pre-configured projects (Issue #3329 Phase 5)
+    if (options.configuredProjects) {
+      for (const project of options.configuredProjects) {
+        this.configuredProjects.set(project.key, {
+          ...project,
+          workingDir: this.resolveWorkingDir(project.workingDir),
+        });
+      }
+    }
 
     // Restore persisted state
     this.loadPersistedData();
@@ -193,6 +206,44 @@ export class ProjectManager {
       chatId,
       workingDir,
     }));
+  }
+
+  // ───────────────────────────────────────────
+  // Configured Project Lookup (Issue #3329 Phase 5)
+  // ───────────────────────────────────────────
+
+  /**
+   * Get a pre-configured project by its key.
+   *
+   * @param key - Project key (e.g., 'hs3180/disclaude')
+   * @returns ConfiguredProject or undefined if not found
+   */
+  getConfiguredProject(key: string): ConfiguredProject | undefined {
+    return this.configuredProjects.get(key);
+  }
+
+  /**
+   * List all pre-configured projects.
+   *
+   * @returns Array of ConfiguredProject entries
+   */
+  listConfiguredProjects(): ConfiguredProject[] {
+    return Array.from(this.configuredProjects.values());
+  }
+
+  /**
+   * Find a configured project by chatId binding.
+   *
+   * @param chatId - ChatId to look up
+   * @returns ConfiguredProject that has this chatId, or undefined
+   */
+  findConfiguredProjectByChatId(chatId: string): ConfiguredProject | undefined {
+    for (const project of this.configuredProjects.values()) {
+      if (project.chatId === chatId) {
+        return project;
+      }
+    }
+    return undefined;
   }
 
   // ───────────────────────────────────────────
@@ -371,5 +422,16 @@ export class ProjectManager {
     }
 
     return null;
+  }
+
+  /**
+   * Resolve a working directory path relative to the workspace.
+   * Handles both absolute and relative paths.
+   */
+  private resolveWorkingDir(workingDir: string): string {
+    if (isAbsolute(workingDir)) {
+      return workingDir;
+    }
+    return resolve(this.workspaceDir, workingDir);
   }
 }

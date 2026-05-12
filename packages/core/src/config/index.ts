@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ProjectConfigEntry,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -567,6 +568,19 @@ export class Config {
    */
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
+  }
+
+  /**
+   * Get pre-configured projects from config file (Issue #3329 Phase 5).
+   *
+   * Returns the list of project entries defined in the `projects` section
+   * of disclaude.config.yaml. Each entry has a key, workingDir, optional
+   * chatId binding, and optional modelTier.
+   *
+   * @returns Array of ProjectConfigEntry, or empty array if not configured
+   */
+  static getProjectsConfig(): ProjectConfigEntry[] {
+    return fileConfigOnly.projects || [];
   }
 
 }

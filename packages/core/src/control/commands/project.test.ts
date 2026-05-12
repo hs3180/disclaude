@@ -6,9 +6,12 @@
  * - `use <workingDir>` — bind chat to a working directory
  * - `reset` — reset chat to default workspace
  * - `info` — show current chat's active project info
+ * - `status` — show all configured projects and runtime state
+ * - `stop <key>` — stop agent for a configured project
  * - Error cases (no ProjectManager, unknown subcommand, missing args)
  *
  * @see Issue #3519 (simplify /project command)
+ * @see Issue #3329 Phase 5 (Configuration & DX)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -19,6 +22,7 @@ import type { ControlCommand } from '../../types/channel.js';
 import type { ControlHandlerContext } from '../types.js';
 import { handleProject } from './project.js';
 import { ProjectManager } from '../../project/project-manager.js';
+import type { ConfiguredProject } from '../../project/types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Test Fixtures
@@ -295,6 +299,202 @@ describe('handleProject', () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('已重置');
+    });
+  });
+
+  describe('/project status', () => {
+    it('should show empty message when no projects or bindings', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('没有已配置的项目');
+    });
+
+    it('should show configured projects from config', async () => {
+      const workspaceDir = createTempDir();
+      const pm = new ProjectManager({
+        workspaceDir,
+        configuredProjects: [
+          { key: 'owner/repo', workingDir: './repos/repo', chatId: 'oc_chat123456789', modelTier: 'low' },
+        ],
+      });
+
+      const ctx: ControlHandlerContext = {
+        agentPool: { reset: () => {}, stop: () => false },
+        node: {
+          nodeId: 'test-node',
+          getDebugGroup: () => null,
+          setDebugGroup: () => {},
+          clearDebugGroup: () => null,
+        },
+        projectManager: pm,
+      };
+
+      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('owner/repo');
+      expect(result.message).toContain('oc_chat12345');
+    });
+
+    it('should show runtime bindings', async () => {
+      const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+      ctx.projectManager!.use('chat-999', projectDir);
+
+      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-project');
+    });
+
+    it('should show both configured and runtime bindings', async () => {
+      const workspaceDir = createTempDir();
+      const pm = new ProjectManager({
+        workspaceDir,
+        configuredProjects: [
+          { key: 'owner/repo', workingDir: './repos/repo', chatId: 'oc_configured_chat' },
+        ],
+      });
+
+      const projectDir = join(workspaceDir, 'runtime-project');
+      mkdirSync(projectDir, { recursive: true });
+      pm.use('chat-runtime', projectDir);
+
+      const ctx: ControlHandlerContext = {
+        agentPool: { reset: () => {}, stop: () => false },
+        node: {
+          nodeId: 'test-node',
+          getDebugGroup: () => null,
+          setDebugGroup: () => {},
+          clearDebugGroup: () => null,
+        },
+        projectManager: pm,
+      };
+
+      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('owner/repo');
+      expect(result.message).toContain('runtime-project');
+    });
+
+    it('should return error when projectManager is not configured', async () => {
+      const ctx = createTestContext();
+      delete (ctx as Partial<ControlHandlerContext>).projectManager;
+
+      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('ProjectManager 未配置');
+    });
+  });
+
+  describe('/project stop', () => {
+    function createTestContextWithProjects(
+      projects: ConfiguredProject[],
+      stopFn?: (chatId: string) => boolean,
+    ): ControlHandlerContext {
+      const workspaceDir = createTempDir();
+      const pm = new ProjectManager({ workspaceDir, configuredProjects: projects });
+
+      return {
+        agentPool: {
+          reset: () => {},
+          stop: stopFn ?? (() => false),
+        },
+        node: {
+          nodeId: 'test-node',
+          getDebugGroup: () => null,
+          setDebugGroup: () => {},
+          clearDebugGroup: () => null,
+        },
+        projectManager: pm,
+      };
+    }
+
+    it('should stop agent for a configured project with chatId', async () => {
+      const stoppedChatIds: string[] = [];
+      const ctx = createTestContextWithProjects(
+        [{ key: 'owner/repo', workingDir: './repo', chatId: 'oc_target_chat' }],
+        (chatId) => { stoppedChatIds.push(chatId); return true; },
+      );
+
+      const result = await invoke(
+        makeCommand('chat-1', 'stop', { projectKey: 'owner/repo' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已停止');
+      expect(stoppedChatIds).toContain('oc_target_chat');
+    });
+
+    it('should report no running agent when stop returns false', async () => {
+      const ctx = createTestContextWithProjects(
+        [{ key: 'owner/repo', workingDir: './repo', chatId: 'oc_target_chat' }],
+        () => false,
+      );
+
+      const result = await invoke(
+        makeCommand('chat-1', 'stop', { projectKey: 'owner/repo' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('没有正在运行');
+    });
+
+    it('should return error when projectKey is missing', async () => {
+      const ctx = createTestContextWithProjects([]);
+      const result = await invoke(makeCommand('chat-1', 'stop'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('projectKey');
+    });
+
+    it('should return error for unknown project key', async () => {
+      const ctx = createTestContextWithProjects(
+        [{ key: 'owner/repo', workingDir: './repo', chatId: 'oc_chat' }],
+      );
+
+      const result = await invoke(
+        makeCommand('chat-1', 'stop', { projectKey: 'unknown/key' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('未找到项目');
+      expect(result.error).toContain('owner/repo');
+    });
+
+    it('should return error when project has no chatId', async () => {
+      const ctx = createTestContextWithProjects(
+        [{ key: 'owner/repo', workingDir: './repo' }],
+      );
+
+      const result = await invoke(
+        makeCommand('chat-1', 'stop', { projectKey: 'owner/repo' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('没有绑定 chatId');
+    });
+
+    it('should return error when projectManager is not configured', async () => {
+      const ctx = createTestContext();
+      delete (ctx as Partial<ControlHandlerContext>).projectManager;
+
+      const result = await invoke(
+        makeCommand('chat-1', 'stop', { projectKey: 'owner/repo' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('ProjectManager 未配置');
     });
   });
 });

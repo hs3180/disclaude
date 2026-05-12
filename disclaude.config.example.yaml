@@ -267,6 +267,20 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Pre-configured Projects (Issue #3329 Phase 5)
+# -----------------------------------------------------------------------------
+# Define projects with chatId bindings for system-driven tasks and admin commands.
+# Projects can be managed via /project status and /project stop commands.
+#
+# projects:
+#   - key: "owner/repo"              # Unique project key
+#     workingDir: "./repos/repo"      # Working directory (relative to workspace)
+#     chatId: "oc_xxxx"              # Bound chatId for agent output
+#     modelTier: "low"               # Optional: high | low | multimodal
+#
+# projects: []
+
 # =============================================================================
 # Notes
 # =============================================================================

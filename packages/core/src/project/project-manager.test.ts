@@ -387,4 +387,95 @@ describe('ProjectManager', () => {
       expect(pm.getWorkspaceDir()).toBe(opts.workspaceDir);
     });
   });
+
+  describe('configured projects (Issue #3329 Phase 5)', () => {
+    it('should load configured projects from constructor options', () => {
+      const opts = createOptions({
+        configuredProjects: [
+          { key: 'owner/repo', workingDir: './repos/repo', chatId: 'oc_chat1', modelTier: 'low' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const projects = pm.listConfiguredProjects();
+      expect(projects).toHaveLength(1);
+      expect(projects[0].key).toBe('owner/repo');
+      expect(projects[0].chatId).toBe('oc_chat1');
+    });
+
+    it('should resolve relative workingDir against workspace', () => {
+      const opts = createOptions({
+        configuredProjects: [
+          { key: 'owner/repo', workingDir: './repos/repo' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const project = pm.getConfiguredProject('owner/repo');
+      expect(project).toBeDefined();
+      expect(project!.workingDir).toBe(resolve(opts.workspaceDir, './repos/repo'));
+    });
+
+    it('should keep absolute workingDir as-is', () => {
+      const opts = createOptions({
+        configuredProjects: [
+          { key: 'owner/repo', workingDir: '/absolute/path/to/repo' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const project = pm.getConfiguredProject('owner/repo');
+      expect(project!.workingDir).toBe('/absolute/path/to/repo');
+    });
+
+    it('should return undefined for unknown project key', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+
+      expect(pm.getConfiguredProject('unknown/key')).toBeUndefined();
+    });
+
+    it('should return empty array when no configured projects', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+
+      expect(pm.listConfiguredProjects()).toEqual([]);
+    });
+
+    it('should find configured project by chatId', () => {
+      const opts = createOptions({
+        configuredProjects: [
+          { key: 'owner/repo-a', workingDir: './a', chatId: 'oc_chat_a' },
+          { key: 'owner/repo-b', workingDir: './b', chatId: 'oc_chat_b' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const found = pm.findConfiguredProjectByChatId('oc_chat_b');
+      expect(found).toBeDefined();
+      expect(found!.key).toBe('owner/repo-b');
+    });
+
+    it('should return undefined when no project matches chatId', () => {
+      const opts = createOptions({
+        configuredProjects: [
+          { key: 'owner/repo', workingDir: './repo', chatId: 'oc_chat' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      expect(pm.findConfiguredProjectByChatId('oc_unknown')).toBeUndefined();
+    });
+
+    it('should handle project without chatId in findConfiguredProjectByChatId', () => {
+      const opts = createOptions({
+        configuredProjects: [
+          { key: 'owner/repo', workingDir: './repo' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      expect(pm.findConfiguredProjectByChatId('any_chat')).toBeUndefined();
+    });
+  });
 });
