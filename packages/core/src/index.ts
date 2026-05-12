@@ -280,6 +280,12 @@ export {
   createMarkdownMessage,
   createCardMessage,
   createDoneMessage,
+  // NonUserMessage Router (Issue #3331)
+  NonUserMessageRouter,
+  type NonUserMessageRouterOptions,
+  type ProjectLookupFn,
+  type AgentFactoryFn,
+  type ErrorNotifierFn,
 } from './messaging/index.js';
 
 // Channels module (Issue #1041 - migrated from primary-node)

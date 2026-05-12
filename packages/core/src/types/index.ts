@@ -122,6 +122,15 @@ export type {
 
 export { getNodeCapabilities } from './primary-node.js';
 
+// NonUserMessage types (Issue #3331)
+export type {
+  NonUserMessageType,
+  NonUserMessagePriority,
+  NonUserMessage,
+  NonUserMessageRouteResult,
+  ProjectBinding,
+} from './non-user-message.js';
+
 // Adapter types (Issue #1040)
 export type {
   FileAttachment,

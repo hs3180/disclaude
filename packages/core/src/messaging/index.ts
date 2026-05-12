@@ -36,3 +36,12 @@ export {
   createCardMessage,
   createDoneMessage,
 } from './universal-message.js';
+
+// NonUserMessage Router (Issue #3331)
+export {
+  NonUserMessageRouter,
+  type NonUserMessageRouterOptions,
+  type ProjectLookupFn,
+  type AgentFactoryFn,
+  type ErrorNotifierFn,
+} from './non-user-message-router.js';
