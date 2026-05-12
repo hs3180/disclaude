@@ -79,15 +79,25 @@ export class PrimaryAgentPool {
   }
 
   /**
-   * Reset the ChatAgent for a chatId.
+   * Reset the ChatAgent for a chatId by disposing the old instance.
+   *
+   * Issue #3570: Instead of just clearing conversation context on the existing
+   * agent, we dispose it completely and remove it from the pool. The next
+   * getOrCreateChatAgent() call will create a fresh agent instance.
+   *
+   * This ensures all resources (MCP connections, event listeners, transports,
+   * AbortControllers) are properly released rather than accumulated across
+   * multiple /reset operations.
    *
    * @param chatId - Chat ID to reset
-   * @param keepContext - Whether to keep context after reset
+   * @param _keepContext - Ignored (kept for API compatibility). Context is not
+   *   preserved since the old agent is fully disposed.
    */
-  reset(chatId: string, keepContext?: boolean): void {
+  reset(chatId: string, _keepContext?: boolean): void {
     const agent = this.agents.get(chatId);
     if (agent) {
-      agent.reset(chatId, keepContext);
+      this.agents.delete(chatId);
+      agent.dispose();
     }
   }
 
