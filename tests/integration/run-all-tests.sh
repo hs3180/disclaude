@@ -169,7 +169,7 @@ run_test_script() {
 
                 if [ "$needs_restart" = true ]; then
                     stop_server 2>/dev/null || true
-                    sleep 2
+                    wait_for_port_release "$REST_PORT" 10 || true
                     if start_server; then
                         log_info "Server restarted successfully for retry ${attempt}"
                     else
@@ -218,8 +218,8 @@ check_server_health_detailed() {
                 _EXIT_LISTENER_BASELINE="$exit_count"
                 log_info "Exit listener baseline: $exit_count"
             fi
-            if [ "$exit_count" -gt 8 ] 2>/dev/null; then
-                log_warn "⚠️ Server health check: exit listener count=$exit_count (threshold: 8) — possible ProcessTransport leak"
+            if [ "$exit_count" -gt "${EXIT_LISTENER_THRESHOLD:-10}" ] 2>/dev/null; then
+                log_warn "⚠️ Server health check: exit listener count=$exit_count (threshold: ${EXIT_LISTENER_THRESHOLD:-10}) — possible ProcessTransport leak"
             else
                 log_debug "Server health check: exit listeners=$exit_count, status=ok"
             fi
