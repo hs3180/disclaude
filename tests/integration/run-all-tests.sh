@@ -157,9 +157,13 @@ run_test_script() {
 # Delay is skipped before the first suite and after retries
 _SUITE_COUNT=0
 
+# Issue #3378: Track exit listener count for leak detection across test run.
+_EXIT_LISTENER_BASELINE=""
+
 # Issue #3378: Check server health including process exit listener count.
 # Logs a warning if exit listeners exceed threshold, helping diagnose
 # ProcessTransport leaks from Claude Agent SDK.
+# If baseline is not yet set, records the current count as baseline.
 check_server_health_detailed() {
     local result
     result=$(make_request "GET" "/api/health" 2>/dev/null) || return
@@ -173,6 +177,11 @@ check_server_health_detailed() {
         local exit_count
         exit_count=$(echo "$body" | grep -o '"exit":[0-9]*' | grep -o '[0-9]*')
         if [ -n "$exit_count" ]; then
+            # Record baseline on first call
+            if [ -z "$_EXIT_LISTENER_BASELINE" ]; then
+                _EXIT_LISTENER_BASELINE="$exit_count"
+                log_info "Exit listener baseline: $exit_count"
+            fi
             if [ "$exit_count" -gt 8 ] 2>/dev/null; then
                 log_warn "⚠️ Server health check: exit listener count=$exit_count (threshold: 8) — possible ProcessTransport leak"
             else
@@ -181,6 +190,34 @@ check_server_health_detailed() {
         fi
     else
         log_warn "Server health check returned HTTP $status"
+    fi
+}
+
+# Issue #3378: Warm up the agent before the first AI-dependent test.
+# Sends a lightweight sync request to ensure the agent is fully initialized,
+# addressing cold-start behavior where the first AI request might return
+# inconsistent responses (e.g., raw tool call format instead of text).
+# Returns: 0 on success, 1 on failure (non-fatal — tests still proceed)
+warmup_agent() {
+    log_info "Warming up agent (cold start prevention)..."
+    local warmup_chat_id="warmup-$$-$(date +%s)"
+    local result
+    result=$(make_sync_request "ping" "$warmup_chat_id" 2>/dev/null) || true
+
+    parse_response "$result"
+
+    if [ "$RESPONSE_STATUS" = "200" ]; then
+        log_info "Agent warm-up successful (HTTP 200)"
+        # Record baseline exit listener count after warm-up
+        check_server_health_detailed
+        return 0
+    elif [ "$RESPONSE_STATUS" = "000" ]; then
+        # Warm-up timeout — agent might be slow on cold start, not a failure
+        log_warn "Agent warm-up: no response (HTTP 000) — agent may be initializing"
+        return 0
+    else
+        log_warn "Agent warm-up returned HTTP $RESPONSE_STATUS (non-fatal)"
+        return 0
     fi
 }
 
@@ -230,6 +267,9 @@ main() {
     log_info "Starting test server..."
     start_server || exit 1
 
+    # Issue #3378: Warm up agent before first AI test to prevent cold-start issues
+    warmup_agent
+
     local failed=0
     local RETRIED_SUCCESSES=0
     local TOTAL_RETRIES=0
@@ -274,6 +314,30 @@ main() {
     if [ $RETRIED_SUCCESSES -gt 0 ]; then
         log_warn "${RETRIED_SUCCESSES} suite(s) passed after retry"
     fi
+
+    # Issue #3378: Report exit listener growth for leak detection
+    if [ -n "$_EXIT_LISTENER_BASELINE" ]; then
+        local final_result
+        final_result=$(make_request "GET" "/api/health" 2>/dev/null) || true
+        local final_body
+        final_body=$(echo "$final_result" | cut -d'|' -f2-)
+        local final_exit_count
+        final_exit_count=$(echo "$final_body" | grep -o '"exit":[0-9]*' | grep -o '[0-9]*')
+        if [ -n "$final_exit_count" ]; then
+            local growth=$((final_exit_count - _EXIT_LISTENER_BASELINE))
+            echo ""
+            echo "Exit listener diagnostics (Issue #3378):"
+            echo "  Baseline: $_EXIT_LISTENER_BASELINE"
+            echo "  Final:    $final_exit_count"
+            echo "  Growth:   $growth"
+            if [ "$growth" -gt 3 ] 2>/dev/null; then
+                log_warn "Exit listener growth=$growth exceeds threshold (3) — possible ProcessTransport leak"
+            else
+                log_info "Exit listener growth within normal range ($growth)"
+            fi
+        fi
+    fi
+
     echo "=========================================="
 
     cleanup
