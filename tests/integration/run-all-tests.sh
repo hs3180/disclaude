@@ -176,7 +176,7 @@ run_suite() {
         if ! is_server_running; then
             log_warn "Server not healthy before '$name' — restarting..."
             stop_server
-            sleep 2
+            wait_for_port_release "${REST_PORT:-3456}" 5 2>/dev/null || sleep 1
             start_server || {
                 log_error "Failed to restart server before '$name'"
                 return 1

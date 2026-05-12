@@ -32,13 +32,20 @@ const logger = createLogger('ClaudeSDKProvider');
  */
 const SDK_PROCESS_EVENTS = ['exit', 'SIGINT', 'SIGTERM'] as const;
 
+/** Type-safe access to process listeners/off for events not in Node.js typings. */
+type ProcessEventListener = (...args: unknown[]) => void;
+const _process = process as unknown as {
+  listeners(e: string): ProcessEventListener[];
+  off(e: string, fn: ProcessEventListener): void;
+};
+
 /**
  * Snapshot of process listeners for a set of events.
  * Used to detect and clean up listeners added by the SDK during a query.
  */
 interface ProcessListenerSnapshot {
-  /** Map of event name → array of listener functions at snapshot time */
-  listeners: Map<string, Set<(...args: unknown[]) => void>>;
+  /** Map of event name → set of listener functions at snapshot time */
+  listeners: Map<string, Set<ProcessEventListener>>;
 }
 
 /**
@@ -46,13 +53,9 @@ interface ProcessListenerSnapshot {
  * Call this BEFORE invoking `query()` to establish a baseline.
  */
 function snapshotProcessListeners(): ProcessListenerSnapshot {
-  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  const listeners = new Map<string, Set<ProcessEventListener>>();
   for (const event of SDK_PROCESS_EVENTS) {
-    // Cast through unknown because Node.js typings don't allow 'exit' as a
-    // valid argument to process.listeners() / process.off() — but it works
-    // at runtime and is exactly what the SDK registers.
-    const current = (process as unknown as { listeners(e: string): ((...args: unknown[]) => void)[] }).listeners(event);
-    listeners.set(event, new Set(current));
+    listeners.set(event, new Set(_process.listeners(event)));
   }
   return { listeners };
 }
@@ -73,12 +76,11 @@ function cleanupNewProcessListeners(snapshot: ProcessListenerSnapshot): void {
   let cleaned = 0;
   for (const event of SDK_PROCESS_EVENTS) {
     const before = snapshot.listeners.get(event);
-    if (!before) {continue;}
-    const after = (process as unknown as { listeners(e: string): ((...args: unknown[]) => void)[] }).listeners(event);
-    for (const listener of after) {
+    if (!before) { continue; }
+    for (const listener of _process.listeners(event)) {
       if (!before.has(listener)) {
         try {
-          (process as unknown as { off(e: string, fn: (...args: unknown[]) => void): void }).off(event, listener);
+          _process.off(event, listener);
           cleaned++;
         } catch {
           // Ignore errors during cleanup — listener may have already been removed
