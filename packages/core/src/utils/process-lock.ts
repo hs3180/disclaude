@@ -169,21 +169,69 @@ export class ProcessLock {
   }
 
   /**
-   * Check if a process with the given PID is still running.
+   * Check if a process with the given PID is still running **and** is
+   * a disclaude-related process.
    *
-   * Uses `process.kill(pid, 0)` which sends signal 0 — it doesn't
-   * kill the process, just checks if it exists and we have permission
-   * to signal it.
+   * Uses `process.kill(pid, 0)` to check existence, then on Linux
+   * verifies via `/proc/{pid}/cmdline` that the process is actually
+   * a node/disclaude process. This prevents PID recycling from
+   * blocking server startup when an unrelated process reuses the PID
+   * from a crashed previous instance.
+   *
+   * Issue #3494: On CI (Linux), PIDs are aggressively recycled.
+   * A stale PID file whose PID now belongs to, e.g., a shell or
+   * cron daemon would prevent the test server from starting.
    *
    * @param pid - Process ID to check
-   * @returns `true` if process is alive
+   * @returns `true` if process is alive and is a disclaude process
    */
   private isProcessRunning(pid: number): boolean {
     try {
       process.kill(pid, 0);
-      return true;
     } catch {
       return false;
+    }
+
+    // process.kill(pid, 0) succeeded — a process with this PID exists.
+    // On Linux, verify it's actually a disclaude process to handle PID recycling.
+    if (process.platform === 'linux') {
+      return this.isDisclaudeProcess(pid);
+    }
+
+    // On non-Linux platforms (macOS dev), trust process.kill(pid, 0).
+    return true;
+  }
+
+  /**
+   * Verify that a running process is a Node.js process (which could be
+   * a disclaude server instance).
+   *
+   * Reads `/proc/{pid}/cmdline` to check if the process command line
+   * contains "node". If the PID was recycled to a non-Node process
+   * (e.g., init, cron, bash), we treat the lock as stale.
+   *
+   * @param pid - Process ID to verify
+   * @returns `true` if the process appears to be a Node.js process
+   */
+  private isDisclaudeProcess(pid: number): boolean {
+    try {
+      const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
+      // /proc/{pid}/cmdline uses null bytes as separators
+      const cmdStr = cmdline.replace(/\0/g, ' ');
+      // Check if this is a Node.js process (could be our disclaude server)
+      if (cmdStr.includes('node')) {
+        return true;
+      }
+      this.logger.warn(
+        { pid, cmdline: cmdStr.substring(0, 200) },
+        'PID file references a non-Node.js process (PID recycled). Treating as stale.'
+      );
+      return false;
+    } catch {
+      // Can't read cmdline (PID gone or permission denied) —
+      // be conservative and assume it IS our process to avoid
+      // false positives during legitimate concurrent runs.
+      return true;
     }
   }
 }
