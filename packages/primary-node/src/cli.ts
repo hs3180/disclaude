@@ -28,6 +28,7 @@ import {
   createControlHandler,
   type ControlHandlerContext,
   ProcessLock,
+  ProjectManager,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -108,9 +109,9 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Issue #2934: Initialize logger with file rotation support.
-  // When LOG_TO_FILE=true (set by launchd), this upgrades the sync file
-  // logger (created at module level) to pino-roll with rotation.
+  // Initialize logger with file logging support.
+  // When LOG_TO_FILE=true (set by launchd), writes to a single log file.
+  // Issue #3416: Rotation delegated to system-level tools (logrotate / newsyslog).
   await initLogger();
 
   // Issue #3417: Acquire process lock to prevent multiple concurrent instances.
@@ -214,8 +215,17 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
+  // Issue #3519: Simplified ProjectManager — chatId → workingDir binding
+  const workspaceDir = Config.getWorkspaceDir();
+
+  const projectManager = new ProjectManager({
+    workspaceDir,
+  });
+  logger.info({ workspaceDir }, 'ProjectManager initialized');
+
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
+    cwdProvider: projectManager.createCwdProvider(),
   });
 
   // Create unified control handler context
@@ -230,6 +240,7 @@ async function main(): Promise<void> {
       setDebugGroup: (chatId: string, name?: string) => primaryNode.getDebugGroupService().setDebugGroup(chatId, name),
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
     },
+    projectManager,
     logger,
   };
 
@@ -273,9 +284,9 @@ async function main(): Promise<void> {
       processLock.release();
       logger.info('Primary Node stopped');
 
-      // Issue #3416: Flush all buffered log entries to disk before exiting.
+      // Flush all buffered log entries to disk before exiting.
       // Without this, pino's async SonicBoom writes may be lost, causing
-      // log truncation and corruption in production (especially with pino-roll rotation).
+      // log truncation in production.
       await flushLogger();
 
       process.exit(0);

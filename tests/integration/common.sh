@@ -197,18 +197,13 @@ start_server() {
         log_info "Created isolated test workspace: ${TEST_WORKSPACE}"
     fi
 
-    # Issue #3494: Create isolated lock file for integration tests.
-    # Prevents stale production PID files from blocking test server startup.
-    # Uses a test-specific PID file in the test workspace directory.
-    if [ -z "$LOCKFILE_PATH" ]; then
-        LOCKFILE_PATH="${TEST_WORKSPACE}/disclaude-test.pid"
-        export LOCKFILE_PATH
-        log_debug "Using isolated lock file: ${LOCKFILE_PATH}"
-    fi
-    # Remove stale test lock file from a previous crashed run
-    if [ -f "$LOCKFILE_PATH" ]; then
-        log_warn "Removing stale test lock file: ${LOCKFILE_PATH}"
-        rm -f "$LOCKFILE_PATH"
+    # Issue #3510: Use an isolated PID lock file for the test server.
+    # Without this, the test server shares the production lock file path
+    # and fails to start when a production instance is already running.
+    if [ -z "$TEST_LOCKFILE" ]; then
+        TEST_LOCKFILE="${TEST_WORKSPACE}/disclaude-test-server.pid"
+        export LOCKFILE_PATH="$TEST_LOCKFILE"
+        log_info "Using isolated test lock file: ${TEST_LOCKFILE}"
     fi
 
     # Build config argument if provided
@@ -306,6 +301,13 @@ cleanup() {
         rm -rf "$TEST_WORKSPACE"
         unset DISCLAUDE_WORKSPACE_DIR
         TEST_WORKSPACE=""
+    fi
+
+    # Clean up test PID lock file (Issue #3510)
+    if [ -n "$TEST_LOCKFILE" ] && [ -f "$TEST_LOCKFILE" ]; then
+        rm -f "$TEST_LOCKFILE"
+        unset LOCKFILE_PATH
+        TEST_LOCKFILE=""
     fi
 }
 

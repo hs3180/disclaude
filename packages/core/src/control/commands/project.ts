@@ -1,58 +1,25 @@
 /**
  * /project command handler.
  *
- * Provides admin commands for managing project instances and viewing project state.
+ * Provides commands for managing chatId → working directory bindings.
  *
  * Subcommands:
- * - `list` — List all project instances and their bindings
- * - `status [projectKey]` — Show project agent status and state summary
+ * - `use <workingDir>` — Bind current chat to a working directory
+ * - `reset` — Reset current chat to default workspace
  * - `info` — Show current chat's active project info
  *
- * Note: `trigger` and `stop` subcommands require Phase 2 (Issue #3332)
- * for project-scoped ChatAgent support and are not yet implemented.
- *
- * @see Issue #3335 (Project state persistence and admin commands)
+ * @see Issue #3519 (simplify /project command)
+ * @see Issue #1916 (unified ProjectContext system)
  */
 
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext, CommandHandler } from '../types.js';
 import { readProjectState } from '../../project/project-state.js';
+import { basename } from 'node:path';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Subcommand Handlers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/**
- * `/project list` — List all project instances.
- */
-function handleList(context: ControlHandlerContext): ControlResponse {
-  const pm = context.projectManager;
-  if (!pm) {
-    return {
-      success: false,
-      error: 'ProjectManager 未配置',
-    };
-  }
-
-  const instances = pm.listInstances();
-  if (instances.length === 0) {
-    return {
-      success: true,
-      message: '📋 **项目实例列表**\n\n暂无项目实例。',
-    };
-  }
-
-  const lines = instances.map((inst) => {
-    const chatCount = inst.chatIds.length;
-    const bindingInfo = chatCount > 0 ? `绑定 ${chatCount} 个会话` : '无绑定';
-    return `- **${inst.name}** (${inst.templateName}) — ${bindingInfo}\n  \`${inst.workingDir}\``;
-  });
-
-  return {
-    success: true,
-    message: `📋 **项目实例列表**\n\n${lines.join('\n')}`,
-  };
-}
 
 /**
  * `/project info` — Show current chat's active project.
@@ -71,7 +38,7 @@ function handleInfo(command: ControlCommand, context: ControlHandlerContext): Co
   if (active.name === 'default') {
     return {
       success: true,
-      message: '📂 **当前项目**: default（工作空间根目录）',
+      message: `📂 **当前项目**: default（工作空间根目录）\n\`${active.workingDir}\``,
     };
   }
 
@@ -79,13 +46,12 @@ function handleInfo(command: ControlCommand, context: ControlHandlerContext): Co
   const state = readProjectState(active.workingDir);
   const issueCount = state ? Object.keys(state.issues).length : 0;
   const prCount = state ? Object.keys(state.prs).length : 0;
-  const lastSync = state?.sync?.issues ?? '从未';
+  const lastSync = state?.sync?.issues ?? '从不';
 
   return {
     success: true,
     message: [
-      `📂 **当前项目**: ${active.name}`,
-      `**模板**: ${active.templateName ?? '无'}`,
+      `📂 **当前项目**: ${basename(active.workingDir)}`,
       `**工作目录**: \`${active.workingDir}\``,
       '',
       '**状态摘要**:',
@@ -97,9 +63,9 @@ function handleInfo(command: ControlCommand, context: ControlHandlerContext): Co
 }
 
 /**
- * `/project status [name]` — Show detailed status for a project instance.
+ * `/project use <workingDir>` — Bind current chat to a working directory.
  */
-function handleStatus(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
+function handleUse(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
   const pm = context.projectManager;
   if (!pm) {
     return {
@@ -108,74 +74,62 @@ function handleStatus(command: ControlCommand, context: ControlHandlerContext): 
     };
   }
 
-  const targetName = (command.data?.name as string) ?? '';
-  let workingDir: string;
-  let displayName: string;
+  const workingDir = command.data?.workingDir as string | undefined;
 
-  if (targetName) {
-    const instances = pm.listInstances();
-    const target = instances.find((i) => i.name === targetName);
-    if (!target) {
-      return {
-        success: false,
-        error: `项目实例 "${targetName}" 不存在`,
-      };
-    }
-    const { workingDir: wd, name } = target;
-    workingDir = wd;
-    displayName = name;
-  } else {
-    // Use current chat's active project
-    const active = pm.getActive(command.chatId);
-    if (active.name === 'default') {
-      return {
-        success: true,
-        message: '📂 当前会话未绑定项目（使用 default 工作空间）',
-      };
-    }
-    const { workingDir: wd, name } = active;
-    workingDir = wd;
-    displayName = name;
-  }
-
-  const state = readProjectState(workingDir);
-  if (!state) {
+  if (!workingDir) {
     return {
-      success: true,
-      message: `📊 **项目 ${displayName} 状态**\n\n暂无状态数据（.disclaude/project-state.json 不存在）`,
+      success: false,
+      error: '用法: /project use <workingDir>\n请指定工作目录路径（相对或绝对路径）',
     };
   }
 
-  const issueEntries = Object.entries(state.issues);
-  const prEntries = Object.entries(state.prs);
+  const result = pm.use(command.chatId, workingDir);
+  if (!result.ok) {
+    return {
+      success: false,
+      error: result.error,
+    };
+  }
 
-  const issueLines = issueEntries.length > 0
-    ? issueEntries.slice(0, 10).map(([num, issue]) =>
-        `- #${num} ${issue.title} [${issue.triageStatus}] ${issue.state === 'open' ? '🟢' : '🔴'}`
-      ).join('\n') + (issueEntries.length > 10 ? `\n... 还有 ${issueEntries.length - 10} 个` : '')
-    : '无';
-
-  const prLines = prEntries.length > 0
-    ? prEntries.slice(0, 10).map(([num, pr]) =>
-        `- PR #${num} ${pr.title} [${pr.reviewStatus}]${pr.issueNumber ? ` → #${pr.issueNumber}` : ''}`
-      ).join('\n') + (prEntries.length > 10 ? `\n... 还有 ${prEntries.length - 10} 个` : '')
-    : '无';
+  // Reset the agent session so the next message uses the new cwd
+  context.agentPool.reset(command.chatId);
 
   return {
     success: true,
     message: [
-      `📊 **项目 ${displayName} 状态**`,
-      `**Key**: ${state.projectKey}`,
-      `**最后活跃**: ${state.lastActive}`,
-      `**Issues 同步**: ${state.sync.issues ?? '从未'}`,
-      `**PRs 同步**: ${state.sync.prs ?? '从未'}`,
+      `✅ **已切换工作目录**: \`${result.data.workingDir}\``,
       '',
-      `**Issues (${issueEntries.length})**`,
-      issueLines,
-      '',
-      `**PRs (${prEntries.length})**`,
-      prLines,
+      'Agent 会话已重置，下次对话将使用新工作目录。',
     ].join('\n'),
+  };
+}
+
+/**
+ * `/project reset` — Reset current chat to default workspace.
+ */
+function handleReset(command: ControlCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const result = pm.reset(command.chatId);
+  if (!result.ok) {
+    return {
+      success: false,
+      error: result.error,
+    };
+  }
+
+  // Reset the agent session so the next message uses the default cwd
+  context.agentPool.reset(command.chatId);
+
+  return {
+    success: true,
+    message: '✅ **已重置为默认项目**（工作空间根目录）\n\nAgent 会话已重置。',
   };
 }
 
@@ -192,19 +146,26 @@ export const handleProject: CommandHandler = (
   command: ControlCommand,
   context: ControlHandlerContext,
 ): ControlResponse => {
-  const subcommand = (command.data?.subcommand as string) ?? 'info';
+  // Support both structured data (subcommand field) and CLI args array
+  const args = command.data?.args as string[] | undefined;
+  const subcommand = (command.data?.subcommand as string) ?? args?.[0] ?? 'info';
+
+  // Inject workingDir from args[1] if not already provided (for CLI-style invocation)
+  if (args && args.length >= 2 && args[0] === 'use' && !command.data?.workingDir) {
+    command.data = { ...command.data, workingDir: args.slice(1).join(' ') };
+  }
 
   switch (subcommand) {
-    case 'list':
-      return handleList(context);
+    case 'use':
+      return handleUse(command, context);
+    case 'reset':
+      return handleReset(command, context);
     case 'info':
       return handleInfo(command, context);
-    case 'status':
-      return handleStatus(command, context);
     default:
       return {
         success: false,
-        error: `未知子命令: ${subcommand}。可用: list, info, status`,
+        error: `未知子命令: ${subcommand}。可用: use, reset, info`,
       };
   }
 };

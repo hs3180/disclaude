@@ -38,9 +38,10 @@ const LAUNCHAGENTS_DIR = resolve(homedir(), 'Library/LaunchAgents');
 const PLIST_PATH = resolve(LAUNCHAGENTS_DIR, PLIST_FILENAME);
 
 // Issue #2934: Log directory moved from /tmp to ~/Library/Logs/disclaude
-// for security (restrictive permissions) and pino-roll log rotation support.
-// Application logs go through pino file transport with rotation;
-// only stderr (for uncaught Node.js crashes) uses launchd's StandardErrorPath.
+// for security (restrictive permissions).
+// Issue #3416: Application writes to a single log file via pino.destination().
+// Use system-level tools (newsyslog) for log rotation — see config/ for examples.
+// Only stderr (for uncaught Node.js crashes) uses launchd's StandardErrorPath.
 const LOG_DIR = resolve(homedir(), 'Library/Logs/disclaude');
 const STDERR_LOG = resolve(LOG_DIR, 'launchd-stderr.log');
 const STDOUT_LOG = resolve(LOG_DIR, 'launchd-stdout.log');
@@ -133,11 +134,11 @@ function generatePlist() {
   const caffeinatePath = getCaffeinatePath();
   const programArgs = buildProgramArguments(nodePath, caffeinatePath);
 
-  // Issue #2934: Application logs go through pino file transport with
-  // pino-roll rotation (triggered by LOG_TO_FILE env var).
+  // Issue #2934: Application logs go through pino file transport
+  // (triggered by LOG_TO_FILE env var). Issue #3416: pino-roll removed,
+  // rotation delegated to system-level tools (newsyslog / logrotate).
   // Issue #3360: Added StandardOutPath as fallback — when pino file logging
-  // fails (e.g. #3359 pinoRoll error), console.log/stdout output is still
-  // captured instead of being silently discarded.
+  // fails, console.log/stdout output is still captured.
   // StandardErrorPath is kept for uncaught Node.js crash diagnostics.
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -194,7 +195,7 @@ ${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
   console.log(`  Entry: ${CLI_ENTRY}`);
   console.log(`  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
-  console.log(`  App log: ${APP_LOG} (pino-roll rotated)`);
+  console.log(`  App log: ${APP_LOG} (use newsyslog for rotation)`);
   console.log(`  Stdout: ${STDOUT_LOG} (launchd fallback log)`);
   console.log(`  Stderr: ${STDERR_LOG} (launchd crash log)`);
 }
@@ -290,7 +291,7 @@ function cmdStatus() {
   if (result) {
     console.log(result.trim());
     console.log(`\nPlist: ${PLIST_PATH}`);
-    console.log(`App log: ${APP_LOG} (pino-roll rotated)`);
+    console.log(`App log: ${APP_LOG} (use newsyslog for rotation)`);
     console.log(`Stdout: ${STDOUT_LOG} (launchd fallback log)`);
     console.log(`Stderr: ${STDERR_LOG} (launchd crash log)`);
   } else {

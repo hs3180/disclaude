@@ -3,12 +3,12 @@
  *
  * Tests cover:
  * - Subcommand dispatching
- * - `list` — list all instances
- * - `info` — show current chat's active project
- * - `status` — show detailed status for a project
- * - Error cases (no ProjectManager, unknown subcommand, missing instance)
+ * - `use <workingDir>` — bind chat to a working directory
+ * - `reset` — reset chat to default workspace
+ * - `info` — show current chat's active project info
+ * - Error cases (no ProjectManager, unknown subcommand, missing args)
  *
- * @see Issue #3335 (Project state persistence)
+ * @see Issue #3519 (simplify /project command)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -45,16 +45,9 @@ afterEach(() => {
 
 function createTestContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   const workspaceDir = createTempDir();
-  const packageDir = join(workspaceDir, 'pkg');
-
-  // Create a template for testing
-  const tplDir = join(packageDir, 'templates', 'test-tpl');
-  mkdirSync(tplDir, { recursive: true });
-  writeFileSync(join(tplDir, 'CLAUDE.md'), '# Test');
 
   const pm = new ProjectManager({
     workspaceDir,
-    packageDir,
   });
 
   return {
@@ -113,31 +106,10 @@ describe('handleProject', () => {
       const ctx = createTestContext();
       delete (ctx as Partial<ControlHandlerContext>).projectManager;
 
-      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+      const result = await invoke(makeCommand('chat-1', 'info'), ctx);
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('ProjectManager 未配置');
-    });
-  });
-
-  describe('/project list', () => {
-    it('should show empty list message when no instances', async () => {
-      const ctx = createTestContext();
-      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('暂无项目实例');
-    });
-
-    it('should list existing instances', async () => {
-      const ctx = createTestContext();
-      ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
-
-      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('my-project');
-      expect(result.message).toContain('test-tpl');
     });
   });
 
@@ -150,27 +122,26 @@ describe('handleProject', () => {
       expect(result.message).toContain('default');
     });
 
-    it('should show active project info', async () => {
+    it('should show bound working directory', async () => {
       const ctx = createTestContext();
-      const createResult = ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
-      expect(createResult.ok).toBe(true);
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+      ctx.projectManager!.use('chat-1', projectDir);
 
       const result = await invoke(makeCommand('chat-1', 'info'), ctx);
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('my-project');
-      expect(result.message).toContain('test-tpl');
     });
 
     it('should include state summary when project state exists', async () => {
       const ctx = createTestContext();
-      const createResult = ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
-      expect(createResult.ok).toBe(true);
-
-      const workingDir = createResult.ok ? createResult.data.workingDir : '';
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+      ctx.projectManager!.use('chat-1', projectDir);
 
       // Create a project state file
-      const stateDir = join(workingDir, '.disclaude');
+      const stateDir = join(projectDir, '.disclaude');
       mkdirSync(stateDir, { recursive: true });
       writeFileSync(join(stateDir, 'project-state.json'), JSON.stringify({
         version: 1,
@@ -192,79 +163,6 @@ describe('handleProject', () => {
     });
   });
 
-  describe('/project status', () => {
-    it('should show status for current project when no name given', async () => {
-      const ctx = createTestContext();
-      const createResult = ctx.projectManager!.create('chat-1', 'test-tpl', 'my-project');
-      expect(createResult.ok).toBe(true);
-
-      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('my-project');
-    });
-
-    it('should show status for named project', async () => {
-      const ctx = createTestContext();
-      const createResult = ctx.projectManager!.create('chat-1', 'test-tpl', 'target-project');
-      expect(createResult.ok).toBe(true);
-
-      const result = await invoke(makeCommand('chat-2', 'status', { name: 'target-project' }), ctx);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('target-project');
-    });
-
-    it('should return error for non-existent project name', async () => {
-      const ctx = createTestContext();
-
-      const result = await invoke(makeCommand('chat-1', 'status', { name: 'non-existent' }), ctx);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('不存在');
-    });
-
-    it('should show default message when unbound chat queries status', async () => {
-      const ctx = createTestContext();
-
-      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('未绑定');
-    });
-
-    it('should show state details when project state exists', async () => {
-      const ctx = createTestContext();
-      const createResult = ctx.projectManager!.create('chat-1', 'test-tpl', 'stateful-project');
-      expect(createResult.ok).toBe(true);
-
-      const workingDir = createResult.ok ? createResult.data.workingDir : '';
-      const stateDir = join(workingDir, '.disclaude');
-      mkdirSync(stateDir, { recursive: true });
-      writeFileSync(join(stateDir, 'project-state.json'), JSON.stringify({
-        version: 1,
-        projectKey: 'test/repo',
-        lastActive: '2026-05-10T10:00:00Z',
-        sync: { issues: '2026-05-10T09:00:00Z', prs: '2026-05-10T08:00:00Z' },
-        issues: {
-          '1': { title: 'First', state: 'open', triageStatus: 'triaged', labels: [] },
-          '2': { title: 'Second', state: 'closed', triageStatus: 'resolved', labels: ['bug'] },
-        },
-        prs: {
-          '10': { title: 'PR One', reviewStatus: 'approved', issueNumber: 1 },
-        },
-      }));
-
-      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toContain('First');
-      expect(result.message).toContain('Second');
-      expect(result.message).toContain('PR One');
-      expect(result.message).toContain('test/repo');
-    });
-  });
-
   describe('default subcommand', () => {
     it('should default to "info" when no subcommand specified', async () => {
       const ctx = createTestContext();
@@ -273,6 +171,129 @@ describe('handleProject', () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('default');
+    });
+  });
+
+  describe('/project use', () => {
+    it('should bind chat to a working directory', async () => {
+      const resetCalls: string[] = [];
+      const ctx = createTestContext({
+        agentPool: {
+          reset: (chatId: string) => { resetCalls.push(chatId); },
+          stop: () => false,
+        },
+      });
+
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+
+      const result = await invoke(
+        makeCommand('chat-1', 'use', { workingDir: projectDir }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-project');
+      expect(result.message).toContain('已切换');
+      expect(resetCalls).toContain('chat-1');
+    });
+
+    it('should bind to relative path resolved against workspace', async () => {
+      const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'projects', 'my-app');
+      mkdirSync(projectDir, { recursive: true });
+
+      const result = await invoke(
+        makeCommand('chat-1', 'use', { workingDir: 'projects/my-app' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('projects/my-app');
+    });
+
+    it('should return error when workingDir is missing', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'use'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('workingDir');
+    });
+
+    it('should return error for path traversal', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(
+        makeCommand('chat-1', 'use', { workingDir: '../etc/passwd' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('路径遍历');
+    });
+
+    it('should accept args array from CLI-style invocation', async () => {
+      const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+
+      // Simulate the data format sent by message-handler.ts:
+      // data: { args: ['use', 'my-project'], rawText: '/project use my-project' }
+      const result = await invoke(
+        makeCommand('chat-1', 'use', { args: ['use', 'my-project'], rawText: '/project use my-project' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-project');
+      expect(result.message).toContain('已切换');
+    });
+
+    it('should accept args with multi-segment path', async () => {
+      const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'projects', 'my-app');
+      mkdirSync(projectDir, { recursive: true });
+
+      const result = await invoke(
+        makeCommand('chat-1', 'use', { args: ['use', 'projects/my-app'], rawText: '/project use projects/my-app' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('projects/my-app');
+    });
+  });
+
+  describe('/project reset', () => {
+    it('should reset chat to default project', async () => {
+      const resetCalls: string[] = [];
+      const ctx = createTestContext({
+        agentPool: {
+          reset: (chatId: string) => { resetCalls.push(chatId); },
+          stop: () => false,
+        },
+      });
+
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'project');
+      mkdirSync(projectDir, { recursive: true });
+      ctx.projectManager!.use('chat-1', projectDir);
+
+      const result = await invoke(makeCommand('chat-1', 'reset'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已重置');
+      expect(resetCalls).toContain('chat-1');
+
+      // Verify binding was removed
+      const active = ctx.projectManager!.getActive('chat-1');
+      expect(active.name).toBe('default');
+    });
+
+    it('should succeed even when already on default', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'reset'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已重置');
     });
   });
 });
