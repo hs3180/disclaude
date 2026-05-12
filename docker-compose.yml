@@ -130,3 +130,77 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser Container (optional)
+  # ===========================================================================
+  # Provides a headless Chrome/Chromium with CDP (Chrome DevTools Protocol)
+  # endpoint for browser automation via the playwright MCP server.
+  #
+  # Start: docker compose --profile playwright up -d
+  # Stop:  docker compose --profile playwright down
+  #
+  # CDP endpoint: http://localhost:{CDP_PORT} (default: 9222)
+  # The primary container uses network_mode: host and can access this endpoint.
+  #
+  playwright:
+    image: ${DOCKER_IMAGE_PREFIX:-}mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    network_mode: host
+
+    # Launch Chromium with CDP exposed on 0.0.0.0
+    command:
+      - /bin/sh
+      - -c
+      - |
+        CHROME_BIN=$$(find /ms-playwright -name chrome -type f -path "*/chrome-linux/*" | head -1)
+        if [ -z "$$CHROME_BIN" ]; then
+          echo "ERROR: Chrome binary not found in /ms-playwright"
+          exit 1
+        fi
+        echo "Starting Chromium CDP on http://0.0.0.0:$${CDP_PORT:-9222}"
+        exec $$CHROME_BIN \
+          --remote-debugging-port=$${CDP_PORT:-9222} \
+          --remote-debugging-address=0.0.0.0 \
+          --headless=new \
+          --no-sandbox \
+          --disable-dev-shm-usage \
+          --disable-gpu \
+          --disable-software-rasterizer \
+          --disable-background-networking \
+          --disable-default-apps \
+          --disable-extensions \
+          --disable-sync \
+          --disable-translate \
+          --hide-scrollbars \
+          --mute-audio \
+          --no-first-run \
+          --user-data-dir=/tmp/chrome-user-data
+
+    environment:
+      - CDP_PORT=${CDP_PORT:-9222}
+
+    # Chromium needs shared memory; --disable-dev-shm-usage helps but
+    # explicit shm_size is recommended for stability
+    shm_size: '2gb'
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:${CDP_PORT:-9222}/json/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    profiles:
+      - playwright
