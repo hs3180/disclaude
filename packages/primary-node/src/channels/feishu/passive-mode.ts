@@ -71,8 +71,7 @@ export class TriggerModeManager {
   /**
    * Auto-detected small groups (≤2 members: bot + 1 user).
    * Used by 'auto' mode to decide whether to respond.
-   * Once detected, trigger mode is permanently enabled for these chats,
-   * even if more members join later (Issue #2052).
+   * Can be removed via `unmarkSmallGroup()` when the group grows (Issue #3592).
    */
   private smallGroups: Set<string> = new Set();
 
@@ -130,15 +129,27 @@ export class TriggerModeManager {
   /**
    * Mark a chat as a small group, auto-enabling trigger mode.
    *
-   * Once marked, trigger mode stays enabled even if members join later,
-   * to avoid disruptive behavior changes (Issue #2052).
-   *
    * @param chatId - Chat ID to mark
    */
   markAsSmallGroup(chatId: string): void {
     if (!this.smallGroups.has(chatId)) {
       this.smallGroups.add(chatId);
       logger.info({ chatId }, 'Auto-enabled trigger mode for small group (≤2 members)');
+    }
+  }
+
+  /**
+   * Remove the small group mark, disabling auto-enabled trigger mode.
+   *
+   * Called when a group grows beyond 2 members (Issue #3592).
+   * No-op if the chat was not marked as a small group.
+   *
+   * @param chatId - Chat ID to unmark
+   */
+  unmarkSmallGroup(chatId: string): void {
+    if (this.smallGroups.has(chatId)) {
+      this.smallGroups.delete(chatId);
+      logger.info({ chatId }, 'Auto-disabled trigger mode: group grew beyond 2 members');
     }
   }
 

@@ -1126,6 +1126,138 @@ describe('MessageHandler', () => {
   });
 
   // -----------------------------------------------------------------------
+  // /reset re-checks small group status (Issue #3592)
+  // -----------------------------------------------------------------------
+  describe('/reset re-checks small group (Issue #3592)', () => {
+    it('should unmark small group on /reset when group grew beyond 2 members', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '2', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // Simulate: was marked as small group earlier
+      triggerModeManager.markAsSmallGroup('chat_group');
+
+      // Trigger /reset via control handler path — must be group chat
+      mockState.hasControlHandler = true;
+      handler.setControlHandler(true);
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'Reset done' });
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_reset_group',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitControl).toHaveBeenCalled();
+      expect(triggerModeManager.isSmallGroup('chat_group')).toBe(false);
+      expect(triggerModeManager.isTriggerEnabled('chat_group')).toBe(false);
+    });
+
+    it('should keep small group on /reset when still ≤2 members', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '1', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+      triggerModeManager.markAsSmallGroup('chat_group');
+
+      mockState.hasControlHandler = true;
+      handler.setControlHandler(true);
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'Reset done' });
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_reset_still_small',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isSmallGroup('chat_group')).toBe(true);
+      expect(triggerModeManager.isTriggerEnabled('chat_group')).toBe(true);
+    });
+
+    it('should not re-check small group on /reset for p2p chats', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: { chat: { get: vi.fn() } },
+      };
+      handler.initialize(mockClient as any);
+      triggerModeManager.markAsSmallGroup('chat_001');
+
+      mockState.hasControlHandler = true;
+      handler.setControlHandler(true);
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'Reset done' });
+
+      // textEvent uses chat_type: 'p2p' by default — no re-check for p2p
+      await handler.handleMessageReceive(textEvent('/reset'));
+
+      expect(mockClient.im.chat.get).not.toHaveBeenCalled();
+    });
+
+    it('should unmark small group on /reset fallback path', async () => {
+      mockState.hasControlHandler = false;
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '2', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+      triggerModeManager.markAsSmallGroup('chat_001');
+
+      // Send /reset in a group chat context
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_reset',
+            chat_id: 'chat_001',
+            chat_type: 'group',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(triggerModeManager.isSmallGroup('chat_001')).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // addTypingReaction with client
   // -----------------------------------------------------------------------
   describe('addTypingReaction (via handleMessageReceive)', () => {

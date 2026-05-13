@@ -895,6 +895,10 @@ export class MessageHandler {
               text: response.message,
             });
           }
+          // Issue #3592: Re-check small group status on /reset
+          if (cmd === 'reset' && this.isGroupChat(chat_type) && this.triggerModeManager.getMode(chat_id) === 'auto') {
+            await this.checkAndAutoDisableSmallGroup(chat_id);
+          }
           return;
         }
       }
@@ -906,6 +910,10 @@ export class MessageHandler {
           type: 'text',
           text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
         });
+        // Issue #3592: Re-check small group status on /reset
+        if (this.isGroupChat(chat_type) && this.triggerModeManager.getMode(chat_id) === 'auto') {
+          await this.checkAndAutoDisableSmallGroup(chat_id);
+        }
         return;
       }
 
@@ -1205,9 +1213,11 @@ export class MessageHandler {
           'Small group detected (≤2 members), auto-enabling trigger mode',
         );
       } else {
+        // Issue #3592: Unmark small group when members grow beyond 2
+        this.triggerModeManager.unmarkSmallGroup(chatId);
         logger.debug(
           { chatId, userCount, botCount, totalMembers },
-          'Group has more than 2 members, keeping trigger mode disabled',
+          'Group has more than 2 members, trigger mode disabled',
         );
       }
     } catch (error) {
