@@ -47,6 +47,7 @@ services:
     command: ["pm2-runtime", "start", "ecosystem.primary.config.json"]
 
     # Network mode: host allows container to access host's CDP endpoint
+    # and Playwright container's CDP endpoint (when using --profile playwright)
     network_mode: host
 
     environment:
@@ -130,3 +131,84 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Headless Chromium with CDP endpoint for browser automation (site-miner).
+  # Disabled by default — enable with: docker compose --profile playwright up -d
+  #
+  # CDP endpoint: http://localhost:9222
+  # The primary container (network_mode: host) can connect directly.
+  # Configure in disclaude.config.yaml:
+  #   mcpServers:
+  #     playwright:
+  #       args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
+  #
+  # Playwright Docker image: https://playwright.dev/docs/docker
+  # Pin image version for reproducible builds (e.g., v1.52.1-noble).
+  playwright:
+    image: ${DOCKER_IMAGE_PREFIX:-}mcr.microsoft.com/playwright:v1.52.1-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+    network_mode: host
+
+    # Start Chromium with CDP (Chrome DevTools Protocol) enabled
+    # Args match scripts/start-playwright-cdp.sh for consistency
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        CHROME=$$(find /ms-playwright -name chrome -type f -path '*/chrome-linux/*' | head -1)
+        if [ -z "$$CHROME" ]; then
+          echo "ERROR: Chrome binary not found in /ms-playwright" >&2
+          exit 1
+        fi
+        echo "Starting Chrome CDP: $$CHROME on port 9222"
+        exec "$$CHROME" \
+          --headless=new \
+          --no-sandbox \
+          --disable-setuid-sandbox \
+          --disable-dev-shm-usage \
+          --disable-gpu \
+          --disable-software-rasterizer \
+          --disable-background-networking \
+          --disable-default-apps \
+          --disable-extensions \
+          --disable-sync \
+          --disable-translate \
+          --hide-scrollbars \
+          --metrics-recording-only \
+          --mute-audio \
+          --no-first-run \
+          --safebrowsing-disable-auto-update \
+          --remote-debugging-address=0.0.0.0 \
+          --remote-debugging-port=9222 \
+          about:blank
+
+    environment:
+      - DISPLAY=:99
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9222/json/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    profiles:
+      - playwright
