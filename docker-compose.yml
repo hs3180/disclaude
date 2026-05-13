@@ -130,3 +130,61 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Provides a headless Chromium browser with CDP endpoint for browser automation.
+  # The primary container (network_mode: host) can connect via http://localhost:9222.
+  #
+  # Use --profile playwright to start: docker compose --profile playwright up -d
+  # Configure the CDP URL in disclaude.config.yaml:
+  #   mcpServers:
+  #     playwright:
+  #       args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
+  playwright:
+    image: ${DOCKER_IMAGE_PREFIX:-}mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Run Chromium headless with CDP enabled
+    # --remote-debugging-address=0.0.0.0 allows connections from outside the container
+    # --disable-dev-shm-usage avoids /dev/shm size issues in containers
+    # The Playwright Docker image stores Chromium under /ms-playwright/chromium-*/
+    command:
+      [
+        "sh",
+        "-c",
+        "exec $$(find /ms-playwright -name chrome -type f | head -1) --headless --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage --disable-gpu --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --no-first-run --disable-extensions --hide-scrollbars --mute-audio about:blank",
+      ]
+
+    ports:
+      - "${PLAYWRIGHT_CDP_PORT:-9222}:9222"
+
+    environment:
+      - TZ=Asia/Shanghai
+
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    profiles:
+      - playwright
