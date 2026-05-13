@@ -143,6 +143,79 @@ export interface ProjectState {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Template & Instance Types (Issue #1916)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Project template — blueprint for creating project instances.
+ *
+ * Templates define available project types. Their CLAUDE.md files are stored
+ * at `{packageDir}/templates/{name}/CLAUDE.md` and copied to instances on creation.
+ *
+ * Only templates listed in `projectTemplates` config are available.
+ */
+export interface ProjectTemplate {
+  /** Template name (matches directory name under templates/) */
+  name: string;
+  /** Display name for UI */
+  displayName?: string;
+  /** Description of the template */
+  description?: string;
+}
+
+/**
+ * Instance info — metadata about a created project instance.
+ *
+ * Returned by `listInstances()`. Includes binding information and creation metadata.
+ * Does not include the default project (which is implicit).
+ */
+export interface InstanceInfo {
+  /** Instance name (user-specified, globally unique) */
+  name: string;
+  /** Source template name */
+  templateName: string;
+  /** All chatIds bound to this instance */
+  chatIds: string[];
+  /** Instance working directory */
+  workingDir: string;
+  /** Creation timestamp (ISO 8601) */
+  createdAt: string;
+}
+
+/**
+ * Persisted instance data (internal, stored in projects.json).
+ */
+export interface PersistedInstance {
+  /** Source template name */
+  templateName: string;
+  /** Instance working directory */
+  workingDir: string;
+  /** Creation timestamp (ISO 8601) */
+  createdAt: string;
+}
+
+/**
+ * Persistence schema for `.disclaude/projects.json`.
+ *
+ * Stores instances and chatId → instance name bindings.
+ */
+export interface ProjectsPersistData {
+  version: number;
+  instances: Record<string, PersistedInstance>;
+  chatProjectMap: Record<string, string>;
+}
+
+/**
+ * Template configuration entry in disclaude.config.yaml.
+ *
+ * @see DisclaudeConfig.projectTemplates
+ */
+export interface ProjectTemplateConfig {
+  displayName?: string;
+  description?: string;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constructor Options
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -150,8 +223,13 @@ export interface ProjectState {
  * Options for constructing a ProjectManager instance.
  *
  * @see Issue #3519 (simplified /project command)
+ * @see Issue #1916 (template/instance model)
  */
 export interface ProjectManagerOptions {
   /** Workspace root directory (default working directory when no binding exists) */
   workspaceDir: string;
+  /** Package directory containing built-in templates (optional) */
+  packageDir?: string;
+  /** Template configuration from disclaude.config.yaml (optional) */
+  projectTemplates?: Record<string, ProjectTemplateConfig>;
 }

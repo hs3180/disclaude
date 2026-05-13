@@ -25,9 +25,23 @@ export function normalizeCommandData<T extends ControlCommandType>(
     case 'project': {
       const args = rawData.args as string[] | undefined;
       const subcommand = (rawData.subcommand as string) ?? args?.[0] ?? 'info';
+
+      // For 'use': second arg is nameOrPath (backward compat: stored as workingDir)
       const workingDir = (rawData.workingDir as string) ??
         (args && args.length >= 2 && args[0] === 'use' ? args.slice(1).join(' ') : undefined);
-      return { subcommand, ...(workingDir ? { workingDir } : {}) };
+
+      // For 'create': second arg is template, third is instance name
+      const templateName = (rawData.templateName as string) ??
+        (args && args.length >= 3 && args[0] === 'create' ? args[1] : undefined);
+      const instanceName = (rawData.instanceName as string) ??
+        (args && args.length >= 3 && args[0] === 'create' ? args[2] : undefined);
+
+      return {
+        subcommand,
+        ...(workingDir ? { workingDir } : {}),
+        ...(templateName ? { templateName } : {}),
+        ...(instanceName ? { instanceName } : {}),
+      };
     }
     case 'trigger': {
       const rawArgs = rawData.args;

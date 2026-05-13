@@ -7,7 +7,9 @@
 
 export type {
   CwdProvider,
+  InstanceInfo,
   IssueTriageStatus,
+  PersistedInstance,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -15,6 +17,9 @@ export type {
   ProjectStateIssueEntry,
   ProjectStatePrEntry,
   ProjectStateSync,
+  ProjectTemplate,
+  ProjectTemplateConfig,
+  ProjectsPersistData,
   PrReviewStatus,
 } from './types.js';
 

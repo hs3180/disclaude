@@ -4,12 +4,14 @@
  * Provides commands for managing chatId → working directory bindings.
  *
  * Subcommands:
- * - `use <workingDir>` — Bind current chat to a working directory
+ * - `use <nameOrPath>` — Bind current chat to an instance or working directory
+ * - `create <template> <name>` — Create a new project instance from a template
+ * - `list` — List available templates and created instances
  * - `reset` — Reset current chat to default workspace
  * - `info` — Show current chat's active project info
  *
  * @see Issue #3519 (simplify /project command)
- * @see Issue #1916 (unified ProjectContext system)
+ * @see Issue #1916 (unified ProjectContext system — template/instance model)
  * @see Issue #3529 (typed command data)
  */
 
@@ -24,6 +26,96 @@ type ProjectCommand = ControlCommand<'project'>;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Subcommand Handlers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * `/project list` — List available templates and created instances.
+ */
+function handleList(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const templates = pm.listTemplates();
+  const instances = pm.listInstances();
+
+  const lines: string[] = ['📋 **项目模板与实例**', ''];
+
+  if (templates.length > 0) {
+    lines.push('**可用模板**:');
+    for (const t of templates) {
+      const desc = t.description ? ` — ${t.description}` : '';
+      const display = t.displayName ? ` (${t.displayName})` : '';
+      lines.push(`  - \`${t.name}\`${display}${desc}`);
+    }
+    lines.push('');
+  } else {
+    lines.push('**可用模板**: (无 — 未配置 projectTemplates)');
+    lines.push('');
+  }
+
+  if (instances.length > 0) {
+    lines.push('**已创建实例**:');
+    for (const inst of instances) {
+      const chatCount = inst.chatIds.length > 0 ? ` [${inst.chatIds.length} 个绑定]` : '';
+      lines.push(`  - \`${inst.name}\` (模板: ${inst.templateName})${chatCount}`);
+    }
+  } else {
+    lines.push('**已创建实例**: (无)');
+  }
+
+  return {
+    success: true,
+    message: lines.join('\n'),
+  };
+}
+
+/**
+ * `/project create <template> <name>` — Create a new instance from a template.
+ */
+function handleCreate(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const templateName = command.data?.templateName;
+  const instanceName = command.data?.instanceName;
+
+  if (!templateName || !instanceName) {
+    return {
+      success: false,
+      error: '用法: /project create <template> <name>\n请指定模板名和实例名',
+    };
+  }
+
+  const result = pm.create(command.chatId, templateName, instanceName);
+  if (!result.ok) {
+    return {
+      success: false,
+      error: result.error,
+    };
+  }
+
+  // Reset the agent session so the next message uses the new cwd
+  context.agentPool.reset(command.chatId);
+
+  return {
+    success: true,
+    message: [
+      `✅ **已创建实例**: \`${instanceName}\` (模板: ${templateName})`,
+      `**工作目录**: \`${result.data.workingDir}\``,
+      '',
+      'Agent 会话已重置，下次对话将使用新工作目录。',
+    ].join('\n'),
+  };
+}
 
 /**
  * `/project info` — Show current chat's active project.
@@ -52,11 +144,13 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
   const prCount = state ? Object.keys(state.prs).length : 0;
   const lastSync = state?.sync?.issues ?? '从不';
 
+  const templateInfo = active.templateName ? `\n**模板**: ${active.templateName}` : '';
+
   return {
     success: true,
     message: [
       `📂 **当前项目**: ${basename(active.workingDir)}`,
-      `**工作目录**: \`${active.workingDir}\``,
+      `**工作目录**: \`${active.workingDir}\`${templateInfo}`,
       '',
       '**状态摘要**:',
       `- Issues: ${issueCount} 个已追踪`,
@@ -67,7 +161,7 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
 }
 
 /**
- * `/project use <workingDir>` — Bind current chat to a working directory.
+ * `/project use <nameOrPath>` — Bind current chat to an instance or working directory.
  */
 function handleUse(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
   const pm = context.projectManager;
@@ -78,16 +172,16 @@ function handleUse(command: ProjectCommand, context: ControlHandlerContext): Con
     };
   }
 
-  const workingDir = command.data?.workingDir;
+  const nameOrPath = command.data?.workingDir;
 
-  if (!workingDir) {
+  if (!nameOrPath) {
     return {
       success: false,
-      error: '用法: /project use <workingDir>\n请指定工作目录路径（相对或绝对路径）',
+      error: '用法: /project use <instanceName | workingDir>\n请指定实例名或工作目录路径',
     };
   }
 
-  const result = pm.use(command.chatId, workingDir);
+  const result = pm.use(command.chatId, nameOrPath);
   if (!result.ok) {
     return {
       success: false,
@@ -98,10 +192,12 @@ function handleUse(command: ProjectCommand, context: ControlHandlerContext): Con
   // Reset the agent session so the next message uses the new cwd
   context.agentPool.reset(command.chatId);
 
+  const templateInfo = result.data.templateName ? ` (模板: ${result.data.templateName})` : '';
+
   return {
     success: true,
     message: [
-      `✅ **已切换工作目录**: \`${result.data.workingDir}\``,
+      `✅ **已切换工作目录**: \`${result.data.workingDir}\`${templateInfo}`,
       '',
       'Agent 会话已重置，下次对话将使用新工作目录。',
     ].join('\n'),
@@ -154,6 +250,10 @@ export const handleProject: CommandHandler<'project'> = (
   const subcommand = command.data?.subcommand ?? 'info';
 
   switch (subcommand) {
+    case 'list':
+      return handleList(command, context);
+    case 'create':
+      return handleCreate(command, context);
     case 'use':
       return handleUse(command, context);
     case 'reset':
@@ -163,7 +263,7 @@ export const handleProject: CommandHandler<'project'> = (
     default:
       return {
         success: false,
-        error: `未知子命令: ${subcommand}。可用: use, reset, info`,
+        error: `未知子命令: ${subcommand}。可用: list, create, use, reset, info`,
       };
   }
 };

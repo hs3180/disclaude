@@ -1,23 +1,33 @@
 /**
- * ProjectManager — simplified per-chatId working directory binding.
+ * ProjectManager — per-chatId working directory binding with template/instance support.
  *
- * Manages chatId → workingDir mappings in memory with atomic persistence
- * to `{workspace}/.disclaude/project-bindings.json`.
+ * Manages chatId → workingDir mappings in memory with atomic persistence.
+ * Supports both:
+ * - Simplified binding (Issue #3519): direct chatId → path binding via `use(chatId, path)`
+ * - Template/Instance model (Issue #1916): `create()` from templates, `use()` by instance name
  *
- * Simplified design (Issue #3519): No templates or instances.
- * A project = an arbitrary working directory. ChatId binds directly to a path.
+ * Persistence uses two files (backward-compatible):
+ * - `.disclaude/project-bindings.json` (v1): simple bindings, always present
+ * - `.disclaude/projects.json` (v2): instances + chatProjectMap, created on first template use
  *
  * @see Issue #3519 (simplify /project command)
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import {
+  writeFileSync, renameSync, unlinkSync, existsSync,
+  mkdirSync, readFileSync, copyFileSync,
+} from 'node:fs';
+import { basename, resolve, join } from 'node:path';
 import type {
   CwdProvider,
+  InstanceInfo,
+  PersistedInstance,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
+  ProjectTemplate,
+  ProjectsPersistData,
 } from './types.js';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -26,45 +36,80 @@ import type {
 
 /**
  * Persistence schema for `.disclaude/project-bindings.json`.
+ * Legacy format — kept for backward compatibility.
  */
 interface ProjectBindingsData {
   version: number;
   bindings: Record<string, string>;
 }
 
+/** Reserved instance name */
+const RESERVED_NAME = 'default';
+
+/** Max instance name length */
+const MAX_NAME_LENGTH = 64;
+
+/** Allowed characters for instance names: alphanumeric, hyphens, underscores */
+const NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ProjectManager
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * Manages chatId → workingDir bindings with persistence.
+ * Manages chatId → workingDir bindings with persistence and template/instance support.
  *
  * Lifecycle:
- * 1. Construct with `{ workspaceDir }`
- * 2. Bindings are loaded from `.disclaude/project-bindings.json` automatically
- * 3. Use `use()`, `reset()`, `getActive()` to manage bindings
+ * 1. Construct with `{ workspaceDir }` (optionally `packageDir` and `projectTemplates`)
+ * 2. Bindings and instances loaded from `.disclaude/` automatically
+ * 3. Use `use()`, `create()`, `reset()`, `getActive()` to manage bindings
  * 4. Call `createCwdProvider()` to get a CwdProvider for Agent injection
  */
 export class ProjectManager {
   private readonly workspaceDir: string;
-  /** chatId → workingDir binding */
+  private readonly packageDir?: string;
+  /** Available templates (from config + package templates) */
+  private templates: Map<string, ProjectTemplate> = new Map();
+  /** Named instances: instanceName → PersistedInstance */
+  private instances: Map<string, PersistedInstance> = new Map();
+  /** chatId → instanceName (for template-based binding) */
+  private chatProjectMap: Map<string, string> = new Map();
+  /** chatId → workingDir (for simple path binding, Issue #3519) */
   private bindings: Map<string, string> = new Map();
 
   /** Path to .disclaude directory */
   private readonly dataDir: string;
-  /** Path to project-bindings.json */
+  /** Path to project-bindings.json (legacy) */
   private readonly persistPath: string;
+  /** Path to projects.json (template/instance) */
+  private readonly projectsPath: string;
   /** Path to temporary file used during atomic write */
   private readonly persistTmpPath: string;
+  private readonly projectsTmpPath: string;
 
   constructor(options: ProjectManagerOptions) {
     this.workspaceDir = options.workspaceDir;
+    this.packageDir = options.packageDir;
     this.dataDir = resolve(options.workspaceDir, '.disclaude');
     this.persistPath = resolve(this.dataDir, 'project-bindings.json');
+    this.projectsPath = resolve(this.dataDir, 'projects.json');
     this.persistTmpPath = resolve(this.dataDir, 'project-bindings.json.tmp');
+    this.projectsTmpPath = resolve(this.dataDir, 'projects.json.tmp');
+
+    // Load templates from config
+    if (options.projectTemplates) {
+      for (const [name, config] of Object.entries(options.projectTemplates)) {
+        this.templates.set(name, {
+          name,
+          displayName: config.displayName,
+          description: config.description,
+        });
+      }
+    }
 
     // Restore persisted state
     this.loadPersistedData();
+    this.loadProjectsData();
   }
 
   // ───────────────────────────────────────────
@@ -74,10 +119,29 @@ export class ProjectManager {
   /**
    * Get the active project context for a chatId.
    *
+   * Resolution order:
+   * 1. Template-based binding (chatProjectMap → instance)
+   * 2. Simple path binding (bindings Map)
+   * 3. Default (workspace root)
+   *
    * @param chatId - Chat session identifier
    * @returns ProjectContextConfig for the active project (or default)
    */
   getActive(chatId: string): ProjectContextConfig {
+    // Check template-based binding first
+    const projectName = this.chatProjectMap.get(chatId);
+    if (projectName) {
+      const instance = this.instances.get(projectName);
+      if (instance) {
+        return {
+          name: projectName,
+          templateName: instance.templateName,
+          workingDir: instance.workingDir,
+        };
+      }
+    }
+
+    // Check simple path binding
     const workingDir = this.bindings.get(chatId);
     if (workingDir) {
       return {
@@ -94,42 +158,87 @@ export class ProjectManager {
   }
 
   /**
-   * Bind a chatId to a working directory.
+   * Create a new project instance from a template and bind it to a chatId.
    *
-   * Resolves relative paths against the workspace directory.
-   * Validates that the directory path doesn't contain path traversal patterns.
+   * - Copies CLAUDE.md from template directory to instance workingDir
+   * - Fails if: template doesn't exist, name is reserved, name already exists
+   * - Rolls back directory creation on copy failure
    *
-   * @param chatId - Chat session requesting binding
-   * @param workingDir - Working directory path (relative or absolute)
+   * @param chatId - Chat session requesting creation
+   * @param templateName - Template to instantiate
+   * @param name - Instance name (user-specified, globally unique)
    * @returns ProjectResult with ProjectContextConfig on success
    */
-  use(chatId: string, workingDir: string): ProjectResult<ProjectContextConfig> {
+  create(chatId: string, templateName: string, name: string): ProjectResult<ProjectContextConfig> {
     const chatIdError = this.validateChatId(chatId);
     if (chatIdError) {
       return { ok: false, error: chatIdError };
     }
 
-    const dirError = this.validateWorkingDir(workingDir);
-    if (dirError) {
-      return { ok: false, error: dirError };
+    const nameError = this.validateInstanceName(name);
+    if (nameError) {
+      return { ok: false, error: nameError };
     }
 
-    // Resolve relative paths against workspaceDir
-    const resolvedDir = resolve(this.workspaceDir, workingDir);
+    const template = this.templates.get(templateName);
+    if (!template) {
+      return { ok: false, error: `模板 "${templateName}" 不存在。可用模板: ${this.listTemplateNames()}` };
+    }
+
+    if (this.instances.has(name)) {
+      return { ok: false, error: `实例 "${name}" 已存在，请使用 /project use ${name} 绑定` };
+    }
+
+    // Create instance working directory
+    const workingDir = resolve(this.workspaceDir, 'projects', name);
+
+    try {
+      mkdirSync(workingDir, { recursive: true });
+    } catch (err) {
+      return { ok: false, error: `创建工作目录失败: ${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    // Copy CLAUDE.md from template
+    const copyResult = this.copyClaudeMd(templateName, workingDir);
+    if (!copyResult.ok) {
+      // Rollback: remove created directory
+      try {
+        const { rmSync } = require('node:fs');
+        rmSync(workingDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup failure
+      }
+      return { ok: false, error: copyResult.error };
+    }
 
     // Save pre-mutation state for rollback
-    const oldDir = this.bindings.get(chatId);
+    const oldProjectName = this.chatProjectMap.get(chatId);
+    const oldInstance = this.instances.get(name);
 
-    this.bindings.set(chatId, resolvedDir);
+    // Register instance
+    const now = new Date().toISOString();
+    this.instances.set(name, {
+      templateName,
+      workingDir,
+      createdAt: now,
+    });
 
-    // Persist after mutation; rollback on failure
-    const persistResult = this.persist();
+    // Bind chatId to instance
+    this.chatProjectMap.set(chatId, name);
+
+    // Persist
+    const persistResult = this.persistProjects();
     if (!persistResult.ok) {
-      // Rollback in-memory state
-      if (oldDir !== undefined) {
-        this.bindings.set(chatId, oldDir);
+      // Rollback
+      if (oldProjectName !== undefined) {
+        this.chatProjectMap.set(chatId, oldProjectName);
       } else {
-        this.bindings.delete(chatId);
+        this.chatProjectMap.delete(chatId);
+      }
+      if (oldInstance) {
+        this.instances.set(name, oldInstance);
+      } else {
+        this.instances.delete(name);
       }
       return { ok: false, error: persistResult.error };
     }
@@ -137,10 +246,42 @@ export class ProjectManager {
     return {
       ok: true,
       data: {
-        name: basename(resolvedDir),
-        workingDir: resolvedDir,
+        name,
+        templateName,
+        workingDir,
       },
     };
+  }
+
+  /**
+   * Bind a chatId to a working directory or an existing instance.
+   *
+   * Two modes:
+   * - If `nameOrPath` matches an existing instance name → bind to instance
+   * - Otherwise → treat as a working directory path (simplified mode, Issue #3519)
+   *
+   * @param chatId - Chat session requesting binding
+   * @param nameOrPath - Instance name or working directory path
+   * @returns ProjectResult with ProjectContextConfig on success
+   */
+  use(chatId: string, nameOrPath: string): ProjectResult<ProjectContextConfig> {
+    const chatIdError = this.validateChatId(chatId);
+    if (chatIdError) {
+      return { ok: false, error: chatIdError };
+    }
+
+    if (!nameOrPath || nameOrPath.trim().length === 0) {
+      return { ok: false, error: '请指定实例名或工作目录路径' };
+    }
+
+    // Check if it's an existing instance name
+    const instance = this.instances.get(nameOrPath);
+    if (instance) {
+      return this.useInstance(chatId, nameOrPath, instance);
+    }
+
+    // Treat as working directory path (simplified mode)
+    return this.usePath(chatId, nameOrPath);
   }
 
   /**
@@ -157,17 +298,22 @@ export class ProjectManager {
 
     // Save pre-mutation state for rollback
     const boundDir = this.bindings.get(chatId);
+    const boundProject = this.chatProjectMap.get(chatId);
 
     this.bindings.delete(chatId);
+    this.chatProjectMap.delete(chatId);
 
-    // Persist after mutation; rollback on failure
+    // Persist both files
     const persistResult = this.persist();
+    const projectsResult = this.persistProjects();
     if (!persistResult.ok) {
-      // Rollback in-memory state
-      if (boundDir) {
-        this.bindings.set(chatId, boundDir);
-      }
+      // Rollback
+      if (boundDir) { this.bindings.set(chatId, boundDir); }
       return { ok: false, error: persistResult.error };
+    }
+    if (!projectsResult.ok) {
+      if (boundProject) { this.chatProjectMap.set(chatId, boundProject); }
+      return { ok: false, error: projectsResult.error };
     }
 
     return {
@@ -184,7 +330,46 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * List all current bindings.
+   * List all available templates.
+   *
+   * @returns Array of ProjectTemplate objects
+   */
+  listTemplates(): ProjectTemplate[] {
+    return Array.from(this.templates.values());
+  }
+
+  /**
+   * List all project instances (excluding default).
+   *
+   * @returns Array of InstanceInfo objects
+   */
+  listInstances(): InstanceInfo[] {
+    // Build reverse map: instanceName → chatIds[]
+    const instanceChatIds = new Map<string, string[]>();
+    for (const [chatId, projectName] of this.chatProjectMap.entries()) {
+      const list = instanceChatIds.get(projectName);
+      if (list) {
+        list.push(chatId);
+      } else {
+        instanceChatIds.set(projectName, [chatId]);
+      }
+    }
+
+    const result: InstanceInfo[] = [];
+    for (const [name, instance] of this.instances.entries()) {
+      result.push({
+        name,
+        templateName: instance.templateName,
+        chatIds: instanceChatIds.get(name) ?? [],
+        workingDir: instance.workingDir,
+        createdAt: instance.createdAt,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * List all current simple path bindings.
    *
    * @returns Array of { chatId, workingDir } objects
    */
@@ -222,7 +407,7 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
-   * Persist current bindings to disk using atomic write-then-rename.
+   * Persist simple bindings to disk using atomic write-then-rename.
    *
    * @returns ProjectResult indicating success or failure
    */
@@ -249,12 +434,7 @@ export class ProjectManager {
       try {
         renameSync(this.persistTmpPath, this.persistPath);
       } catch (renameErr) {
-        // Clean up .tmp file if rename fails
-        try {
-          unlinkSync(this.persistTmpPath);
-        } catch {
-          // Ignore cleanup failure
-        }
+        try { unlinkSync(this.persistTmpPath); } catch { /* Ignore */ }
         return {
           ok: false,
           error: `持久化写入失败: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
@@ -271,13 +451,56 @@ export class ProjectManager {
   }
 
   /**
-   * Load persisted bindings from disk.
+   * Persist projects (instances + chatProjectMap) to disk.
+   */
+  persistProjects(): ProjectResult<void> {
+    try {
+      if (!existsSync(this.dataDir)) {
+        mkdirSync(this.dataDir, { recursive: true });
+      }
+
+      const data: ProjectsPersistData = {
+        version: 2,
+        instances: {},
+        chatProjectMap: {},
+      };
+
+      for (const [name, instance] of this.instances.entries()) {
+        data.instances[name] = instance;
+      }
+      for (const [chatId, projectName] of this.chatProjectMap.entries()) {
+        data.chatProjectMap[chatId] = projectName;
+      }
+
+      const json = JSON.stringify(data, null, 2);
+      writeFileSync(this.projectsTmpPath, json, 'utf8');
+
+      try {
+        renameSync(this.projectsTmpPath, this.projectsPath);
+      } catch (renameErr) {
+        try { unlinkSync(this.projectsTmpPath); } catch { /* Ignore */ }
+        return {
+          ok: false,
+          error: `持久化写入失败: ${renameErr instanceof Error ? renameErr.message : String(renameErr)}`,
+        };
+      }
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `持久化失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Load persisted bindings from disk (legacy format).
    *
    * Gracefully handles missing/corrupted files.
    */
   loadPersistedData(): ProjectResult<void> {
     if (!existsSync(this.persistPath)) {
-      // First run — no persisted data
       return { ok: true, data: undefined };
     }
 
@@ -291,7 +514,6 @@ export class ProjectManager {
 
       const persisted = data as ProjectBindingsData;
 
-      // Restore bindings
       for (const [chatId, workingDir] of Object.entries(persisted.bindings)) {
         if (typeof workingDir === 'string' && workingDir.length > 0) {
           this.bindings.set(chatId, workingDir);
@@ -308,10 +530,60 @@ export class ProjectManager {
   }
 
   /**
+   * Load persisted projects (instances + chatProjectMap) from disk.
+   *
+   * Gracefully handles missing/corrupted files.
+   */
+  loadProjectsData(): ProjectResult<void> {
+    if (!existsSync(this.projectsPath)) {
+      return { ok: true, data: undefined };
+    }
+
+    try {
+      const raw = readFileSync(this.projectsPath, 'utf8');
+      const data = JSON.parse(raw) as unknown;
+
+      if (!this.validateProjectsSchema(data)) {
+        return { ok: false, error: 'projects.json 格式无效，已跳过恢复' };
+      }
+
+      const persisted = data as ProjectsPersistData;
+
+      // Restore instances
+      for (const [name, instance] of Object.entries(persisted.instances)) {
+        if (this.isValidPersistedInstance(instance)) {
+          this.instances.set(name, instance);
+        }
+      }
+
+      // Restore chatProjectMap
+      for (const [chatId, projectName] of Object.entries(persisted.chatProjectMap)) {
+        if (typeof projectName === 'string' && projectName.length > 0) {
+          this.chatProjectMap.set(chatId, projectName);
+        }
+      }
+
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `读取 projects.json 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
    * Get the persist file path (for testing/debugging).
    */
   getPersistPath(): string {
     return this.persistPath;
+  }
+
+  /**
+   * Get the projects file path (for testing/debugging).
+   */
+  getProjectsPath(): string {
+    return this.projectsPath;
   }
 
   /**
@@ -322,11 +594,120 @@ export class ProjectManager {
   }
 
   // ───────────────────────────────────────────
-  // Internal Helpers
+  // Internal: Binding Helpers
   // ───────────────────────────────────────────
 
   /**
-   * Validate the top-level schema of persisted data.
+   * Bind chatId to an existing instance by name.
+   */
+  private useInstance(
+    chatId: string,
+    name: string,
+    instance: PersistedInstance,
+  ): ProjectResult<ProjectContextConfig> {
+    const oldProjectName = this.chatProjectMap.get(chatId);
+
+    this.chatProjectMap.set(chatId, name);
+
+    const persistResult = this.persistProjects();
+    if (!persistResult.ok) {
+      // Rollback
+      if (oldProjectName !== undefined) {
+        this.chatProjectMap.set(chatId, oldProjectName);
+      } else {
+        this.chatProjectMap.delete(chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
+
+    return {
+      ok: true,
+      data: {
+        name,
+        templateName: instance.templateName,
+        workingDir: instance.workingDir,
+      },
+    };
+  }
+
+  /**
+   * Bind chatId to a working directory path (simplified mode, Issue #3519).
+   */
+  private usePath(chatId: string, workingDir: string): ProjectResult<ProjectContextConfig> {
+    const dirError = this.validateWorkingDir(workingDir);
+    if (dirError) {
+      return { ok: false, error: dirError };
+    }
+
+    const resolvedDir = resolve(this.workspaceDir, workingDir);
+
+    // Save pre-mutation state for rollback
+    const oldDir = this.bindings.get(chatId);
+
+    this.bindings.set(chatId, resolvedDir);
+
+    const persistResult = this.persist();
+    if (!persistResult.ok) {
+      if (oldDir !== undefined) {
+        this.bindings.set(chatId, oldDir);
+      } else {
+        this.bindings.delete(chatId);
+      }
+      return { ok: false, error: persistResult.error };
+    }
+
+    return {
+      ok: true,
+      data: {
+        name: basename(resolvedDir),
+        workingDir: resolvedDir,
+      },
+    };
+  }
+
+  // ───────────────────────────────────────────
+  // Internal: Template Helpers
+  // ───────────────────────────────────────────
+
+  /**
+   * Copy CLAUDE.md from a template directory to the target directory.
+   */
+  private copyClaudeMd(templateName: string, targetDir: string): ProjectResult<void> {
+    if (!this.packageDir) {
+      return { ok: false, error: '未配置 packageDir，无法复制模板文件' };
+    }
+
+    const sourcePath = join(this.packageDir, 'templates', templateName, 'CLAUDE.md');
+
+    if (!existsSync(sourcePath)) {
+      return { ok: false, error: `模板 CLAUDE.md 不存在: ${sourcePath}` };
+    }
+
+    try {
+      copyFileSync(sourcePath, join(targetDir, 'CLAUDE.md'));
+      return { ok: true, data: undefined };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `复制 CLAUDE.md 失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Get comma-separated list of available template names.
+   */
+  private listTemplateNames(): string {
+    const names = Array.from(this.templates.keys());
+    return names.length > 0 ? names.join(', ') : '(无)';
+  }
+
+  // ───────────────────────────────────────────
+  // Internal: Validation
+  // ───────────────────────────────────────────
+
+  /**
+   * Validate the top-level schema of legacy persisted data.
    */
   private validatePersistSchema(data: unknown): data is ProjectBindingsData {
     if (typeof data !== 'object' || data === null) {
@@ -340,6 +721,41 @@ export class ProjectManager {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Validate the top-level schema of projects data.
+   */
+  private validateProjectsSchema(data: unknown): data is ProjectsPersistData {
+    if (typeof data !== 'object' || data === null) {
+      return false;
+    }
+    const obj = data as Record<string, unknown>;
+    if (obj.version !== 2) {
+      return false;
+    }
+    if (typeof obj.instances !== 'object' || obj.instances === null || Array.isArray(obj.instances)) {
+      return false;
+    }
+    if (typeof obj.chatProjectMap !== 'object' || obj.chatProjectMap === null || Array.isArray(obj.chatProjectMap)) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Check if a value is a valid PersistedInstance.
+   */
+  private isValidPersistedInstance(value: unknown): value is PersistedInstance {
+    if (typeof value !== 'object' || value === null) {
+      return false;
+    }
+    const obj = value as Record<string, unknown>;
+    return (
+      typeof obj.templateName === 'string' &&
+      typeof obj.workingDir === 'string' &&
+      typeof obj.createdAt === 'string'
+    );
   }
 
   /**
@@ -368,6 +784,29 @@ export class ProjectManager {
     // Null byte protection
     if (workingDir.includes('\0')) {
       return '工作目录路径不能包含空字节';
+    }
+
+    return null;
+  }
+
+  /**
+   * Validate an instance name.
+   */
+  private validateInstanceName(name: string): string | null {
+    if (!name || name.trim().length === 0) {
+      return '实例名不能为空';
+    }
+
+    if (name === RESERVED_NAME) {
+      return `"${RESERVED_NAME}" 为保留名，请使用其他名称`;
+    }
+
+    if (name.length > MAX_NAME_LENGTH) {
+      return `实例名过长（最大 ${MAX_NAME_LENGTH} 字符）`;
+    }
+
+    if (!NAME_PATTERN.test(name)) {
+      return '实例名只能包含字母、数字、连字符和下划线';
     }
 
     return null;

@@ -3,12 +3,15 @@
  *
  * Tests cover:
  * - Subcommand dispatching
- * - `use <workingDir>` — bind chat to a working directory
+ * - `use <workingDir>` — bind chat to a working directory or instance
+ * - `create <template> <name>` — create instance from template
+ * - `list` — list templates and instances
  * - `reset` — reset chat to default workspace
  * - `info` — show current chat's active project info
  * - Error cases (no ProjectManager, unknown subcommand, missing args)
  *
  * @see Issue #3519 (simplify /project command)
+ * @see Issue #1916 (template/instance model)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -43,6 +46,15 @@ afterEach(() => {
   tempDirs.length = 0;
 });
 
+/** Create a packageDir with a template CLAUDE.md */
+function createPackageDir(templateName = 'research'): string {
+  const packageDir = createTempDir();
+  const templateDir = join(packageDir, 'templates', templateName);
+  mkdirSync(templateDir, { recursive: true });
+  writeFileSync(join(templateDir, 'CLAUDE.md'), '# Research Mode\n\nYou are in research mode.');
+  return packageDir;
+}
+
 function createTestContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   const workspaceDir = createTempDir();
 
@@ -63,6 +75,33 @@ function createTestContext(overrides?: Partial<ControlHandlerContext>): ControlH
     },
     projectManager: pm,
     ...overrides,
+  };
+}
+
+function createTestContextWithTemplates(): ControlHandlerContext {
+  const workspaceDir = createTempDir();
+  const packageDir = createPackageDir();
+
+  const pm = new ProjectManager({
+    workspaceDir,
+    packageDir,
+    projectTemplates: {
+      research: { displayName: 'Research', description: 'Research mode' },
+    },
+  });
+
+  return {
+    agentPool: {
+      reset: () => {},
+      stop: () => false,
+    },
+    node: {
+      nodeId: 'test-node',
+      getDebugGroup: () => null,
+      setDebugGroup: () => {},
+      clearDebugGroup: () => null,
+    },
+    projectManager: pm,
   };
 }
 
@@ -134,6 +173,17 @@ describe('handleProject', () => {
       expect(result.message).toContain('my-project');
     });
 
+    it('should include template info for instance-based binding', async () => {
+      const ctx = createTestContextWithTemplates();
+      ctx.projectManager!.create('chat-1', 'research', 'my-research');
+
+      const result = await invoke(makeCommand('chat-1', 'info'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('模板');
+      expect(result.message).toContain('research');
+    });
+
     it('should include state summary when project state exists', async () => {
       const ctx = createTestContext();
       const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
@@ -174,6 +224,107 @@ describe('handleProject', () => {
     });
   });
 
+  describe('/project list', () => {
+    it('should list available templates and instances', async () => {
+      const ctx = createTestContextWithTemplates();
+
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('research');
+      expect(result.message).toContain('Research');
+      expect(result.message).toContain('模板');
+    });
+
+    it('should show no templates message when none configured', async () => {
+      const ctx = createTestContext();
+
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('无');
+    });
+
+    it('should show created instances', async () => {
+      const ctx = createTestContextWithTemplates();
+      ctx.projectManager!.create('chat-1', 'research', 'my-research');
+
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-research');
+      expect(result.message).toContain('已创建实例');
+    });
+  });
+
+  describe('/project create', () => {
+    it('should create instance from template', async () => {
+      const resetCalls: string[] = [];
+      const ctx = createTestContextWithTemplates();
+      (ctx.agentPool as { reset: (id: string) => void }).reset = (id: string) => { resetCalls.push(id); };
+
+      const result = await invoke(
+        makeCommand('chat-1', 'create', { templateName: 'research', instanceName: 'my-research' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-research');
+      expect(result.message).toContain('research');
+      expect(result.message).toContain('已创建');
+      expect(resetCalls).toContain('chat-1');
+    });
+
+    it('should return error when templateName missing', async () => {
+      const ctx = createTestContextWithTemplates();
+
+      const result = await invoke(
+        makeCommand('chat-1', 'create', { instanceName: 'my-research' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('template');
+    });
+
+    it('should return error when instanceName missing', async () => {
+      const ctx = createTestContextWithTemplates();
+
+      const result = await invoke(
+        makeCommand('chat-1', 'create', { templateName: 'research' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('name');
+    });
+
+    it('should return error for unknown template', async () => {
+      const ctx = createTestContextWithTemplates();
+
+      const result = await invoke(
+        makeCommand('chat-1', 'create', { templateName: 'nonexistent', instanceName: 'my-inst' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('不存在');
+    });
+
+    it('should return error for duplicate instance name', async () => {
+      const ctx = createTestContextWithTemplates();
+      ctx.projectManager!.create('chat-1', 'research', 'my-research');
+
+      const result = await invoke(
+        makeCommand('chat-2', 'create', { templateName: 'research', instanceName: 'my-research' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('已存在');
+    });
+  });
+
   describe('/project use', () => {
     it('should bind chat to a working directory', async () => {
       const resetCalls: string[] = [];
@@ -198,6 +349,23 @@ describe('handleProject', () => {
       expect(resetCalls).toContain('chat-1');
     });
 
+    it('should bind to existing instance by name', async () => {
+      const resetCalls: string[] = [];
+      const ctx = createTestContextWithTemplates();
+      (ctx.agentPool as { reset: (id: string) => void }).reset = (id: string) => { resetCalls.push(id); };
+
+      ctx.projectManager!.create('chat-1', 'research', 'my-research');
+
+      const result = await invoke(
+        makeCommand('chat-2', 'use', { workingDir: 'my-research' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('my-research');
+      expect(resetCalls).toContain('chat-2');
+    });
+
     it('should bind to relative path resolved against workspace', async () => {
       const ctx = createTestContext();
       const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'projects', 'my-app');
@@ -217,7 +385,7 @@ describe('handleProject', () => {
       const result = await invoke(makeCommand('chat-1', 'use'), ctx);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('workingDir');
+      expect(result.error).toContain('实例名');
     });
 
     it('should return error for path traversal', async () => {
@@ -287,6 +455,16 @@ describe('handleProject', () => {
       // Verify binding was removed
       const active = ctx.projectManager!.getActive('chat-1');
       expect(active.name).toBe('default');
+    });
+
+    it('should reset template-based binding', async () => {
+      const ctx = createTestContextWithTemplates();
+      ctx.projectManager!.create('chat-1', 'research', 'my-research');
+
+      const result = await invoke(makeCommand('chat-1', 'reset'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(ctx.projectManager!.getActive('chat-1').name).toBe('default');
     });
 
     it('should succeed even when already on default', async () => {

@@ -216,12 +216,18 @@ async function main(): Promise<void> {
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
   // Issue #3519: Simplified ProjectManager — chatId → workingDir binding
+  // Issue #1916: Template/instance model — create from templates
   const workspaceDir = Config.getWorkspaceDir();
+
+  // Resolve packageDir for built-in templates
+  const packageDir = path.resolve(new URL('.', import.meta.url).pathname, '..');
 
   const projectManager = new ProjectManager({
     workspaceDir,
+    packageDir,
+    projectTemplates: config.projectTemplates,
   });
-  logger.info({ workspaceDir }, 'ProjectManager initialized');
+  logger.info({ workspaceDir, packageDir }, 'ProjectManager initialized');
 
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
