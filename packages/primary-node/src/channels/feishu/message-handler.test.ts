@@ -1123,6 +1123,50 @@ describe('MessageHandler', () => {
 
       expect(triggerModeManager.isTriggerEnabled('chat_noclient')).toBe(false);
     });
+
+    // Issue #3592: Small group detection should be reversible
+    it('should disable trigger mode when small group grows beyond 2 members', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn()
+              // First call: 2 members (small group)
+              .mockResolvedValueOnce({ data: { user_count: '1', bot_count: '1' } })
+              // Second call: 3 members (group grew)
+              .mockResolvedValueOnce({ data: { user_count: '2', bot_count: '1' } }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // First message: group has 2 members → trigger mode enabled
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: { message_id: 'msg_grow_1', chat_id: 'chat_growing', chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }), message_type: 'text', create_time: Date.now() },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(triggerModeManager.isTriggerEnabled('chat_growing')).toBe(true);
+
+      // Force recheck by clearing the throttle timestamp
+      vi.spyOn(triggerModeManager, 'shouldRecheckSmallGroup').mockReturnValue(true);
+
+      // Second message: group now has 3 members → trigger mode should be disabled
+      await handler.handleMessageReceive({
+        event: {
+          message: { message_id: 'msg_grow_2', chat_id: 'chat_growing', chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello again' }), message_type: 'text', create_time: Date.now() },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Trigger mode should now be disabled because group grew beyond 2 members
+      expect(triggerModeManager.isTriggerEnabled('chat_growing')).toBe(false);
+      expect(triggerModeManager.isSmallGroup('chat_growing')).toBe(false);
+    });
   });
 
   // -----------------------------------------------------------------------

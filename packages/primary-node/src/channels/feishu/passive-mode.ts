@@ -57,9 +57,17 @@ export interface TriggerModeRecord {
  * In 'auto' mode, the manager delegates trigger decisions to `shouldTriggerForAutoMode()`,
  * which checks if the group is small (≤2 members) and returns the effective behavior.
  *
+ * Issue #3592: Small group detection is now reversible — when a group grows beyond
+ * 2 members, trigger mode is automatically disabled. Re-checks are throttled to
+ * avoid excessive API calls.
+ *
  * State can be initialized declaratively from persisted records (e.g., TempChatRecord)
  * via `initFromRecords()`, ensuring trigger mode settings survive restarts.
  */
+
+/** Minimum interval (ms) between re-checking a group's member count. Default: 5 minutes. */
+const SMALL_GROUP_RECHECK_INTERVAL_MS = 5 * 60 * 1000;
+
 export class TriggerModeManager {
   /**
    * Per-chat trigger mode setting (enum-based).
@@ -71,10 +79,16 @@ export class TriggerModeManager {
   /**
    * Auto-detected small groups (≤2 members: bot + 1 user).
    * Used by 'auto' mode to decide whether to respond.
-   * Once detected, trigger mode is permanently enabled for these chats,
-   * even if more members join later (Issue #2052).
+   *
+   * Issue #3592: No longer permanent — groups are unmarked when they grow beyond 2 members.
    */
   private smallGroups: Set<string> = new Set();
+
+  /**
+   * Timestamps of the last member-count check per chat, used for throttling
+   * re-checks (Issue #3592).
+   */
+  private lastSmallGroupCheck: Map<string, number> = new Map();
 
   /**
    * Get the configured trigger mode for a chat.
@@ -140,6 +154,36 @@ export class TriggerModeManager {
       this.smallGroups.add(chatId);
       logger.info({ chatId }, 'Auto-enabled trigger mode for small group (≤2 members)');
     }
+    this.lastSmallGroupCheck.set(chatId, Date.now());
+  }
+
+  /**
+   * Remove a chat from the small group set, disabling auto-trigger mode.
+   *
+   * Issue #3592: Called when a previously-small group grows beyond 2 members.
+   *
+   * @param chatId - Chat ID to unmark
+   */
+  unmarkSmallGroup(chatId: string): void {
+    if (this.smallGroups.has(chatId)) {
+      this.smallGroups.delete(chatId);
+      logger.info({ chatId }, 'Auto-disabled trigger mode: group grew beyond 2 members');
+    }
+    this.lastSmallGroupCheck.set(chatId, Date.now());
+  }
+
+  /**
+   * Check whether enough time has elapsed to re-check a group's member count.
+   *
+   * Issue #3592: Throttles API calls for already-detected small groups.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if the group should be re-checked
+   */
+  shouldRecheckSmallGroup(chatId: string): boolean {
+    const lastCheck = this.lastSmallGroupCheck.get(chatId);
+    if (!lastCheck) {return true;}
+    return Date.now() - lastCheck >= SMALL_GROUP_RECHECK_INTERVAL_MS;
   }
 
   /**
