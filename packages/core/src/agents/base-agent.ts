@@ -43,6 +43,19 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * Custom permission callback (Issue #2890)
+   *
+   * Called by the SDK before executing tools that require permission.
+   * Only invoked when permissionMode is 'default' (not 'bypassPermissions').
+   */
+  canUseTool?: AgentQueryOptions['canUseTool'];
+  /**
+   * Include partial/streaming messages (Issue #2890)
+   *
+   * When true, the SDK emits partial message events during streaming.
+   */
+  includePartialMessages?: boolean;
 }
 
 /**
@@ -175,6 +188,16 @@ export abstract class BaseAgent implements Disposable {
     // Add MCP servers (convert to SDK format)
     if (extra.mcpServers) {
       options.mcpServers = extra.mcpServers as Record<string, import('../sdk/index.js').SdkMcpServerConfig>;
+    }
+
+    // Add canUseTool callback (Issue #2890)
+    if (extra.canUseTool) {
+      options.canUseTool = extra.canUseTool;
+    }
+
+    // Add includePartialMessages (Issue #2890)
+    if (extra.includePartialMessages !== undefined) {
+      options.includePartialMessages = extra.includePartialMessages;
     }
 
     // Set environment: config env + runtime env file (Issue #1361)

@@ -530,5 +530,26 @@ describe('BaseAgent', () => {
       const options = noModelAgent.testCreateSdkOptions();
       expect(options.model).toBeUndefined();
     });
+
+    it('should add canUseTool callback when specified (Issue #2890)', () => {
+      const canUseTool = () => Promise.resolve({ behavior: 'allow' as const });
+      const options = agent.testCreateSdkOptions({ canUseTool });
+      expect(options.canUseTool).toBe(canUseTool);
+    });
+
+    it('should not include canUseTool when not specified', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.canUseTool).toBeUndefined();
+    });
+
+    it('should add includePartialMessages when specified (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions({ includePartialMessages: true });
+      expect(options.includePartialMessages).toBe(true);
+    });
+
+    it('should not include includePartialMessages when not specified', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.includePartialMessages).toBeUndefined();
+    });
   });
 });

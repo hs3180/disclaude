@@ -228,6 +228,25 @@ export interface AgentQueryOptions {
    * Provider 层将其传递给 SDK 的 stderr 选项。
    */
   stderr?: (data: string) => void;
+  /**
+   * 自定义权限回调（Issue #2890）
+   *
+   * 当 permissionMode 为 'default' 时，SDK 在执行需要权限的工具前调用此回调。
+   * 可用于实现飞书端的权限确认流程——将权限请求发送到聊天界面，等待用户确认。
+   *
+   * 当 permissionMode 为 'bypassPermissions' 时，此回调不会被调用。
+   */
+  canUseTool?: (toolName: string, input: Record<string, unknown>, options: {
+    signal: AbortSignal;
+    toolUseID: string;
+  }) => Promise<{ behavior: 'allow'; updatedInput?: Record<string, unknown> } | { behavior: 'deny'; message: string }>;
+  /**
+   * 是否包含部分/流式消息事件（Issue #2890）
+   *
+   * 当为 true 时，SDK 会在流式传输期间发出 SDKPartialAssistantMessage 事件，
+   * 允许上层实时获取 Agent 的部分输出，提供更好的流式响应体验。
+   */
+  includePartialMessages?: boolean;
 }
 
 // ============================================================================

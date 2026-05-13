@@ -194,6 +194,41 @@ describe('adaptOptions', () => {
 
     expect(result.tools).toBeUndefined();
   });
+
+  it('should pass through canUseTool callback (Issue #2890)', () => {
+    const canUseTool = () => Promise.resolve({ behavior: 'allow' as const });
+    const result = adaptOptions({
+      settingSources: ['project'],
+      canUseTool,
+    });
+
+    expect(result.canUseTool).toBe(canUseTool);
+  });
+
+  it('should not include canUseTool when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.canUseTool).toBeUndefined();
+  });
+
+  it('should pass through includePartialMessages (Issue #2890)', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+      includePartialMessages: true,
+    });
+
+    expect(result.includePartialMessages).toBe(true);
+  });
+
+  it('should not include includePartialMessages when not provided', () => {
+    const result = adaptOptions({
+      settingSources: ['project'],
+    });
+
+    expect(result.includePartialMessages).toBeUndefined();
+  });
 });
 
 describe('adaptInput', () => {

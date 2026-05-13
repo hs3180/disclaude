@@ -75,6 +75,16 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.stderr = options.stderr;
   }
 
+  // 权限回调（Issue #2890: canUseTool for permission control）
+  if (options.canUseTool) {
+    sdkOptions.canUseTool = options.canUseTool;
+  }
+
+  // 流式部分消息（Issue #2890: includePartialMessages for streaming）
+  if (options.includePartialMessages !== undefined) {
+    sdkOptions.includePartialMessages = options.includePartialMessages;
+  }
+
   return sdkOptions;
 }
 
