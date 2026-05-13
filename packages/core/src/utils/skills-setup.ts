@@ -2,7 +2,8 @@
  * Skills setup utility for copying skills to workspace.
  *
  * This module handles copying skills from the package installation directory
- * to the workspace's .claude directory, enabling SDK to load them via settingSources.
+ * to the workspace's .claude directory, enabling SDK to load them via settingSources
+ * (expanded to user+project+local for project-bound sessions, Issue #3573).
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';

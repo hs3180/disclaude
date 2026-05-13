@@ -160,7 +160,9 @@ export abstract class BaseAgent implements Disposable {
       cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['project'],
+      settingSources: extra.cwd
+        ? ['user', 'project', 'local']
+        : ['project'],
     };
 
     // Add allowed/disallowed tools

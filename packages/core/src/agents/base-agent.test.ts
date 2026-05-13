@@ -166,6 +166,20 @@ describe('BaseAgent', () => {
       });
     });
 
+    it('should use project-only settingSources by default (Issue #3573)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      expect(options.settingSources).toEqual(['project']);
+    });
+
+    it('should expand settingSources to user+project+local for project-bound cwd (Issue #3573)', () => {
+      const options = agent.testCreateSdkOptions({
+        cwd: '/my-project',
+      });
+
+      expect(options.settingSources).toEqual(['user', 'project', 'local']);
+    });
+
     it('should include model if specified', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.model).toBe('claude-3-5-sonnet-20241022');
