@@ -387,4 +387,97 @@ describe('ProjectManager', () => {
       expect(pm.getWorkspaceDir()).toBe(opts.workspaceDir);
     });
   });
+
+  describe('config-driven projects (Issue #3583)', () => {
+    it('should register config projects on construction', () => {
+      const opts = createOptions({
+        projects: [
+          { key: 'owner/repo-a', workingDir: '.', chatId: 'chat-1' },
+          { key: 'owner/repo-b', workingDir: '/abs/path', chatId: 'chat-2' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const projects = pm.listConfigProjects();
+      expect(projects).toHaveLength(2);
+      expect(projects[0].key).toBe('owner/repo-a');
+      expect(projects[1].key).toBe('owner/repo-b');
+    });
+
+    it('should resolve relative workingDir against workspace', () => {
+      const opts = createOptions({
+        projects: [
+          { key: 'test/proj', workingDir: 'subdir', chatId: 'chat-1' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const project = pm.getConfigProject('test/proj');
+      expect(project).toBeDefined();
+      expect(project!.workingDir).toBe(resolve(opts.workspaceDir, 'subdir'));
+    });
+
+    it('should keep absolute workingDir as-is', () => {
+      const opts = createOptions({
+        projects: [
+          { key: 'test/proj', workingDir: '/absolute/path', chatId: 'chat-1' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const project = pm.getConfigProject('test/proj');
+      expect(project!.workingDir).toBe('/absolute/path');
+    });
+
+    it('should preserve modelTier when set', () => {
+      const opts = createOptions({
+        projects: [
+          { key: 'test/proj', workingDir: '.', chatId: 'chat-1', modelTier: 'low' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const project = pm.getConfigProject('test/proj');
+      expect(project!.modelTier).toBe('low');
+    });
+
+    it('should return undefined for unknown project key', () => {
+      const opts = createOptions({
+        projects: [
+          { key: 'test/proj', workingDir: '.', chatId: 'chat-1' },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      expect(pm.getConfigProject('nonexistent')).toBeUndefined();
+    });
+
+    it('should return empty list when no projects configured', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+
+      expect(pm.listConfigProjects()).toEqual([]);
+    });
+
+    it('should handle multiple projects with different chatIds', () => {
+      const opts = createOptions({
+        projects: [
+          { key: 'a/proj', workingDir: '.', chatId: 'chat-a', modelTier: 'high' },
+          { key: 'b/proj', workingDir: '..', chatId: 'chat-b', modelTier: 'low' as const },
+        ],
+      });
+      const pm = new ProjectManager(opts);
+
+      const projects = pm.listConfigProjects();
+      expect(projects).toHaveLength(2);
+
+      const projA = pm.getConfigProject('a/proj');
+      expect(projA!.chatId).toBe('chat-a');
+      expect(projA!.modelTier).toBe('high');
+
+      const projB = pm.getConfigProject('b/proj');
+      expect(projB!.chatId).toBe('chat-b');
+      expect(projB!.modelTier).toBe('low');
+    });
+  });
 });

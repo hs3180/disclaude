@@ -25,9 +25,31 @@ export function normalizeCommandData<T extends ControlCommandType>(
     case 'project': {
       const args = rawData.args as string[] | undefined;
       const subcommand = (rawData.subcommand as string) ?? args?.[0] ?? 'info';
+
+      // /project use <workingDir>
       const workingDir = (rawData.workingDir as string) ??
         (args && args.length >= 2 && args[0] === 'use' ? args.slice(1).join(' ') : undefined);
-      return { subcommand, ...(workingDir ? { workingDir } : {}) };
+
+      // /project trigger <key> [prompt text...]
+      // /project stop <key>
+      let projectKey: string | undefined;
+      let prompt: string | undefined;
+      if (subcommand === 'trigger' || subcommand === 'stop') {
+        projectKey = (rawData.projectKey as string) ?? args?.[1];
+        if (subcommand === 'trigger' && args && args.length > 2) {
+          prompt = args.slice(2).join(' ');
+        }
+        if (subcommand === 'trigger') {
+          prompt = (rawData.prompt as string) ?? prompt;
+        }
+      }
+
+      return {
+        subcommand,
+        ...(workingDir ? { workingDir } : {}),
+        ...(projectKey ? { projectKey } : {}),
+        ...(prompt ? { prompt } : {}),
+      };
     }
     case 'trigger': {
       const rawArgs = rawData.args;

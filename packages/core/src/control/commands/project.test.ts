@@ -43,11 +43,12 @@ afterEach(() => {
   tempDirs.length = 0;
 });
 
-function createTestContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
+function createTestContext(overrides?: Partial<ControlHandlerContext>, projects?: Array<{ key: string; workingDir: string; chatId: string; modelTier?: 'high' | 'low' | 'multimodal' }>): ControlHandlerContext {
   const workspaceDir = createTempDir();
 
   const pm = new ProjectManager({
     workspaceDir,
+    projects,
   });
 
   return {
@@ -295,6 +296,171 @@ describe('handleProject', () => {
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('已重置');
+    });
+  });
+
+  describe('/project status (Issue #3583)', () => {
+    it('should show empty message when no projects configured', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('无已配置项目');
+    });
+
+    it('should list configured projects', async () => {
+      const ctx = createTestContext(undefined, [
+        { key: 'owner/repo-a', workingDir: '.', chatId: 'chat-a' },
+        { key: 'owner/repo-b', workingDir: '/abs/path', chatId: 'chat-b', modelTier: 'low' },
+      ]);
+
+      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('owner/repo-a');
+      expect(result.message).toContain('owner/repo-b');
+      expect(result.message).toContain('low');
+    });
+
+    it('should return error when projectManager is not configured', async () => {
+      const ctx = createTestContext();
+      delete (ctx as Partial<ControlHandlerContext>).projectManager;
+
+      const result = await invoke(makeCommand('chat-1', 'status'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('ProjectManager 未配置');
+    });
+  });
+
+  describe('/project trigger (Issue #3583)', () => {
+    it('should return error when projectKey is missing', async () => {
+      const ctx = createTestContext(undefined, [
+        { key: 'owner/repo', workingDir: '.', chatId: 'chat-a' },
+      ]);
+
+      const result = await invoke(makeCommand('chat-1', 'trigger'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('trigger <key>');
+    });
+
+    it('should return error for unknown project key', async () => {
+      const ctx = createTestContext(undefined, [
+        { key: 'owner/repo', workingDir: '.', chatId: 'chat-a' },
+      ]);
+
+      const result = await invoke(
+        makeCommand('chat-1', 'trigger', { projectKey: 'nonexistent' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('未找到');
+    });
+
+    it('should trigger project and reset its agent', async () => {
+      const resetCalls: string[] = [];
+      const ctx = createTestContext(
+        {
+          agentPool: {
+            reset: (chatId: string) => { resetCalls.push(chatId); },
+            stop: () => false,
+          },
+        },
+        [
+          { key: 'owner/repo', workingDir: '.', chatId: 'chat-a' },
+        ],
+      );
+
+      const result = await invoke(
+        makeCommand('chat-1', 'trigger', { projectKey: 'owner/repo' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('owner/repo');
+      expect(result.message).toContain('已触发');
+      expect(resetCalls).toContain('chat-a');
+    });
+
+    it('should include prompt when provided', async () => {
+      const ctx = createTestContext(undefined, [
+        { key: 'owner/repo', workingDir: '.', chatId: 'chat-a' },
+      ]);
+
+      const result = await invoke(
+        makeCommand('chat-1', 'trigger', { projectKey: 'owner/repo', prompt: 'check CI status' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('check CI status');
+    });
+  });
+
+  describe('/project stop (Issue #3583)', () => {
+    it('should return error when projectKey is missing', async () => {
+      const ctx = createTestContext(undefined, [
+        { key: 'owner/repo', workingDir: '.', chatId: 'chat-a' },
+      ]);
+
+      const result = await invoke(makeCommand('chat-1', 'stop'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('stop <key>');
+    });
+
+    it('should return error for unknown project key', async () => {
+      const ctx = createTestContext(undefined, [
+        { key: 'owner/repo', workingDir: '.', chatId: 'chat-a' },
+      ]);
+
+      const result = await invoke(
+        makeCommand('chat-1', 'stop', { projectKey: 'nonexistent' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('未找到');
+    });
+
+    it('should stop project agent when running', async () => {
+      const stopCalls: string[] = [];
+      const ctx = createTestContext(
+        {
+          agentPool: {
+            reset: () => {},
+            stop: (chatId: string) => { stopCalls.push(chatId); return true; },
+          },
+        },
+        [
+          { key: 'owner/repo', workingDir: '.', chatId: 'chat-a' },
+        ],
+      );
+
+      const result = await invoke(
+        makeCommand('chat-1', 'stop', { projectKey: 'owner/repo' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('已停止');
+      expect(stopCalls).toContain('chat-a');
+    });
+
+    it('should report when no agent is running', async () => {
+      const ctx = createTestContext(undefined, [
+        { key: 'owner/repo', workingDir: '.', chatId: 'chat-a' },
+      ]);
+
+      const result = await invoke(
+        makeCommand('chat-1', 'stop', { projectKey: 'owner/repo' }),
+        ctx,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('没有正在运行');
     });
   });
 });

@@ -267,6 +267,19 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# Projects Configuration (Issue #3583)
+# -----------------------------------------------------------------------------
+# Pre-configured projects with chatId bindings.
+# Projects defined here are registered at startup and can be managed via
+# /project status, /project trigger, and /project stop commands.
+#
+# projects:
+#   - key: "owner/repo"
+#     workingDir: "."
+#     chatId: "oc_xxx"
+#     modelTier: "low"          # Optional: high | low | multimodal
+
 # =============================================================================
 # Notes
 # =============================================================================

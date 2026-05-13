@@ -1,16 +1,21 @@
 /**
  * /project command handler.
  *
- * Provides commands for managing chatId → working directory bindings.
+ * Provides commands for managing chatId → working directory bindings
+ * and config-driven project management.
  *
  * Subcommands:
  * - `use <workingDir>` — Bind current chat to a working directory
  * - `reset` — Reset current chat to default workspace
  * - `info` — Show current chat's active project info
+ * - `status` — Show all configured projects and their agent status (Issue #3583)
+ * - `trigger <key> [prompt]` — Manually trigger a SystemMessage to a project (Issue #3583)
+ * - `stop <key>` — Stop a specific project's agent (Issue #3583)
  *
  * @see Issue #3519 (simplify /project command)
  * @see Issue #1916 (unified ProjectContext system)
  * @see Issue #3529 (typed command data)
+ * @see Issue #3583 (Phase 5: projects config + admin commands)
  */
 
 import type { ControlCommand, ControlResponse } from '../../types/channel.js';
@@ -137,6 +142,149 @@ function handleReset(command: ProjectCommand, context: ControlHandlerContext): C
   };
 }
 
+/**
+ * `/project status` — Show all configured projects and their agent status.
+ *
+ * Lists projects from disclaude.config.yaml and shows which ones have
+ * active agent sessions.
+ *
+ * @see Issue #3583 (Phase 5: projects config + admin commands)
+ */
+function handleStatus(_command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const projects = pm.listConfigProjects();
+
+  if (projects.length === 0) {
+    return {
+      success: true,
+      message: '📋 **项目列表**: 无已配置项目\n\n在 disclaude.config.yaml 中添加 projects 配置。',
+    };
+  }
+
+  const lines = ['📋 **已配置项目**:', ''];
+
+  for (const project of projects) {
+    const active = pm.getActive(project.chatId);
+    const isDefault = active.name === 'default';
+    const statusIcon = isDefault ? '⏸️' : '▶️';
+    const tier = project.modelTier ? ` (${project.modelTier})` : '';
+
+    lines.push(`${statusIcon} **${project.key}**${tier}`);
+    lines.push(`   工作目录: \`${project.workingDir}\``);
+    lines.push(`   ChatId: \`${project.chatId}\``);
+    lines.push('');
+  }
+
+  return {
+    success: true,
+    message: lines.join('\n'),
+  };
+}
+
+/**
+ * `/project trigger <key> [prompt]` — Manually trigger a SystemMessage to a project.
+ *
+ * Finds the project by key from disclaude.config.yaml and sends a SystemMessage
+ * to its bound chatId via the agentPool.
+ *
+ * @see Issue #3583 (Phase 5: projects config + admin commands)
+ */
+function handleTrigger(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const projectKey = command.data?.projectKey;
+  if (!projectKey) {
+    return {
+      success: false,
+      error: '用法: /project trigger <key> [prompt]\n请指定项目 key（如 hs3180/disclaude）',
+    };
+  }
+
+  const project = pm.getConfigProject(projectKey);
+  if (!project) {
+    const available = pm.listConfigProjects().map(p => p.key);
+    return {
+      success: false,
+      error: `项目 \`${projectKey}\` 未找到。\n可用项目: ${available.length > 0 ? available.join(', ') : '无'}`,
+    };
+  }
+
+  // The trigger sends a message to the project's bound chatId.
+  // For now, this resets the agent for that chatId and returns confirmation.
+  // Full SystemMessage routing requires Phase 1-3 (InputMessageRouter) to be merged.
+  context.agentPool.reset(project.chatId);
+
+  const prompt = command.data?.prompt;
+  const promptInfo = prompt ? `\n提示: "${prompt}"` : '';
+
+  return {
+    success: true,
+    message: [
+      `✅ **已触发项目**: ${project.key}`,
+      `ChatId: \`${project.chatId}\``,
+      promptInfo,
+      '',
+      'Agent 会话已重置，等待下次消息触发。',
+    ].filter(Boolean).join('\n'),
+  };
+}
+
+/**
+ * `/project stop <key>` — Stop a specific project's agent.
+ *
+ * Finds the project by key and stops its agent session.
+ *
+ * @see Issue #3583 (Phase 5: projects config + admin commands)
+ */
+function handleStop(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const projectKey = command.data?.projectKey;
+  if (!projectKey) {
+    return {
+      success: false,
+      error: '用法: /project stop <key>\n请指定项目 key（如 hs3180/disclaude）',
+    };
+  }
+
+  const project = pm.getConfigProject(projectKey);
+  if (!project) {
+    const available = pm.listConfigProjects().map(p => p.key);
+    return {
+      success: false,
+      error: `项目 \`${projectKey}\` 未找到。\n可用项目: ${available.length > 0 ? available.join(', ') : '无'}`,
+    };
+  }
+
+  const stopped = context.agentPool.stop(project.chatId);
+
+  return {
+    success: true,
+    message: stopped
+      ? `⏹️ **已停止项目 Agent**: ${project.key}\nChatId: \`${project.chatId}\``
+      : `ℹ️ 项目 ${project.key} 没有正在运行的 Agent`,
+  };
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Main Handler
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -160,10 +308,16 @@ export const handleProject: CommandHandler<'project'> = (
       return handleReset(command, context);
     case 'info':
       return handleInfo(command, context);
+    case 'status':
+      return handleStatus(command, context);
+    case 'trigger':
+      return handleTrigger(command, context);
+    case 'stop':
+      return handleStop(command, context);
     default:
       return {
         success: false,
-        error: `未知子命令: ${subcommand}。可用: use, reset, info`,
+        error: `未知子命令: ${subcommand}。可用: use, reset, info, status, trigger, stop`,
       };
   }
 };

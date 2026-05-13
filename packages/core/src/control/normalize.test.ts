@@ -44,6 +44,36 @@ describe('normalizeCommandData', () => {
       const result = normalizeCommandData('project', undefined);
       expect(result).toBeUndefined();
     });
+
+    it('should normalize trigger subcommand with projectKey from args', () => {
+      const result = normalizeCommandData('project', { args: ['trigger', 'owner/repo'] });
+      expect(result).toEqual({ subcommand: 'trigger', projectKey: 'owner/repo' });
+    });
+
+    it('should normalize trigger subcommand with projectKey and prompt', () => {
+      const result = normalizeCommandData('project', { args: ['trigger', 'owner/repo', 'check', 'CI'] });
+      expect(result).toEqual({ subcommand: 'trigger', projectKey: 'owner/repo', prompt: 'check CI' });
+    });
+
+    it('should normalize stop subcommand with projectKey from args', () => {
+      const result = normalizeCommandData('project', { args: ['stop', 'owner/repo'] });
+      expect(result).toEqual({ subcommand: 'stop', projectKey: 'owner/repo' });
+    });
+
+    it('should normalize trigger with explicit projectKey and prompt', () => {
+      const result = normalizeCommandData('project', { subcommand: 'trigger', projectKey: 'owner/repo', prompt: 'run tests' });
+      expect(result).toEqual({ subcommand: 'trigger', projectKey: 'owner/repo', prompt: 'run tests' });
+    });
+
+    it('should prefer explicit prompt over args for trigger', () => {
+      const result = normalizeCommandData('project', { subcommand: 'trigger', projectKey: 'owner/repo', prompt: 'explicit', args: ['trigger', 'owner/repo', 'from', 'args'] });
+      expect(result).toEqual({ subcommand: 'trigger', projectKey: 'owner/repo', prompt: 'explicit' });
+    });
+
+    it('should normalize status subcommand with no extra args', () => {
+      const result = normalizeCommandData('project', { args: ['status'] });
+      expect(result).toEqual({ subcommand: 'status' });
+    });
   });
 
   describe('trigger command', () => {

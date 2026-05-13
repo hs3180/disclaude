@@ -13,8 +13,10 @@
 
 import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import * as path from 'node:path';
 import type {
   CwdProvider,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -50,6 +52,9 @@ export class ProjectManager {
   /** chatId → workingDir binding */
   private bindings: Map<string, string> = new Map();
 
+  /** Config-driven projects, keyed by project key */
+  private configProjects: Map<string, ProjectConfig> = new Map();
+
   /** Path to .disclaude directory */
   private readonly dataDir: string;
   /** Path to project-bindings.json */
@@ -62,6 +67,18 @@ export class ProjectManager {
     this.dataDir = resolve(options.workspaceDir, '.disclaude');
     this.persistPath = resolve(this.dataDir, 'project-bindings.json');
     this.persistTmpPath = resolve(this.dataDir, 'project-bindings.json.tmp');
+
+    // Register config-driven projects (Issue #3583)
+    if (options.projects) {
+      for (const project of options.projects) {
+        this.configProjects.set(project.key, {
+          ...project,
+          workingDir: path.isAbsolute(project.workingDir)
+            ? project.workingDir
+            : resolve(this.workspaceDir, project.workingDir),
+        });
+      }
+    }
 
     // Restore persisted state
     this.loadPersistedData();
@@ -193,6 +210,29 @@ export class ProjectManager {
       chatId,
       workingDir,
     }));
+  }
+
+  // ───────────────────────────────────────────
+  // Config-Driven Project Methods (Issue #3583)
+  // ───────────────────────────────────────────
+
+  /**
+   * List all config-driven projects.
+   *
+   * @returns Array of ProjectConfig entries from disclaude.config.yaml
+   */
+  listConfigProjects(): ProjectConfig[] {
+    return Array.from(this.configProjects.values());
+  }
+
+  /**
+   * Get a config-driven project by its key.
+   *
+   * @param key - Project key (e.g. 'hs3180/disclaude')
+   * @returns ProjectConfig or undefined if not found
+   */
+  getConfigProject(key: string): ProjectConfig | undefined {
+    return this.configProjects.get(key);
   }
 
   // ───────────────────────────────────────────

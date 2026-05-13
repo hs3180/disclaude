@@ -143,6 +143,41 @@ export interface ProjectState {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Config-Driven Project (Issue #3583)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Project configuration entry from disclaude.config.yaml.
+ *
+ * Defines a project with a bound chatId, enabling:
+ * - Config-driven agent-to-chat routing
+ * - `/project status` to list all configured projects
+ * - `/project trigger <key> [prompt]` to manually trigger a SystemMessage
+ * - `/project stop <key>` to stop a project's agent
+ *
+ * ```yaml
+ * projects:
+ *   - key: "hs3180/disclaude"
+ *     workingDir: "."
+ *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+ *     modelTier: "low"
+ * ```
+ *
+ * @see Issue #3583 (Phase 5: projects config in disclaude.config.yaml)
+ * @see Issue #3329 (RFC: Message — Unified Agent Input Abstraction)
+ */
+export interface ProjectConfig {
+  /** Project identifier (e.g. 'hs3180/disclaude') */
+  key: string;
+  /** Project root directory (agent cwd), resolved relative to workspace */
+  workingDir: string;
+  /** Bound chat — agent replies are sent here */
+  chatId: string;
+  /** Default model tier for this project (optional) */
+  modelTier?: 'high' | 'low' | 'multimodal';
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constructor Options
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -154,4 +189,6 @@ export interface ProjectState {
 export interface ProjectManagerOptions {
   /** Workspace root directory (default working directory when no binding exists) */
   workspaceDir: string;
+  /** Pre-configured projects from disclaude.config.yaml (Issue #3583) */
+  projects?: ProjectConfig[];
 }

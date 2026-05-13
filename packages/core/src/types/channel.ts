@@ -136,7 +136,7 @@ export interface CommandDataMap {
   /** /trigger — trigger mode toggle */
   trigger: { mode?: string };
   /** /project — project management */
-  project: { subcommand: string; workingDir?: string };
+  project: { subcommand: string; workingDir?: string; projectKey?: string; prompt?: string };
 }
 
 /**

@@ -569,6 +569,24 @@ export class Config {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
   }
 
+  /**
+   * Get pre-configured projects from config file.
+   *
+   * Projects are defined in disclaude.config.yaml and registered at startup.
+   * Each project has a key, workingDir, chatId, and optional modelTier.
+   *
+   * @returns Array of project configs or empty array if none configured
+   * @see Issue #3583 (Phase 5: projects config in disclaude.config.yaml)
+   */
+  static getProjectsConfig(): Array<{
+    key: string;
+    workingDir: string;
+    chatId: string;
+    modelTier?: 'high' | 'low' | 'multimodal';
+  }> {
+    return fileConfigOnly.projects || [];
+  }
+
 }
 
 // ============================================================================

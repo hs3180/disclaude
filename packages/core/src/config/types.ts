@@ -394,6 +394,26 @@ export interface DisclaudeConfig {
    * ```
    */
   projectTemplates?: Record<string, { displayName?: string; description?: string }>;
+  /**
+   * Pre-configured projects with chatId bindings (Issue #3583).
+   *
+   * Projects defined here are registered at startup and can be managed
+   * via `/project status`, `/project trigger`, and `/project stop` commands.
+   *
+   * ```yaml
+   * projects:
+   *   - key: "hs3180/disclaude"
+   *     workingDir: "."
+   *     chatId: "oc_3d14c151cc209fd7ac1176a2b7ecbc30"
+   *     modelTier: "low"
+   * ```
+   */
+  projects?: Array<{
+    key: string;
+    workingDir: string;
+    chatId: string;
+    modelTier?: 'high' | 'low' | 'multimodal';
+  }>;
 }
 
 /**
