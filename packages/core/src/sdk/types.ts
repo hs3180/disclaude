@@ -181,6 +181,12 @@ export interface SystemPromptPreset {
   append?: string;
 }
 
+/** Tools preset 配置 (Issue #2890) */
+export interface ToolsPreset {
+  type: 'preset';
+  preset: 'claude_code';
+}
+
 /** 查询选项（Provider 无关） */
 export interface AgentQueryOptions {
   /** 工作目录 */
@@ -193,6 +199,15 @@ export interface AgentQueryOptions {
   allowedTools?: string[];
   /** 禁用的工具列表 */
   disallowedTools?: string[];
+  /**
+   * 工具配置 (Issue #2890)
+   * - `string[]` - 指定可用工具列表
+   * - `{ type: 'preset', preset: 'claude_code' }` - 使用 Claude Code 默认工具集
+   *
+   * 不设置时由 SDK 决定默认工具集。设置为 `claude_code` preset 可确保
+   * Agent 使用完整的 Claude Code 内置工具，是 vibe coding 合规的关键配置。
+   */
+  tools?: string[] | ToolsPreset;
   /** MCP 服务器配置 */
   mcpServers?: Record<string, McpServerConfig>;
   /** 环境变量 */
