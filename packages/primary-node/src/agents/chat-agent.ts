@@ -728,11 +728,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
+    // Issue #3573: Expand settingSources for project-bound sessions (ACP compliance)
     const projectCwd = this.cwdProvider?.(chatId);
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
       disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
       mcpServers,
+      isProjectBound: projectCwd !== undefined,
     });
 
     this.logger.info(

@@ -212,6 +212,23 @@ describe('BaseAgent', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
     });
+
+    describe('settingSources - conditional expansion (Issue #3573)', () => {
+      it('should use [project] by default (non-project session)', () => {
+        const options = agent.testCreateSdkOptions();
+        expect(options.settingSources).toEqual(['project']);
+      });
+
+      it('should expand to [user, project, local] when isProjectBound is true', () => {
+        const options = agent.testCreateSdkOptions({ isProjectBound: true });
+        expect(options.settingSources).toEqual(['user', 'project', 'local']);
+      });
+
+      it('should keep [project] when isProjectBound is false', () => {
+        const options = agent.testCreateSdkOptions({ isProjectBound: false });
+        expect(options.settingSources).toEqual(['project']);
+      });
+    });
   });
 
   describe('formatMessage', () => {

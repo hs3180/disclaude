@@ -43,6 +43,13 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * Whether the session is bound to a project (cwdProvider returned a non-default value).
+   * When true, settingSources expands to ['user', 'project', 'local'] for ACP compliance.
+   * When false/undefined, settingSources stays ['project'].
+   * @see Issue #3573
+   */
+  isProjectBound?: boolean;
 }
 
 /**
@@ -161,7 +168,7 @@ export abstract class BaseAgent implements Disposable {
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['project'],
+      settingSources: extra.isProjectBound ? ['user', 'project', 'local'] : ['project'],
     };
 
     // Add allowed/disallowed tools
