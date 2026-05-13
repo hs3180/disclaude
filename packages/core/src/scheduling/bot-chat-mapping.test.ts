@@ -507,6 +507,20 @@ describe('parseGroupNameToKey', () => {
     expect(parseGroupNameToKey('PR #200 — Title')).toBe('pr-200');
   });
 
+  it('should parse discussion group names with middle dot', () => {
+    expect(parseGroupNameToKey('讨论 · 用户反馈分析')).toBe('discussion-用户反馈分析');
+  });
+
+  it('should parse discussion group names with explicit id', () => {
+    expect(parseGroupNameToKey('讨论 · 用户反馈分析 (msg-123)')).toBe('discussion-msg-123');
+  });
+
+  it('should truncate long discussion topics to 30 chars', () => {
+    const longTopic = '这是一个非常长的讨论主题'.repeat(5);
+    const result = parseGroupNameToKey(`讨论 · ${longTopic}`);
+    expect(result!.startsWith('discussion-')).toBe(true);
+  });
+
   it('should return null for non-matching names', () => {
     expect(parseGroupNameToKey('Random group')).toBeNull();
     expect(parseGroupNameToKey('Some other chat')).toBeNull();

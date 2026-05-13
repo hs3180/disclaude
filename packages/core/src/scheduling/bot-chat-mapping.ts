@@ -78,9 +78,21 @@ export interface BotChatMappingStoreOptions {
 const PR_GROUP_NAME_REGEX = /^PR\s+#(\d+)\s*[·•\-–—]\s*/;
 
 /**
+ * Regex to parse discussion group names.
+ * Expected format: `讨论 · Some topic` or `讨论 · Some topic (id)`
+ * Captures the topic text for key generation.
+ */
+const DISCUSSION_GROUP_NAME_REGEX = /^讨论\s*[·•\-–—]\s*(.+?)(?:\s*\(([^)]+)\))?$/;
+
+/**
  * Key prefix for PR review groups.
  */
 const PR_KEY_PREFIX = 'pr-';
+
+/**
+ * Key prefix for discussion groups.
+ */
+const DISCUSSION_KEY_PREFIX = 'discussion-';
 
 // ---- Helpers ----
 
@@ -119,7 +131,18 @@ export function parseGroupNameToKey(groupName: string): string | null {
     return `${PR_KEY_PREFIX}${prMatch[1]}`;
   }
 
-  // Future: add more patterns here for other group types
+  // Discussion group pattern: "讨论 · topic" or "讨论 · topic (id)"
+  const discussionMatch = groupName.match(DISCUSSION_GROUP_NAME_REGEX);
+  if (discussionMatch) {
+    // If an explicit id is provided in parentheses, use it
+    if (discussionMatch[2]) {
+      return `${DISCUSSION_KEY_PREFIX}${discussionMatch[2]}`;
+    }
+    // Otherwise, derive a stable key from the topic text (first 30 chars, sanitized)
+    const topic = discussionMatch[1].trim().slice(0, 30);
+    const sanitized = topic.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '_');
+    return `${DISCUSSION_KEY_PREFIX}${sanitized}`;
+  }
 
   return null;
 }
