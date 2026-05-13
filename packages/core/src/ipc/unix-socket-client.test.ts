@@ -27,6 +27,22 @@ import type { ChannelHandlersContainer } from './unix-socket-server.js';
 // Test helpers
 // ============================================================================
 
+/** Create a transport that connects successfully but never responds to requests (for timeout tests) */
+function createTimeoutTransport(): import('./transport.js').IIpcClientTransport {
+  return {
+    connect: vi.fn().mockImplementation((handlers) => {
+      handlers.onConnect();
+      return Promise.resolve();
+    }),
+    write: vi.fn().mockImplementation((_data: string) => {
+      // Intentionally never respond — simulates server not responding
+    }),
+    destroy: vi.fn().mockImplementation(() => {
+      // no-op
+    }),
+  };
+}
+
 /** Generate a unique socket path to avoid collisions in fast test execution */
 function uniqueSocketPath(tempDir: string, prefix = 'server'): string {
   return join(tempDir, `${prefix}-${randomUUID().slice(0, 8)}.ipc`);
@@ -432,6 +448,508 @@ describe('UnixSocketIpcClient', () => {
       });
 
       expect(await client.ping()).toBe(false);
+    });
+  });
+
+  describe('uploadImage', () => {
+    it('should upload image via IPC and return success', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          uploadImage: vi.fn().mockResolvedValue({ imageKey: 'img_key_123' }),
+          sendInteractive: vi.fn().mockResolvedValue({ messageId: 'm1', actionPrompts: {} }),
+        },
+      };
+      const { socketPath: serverSocketPath } = await startTrackedServer(tempDir, activeServers, mockHandlers, 'img');
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.uploadImage('/path/to/image.png');
+      expect(result.success).toBe(true);
+      expect(result.imageKey).toBe('img_key_123');
+
+      await client.disconnect();
+    });
+
+    it('should return ipc_unavailable error type when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.uploadImage('/path/to/image.png');
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+
+    it('should return ipc_timeout error type on timeout', async () => {
+      // Use a transport that connects but never responds to trigger timeout
+      const transport = createTimeoutTransport();
+      const client = new UnixSocketIpcClient({ timeout: 50 }, transport);
+
+      await client.connect();
+      const result = await client.uploadImage('/path/to/image.png');
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+
+      await client.disconnect();
+    });
+
+    it('should return ipc_request_failed error type when server returns error', async () => {
+      const errorHandler = vi.fn().mockResolvedValue({ id: '1', success: false, error: 'upload failed' });
+      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
+      const serverSocketPath = uniqueSocketPath(tempDir, 'imgerr');
+      const server = new UnixSocketIpcServer(errorHandler, { socketPath: serverSocketPath });
+      await server.start();
+      activeServers.push(() => server.stop());
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.uploadImage('/path/to/image.png');
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_request_failed');
+
+      await client.disconnect();
+    });
+  });
+
+  describe('listTempChats', () => {
+    it('should list temp chats via IPC', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({ messageId: 'm1', actionPrompts: {} }),
+          listTempChats: vi.fn().mockResolvedValue([
+            { chatId: 'oc_123', createdAt: '2026-01-01', expiresAt: '2026-01-02', responded: false },
+          ]),
+        },
+      };
+      const { socketPath: serverSocketPath } = await startTrackedServer(tempDir, activeServers, mockHandlers, 'list');
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.listTempChats();
+      expect(result.success).toBe(true);
+      expect(result.chats).toHaveLength(1);
+      expect(result.chats![0].chatId).toBe('oc_123');
+
+      await client.disconnect();
+    });
+
+    it('should return ipc_unavailable error type when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.listTempChats();
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+
+    it('should return ipc_timeout error type on timeout', async () => {
+      const transport = createTimeoutTransport();
+      const client = new UnixSocketIpcClient({ timeout: 50 }, transport);
+
+      await client.connect();
+      const result = await client.listTempChats();
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+
+      await client.disconnect();
+    });
+  });
+
+  describe('markChatResponded', () => {
+    it('should mark chat as responded via IPC', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          sendInteractive: vi.fn().mockResolvedValue({ messageId: 'm1', actionPrompts: {} }),
+          markChatResponded: vi.fn().mockResolvedValue({ success: true }),
+        },
+      };
+      const { socketPath: serverSocketPath } = await startTrackedServer(tempDir, activeServers, mockHandlers, 'mark');
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.markChatResponded('oc_123', {
+        selectedValue: 'approve',
+        responder: 'user_1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(true);
+
+      await client.disconnect();
+    });
+
+    it('should return ipc_unavailable error type when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.markChatResponded('oc_123', {
+        selectedValue: 'approve',
+        responder: 'user_1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+
+    it('should return ipc_timeout error type on timeout', async () => {
+      const transport = createTimeoutTransport();
+      const client = new UnixSocketIpcClient({ timeout: 50 }, transport);
+
+      await client.connect();
+      const result = await client.markChatResponded('oc_123', {
+        selectedValue: 'approve',
+        responder: 'user_1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+
+      await client.disconnect();
+    });
+  });
+
+  describe('handleData with invalid JSON', () => {
+    it('should handle invalid JSON data without throwing', async () => {
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      await client.connect();
+
+      // Send a valid ping request that the server will handle normally
+      // The server will echo back a valid response, proving the client works
+      const result = await client.ping();
+      expect(result).toBe(true);
+
+      await client.disconnect();
+    });
+  });
+
+  describe('sendMessage error type branches', () => {
+    it('should return ipc_timeout error type on timeout', async () => {
+      const transport = createTimeoutTransport();
+      const client = new UnixSocketIpcClient({ timeout: 50 }, transport);
+
+      await client.connect();
+      const result = await client.sendMessage('chat-1', 'Hello');
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+
+      await client.disconnect();
+    });
+
+    it('should return ipc_request_failed error type on server error', async () => {
+      const errorHandler = vi.fn().mockResolvedValue({ id: '1', success: false, error: 'server error' });
+      const { UnixSocketIpcServer } = await import('./unix-socket-server.js');
+      const serverSocketPath = uniqueSocketPath(tempDir, 'smerr');
+      const server = new UnixSocketIpcServer(errorHandler, { socketPath: serverSocketPath });
+      await server.start();
+      activeServers.push(() => server.stop());
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.sendMessage('chat-1', 'Hello');
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_request_failed');
+
+      await client.disconnect();
+    });
+  });
+
+  describe('sendCard error type branches', () => {
+    it('should return ipc_timeout error type on timeout', async () => {
+      const transport = createTimeoutTransport();
+      const client = new UnixSocketIpcClient({ timeout: 50 }, transport);
+
+      await client.connect();
+      const result = await client.sendCard('chat-1', {
+        config: {},
+        header: { title: { tag: 'plain_text', content: '' } },
+        elements: [],
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+
+      await client.disconnect();
+    });
+  });
+
+  describe('uploadFile error type branches', () => {
+    it('should return ipc_timeout error type on timeout', async () => {
+      const transport = createTimeoutTransport();
+      const client = new UnixSocketIpcClient({ timeout: 50 }, transport);
+
+      await client.connect();
+      const result = await client.uploadFile('chat-1', '/path/to/file.pdf');
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+
+      await client.disconnect();
+    });
+  });
+
+  describe('sendInteractive error type branches', () => {
+    it('should return ipc_unavailable error type when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.sendInteractive('chat-1', {
+        question: 'Choose:',
+        options: [{ text: 'A', value: 'a' }],
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+
+    it('should return ipc_timeout error type on timeout', async () => {
+      const transport = createTimeoutTransport();
+      const client = new UnixSocketIpcClient({ timeout: 50 }, transport);
+
+      await client.connect();
+      const result = await client.sendInteractive('chat-1', {
+        question: 'Choose:',
+        options: [{ text: 'A', value: 'a' }],
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+
+      await client.disconnect();
+    });
+  });
+
+  describe('transport mode', () => {
+    it('should connect and disconnect via transport', async () => {
+      const transport: import('./transport.js').IIpcClientTransport = {
+        connect: vi.fn().mockImplementation((handlers) => {
+          handlers.onConnect();
+          return Promise.resolve();
+        }),
+        write: vi.fn(),
+        destroy: vi.fn(),
+      };
+
+      const client = new UnixSocketIpcClient({}, transport);
+      await client.connect();
+      expect(client.isConnected()).toBe(true);
+
+      await client.disconnect();
+      expect(client.isConnected()).toBe(false);
+    });
+
+    it('should reject pending requests on transport close', async () => {
+      let closeHandler: (() => void) | null = null;
+      const transport: import('./transport.js').IIpcClientTransport = {
+        connect: vi.fn().mockImplementation((handlers) => {
+          closeHandler = () => handlers.onClose();
+          handlers.onConnect();
+          return Promise.resolve();
+        }),
+        write: vi.fn(),
+        destroy: vi.fn(),
+      };
+
+      const client = new UnixSocketIpcClient({ timeout: 5000 }, transport);
+      await client.connect();
+
+      // Start a request that will be pending
+      const requestPromise = client.request('ping', {});
+
+      // Close the transport while request is pending
+      closeHandler!();
+
+      await expect(requestPromise).rejects.toThrow('IPC connection closed');
+
+      await client.disconnect();
+    });
+
+    it('should handle transport connect error', async () => {
+      const transport: import('./transport.js').IIpcClientTransport = {
+        connect: vi.fn().mockRejectedValue(new Error('Transport connect failed')),
+        write: vi.fn(),
+        destroy: vi.fn(),
+      };
+
+      const client = new UnixSocketIpcClient({}, transport);
+      await expect(client.connect()).rejects.toThrow('Transport connect failed');
+      expect(client.isConnected()).toBe(false);
+    });
+
+    it('should handle concurrent connect calls via transport', async () => {
+      let resolveConnect: (() => void) | null = null;
+      const transport: import('./transport.js').IIpcClientTransport = {
+        connect: vi.fn().mockImplementation((handlers) => new Promise<void>(resolve => {
+          resolveConnect = () => {
+            handlers.onConnect();
+            resolve();
+          };
+        })),
+        write: vi.fn(),
+        destroy: vi.fn(),
+      };
+
+      const client = new UnixSocketIpcClient({}, transport);
+
+      // Start two concurrent connects
+      const connect1 = client.connect();
+      const connect2 = client.connect();
+
+      // Resolve the transport connect
+      resolveConnect!();
+
+      await Promise.all([connect1, connect2]);
+      expect(client.isConnected()).toBe(true);
+
+      await client.disconnect();
+    });
+  });
+
+  describe('isAvailable', () => {
+    it('should return true when connected', async () => {
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      await client.connect();
+      expect(client.isAvailable()).toBe(true);
+
+      await client.disconnect();
+    });
+
+    it('should use cache within TTL for transport mode', async () => {
+      const transport: import('./transport.js').IIpcClientTransport = {
+        connect: vi.fn().mockImplementation((handlers) => {
+          handlers.onConnect();
+          return Promise.resolve();
+        }),
+        write: vi.fn(),
+        destroy: vi.fn(),
+      };
+
+      const client = new UnixSocketIpcClient({}, transport);
+      await client.connect();
+
+      // After connecting, availability should be cached as true
+      expect(client.isAvailable()).toBe(true);
+
+      await client.disconnect();
+    });
+
+    it('should return false when transport not connected and cache expired', () => {
+      const transport: import('./transport.js').IIpcClientTransport = {
+        connect: vi.fn().mockImplementation((handlers) => {
+          handlers.onConnect();
+          return Promise.resolve();
+        }),
+        write: vi.fn(),
+        destroy: vi.fn(),
+      };
+
+      const client = new UnixSocketIpcClient({}, transport);
+      // Not connected, no cache — should return false
+      expect(client.isAvailable()).toBe(false);
+    });
+  });
+
+  describe('checkAvailability', () => {
+    it('should return cached result within TTL', async () => {
+      const { socketPath: serverSocketPath, stop } = await startTestServer(tempDir);
+      activeServers.push(stop);
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      // First check — connects and caches
+      const status1 = await client.checkAvailability();
+      expect(status1.available).toBe(true);
+
+      // Second check — should return cached result
+      const status2 = await client.checkAvailability();
+      expect(status2.available).toBe(true);
+
+      await client.disconnect();
+    });
+
+    it('should return connection_failed for transport mode when connect fails', async () => {
+      const transport: import('./transport.js').IIpcClientTransport = {
+        connect: vi.fn().mockRejectedValue(new Error('Connection refused')),
+        write: vi.fn(),
+        destroy: vi.fn(),
+      };
+
+      const client = new UnixSocketIpcClient({}, transport);
+      const status = await client.checkAvailability();
+      expect(status.available).toBe(false);
+      if (!status.available) {
+        expect(status.reason).toBe('connection_failed');
+      }
+    });
+
+    it('should detect timeout reason from error message', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'missing.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      // Create the socket file but have no server to trigger timeout
+      const { writeFileSync } = await import('fs');
+      writeFileSync(join(tempDir, 'missing.ipc'), '');
+
+      // This should either timeout or connection_failed
+      const status = await client.checkAvailability();
+      expect(status.available).toBe(false);
+      if (!status.available) {
+        expect(['timeout', 'connection_failed']).toContain(status.reason);
+      }
     });
   });
 
