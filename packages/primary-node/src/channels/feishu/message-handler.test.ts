@@ -1126,6 +1126,137 @@ describe('MessageHandler', () => {
   });
 
   // -----------------------------------------------------------------------
+  // checkAndAutoDisableSmallGroup — Issue #3592 re-check behavior
+  // -----------------------------------------------------------------------
+  describe('checkAndAutoDisableSmallGroup — re-check (Issue #3592)', () => {
+    it('should unmark small group when members grow beyond 2', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      // First: mark as small group (2 members)
+      triggerModeManager.markAsSmallGroup('chat_growing');
+      expect(triggerModeManager.isTriggerEnabled('chat_growing')).toBe(true);
+
+      // Now mock API to return 3 members
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '2', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // Send a group message — should trigger re-check and unmark
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_recheck_1',
+            chat_id: 'chat_growing',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello after new member joined' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Should have been unmarked
+      expect(triggerModeManager.isSmallGroup('chat_growing')).toBe(false);
+      expect(triggerModeManager.isTriggerEnabled('chat_growing')).toBe(false);
+      // Message should NOT have been emitted (trigger mode now disabled)
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should throttle re-checks for already-detected small groups', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      triggerModeManager.markAsSmallGroup('chat_throttled');
+
+      // Return ≤2 members so the group stays marked as small
+      const mockGet = vi.fn().mockResolvedValue({
+        data: { user_count: '1', bot_count: '1' },
+      });
+      const mockClient = {
+        im: { chat: { get: mockGet } },
+      };
+      handler.initialize(mockClient as any);
+
+      // First message — should call API (first check)
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_throttle_1',
+            chat_id: 'chat_throttled',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'First message' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      // Second message (within throttle window) — should NOT call API
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_throttle_2',
+            chat_id: 'chat_throttled',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Second message' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(mockGet).toHaveBeenCalledTimes(1); // Still 1 — throttled
+
+      // Trigger mode should remain enabled (throttled, not re-checked)
+      expect(triggerModeManager.isTriggerEnabled('chat_throttled')).toBe(true);
+    });
+
+    it('should skip group message after small group is unmarked', async () => {
+      const { handler, triggerModeManager } = createHandler();
+
+      const mockGet = vi.fn().mockResolvedValue({
+        data: { user_count: '3', bot_count: '1' },
+      });
+      const mockClient = {
+        im: { chat: { get: mockGet } },
+      };
+      handler.initialize(mockClient as any);
+
+      // Pre-mark as small group, then let re-check unmark it
+      triggerModeManager.markAsSmallGroup('chat_unmark_skip');
+
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_unmark_1',
+            chat_id: 'chat_unmark_skip',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Should be unmarked and message should be skipped (not emitted)
+      expect(triggerModeManager.isSmallGroup('chat_unmark_skip')).toBe(false);
+      expect(triggerModeManager.isTriggerEnabled('chat_unmark_skip')).toBe(false);
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // addTypingReaction with client
   // -----------------------------------------------------------------------
   describe('addTypingReaction (via handleMessageReceive)', () => {

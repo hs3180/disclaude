@@ -222,6 +222,36 @@ describe('TriggerModeManager', () => {
       expect(manager.isTriggerEnabled('oc_small')).toBe(true);
       expect(manager.isSmallGroup('oc_small')).toBe(true);
     });
+
+    it('should unmark small group when group grows (Issue #3592)', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_growing');
+      expect(manager.isSmallGroup('oc_growing')).toBe(true);
+      expect(manager.isTriggerEnabled('oc_growing')).toBe(true);
+
+      // Group grows beyond 2 members
+      const removed = manager.unmarkSmallGroup('oc_growing');
+      expect(removed).toBe(true);
+      expect(manager.isSmallGroup('oc_growing')).toBe(false);
+      expect(manager.isTriggerEnabled('oc_growing')).toBe(false);
+    });
+
+    it('should return false when unmarking a non-small group (Issue #3592)', () => {
+      const manager = new TriggerModeManager();
+      const removed = manager.unmarkSmallGroup('oc_never_small');
+      expect(removed).toBe(false);
+    });
+
+    it('should allow re-marking after unmark (Issue #3592)', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_dynamic');
+      manager.unmarkSmallGroup('oc_dynamic');
+      expect(manager.isTriggerEnabled('oc_dynamic')).toBe(false);
+
+      // Group shrinks again
+      manager.markAsSmallGroup('oc_dynamic');
+      expect(manager.isTriggerEnabled('oc_dynamic')).toBe(true);
+    });
   });
 
   describe('auto mode (Issue #3345)', () => {

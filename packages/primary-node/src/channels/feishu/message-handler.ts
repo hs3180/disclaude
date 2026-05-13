@@ -126,6 +126,15 @@ export class MessageHandler {
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
   /**
+   * Issue #3592: Throttle small group re-checks to avoid excessive API calls.
+   * Maps chatId to the timestamp of the last member count check.
+   */
+  private lastSmallGroupCheckTime: Map<string, number> = new Map();
+
+  /** Issue #3592: Re-check small groups at most every 10 minutes */
+  private static readonly SMALL_GROUP_RECHECK_INTERVAL_MS = 10 * 60 * 1000;
+
+  /**
    * Create a MessageHandler.
    */
   constructor(options: {
@@ -855,18 +864,19 @@ export class MessageHandler {
     // Group chat trigger mode (Issue #2291: triggerMode enum, #3345: 'auto' mode)
     // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
     const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
+
+    // Issue #3592: Re-evaluate small group status in 'auto' mode, even for already-marked groups.
+    // Previously, once marked as small group, the check was never run again, so groups that
+    // grew beyond 2 members stayed in trigger-forever mode.
+    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand
+      && this.triggerModeManager.getMode(chat_id) === 'auto') {
+      await this.checkAndAutoDisableSmallGroup(chat_id);
+    }
+
     if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand && !this.triggerModeManager.isTriggerEnabled(chat_id)) {
-      // Issue #3345: Only check small group detection in 'auto' mode
-      // In 'mention' mode, user explicitly wants mention-only regardless of group size
-      if (this.triggerModeManager.getMode(chat_id) === 'auto' && !this.triggerModeManager.isSmallGroup(chat_id)) {
-        await this.checkAndAutoDisableSmallGroup(chat_id);
-      }
-      // Re-check after potential auto-detection
-      if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
-        logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode disabled)');
-        this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
-        return;
-      }
+      logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode disabled)');
+      this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+      return;
     }
 
     // Add typing reaction
@@ -1166,15 +1176,14 @@ export class MessageHandler {
   }
 
   /**
-   * Check if a group chat has ≤2 members and auto-disable passive mode.
+   * Check if a group chat has ≤2 members and auto-enable/disable trigger mode.
    *
    * Uses Feishu API `GET /open-apis/im/v1/chats/{chat_id}` to get member counts.
    * A group with user_count=1 and bot_count=1 (or fewer) is considered a small group.
    *
-   * Once detected, the chat is permanently marked as a small group — even if
-   * more members join later, passive mode stays off to avoid disruptive changes.
-   *
-   * Issue #2052: Disable passive mode by default for 2-member group chats.
+   * Issue #2052: Auto-enable trigger mode for 2-member group chats.
+   * Issue #3592: Also unmarks groups that have grown beyond 2 members.
+   * Throttled to at most once every SMALL_GROUP_RECHECK_INTERVAL_MS per chat.
    *
    * @param chatId - Chat ID to check
    */
@@ -1182,6 +1191,15 @@ export class MessageHandler {
     if (!this.client) {
       return;
     }
+
+    // Issue #3592: Throttle re-checks for already-detected small groups
+    const now = Date.now();
+    const lastCheck = this.lastSmallGroupCheckTime.get(chatId) ?? 0;
+    const isAlreadySmall = this.triggerModeManager.isSmallGroup(chatId);
+    if (isAlreadySmall && (now - lastCheck) < MessageHandler.SMALL_GROUP_RECHECK_INTERVAL_MS) {
+      return;
+    }
+    this.lastSmallGroupCheckTime.set(chatId, now);
 
     try {
       const response = await this.client.im.chat.get({
@@ -1203,6 +1221,13 @@ export class MessageHandler {
         logger.info(
           { chatId, userCount, botCount, totalMembers },
           'Small group detected (≤2 members), auto-enabling trigger mode',
+        );
+      } else if (isAlreadySmall) {
+        // Issue #3592: Group grew beyond 2 members — unmark to disable trigger mode
+        this.triggerModeManager.unmarkSmallGroup(chatId);
+        logger.info(
+          { chatId, userCount, botCount, totalMembers },
+          'Group grew beyond 2 members, auto-disabling trigger mode',
         );
       } else {
         logger.debug(
