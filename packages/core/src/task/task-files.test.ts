@@ -347,4 +347,192 @@ describe('TaskFileManager', () => {
       await expect(manager.cleanupTask('nonexistent')).resolves.toBeUndefined();
     });
   });
+
+  describe('setRunning / clearRunning / isRunning', () => {
+    it('should set and detect running lock', async () => {
+      await manager.initializeTask('task-1');
+      await manager.setRunning('task-1');
+
+      expect(await manager.isRunning('task-1')).toBe(true);
+    });
+
+    it('should clear running lock', async () => {
+      await manager.initializeTask('task-1');
+      await manager.setRunning('task-1');
+      await manager.clearRunning('task-1');
+
+      expect(await manager.isRunning('task-1')).toBe(false);
+    });
+
+    it('should return false when no running lock', async () => {
+      await manager.initializeTask('task-1');
+      expect(await manager.isRunning('task-1')).toBe(false);
+    });
+
+    it('should not throw when clearing non-existent lock', async () => {
+      await manager.initializeTask('task-1');
+      await expect(manager.clearRunning('task-1')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('setFailed / isFailed', () => {
+    it('should set and detect failed state', async () => {
+      await manager.initializeTask('task-1');
+      await manager.setFailed('task-1', 'Build failed');
+
+      expect(await manager.isFailed('task-1')).toBe(true);
+    });
+
+    it('should return false when not failed', async () => {
+      await manager.initializeTask('task-1');
+      expect(await manager.isFailed('task-1')).toBe(false);
+    });
+
+    it('should include reason in failed.md', async () => {
+      await manager.initializeTask('task-1');
+      await manager.setFailed('task-1', 'Build failed with errors');
+
+      const failedPath = path.join(manager.getTaskDir('task-1'), 'failed.md');
+      const content = await fs.readFile(failedPath, 'utf-8');
+      expect(content).toContain('Build failed with errors');
+    });
+  });
+
+  describe('getTaskFileStatus', () => {
+    it('should return unknown for non-existent task', async () => {
+      expect(await manager.getTaskFileStatus('nonexistent')).toBe('unknown');
+    });
+
+    it('should return pending for task with task.md only', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+
+      expect(await manager.getTaskFileStatus('task-1')).toBe('pending');
+    });
+
+    it('should return running for task with running.lock', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+      await manager.setRunning('task-1');
+
+      expect(await manager.getTaskFileStatus('task-1')).toBe('running');
+    });
+
+    it('should return completed for task with final_result.md', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+      await fs.writeFile(manager.getFinalResultPath('task-1'), 'Done', 'utf-8');
+
+      expect(await manager.getTaskFileStatus('task-1')).toBe('completed');
+    });
+
+    it('should return failed for task with failed.md', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+      await manager.setFailed('task-1', 'Error');
+
+      expect(await manager.getTaskFileStatus('task-1')).toBe('failed');
+    });
+  });
+
+  describe('getProgressStatus', () => {
+    it('should return progress for pending task', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task: Fix Login Bug\n\n**Chat ID**: oc_test123\n');
+
+      const status = await manager.getProgressStatus('task-1');
+      expect(status.taskId).toBe('task-1');
+      expect(status.status).toBe('pending');
+      expect(status.title).toBe('Fix Login Bug');
+      expect(status.chatId).toBe('oc_test123');
+      expect(status.currentIteration).toBe(0);
+      expect(status.isRunning).toBe(false);
+      expect(status.hasFinalResult).toBe(false);
+      expect(status.latestExecutionSummary).toBeNull();
+    });
+
+    it('should return progress for running task with iterations', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task: Refactor API\n\n**Chat**: oc_chat456\n');
+      await manager.setRunning('task-1');
+      await manager.createIteration('task-1', 1);
+      await manager.writeExecution('task-1', 1, '# Execution: Iteration 1\n\n## Summary\nRefactored 3 files\n');
+      await manager.createIteration('task-1', 2);
+      await manager.writeExecution('task-1', 2, '# Execution: Iteration 2\n\n## Summary\nFixed test failures\n');
+
+      const status = await manager.getProgressStatus('task-1');
+      expect(status.status).toBe('running');
+      expect(status.title).toBe('Refactor API');
+      expect(status.chatId).toBe('oc_chat456');
+      expect(status.currentIteration).toBe(2);
+      expect(status.isRunning).toBe(true);
+      expect(status.latestExecutionSummary).toContain('Fixed test failures');
+    });
+
+    it('should return progress for completed task', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task: Add Feature\n\n**Chat ID**: oc_done\n');
+      await fs.writeFile(manager.getFinalResultPath('task-1'), '# Done', 'utf-8');
+      await manager.createIteration('task-1', 1);
+
+      const status = await manager.getProgressStatus('task-1');
+      expect(status.status).toBe('completed');
+      expect(status.hasFinalResult).toBe(true);
+    });
+
+    it('should handle task with unreadable spec gracefully', async () => {
+      await manager.initializeTask('task-1');
+      // Don't write task.md
+
+      const status = await manager.getProgressStatus('task-1');
+      expect(status.taskId).toBe('task-1');
+      expect(status.title).toBe('task-1');
+      expect(status.chatId).toBeNull();
+    });
+  });
+
+  describe('listActiveTasks', () => {
+    it('should return empty array when no tasks exist', async () => {
+      expect(await manager.listActiveTasks()).toEqual([]);
+    });
+
+    it('should list tasks with task.md', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task 1');
+      await manager.initializeTask('task-2');
+      await manager.writeTaskSpec('task-2', '# Task 2');
+      await manager.initializeTask('task-3'); // No task.md
+
+      const tasks = await manager.listActiveTasks();
+      expect(tasks).toContain('task-1');
+      expect(tasks).toContain('task-2');
+      expect(tasks).not.toContain('task-3');
+    });
+  });
+
+  describe('listTasksByStatus', () => {
+    it('should filter tasks by pending status', async () => {
+      await manager.initializeTask('pending-1');
+      await manager.writeTaskSpec('pending-1', '# Task');
+      await manager.initializeTask('running-1');
+      await manager.writeTaskSpec('running-1', '# Task');
+      await manager.setRunning('running-1');
+
+      const pending = await manager.listTasksByStatus('pending');
+      const running = await manager.listTasksByStatus('running');
+
+      expect(pending).toContain('pending-1');
+      expect(pending).not.toContain('running-1');
+      expect(running).toContain('running-1');
+      expect(running).not.toContain('pending-1');
+    });
+
+    it('should return empty array when no tasks match', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+
+      const completed = await manager.listTasksByStatus('completed');
+      expect(completed).toEqual([]);
+    });
+  });
 });

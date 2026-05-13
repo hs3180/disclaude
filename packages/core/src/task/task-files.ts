@@ -28,6 +28,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from '../utils/logger.js';
+import type { TaskFileStatus, TaskProgressStatus } from './types.js';
 
 const logger = createLogger('TaskFileManager');
 
@@ -506,5 +507,228 @@ export class TaskFileManager {
    */
   getFinalResultPath(taskId: string): string {
     return path.join(this.getTaskDir(taskId), 'final_result.md');
+  }
+
+  // ===== Lock & Status File Management =====
+
+  /**
+   * Create running.lock to mark task as executing.
+   *
+   * @param taskId - Task identifier
+   */
+  async setRunning(taskId: string): Promise<void> {
+    const lockPath = path.join(this.getTaskDir(taskId), 'running.lock');
+    try {
+      await fs.writeFile(lockPath, new Date().toISOString(), 'utf-8');
+      logger.debug({ taskId }, 'Running lock set');
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to set running lock');
+      throw error;
+    }
+  }
+
+  /**
+   * Remove running.lock to mark task as no longer executing.
+   *
+   * @param taskId - Task identifier
+   */
+  async clearRunning(taskId: string): Promise<void> {
+    const lockPath = path.join(this.getTaskDir(taskId), 'running.lock');
+    try {
+      await fs.unlink(lockPath);
+      logger.debug({ taskId }, 'Running lock cleared');
+    } catch (error) {
+      // File might not exist, that's OK
+      logger.debug({ taskId }, 'Running lock already cleared or missing');
+    }
+  }
+
+  /**
+   * Check if running.lock exists.
+   *
+   * @param taskId - Task identifier
+   * @returns True if task is currently running
+   */
+  async isRunning(taskId: string): Promise<boolean> {
+    const lockPath = path.join(this.getTaskDir(taskId), 'running.lock');
+    try {
+      await fs.access(lockPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Create failed.md to mark task as failed.
+   *
+   * @param taskId - Task identifier
+   * @param reason - Failure reason
+   */
+  async setFailed(taskId: string, reason: string): Promise<void> {
+    const failedPath = path.join(this.getTaskDir(taskId), 'failed.md');
+    try {
+      await fs.writeFile(failedPath, `# Task Failed\n\n**Reason**: ${reason}\n**Time**: ${new Date().toISOString()}\n`, 'utf-8');
+      logger.info({ taskId }, 'Task marked as failed');
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to write failed.md');
+      throw error;
+    }
+  }
+
+  /**
+   * Check if failed.md exists.
+   *
+   * @param taskId - Task identifier
+   * @returns True if task has failed
+   */
+  async isFailed(taskId: string): Promise<boolean> {
+    const failedPath = path.join(this.getTaskDir(taskId), 'failed.md');
+    try {
+      await fs.access(failedPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ===== Progress Status =====
+
+  /**
+   * Get the derived file-based status of a task.
+   *
+   * @param taskId - Task identifier
+   * @returns Task file status
+   */
+  async getTaskFileStatus(taskId: string): Promise<TaskFileStatus> {
+    const taskDir = this.getTaskDir(taskId);
+    try {
+      await fs.access(taskDir);
+    } catch {
+      return 'unknown';
+    }
+
+    // Check in priority order
+    if (await this.hasFinalResult(taskId)) return 'completed';
+    if (await this.isFailed(taskId)) return 'failed';
+    if (await this.isRunning(taskId)) return 'running';
+
+    // Check if task.md exists
+    try {
+      await fs.access(this.getTaskSpecPath(taskId));
+      return 'pending';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Get full progress status for a task.
+   *
+   * Reads task.md, iterations, and status files to produce
+   * a structured progress report.
+   *
+   * @param taskId - Task identifier
+   * @returns Structured progress status
+   */
+  async getProgressStatus(taskId: string): Promise<TaskProgressStatus> {
+    const status = await this.getTaskFileStatus(taskId);
+    const iterations = await this.listIterations(taskId);
+    const isRunning = status === 'running';
+
+    // Extract title and chatId from task.md
+    let title = taskId;
+    let chatId: string | null = null;
+    try {
+      const spec = await this.readTaskSpec(taskId);
+      // Extract title from "# Task: ..." line
+      const titleMatch = spec.match(/^#\s+Task:\s+(.+)$/m);
+      if (titleMatch) title = titleMatch[1].trim();
+      // Extract chatId from "**Chat ID**: ..." or "**Chat**: ..." line
+      const chatMatch = spec.match(/\*\*(?:Chat ID|Chat)\*\*:\s*(\S+)/);
+      if (chatMatch) chatId = chatMatch[1].trim();
+    } catch {
+      // task.md might not exist
+    }
+
+    // Get latest execution summary
+    let latestExecutionSummary: string | null = null;
+    if (iterations.length > 0) {
+      const lastIter = iterations[iterations.length - 1];
+      try {
+        const execution = await this.readExecution(taskId, lastIter);
+        // Extract summary from execution.md
+        const summaryMatch = execution.match(/^##\s+Summary\s*\n([\s\S]*?)(?=\n##|\Z)/m);
+        if (summaryMatch) {
+          latestExecutionSummary = summaryMatch[1].trim();
+        } else {
+          // Fallback: first non-heading line
+          const lines = execution.split('\n').filter(l => l.trim() && !l.startsWith('#'));
+          if (lines.length > 0) latestExecutionSummary = lines[0].trim();
+        }
+      } catch {
+        // execution.md might not exist
+      }
+    }
+
+    return {
+      taskId,
+      status,
+      title,
+      chatId,
+      currentIteration: iterations.length,
+      hasFinalResult: status === 'completed',
+      isRunning,
+      latestExecutionSummary,
+    };
+  }
+
+  /**
+   * List all task IDs that have a task.md file (active tasks).
+   *
+   * @returns Array of task IDs with task.md present
+   */
+  async listActiveTasks(): Promise<string[]> {
+    try {
+      const entries = await fs.readdir(this.tasksBaseDir, { withFileTypes: true });
+      const taskIds: string[] = [];
+
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const taskMdPath = path.join(this.tasksBaseDir, entry.name, 'task.md');
+          try {
+            await fs.access(taskMdPath);
+            taskIds.push(entry.name);
+          } catch {
+            // No task.md, skip
+          }
+        }
+      }
+
+      return taskIds;
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to list active tasks');
+      return [];
+    }
+  }
+
+  /**
+   * List task IDs that are currently in a given status.
+   *
+   * @param status - Status to filter by
+   * @returns Array of task IDs matching the status
+   */
+  async listTasksByStatus(status: TaskFileStatus): Promise<string[]> {
+    const allTasks = await this.listActiveTasks();
+    const result: string[] = [];
+
+    for (const taskId of allTasks) {
+      const taskStatus = await this.getTaskFileStatus(taskId);
+      if (taskStatus === status) {
+        result.push(taskId);
+      }
+    }
+
+    return result;
   }
 }
