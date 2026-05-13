@@ -29,7 +29,7 @@ import type {
 } from '../channel-lifecycle-manager.js';
 import {
   createChannelCallbacksFactory,
-  createDefaultMessageHandler,
+  createRoutedMessageHandler,
   createChannelApiHandlers,
 } from '../utils/channel-handlers.js';
 import {
@@ -106,7 +106,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     }),
 
   createMessageHandler: (channel, context) =>
-    createDefaultMessageHandler(channel, context, {
+    createRoutedMessageHandler(channel, context, {
       channelName: 'Feishu channel',
       sendDoneSignal: false,
       extractAttachments: (message: IncomingMessage): FileRef[] | undefined => {

@@ -20,6 +20,10 @@ import {
   type FileRef,
   type ChannelApiHandlers,
   type FeishuCard,
+  AgentPool,
+  InputMessageRouter,
+  type UserMessage,
+  type ProjectChatIdResolver,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from '../agents/types.js';
 import type { Logger } from 'pino';
@@ -191,6 +195,106 @@ export function createDefaultMessageHandler(
       void agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      await channel.sendMessage({
+        chatId,
+        type: 'text',
+        text: `❌ Error: ${errorMsg}`,
+      });
+      if (options.sendDoneSignal) {
+        await channel.sendMessage({ chatId, type: 'done' });
+      }
+    }
+  };
+}
+
+// ============================================================================
+// createRoutedMessageHandler (Issue #3582 Phase 3)
+// ============================================================================
+
+/**
+ * Options for creating a routed message handler.
+ *
+ * Extends MessageHandlerOptions with InputMessageRouter integration.
+ */
+export interface RoutedMessageHandlerOptions extends MessageHandlerOptions {
+  /**
+   * Optional ProjectChatIdResolver for InputMessageRouter.
+   * When provided, enables SystemMessage routing to project-bound agents.
+   */
+  projectChatIdResolver?: ProjectChatIdResolver;
+}
+
+/**
+ * Create a routed message handler that constructs UserMessage and routes
+ * through InputMessageRouter.
+ *
+ * Issue #3582: FeishuChannel refactored to construct UserMessage from
+ * incoming messages and route via the unified InputMessageRouter, instead
+ * of calling agent.processMessage() directly.
+ *
+ * The handler wraps PrimaryAgentPool in a core AgentPool for compatibility
+ * with InputMessageRouter's interface. This is functionally identical to
+ * createDefaultMessageHandler — same agent creation, same processMessage call —
+ * but goes through the unified routing layer.
+ *
+ * @param channel - The channel instance (for error response)
+ * @param context - Wired context with agentPool and callbacks factory
+ * @param options - Channel-specific options including attachment extraction
+ * @returns A message handler function that routes via InputMessageRouter
+ */
+export function createRoutedMessageHandler(
+  channel: IChannel,
+  context: WiredContext,
+  options: RoutedMessageHandlerOptions
+): (message: IncomingMessage) => Promise<void> {
+  // Wrap PrimaryAgentPool in core AgentPool for InputMessageRouter compatibility.
+  // The factory delegates to PrimaryAgentPool.getOrCreateChatAgent(chatId, callbacks).
+  const corePool = new AgentPool({
+    chatAgentFactory: (chatId: string) => {
+      const callbacks = context.callbacks(chatId);
+      return context.agentPool.getOrCreateChatAgent(chatId, callbacks);
+    },
+    projectChatIdResolver: options.projectChatIdResolver,
+  });
+
+  const router = new InputMessageRouter({
+    agentPool: corePool,
+    projectChatIdResolver: options.projectChatIdResolver,
+  });
+
+  return async (message: IncomingMessage) => {
+    const { chatId, content, messageId, userId, metadata, messageType } = message;
+    context.logger.info(
+      { chatId, messageId, messageType, contentLength: content.length, hasAttachments: !!message.attachments },
+      `Processing message from ${options.channelName} via InputMessageRouter`
+    );
+
+    // Construct UserMessage from IncomingMessage
+    const userMessage: UserMessage = {
+      id: messageId,
+      source: 'user',
+      payload: content,
+      chatId,
+      senderOpenId: userId,
+      messageId,
+      chatHistoryContext: metadata?.chatHistoryContext as string | undefined,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Convert attachments if the channel supports them
+    const fileRefs = options.extractAttachments?.(message);
+
+    try {
+      const result = router.route(userMessage, fileRefs);
+      if (!result.routed) {
+        context.logger.warn(
+          { chatId, messageId, reason: result.reason },
+          'InputMessageRouter returned fallback — message not routed'
+        );
+      }
+    } catch (error) {
+      context.logger.error({ err: error, chatId, messageId }, 'Failed to route message');
       const errorMsg = error instanceof Error ? error.message : String(error);
       await channel.sendMessage({
         chatId,

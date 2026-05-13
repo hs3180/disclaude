@@ -62,4 +62,14 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
+  /**
+   * Project key for routing scheduled tasks through InputMessageRouter.
+   * When set, the Scheduler constructs a SystemMessage and routes it via
+   * InputMessageRouter instead of using the legacy short-lived agent path.
+   *
+   * Defined in schedule markdown frontmatter (e.g., `projectKey: "hs3180/disclaude"`).
+   *
+   * Issue #3582: Channel + Scheduler integration via MessageRouter (#3329 Phase 3).
+   */
+  projectKey?: string;
 }

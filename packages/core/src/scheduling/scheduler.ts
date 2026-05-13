@@ -29,6 +29,8 @@ import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { ModelTier } from '../config/types.js';
+import type { InputMessageRouter } from '../messaging/input-message-router.js';
+import type { SystemMessage } from '../types/message.js';
 
 const logger = createLogger('Scheduler');
 
@@ -104,6 +106,14 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Optional InputMessageRouter for project-keyed scheduled tasks.
+   * When provided, tasks with `projectKey` are routed as SystemMessage
+   * through the router instead of using the legacy short-lived executor.
+   *
+   * Issue #3582: Channel + Scheduler integration via MessageRouter (#3329 Phase 3).
+   */
+  messageRouter?: InputMessageRouter;
 }
 
 /**
@@ -142,6 +152,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private messageRouter?: InputMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -162,6 +173,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.messageRouter = options.messageRouter;
     logger.info('Scheduler created');
   }
 
@@ -381,24 +393,75 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
-      // Issue #1041: Use injected executor function
-      // Issue #1338: Pass model override for per-task model selection
-      // Issue #3059: Pass modelTier for tier-based model resolution
-      // Issue #3346: Wrap with timeout to prevent indefinite hangs
-      const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
-      });
+      // Issue #3582: Route through InputMessageRouter when task has projectKey.
+      // This sends a SystemMessage to the project-bound agent via the unified
+      // routing path instead of creating a short-lived agent.
+      if (task.projectKey && this.messageRouter) {
+        logger.info(
+          { taskId: task.id, name: task.name, projectKey: task.projectKey },
+          'Routing scheduled task via InputMessageRouter'
+        );
 
-      try {
-        await Promise.race([
-          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
-          timeoutPromise,
-        ]);
-      } finally {
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId);
+        const systemMessage: SystemMessage = {
+          id: `sched-${Date.now()}`,
+          source: 'system',
+          payload: wrappedPrompt,
+          createdAt: new Date().toISOString(),
+          trigger: 'scheduled',
+          projectKey: task.projectKey,
+          taskName: task.name,
+          data: {
+            taskId: task.id,
+            model: task.model,
+            modelTier: task.modelTier,
+            createdBy: task.createdBy,
+          },
+        };
+
+        // Issue #3346: Wrap with timeout to prevent indefinite hangs
+        const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
+        });
+
+        try {
+          const routeResult = this.messageRouter.route(systemMessage);
+          if (routeResult.routed && routeResult.method === 'project-resolved') {
+            // runOnce was fired as void — for full integration we rely on
+            // the agent's internal completion handling.
+            // The scheduler's runningTasks tracking provides lifecycle management.
+          }
+          await Promise.race([
+            Promise.resolve(routeResult),
+            timeoutPromise,
+          ]);
+        } finally {
+          if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+          }
+        }
+      } else {
+        // Legacy path: use injected executor function
+        // Issue #1041: Use injected executor function
+        // Issue #1338: Pass model override for per-task model selection
+        // Issue #3059: Pass modelTier for tier-based model resolution
+        // Issue #3346: Wrap with timeout to prevent indefinite hangs
+        const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
+        });
+
+        try {
+          await Promise.race([
+            this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+            timeoutPromise,
+          ]);
+        } finally {
+          if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+          }
         }
       }
 

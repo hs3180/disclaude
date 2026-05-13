@@ -11,6 +11,7 @@
  */
 
 import type { ChatAgent } from '../agents/types.js';
+import type { FileRef } from '../types/index.js';
 import type { AgentPool } from '../agents/agent-pool.js';
 import { createLogger, type Logger } from '../utils/logger.js';
 import {
@@ -119,11 +120,12 @@ export class InputMessageRouter {
    * Route a message to the appropriate ChatAgent.
    *
    * @param message - The message to route
+   * @param fileRefs - Optional file attachments (for UserMessage with files)
    * @returns Route result indicating success or fallback reason
    */
-  route(message: InputMessage): InputRouteResult {
+  route(message: InputMessage, fileRefs?: FileRef[]): InputRouteResult {
     if (isUserMessage(message)) {
-      return this.routeUserMessage(message);
+      return this.routeUserMessage(message, fileRefs);
     }
 
     if (isSystemMessage(message)) {
@@ -141,11 +143,9 @@ export class InputMessageRouter {
    * UserMessage carries its own chatId, so routing is direct:
    * chatId → AgentPool.getOrCreate(chatId) → processMessage
    */
-  private routeUserMessage(message: UserMessage): RouteResult {
+  private routeUserMessage(message: UserMessage, fileRefs?: FileRef[]): InputRouteResult {
     const { chatId } = message;
     if (!chatId) {
-      // Should never happen since chatId is required on UserMessage,
-      // but handle defensively
       this.log.error({ messageId: message.id }, 'UserMessage missing chatId');
       return { routed: false, reason: 'missing-chat-id' };
     }
@@ -161,7 +161,7 @@ export class InputMessageRouter {
       message.payload,
       message.messageId,
       message.senderOpenId,
-      undefined, // attachments — Phase 1 passes through payload only
+      fileRefs, // Issue #3582: Pass file attachments through
       message.chatHistoryContext
     );
 

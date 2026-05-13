@@ -534,6 +534,72 @@ describe('ScheduleFileScanner', () => {
     });
   });
 
+  describe('parseFile - projectKey field (Issue #3582)', () => {
+    it('should parse projectKey from frontmatter', async () => {
+      const content = [
+        '---',
+        'name: "Daily Maintenance"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_test"',
+        'projectKey: "hs3180/disclaude"',
+        '---',
+        '',
+        'Daily repo maintenance task.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/project-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBe('hs3180/disclaude');
+    });
+
+    it('should default projectKey to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-project/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.projectKey).toBeUndefined();
+    });
+  });
+
+  describe('writeTask - projectKey field (Issue #3582)', () => {
+    it('should write projectKey to frontmatter when set', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-project-task',
+        name: 'Project Task',
+        cron: '0 9 * * *',
+        prompt: 'Do project work.',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        projectKey: 'hs3180/disclaude',
+      };
+
+      await scanner.writeTask(task);
+      expect(mockWriteFile).toHaveBeenCalledTimes(1);
+      const written = mockWriteFile.mock.calls[0][1] as string;
+      expect(written).toContain('projectKey: "hs3180/disclaude"');
+    });
+
+    it('should omit projectKey from frontmatter when not set', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-legacy-task',
+        name: 'Legacy Task',
+        cron: '0 9 * * *',
+        prompt: 'Do legacy work.',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+      };
+
+      await scanner.writeTask(task);
+      expect(mockWriteFile).toHaveBeenCalledTimes(1);
+      const written = mockWriteFile.mock.calls[0][1] as string;
+      expect(written).not.toContain('projectKey');
+    });
+  });
+
   describe('deleteTask', () => {
     it('should delete <slug>/SCHEDULE.md and return true (Issue #2526)', async () => {
       const result = await scanner.deleteTask('schedule-daily-report');
