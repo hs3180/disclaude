@@ -222,6 +222,32 @@ describe('TriggerModeManager', () => {
       expect(manager.isTriggerEnabled('oc_small')).toBe(true);
       expect(manager.isSmallGroup('oc_small')).toBe(true);
     });
+
+    it('should unmark small group (Issue #3592)', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.isSmallGroup('oc_small')).toBe(true);
+      expect(manager.isTriggerEnabled('oc_small')).toBe(true);
+
+      manager.unmarkSmallGroup('oc_small');
+      expect(manager.isSmallGroup('oc_small')).toBe(false);
+      expect(manager.isTriggerEnabled('oc_small')).toBe(false);
+    });
+
+    it('should be a no-op when unmarking a non-small-group chat', () => {
+      const manager = new TriggerModeManager();
+      manager.unmarkSmallGroup('oc_never_was_small');
+      expect(manager.isSmallGroup('oc_never_was_small')).toBe(false);
+    });
+
+    it('should remove unmarked group from getTriggerEnabledChats', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.getTriggerEnabledChats()).toContain('oc_small');
+
+      manager.unmarkSmallGroup('oc_small');
+      expect(manager.getTriggerEnabledChats()).not.toContain('oc_small');
+    });
   });
 
   describe('auto mode (Issue #3345)', () => {
