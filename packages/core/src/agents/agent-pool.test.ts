@@ -128,18 +128,27 @@ describe('AgentPool', () => {
       expect(() => pool.reset('non-existent')).not.toThrow();
     });
 
-    it('should call reset on the agent for existing chatId', () => {
+    it('should dispose the agent and remove it from pool (Issue #3570)', () => {
       const agent = pool.getOrCreateChatAgent('chat-1');
+      expect(pool.has('chat-1')).toBe(true);
+
       pool.reset('chat-1');
 
-      expect(agent.reset).toHaveBeenCalledWith('chat-1', undefined);
+      // Agent should be disposed, not just reset
+      expect(agent.dispose).toHaveBeenCalled();
+      expect(pool.has('chat-1')).toBe(false);
+      expect(pool.size()).toBe(0);
     });
 
-    it('should pass keepContext parameter to agent reset', () => {
-      const agent = pool.getOrCreateChatAgent('chat-1');
-      pool.reset('chat-1', true);
+    it('should create a fresh agent on next getOrCreate after reset (Issue #3570)', () => {
+      const agent1 = pool.getOrCreateChatAgent('chat-1');
+      pool.reset('chat-1');
 
-      expect(agent.reset).toHaveBeenCalledWith('chat-1', true);
+      const agent2 = pool.getOrCreateChatAgent('chat-1');
+
+      // A new agent should be created (different instance)
+      expect(agent2).not.toBe(agent1);
+      expect(mockFactory).toHaveBeenCalledTimes(2);
     });
   });
 

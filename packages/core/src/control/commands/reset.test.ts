@@ -22,22 +22,24 @@ function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlH
 }
 
 describe('handleReset', () => {
-  it('should reset agent pool for the given chatId', async () => {
+  it('should reset agent pool for the given chatId (Issue #3570: dispose + recreate)', async () => {
     const context = createMockContext();
     const result = await handleReset({ type: 'reset', chatId: 'chat-123' }, context);
 
     expect(result.success).toBe(true);
+    // reset() now internally calls dispose() to fully recycle the agent
     expect(context.agentPool.reset).toHaveBeenCalledWith('chat-123');
     expect(result.message).toContain('对话已重置');
   });
 });
 
 describe('handleRestart', () => {
-  it('should reset agent pool for the given chatId', async () => {
+  it('should reset agent pool for the given chatId (Issue #3570: dispose + recreate)', async () => {
     const context = createMockContext();
     const result = await handleRestart({ type: 'restart', chatId: 'chat-456' }, context);
 
     expect(result.success).toBe(true);
+    // reset() now internally calls dispose() to fully recycle the agent
     expect(context.agentPool.reset).toHaveBeenCalledWith('chat-456');
     expect(result.message).toContain('Agent 实例已重启');
   });
