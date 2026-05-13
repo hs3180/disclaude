@@ -334,6 +334,7 @@ export {
 export type {
   CwdProvider,
   IssueTriageStatus,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -361,4 +362,6 @@ export {
   STATE_DIR_NAME,
   STATE_FILE_NAME,
   STATE_VERSION,
+  // ProjectConfigStore (Issue #3329 Phase 2)
+  ProjectConfigStore,
 } from './project/index.js';

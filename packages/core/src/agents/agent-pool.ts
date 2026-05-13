@@ -24,6 +24,7 @@
 
 import { createLogger, type Logger } from '../utils/logger.js';
 import type { ChatAgent } from './types.js';
+import type { ProjectConfigStore } from '../project/project-config-store.js';
 
 const defaultLogger = createLogger('AgentPool');
 
@@ -38,6 +39,8 @@ export type ChatAgentFactory = (chatId: string) => ChatAgent;
 export interface AgentPoolConfig {
   /** Factory function to create ChatAgent instances */
   chatAgentFactory: ChatAgentFactory;
+  /** Optional project config store for project-scoped agent creation (Issue #3329 Phase 2) */
+  projectConfigStore?: ProjectConfigStore;
   /** Optional logger */
   logger?: Logger;
 }
@@ -54,11 +57,13 @@ export interface AgentPoolConfig {
  */
 export class AgentPool {
   private readonly chatAgentFactory: ChatAgentFactory;
+  private readonly projectConfigStore?: ProjectConfigStore;
   private readonly chatAgents = new Map<string, ChatAgent>();
   private readonly log: Logger;
 
   constructor(config: AgentPoolConfig) {
     this.chatAgentFactory = config.chatAgentFactory;
+    this.projectConfigStore = config.projectConfigStore;
     this.log = config.logger ?? defaultLogger;
   }
 
@@ -79,6 +84,32 @@ export class AgentPool {
       this.chatAgents.set(chatId, agent);
     }
     return agent;
+  }
+
+  /**
+   * Get or create a ChatAgent for a project-scoped agent.
+   *
+   * Looks up the ProjectConfig by projectKey, then delegates to
+   * getOrCreateChatAgent with the config's chatId. The agent's cwd
+   * is resolved at start time via CwdProvider (from ProjectConfigStore).
+   *
+   * @param projectKey - The project identifier (e.g. 'hs3180/disclaude')
+   * @returns The ChatAgent instance, or undefined if no ProjectConfig is registered
+   */
+  getOrCreateProjectAgent(projectKey: string): ChatAgent | undefined {
+    if (!this.projectConfigStore) {
+      this.log.warn({ projectKey }, 'No ProjectConfigStore configured — cannot create project agent');
+      return undefined;
+    }
+
+    const config = this.projectConfigStore.get(projectKey);
+    if (!config) {
+      this.log.warn({ projectKey }, 'No ProjectConfig found for projectKey');
+      return undefined;
+    }
+
+    this.log.debug({ projectKey, chatId: config.chatId }, 'Creating project-scoped agent');
+    return this.getOrCreateChatAgent(config.chatId);
   }
 
   /**

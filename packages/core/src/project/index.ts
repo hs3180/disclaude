@@ -8,6 +8,7 @@
 export type {
   CwdProvider,
   IssueTriageStatus,
+  ProjectConfig,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -36,3 +37,6 @@ export {
 } from './project-state.js';
 
 export { ProjectManager } from './project-manager.js';
+
+// ProjectConfigStore (Issue #3329 Phase 2)
+export { ProjectConfigStore } from './project-config-store.js';

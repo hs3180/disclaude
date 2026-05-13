@@ -143,6 +143,31 @@ export interface ProjectState {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProjectConfig (Issue #3329 Phase 2)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Project configuration bound to a chatId.
+ *
+ * Maps a project key (e.g. 'hs3180/disclaude') to its working directory,
+ * bound chat, and optional model tier. Used by InputMessageRouter to
+ * resolve SystemMessage → chatId and by AgentPool to create project-scoped agents.
+ *
+ * @see Issue #3329 (RFC: Message — Unified Agent Input Abstraction)
+ * @see Issue #3581 (Phase 2: ProjectConfig + AgentPool extension)
+ */
+export interface ProjectConfig {
+  /** Project identifier (e.g. 'hs3180/disclaude') */
+  key: string;
+  /** Project root directory — agent cwd for project-scoped agents */
+  workingDir: string;
+  /** Bound chat — agent replies are sent here */
+  chatId: string;
+  /** Default model tier for this project */
+  modelTier?: 'high' | 'low' | 'multimodal';
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constructor Options
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
