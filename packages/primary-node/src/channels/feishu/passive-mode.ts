@@ -71,10 +71,20 @@ export class TriggerModeManager {
   /**
    * Auto-detected small groups (≤2 members: bot + 1 user).
    * Used by 'auto' mode to decide whether to respond.
-   * Once detected, trigger mode is permanently enabled for these chats,
-   * even if more members join later (Issue #2052).
+   * Issue #3592: Groups are re-checked periodically — if members grow beyond 2,
+   * the small group mark is removed and trigger mode reverts to mention-only.
    */
   private smallGroups: Set<string> = new Set();
+
+  /**
+   * Timestamps of last small group member count check per chat.
+   * Used to debounce API calls — re-check at most every SMALL_GROUP_RECHECK_MS.
+   * Issue #3592: Avoids calling Feishu API on every message.
+   */
+  private lastSmallGroupCheck: Map<string, number> = new Map();
+
+  /** Minimum interval between small group re-checks (5 minutes). */
+  private static readonly SMALL_GROUP_RECHECK_MS = 5 * 60 * 1000;
 
   /**
    * Get the configured trigger mode for a chat.
@@ -130,8 +140,8 @@ export class TriggerModeManager {
   /**
    * Mark a chat as a small group, auto-enabling trigger mode.
    *
-   * Once marked, trigger mode stays enabled even if members join later,
-   * to avoid disruptive behavior changes (Issue #2052).
+   * Issue #3592: The mark can be removed via unmarkSmallGroup() when the group
+   * grows beyond 2 members.
    *
    * @param chatId - Chat ID to mark
    */
@@ -140,6 +150,40 @@ export class TriggerModeManager {
       this.smallGroups.add(chatId);
       logger.info({ chatId }, 'Auto-enabled trigger mode for small group (≤2 members)');
     }
+    this.lastSmallGroupCheck.set(chatId, Date.now());
+  }
+
+  /**
+   * Remove the small group mark, reverting to mention-only in auto mode.
+   * Issue #3592: Called when a group grows beyond 2 members.
+   *
+   * @param chatId - Chat ID to unmark
+   */
+  unmarkSmallGroup(chatId: string): void {
+    if (this.smallGroups.has(chatId)) {
+      this.smallGroups.delete(chatId);
+      logger.info({ chatId }, 'Auto-disabled trigger mode: group grew beyond 2 members');
+    }
+    this.lastSmallGroupCheck.set(chatId, Date.now());
+  }
+
+  /**
+   * Check if the small group status for a chat needs to be re-evaluated.
+   * Returns true if:
+   * - The chat is not currently marked as a small group (first-time check), OR
+   * - Enough time has passed since the last check (debounced re-check)
+   *
+   * Issue #3592: Prevents excessive API calls while still detecting group growth.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if the chat should be re-evaluated
+   */
+  shouldRecheckSmallGroup(chatId: string): boolean {
+    if (!this.smallGroups.has(chatId)) {
+      return true;
+    }
+    const lastCheck = this.lastSmallGroupCheck.get(chatId) ?? 0;
+    return Date.now() - lastCheck >= TriggerModeManager.SMALL_GROUP_RECHECK_MS;
   }
 
   /**

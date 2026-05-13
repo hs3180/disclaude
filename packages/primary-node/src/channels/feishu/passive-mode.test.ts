@@ -224,6 +224,56 @@ describe('TriggerModeManager', () => {
     });
   });
 
+  describe('small group unmark (Issue #3592)', () => {
+    it('should unmark a small group', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.isSmallGroup('oc_small')).toBe(true);
+      expect(manager.isTriggerEnabled('oc_small')).toBe(true);
+
+      manager.unmarkSmallGroup('oc_small');
+      expect(manager.isSmallGroup('oc_small')).toBe(false);
+      expect(manager.isTriggerEnabled('oc_small')).toBe(false);
+    });
+
+    it('should be a no-op for non-small-group chats', () => {
+      const manager = new TriggerModeManager();
+      manager.unmarkSmallGroup('oc_never_small');
+      expect(manager.isSmallGroup('oc_never_small')).toBe(false);
+      expect(manager.isTriggerEnabled('oc_never_small')).toBe(false);
+    });
+
+    it('should remove from getTriggerEnabledChats after unmark', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.getTriggerEnabledChats()).toContain('oc_small');
+
+      manager.unmarkSmallGroup('oc_small');
+      expect(manager.getTriggerEnabledChats()).not.toContain('oc_small');
+    });
+  });
+
+  describe('shouldRecheckSmallGroup (Issue #3592)', () => {
+    it('should return true for non-small-group chats', () => {
+      const manager = new TriggerModeManager();
+      expect(manager.shouldRecheckSmallGroup('oc_new')).toBe(true);
+    });
+
+    it('should return false right after marking as small group', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.shouldRecheckSmallGroup('oc_small')).toBe(false);
+    });
+
+    it('should return true after unmarking (ready for re-check)', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      manager.unmarkSmallGroup('oc_small');
+      // After unmarking, the chat is no longer a small group, so it should be re-checked
+      expect(manager.shouldRecheckSmallGroup('oc_small')).toBe(true);
+    });
+  });
+
   describe('auto mode (Issue #3345)', () => {
     it('should default to auto mode for unknown chats', () => {
       const manager = new TriggerModeManager();

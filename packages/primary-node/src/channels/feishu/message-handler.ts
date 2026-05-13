@@ -854,14 +854,15 @@ export class MessageHandler {
 
     // Group chat trigger mode (Issue #2291: triggerMode enum, #3345: 'auto' mode)
     // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
+    // Issue #3592: Re-check small group status when group may have grown
     const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
-    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand && !this.triggerModeManager.isTriggerEnabled(chat_id)) {
+    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
       // Issue #3345: Only check small group detection in 'auto' mode
-      // In 'mention' mode, user explicitly wants mention-only regardless of group size
-      if (this.triggerModeManager.getMode(chat_id) === 'auto' && !this.triggerModeManager.isSmallGroup(chat_id)) {
+      // Issue #3592: Also re-check already-marked small groups (debounced)
+      if (this.triggerModeManager.getMode(chat_id) === 'auto' && this.triggerModeManager.shouldRecheckSmallGroup(chat_id)) {
         await this.checkAndAutoDisableSmallGroup(chat_id);
       }
-      // Re-check after potential auto-detection
+      // Re-check after potential auto-detection/update
       if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
         logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode disabled)');
         this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
@@ -1166,15 +1167,13 @@ export class MessageHandler {
   }
 
   /**
-   * Check if a group chat has ≤2 members and auto-disable passive mode.
+   * Check if a group chat has ≤2 members and update trigger mode accordingly.
    *
    * Uses Feishu API `GET /open-apis/im/v1/chats/{chat_id}` to get member counts.
    * A group with user_count=1 and bot_count=1 (or fewer) is considered a small group.
    *
-   * Once detected, the chat is permanently marked as a small group — even if
-   * more members join later, passive mode stays off to avoid disruptive changes.
-   *
-   * Issue #2052: Disable passive mode by default for 2-member group chats.
+   * Issue #2052: Auto-enable trigger mode for 2-member group chats.
+   * Issue #3592: Auto-disable trigger mode when group grows beyond 2 members.
    *
    * @param chatId - Chat ID to check
    */
@@ -1205,9 +1204,11 @@ export class MessageHandler {
           'Small group detected (≤2 members), auto-enabling trigger mode',
         );
       } else {
+        // Issue #3592: Unmark if group has grown beyond 2 members
+        this.triggerModeManager.unmarkSmallGroup(chatId);
         logger.debug(
           { chatId, userCount, botCount, totalMembers },
-          'Group has more than 2 members, keeping trigger mode disabled',
+          'Group has more than 2 members, auto-disabling trigger mode',
         );
       }
     } catch (error) {
