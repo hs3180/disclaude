@@ -38,7 +38,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
 
-  // 工具配置
+  // 工具配置 (Issue #2890: tools preset for vibe coding compliance)
+  if (options.tools) {
+    sdkOptions.tools = options.tools;
+  }
+
   if (options.allowedTools) {
     sdkOptions.allowedTools = options.allowedTools;
   }
