@@ -11,6 +11,7 @@
  *
  * @see Issue #3329 (RFC: Message — Unified Agent Input Abstraction)
  * @see Issue #3580 (Phase 1: Message types + MessageRouter)
+ * @see Issue #3582 (Phase 3: Channel + Scheduler integration)
  */
 
 // ============================================================================
@@ -66,8 +67,24 @@ export interface UserMessage extends Message {
   senderOpenId?: string;
   /** Platform message ID (for deduplication and reply threading) */
   messageId: string;
-  /** File/image attachments */
+  /** File/image attachments (lightweight metadata) */
   attachments?: Attachment[];
+  /**
+   * File references for agent processing (Issue #3582 Phase 3).
+   * When set, these are passed through to ChatAgent.processMessage().
+   * Takes precedence over `attachments` when both are present.
+   */
+  fileRefs?: Array<{
+    id: string;
+    fileName: string;
+    mimeType?: string;
+    size?: number;
+    source: 'user' | 'agent';
+    localPath?: string;
+    platformKey?: string;
+    createdAt: number;
+    expiresAt?: number;
+  }>;
   /** Recent chat history context (for trigger-mode mentions) */
   chatHistoryContext?: string;
 }

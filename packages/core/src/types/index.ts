@@ -141,7 +141,7 @@ export type {
   UserMessage,
   SystemMessage,
   SystemTrigger,
-  Attachment as MessageAttachment,
+  Attachment,
   InputMessage,
 } from './message.js';
 

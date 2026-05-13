@@ -20,6 +20,9 @@ import {
   type FileRef,
   type ChannelApiHandlers,
   type FeishuCard,
+  AgentPool,
+  InputMessageRouter,
+  type UserMessage,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from '../agents/types.js';
 import type { Logger } from 'pino';
@@ -149,7 +152,11 @@ export function createChannelCallbacksFactory(
 /**
  * Create a default message handler using the shared processing pattern.
  *
- * Pattern: extract data → get/create agent → optional attachment conversion → process → error handling
+ * Pattern: extract data → construct UserMessage → route through InputMessageRouter → error handling
+ *
+ * Issue #3582 (Phase 3): Constructs UserMessage and routes through InputMessageRouter for
+ * unified agent input handling. The router uses a core AgentPool adapter that delegates to
+ * PrimaryAgentPool with channel-specific callbacks.
  *
  * @param channel - The channel instance (for error response)
  * @param context - Wired context with agentPool and callbacks factory
@@ -170,15 +177,25 @@ export function createDefaultMessageHandler(
   context: WiredContext,
   options: MessageHandlerOptions
 ): (message: IncomingMessage) => Promise<void> {
+  // Issue #3582: Create InputMessageRouter with PrimaryAgentPool adapter.
+  // The core AgentPool's factory delegates to PrimaryAgentPool.getOrCreateChatAgent(chatId, callbacks),
+  // bridging the callback-based PrimaryAgentPool with the core AgentPool interface expected by InputMessageRouter.
+  const routerAgentPool = new AgentPool({
+    chatAgentFactory: (chatId: string) => context.agentPool.getOrCreateChatAgent(chatId, context.callbacks(chatId)),
+    logger: context.logger,
+  });
+
+  const router = new InputMessageRouter({
+    agentPool: routerAgentPool,
+    logger: context.logger,
+  });
+
   return async (message: IncomingMessage) => {
     const { chatId, content, messageId, userId, metadata, messageType } = message;
     context.logger.info(
       { chatId, messageId, messageType, contentLength: content.length, hasAttachments: !!message.attachments },
       `Processing message from ${options.channelName}`
     );
-
-    const callbacks = context.callbacks(chatId);
-    const agent = context.agentPool.getOrCreateChatAgent(chatId, callbacks);
 
     // Extract context
     const senderOpenId = userId;
@@ -187,8 +204,34 @@ export function createDefaultMessageHandler(
     // Convert attachments if the channel supports them
     const fileRefs = options.extractAttachments?.(message);
 
+    // Issue #3582: Construct UserMessage and route through InputMessageRouter.
+    // This provides unified routing for both user messages (from channels) and system messages (from scheduler).
+    const userMessage: UserMessage = {
+      id: messageId,
+      source: 'user',
+      payload: content,
+      chatId,
+      messageId,
+      senderOpenId,
+      chatHistoryContext,
+      fileRefs,
+      createdAt: new Date().toISOString(),
+    };
+
     try {
-      void agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
+      const result = await router.route(userMessage);
+      if (!result.routed) {
+        // This should never happen for UserMessage (chatId is always set), but handle defensively
+        context.logger.error({ chatId, messageId, reason: result.reason }, 'Failed to route UserMessage');
+        await channel.sendMessage({
+          chatId,
+          type: 'text',
+          text: '❌ Error: Failed to route message',
+        });
+        if (options.sendDoneSignal) {
+          await channel.sendMessage({ chatId, type: 'done' });
+        }
+      }
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

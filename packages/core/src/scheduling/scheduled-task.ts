@@ -62,4 +62,13 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
+  /**
+   * Optional project key for routing through InputMessageRouter.
+   * When set, the scheduler creates a SystemMessage with this projectKey
+   * and routes through InputMessageRouter (projectKey → chatId resolution).
+   * When absent, the existing short-lived agent executor path is used.
+   *
+   * Issue #3582: Channel + Scheduler integration via MessageRouter.
+   */
+  projectKey?: string;
 }

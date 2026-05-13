@@ -6,8 +6,12 @@
  * - SystemMessage with projectKey: resolve chatId from project config → AgentPool → runOnce
  * - SystemMessage without projectKey: legacy path (caller handles routing)
  *
+ * Issue #3582 (Phase 3): route() is now async. SystemMessage routing awaits runOnce()
+ * so the caller (e.g., Scheduler) can wait for task completion.
+ *
  * @see Issue #3329 (RFC: Message — Unified Agent Input Abstraction)
  * @see Issue #3580 (Phase 1: Message types + MessageRouter)
+ * @see Issue #3582 (Phase 3: Channel + Scheduler integration)
  */
 
 import type { ChatAgent } from '../agents/types.js';
@@ -100,8 +104,8 @@ export interface InputMessageRouterConfig {
  * InputMessageRouter — Unified routing for all Message types.
  *
  * Routes messages to the appropriate ChatAgent via AgentPool:
- * - UserMessage → direct chatId routing
- * - SystemMessage → projectKey-based chatId resolution → routing
+ * - UserMessage → direct chatId routing (fire-and-forget, processMessage)
+ * - SystemMessage → projectKey-based chatId resolution → routing (awaitable, runOnce)
  * - SystemMessage without projectKey → fallback (legacy path)
  */
 export class InputMessageRouter {
@@ -118,16 +122,20 @@ export class InputMessageRouter {
   /**
    * Route a message to the appropriate ChatAgent.
    *
+   * Issue #3582 (Phase 3): Now async. SystemMessage routing awaits runOnce()
+   * so the caller can wait for task completion. UserMessage routing returns
+   * immediately (processMessage is fire-and-forget).
+   *
    * @param message - The message to route
    * @returns Route result indicating success or fallback reason
    */
-  route(message: InputMessage): InputRouteResult {
+  async route(message: InputMessage): Promise<InputRouteResult> {
     if (isUserMessage(message)) {
       return this.routeUserMessage(message);
     }
 
     if (isSystemMessage(message)) {
-      return this.routeSystemMessage(message);
+      return await this.routeSystemMessage(message);
     }
 
     // Exhaustive check — should never reach here
@@ -141,7 +149,7 @@ export class InputMessageRouter {
    * UserMessage carries its own chatId, so routing is direct:
    * chatId → AgentPool.getOrCreate(chatId) → processMessage
    */
-  private routeUserMessage(message: UserMessage): RouteResult {
+  private routeUserMessage(message: UserMessage): InputRouteResult {
     const { chatId } = message;
     if (!chatId) {
       // Should never happen since chatId is required on UserMessage,
@@ -161,7 +169,7 @@ export class InputMessageRouter {
       message.payload,
       message.messageId,
       message.senderOpenId,
-      undefined, // attachments — Phase 1 passes through payload only
+      message.fileRefs, // Phase 3: Pass through fileRefs from UserMessage (Issue #3582)
       message.chatHistoryContext
     );
 
@@ -176,10 +184,13 @@ export class InputMessageRouter {
   /**
    * Route a SystemMessage via projectKey resolution.
    *
+   * Issue #3582 (Phase 3): Awaits runOnce() so the caller (Scheduler) can
+   * track task completion, apply timeout, and handle errors.
+   *
    * - With projectKey → resolve chatId → AgentPool → runOnce
    * - Without projectKey → fallback (legacy path, caller handles routing)
    */
-  private routeSystemMessage(message: SystemMessage): InputRouteResult {
+  private async routeSystemMessage(message: SystemMessage): Promise<InputRouteResult> {
     if (!message.projectKey) {
       this.log.debug(
         { messageId: message.id, trigger: message.trigger },
@@ -211,8 +222,8 @@ export class InputMessageRouter {
     );
 
     const agent = this.agentPool.getOrCreateChatAgent(chatId);
-    // SystemMessage uses runOnce for blocking execution (suitable for scheduled tasks)
-    void agent.runOnce(chatId, message.payload, message.id);
+    // Phase 3: Await runOnce for scheduled task completion tracking (Issue #3582)
+    await agent.runOnce(chatId, message.payload, message.id);
 
     return {
       routed: true,

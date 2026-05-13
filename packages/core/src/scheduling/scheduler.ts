@@ -94,6 +94,7 @@ export type TaskExecutor = (chatId: string, prompt: string, userId?: string, mod
  * Uses executor function for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
  * Issue #1041: Uses dependency injection for executor.
+ * Issue #3582: Added optional inputMessageRouter for SystemMessage routing.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
@@ -104,6 +105,14 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Optional InputMessageRouter for routing SystemMessages from scheduled tasks.
+   * When a task has `projectKey`, the scheduler creates a SystemMessage and
+   * routes through this router instead of using the short-lived executor.
+   *
+   * Issue #3582: Channel + Scheduler integration via MessageRouter.
+   */
+  inputMessageRouter?: import('../messaging/input-message-router.js').InputMessageRouter;
 }
 
 /**
@@ -142,6 +151,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private inputMessageRouter?: import('../messaging/input-message-router.js').InputMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -162,6 +172,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.inputMessageRouter = options.inputMessageRouter;
     logger.info('Scheduler created');
   }
 
@@ -323,6 +334,7 @@ ${task.prompt}`;
    * ChatAgent is disposed after execution to free resources.
    * Issue #869: Added cooldown period check before execution.
    * Issue #1041: Uses injected executor function.
+   * Issue #3582: Routes through InputMessageRouter for tasks with projectKey.
    *
    * @param task - Task to execute
    */
@@ -381,24 +393,50 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
-      // Issue #1041: Use injected executor function
-      // Issue #1338: Pass model override for per-task model selection
-      // Issue #3059: Pass modelTier for tier-based model resolution
-      // Issue #3346: Wrap with timeout to prevent indefinite hangs
-      const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
-      });
+      // Issue #3582: Route through InputMessageRouter for tasks with projectKey.
+      // This routes to a long-lived agent in the AgentPool instead of creating a
+      // short-lived agent. Tasks without projectKey use the existing executor path.
+      if (task.projectKey && this.inputMessageRouter) {
+        const systemMessage = {
+          id: `sched-${Date.now()}`,
+          source: 'system' as const,
+          payload: wrappedPrompt,
+          createdAt: new Date().toISOString(),
+          trigger: 'scheduled' as const,
+          projectKey: task.projectKey,
+          taskName: task.name,
+          data: { taskId: task.id },
+        };
 
-      try {
-        await Promise.race([
-          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
-          timeoutPromise,
-        ]);
-      } finally {
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId);
+        const result = await this.inputMessageRouter.route(systemMessage);
+        if (!result.routed) {
+          logger.warn(
+            { taskId: task.id, projectKey: task.projectKey, reason: result.reason },
+            'SystemMessage routing failed, falling back to executor'
+          );
+          // Fallback to executor if routing fails
+          await this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier);
+        }
+      } else {
+        // Issue #1041: Use injected executor function
+        // Issue #1338: Pass model override for per-task model selection
+        // Issue #3059: Pass modelTier for tier-based model resolution
+        // Issue #3346: Wrap with timeout to prevent indefinite hangs
+        const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
+        });
+
+        try {
+          await Promise.race([
+            this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
+            timeoutPromise,
+          ]);
+        } finally {
+          if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+          }
         }
       }
 

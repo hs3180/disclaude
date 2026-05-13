@@ -195,6 +195,27 @@ export class ProjectManager {
     }));
   }
 
+  /**
+   * Resolve a projectKey (working directory path) to its bound chatId.
+   *
+   * Performs a reverse lookup on the bindings map: given a workingDir,
+   * finds which chatId is bound to it. Used by InputMessageRouter to
+   * route SystemMessage (with projectKey) to the correct agent.
+   *
+   * Issue #3582: Channel + Scheduler integration via MessageRouter.
+   *
+   * @param projectKey - Working directory path to look up
+   * @returns The bound chatId, or undefined if no binding exists
+   */
+  getChatIdByProjectKey(projectKey: string): string | undefined {
+    for (const [chatId, workingDir] of this.bindings.entries()) {
+      if (workingDir === projectKey) {
+        return chatId;
+      }
+    }
+    return undefined;
+  }
+
   // ───────────────────────────────────────────
   // CwdProvider Factory
   // ───────────────────────────────────────────

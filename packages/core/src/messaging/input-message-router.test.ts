@@ -12,10 +12,9 @@ import type { ChatAgent } from '../agents/types.js';
 import { AgentPool } from '../agents/agent-pool.js';
 import {
   InputMessageRouter,
-  type UserMessage,
-  type SystemMessage,
   type ProjectChatIdResolver,
 } from './input-message-router.js';
+import type { UserMessage, SystemMessage } from '../types/message.js';
 
 // ============================================================================
 // Mock Helpers
@@ -88,11 +87,11 @@ describe('InputMessageRouter', () => {
   // ==========================================================================
 
   describe('route — UserMessage', () => {
-    it('should route UserMessage by direct chatId', () => {
+    it('should route UserMessage by direct chatId', async () => {
       router = new InputMessageRouter({ agentPool: pool });
       const message = createUserMessage();
 
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result.routed).toBe(true);
       if (!result.routed) {return;}
@@ -101,11 +100,11 @@ describe('InputMessageRouter', () => {
       expect(result.agent).toBeDefined();
     });
 
-    it('should call processMessage on the resolved agent', () => {
+    it('should call processMessage on the resolved agent', async () => {
       router = new InputMessageRouter({ agentPool: pool });
       const message = createUserMessage();
 
-      router.route(message);
+      await router.route(message);
 
       const agent = pool.get('oc_test_chat');
       expect(agent).toBeDefined();
@@ -119,13 +118,13 @@ describe('InputMessageRouter', () => {
       );
     });
 
-    it('should reuse existing agent for same chatId', () => {
+    it('should reuse existing agent for same chatId', async () => {
       router = new InputMessageRouter({ agentPool: pool });
       const msg1 = createUserMessage({ id: 'msg-1' });
       const msg2 = createUserMessage({ id: 'msg-2', payload: 'Second message' });
 
-      const result1 = router.route(msg1);
-      const result2 = router.route(msg2);
+      const result1 = await router.route(msg1);
+      const result2 = await router.route(msg2);
 
       expect(result1.routed).toBe(true);
       expect(result2.routed).toBe(true);
@@ -133,13 +132,13 @@ describe('InputMessageRouter', () => {
       expect(result1.agent).toBe(result2.agent);
     });
 
-    it('should create different agents for different chatIds', () => {
+    it('should create different agents for different chatIds', async () => {
       router = new InputMessageRouter({ agentPool: pool });
       const msg1 = createUserMessage({ chatId: 'oc_chat_A' });
       const msg2 = createUserMessage({ chatId: 'oc_chat_B' });
 
-      const result1 = router.route(msg1);
-      const result2 = router.route(msg2);
+      const result1 = await router.route(msg1);
+      const result2 = await router.route(msg2);
 
       expect(result1.routed).toBe(true);
       expect(result2.routed).toBe(true);
@@ -147,13 +146,13 @@ describe('InputMessageRouter', () => {
       expect(result1.agent).not.toBe(result2.agent);
     });
 
-    it('should pass chatHistoryContext to processMessage', () => {
+    it('should pass chatHistoryContext to processMessage', async () => {
       router = new InputMessageRouter({ agentPool: pool });
       const message = createUserMessage({
         chatHistoryContext: '[recent chat history]',
       });
 
-      router.route(message);
+      await router.route(message);
 
       const agent = pool.get('oc_test_chat');
       expect(agent!.processMessage).toHaveBeenCalledWith(
@@ -165,6 +164,29 @@ describe('InputMessageRouter', () => {
         '[recent chat history]'
       );
     });
+
+    it('should pass fileRefs to processMessage (Issue #3582)', async () => {
+      router = new InputMessageRouter({ agentPool: pool });
+      const fileRefs = [{
+        id: 'file-001',
+        fileName: 'test.png',
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+      const message = createUserMessage({ fileRefs });
+
+      await router.route(message);
+
+      const agent = pool.get('oc_test_chat');
+      expect(agent!.processMessage).toHaveBeenCalledWith(
+        'oc_test_chat',
+        'Hello from user',
+        'feishu-msg-001',
+        'ou_sender001',
+        fileRefs,
+        undefined
+      );
+    });
   });
 
   // ==========================================================================
@@ -172,7 +194,7 @@ describe('InputMessageRouter', () => {
   // ==========================================================================
 
   describe('route — SystemMessage', () => {
-    it('should route SystemMessage via projectKey resolution', () => {
+    it('should route SystemMessage via projectKey resolution', async () => {
       const resolver = createResolver({
         'hs3180/disclaude': 'oc_project_chat',
       });
@@ -182,7 +204,7 @@ describe('InputMessageRouter', () => {
         projectKey: 'hs3180/disclaude',
       });
 
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result.routed).toBe(true);
       if (!result.routed) {return;}
@@ -191,7 +213,7 @@ describe('InputMessageRouter', () => {
       expect(result.agent).toBeDefined();
     });
 
-    it('should call runOnce on the resolved agent for SystemMessage', () => {
+    it('should call runOnce on the resolved agent for SystemMessage', async () => {
       const resolver = createResolver({
         'hs3180/disclaude': 'oc_project_chat',
       });
@@ -201,7 +223,7 @@ describe('InputMessageRouter', () => {
         projectKey: 'hs3180/disclaude',
       });
 
-      router.route(message);
+      await router.route(message);
 
       const agent = pool.get('oc_project_chat');
       expect(agent).toBeDefined();
@@ -212,7 +234,24 @@ describe('InputMessageRouter', () => {
       );
     });
 
-    it('should support different trigger types', () => {
+    it('should await runOnce completion (Issue #3582)', async () => {
+      const resolver = createResolver({
+        'my-project': 'oc_chat_1',
+      });
+      router = new InputMessageRouter({ agentPool: pool, projectChatIdResolver: resolver });
+
+      const message = createSystemMessage({
+        projectKey: 'my-project',
+      });
+
+      // runOnce should be awaited — the mock resolves immediately
+      await router.route(message);
+
+      const agent = pool.get('oc_chat_1');
+      expect(agent!.runOnce).toHaveBeenCalledTimes(1);
+    });
+
+    it('should support different trigger types', async () => {
       const resolver = createResolver({
         'my-project': 'oc_chat_1',
       });
@@ -223,7 +262,7 @@ describe('InputMessageRouter', () => {
           projectKey: 'my-project',
           trigger,
         });
-        const result = router.route(message);
+        const result = await router.route(message);
         expect(result.routed).toBe(true);
       }
     });
@@ -234,18 +273,18 @@ describe('InputMessageRouter', () => {
   // ==========================================================================
 
   describe('route — edge cases', () => {
-    it('should return fallback for SystemMessage without projectKey', () => {
+    it('should return fallback for SystemMessage without projectKey', async () => {
       router = new InputMessageRouter({ agentPool: pool });
       const message = createSystemMessage(); // no projectKey
 
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result.routed).toBe(false);
       if (result.routed) {return;}
       expect(result.reason).toBe('no-project-key');
     });
 
-    it('should return fallback for unknown projectKey', () => {
+    it('should return fallback for unknown projectKey', async () => {
       const resolver = createResolver({}); // empty mapping
       router = new InputMessageRouter({ agentPool: pool, projectChatIdResolver: resolver });
 
@@ -253,21 +292,21 @@ describe('InputMessageRouter', () => {
         projectKey: 'unknown/project',
       });
 
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result.routed).toBe(false);
       if (result.routed) {return;}
       expect(result.reason).toBe('unknown-project');
     });
 
-    it('should return fallback when no resolver configured and projectKey is set', () => {
+    it('should return fallback when no resolver configured and projectKey is set', async () => {
       router = new InputMessageRouter({ agentPool: pool }); // no resolver
 
       const message = createSystemMessage({
         projectKey: 'hs3180/disclaude',
       });
 
-      const result = router.route(message);
+      const result = await router.route(message);
 
       expect(result.routed).toBe(false);
       if (result.routed) {return;}
