@@ -130,3 +130,58 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser Container (optional)
+  # ===========================================================================
+  # Optional Chromium container that exposes a CDP (Chrome DevTools Protocol)
+  # endpoint for browser automation (used by site-miner and playwright-agent).
+  #
+  # Usage:
+  #   docker compose --profile playwright up -d
+  #
+  # The CDP endpoint will be available at http://localhost:9222 (or custom port
+  # via PLAYWRIGHT_CDP_PORT). Configure disclaude.config.yaml:
+  #   playwright:
+  #     type: "stdio"
+  #     command: "npx"
+  #     args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
+  #
+  # Alternatively, start Chrome CDP on the host directly:
+  #   ./scripts/start-playwright-cdp.sh
+  #
+  playwright:
+    image: ${DOCKER_IMAGE_PREFIX}mcr.microsoft.com/playwright:v1.52.2-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Start Chromium with CDP endpoint exposed on all interfaces
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        CHROME=$$(find /ms-playwright -name "chrome" -type f -path "*/chrome-linux/*" | head -1) && \
+        exec "$$CHROME" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
+          --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 \
+          --hide-scrollbars --disable-extensions about:blank
+
+    ports:
+      - "${PLAYWRIGHT_CDP_PORT:-9222}:9222"
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9222/json/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    profiles:
+      - playwright

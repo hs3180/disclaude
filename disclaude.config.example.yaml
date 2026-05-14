@@ -227,8 +227,9 @@ tools:
   # MCP server configurations
   mcpServers:
     # Playwright browser automation via CDP (Chrome DevTools Protocol)
-    # For Docker: Start Chrome CDP on host first: ./scripts/start-playwright-cdp.sh
-    # Then configure the CDP endpoint here (http://localhost:9222 for network_mode: host)
+    # Option 1: Host browser — run ./scripts/start-playwright-cdp.sh on the host
+    # Option 2: Docker container — run: docker compose --profile playwright up -d
+    # In both cases, the CDP endpoint is at http://localhost:9222 (default port)
     playwright:
       type: "stdio"
       command: "npx"
