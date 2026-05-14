@@ -20,10 +20,14 @@ import {
   type FileRef,
   type ChannelApiHandlers,
   type FeishuCard,
+  type UserMessage,
+  createLogger as coreCreateLogger,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from '../agents/types.js';
 import type { Logger } from 'pino';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
+
+const routingLogger = coreCreateLogger('ChannelMessageRouter');
 
 // ============================================================================
 // Types
@@ -177,6 +181,41 @@ export function createDefaultMessageHandler(
       `Processing message from ${options.channelName}`
     );
 
+    // Issue #3582: Route through InputMessageRouter when available (Phase 3)
+    if (context.inputMessageRouter) {
+      const senderOpenId = userId;
+      const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
+      const fileRefs = options.extractAttachments?.(message);
+
+      const userMessage: UserMessage = {
+        id: messageId,
+        source: 'user',
+        payload: content,
+        chatId,
+        messageId,
+        senderOpenId,
+        attachments: fileRefs,
+        chatHistoryContext,
+        createdAt: message.timestamp ? new Date(message.timestamp).toISOString() : new Date().toISOString(),
+      };
+
+      try {
+        await context.inputMessageRouter.route(userMessage);
+      } catch (error) {
+        routingLogger.error({ err: error, chatId, messageId }, 'Failed to route user message via InputMessageRouter');
+        await channel.sendMessage({
+          chatId,
+          type: 'text',
+          text: `❌ Error: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        if (options.sendDoneSignal) {
+          await channel.sendMessage({ chatId, type: 'done' });
+        }
+      }
+      return;
+    }
+
+    // Existing path: direct agent pool access (backward compatible fallback)
     const callbacks = context.callbacks(chatId);
     const agent = context.agentPool.getOrCreateChatAgent(chatId, callbacks);
 
