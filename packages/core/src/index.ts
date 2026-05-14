@@ -240,6 +240,12 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  // Issue #1234: ETA estimation Phase 1
+  TaskRecordManager,
+  type TaskType,
+  type TaskRecordInput,
+  type TaskRecord,
+  type TaskRecordsFile,
 } from './task/index.js';
 
 // Queue module (Issue #1041)
