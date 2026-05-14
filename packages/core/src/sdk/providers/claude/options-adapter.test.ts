@@ -6,8 +6,26 @@
  * Issue #1617: Phase 2 - SDK providers test coverage.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { adaptOptions, adaptInput } from './options-adapter.js';
+
+// Mock the Claude Agent SDK for inline MCP server tests
+const mockTool = vi.fn((_name: string, _desc: string, _params: unknown, handler: unknown) => ({
+  type: 'sdk_tool',
+  name: _name,
+  handler,
+}));
+const mockCreateSdkMcpServer = vi.fn((config: { name: string; version: string; tools: unknown[] }) => ({
+  type: 'sdk',
+  name: config.name,
+  instance: { name: config.name, tools: config.tools },
+}));
+
+// eslint-disable-next-line no-restricted-syntax -- Mocking SDK for unit test of adapter logic (no network calls)
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  tool: (name: string, desc: string, params: unknown, handler: unknown) => mockTool(name, desc, params, handler),
+  createSdkMcpServer: (arg: { name: string; version: string; tools: unknown[] }) => mockCreateSdkMcpServer(arg),
+}));
 
 describe('adaptOptions', () => {
   it('should return empty options for minimal input', () => {
@@ -193,6 +211,82 @@ describe('adaptOptions', () => {
     });
 
     expect(result.tools).toBeUndefined();
+  });
+
+  it('should pass through SDK inline MCP server wrapper objects', () => {
+    // Simulate a pre-created SDK MCP server (already wrapped with createSdkMcpServer)
+    const sdkServer = {
+      type: 'sdk' as const,
+      name: 'existing-server',
+      instance: { name: 'existing-server' },
+    };
+
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'wrapped-server': sdkServer as any,
+      },
+    });
+
+    expect(result.mcpServers).toBeDefined();
+    expect((result.mcpServers as Record<string, unknown>)['wrapped-server']).toBe(sdkServer);
+    // Should NOT call createSdkMcpServer for pre-wrapped objects
+    expect(mockCreateSdkMcpServer).not.toHaveBeenCalled();
+  });
+
+  it('should adapt inline MCP server config with tools', () => {
+    const handler = vi.fn();
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'inline-server': {
+          type: 'inline',
+          name: 'inline-server',
+          version: '1.0.0',
+          tools: [{
+            name: 'my-tool',
+            description: 'A test tool',
+            parameters: { type: 'object' as const, properties: {} },
+            handler,
+          }],
+        },
+      },
+    });
+
+    expect(result.mcpServers).toBeDefined();
+    const _server = (result.mcpServers as Record<string, unknown>)['inline-server'];
+    // Should have been converted via createSdkMcpServer
+    expect(mockCreateSdkMcpServer).toHaveBeenCalledWith({
+      name: 'inline-server',
+      version: '1.0.0',
+      tools: expect.arrayContaining([
+        expect.objectContaining({ type: 'sdk_tool', name: 'my-tool' }),
+      ]),
+    });
+    expect(mockTool).toHaveBeenCalledWith('my-tool', 'A test tool', { type: 'object', properties: {} }, handler);
+  });
+
+  it('should adapt inline MCP server config without tools', () => {
+    mockCreateSdkMcpServer.mockClear();
+    const result = adaptOptions({
+      settingSources: ['project'],
+      mcpServers: {
+        'empty-server': {
+          type: 'inline',
+          name: 'empty-server',
+          version: '1.0.0',
+          tools: [],
+        },
+      },
+    });
+
+    expect(result.mcpServers).toBeDefined();
+    // Should call createSdkMcpServer with empty tools array
+    expect(mockCreateSdkMcpServer).toHaveBeenCalledWith({
+      name: 'empty-server',
+      version: '1.0.0',
+      tools: [],
+    });
   });
 });
 

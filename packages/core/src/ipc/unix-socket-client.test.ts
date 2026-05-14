@@ -407,6 +407,142 @@ describe('UnixSocketIpcClient', () => {
 
       await client.disconnect();
     });
+
+    it('should return error when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.sendInteractive('chat-1', {
+        question: 'Choose:',
+        options: [{ text: 'Option 1', value: 'opt1' }],
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+  });
+
+  describe('uploadImage', () => {
+    it('should upload image via IPC', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          sendCard: vi.fn().mockResolvedValue(undefined),
+          uploadFile: vi.fn().mockResolvedValue({ fileKey: '', fileType: '', fileName: '', fileSize: 0 }),
+          uploadImage: vi.fn().mockResolvedValue({ imageKey: 'img_key_123' }),
+        },
+      };
+      const { socketPath: serverSocketPath } = await startTrackedServer(tempDir, activeServers, mockHandlers, 'img');
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.uploadImage('/path/to/image.png');
+      expect(result.success).toBe(true);
+      expect(result.imageKey).toBe('img_key_123');
+
+      await client.disconnect();
+    });
+
+    it('should return error when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.uploadImage('/path/to/image.png');
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+  });
+
+  describe('listTempChats', () => {
+    it('should list temp chats via IPC', async () => {
+      const mockChats = [
+        { chatId: 'chat-1', createdAt: '2026-01-01T00:00:00Z', expiresAt: '2026-01-02T00:00:00Z', responded: false },
+      ];
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          listTempChats: vi.fn().mockResolvedValue(mockChats),
+        },
+      };
+      const { socketPath: serverSocketPath } = await startTrackedServer(tempDir, activeServers, mockHandlers, 'list');
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.listTempChats();
+      expect(result.success).toBe(true);
+      expect(result.chats).toHaveLength(1);
+      expect(result.chats![0].chatId).toBe('chat-1');
+
+      await client.disconnect();
+    });
+
+    it('should return error when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.listTempChats();
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+  });
+
+  describe('markChatResponded', () => {
+    it('should mark chat as responded via IPC', async () => {
+      const mockHandlers = {
+        handlers: {
+          sendMessage: vi.fn().mockResolvedValue(undefined),
+          markChatResponded: vi.fn().mockResolvedValue({ success: true }),
+        },
+      };
+      const { socketPath: serverSocketPath } = await startTrackedServer(tempDir, activeServers, mockHandlers, 'mark');
+
+      const client = new UnixSocketIpcClient({
+        socketPath: serverSocketPath,
+        timeout: 2000,
+        maxRetries: 1,
+      });
+
+      const result = await client.markChatResponded('chat-1', {
+        selectedValue: 'approve',
+        responder: 'user-1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(true);
+
+      await client.disconnect();
+    });
+
+    it('should return error when IPC not available', async () => {
+      const client = new UnixSocketIpcClient({
+        socketPath: join(tempDir, 'nonexistent.ipc'),
+        timeout: 100,
+        maxRetries: 1,
+      });
+
+      const result = await client.markChatResponded('chat-1', {
+        selectedValue: 'approve',
+        responder: 'user-1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
   });
 
   describe('ping', () => {

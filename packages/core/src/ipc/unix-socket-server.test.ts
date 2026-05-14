@@ -409,6 +409,163 @@ describe('createInteractiveMessageHandler', () => {
       expect(response.id).toBe('req-special-id');
     });
   });
+
+  // ----- listTempChats (Issue #1703) -----
+  describe('listTempChats request', () => {
+    it('should return chats list from handler', async () => {
+      const mockChats = [
+        { chatId: 'chat-1', createdAt: '2026-01-01T00:00:00Z', expiresAt: '2026-01-02T00:00:00Z', responded: false },
+      ];
+      const chatContainer = createMockHandlersContainer({
+        listTempChats: vi.fn().mockResolvedValue(mockChats),
+      });
+      const chatHandler = createInteractiveMessageHandler(registerActionPrompts, chatContainer);
+      const request = createRequest('listTempChats', 'req-ltc-1', {});
+      const response = await chatHandler(request);
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true, chats: mockChats });
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('listTempChats', 'req-ltc-2', {});
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
+    });
+
+    it('should return error when listTempChats not supported', async () => {
+      const noListContainer = createMockHandlersContainer({
+        listTempChats: undefined,
+      });
+      const noListHandler = createInteractiveMessageHandler(registerActionPrompts, noListContainer);
+      const request = createRequest('listTempChats', 'req-ltc-3', {});
+      const response = await noListHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('listTempChats not supported');
+    });
+
+    it('should return error when listTempChats throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        listTempChats: vi.fn().mockRejectedValue(new Error('DB error')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('listTempChats', 'req-ltc-4', {});
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('DB error');
+    });
+  });
+
+  // ----- markChatResponded (Issue #1703) -----
+  describe('markChatResponded request', () => {
+    it('should mark chat as responded', async () => {
+      const markContainer = createMockHandlersContainer({
+        markChatResponded: vi.fn().mockResolvedValue({ success: true }),
+      });
+      const markHandler = createInteractiveMessageHandler(registerActionPrompts, markContainer);
+      const request = createRequest('markChatResponded', 'req-mcr-1', {
+        chatId: 'chat-1',
+        response: { selectedValue: 'approve', responder: 'user-1', repliedAt: '2026-01-01T00:00:00Z' },
+      });
+      const response = await markHandler(request);
+
+      expect(response.success).toBe(true);
+      expect(markContainer.handlers!.markChatResponded).toHaveBeenCalledWith('chat-1', {
+        selectedValue: 'approve',
+        responder: 'user-1',
+        repliedAt: '2026-01-01T00:00:00Z',
+      });
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('markChatResponded', 'req-mcr-2', {
+        chatId: 'chat-1',
+        response: { selectedValue: 'approve', responder: 'user-1', repliedAt: '2026-01-01T00:00:00Z' },
+      });
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
+    });
+
+    it('should return error when markChatResponded not supported', async () => {
+      const noMarkContainer = createMockHandlersContainer({
+        markChatResponded: undefined,
+      });
+      const noMarkHandler = createInteractiveMessageHandler(registerActionPrompts, noMarkContainer);
+      const request = createRequest('markChatResponded', 'req-mcr-3', {
+        chatId: 'chat-1',
+        response: { selectedValue: 'approve', responder: 'user-1', repliedAt: '2026-01-01T00:00:00Z' },
+      });
+      const response = await noMarkHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('markChatResponded not supported');
+    });
+
+    it('should return error when markChatResponded throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        markChatResponded: vi.fn().mockRejectedValue(new Error('Update failed')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('markChatResponded', 'req-mcr-4', {
+        chatId: 'chat-1',
+        response: { selectedValue: 'approve', responder: 'user-1', repliedAt: '2026-01-01T00:00:00Z' },
+      });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Update failed');
+    });
+  });
+
+  // ----- uploadImage (Issue #2951) -----
+  describe('uploadImage request', () => {
+    it('should upload image and return image key', async () => {
+      const uploadContainer = createMockHandlersContainer({
+        uploadImage: vi.fn().mockResolvedValue({ imageKey: 'img_key_xyz' }),
+      });
+      const uploadHandler = createInteractiveMessageHandler(registerActionPrompts, uploadContainer);
+      const request = createRequest('uploadImage', 'req-ui-1', { filePath: '/path/to/img.png' });
+      const response = await uploadHandler(request);
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true, imageKey: 'img_key_xyz' });
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('uploadImage', 'req-ui-2', { filePath: '/path/to/img.png' });
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
+    });
+
+    it('should return error when uploadImage throws', async () => {
+      const errorContainer = createMockHandlersContainer({
+        uploadImage: vi.fn().mockRejectedValue(new Error('Upload timeout')),
+      });
+      const errorHandler = createInteractiveMessageHandler(registerActionPrompts, errorContainer);
+      const request = createRequest('uploadImage', 'req-ui-3', { filePath: '/path/to/img.png' });
+      const response = await errorHandler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Upload timeout');
+    });
+  });
 });
 
 // ============================================================================
