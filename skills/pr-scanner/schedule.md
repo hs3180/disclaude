@@ -12,7 +12,7 @@ chatId: "{controlChannelChatId}"
 
 ## 执行
 
-使用 `pr-scanner` skill 扫描仓库 `{repo}` 的 open PR。
+使用 `pr-scanner` skill 扫描仓库 `{repo}` 的 open PR。对新发现的 PR，使用 `pr-review` skill 发送审查卡片。
 
 参数：
 - **仓库**: {repo}

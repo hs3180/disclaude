@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 
 扫描仓库的 open PR，通过映射表追踪已创建的讨论群，为新 PR 创建群并写入映射。
 
-**适用于**: 扫描 PR、创建讨论群、追踪映射 ｜ **不适用于**: 发卡片、解散群、merge/close PR
+**适用于**: 扫描 PR、创建讨论群、追踪映射 ｜ **不适用于**: 解散群、merge/close PR
 
 ## Parameters
 
@@ -69,6 +69,8 @@ lark-cli im chat create --name "PR #{number} · {title前30字}" --description "
 
 **5b. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review"），原子写入。
 
+**5c. 发送 review 卡片**: 使用 `pr-review` skill 为新 PR 发送审查卡片到刚创建的群聊。获取 PR 详情（标题、作者、文件变更、描述摘要），通过 `send_user_feedback` 发送结构化卡片。
+
 ## 错误处理
 
 - `gh` 命令失败 → 记录错误，跳过/退出
@@ -85,7 +87,7 @@ lark-cli im chat create --name "PR #{number} · {title前30字}" --description "
 
 ## 依赖
 
-`gh` CLI · `lark-cli` · `workspace/bot-chat-mapping.json`（BotChatMappingStore）
+`gh` CLI · `lark-cli` · `workspace/bot-chat-mapping.json`（BotChatMappingStore） · `pr-review` skill（发送审查卡片）
 
 ## Schedule 模板
 
@@ -95,3 +97,4 @@ lark-cli im chat create --name "PR #{number} · {title前30字}" --description "
 
 - Parent: #2945
 - Depends on: #2947 (BotChatMappingStore), #2946 (移除 register_temp_chat)
+- Related: #3383 (PR Review 临时群聊), pr-review skill
