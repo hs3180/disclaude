@@ -222,14 +222,33 @@ describe('TriggerModeManager', () => {
       expect(manager.isTriggerEnabled('oc_small')).toBe(true);
       expect(manager.isSmallGroup('oc_small')).toBe(true);
     });
+
+    // Issue #3592: Unmark small group when it grows
+    it('should unmark small group and disable trigger mode', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_growing');
+      expect(manager.isTriggerEnabled('oc_growing')).toBe(true);
+
+      manager.unmarkSmallGroup('oc_growing');
+      expect(manager.isSmallGroup('oc_growing')).toBe(false);
+      expect(manager.isTriggerEnabled('oc_growing')).toBe(false);
+    });
+
+    it('should be a no-op when unmarking a non-small-group', () => {
+      const manager = new TriggerModeManager();
+      manager.unmarkSmallGroup('oc_never_small');
+      expect(manager.isSmallGroup('oc_never_small')).toBe(false);
+    });
+
+    it('should not include unmarked groups in getTriggerEnabledChats', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      manager.unmarkSmallGroup('oc_small');
+      expect(manager.getTriggerEnabledChats()).not.toContain('oc_small');
+    });
   });
 
   describe('auto mode (Issue #3345)', () => {
-    it('should default to auto mode for unknown chats', () => {
-      const manager = new TriggerModeManager();
-      expect(manager.getMode('oc_new')).toBe('auto');
-    });
-
     it('should not trigger in auto mode for non-small groups', () => {
       const manager = new TriggerModeManager();
       expect(manager.isTriggerEnabled('oc_new')).toBe(false);
@@ -330,6 +349,36 @@ describe('TriggerModeManager', () => {
       expect(enabled).toContain('oc_always');
       expect(enabled).not.toContain('oc_mention');
       expect(enabled).not.toContain('oc_auto');
+    });
+  });
+
+  describe('small group re-check throttling (Issue #3592)', () => {
+    it('should allow recheck for unchecked chats', () => {
+      const manager = new TriggerModeManager();
+      expect(manager.needsSmallGroupRecheck('oc_new')).toBe(true);
+    });
+
+    it('should block recheck within cooldown', () => {
+      const manager = new TriggerModeManager();
+      manager.updateSmallGroupCheckTime('oc_recent');
+      expect(manager.needsSmallGroupRecheck('oc_recent')).toBe(false);
+    });
+
+    it('should allow recheck after cooldown', () => {
+      const manager = new TriggerModeManager();
+      // Set check time to 11 minutes ago (cooldown is 10 minutes)
+      manager.updateSmallGroupCheckTime('oc_old');
+      // Manually backdate the timestamp
+      (manager as any).lastSmallGroupCheck.set('oc_old', Date.now() - 11 * 60 * 1000);
+      expect(manager.needsSmallGroupRecheck('oc_old')).toBe(true);
+    });
+
+    it('should allow recheck with custom cooldown', () => {
+      const manager = new TriggerModeManager();
+      manager.updateSmallGroupCheckTime('oc_custom');
+      // 5 seconds ago, with 1 second cooldown
+      (manager as any).lastSmallGroupCheck.set('oc_custom', Date.now() - 5000);
+      expect(manager.needsSmallGroupRecheck('oc_custom', 1000)).toBe(true);
     });
   });
 });

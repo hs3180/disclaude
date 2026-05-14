@@ -71,10 +71,18 @@ export class TriggerModeManager {
   /**
    * Auto-detected small groups (≤2 members: bot + 1 user).
    * Used by 'auto' mode to decide whether to respond.
-   * Once detected, trigger mode is permanently enabled for these chats,
-   * even if more members join later (Issue #2052).
+   *
+   * Issue #2052: Auto-enable trigger mode for small groups.
+   * Issue #3592: Groups can be unmarked when they grow beyond 2 members.
    */
   private smallGroups: Set<string> = new Set();
+
+  /**
+   * Timestamps of last small group member-count API check per chat.
+   * Used to throttle re-checks so we don't call the API on every message.
+   * Issue #3592: Periodic re-check allows unmarking groups that have grown.
+   */
+  private lastSmallGroupCheck: Map<string, number> = new Map();
 
   /**
    * Get the configured trigger mode for a chat.
@@ -129,9 +137,7 @@ export class TriggerModeManager {
 
   /**
    * Mark a chat as a small group, auto-enabling trigger mode.
-   *
-   * Once marked, trigger mode stays enabled even if members join later,
-   * to avoid disruptive behavior changes (Issue #2052).
+   * Issue #2052: Auto-enable trigger mode for 2-member group chats.
    *
    * @param chatId - Chat ID to mark
    */
@@ -140,6 +146,43 @@ export class TriggerModeManager {
       this.smallGroups.add(chatId);
       logger.info({ chatId }, 'Auto-enabled trigger mode for small group (≤2 members)');
     }
+  }
+
+  /**
+   * Remove a chat from the small group set, disabling auto-trigger.
+   * Issue #3592: Groups that grow beyond 2 members should lose small-group status.
+   *
+   * @param chatId - Chat ID to unmark
+   */
+  unmarkSmallGroup(chatId: string): void {
+    if (this.smallGroups.has(chatId)) {
+      this.smallGroups.delete(chatId);
+      logger.info({ chatId }, 'Auto-disabled trigger mode: group grew beyond 2 members');
+    }
+  }
+
+  /**
+   * Check if enough time has passed since the last small group API check.
+   * Issue #3592: Throttles re-checks to avoid calling the member-count API on every message.
+   *
+   * @param chatId - Chat ID to check
+   * @param cooldownMs - Minimum milliseconds between checks (default: 10 minutes)
+   * @returns true if a re-check should be performed
+   */
+  needsSmallGroupRecheck(chatId: string, cooldownMs = 10 * 60 * 1000): boolean {
+    const lastCheck = this.lastSmallGroupCheck.get(chatId);
+    if (lastCheck === undefined) {return true;}
+    return Date.now() - lastCheck >= cooldownMs;
+  }
+
+  /**
+   * Record that a small group check was performed for a chat.
+   * Issue #3592: Called after the API check (success or failure).
+   *
+   * @param chatId - Chat ID that was checked
+   */
+  updateSmallGroupCheckTime(chatId: string): void {
+    this.lastSmallGroupCheck.set(chatId, Date.now());
   }
 
   /**
