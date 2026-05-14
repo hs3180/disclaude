@@ -525,6 +525,45 @@ describe('BaseAgent', () => {
       expect(options.cwd).toBe('/custom/workspace');
     });
 
+    it('should keep settingSources as ["project"] when no project binding (Issue #3532)', () => {
+      const options = agent.testCreateSdkOptions();
+      expect(options.settingSources).toEqual(['project']);
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+    });
+
+    it('should expand settingSources and set CLAUDE_CONFIG_DIR when project-bound (Issue #3532)', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/some/other/project' });
+
+      expect(options.settingSources).toEqual(['project', 'user']);
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
+    });
+
+    it('should not set CLAUDE_CONFIG_DIR when cwd matches workspace (Issue #3532)', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      // No cwd override → falls back to workspace dir → not project-bound
+      const options = ctxAgent.testCreateSdkOptions();
+
+      expect(options.settingSources).toEqual(['project']);
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+    });
+
     it('should not set model when model is empty string', () => {
       const noModelAgent = new TestAgent({ apiKey: 'key', model: '', provider: 'anthropic' });
       const options = noModelAgent.testCreateSdkOptions();

@@ -11,6 +11,7 @@
  * @module agents/base-agent
  */
 
+import path from 'node:path';
 import {
   getProvider,
   type IAgentSDKProvider,
@@ -156,12 +157,19 @@ export abstract class BaseAgent implements Disposable {
    * @returns AgentQueryOptions object
    */
   protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
+    // Issue #3532: Conditionally expand settingSources when project is bound.
+    // When cwd is explicitly provided (via CwdProvider after /project use),
+    // the agent's cwd differs from workspace — workspace skills would be lost.
+    // Expanding to ['project', 'user'] with CLAUDE_CONFIG_DIR pointing to
+    // workspace/.claude ensures built-in skills remain discoverable.
+    const isProjectBound = extra.cwd !== undefined;
+
     const options: AgentQueryOptions = {
       cwd: extra.cwd ?? this.getWorkspaceDir(),
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['project'],
+      settingSources: isProjectBound ? ['project', 'user'] : ['project'],
     };
 
     // Add allowed/disallowed tools
@@ -185,6 +193,11 @@ export abstract class BaseAgent implements Disposable {
     };
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
+    }
+    // Issue #3532: Redirect SDK user scope to workspace/.claude when project-bound.
+    // This makes workspace's built-in skills available via the 'user' settingSource.
+    if (isProjectBound) {
+      globalEnv.CLAUDE_CONFIG_DIR = path.join(this.getWorkspaceDir(), '.claude');
     }
     options.env = buildSdkEnv(
       this.apiKey,
