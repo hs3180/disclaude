@@ -6,6 +6,7 @@
  * Subcommands:
  * - `use <workingDir>` — Bind current chat to a working directory
  * - `reset` — Reset current chat to default workspace
+ * - `list` — List all chatId → working directory bindings
  * - `info` — Show current chat's active project info
  *
  * @see Issue #3519 (simplify /project command)
@@ -24,6 +25,37 @@ type ProjectCommand = ControlCommand<'project'>;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Subcommand Handlers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * `/project list` — List all chatId → working directory bindings.
+ */
+function handleList(_command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
+  const pm = context.projectManager;
+  if (!pm) {
+    return {
+      success: false,
+      error: 'ProjectManager 未配置',
+    };
+  }
+
+  const bindings = pm.listBindings();
+
+  if (bindings.length === 0) {
+    return {
+      success: true,
+      message: '📋 当前没有项目绑定',
+    };
+  }
+
+  const lines = bindings.map(
+    ({ chatId, workingDir }) => `- \`${chatId}\` → \`${workingDir}\``,
+  );
+
+  return {
+    success: true,
+    message: [`📋 **项目绑定列表** (${bindings.length} 个):`, ...lines].join('\n'),
+  };
+}
 
 /**
  * `/project info` — Show current chat's active project.
@@ -160,10 +192,12 @@ export const handleProject: CommandHandler<'project'> = (
       return handleReset(command, context);
     case 'info':
       return handleInfo(command, context);
+    case 'list':
+      return handleList(command, context);
     default:
       return {
         success: false,
-        error: `未知子命令: ${subcommand}。可用: use, reset, info`,
+        error: `未知子命令: ${subcommand}。可用: use, reset, info, list`,
       };
   }
 };

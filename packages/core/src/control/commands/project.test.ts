@@ -297,4 +297,45 @@ describe('handleProject', () => {
       expect(result.message).toContain('已重置');
     });
   });
+
+  describe('/project list', () => {
+    it('should show empty message when no bindings', async () => {
+      const ctx = createTestContext();
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('没有项目绑定');
+    });
+
+    it('should list all bindings', async () => {
+      const ctx = createTestContext();
+
+      const projectDir1 = join(ctx.projectManager!.getWorkspaceDir(), 'project-a');
+      const projectDir2 = join(ctx.projectManager!.getWorkspaceDir(), 'project-b');
+      mkdirSync(projectDir1, { recursive: true });
+      mkdirSync(projectDir2, { recursive: true });
+
+      ctx.projectManager!.use('chat-1', projectDir1);
+      ctx.projectManager!.use('chat-2', projectDir2);
+
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('2 个');
+      expect(result.message).toContain('chat-1');
+      expect(result.message).toContain('project-a');
+      expect(result.message).toContain('chat-2');
+      expect(result.message).toContain('project-b');
+    });
+
+    it('should return error when projectManager is not configured', async () => {
+      const ctx = createTestContext();
+      delete (ctx as Partial<ControlHandlerContext>).projectManager;
+
+      const result = await invoke(makeCommand('chat-1', 'list'), ctx);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('ProjectManager 未配置');
+    });
+  });
 });
