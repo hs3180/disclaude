@@ -78,6 +78,16 @@ export {
   type IpcUnavailableReason,
 } from './ipc/index.js';
 
+// Feishu channel internals (for integration testing, Issue #1626)
+export {
+  TriggerModeManager,
+  type TriggerModeRecord,
+  MentionDetector,
+  type BotInfo,
+  MessageHandler as FeishuMessageHandler,
+  type MessageCallbacks as FeishuMessageCallbacks,
+} from './channels/feishu/index.js';
+
 // Note: ChannelManager is now internal to PrimaryNode (Issue #1594).
 // Access it via primaryNode.getChannelManager() instead of direct import.
 
