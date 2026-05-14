@@ -96,6 +96,11 @@ export function buildSdkEnv(
     DEBUG_CLAUDE_AGENT_SDK: sdkDebug ? (process.env.DEBUG_CLAUDE_AGENT_SDK ?? '1') : undefined,
   };
 
+  // Issue #2890: Identify disclaude as the SDK consumer for User-Agent branding.
+  // This ensures the Agent SDK reports the correct client identity rather than
+  // appearing as an unknown or default client, which is key for vibe coding compliance.
+  env.CLAUDE_AGENT_SDK_CLIENT_APP = 'disclaude/0.4.0';
+
   // CRITICAL: Remove CLAUDECODE to allow SDK subprocess to run inside
   // another Claude Code session. Without this, SDK will fail with:
   // "Claude Code cannot be launched inside another Claude Code session"

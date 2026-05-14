@@ -222,6 +222,16 @@ export interface AgentQueryOptions {
   /** 设置来源（必填） */
   settingSources: string[];
   /**
+   * 是否启用流式部分消息 (Issue #2890)
+   *
+   * 启用后 SDK 会 emit SDKPartialAssistantMessage 事件，
+   * 包含实时流式输出（token-by-token），可用于实时展示 Agent 思考过程。
+   *
+   * 适配层已处理 stream_event 类型消息（message-adapter.ts），
+   * 即使启用也不会影响现有消息处理逻辑。
+   */
+  includePartialMessages?: boolean;
+  /**
    * stderr 输出回调（Issue #2920）
    *
    * 用于捕获 Claude Code 进程的 stderr 输出，辅助诊断启动失败原因。

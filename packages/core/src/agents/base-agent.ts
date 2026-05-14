@@ -162,6 +162,8 @@ export abstract class BaseAgent implements Disposable {
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
       settingSources: ['project'],
+      // Issue #2890: Enable partial messages for real-time streaming feedback
+      includePartialMessages: true,
     };
 
     // Add allowed/disallowed tools
