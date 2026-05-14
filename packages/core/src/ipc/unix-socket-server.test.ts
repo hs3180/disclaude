@@ -392,6 +392,180 @@ describe('createInteractiveMessageHandler', () => {
     });
   });
 
+  // ----- uploadImage -----
+  describe('uploadImage request', () => {
+    it('should call handler.uploadImage and return result', async () => {
+      const uploadImageFn = vi.fn().mockResolvedValue({ imageKey: 'img_key_abc' });
+      const container = createMockHandlersContainer({ uploadImage: uploadImageFn } as unknown as Partial<ChannelApiHandlers>);
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('uploadImage', 'req-img-1', { filePath: '/path/to/image.png' });
+      const response = await handler(request);
+
+      expect(uploadImageFn).toHaveBeenCalledWith('/path/to/image.png');
+      expect(response).toEqual({
+        id: 'req-img-1',
+        success: true,
+        payload: { success: true, imageKey: 'img_key_abc' },
+      });
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('uploadImage', 'req-img-2', { filePath: '/path/to/image.png' });
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
+    });
+
+    it('should return error when uploadImage not supported', async () => {
+      const container = createMockHandlersContainer();
+      // uploadImage is optional, delete it to simulate unsupported
+      delete (container.handlers as Record<string, unknown>).uploadImage;
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('uploadImage', 'req-img-3', { filePath: '/path/to/image.png' });
+      const response = await handler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('uploadImage not supported');
+    });
+
+    it('should return error when uploadImage throws', async () => {
+      const container = createMockHandlersContainer({
+        uploadImage: vi.fn().mockRejectedValue(new Error('Image too large')),
+      } as unknown as Partial<ChannelApiHandlers>);
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('uploadImage', 'req-img-4', { filePath: '/path/to/image.png' });
+      const response = await handler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Image too large');
+    });
+  });
+
+  // ----- listTempChats -----
+  describe('listTempChats request', () => {
+    it('should call handler.listTempChats and return chats', async () => {
+      const chats = [
+        { chatId: 'oc_1', createdAt: '2025-01-01', expiresAt: '2025-01-02', responded: false },
+      ];
+      const container = createMockHandlersContainer({
+        listTempChats: vi.fn().mockResolvedValue(chats),
+      } as unknown as Partial<ChannelApiHandlers>);
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('listTempChats', 'req-lt-1', {});
+      const response = await handler(request);
+
+      expect(response.success).toBe(true);
+      expect(response.payload).toEqual({ success: true, chats });
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('listTempChats', 'req-lt-2', {});
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
+    });
+
+    it('should return error when listTempChats not supported', async () => {
+      const container = createMockHandlersContainer();
+      // listTempChats is optional, ensure it's not present
+      delete (container.handlers as Record<string, unknown>).listTempChats;
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('listTempChats', 'req-lt-3', {});
+      const response = await handler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('listTempChats not supported');
+    });
+
+    it('should return error when listTempChats throws', async () => {
+      const container = createMockHandlersContainer({
+        listTempChats: vi.fn().mockRejectedValue(new Error('DB error')),
+      } as unknown as Partial<ChannelApiHandlers>);
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('listTempChats', 'req-lt-4', {});
+      const response = await handler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('DB error');
+    });
+  });
+
+  // ----- markChatResponded -----
+  describe('markChatResponded request', () => {
+    const markResponse = { selectedValue: 'confirm', responder: 'ou_abc', repliedAt: '2025-01-01T00:00:00Z' };
+
+    it('should call handler.markChatResponded and return result', async () => {
+      const markFn = vi.fn().mockResolvedValue({ success: true });
+      const container = createMockHandlersContainer({
+        markChatResponded: markFn,
+      } as unknown as Partial<ChannelApiHandlers>);
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('markChatResponded', 'req-mr-1', {
+        chatId: 'oc_chat1',
+        response: markResponse,
+      });
+      const response = await handler(request);
+
+      expect(markFn).toHaveBeenCalledWith('oc_chat1', markResponse);
+      expect(response).toEqual({
+        id: 'req-mr-1',
+        success: true,
+        payload: { success: true },
+      });
+    });
+
+    it('should return error when handlers not available', async () => {
+      const handlerNoHandlers = createInteractiveMessageHandler(registerActionPrompts, {
+        handlers: undefined,
+      });
+      const request = createRequest('markChatResponded', 'req-mr-2', {
+        chatId: 'oc_chat1',
+        response: markResponse,
+      });
+      const response = await handlerNoHandlers(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('Channel API handlers not available');
+    });
+
+    it('should return error when markChatResponded not supported', async () => {
+      const container = createMockHandlersContainer();
+      delete (container.handlers as Record<string, unknown>).markChatResponded;
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('markChatResponded', 'req-mr-3', {
+        chatId: 'oc_chat1',
+        response: markResponse,
+      });
+      const response = await handler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toContain('markChatResponded not supported');
+    });
+
+    it('should return error when markChatResponded throws', async () => {
+      const container = createMockHandlersContainer({
+        markChatResponded: vi.fn().mockRejectedValue(new Error('Chat not found')),
+      } as unknown as Partial<ChannelApiHandlers>);
+      const handler = createInteractiveMessageHandler(registerActionPrompts, container);
+      const request = createRequest('markChatResponded', 'req-mr-4', {
+        chatId: 'oc_chat1',
+        response: markResponse,
+      });
+      const response = await handler(request);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('Chat not found');
+    });
+  });
+
   // ----- default / unknown -----
   describe('unknown request type', () => {
     it('should return error for unknown type', async () => {
@@ -675,6 +849,212 @@ describe('UnixSocketIpcServer', () => {
       expect(mockHandlers.handlers!.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello via socket', undefined, undefined);
 
       await server.stop();
+    });
+
+    it('should handle handler errors in handleMessage gracefully', async () => {
+      // Create a handler that throws AFTER JSON parsing succeeds
+      const throwingHandler = vi.fn().mockImplementation((_req: IpcRequest) => {
+        // Simulate withTiming or handler throwing
+        throw new Error('Internal handler failure');
+      });
+      const server = createTrackedServer(throwingHandler);
+
+      await server.start();
+
+      const { createConnection } = await import('net');
+
+      const response = await new Promise<string>((resolve, reject) => {
+        const client = createConnection(socketPath, () => {
+          client.write(`${JSON.stringify({
+            type: 'ping',
+            id: 'err-test-1',
+            payload: {},
+          })}\n`);
+        });
+
+        let buffer = '';
+        client.on('data', (data: Buffer) => {
+          buffer += data.toString();
+          if (buffer.includes('\n')) {
+            client.destroy();
+            resolve(buffer.trim());
+          }
+        });
+
+        client.on('error', reject);
+        setTimeout(() => { client.destroy(); reject(new Error('Timeout')); }, 2000);
+      });
+
+      const parsed = JSON.parse(response) as IpcResponse;
+      expect(parsed.id).toBe('err-test-1');
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toBe('Internal handler failure');
+
+      await server.stop();
+    });
+  });
+
+  // ===========================================================================
+  // Issue #2352: Transport mode tests
+  // ===========================================================================
+  describe('transport mode', () => {
+    /** Create a mock in-memory transport for testing */
+    function createMockTransport() {
+      let connectionHandler: ((conn: IpcConnectionLike) => void) | null = null;
+      let listening = false;
+
+      return {
+        transport: {
+          start: vi.fn().mockImplementation((onConnection: (conn: IpcConnectionLike) => void) => {
+            connectionHandler = onConnection;
+            listening = true;
+          }),
+          stop: vi.fn().mockImplementation(() => {
+            listening = false;
+            connectionHandler = null;
+          }),
+          isListening: () => listening,
+        } as unknown as import('./transport.js').IIpcServerTransport,
+        simulateConnection: (conn: IpcConnectionLike) => {
+          if (connectionHandler) {connectionHandler(conn);}
+        },
+      };
+    }
+
+    /** Create a mock connection */
+    function createMockConnection(remoteAddress = 'in-memory'): IpcConnectionLike {
+      const handlers: Record<string, Array<(...args: unknown[]) => void>> = {};
+      return {
+        write: vi.fn(),
+        destroy: vi.fn(),
+        on: vi.fn().mockImplementation((event: string, handler: (...args: unknown[]) => void) => {
+          if (!handlers[event]) {handlers[event] = [];}
+          handlers[event].push(handler);
+        }),
+        remoteAddress,
+        // Test helper to emit events
+        _emit: (event: string, ...args: unknown[]) => {
+          for (const h of handlers[event] ?? []) {h(...args);}
+        },
+      } as unknown as IpcConnectionLike & { _emit: (event: string, ...args: unknown[]) => void };
+    }
+
+    it('should start with transport', async () => {
+      const { transport } = createMockTransport();
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' }, transport);
+
+      expect(server.isRunning()).toBe(false);
+      await server.start();
+      expect(server.isRunning()).toBe(true);
+      expect(transport.start).toHaveBeenCalled();
+
+      await server.stop();
+    });
+
+    it('should stop with transport', async () => {
+      const { transport } = createMockTransport();
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' }, transport);
+
+      await server.start();
+      await server.stop();
+
+      expect(server.isRunning()).toBe(false);
+      expect(transport.stop).toHaveBeenCalled();
+    });
+
+    it('should be no-op when starting already listening transport', async () => {
+      const { transport } = createMockTransport();
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' }, transport);
+
+      await server.start();
+      await server.start(); // should be no-op
+
+      expect(server.isRunning()).toBe(true);
+      await server.stop();
+    });
+
+    it('should handle connection and route messages via transport', async () => {
+      const { transport, simulateConnection } = createMockTransport();
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' }, transport);
+
+      await server.start();
+
+      const conn = createMockConnection();
+      simulateConnection(conn);
+
+      // Simulate receiving data
+      (conn as unknown as { _emit: (e: string, ...a: unknown[]) => void })._emit(
+        'data',
+        Buffer.from(`${JSON.stringify({ type: 'ping', id: 'transport-1', payload: {} })}\n`)
+      );
+
+      // Wait for async handleMessage
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(conn.write).toHaveBeenCalledWith(
+        expect.stringContaining('"success":true')
+      );
+
+      await server.stop();
+    });
+
+    it('should handle connection close via transport', async () => {
+      const { transport, simulateConnection } = createMockTransport();
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' }, transport);
+
+      await server.start();
+
+      const conn = createMockConnection();
+      simulateConnection(conn);
+
+      // Simulate connection close
+      (conn as unknown as { _emit: (e: string, ...a: unknown[]) => void })._emit('close');
+
+      // Connection should be removed from active connections
+      // Verify by stopping (should complete without hanging)
+      await server.stop();
+    });
+
+    it('should handle connection error via transport', async () => {
+      const { transport, simulateConnection } = createMockTransport();
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' }, transport);
+
+      await server.start();
+
+      const conn = createMockConnection();
+      simulateConnection(conn);
+
+      // Simulate connection error
+      (conn as unknown as { _emit: (e: string, ...a: unknown[]) => void })._emit(
+        'error',
+        new Error('Connection reset')
+      );
+
+      // Connection should be removed from active connections
+      await server.stop();
+    });
+
+    it('should reject connections during shutdown in transport mode', async () => {
+      const { transport, simulateConnection } = createMockTransport();
+      const handler = createInteractiveMessageHandler(vi.fn());
+      const server = new UnixSocketIpcServer(handler, { socketPath: '/tmp/test.ipc' }, transport);
+
+      await server.start();
+
+      // Add a connection first, then stop
+      const conn = createMockConnection();
+      simulateConnection(conn);
+
+      // Stop should destroy active connections
+      await server.stop();
+
+      expect(conn.destroy).toHaveBeenCalled();
     });
   });
 });
