@@ -53,6 +53,9 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #3442: WorkBuddy A2A communication
+  WorkBuddyManager,
+  type WorkBuddyCallbacks,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
@@ -152,6 +155,9 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
+
+  // WorkBuddy (Issue #3442)
+  protected workBuddyManager?: WorkBuddyManager;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
@@ -388,6 +394,17 @@ export class PrimaryNode extends EventEmitter {
       );
     }
 
+    // Initialize WorkBuddy (Issue #3442)
+    // Non-fatal: if WorkBuddy fails, PrimaryNode continues without it.
+    try {
+      this.initWorkBuddy();
+    } catch (error) {
+      logger.error(
+        { err: error, nodeId: this.localNodeId },
+        '⚠️ WorkBuddy initialization failed — remote control features will not be available.'
+      );
+    }
+
     this.running = true;
     this.emit('started');
     logger.info({ nodeId: this.localNodeId }, 'PrimaryNode started');
@@ -406,6 +423,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Stop Scheduler (Issue #1377)
     await this.stopScheduler();
+
+    // Stop WorkBuddy (Issue #3442)
+    this.workBuddyManager?.stop();
 
     // Stop IPC server (Issue #1042)
     await this.stopIpcServer();
@@ -571,6 +591,93 @@ export class PrimaryNode extends EventEmitter {
         name: j.task.name,
       })),
       fileWatcherRunning: this.scheduleFileWatcher?.isRunning() ?? false,
+    };
+  }
+
+  // ============================================================================
+  // WorkBuddy (Issue #3442)
+  // ============================================================================
+
+  /**
+   * Initialize WorkBuddy manager for A2A communication with local agents.
+   * Non-fatal: if no WorkBuddy config is present, this is a no-op.
+   *
+   * Issue #3442: WorkBuddy enables remote control of local agent instances
+   * for toolchain integration (e.g., WeChat DevTools CLI).
+   */
+  protected initWorkBuddy(): void {
+    if (!Config.isWorkBuddyEnabled()) {
+      logger.debug('WorkBuddy not configured — skipping initialization');
+      return;
+    }
+
+    const workBuddyConfig = Config.getWorkBuddyConfig();
+    if (!workBuddyConfig) {
+      return;
+    }
+
+    const workBuddyCallbacks: WorkBuddyCallbacks = {
+      sendMessage: async (chatId: string, message: string): Promise<void> => {
+        const channel = this.channelManager.getFirstChannel();
+        if (channel) {
+          await channel.sendMessage({
+            type: 'text',
+            chatId,
+            text: message,
+          });
+        } else {
+          logger.warn({ chatId }, 'No channel available for WorkBuddy message');
+        }
+      },
+    };
+
+    this.workBuddyManager = new WorkBuddyManager({
+      config: workBuddyConfig,
+      callbacks: workBuddyCallbacks,
+    });
+
+    this.workBuddyManager.start();
+    logger.info(
+      { projectKeys: this.workBuddyManager.getProjectKeys() },
+      'WorkBuddy manager initialized',
+    );
+  }
+
+  /**
+   * Get the WorkBuddy manager instance.
+   * Issue #3442: Enables external access for command routing.
+   */
+  getWorkBuddyManager(): WorkBuddyManager | undefined {
+    return this.workBuddyManager;
+  }
+
+  /**
+   * Get WorkBuddy status for health monitoring.
+   * Issue #3442: Exposes WorkBuddy health alongside scheduler status.
+   */
+  getWorkBuddyStatus(): {
+    enabled: boolean;
+    running: boolean;
+    projectCount: number;
+    projectKeys: string[];
+    healthStatus: Map<string, unknown>;
+  } {
+    if (!this.workBuddyManager) {
+      return {
+        enabled: Config.isWorkBuddyEnabled(),
+        running: false,
+        projectCount: 0,
+        projectKeys: [],
+        healthStatus: new Map(),
+      };
+    }
+
+    return {
+      enabled: true,
+      running: this.workBuddyManager.isRunning(),
+      projectCount: this.workBuddyManager.getProjectKeys().length,
+      projectKeys: this.workBuddyManager.getProjectKeys(),
+      healthStatus: this.workBuddyManager.getHealthStatus(),
     };
   }
 }

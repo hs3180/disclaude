@@ -355,3 +355,17 @@ export {
   STATE_FILE_NAME,
   STATE_VERSION,
 } from './project/index.js';
+
+// WorkBuddy module — A2A communication with local WorkBuddy agents (Issue #3442)
+export {
+  WorkBuddyClient,
+  WorkBuddyManager,
+  type A2ACommand,
+  type A2ACommandType,
+  type A2AResponse,
+  type WorkBuddyCallbacks,
+  type WorkBuddyClientOptions,
+  type WorkBuddyHealth,
+  type WorkBuddyManagerOptions,
+  type WorkBuddyStatus,
+} from './workbuddy/index.js';

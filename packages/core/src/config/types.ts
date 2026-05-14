@@ -379,6 +379,8 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /** WorkBuddy remote agent configuration (Issue #3442) */
+  workbuddy?: WorkBuddyConfig;
   /**
    * Project template configuration overrides (Issue #2227).
    *
@@ -441,6 +443,40 @@ export interface ConfigChannelConfig {
  */
 export interface ChannelsConfig {
   [channelName: string]: ConfigChannelConfig | undefined;
+}
+
+/**
+ * WorkBuddy project configuration.
+ * Defines a single WorkBuddy instance bound to a project directory and chat.
+ * @see Issue #3442
+ */
+export interface WorkBuddyProjectConfig {
+  /** Project working directory (bound to WorkBuddy's cwd) */
+  cwd: string;
+  /** Bound Feishu chat ID — agent replies go here */
+  chatId: string;
+  /** Enabled tool integrations (e.g., 'wechat-devtools') */
+  tools?: string[];
+  /** Environment variables for the WorkBuddy process */
+  env?: Record<string, string>;
+}
+
+/**
+ * WorkBuddy configuration section.
+ * Enables remote control of local WorkBuddy agents via A2A messaging.
+ * @see Issue #3442
+ */
+export interface WorkBuddyConfig {
+  /** Enable/disable WorkBuddy integration */
+  enabled?: boolean;
+  /** Map of project key → project config */
+  projects?: Record<string, WorkBuddyProjectConfig>;
+  /** Default timeout for A2A commands in milliseconds (default: 60000) */
+  timeoutMs?: number;
+  /** Health check interval in milliseconds (default: 30000) */
+  healthCheckIntervalMs?: number;
+  /** Authentication token for WorkBuddy communication */
+  authToken?: string;
 }
 
 /**

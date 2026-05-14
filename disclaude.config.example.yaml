@@ -267,6 +267,40 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# WorkBuddy Configuration (Issue #3442)
+# -----------------------------------------------------------------------------
+# WorkBuddy enables remote control of local agent instances via A2A messaging.
+# Each project binds to a specific working directory and chat, allowing
+# disclaude to delegate tasks to local toolchains (e.g., WeChat DevTools CLI).
+#
+# workbuddy:
+#   # Enable/disable WorkBuddy integration
+#   enabled: false
+#
+#   # Authentication token for WorkBuddy communication
+#   # authToken: "your-workbuddy-secret"
+#
+#   # Default timeout for A2A commands in milliseconds (default: 60000)
+#   # timeoutMs: 60000
+#
+#   # Health check interval in milliseconds (default: 30000)
+#   # healthCheckIntervalMs: 30000
+#
+#   # Project configurations — map of project key → config
+#   projects:
+#     my-miniprogram:
+#       # WorkBuddy endpoint URL (HTTP server on the local machine)
+#       cwd: "http://localhost:8080"
+#       # Bound Feishu chat ID — agent replies go here
+#       chatId: "oc_xxxx"
+#       # Enabled tool integrations
+#       tools:
+#         - wechat-devtools
+#       # Environment variables for the WorkBuddy process
+#       env:
+#         WECHAT_DEVTOOLS_PATH: "/Applications/wechatwebdevtools.app"
+
 # =============================================================================
 # Notes
 # =============================================================================
