@@ -15,7 +15,9 @@ import {
   send_card,
   send_interactive,
   send_file,
-  setMessageSentCallback
+  setMessageSentCallback,
+  get_task_status,
+  list_tasks,
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
 import { transformCardTables } from './utils/table-converter.js';
@@ -466,6 +468,65 @@ For display-only cards, use send_card instead.
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
+  },
+  // ============================================================================
+  // Issue #857: Task status tools for progress reporting
+  // These tools allow agents to query task progress from the filesystem.
+  // Used by the Reporter Agent to provide progress updates to users.
+  // ============================================================================
+  {
+    name: 'get_task_status',
+    description: `Get detailed status of a specific task.
+
+Returns task state, iteration details, and progress information.
+Use this to check the progress of a background task created by the deep-task skill.
+
+## Parameters
+- **taskId**: Task identifier (typically a message ID)
+
+## Returns
+- Task state (pending, running, completed, finalized)
+- Iteration count and details
+- Whether final result is available
+- Task title and creation time
+
+## Example
+\`\`\`json
+{"taskId": "msg_123456"}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task identifier (message ID)'),
+    }),
+    handler: async ({ taskId }: { taskId: string }) => {
+      try {
+        return await get_task_status({ taskId });
+      } catch (error) {
+        return toolError(`Task status query failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+  },
+  {
+    name: 'list_tasks',
+    description: `List all tasks with summary information.
+
+Returns a list of all tasks in the workspace with their current state,
+iteration count, and titles.
+
+## Returns
+- Array of task summaries with state, iteration count, and title
+
+## Example
+\`\`\`
+(no parameters required)
+\`\`\``,
+    parameters: z.object({}),
+    handler: async () => {
+      try {
+        return await list_tasks();
+      } catch (error) {
+        return toolError(`Task list failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
   },
 ];
 

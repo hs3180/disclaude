@@ -42,3 +42,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Task Status (Issue #857: progress reporting foundation)
+export { get_task_status, list_tasks } from './task-status.js';

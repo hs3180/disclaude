@@ -17,3 +17,12 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// Task Status (Issue #857: progress reporting foundation)
+export {
+  TaskStatusProvider,
+  TaskState,
+  type DialogueTaskStatus,
+  type DialogueTaskSummary,
+  type DialogueIterationStatus,
+} from './task-status.js';
