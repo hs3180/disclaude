@@ -149,6 +149,29 @@ describe('CooldownManager', () => {
       expect(status.cooldownEndsAt).not.toBeNull();
       expect(status.remainingMs).toBeGreaterThan(0);
     });
+
+    it('should return expired status for expired cooldown', async () => {
+      await manager.recordExecution('task-1', 1); // 1ms cooldown
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      const status = await manager.getCooldownStatus('task-1');
+      expect(status.isInCooldown).toBe(false);
+      expect(status.remainingMs).toBe(0);
+    });
+  });
+
+  describe('isInCooldown edge cases', () => {
+    it('should return false when cooldownPeriod is zero', async () => {
+      await manager.recordExecution('task-1', 60000);
+      const result = await manager.isInCooldown('task-1', 0);
+      expect(result).toBe(false);
+    });
+
+    it('should return false when cooldownPeriod is negative', async () => {
+      await manager.recordExecution('task-1', 60000);
+      const result = await manager.isInCooldown('task-1', -100);
+      expect(result).toBe(false);
+    });
   });
 
   describe('getAllInCooldown', () => {

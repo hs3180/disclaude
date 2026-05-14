@@ -774,6 +774,109 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('executeTask with blocking flag', () => {
+    it('should skip blocking task when previous execution is still running', async () => {
+      const task = createTask({ id: 'blocking-1', blocking: true });
+      scheduler.addTask(task);
+
+      // Start a long-running execution
+      mockExecutor.mockReturnValueOnce(new Promise(() => {})); // never resolves
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-1')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Reset call count so we can verify the second trigger
+      mockExecutor.mockClear();
+
+      // Second trigger while first is still running — should be skipped
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        // The blocking check happens synchronously after the cooldown check,
+        // so by the next microtask the task should not have been started
+        expect(mockExecutor).not.toHaveBeenCalled();
+      }, { timeout: 1000 });
+
+      // Task should still be marked as running from the first execution
+      expect(scheduler.isTaskRunning('blocking-1')).toBe(true);
+    });
+
+    it('should allow non-blocking task to run concurrently', async () => {
+      const task = createTask({ id: 'nonblocking-1', blocking: false });
+      scheduler.addTask(task);
+
+      // Start a long-running execution
+      mockExecutor.mockReturnValueOnce(new Promise(() => {})); // never resolves
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('nonblocking-1')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second execution should also start (non-blocking)
+      mockExecutor.mockResolvedValueOnce(undefined);
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+
+    it('should allow blocking task to execute after previous completes', async () => {
+      const task = createTask({ id: 'blocking-done', blocking: true });
+      scheduler.addTask(task);
+
+      // First execution completes quickly
+      mockExecutor.mockResolvedValueOnce(undefined);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-done')).toBe(false);
+      }, { timeout: 2000 });
+
+      // Second execution should proceed since first completed
+      mockExecutor.mockResolvedValueOnce(undefined);
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+
+    it('should default blocking to false when not specified', async () => {
+      // task without explicit blocking field
+      const task = createTask({ id: 'default-block' });
+      scheduler.addTask(task);
+
+      // First execution hangs
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('default-block')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger — since blocking is not set (undefined → falsy),
+      // the task should NOT be skipped
+      mockExecutor.mockResolvedValueOnce(undefined);
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+  });
+
   describe('TaskTimeoutError', () => {
     it('should have correct name and message', () => {
       const error = new TaskTimeoutError(30000);

@@ -181,6 +181,33 @@ describe('createScheduleExecutor', () => {
     });
   });
 
+  describe('agent factory error handling', () => {
+    it('should propagate error when agentFactory throws', async () => {
+      const factoryError = new Error('Factory failed');
+      vi.mocked(mockAgentFactory).mockImplementationOnce(() => { throw factoryError; });
+
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      await expect(executor('chat-1', 'Run tests')).rejects.toThrow('Factory failed');
+    });
+
+    it('should not call dispose when agentFactory throws', async () => {
+      vi.mocked(mockAgentFactory).mockImplementationOnce(() => { throw new Error('boom'); });
+
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      try { await executor('chat-1', 'Run tests'); } catch {}
+
+      expect(mockAgent.dispose).not.toHaveBeenCalled();
+    });
+  });
+
   describe('multiple executions', () => {
     it('should create a new agent for each execution', async () => {
       const executor = createScheduleExecutor({

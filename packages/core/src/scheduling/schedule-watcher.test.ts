@@ -486,6 +486,41 @@ describe('ScheduleFileScanner', () => {
       expect(writtenContent).toContain('model: "claude-sonnet-4-20250514"');
     });
 
+    it('should write modelTier field when present (Issue #3059)', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-tier',
+        name: 'Tier Task',
+        cron: '0 * * * *',
+        prompt: 'Tier-based task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+        modelTier: 'low',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('modelTier: "low"');
+    });
+
+    it('should not write modelTier field when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-default',
+        name: 'Default Task',
+        cron: '0 0 * * *',
+        prompt: 'Task without model override',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-03-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('modelTier:');
+    });
+
     it('should not write model field when undefined', async () => {
       const task: ScheduledTask = {
         id: 'schedule-default',
@@ -578,6 +613,135 @@ describe('ScheduleFileScanner', () => {
     it('should use task ID as-is without schedule- prefix', () => {
       const filePath = scanner.getFilePath('my-task');
       expect(filePath).toBe(`${MOCK_DIR}/my-task/SCHEDULE.md`);
+    });
+  });
+
+  describe('parseFile - modelTier validation (Issue #3059)', () => {
+    it('should parse valid modelTier value', async () => {
+      const content = [
+        '---',
+        'name: "Low Tier Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_low"',
+        'modelTier: "low"',
+        '---',
+        '',
+        'Task with low tier model.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/low-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBe('low');
+    });
+
+    it('should accept "high" as valid modelTier', async () => {
+      const content = [
+        '---',
+        'name: "High Tier Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_high"',
+        'modelTier: "high"',
+        '---',
+        '',
+        'Task with high tier model.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/high-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBe('high');
+    });
+
+    it('should accept "multimodal" as valid modelTier', async () => {
+      const content = [
+        '---',
+        'name: "Multimodal Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_mm"',
+        'modelTier: "multimodal"',
+        '---',
+        '',
+        'Task with multimodal tier.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/mm-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBe('multimodal');
+    });
+
+    it('should set modelTier to undefined for invalid tier value', async () => {
+      const content = [
+        '---',
+        'name: "Invalid Tier Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_invalid"',
+        'modelTier: "ultra"',
+        '---',
+        '',
+        'Task with invalid tier.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/invalid-tier/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.modelTier).toBeUndefined();
+    });
+
+    it('should log info when both model and valid modelTier are specified', async () => {
+      const content = [
+        '---',
+        'name: "Both Specified"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_both"',
+        'model: "claude-sonnet-4"',
+        'modelTier: "low"',
+        '---',
+        '',
+        'Task with both model and tier.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/both/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      // model takes priority, modelTier is still set in the task
+      expect(task!.model).toBe('claude-sonnet-4');
+      expect(task!.modelTier).toBe('low');
+    });
+  });
+
+  describe('parseFile - timeoutMs field', () => {
+    it('should parse timeoutMs when specified', async () => {
+      const content = [
+        '---',
+        'name: "Timeout Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_timeout"',
+        'timeoutMs: 60000',
+        '---',
+        '',
+        'Task with timeout.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/timeout/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.timeoutMs).toBe(60000);
+    });
+
+    it('should default timeoutMs to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/no-timeout/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.timeoutMs).toBeUndefined();
     });
   });
 
