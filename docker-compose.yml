@@ -130,3 +130,70 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser Container (optional)
+  # ===========================================================================
+  # Optional Chromium container that exposes a CDP (Chrome DevTools Protocol)
+  # endpoint for browser automation (site-miner, etc.).
+  #
+  # Disabled by default — enable with:
+  #   docker compose --profile playwright up -d
+  #
+  # CDP endpoint: http://localhost:9222
+  # Configure in disclaude.config.yaml under tools.mcpServers.playwright:
+  #   args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
+  #
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Start Chromium with CDP enabled on port 9222
+    command:
+      - sh
+      - -c
+      - |
+        CHROME=$$(find /ms-playwright -name chrome -path '*/chrome-linux/*' -type f | head -1)
+        if [ -z "$$CHROME" ]; then
+          echo "ERROR: Chromium not found in /ms-playwright/" >&2
+          exit 1
+        fi
+        echo "Starting Chromium CDP server: $$CHROME"
+        exec $$CHROME \
+          --headless=new \
+          --no-sandbox \
+          --disable-dev-shm-usage \
+          --disable-gpu \
+          --remote-debugging-port=9222 \
+          --remote-debugging-address=0.0.0.0 \
+          --user-data-dir=/tmp/chrome-data \
+          about:blank
+
+    # Use host network so primary container can reach CDP via localhost:9222
+    network_mode: host
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9222/json/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    profiles:
+      - playwright
