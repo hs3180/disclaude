@@ -12,7 +12,7 @@ import { adaptOptions, adaptInput } from './options-adapter.js';
 describe('adaptOptions', () => {
   it('should return empty options for minimal input', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
     });
 
     expect(result.settingSources).toEqual(['project']);
@@ -22,7 +22,7 @@ describe('adaptOptions', () => {
 
   it('should pass through cwd and model', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       cwd: '/workspace',
       model: 'claude-sonnet-4-20250514',
     });
@@ -33,7 +33,7 @@ describe('adaptOptions', () => {
 
   it('should pass through permission mode', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       permissionMode: 'bypassPermissions',
     });
 
@@ -42,7 +42,7 @@ describe('adaptOptions', () => {
 
   it('should pass through allowedTools and disallowedTools', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       allowedTools: ['tool1', 'tool2'],
       disallowedTools: ['tool3'],
     });
@@ -53,7 +53,7 @@ describe('adaptOptions', () => {
 
   it('should extract API key and base URL from env', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       env: {
         ANTHROPIC_API_KEY: 'sk-123',
         ANTHROPIC_BASE_URL: 'https://api.example.com',
@@ -72,7 +72,7 @@ describe('adaptOptions', () => {
 
   it('should pass through env without extracting when no API key', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       env: {
         OTHER_VAR: 'value',
       },
@@ -84,7 +84,7 @@ describe('adaptOptions', () => {
 
   it('should adapt stdio MCP servers', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       mcpServers: {
         'my-server': {
           type: 'stdio',
@@ -109,7 +109,7 @@ describe('adaptOptions', () => {
   it('should pass through stderr callback (Issue #2920)', () => {
     const stderrFn = (_data: string) => { /* test callback */ };
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       stderr: stderrFn,
     });
 
@@ -118,7 +118,7 @@ describe('adaptOptions', () => {
 
   it('should not include stderr when not provided', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
     });
 
     expect(result.stderr).toBeUndefined();
@@ -126,7 +126,7 @@ describe('adaptOptions', () => {
 
   it('should pass through systemPrompt preset (Issue #2890)', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       systemPrompt: { type: 'preset', preset: 'claude_code' },
     });
 
@@ -138,7 +138,7 @@ describe('adaptOptions', () => {
 
   it('should pass through systemPrompt with append (Issue #2890)', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Extra instructions' },
     });
 
@@ -151,7 +151,7 @@ describe('adaptOptions', () => {
 
   it('should pass through string systemPrompt (Issue #2890)', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       systemPrompt: 'You are a helpful assistant.',
     });
 
@@ -160,7 +160,7 @@ describe('adaptOptions', () => {
 
   it('should not include systemPrompt when not provided', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
     });
 
     expect(result.systemPrompt).toBeUndefined();
@@ -168,7 +168,7 @@ describe('adaptOptions', () => {
 
   it('should pass through tools preset (Issue #2890)', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       tools: { type: 'preset', preset: 'claude_code' },
     });
 
@@ -180,7 +180,7 @@ describe('adaptOptions', () => {
 
   it('should pass through tools as string array (Issue #2890)', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       tools: ['Read', 'Write', 'Bash'],
     });
 
@@ -189,7 +189,7 @@ describe('adaptOptions', () => {
 
   it('should not include tools when not provided', () => {
     const result = adaptOptions({
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
     });
 
     expect(result.tools).toBeUndefined();
