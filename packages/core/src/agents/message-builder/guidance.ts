@@ -72,6 +72,34 @@ ${persistedHistoryContext}
 }
 
 /**
+ * Build the thread context section for topic groups.
+ *
+ * Issue #3641 sub-problem 1: Provides thread conversation history
+ * when the user sends a message in a Feishu topic group thread.
+ *
+ * @param threadContext - Thread context string, or undefined to skip
+ * @returns Formatted thread context section, or empty string if no context
+ */
+export function buildThreadContextSection(threadContext?: string): string {
+  if (!threadContext) {
+    return '';
+  }
+
+  return `
+
+---
+
+## Thread Context
+
+You are responding in a topic group thread. Here is the conversation history within this thread (from oldest to newest):
+
+${threadContext}
+
+---
+`;
+}
+
+/**
  * Build the next-step guidance section.
  *
  * Issue #893: Provides in-prompt guidance for suggesting next steps

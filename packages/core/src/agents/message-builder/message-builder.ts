@@ -32,6 +32,7 @@ import type { MessageData, MessageBuilderContext, MessageBuilderOptions } from '
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildThreadContextSection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
@@ -131,6 +132,7 @@ export class MessageBuilder {
     // History sections (framework-agnostic)
     const chatHistorySection = buildChatHistorySection(msg.chatHistoryContext);
     const persistedHistorySection = buildPersistedHistorySection(msg.persistedHistoryContext);
+    const threadContextSection = buildThreadContextSection(msg.threadContext);
 
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
@@ -159,6 +161,9 @@ export class MessageBuilder {
     }
     if (chatHistorySection) {
       sections.push(chatHistorySection);
+    }
+    if (threadContextSection) {
+      sections.push(threadContextSection);
     }
     if (postHistory) {
       sections.push(postHistory);

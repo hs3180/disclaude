@@ -57,6 +57,8 @@ export interface UserMessage extends Message {
   attachments?: FileRef[];
   /** Chat history context for passive mode (Issue #517) */
   chatHistoryContext?: string;
+  /** Thread context for topic groups (Issue #3641 sub-problem 1) */
+  threadContext?: string;
 }
 
 // ============================================================================
