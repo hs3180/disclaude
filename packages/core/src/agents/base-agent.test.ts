@@ -166,6 +166,15 @@ describe('BaseAgent', () => {
       });
     });
 
+    it('should set tools to claude_code preset (Issue #2890)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      expect(options.tools).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+      });
+    });
+
     it('should include model if specified', () => {
       const options = agent.testCreateSdkOptions();
       expect(options.model).toBe('claude-3-5-sonnet-20241022');
@@ -266,7 +275,7 @@ describe('BaseAgent', () => {
     const defaultOptions = {
       cwd: '/workspace',
       permissionMode: 'bypassPermissions' as const,
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
     };
 
     async function* createMockInput(messages: StreamingUserMessage[]): AsyncGenerator<StreamingUserMessage> {
@@ -523,27 +532,13 @@ describe('BaseAgent', () => {
     });
   });
 
-  describe('createSdkOptions - Issue #3532: project-bound CLAUDE_CONFIG_DIR', () => {
-    it('should use settingSources [project] when no cwd override (default)', () => {
+  describe('createSdkOptions - Issue #3532: CLAUDE_CONFIG_DIR for project-bound agents', () => {
+    it('should NOT set CLAUDE_CONFIG_DIR when no cwd override (default)', () => {
       const options = agent.testCreateSdkOptions();
-      expect(options.settingSources).toEqual(['project']);
-    });
-
-    it('should use settingSources [project] when cwd equals workspace dir', () => {
-      setRuntimeContext({
-        getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
-        getLoggingConfig: () => ({ sdkDebug: false }),
-        getGlobalEnv: () => ({}),
-        isAgentTeamsEnabled: () => false,
-      });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
-      const options = ctxAgent.testCreateSdkOptions({ cwd: '/workspace' });
-      expect(options.settingSources).toEqual(['project']);
       expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
     });
 
-    it('should use settingSources [project, user] when cwd differs from workspace', () => {
+    it('should NOT set CLAUDE_CONFIG_DIR when cwd equals workspace dir', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
         getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
@@ -551,12 +546,12 @@ describe('BaseAgent', () => {
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => false,
       });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
-      const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
-      expect(options.settingSources).toEqual(['project', 'user']);
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/workspace' });
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
     });
 
-    it('should set CLAUDE_CONFIG_DIR to workspace .claude when project-bound', () => {
+    it('should set CLAUDE_CONFIG_DIR to workspace .claude when cwd differs from workspace', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
         getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
@@ -564,22 +559,9 @@ describe('BaseAgent', () => {
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => false,
       });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
       const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
       expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
-    });
-
-    it('should NOT set CLAUDE_CONFIG_DIR when not project-bound', () => {
-      setRuntimeContext({
-        getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
-        getLoggingConfig: () => ({ sdkDebug: false }),
-        getGlobalEnv: () => ({}),
-        isAgentTeamsEnabled: () => false,
-      });
-      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model' });
-      const options = ctxAgent.testCreateSdkOptions();
-      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
     });
   });
 });
