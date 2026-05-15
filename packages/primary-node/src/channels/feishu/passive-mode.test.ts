@@ -222,6 +222,69 @@ describe('TriggerModeManager', () => {
       expect(manager.isTriggerEnabled('oc_small')).toBe(true);
       expect(manager.isSmallGroup('oc_small')).toBe(true);
     });
+
+    it('should unmark a small group (Issue #3592)', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.isSmallGroup('oc_small')).toBe(true);
+      expect(manager.isTriggerEnabled('oc_small')).toBe(true);
+
+      manager.unmarkSmallGroup('oc_small');
+      expect(manager.isSmallGroup('oc_small')).toBe(false);
+      expect(manager.isTriggerEnabled('oc_small')).toBe(false);
+    });
+
+    it('should handle unmarkSmallGroup on non-small group gracefully', () => {
+      const manager = new TriggerModeManager();
+      // Should not throw
+      manager.unmarkSmallGroup('oc_not_small');
+      expect(manager.isSmallGroup('oc_not_small')).toBe(false);
+    });
+
+    it('should no longer include unmarked small group in getTriggerEnabledChats', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.getTriggerEnabledChats()).toContain('oc_small');
+
+      manager.unmarkSmallGroup('oc_small');
+      expect(manager.getTriggerEnabledChats()).not.toContain('oc_small');
+    });
+  });
+
+  describe('small group re-check throttle (Issue #3592)', () => {
+    it('should allow re-check when no previous check exists', () => {
+      const manager = new TriggerModeManager();
+      expect(manager.shouldRecheckSmallGroup('oc_new')).toBe(true);
+    });
+
+    it('should not allow re-check immediately after marking', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      expect(manager.shouldRecheckSmallGroup('oc_small')).toBe(false);
+    });
+
+    it('should allow re-check after interval has passed', () => {
+      const manager = new TriggerModeManager();
+      // Manually set last check time to simulate time passage
+      manager.markAsSmallGroup('oc_small');
+      // Access internal map to simulate time passage
+      (manager as any).lastSmallGroupCheckTime.set('oc_small', Date.now() - 11 * 60 * 1000);
+      expect(manager.shouldRecheckSmallGroup('oc_small')).toBe(true);
+    });
+
+    it('should not allow re-check immediately after unmarking', () => {
+      const manager = new TriggerModeManager();
+      manager.markAsSmallGroup('oc_small');
+      manager.unmarkSmallGroup('oc_small');
+      expect(manager.shouldRecheckSmallGroup('oc_small')).toBe(false);
+    });
+
+    it('should allow re-check for non-small group after interval', () => {
+      const manager = new TriggerModeManager();
+      // Simulate a previous check on a non-small group
+      (manager as any).lastSmallGroupCheckTime.set('oc_large', Date.now() - 11 * 60 * 1000);
+      expect(manager.shouldRecheckSmallGroup('oc_large')).toBe(true);
+    });
   });
 
   describe('auto mode (Issue #3345)', () => {

@@ -1123,6 +1123,49 @@ describe('MessageHandler', () => {
 
       expect(triggerModeManager.isTriggerEnabled('chat_noclient')).toBe(false);
     });
+
+    it('should unmark small group when it grows beyond 2 members (Issue #3592)', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '2', bot_count: '1' },  // 3 total members
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // First, mark as small group
+      triggerModeManager.markAsSmallGroup('chat_grown');
+      expect(triggerModeManager.isTriggerEnabled('chat_grown')).toBe(true);
+
+      // Simulate time passage so re-check is allowed
+      (triggerModeManager as any).lastSmallGroupCheckTime.set('chat_grown', Date.now() - 11 * 60 * 1000);
+
+      // Send a message - should re-check and unmark
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_grown',
+            chat_id: 'chat_grown',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Should be unmarked now
+      expect(triggerModeManager.isSmallGroup('chat_grown')).toBe(false);
+      expect(triggerModeManager.isTriggerEnabled('chat_grown')).toBe(false);
+      // Message should be filtered (not processed)
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
   });
 
   // -----------------------------------------------------------------------
