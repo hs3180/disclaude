@@ -287,6 +287,7 @@ describe('createDefaultMessageHandler', () => {
       'user-001',
       undefined,
       undefined,
+      undefined,
     );
   });
 
@@ -313,6 +314,7 @@ describe('createDefaultMessageHandler', () => {
       'user-001',
       fileRefs,
       undefined,
+      undefined,
     );
   });
 
@@ -333,6 +335,7 @@ describe('createDefaultMessageHandler', () => {
       'user-001',
       undefined,
       'Previous conversation context',
+      undefined,
     );
   });
 
@@ -348,6 +351,7 @@ describe('createDefaultMessageHandler', () => {
       'chat-001',
       'Hello, agent!',
       'msg-001',
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -397,6 +401,7 @@ describe('createDefaultMessageHandler', () => {
       'User clicked confirm button',
       'card-msg-001-action1',
       'user-001',
+      undefined,
       undefined,
       undefined,
     );

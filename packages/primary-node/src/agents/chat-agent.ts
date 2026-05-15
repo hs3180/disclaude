@@ -96,6 +96,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // `result` message and resolves the completion promise, enabling blocking
   // one-shot execution via processMessage + taskComplete.
   private onceMode = false;
+  // Issue #3641: Track whether this agent is in a topic group for message filtering
+  private isTopicGroup = false;
   private taskCompletionPromise?: Promise<void>;
   private taskCompletionResolve?: () => void;
   private taskCompletionReject?: (error: Error) => void;
@@ -569,7 +571,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     messageId: string,
     senderOpenId?: string,
     attachments?: MessageData['attachments'],
-    chatHistoryContext?: string
+    chatHistoryContext?: string,
+    chatType?: string
   ): Promise<void> {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -581,9 +584,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     this.logger.info(
-      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, hasFirstMessageHistory: !!this.firstMessageHistoryContext },
+      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, hasFirstMessageHistory: !!this.firstMessageHistoryContext, chatType },
       'processMessage called'
     );
+
+    // Issue #3641: Track topic group status for message filtering
+    if (chatType) {
+      this.isTopicGroup = chatType === 'topic';
+    }
 
     // Track thread root
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
@@ -615,7 +623,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Get capabilities for message building
-    const capabilities = this.callbacks.getCapabilities?.(chatId);
+    // Issue #3641: Suppress interactive cards in topic groups
+    const channelCapabilities = this.callbacks.getCapabilities?.(chatId);
+    const capabilities = this.isTopicGroup && channelCapabilities
+      ? { ...channelCapabilities, supportsCard: false }
+      : channelCapabilities;
 
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
@@ -886,8 +898,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           'SDK message received'
         );
 
+        // Issue #3641: In topic groups, suppress intermediate messages (thinking/tool_use).
+        // Only send the final result message to reduce noise in topic threads.
+        const isIntermediateMessage = this.isTopicGroup && parsed.type !== 'result';
+
         // Send message content to callback
-        if (parsed.content) {
+        if (parsed.content && !isIntermediateMessage) {
           const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
           await this.callbacks.sendMessage(chatId, parsed.content, threadRoot);
         }

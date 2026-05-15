@@ -902,8 +902,9 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      // Without client, quoted message context is undefined → no metadata
-      expect(msg.metadata).toBeUndefined();
+      // Issue #3641: chatType is always propagated in metadata when available
+      // Without client, quoted message context is undefined, but chatType is still set
+      expect(msg.metadata).toEqual({ chatType: 'p2p' });
     });
   });
 

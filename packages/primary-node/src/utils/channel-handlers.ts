@@ -222,12 +222,14 @@ export function createDefaultMessageHandler(
     // Extract context
     const senderOpenId = userId;
     const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
+    // Issue #3641: Propagate chatType for topic group behavior
+    const chatType = metadata?.chatType as string | undefined;
 
     // Convert attachments if the channel supports them
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      void agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext);
+      void agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext, chatType);
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

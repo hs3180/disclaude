@@ -802,6 +802,7 @@ export class MessageHandler {
         messageType: message_type === 'audio' ? 'audio' : 'file',
         timestamp: create_time,
         threadId,
+        metadata: chat_type ? { chatType: chat_type } : undefined,
         attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
       });
       return;
@@ -952,6 +953,10 @@ export class MessageHandler {
     }
     if (chatHistoryContext) {
       metadata.chatHistoryContext = chatHistoryContext;
+    }
+    // Issue #3641: Propagate chatType for topic group behavior (suppress intermediate messages/cards)
+    if (chat_type) {
+      metadata.chatType = chat_type;
     }
 
     // Build attachments from quoted message if available
