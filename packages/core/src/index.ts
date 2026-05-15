@@ -282,6 +282,17 @@ export {
   createDoneMessage,
 } from './messaging/index.js';
 
+// Input MessageRouter (Issue #3580: RFC #3329 Phase 1)
+export {
+  MessageRouter,
+  MessageRoutingError,
+} from './messaging/index.js';
+
+export type {
+  IAgentMessageHandler,
+  MessageRouterConfig,
+} from './messaging/index.js';
+
 // Channels module (Issue #1041 - migrated from primary-node)
 export { BaseChannel } from './channels/index.js';
 

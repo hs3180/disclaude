@@ -29,6 +29,8 @@ import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { ModelTier } from '../config/types.js';
+import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
+import type { SystemMessage } from '../types/message.js';
 
 const logger = createLogger('Scheduler');
 
@@ -104,6 +106,13 @@ export interface SchedulerOptions {
   executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
+  /**
+   * Input MessageRouter for unified message routing (Issue #3582 Phase 3).
+   * When provided, scheduled tasks route through this router as SystemMessage
+   * instead of using the direct executor. Tasks without chatId (future: projectKey)
+   * fall back to the existing executor path (backward compatible).
+   */
+  inputMessageRouter?: InputMessageRouter;
 }
 
 /**
@@ -142,6 +151,7 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
+  private inputMessageRouter?: InputMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -162,6 +172,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
+    this.inputMessageRouter = options.inputMessageRouter;
     logger.info('Scheduler created');
   }
 
@@ -380,6 +391,32 @@ ${task.prompt}`;
 
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
+      // Issue #3582: Route through InputMessageRouter when available (Phase 3)
+      if (this.inputMessageRouter && task.chatId) {
+        const systemMessage: SystemMessage = {
+          id: `sched-${task.id}-${Date.now()}`,
+          source: 'system',
+          payload: wrappedPrompt,
+          chatId: task.chatId,
+          trigger: 'scheduled',
+          taskName: task.name,
+          modelTier: task.modelTier,
+          data: {
+            taskId: task.id,
+            createdBy: task.createdBy,
+            model: task.model,
+          },
+          createdAt: new Date().toISOString(),
+        };
+
+        logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
+        await this.inputMessageRouter.route(systemMessage);
+        logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
+        return;
+      }
+
+      // Existing executor path (backward compatible fallback)
 
       // Issue #1041: Use injected executor function
       // Issue #1338: Pass model override for per-task model selection

@@ -53,12 +53,15 @@ import {
   type SchedulerCallbacks,
   // Issue #1703: Temp chat lifecycle management
   ChatStore,
+  // Issue #3582: Input MessageRouter for unified routing
+  MessageRouter as InputMessageRouter,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
+import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -152,6 +155,9 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
+
+  // Input MessageRouter for unified routing (Issue #3582 Phase 3)
+  protected inputMessageRouter?: InputMessageRouter;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
@@ -486,6 +492,8 @@ export class PrimaryNode extends EventEmitter {
       cooldownManager: this.cooldownManager,
       callbacks: schedulerCallbacks,
       executor,
+      // Issue #3582: Pass InputMessageRouter for unified scheduling (Phase 3)
+      inputMessageRouter: this.inputMessageRouter,
     });
 
     await this.scheduler.start();
@@ -537,6 +545,39 @@ export class PrimaryNode extends EventEmitter {
    */
   getScheduler(): Scheduler | undefined {
     return this.scheduler;
+  }
+
+  /**
+   * Get the InputMessageRouter instance.
+   * Issue #3582: Unified message routing (Phase 3).
+   */
+  getInputMessageRouter(): InputMessageRouter | undefined {
+    return this.inputMessageRouter;
+  }
+
+  /**
+   * Initialize the InputMessageRouter with the given agent pool and callbacks.
+   * Issue #3582: Creates the unified input routing layer (Phase 3).
+   *
+   * Should be called after agent pool is set up but before channels are started.
+   *
+   * @param agentPool - Agent pool for creating/getting persistent agents
+   * @param callbacksFactory - Factory for creating ChatAgentCallbacks per chat
+   * @param systemExecutor - Optional executor for system message handling (short-lived agents)
+   */
+  initInputMessageRouter(
+    agentPool: { getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent },
+    callbacksFactory: (chatId: string) => import('./agents/types.js').ChatAgentCallbacks,
+    systemExecutor?: (chatId: string, payload: string, messageId: string) => Promise<void>,
+  ): void {
+    const handler = new AgentPoolMessageHandler({
+      agentPool,
+      callbacksFactory,
+      systemExecutor,
+    });
+
+    this.inputMessageRouter = new InputMessageRouter({ handler });
+    logger.info('InputMessageRouter initialized');
   }
 
   /**
