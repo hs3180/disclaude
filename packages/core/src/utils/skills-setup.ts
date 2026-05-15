@@ -14,7 +14,7 @@ const logger = createLogger('SkillsSetup');
 /**
  * Copy skills from package directory to workspace .claude/skills.
  *
- * This enables the SDK to load skills via settingSources: ['project'],
+ * This enables the SDK to load skills via settingSources: ['user', 'project', 'local'],
  * which looks for .claude/skills/ in the working directory.
  *
  * @returns Success status and error message if failed
