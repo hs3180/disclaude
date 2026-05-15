@@ -27,6 +27,7 @@ import type { AgentMessage } from '../types/index.js';
 import { getRuntimeContext, hasRuntimeContext, type Disposable, type BaseAgentConfig, type AgentProvider } from './types.js';
 import { Config } from '../config/index.js';
 import { loadRuntimeEnv } from '../config/runtime-env.js';
+import path from 'node:path';
 
 // Re-export BaseAgentConfig for backward compatibility
 export type { BaseAgentConfig } from './types.js';
@@ -156,8 +157,15 @@ export abstract class BaseAgent implements Disposable {
    * @returns AgentQueryOptions object
    */
   protected createSdkOptions(extra: SdkOptionsExtra = {}): AgentQueryOptions {
+    const workspaceDir = this.getWorkspaceDir();
+    const effectiveCwd = extra.cwd ?? workspaceDir;
+
+    // Issue #3532: When cwd differs from workspace (project binding via /project use),
+    // set CLAUDE_CONFIG_DIR so workspace skills remain accessible after project switch.
+    const isProjectBound = extra.cwd !== undefined && extra.cwd !== workspaceDir;
+
     const options: AgentQueryOptions = {
-      cwd: extra.cwd ?? this.getWorkspaceDir(),
+      cwd: effectiveCwd,
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
@@ -181,11 +189,18 @@ export abstract class BaseAgent implements Disposable {
     const loggingConfig = this.getLoggingConfig();
     const globalEnv = {
       ...this.getGlobalEnv(),
-      ...loadRuntimeEnv(this.getWorkspaceDir()),
+      ...loadRuntimeEnv(workspaceDir),
     };
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
     }
+
+    // Issue #3532: Set CLAUDE_CONFIG_DIR to workspace .claude dir when project-bound.
+    // This redirects SDK's user scope to workspace, making workspace skills always available.
+    if (isProjectBound) {
+      globalEnv.CLAUDE_CONFIG_DIR = path.join(workspaceDir, '.claude');
+    }
+
     options.env = buildSdkEnv(
       this.apiKey,
       this.apiBaseUrl,
