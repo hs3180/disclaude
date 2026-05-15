@@ -30,6 +30,8 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /** Chat type from the channel (e.g., 'p2p', 'group', 'topic'). Issue #3641 */
+  chatType?: string;
 }
 
 /**

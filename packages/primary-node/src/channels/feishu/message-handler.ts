@@ -947,6 +947,9 @@ export class MessageHandler {
 
     // Build metadata
     const metadata: Record<string, unknown> = {};
+    if (chat_type) {
+      metadata.chatType = chat_type;
+    }
     if (quotedMessageResult?.text) {
       metadata.quotedMessage = quotedMessageResult.text;
     }

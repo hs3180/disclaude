@@ -902,8 +902,9 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      // Without client, quoted message context is undefined → no metadata
-      expect(msg.metadata).toBeUndefined();
+      // Without client, quoted message context is undefined → only chatType in metadata
+      expect(msg.metadata?.quotedMessage).toBeUndefined();
+      expect(msg.metadata?.chatType).toBe('p2p');
     });
   });
 
