@@ -167,6 +167,9 @@ describe('Integration: SystemMessage end-to-end (Scheduler → MessageRouter →
       'oc_admin_chat',
       expect.stringContaining('Scheduled Task Execution Context'),
       'sched-daily-maint-1715644800000',
+      undefined,
+      'daily-maintenance',
+      undefined,
     );
   });
 
@@ -191,8 +194,8 @@ describe('Integration: SystemMessage end-to-end (Scheduler → MessageRouter →
     await router.route(createSystemMessage({ chatId: 'oc_chat_project1', taskName: 'task-a', id: 's-1' }));
     await router.route(createSystemMessage({ chatId: 'oc_chat_project2', taskName: 'task-b', id: 's-2' }));
 
-    expect(handler.handleSystemMessage).toHaveBeenNthCalledWith(1, 'oc_chat_project1', expect.any(String), 's-1');
-    expect(handler.handleSystemMessage).toHaveBeenNthCalledWith(2, 'oc_chat_project2', expect.any(String), 's-2');
+    expect(handler.handleSystemMessage).toHaveBeenNthCalledWith(1, 'oc_chat_project1', expect.any(String), 's-1', undefined, 'task-a', undefined);
+    expect(handler.handleSystemMessage).toHaveBeenNthCalledWith(2, 'oc_chat_project2', expect.any(String), 's-2', undefined, 'task-b', undefined);
   });
 });
 

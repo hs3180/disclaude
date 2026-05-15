@@ -411,7 +411,25 @@ ${task.prompt}`;
         };
 
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
-        await this.inputMessageRouter.route(systemMessage);
+
+        // Issue #3346: Wrap with timeout to prevent indefinite hangs (same as executor path)
+        const routerTimeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+        let routerTimeoutId: ReturnType<typeof setTimeout> | undefined;
+        const routerTimeoutPromise = new Promise<never>((_, reject) => {
+          routerTimeoutId = setTimeout(() => reject(new TaskTimeoutError(routerTimeoutMs)), routerTimeoutMs);
+        });
+
+        try {
+          await Promise.race([
+            this.inputMessageRouter.route(systemMessage),
+            routerTimeoutPromise,
+          ]);
+        } finally {
+          if (routerTimeoutId !== undefined) {
+            clearTimeout(routerTimeoutId);
+          }
+        }
+
         logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
         return;
       }

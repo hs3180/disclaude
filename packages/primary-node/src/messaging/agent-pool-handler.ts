@@ -89,9 +89,12 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     chatId: string,
     payload: string,
     messageId: string,
+    _modelTier?: string,
+    _taskName?: string,
+    _data?: Record<string, unknown>,
   ): Promise<void> {
     this.log.info(
-      { chatId, messageId },
+      { chatId, messageId, taskName: _taskName },
       'Handling system message',
     );
 

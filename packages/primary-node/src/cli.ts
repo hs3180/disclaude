@@ -35,6 +35,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -248,12 +249,30 @@ async function main(): Promise<void> {
   const controlHandler = createControlHandler(controlHandlerContext);
 
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
+  // Issue #3582: Initialize InputMessageRouter before lifecycle manager so
+  // channels can route incoming messages through the unified router.
+  // The callbacks factory lazily resolves channels at message time,
+  // since channels are not yet available at this point.
+  primaryNode.initInputMessageRouter(
+    agentPool,
+    (chatId: string) => {
+      // Lazy callbacks factory: resolve channel at message time.
+      // By the time messages flow, channels are created and started.
+      const channel = channelManager.getFirstChannel();
+      if (!channel) {
+        throw new Error('No channel available for agent message routing');
+      }
+      return createChannelCallbacksFactory(channel, logger)(chatId);
+    },
+  );
+
   const lifecycleManager = new ChannelLifecycleManager(channelManager, {
     agentPool,
     controlHandler,
     controlHandlerContext,
     logger,
     primaryNode,
+    inputMessageRouter: primaryNode.getInputMessageRouter(),
   });
 
   // Register all built-in channel descriptors (Issue #1594 Phase 3)

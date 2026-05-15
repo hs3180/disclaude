@@ -150,7 +150,10 @@ describe('MessageRouter', () => {
       expect(handler.handleSystemMessage).toHaveBeenCalledWith(
         'oc_chat456',
         'Run daily maintenance',
-        'msg-sys-1'
+        'msg-sys-1',
+        undefined,
+        'daily-maintenance',
+        undefined
       );
     });
 
@@ -165,11 +168,35 @@ describe('MessageRouter', () => {
         expect(handler.handleSystemMessage).toHaveBeenCalledWith(
           'oc_chat456',
           'Run daily maintenance',
-          'msg-sys-1'
+          'msg-sys-1',
+          undefined,
+          'daily-maintenance',
+          undefined
         );
       }
 
       expect(handler.handleSystemMessage).toHaveBeenCalledTimes(3);
+    });
+
+    it('should pass SystemMessage metadata (modelTier, taskName, data) to handler', async () => {
+      const handler = createMockHandler();
+      const router = new MessageRouter({ handler });
+      const msg = createSystemMessage({
+        modelTier: 'sonnet',
+        taskName: 'custom-task',
+        data: { key: 'value', num: 42 },
+      });
+
+      await router.route(msg);
+
+      expect(handler.handleSystemMessage).toHaveBeenCalledWith(
+        'oc_chat456',
+        'Run daily maintenance',
+        'msg-sys-1',
+        'sonnet',
+        'custom-task',
+        { key: 'value', num: 42 }
+      );
     });
   });
 

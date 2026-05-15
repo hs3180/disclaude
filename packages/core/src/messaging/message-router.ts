@@ -54,11 +54,17 @@ export interface IAgentMessageHandler {
    * @param chatId - Target chat ID
    * @param payload - Message text
    * @param messageId - Unique message identifier
+   * @param modelTier - Optional model tier override from SystemMessage
+   * @param taskName - Optional task name from SystemMessage
+   * @param data - Optional trigger-specific payload data
    */
   handleSystemMessage(
     chatId: string,
     payload: string,
-    messageId: string
+    messageId: string,
+    modelTier?: string,
+    taskName?: string,
+    data?: Record<string, unknown>
   ): Promise<void>;
 }
 
@@ -186,7 +192,10 @@ export class MessageRouter {
     await this.handler.handleSystemMessage(
       message.chatId,
       message.payload,
-      message.id
+      message.id,
+      message.modelTier,
+      message.taskName,
+      message.data
     );
   }
 }

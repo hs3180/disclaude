@@ -12,6 +12,7 @@ import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type TaskExecutor
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
+import type { MessageRouter } from '../messaging/message-router.js';
 
 function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -770,6 +771,119 @@ describe('Scheduler', () => {
           'oc_test',
           expect.stringContaining('0.1s'),
         );
+      }, { timeout: 3000 });
+    });
+  });
+
+  describe('InputMessageRouter integration (Issue #3582)', () => {
+    function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
+      void jobs[0].job.fireOnTick();
+    }
+
+    it('should route through InputMessageRouter when available', async () => {
+      const mockRoute = vi.fn().mockResolvedValue(undefined);
+      const mockInputMessageRouter = { route: mockRoute } as unknown as MessageRouter;
+
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockInputMessageRouter,
+      });
+
+      const task = createTask({ id: 'router-1', name: 'Router Task', chatId: 'oc_router_chat' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockRoute).toHaveBeenCalledTimes(1);
+      }, { timeout: 3000 });
+
+      // Verify SystemMessage fields
+      expect(mockRoute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'system',
+          chatId: 'oc_router_chat',
+          trigger: 'scheduled',
+          taskName: 'Router Task',
+        }),
+      );
+      expect(mockRoute.mock.calls[0][0].payload).toContain('Router Task');
+
+      // Executor should NOT be called when router is used
+      expect(mockExecutor).not.toHaveBeenCalled();
+
+      void routerScheduler.stop();
+    });
+
+    it('should fall back to executor when task has no chatId', async () => {
+      const mockRoute = vi.fn().mockResolvedValue(undefined);
+      const mockInputMessageRouter = { route: mockRoute } as unknown as MessageRouter;
+
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockInputMessageRouter,
+      });
+
+      // Task without chatId — should use executor fallback
+      const task = createTask({ id: 'no-chatid', chatId: '' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 3000 });
+
+      // Router should NOT be called
+      expect(mockRoute).not.toHaveBeenCalled();
+
+      void routerScheduler.stop();
+    });
+
+    it('should apply timeout protection to InputMessageRouter path', async () => {
+      // Router route never resolves
+      const mockRoute = vi.fn().mockReturnValue(new Promise(() => {}));
+      const mockInputMessageRouter = { route: mockRoute } as unknown as MessageRouter;
+
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockInputMessageRouter,
+      });
+
+      const task = createTask({ id: 'router-timeout', timeoutMs: 50, chatId: 'oc_timeout_chat' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_timeout_chat',
+          expect.stringContaining('执行超时'),
+        );
+      }, { timeout: 3000 });
+
+      void routerScheduler.stop();
+    });
+
+    it('should fall back to executor when no InputMessageRouter', async () => {
+      // No inputMessageRouter — should use executor directly
+      const task = createTask({ id: 'no-router' });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
       }, { timeout: 3000 });
     });
   });
