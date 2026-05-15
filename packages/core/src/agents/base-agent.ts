@@ -11,6 +11,7 @@
  * @module agents/base-agent
  */
 
+import { join } from 'node:path';
 import {
   getProvider,
   type IAgentSDKProvider,
@@ -185,6 +186,13 @@ export abstract class BaseAgent implements Disposable {
     };
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
+    }
+    // Issue #3532: When cwd is overridden by project binding, redirect the SDK's
+    // user scope to the workspace's .claude directory so built-in skills remain
+    // available even after /project use switches to a different directory.
+    const workspaceDir = this.getWorkspaceDir();
+    if (extra.cwd && extra.cwd !== workspaceDir) {
+      globalEnv.CLAUDE_CONFIG_DIR = join(workspaceDir, '.claude');
     }
     options.env = buildSdkEnv(
       this.apiKey,

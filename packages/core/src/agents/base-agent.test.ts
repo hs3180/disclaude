@@ -481,6 +481,53 @@ describe('BaseAgent', () => {
     });
   });
 
+  describe('createSdkOptions - CLAUDE_CONFIG_DIR for project binding (Issue #3532)', () => {
+    it('should set CLAUDE_CONFIG_DIR when cwd differs from workspace', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
+
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
+    });
+
+    it('should not set CLAUDE_CONFIG_DIR when cwd matches workspace', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/workspace' });
+
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+    });
+
+    it('should not set CLAUDE_CONFIG_DIR when no cwd override', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions();
+
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+    });
+  });
+
   describe('createSdkOptions - env fallback paths', () => {
     it('should use SDK_DEBUG env var when no runtime context and SDK_DEBUG is set', () => {
       const originalEnv = process.env.SDK_DEBUG;
