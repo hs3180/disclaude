@@ -161,15 +161,15 @@ export abstract class BaseAgent implements Disposable {
     const effectiveCwd = extra.cwd ?? workspaceDir;
 
     // Issue #3532: When cwd differs from workspace (project binding via /project use),
-    // expand settingSources to include 'user' scope and set CLAUDE_CONFIG_DIR
-    // so workspace skills remain accessible after project switch.
+    // set CLAUDE_CONFIG_DIR so workspace skills remain accessible after project switch.
     const isProjectBound = extra.cwd !== undefined && extra.cwd !== workspaceDir;
 
     const options: AgentQueryOptions = {
       cwd: effectiveCwd,
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
-      settingSources: isProjectBound ? ['project', 'user'] : ['project'],
+      tools: { type: 'preset', preset: 'claude_code' },
+      settingSources: ['user', 'project', 'local'],
     };
 
     // Add allowed/disallowed tools
