@@ -36,3 +36,14 @@ export {
   createCardMessage,
   createDoneMessage,
 } from './universal-message.js';
+
+// Input MessageRouter (Issue #3580: RFC #3329 Phase 1)
+export {
+  MessageRouter,
+  MessageRoutingError,
+} from './message-router.js';
+
+export type {
+  IAgentMessageHandler,
+  MessageRouterConfig,
+} from './message-router.js';

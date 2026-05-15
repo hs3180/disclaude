@@ -134,3 +134,13 @@ export type {
   IAttachmentManager,
   IPlatformAdapter,
 } from './adapter.js';
+
+// Input Message types (Issue #3580: RFC #3329 Phase 1)
+export type {
+  Message,
+  UserMessage,
+  SystemMessage,
+  SystemTrigger,
+} from './message.js';
+
+export { isUserMessage, isSystemMessage } from './message.js';
