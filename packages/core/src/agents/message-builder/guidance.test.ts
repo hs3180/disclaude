@@ -13,6 +13,7 @@ import {
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
   buildLocationAwarenessGuidance,
+  buildRuntimeEnvGuidance,
 } from './guidance.js';
 
 describe('buildChatHistorySection', () => {
@@ -166,5 +167,36 @@ describe('buildTaskRecordGuidance', () => {
   it('should mention creating file if not exists', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('Create the file if it does not exist');
+  });
+});
+
+describe('buildRuntimeEnvGuidance', () => {
+  it('should include runtime-env awareness section header', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('Runtime Environment Variables');
+  });
+
+  it('should explain what .runtime-env is', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.runtime-env');
+    expect(result).toContain('cross-process state sharing');
+  });
+
+  it('should mention known variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('GH_TOKEN');
+    expect(result).toContain('GH_TOKEN_EXPIRES_AT');
+  });
+
+  it('should explain how to read and write variables', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('process.env');
+    expect(result).toContain('KEY=VALUE');
+  });
+
+  it('should include security notes', () => {
+    const result = buildRuntimeEnvGuidance();
+    expect(result).toContain('.gitignore');
+    expect(result).toContain('expiration');
   });
 });

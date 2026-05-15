@@ -298,3 +298,51 @@ You are running on a remote server that is physically separate from the user's t
 **✅ Correct Approach:**
 > "I don't know your current location since I'm running on a remote server. Could you tell me which city you're in so I can help you with the weather forecast?"`;
 }
+
+/**
+ * Build the runtime-env awareness guidance section.
+ *
+ * Issue #1371: Informs the agent about the `.runtime-env` file mechanism
+ * for cross-process state sharing. The agent runs in an SDK subprocess
+ * where in-memory singletons from the main process are inaccessible.
+ * `.runtime-env` bridges this gap by providing file-based environment
+ * variables that are loaded into the subprocess environment at startup.
+ *
+ * @returns Formatted runtime-env awareness guidance section
+ */
+export function buildRuntimeEnvGuidance(): string {
+  return `
+
+
+---
+
+## Runtime Environment Variables
+
+You have access to **shared environment variables** via the \`.runtime-env\` file in the workspace directory. This enables cross-process state sharing between the main process and your subprocess.
+
+### What is .runtime-env?
+
+A file-based key-value store (\`KEY=VALUE\` per line) at \`{workspace}/.runtime-env\`. Variables are loaded into \`process.env\` at startup, so you can access them directly.
+
+### Known Variables
+
+| Variable | Written by | Purpose |
+|----------|-----------|---------|
+| \`GH_TOKEN\` | \`github-jwt-auth\` skill | GitHub App Installation Access Token |
+| \`GH_TOKEN_EXPIRES_AT\` | \`github-jwt-auth\` skill | Token expiration timestamp (ISO 8601) |
+
+### How to Read Variables
+
+- Variables are pre-loaded into \`process.env\` — access via \`process.env.VARIABLE_NAME\`
+- You can also read the file directly: \`{workspace}/.runtime-env\`
+
+### How to Write Variables
+
+Write \`KEY=VALUE\` lines to \`{workspace}/.runtime-env\` using the Bash or Write tool. Other processes and future sessions will pick up the values.
+
+### Security Notes
+
+- The \`.runtime-env\` file should be in \`.gitignore\` — never commit secrets
+- Tokens have expiration times — check \`GH_TOKEN_EXPIRES_AT\` before use and refresh if expired
+- Do not log or expose token values in your response`;
+}
