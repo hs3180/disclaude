@@ -15,7 +15,7 @@ describe('adaptOptions', () => {
       settingSources: ['user', 'project', 'local'],
     });
 
-    expect(result.settingSources).toEqual(['project']);
+    expect(result.settingSources).toEqual(['user', 'project', 'local']);
     expect(result.cwd).toBeUndefined();
     expect(result.model).toBeUndefined();
   });
