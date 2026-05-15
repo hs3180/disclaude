@@ -1123,6 +1123,116 @@ describe('MessageHandler', () => {
 
       expect(triggerModeManager.isTriggerEnabled('chat_noclient')).toBe(false);
     });
+
+    // Issue #3592: Small group should be unmarked when group grows beyond 2 members
+    it('should unmark small group when group grows beyond 2 members', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn()
+              // First call: 2 members (small group)
+              .mockResolvedValueOnce({ data: { user_count: '1', bot_count: '1' } })
+              // Second call: 3 members (group grew)
+              .mockResolvedValueOnce({ data: { user_count: '2', bot_count: '1' } }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // First message: should be marked as small group
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_grow_1',
+            chat_id: 'chat_growing',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(triggerModeManager.isTriggerEnabled('chat_growing')).toBe(true);
+      expect(triggerModeManager.isSmallGroup('chat_growing')).toBe(true);
+      // Message should be processed (trigger enabled)
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      mockState.emitMessage.mockClear();
+
+      // Backdate the check time so recheck is allowed
+      (triggerModeManager as any).lastSmallGroupCheck.set('chat_growing', Date.now() - 11 * 60 * 1000);
+
+      // Second message: group grew to 3 members — should unmark
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_grow_2',
+            chat_id: 'chat_growing',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello again' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(triggerModeManager.isSmallGroup('chat_growing')).toBe(false);
+      expect(triggerModeManager.isTriggerEnabled('chat_growing')).toBe(false);
+      // Message should be skipped (trigger disabled)
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    // Issue #3592: Throttled re-check should not call API within cooldown
+    it('should not recheck small group status within cooldown', async () => {
+      const { handler, triggerModeManager } = createHandler();
+      const mockClient = {
+        im: {
+          chat: {
+            get: vi.fn().mockResolvedValue({
+              data: { user_count: '1', bot_count: '1' },
+            }),
+          },
+        },
+      };
+      handler.initialize(mockClient as any);
+
+      // First message: marks as small group and records check time
+      mockState.isBotMentioned = false;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_throttle_1',
+            chat_id: 'chat_throttle',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      expect(mockClient.im.chat.get).toHaveBeenCalledTimes(1);
+      expect(triggerModeManager.isTriggerEnabled('chat_throttle')).toBe(true);
+
+      // Second message: within cooldown, should NOT recheck
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_throttle_2',
+            chat_id: 'chat_throttle',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Hello again' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+      // API should NOT have been called again
+      expect(mockClient.im.chat.get).toHaveBeenCalledTimes(1);
+    });
   });
 
   // -----------------------------------------------------------------------
