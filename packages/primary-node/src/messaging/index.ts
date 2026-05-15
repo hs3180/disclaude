@@ -177,3 +177,9 @@ export {
 
 // Channel-specific MessageBuilder options (Issue #1499)
 export { createFeishuMessageBuilderOptions } from './adapters/feishu-message-builder.js';
+
+// Agent Pool Handler for InputMessageRouter (Issue #3582 Phase 3)
+export {
+  AgentPoolMessageHandler,
+  type AgentPoolHandlerOptions,
+} from './agent-pool-handler.js';

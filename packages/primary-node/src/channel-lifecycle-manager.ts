@@ -25,6 +25,7 @@ import type {
   MessageHandler,
   ControlHandler,
   FeishuApiHandlers,
+  MessageRouter as InputMessageRouter,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -77,6 +78,12 @@ export interface ChannelSetupContext {
   logger: Logger;
   /** PrimaryNode reference for Feishu-specific setup */
   primaryNode: IPrimaryNodeForSetup;
+  /**
+   * Input MessageRouter for unified message routing (Issue #3582 Phase 3).
+   * When provided, channels route incoming messages through this router
+   * instead of directly to the agent pool.
+   */
+  inputMessageRouter?: InputMessageRouter;
 }
 
 /**
