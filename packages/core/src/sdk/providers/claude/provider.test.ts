@@ -302,7 +302,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       expect(() => provider.queryStream(emptyInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       })).toThrow('Provider has been disposed');
     });
 
@@ -337,7 +337,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
         cwd: '/workspace',
         env: { ANTHROPIC_API_KEY: 'sk-test-key' },
       });
@@ -369,7 +369,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
         cwd: '/workspace',
         model: 'claude-sonnet-4-20250514',
         permissionMode: 'bypassPermissions',
@@ -401,7 +401,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       // Consume iterator to trigger input processing
@@ -443,7 +443,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
         stderr: (data: string) => { userStderrCalls.push(data); },
       });
 
@@ -476,7 +476,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       // Expect the iterator to throw with stderr attached
@@ -512,7 +512,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       // close and cancel should not throw even when not available
@@ -541,7 +541,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       result.handle.close();
@@ -572,7 +572,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(multiInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       const messages: AgentMessage[] = [];
@@ -722,7 +722,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       // Consume the iterator
@@ -751,7 +751,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       // Close without consuming iterator
@@ -781,7 +781,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       for await (const _ of result.iterator) {
@@ -811,7 +811,7 @@ describe('ClaudeSDKProvider', () => {
       }
 
       const result = provider.queryStream(testInput(), {
-        settingSources: ['project'],
+        settingSources: ['user', 'project', 'local'],
       });
 
       // Consume iterator fully
