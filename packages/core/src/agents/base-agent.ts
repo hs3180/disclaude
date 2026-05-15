@@ -161,7 +161,7 @@ export abstract class BaseAgent implements Disposable {
       permissionMode: this.permissionMode,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
-      settingSources: ['project'],
+      settingSources: ['user', 'project', 'local'],
       // Issue #2890: Enable partial messages for real-time streaming feedback
       includePartialMessages: true,
     };
