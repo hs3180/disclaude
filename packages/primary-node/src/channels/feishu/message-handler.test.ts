@@ -1405,6 +1405,22 @@ describe('MessageHandler', () => {
       );
     });
 
+    it('should skip InteractionManager when emitMessage fails (no double notification)', async () => {
+      mockState.emitMessage.mockRejectedValueOnce(new Error('Emit failed'));
+      mockState.interactionHandleAction.mockRejectedValueOnce(new Error('Interaction error'));
+      const { handler } = createHandler();
+
+      await handler.handleCardAction(cardActionEvent());
+
+      // InteractionManager should NOT be called when emit already failed
+      expect(mockState.interactionHandleAction).not.toHaveBeenCalled();
+      // Only ONE error notification should be sent (not two)
+      const errorCalls = mockState.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0]?.text?.includes('错误'),
+      );
+      expect(errorCalls).toHaveLength(1);
+    });
+
     it('should send error message when InteractionManager throws', async () => {
       mockState.interactionHandleAction.mockRejectedValueOnce(new Error('Interaction error'));
       const { handler } = createHandler();

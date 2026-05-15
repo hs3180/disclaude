@@ -1111,6 +1111,7 @@ export class MessageHandler {
     // Issue #2007: This is the fallback path when routeCardAction returns false
     // (no remote Worker Node registered). The message goes through the same
     // pipeline as text messages via createDefaultMessageHandler → ChatAgent.processMessage.
+    let emitFailed = false;
     try {
       logger.debug(
         { messageId: message_id, chatId: chat_id, actionValue: action.value, routed: false },
@@ -1133,6 +1134,7 @@ export class MessageHandler {
         'Card action message emitted successfully'
       );
     } catch (error) {
+      emitFailed = true;
       logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Failed to emit card action message');
       // Issue #1357: Notify user that their card action was not processed
       this.callbacks.sendMessage({
@@ -1144,25 +1146,29 @@ export class MessageHandler {
       });
     }
 
-    // Try to handle via InteractionManager
-    try {
-      const compatEvent: FeishuCardActionEvent = {
-        action,
-        message_id,
-        chat_id,
-        user: user ?? { sender_id: { open_id: '' } },
-        tenant_key: (rawData.tenant_key as string) || '',
-      };
+    // Try to handle via InteractionManager (only if emit succeeded — the agent
+    // won't process the action if the message was never delivered, so sending
+    // a second error notification would be redundant and confusing).
+    if (!emitFailed) {
+      try {
+        const compatEvent: FeishuCardActionEvent = {
+          action,
+          message_id,
+          chat_id,
+          user: user ?? { sender_id: { open_id: '' } },
+          tenant_key: (rawData.tenant_key as string) || '',
+        };
 
-      await this.interactionManager.handleAction(compatEvent);
-    } catch (error) {
-      logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Card action handler error');
+        await this.interactionManager.handleAction(compatEvent);
+      } catch (error) {
+        logger.error({ err: error, messageId: message_id, chatId: chat_id }, 'Card action handler error');
 
-      await this.callbacks.sendMessage({
-        chatId: chat_id,
-        type: 'text',
-        text: `❌ 处理卡片操作时发生错误：${error instanceof Error ? error.message : '未知错误'}`,
-      });
+        await this.callbacks.sendMessage({
+          chatId: chat_id,
+          type: 'text',
+          text: `❌ 处理卡片操作时发生错误：${error instanceof Error ? error.message : '未知错误'}`,
+        });
+      }
     }
   }
 
