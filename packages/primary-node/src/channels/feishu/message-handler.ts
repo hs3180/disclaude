@@ -854,14 +854,15 @@ export class MessageHandler {
 
     // Group chat trigger mode (Issue #2291: triggerMode enum, #3345: 'auto' mode)
     // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
+    // Issue #3592: Re-check small group status even when already marked (allows unmarking when group grows)
     const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
-    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand && !this.triggerModeManager.isTriggerEnabled(chat_id)) {
-      // Issue #3345: Only check small group detection in 'auto' mode
+    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
+      // Issue #3592: Always re-check small group status in 'auto' mode (with throttle)
       // In 'mention' mode, user explicitly wants mention-only regardless of group size
-      if (this.triggerModeManager.getMode(chat_id) === 'auto' && !this.triggerModeManager.isSmallGroup(chat_id)) {
+      if (this.triggerModeManager.getMode(chat_id) === 'auto'
+        && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
         await this.checkAndAutoDisableSmallGroup(chat_id);
       }
-      // Re-check after potential auto-detection
       if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
         logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode disabled)');
         this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
@@ -1205,11 +1206,16 @@ export class MessageHandler {
           'Small group detected (≤2 members), auto-enabling trigger mode',
         );
       } else {
+        // Issue #3592: Unmark if group has grown beyond 2 members
+        this.triggerModeManager.unmarkSmallGroup(chatId);
         logger.debug(
           { chatId, userCount, botCount, totalMembers },
-          'Group has more than 2 members, keeping trigger mode disabled',
+          'Group has more than 2 members, trigger mode disabled',
         );
       }
+
+      // Issue #3592: Record check time for throttling
+      this.triggerModeManager.updateSmallGroupCheckTime(chatId);
     } catch (error) {
       // Don't block message processing if member count check fails
       logger.debug({ err: error, chatId }, 'Failed to check group member count for auto-detection');
