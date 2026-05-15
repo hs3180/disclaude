@@ -334,6 +334,15 @@ export {
   type DebugGroup,
 } from './control/index.js';
 
+// ETA Module — Task ETA estimation system (Issue #1234)
+export {
+  TaskRecordManager,
+  type TaskRecord,
+  type TaskRecordManagerOptions,
+  type ParsedTaskRecord,
+  type TaskType,
+} from './eta/index.js';
+
 // Project module — simplified per-chatId working directory binding (Issue #3519)
 export type {
   CwdProvider,
