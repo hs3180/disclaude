@@ -47,6 +47,7 @@ services:
     command: ["pm2-runtime", "start", "ecosystem.primary.config.json"]
 
     # Network mode: host allows container to access host's CDP endpoint
+    # (e.g., Playwright container's mapped port via localhost:9222)
     network_mode: host
 
     environment:
@@ -130,3 +131,71 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Provides a headless Chromium browser with CDP endpoint for browser automation.
+  # Use --profile playwright to start: docker compose --profile playwright up -d
+  #
+  # The primary container uses network_mode: host, so it connects to the CDP
+  # endpoint via http://localhost:9222 (mapped from this container).
+  # Configure the CDP URL in disclaude.config.yaml:
+  #   mcpServers:
+  #     playwright:
+  #       args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
+  playwright:
+    image: ${PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.60.0-noble}
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Run Chromium with CDP enabled on port 9222
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        CHROME_BIN=$$(find /ms-playwright -name chrome -type f -path '*/chrome-linux/*' | head -1)
+        if [ -z "$$CHROME_BIN" ]; then
+          echo "ERROR: Chrome binary not found in /ms-playwright/"
+          exit 1
+        fi
+        echo "Starting Chromium CDP server on port $${PLAYWRIGHT_CDP_PORT:-9222}..."
+        exec "$$CHROME_BIN" \
+          --headless=new \
+          --no-sandbox \
+          --disable-dev-shm-usage \
+          --remote-debugging-port=$${PLAYWRIGHT_CDP_PORT:-9222} \
+          --remote-debugging-address=0.0.0.0 \
+          --disable-gpu \
+          --mute-audio \
+          about:blank
+
+    environment:
+      - PLAYWRIGHT_CDP_PORT=${PLAYWRIGHT_CDP_PORT:-9222}
+
+    ports:
+      - "${PLAYWRIGHT_CDP_PORT:-9222}:${PLAYWRIGHT_CDP_PORT:-9222}"
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PLAYWRIGHT_CDP_PORT:-9222}/json/version || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    profiles:
+      - playwright
