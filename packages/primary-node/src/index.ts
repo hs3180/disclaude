@@ -111,6 +111,7 @@ export {
   buildConfirmCard,
   buildSelectionCard,
   extractCardTextContent,
+  extractFullCardContent,
   type PostElement,
   type PostTextElement,
   type PostAtElement,
