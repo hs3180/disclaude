@@ -302,3 +302,187 @@ describe('createDefaultRouteConfig', () => {
     expect(config2.userChatId).toBe('chat-2');
   });
 });
+
+describe('MessageRouter cross-channel routing (Issue #3659 P2)', () => {
+  describe('admin/user chat level differentiation', () => {
+    it('should route RESULT to both admin and user chats', async () => {
+      const sender = createMockSender();
+      const router = new MessageRouter({
+        config: {
+          adminChatId: 'oc_admin',
+          userChatId: 'oc_user',
+          userMessageLevels: [...DEFAULT_USER_LEVELS],
+        },
+        sender,
+      });
+
+      await router.route({
+        content: 'Task result',
+        level: MessageLevel.RESULT,
+      });
+
+      expect(sender.sendText).toHaveBeenCalledTimes(2);
+      expect(sender.sendText).toHaveBeenCalledWith('oc_admin', 'Task result');
+      expect(sender.sendText).toHaveBeenCalledWith('oc_user', 'Task result');
+    });
+
+    it('should route DEBUG only to admin chat', async () => {
+      const sender = createMockSender();
+      const router = new MessageRouter({
+        config: {
+          adminChatId: 'oc_admin',
+          userChatId: 'oc_user',
+          userMessageLevels: [...DEFAULT_USER_LEVELS],
+        },
+        sender,
+      });
+
+      await router.route({
+        content: 'Debug details',
+        level: MessageLevel.DEBUG,
+      });
+
+      expect(sender.sendText).toHaveBeenCalledTimes(1);
+      expect(sender.sendText).toHaveBeenCalledWith('oc_admin', 'Debug details');
+    });
+
+    it('should route PROGRESS only to admin chat', async () => {
+      const sender = createMockSender();
+      const router = new MessageRouter({
+        config: {
+          adminChatId: 'oc_admin',
+          userChatId: 'oc_user',
+          userMessageLevels: [...DEFAULT_USER_LEVELS],
+        },
+        sender,
+      });
+
+      await router.route({
+        content: 'Running step 3/10',
+        level: MessageLevel.PROGRESS,
+      });
+
+      expect(sender.sendText).toHaveBeenCalledTimes(1);
+      expect(sender.sendText).toHaveBeenCalledWith('oc_admin', 'Running step 3/10');
+    });
+
+    it('should route ERROR to both admin and user chats', async () => {
+      const sender = createMockSender();
+      const router = new MessageRouter({
+        config: {
+          adminChatId: 'oc_admin',
+          userChatId: 'oc_user',
+          userMessageLevels: [...DEFAULT_USER_LEVELS],
+        },
+        sender,
+      });
+
+      await router.route({
+        content: 'Something went wrong',
+        level: MessageLevel.ERROR,
+      });
+
+      expect(sender.sendText).toHaveBeenCalledTimes(2);
+      expect(sender.sendText).toHaveBeenCalledWith('oc_admin', 'Something went wrong');
+      expect(sender.sendText).toHaveBeenCalledWith('oc_user', 'Something went wrong');
+    });
+
+    it('should route NOTICE to both admin and user chats', async () => {
+      const sender = createMockSender();
+      const router = new MessageRouter({
+        config: {
+          adminChatId: 'oc_admin',
+          userChatId: 'oc_user',
+          userMessageLevels: [...DEFAULT_USER_LEVELS],
+        },
+        sender,
+      });
+
+      await router.route({
+        content: 'Notification message',
+        level: MessageLevel.NOTICE,
+      });
+
+      expect(sender.sendText).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('broadcast simulation', () => {
+    it('should deliver same message to all configured targets', async () => {
+      const sender = createMockSender();
+      const router = new MessageRouter({
+        config: {
+          adminChatId: 'oc_admin_group',
+          userChatId: 'oc_user_group',
+          userMessageLevels: [...DEFAULT_USER_LEVELS],
+        },
+        sender,
+      });
+
+      const message = { content: 'Broadcast: system update', level: MessageLevel.IMPORTANT as MessageLevel };
+      await router.route(message);
+
+      // Both admin and user should get the same content
+      const { calls } = (sender.sendText as ReturnType<typeof vi.fn>).mock;
+      expect(calls.length).toBe(2);
+      expect(calls[0][1]).toBe('Broadcast: system update');
+      expect(calls[1][1]).toBe('Broadcast: system update');
+    });
+
+    it('should handle mixed success/failure across targets gracefully', async () => {
+      const sender = createMockSender();
+      let callCount = 0;
+      (sender.sendText as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          throw new Error('Admin send failed');
+        }
+      });
+
+      const router = new MessageRouter({
+        config: {
+          adminChatId: 'oc_admin',
+          userChatId: 'oc_user',
+          userMessageLevels: [MessageLevel.RESULT],
+        },
+        sender,
+      });
+
+      // Should not throw
+      await expect(router.route({
+        content: 'Result',
+        level: MessageLevel.RESULT,
+      })).resolves.toBeUndefined();
+
+      // Both targets should have been attempted
+      expect(sender.sendText).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('dynamic level updates affecting routing', () => {
+    it('should immediately apply new user levels to routing', async () => {
+      const sender = createMockSender();
+      const router = new MessageRouter({
+        config: {
+          adminChatId: 'oc_admin',
+          userChatId: 'oc_user',
+          userMessageLevels: [MessageLevel.RESULT], // Only RESULT to user initially
+        },
+        sender,
+      });
+
+      // DEBUG should go to admin only
+      await router.route({ content: 'Debug', level: MessageLevel.DEBUG });
+      expect(sender.sendText).toHaveBeenCalledTimes(1);
+
+      // Update levels to include DEBUG
+      router.setUserLevels([MessageLevel.RESULT, MessageLevel.DEBUG]);
+
+      (sender.sendText as ReturnType<typeof vi.fn>).mockClear();
+
+      // DEBUG should now go to both
+      await router.route({ content: 'Debug', level: MessageLevel.DEBUG });
+      expect(sender.sendText).toHaveBeenCalledTimes(2);
+    });
+  });
+});

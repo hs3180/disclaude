@@ -788,4 +788,190 @@ describe('Scheduler', () => {
       expect(error).toBeInstanceOf(TaskTimeoutError);
     });
   });
+
+  describe('executeTask with inputMessageRouter (Issue #3582 Phase 3)', () => {
+    /** Helper: fire a cron job */
+    function fireAndWait(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
+      void jobs[0].job.fireOnTick();
+    }
+
+    it('should route through inputMessageRouter when provided', async () => {
+      const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockRouter as any,
+      });
+
+      const task = createTask({ id: 'router-1', name: 'Routed Task', chatId: 'oc_routed' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Should NOT call direct executor when router is used
+      expect(mockExecutor).not.toHaveBeenCalled();
+
+      // Verify the routed message is a SystemMessage
+      // eslint-disable-next-line prefer-destructuring
+      const [routedMessage] = mockRouter.route.mock.calls[0];
+      expect(routedMessage.source).toBe('system');
+      expect(routedMessage.chatId).toBe('oc_routed');
+      expect(routedMessage.trigger).toBe('scheduled');
+      expect(routedMessage.taskName).toBe('Routed Task');
+      expect(routedMessage.payload).toContain('Routed Task');
+    });
+
+    it('should include task metadata in routed SystemMessage', async () => {
+      const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockRouter as any,
+      });
+
+      const task = createTask({
+        id: 'router-meta',
+        name: 'Meta Task',
+        chatId: 'oc_meta',
+        modelTier: 'low',
+        model: 'claude-haiku-4',
+        createdBy: 'ou_creator',
+      });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // eslint-disable-next-line prefer-destructuring
+      const [routedMessage] = mockRouter.route.mock.calls[0];
+      expect(routedMessage.modelTier).toBe('low');
+      expect(routedMessage.data).toEqual({
+        taskId: 'router-meta',
+        createdBy: 'ou_creator',
+        model: 'claude-haiku-4',
+      });
+    });
+
+    it('should fall back to direct executor when no inputMessageRouter', async () => {
+      // Default scheduler has no inputMessageRouter
+      const task = createTask({ id: 'no-router-1', chatId: 'oc_direct' });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should fall back to direct executor when task has no chatId', async () => {
+      const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockRouter as any,
+      });
+
+      const task = createTask({ id: 'no-chatid', chatId: '' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Router should NOT be called when chatId is empty
+      expect(mockRouter.route).not.toHaveBeenCalled();
+    });
+
+    it('should send error notification when inputMessageRouter fails', async () => {
+      const mockRouter = { route: vi.fn().mockRejectedValue(new Error('Router down')) };
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockRouter as any,
+      });
+
+      const task = createTask({ id: 'router-fail', chatId: 'oc_fail' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_fail',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should clear running state after inputMessageRouter completes', async () => {
+      const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockRouter as any,
+      });
+
+      const task = createTask({ id: 'router-cleanup', chatId: 'oc_cleanup' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(routerScheduler.isTaskRunning('router-cleanup')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should send start notification before routing', async () => {
+      const callOrder: string[] = [];
+      const mockRouter = {
+        route: vi.fn().mockImplementation(() => {
+          callOrder.push('route');
+        }),
+      };
+      const sendMsg = vi.fn().mockImplementation(() => {
+        callOrder.push('sendMessage');
+      });
+
+      const routerScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: { sendMessage: sendMsg },
+        executor: mockExecutor,
+        inputMessageRouter: mockRouter as any,
+      });
+
+      const task = createTask({ id: 'router-order', name: 'Order Task', chatId: 'oc_order' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      fireAndWait(jobs);
+
+      await vi.waitFor(() => {
+        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Start notification should be sent before routing
+      expect(callOrder).toEqual(['sendMessage', 'route']);
+    });
+  });
 });

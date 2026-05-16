@@ -563,5 +563,24 @@ describe('BaseAgent', () => {
       const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
       expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
     });
+
+    it('should not affect other env vars when injecting CLAUDE_CONFIG_DIR (Issue #3659 P0)', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({ CUSTOM_VAR: 'custom_value', OTHER_VAR: 'other' }),
+        isAgentTeamsEnabled: () => false,
+      });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
+
+      // CLAUDE_CONFIG_DIR should be injected
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
+      // Other env vars should remain intact
+      expect(options.env?.ANTHROPIC_API_KEY).toBe('key');
+      expect(options.env?.CUSTOM_VAR).toBe('custom_value');
+      expect(options.env?.OTHER_VAR).toBe('other');
+    });
   });
 });
