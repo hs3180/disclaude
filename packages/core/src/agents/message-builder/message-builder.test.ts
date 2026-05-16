@@ -484,6 +484,156 @@ describe('MessageBuilder', () => {
     });
   });
 
+  describe('buildEnhancedContent - edge cases', () => {
+    it('should handle empty attachments array', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: [],
+      }, 'chat-456');
+
+      expect(result).not.toContain('Attachments');
+      expect(result).not.toContain('file(s)');
+    });
+
+    it('should use unknown fallback when mimeType is undefined', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'mystery-file',
+        size: 512,
+        localPath: '/tmp/mystery-file',
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      expect(result).toContain('MIME type: unknown');
+    });
+
+    it('should handle attachment with undefined localPath', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'no-path.txt',
+        mimeType: 'text/plain',
+        size: 100,
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      expect(result).toContain('no-path.txt');
+      expect(result).toContain('Local path: `undefined`');
+    });
+
+    it('should include tools section with separator before heading', () => {
+      const options: MessageBuilderOptions = {
+        buildToolsSection: () => '- my_tool: description',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      const toolsIdx = result.indexOf('## Tools');
+      const separatorIdx = result.lastIndexOf('---', toolsIdx);
+      expect(separatorIdx).toBeGreaterThan(-1);
+      expect(separatorIdx).toBeLessThan(toolsIdx);
+    });
+
+    it('should not include header when buildHeader returns empty string', () => {
+      const options: MessageBuilderOptions = {
+        buildHeader: () => '',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('You are responding');
+    });
+
+    it('should not include post-history when buildPostHistory returns empty string', () => {
+      const options: MessageBuilderOptions = {
+        buildPostHistory: () => '',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      // The empty string should not produce any visible content
+      // beyond what the default builder produces
+      const defaultBuilder = new MessageBuilder();
+      const defaultResult = defaultBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toBe(defaultResult);
+    });
+
+    it('should default to card template when capabilities is undefined', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456', undefined);
+
+      expect(result).toContain('actionPrompts');
+      expect(result).toContain('interactive card');
+    });
+
+    it('should combine attachments and skill command extra for skill commands', () => {
+      const options: MessageBuilderOptions = {
+        buildSkillCommandExtra: () => '\n\nSkill-specific context info',
+      };
+      const builder = new MessageBuilder(options);
+
+      const result = builder.buildEnhancedContent({
+        text: '/analyze',
+        messageId: 'msg-123',
+        attachments: [{
+          id: 'att-1',
+          fileName: 'data.csv',
+          mimeType: 'text/csv',
+          size: 1024,
+          localPath: '/tmp/data.csv',
+          source: 'user' as const,
+          createdAt: Date.now(),
+        }],
+      }, 'chat-456');
+
+      expect(result).toContain('/analyze');
+      expect(result).toContain('data.csv');
+      expect(result).toContain('Skill-specific context info');
+    });
+
+    it('should include task record guidance for regular messages', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Task Execution Recording');
+      expect(result).toContain('task-records.md');
+    });
+  });
+
   describe('buildEnhancedContent - output ordering', () => {
     it('should place user message after guidance sections', () => {
       const result = messageBuilder.buildEnhancedContent({
