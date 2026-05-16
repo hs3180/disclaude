@@ -342,6 +342,41 @@ export interface SessionTimeoutConfig {
 }
 
 /**
+ * WorkBuddy project configuration (Issue #3442).
+ * Maps to a single project entry under `workbuddy.projects`.
+ */
+export interface WorkBuddyProjectConfig {
+  /** Working directory — the WorkBuddy agent runs with this as CWD */
+  cwd: string;
+  /** Feishu chat ID bound to this project */
+  chatId: string;
+  /** Enabled tool integrations (e.g., 'wechat-devtools') */
+  tools?: string[];
+  /** Extra environment variables injected into the WorkBuddy process */
+  env?: Record<string, string>;
+}
+
+/**
+ * WorkBuddy configuration section (Issue #3442).
+ * Enables remote control of local development environments.
+ *
+ * @example
+ * ```yaml
+ * workbuddy:
+ *   projects:
+ *     my-miniprogram:
+ *       cwd: /Users/dev/my-miniprogram
+ *       chatId: oc_xxxx
+ *       tools:
+ *         - wechat-devtools
+ * ```
+ */
+export interface WorkBuddyConfig {
+  /** Named project configurations */
+  projects: Record<string, WorkBuddyProjectConfig>;
+}
+
+/**
  * Run mode for the application.
  * - comm: Communication Node (Feishu WebSocket handler)
  * - exec: Execution Node (ChatAgent/Agent handler)
@@ -379,6 +414,8 @@ export interface DisclaudeConfig {
   sessionRestore?: SessionRestoreConfig;
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
+  /** WorkBuddy remote development configuration (Issue #3442) */
+  workbuddy?: WorkBuddyConfig;
   /**
    * Project template configuration overrides (Issue #2227).
    *

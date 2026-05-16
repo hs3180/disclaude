@@ -23,6 +23,7 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  WorkBuddyConfig,
 } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
@@ -567,6 +568,17 @@ export class Config {
    */
   static getSdkTimeoutMs(): number {
     return fileConfigOnly.agent?.sdkTimeoutMs ?? 300_000;
+  }
+
+  /**
+   * Get WorkBuddy configuration.
+   * Enables remote control of local development environments.
+   * @see Issue #3442
+   *
+   * @returns WorkBuddy configuration or undefined if not configured
+   */
+  static getWorkBuddyConfig(): WorkBuddyConfig | undefined {
+    return fileConfigOnly.workbuddy;
   }
 
 }

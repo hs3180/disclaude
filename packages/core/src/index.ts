@@ -366,3 +366,17 @@ export {
   STATE_FILE_NAME,
   STATE_VERSION,
 } from './project/index.js';
+
+// WorkBuddy module — remote control of local development environments (Issue #3442)
+export type {
+  WorkBuddyConfig as WorkBuddyModuleConfig,
+  WorkBuddyProjectConfig as WorkBuddyModuleProjectConfig,
+  WorkBuddyProcess,
+  WorkBuddyProcessStatus,
+  WorkBuddyChatRouting,
+  WorkBuddyCommand,
+  WorkBuddyResult,
+  WorkBuddyHealth,
+} from './workbuddy/index.js';
+
+export { WorkBuddyManager } from './workbuddy/index.js';

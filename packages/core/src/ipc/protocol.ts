@@ -24,7 +24,14 @@ export type IpcRequestType =
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // WorkBuddy remote development commands (Issue #3442)
+  | 'workbuddy:execute'
+  | 'workbuddy:health'
+  | 'workbuddy:start'
+  | 'workbuddy:stop'
+  | 'workbuddy:status'
+;
 
 /**
  * IPC request payload types.
@@ -78,6 +85,32 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // WorkBuddy remote development commands (Issue #3442)
+  'workbuddy:execute': {
+    /** Project name to route the command to */
+    projectName?: string;
+    /** Chat ID to look up the bound project */
+    chatId?: string;
+    /** Command type (e.g., 'preview', 'upload', 'open') */
+    commandType: string;
+    /** Command payload */
+    payload: Record<string, unknown>;
+    /** Timeout in milliseconds */
+    timeout?: number;
+  };
+  'workbuddy:health': {
+    /** Specific project name, or omit for all */
+    projectName?: string;
+  };
+  'workbuddy:start': {
+    /** Project name to start */
+    projectName: string;
+  };
+  'workbuddy:stop': {
+    /** Project name to stop */
+    projectName: string;
+  };
+  'workbuddy:status': Record<string, never>;
 }
 
 /**
@@ -122,6 +155,43 @@ export interface IpcResponsePayloads {
   };
   markChatResponded: {
     success: boolean;
+  };
+  // WorkBuddy remote development responses (Issue #3442)
+  'workbuddy:execute': {
+    success: boolean;
+    data?: unknown;
+    error?: string;
+  };
+  'workbuddy:health': {
+    success: boolean;
+    results?: Array<{
+      projectName: string;
+      healthy: boolean;
+      cwd: string;
+      uptimeSeconds?: number;
+      tools?: string[];
+    }>;
+  };
+  'workbuddy:start': {
+    success: boolean;
+    pid?: number;
+    error?: string;
+  };
+  'workbuddy:stop': {
+    success: boolean;
+    error?: string;
+  };
+  'workbuddy:status': {
+    success: boolean;
+    processes?: Array<{
+      projectName: string;
+      status: string;
+      pid?: number;
+      cwd: string;
+      chatId: string;
+      startedAt?: string;
+      errorMessage?: string;
+    }>;
   };
 }
 
