@@ -192,11 +192,6 @@ export {
 export {
   CooldownManager,
   type CooldownManagerOptions,
-  // Issue #1703: Temp chat lifecycle management
-  ChatStore,
-  type ChatStoreOptions,
-  type TempChatRecord,
-  type TempChatResponse,
   // Issue #2947: Bot group chat mapping
   BotChatMappingStore,
   makeMappingKey,

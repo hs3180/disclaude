@@ -7,7 +7,7 @@
  *
  * Storage location: workspace/bot-chat-mapping.json
  *
- * Follows the ChatStore pattern: file-based persistence + in-memory cache.
+ * Follows the CooldownManager pattern: file-based persistence + in-memory cache.
  *
  * @module @disclaude/core/scheduling
  */
