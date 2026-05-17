@@ -30,7 +30,7 @@ import {
   createControlCommand,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
-import { extractCardTextContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
+import { extractCardTextContent, extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from './message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -807,9 +807,10 @@ export class MessageHandler {
       return;
     }
 
-    // Handle text, post, and share_chat messages
+    // Handle text, post, share_chat, and interactive messages
     // Issue #846: Add support for share_chat (forwarded chat history) messages
-    if (message_type !== 'text' && message_type !== 'post' && message_type !== 'share_chat') {
+    // Issue #3657: Add support for interactive (card) messages
+    if (message_type !== 'text' && message_type !== 'post' && message_type !== 'share_chat' && message_type !== 'interactive') {
       logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
       this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
       return;
@@ -826,6 +827,9 @@ export class MessageHandler {
       } else if (message_type === 'share_chat') {
         // Issue #846: Parse share_chat (forwarded/merged chat history) messages
         text = this.parseShareChatContent(parsed);
+      } else if (message_type === 'interactive') {
+        // Issue #3657: Parse interactive card messages
+        text = extractFullCardContent(parsed);
       }
     } catch {
       logger.error('Failed to parse content');

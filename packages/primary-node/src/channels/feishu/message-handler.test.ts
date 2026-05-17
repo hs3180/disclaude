@@ -60,6 +60,7 @@ vi.mock('../../platforms/feishu/interaction-manager.js', () => ({
 
 vi.mock('../../platforms/feishu/card-builders/card-text-extractor.js', () => ({
   extractCardTextContent: vi.fn().mockReturnValue('Extracted card text'),
+  extractFullCardContent: vi.fn().mockReturnValue('Mocked full card content'),
 }));
 
 vi.mock('fs/promises', async (importOriginal) => {
@@ -556,6 +557,61 @@ describe('MessageHandler', () => {
 
       const content = firstCallArg(mockState.emitMessage).content as string;
       expect(content).toContain('Alice');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Interactive card messages (Issue #3657)
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — interactive card messages', () => {
+    function interactiveEvent(card: Record<string, unknown>) {
+      return {
+        event: {
+          message: {
+            message_id: 'msg_interactive',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify(card),
+            message_type: 'interactive',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any;
+    }
+
+    it('should emit interactive card message with extracted content', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(interactiveEvent({
+        header: { title: { content: '搜索结果' } },
+        elements: [
+          { tag: 'markdown', content: '找到 3 条结果' },
+        ],
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.messageType).toBe('interactive');
+      expect(msg.content).toBe('Mocked full card content');
+    });
+
+    it('should skip interactive card that extracts to empty content', async () => {
+      // Reset and set mock to return empty
+      const { extractFullCardContent } = await import('../../platforms/feishu/card-builders/card-text-extractor.js');
+      vi.mocked(extractFullCardContent).mockReturnValueOnce('');
+
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(interactiveEvent({}));
+
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should not skip interactive card that extracts to [Interactive Card]', async () => {
+      // Even when card is generic, it should still be emitted
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(interactiveEvent({ elements: [] }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
     });
   });
 
