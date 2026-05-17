@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, matchSkills, buildSkillInjection, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -617,10 +617,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Get capabilities for message building
     const capabilities = this.callbacks.getCapabilities?.(chatId);
 
+    // Issue #3687: Auto-trigger skill matching based on user message keywords.
+    // Scans message against skill trigger keywords and injects matching skill content.
+    let skillInjection = '';
+    if (!text.trimStart().startsWith('/')) {
+      try {
+        const matchedSkills = await matchSkills(text);
+        skillInjection = buildSkillInjection(matchedSkills);
+      } catch (error) {
+        this.logger.debug({ error, chatId, messageId }, 'Auto-trigger matching failed, continuing without skill injection');
+      }
+    }
+
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
-      text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
+      text: skillInjection + text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
     }, chatId, capabilities);
 

@@ -11,3 +11,11 @@ export {
   skillExists,
   readSkillContent,
 } from './finder.js';
+
+export {
+  type SkillMetadata,
+  type MatchedSkillResult,
+  matchSkills,
+  buildSkillInjection,
+  invalidateCache,
+} from './auto-trigger.js';

@@ -166,6 +166,11 @@ export {
   listSkills,
   skillExists,
   readSkillContent,
+  type SkillMetadata,
+  type MatchedSkillResult,
+  matchSkills,
+  buildSkillInjection,
+  invalidateCache,
 } from './skills/index.js';
 
 // Conversation module (Issue #1041)
