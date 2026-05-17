@@ -130,3 +130,78 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Provides a headless Chromium with CDP (Chrome DevTools Protocol) endpoint
+  # for browser automation (site-miner, playwright-agent skills).
+  #
+  # Start: docker compose --profile playwright up -d
+  # Stop:  docker compose --profile playwright down
+  #
+  # The CDP endpoint is available at http://localhost:{CDP_PORT}/json/version
+  # Configure disclaude.config.yaml mcpServers.playwright to point to this URL.
+  #
+  # Note: Uses network_mode: host to match the primary container.
+  # The CDP_PORT must not conflict with other services on the host.
+  #
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.53.1-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    profiles:
+      - playwright
+
+    # Match primary container's network mode for seamless CDP access
+    network_mode: host
+
+    environment:
+      - CDP_PORT=${CDP_PORT:-9222}
+      - TZ=Asia/Shanghai
+
+    # Start Chromium with remote debugging (CDP) enabled
+    # Uses shell globbing to find the Chromium binary in the Playwright image
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "Starting Chromium with CDP on port $${CDP_PORT}..."
+        CHROME=$$(ls /ms-playwright/chromium-*/chrome-linux/chrome 2>/dev/null || \
+                  ls /home/*/.cache/ms-playwright/chromium-*/chrome-linux/chrome 2>/dev/null | head -1)
+        if [ -z "$$CHROME" ]; then
+          echo "ERROR: Chromium binary not found in Playwright image"
+          exit 1
+        fi
+        echo "Found Chromium: $$CHROME"
+        exec "$$CHROME" \
+          --headless=new \
+          --no-sandbox \
+          --disable-dev-shm-usage \
+          --disable-gpu \
+          --remote-debugging-port=$${CDP_PORT} \
+          --remote-debugging-address=0.0.0.0 \
+          --disable-features=site-per-process \
+          --no-first-run \
+          --disable-default-apps \
+          --disable-extensions \
+          --disable-sync \
+          --hide-scrollbars \
+          --mute-audio \
+          about:blank
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:$${CDP_PORT:-9222}/json/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
