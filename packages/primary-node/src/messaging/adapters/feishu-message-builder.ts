@@ -10,7 +10,7 @@
  * @module messaging/adapters/feishu-message-builder
  */
 
-import { Config, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
+import { type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
 
 /**
  * Build Feishu platform header.
@@ -115,8 +115,9 @@ ${messagingTools.join('\n')}
 /**
  * Build Feishu-specific extra attachment info.
  *
- * Issue #809: Adds image analyzer MCP hint for image attachments.
- * Issue #656: Enhanced prompt for better image analyzer MCP scheduling.
+ * Issue #3679: Removed hardcoded MCP tool usage guidance.
+ * Modern models support native multimodal input and can use the Read tool
+ * to view images directly. MCP tool discovery is handled by the SDK automatically.
  */
 function buildFeishuAttachmentExtra(ctx: MessageBuilderContext): string {
   const { msg: { attachments } } = ctx;
@@ -125,57 +126,26 @@ function buildFeishuAttachmentExtra(ctx: MessageBuilderContext): string {
     return '';
   }
 
-  const hasImageAttachment = attachments.some(att =>
+  const imageAttachments = attachments.filter(att =>
     att.mimeType?.startsWith('image/')
   );
 
-  if (!hasImageAttachment || !hasImageAnalyzerMcp()) {
+  if (imageAttachments.length === 0) {
     return '';
   }
 
+  const imageList = imageAttachments
+    .map(att => `- ${att.fileName || 'image'} (${att.localPath || 'no local path'})`)
+    .join('\n');
+
   return `
 
-## 🖼️ Image Analysis Required
+## 📎 Image Attachments
 
-The user has attached image(s). **You MUST analyze the image content before responding** to provide accurate assistance.
+The user has attached ${imageAttachments.length === 1 ? 'an image' : `${imageAttachments.length} images`}:
+${imageList}
 
-### How to Analyze Images
-
-Use the \`mcp__4_5v_mcp__analyze_image\` tool (or \`analyze_image\` if available):
-
-\`\`\`
-mcp__4_5v_mcp__analyze_image(
-  imageSource: "local file path from attachment",
-  prompt: "Describe what you see in this image in detail"
-)
-\`\`\`
-
-### Analysis Workflow
-
-1. **First**: Call the image analysis tool with the image's local path
-2. **Then**: Based on the analysis result, respond to the user's request
-3. **Important**: Do NOT guess or make assumptions about image content without analysis
-
-### Alternative: Native Multimodal
-
-If your model supports native multimodal input, you can also use the Read tool to view images directly. However, for non-native multimodal models, the MCP tool provides better image understanding.`;
-}
-
-/**
- * Check if image analyzer MCP is configured.
- *
- * Issue #809: Detects image analyzer MCP server configuration.
- * Common names: '4_5v_mcp', 'glm-vision', 'image-analyzer', etc.
- */
-function hasImageAnalyzerMcp(): boolean {
-  const mcpServers = Config.getMcpServersConfig();
-  if (!mcpServers) {
-    return false;
-  }
-
-  // Check for common image analyzer MCP server names
-  const imageAnalyzerNames = ['4_5v_mcp', 'glm-vision', 'image-analyzer', 'vision'];
-  return imageAnalyzerNames.some(name => name in mcpServers);
+Use the Read tool to view image files directly.`;
 }
 
 /**

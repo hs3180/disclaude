@@ -5,7 +5,7 @@
  * the core MessageBuilder.
  * Issue #1499: Moved from @disclaude/worker-node to @disclaude/primary-node.
  *
- * Issue #809: Tests for image analyzer MCP hint in buildAttachmentExtra.
+ * Issue #3679: Updated buildAttachmentExtra tests — removed MCP tool guidance.
  * Issue #955: Tests for persisted history context in session restoration.
  * Issue #962: Tests for output format guidance to prevent raw JSON in responses.
  */
@@ -22,17 +22,6 @@ const withTools = (tools: string[]): ChannelCapabilities => ({
   supportedMcpTools: tools,
 });
 
-// Mock config
-vi.mock('@disclaude/core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@disclaude/core')>();
-  return {
-    ...actual,
-    Config: {
-      ...actual.Config,
-      getMcpServersConfig: vi.fn(() => null),
-    },
-  };
-});
 
 describe('MessageBuilder with Feishu sections', () => {
   let messageBuilder: MessageBuilder;
@@ -104,13 +93,8 @@ describe('MessageBuilder with Feishu sections', () => {
     });
   });
 
-  describe('buildAttachmentExtra - image analyzer hint (Issue #809)', () => {
-    it('should include image analyzer hint for image attachments when MCP is configured', async () => {
-      const { Config } = await import('@disclaude/core');
-      vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
-        '4_5v_mcp': { command: 'test-command' },
-      } as any);
-
+  describe('buildAttachmentExtra - image attachment info (Issue #3679)', () => {
+    it('should include image attachment info for image attachments', () => {
       const imageAttachment = [{
         id: 'test-id',
         fileName: 'test.png',
@@ -128,44 +112,52 @@ describe('MessageBuilder with Feishu sections', () => {
         attachments: imageAttachment,
       } as MessageData, 'chat-123');
 
-      // Issue #656: Enhanced image analysis prompt
-      expect(result).toContain('Image Analysis Required');
-      expect(result).toContain('mcp__4_5v_mcp__analyze_image');
-      expect(result).toContain('MUST analyze the image content');
-      expect(result).toContain('Analysis Workflow');
-    });
-
-    it('should not include image analyzer hint when no image analyzer MCP is configured', async () => {
-      const { Config } = await import('@disclaude/core');
-      vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce(undefined as any);
-
-      const imageAttachment = [{
-        id: 'test-id',
-        fileName: 'test.png',
-        mimeType: 'image/png',
-        size: 1024,
-        localPath: '/tmp/test.png',
-        source: 'user' as const,
-        createdAt: Date.now(),
-      }];
-
-      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
-      const result = builder.buildEnhancedContent({
-        text: 'Hello',
-        messageId: 'msg-123',
-        attachments: imageAttachment,
-      } as MessageData, 'chat-123');
-
-      expect(result).not.toContain('Image Analysis Required');
+      // Issue #3679: Simple image attachment info, no MCP tool guidance
+      expect(result).toContain('Image Attachments');
+      expect(result).toContain('test.png');
+      expect(result).toContain('/tmp/test.png');
+      expect(result).toContain('Read tool');
+      // Should NOT contain old MCP tool guidance
       expect(result).not.toContain('mcp__4_5v_mcp__analyze_image');
+      expect(result).not.toContain('MUST analyze the image content');
+      expect(result).not.toContain('Analysis Workflow');
     });
 
-    it('should not include image analyzer hint for non-image attachments', async () => {
-      const { Config } = await import('@disclaude/core');
-      vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
-        '4_5v_mcp': { command: 'test-command' },
-      } as any);
+    it('should list multiple image attachments', () => {
+      const imageAttachments = [
+        {
+          id: 'id-1',
+          fileName: 'photo1.jpg',
+          mimeType: 'image/jpeg',
+          size: 2048,
+          localPath: '/tmp/photo1.jpg',
+          source: 'user' as const,
+          createdAt: Date.now(),
+        },
+        {
+          id: 'id-2',
+          fileName: 'photo2.png',
+          mimeType: 'image/png',
+          size: 3072,
+          localPath: '/tmp/photo2.png',
+          source: 'user' as const,
+          createdAt: Date.now(),
+        },
+      ];
 
+      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: imageAttachments,
+      } as MessageData, 'chat-123');
+
+      expect(result).toContain('2 images');
+      expect(result).toContain('photo1.jpg');
+      expect(result).toContain('photo2.png');
+    });
+
+    it('should not include image info for non-image attachments', () => {
       const textAttachment = [{
         id: 'test-id',
         fileName: 'test.txt',
@@ -183,37 +175,17 @@ describe('MessageBuilder with Feishu sections', () => {
         attachments: textAttachment,
       } as MessageData, 'chat-123');
 
-      expect(result).not.toContain('Image Analysis Required');
+      expect(result).not.toContain('Image Attachments');
     });
 
-    it('should detect various image analyzer MCP names', async () => {
-      const { Config } = await import('@disclaude/core');
-      const mcpNames = ['4_5v_mcp', 'glm-vision', 'image-analyzer', 'vision'];
+    it('should not include image info when no attachments', () => {
+      const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-123');
 
-      for (const name of mcpNames) {
-        vi.mocked(Config.getMcpServersConfig).mockReturnValueOnce({
-          [name]: { command: 'test-command' },
-        } as any);
-
-        const imageAttachment = [{
-          id: 'test-id',
-          fileName: 'test.jpg',
-          mimeType: 'image/jpeg',
-          size: 1024,
-          localPath: '/tmp/test.jpg',
-          source: 'user' as const,
-          createdAt: Date.now(),
-        }];
-
-        const builder = new MessageBuilder(createFeishuMessageBuilderOptions());
-        const result = builder.buildEnhancedContent({
-          text: 'Hello',
-          messageId: 'msg-123',
-          attachments: imageAttachment,
-        } as MessageData, 'chat-123');
-
-        expect(result).toContain('Image Analysis Required');
-      }
+      expect(result).not.toContain('Image Attachments');
     });
   });
 

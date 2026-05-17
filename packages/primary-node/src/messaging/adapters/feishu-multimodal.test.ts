@@ -16,19 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder, type MessageData } from '@disclaude/core';
 import { createFeishuMessageBuilderOptions } from './feishu-message-builder.js';
 
-// Mock config
-vi.mock('@disclaude/core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@disclaude/core')>();
-  return {
-    ...actual,
-    Config: {
-      ...actual.Config,
-      getMcpServersConfig: vi.fn(() => ({
-        '4_5v_mcp': { command: 'test-command' },
-      })),
-    },
-  };
-});
+// Issue #3679: Removed Config mock — no longer needed since hasImageAnalyzerMcp() was removed
 
 describe('Multimodal Message Handling (Issue #808)', () => {
   let messageBuilder: MessageBuilder;
@@ -79,9 +67,10 @@ describe('Multimodal Message Handling (Issue #808)', () => {
       expect(result).toContain(imageAttachment.localPath);
       expect(result).toContain('image/png');
 
-      // Should include image analyzer hint
-      expect(result).toContain('## 🖼️ Image Analysis Required');
-      expect(result).toContain('mcp__4_5v_mcp__analyze_image');
+      // Issue #3679: Should include image attachment info (no MCP guidance)
+      expect(result).toContain('## 📎 Image Attachments');
+      expect(result).toContain('Read tool');
+      expect(result).not.toContain('mcp__4_5v_mcp__analyze_image');
     });
 
     it('should handle JPEG image', () => {
@@ -154,8 +143,9 @@ describe('Multimodal Message Handling (Issue #808)', () => {
       // Should show attachment count
       expect(result).toContain('2 file(s)');
 
-      // Should include image analyzer hint
-      expect(result).toContain('## 🖼️ Image Analysis Required');
+      // Issue #3679: Should include image attachment info (no MCP guidance)
+      expect(result).toContain('## 📎 Image Attachments');
+      expect(result).toContain('2 images');
     });
 
     it('should handle multiple images with different formats', () => {
@@ -262,7 +252,8 @@ console.log(data.value);
 
       expect(result).toContain(userText);
       expect(result).toContain('code-screenshot.png');
-      expect(result).toContain('analyze_image');
+      // Issue #3679: No longer includes MCP tool name
+      expect(result).toContain('Read tool');
     });
 
     it('should handle error screenshot for debugging', () => {
@@ -295,12 +286,7 @@ console.log(data.value);
   });
 
   describe('Image type detection', () => {
-    it('should correctly identify image types', async () => {
-      const { Config } = await import('@disclaude/core');
-      vi.mocked(Config.getMcpServersConfig).mockReturnValue({
-        '4_5v_mcp': { command: 'test-command' },
-      } as any);
-
+    it('should correctly identify image types', () => {
       const imageTypes = [
         { mimeType: 'image/png', fileName: 'test.png' },
         { mimeType: 'image/jpeg', fileName: 'test.jpg' },
@@ -318,17 +304,13 @@ console.log(data.value);
           attachments: [attachment],
         } as MessageData, 'chat-789');
 
-        expect(result).toContain('## 🖼️ Image Analysis Required');
-        expect(result).toContain(mimeType);
+        // Issue #3679: Shows image attachment info, not MCP guidance
+        expect(result).toContain('## 📎 Image Attachments');
+        expect(result).toContain(fileName);
       }
     });
 
-    it('should not show image hint for non-image files', async () => {
-      const { Config } = await import('@disclaude/core');
-      vi.mocked(Config.getMcpServersConfig).mockReturnValue({
-        '4_5v_mcp': { command: 'test-command' },
-      } as any);
-
+    it('should not show image info for non-image files', () => {
       const pdfAttachment: any = {
         id: 'test-id',
         fileName: 'document.pdf',
@@ -345,7 +327,7 @@ console.log(data.value);
         attachments: [pdfAttachment],
       } as MessageData, 'chat-789');
 
-      expect(result).not.toContain('## 🖼️ Image Analysis Required');
+      expect(result).not.toContain('## 📎 Image Attachments');
       expect(result).toContain('document.pdf');
     });
   });
