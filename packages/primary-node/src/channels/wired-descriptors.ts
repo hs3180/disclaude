@@ -158,21 +158,6 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     };
     context.controlHandlerContext.triggerMode = triggerModeAdapter;
 
-    // 2b. Issue #2291: Initialize trigger mode from persisted temp chat records.
-    // Supports both new `triggerMode` enum and legacy `passiveMode` boolean.
-    const chatStore = context.primaryNode.getChatStore();
-    chatStore.listTempChats().then(records => {
-      const triggerModeManager = feishuChannel.getTriggerModeManager();
-      const loaded = triggerModeManager.initFromRecords(
-        records.map(r => ({ chatId: r.chatId, triggerMode: r.triggerMode, passiveMode: r.passiveMode }))
-      );
-      if (loaded > 0) {
-        context.logger.info({ count: loaded }, 'Initialized trigger mode from chat store records');
-      }
-    }).catch(err => {
-      context.logger.warn({ err }, 'Failed to initialize trigger mode from chat store');
-    });
-
     // 3. Register IPC handlers for MCP Server connections
     // Base handlers reuse the same channel.sendMessage pattern as ChatAgentCallbacks
     // (Issue #1555: unified handler injection — avoids duplication)
@@ -221,23 +206,6 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
           : buildActionPrompts(options);
 
         return { messageId, actionPrompts: resolvedActionPrompts };
-      },
-      // Issue #1703: Temp chat lifecycle management handlers
-      listTempChats: async () => {
-        const chatStore = context.primaryNode.getChatStore();
-        const records = await chatStore.listTempChats();
-        return records.map(r => ({
-          chatId: r.chatId,
-          createdAt: r.createdAt,
-          expiresAt: r.expiresAt,
-          creatorChatId: r.creatorChatId,
-          responded: r.response !== undefined,
-        }));
-      },
-      markChatResponded: async (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => {
-        const chatStore = context.primaryNode.getChatStore();
-        const updated = await chatStore.markTempChatResponded(chatId, response);
-        return { success: updated };
       },
     };
 

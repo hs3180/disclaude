@@ -51,8 +51,6 @@ import {
   // Issue #1382: Unified schedule executor
   createScheduleExecutor,
   type SchedulerCallbacks,
-  // Issue #1703: Temp chat lifecycle management
-  ChatStore,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
 } from '@disclaude/core';
@@ -162,9 +160,6 @@ export class PrimaryNode extends EventEmitter {
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
 
-  // Temp chat data store (Issue #1703)
-  protected chatStore: ChatStore;
-
   constructor(config: PrimaryNodeOptions = {}) {
     super();
     this.port = config.port || 3001;
@@ -183,13 +178,6 @@ export class PrimaryNode extends EventEmitter {
 
     // Initialize InteractiveContextStore (Issue #1572)
     this.interactiveContextStore = new InteractiveContextStore();
-
-    // Initialize ChatStore for temp chat record management (Issue #1703)
-    // Note: TempChatLifecycleService was removed per Issue #2067 direction update.
-    // ChatStore is retained for use by channel wiring (wired-descriptors.ts).
-    const workspaceDir = Config.getWorkspaceDir();
-    const tempChatStoreDir = path.join(workspaceDir, 'schedules', '.temp-chats');
-    this.chatStore = new ChatStore({ storeDir: tempChatStoreDir });
 
     logger.info({
       nodeId: this.localNodeId,
@@ -243,14 +231,6 @@ export class PrimaryNode extends EventEmitter {
    */
   getInteractiveContextStore(): InteractiveContextStore {
     return this.interactiveContextStore;
-  }
-
-  /**
-   * Get the ChatStore for temp chat lifecycle management.
-   * Issue #1703: Temp chat lifecycle management.
-   */
-  getChatStore(): ChatStore {
-    return this.chatStore;
   }
 
   /**

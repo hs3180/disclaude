@@ -67,7 +67,6 @@ function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSet
         generatePrompt: vi.fn().mockReturnValue('Generated prompt'),
       }),
       registerFeishuHandlers: vi.fn(),
-      getChatStore: vi.fn().mockReturnValue({}),
     },
     ...overrides,
   };
