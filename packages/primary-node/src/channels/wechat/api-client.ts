@@ -19,7 +19,13 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import type { WeChatGetUpdatesResponse, WeChatTypingResponse } from './types.js';
+import { readFile, stat } from 'node:fs/promises';
+import { basename } from 'node:path';
+import type {
+  WeChatGetUpdatesResponse,
+  WeChatTypingResponse,
+  WeChatUploadMediaResponse,
+} from './types.js';
 
 const logger = createLogger('WeChatApiClient');
 
@@ -255,7 +261,7 @@ export class WeChatApiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Typing indicator (Issue #1556 Phase 3.2)
+  // Typing indicator (Issue #1556 Phase 3.2 — original numbering)
   // ---------------------------------------------------------------------------
 
   /**
@@ -290,6 +296,157 @@ export class WeChatApiClient {
         'Failed to send typing indicator (non-fatal)',
       );
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Media handling (Issue #1556 Phase 3.2)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Upload a media file to the WeChat CDN.
+   *
+   * POST /ilink/bot/uploadfile (multipart/form-data)
+   *
+   * Reads the file from disk and uploads it. Returns the CDN URL
+   * and file metadata for use in sendImage/sendFile.
+   *
+   * @param filePath - Local path to the file to upload
+   * @returns Upload result with CDN URL and file metadata
+   */
+  async uploadMedia(filePath: string): Promise<{
+    url: string;
+    fileName: string;
+    fileSize: number;
+  }> {
+    const fileName = basename(filePath);
+    const { size: fileSize } = await stat(filePath);
+    const fileBuffer = await readFile(filePath);
+
+    const url = `${this.baseUrl}/ilink/bot/uploadfile`;
+    const formData = new FormData();
+    formData.append('file', new Blob([fileBuffer]), fileName);
+
+    const headers: Record<string, string> = {};
+    if (this.token?.trim()) {
+      headers['Authorization'] = `Bearer ${this.token.trim()}`;
+    }
+    headers['AuthorizationType'] = 'ilink_bot_token';
+    if (this.routeTag) {
+      headers['SKRouteTag'] = this.routeTag;
+    }
+
+    logger.debug({ filePath, fileName, fileSize }, 'Uploading media');
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '(unreadable)');
+      throw new Error(`WeChat upload error [${response.status}]: ${text}`);
+    }
+
+    const data = await response.json() as WeChatUploadMediaResponse;
+
+    const ret = data.ret as number | undefined;
+    if (ret !== undefined && ret !== 0) {
+      const errMsg = (data as Record<string, unknown>).err_msg as string
+        || (data as Record<string, unknown>).errmsg as string
+        || `Error code ${ret}`;
+      throw new Error(`WeChat upload error [${ret}]: ${errMsg}`);
+    }
+
+    if (!data.url) {
+      throw new Error('WeChat upload succeeded but returned no URL');
+    }
+
+    logger.info({ fileName, url: data.url }, 'Media uploaded successfully');
+
+    return {
+      url: data.url,
+      fileName: data.file_name ?? fileName,
+      fileSize: data.file_size ?? fileSize,
+    };
+  }
+
+  /**
+   * Send an image message.
+   *
+   * Uploads the image to CDN, then sends via sendmessage with type 2 item.
+   *
+   * @param params - Image parameters
+   */
+  async sendImage(params: {
+    to: string;
+    filePath: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, filePath, contextToken } = params;
+
+    const uploadResult = await this.uploadMedia(filePath);
+
+    const clientId = this.generateClientId();
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{
+          type: 2, // Image
+          image_item: { url: uploadResult.url },
+        }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, fileName: uploadResult.fileName }, 'Image sent');
+  }
+
+  /**
+   * Send a file message.
+   *
+   * Uploads the file to CDN, then sends via sendmessage with type 3 item.
+   *
+   * @param params - File parameters
+   */
+  async sendFile(params: {
+    to: string;
+    filePath: string;
+    contextToken?: string;
+  }): Promise<void> {
+    const { to, filePath, contextToken } = params;
+
+    const uploadResult = await this.uploadMedia(filePath);
+
+    const clientId = this.generateClientId();
+    const body = {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: 2, // FINISH
+        item_list: [{
+          type: 3, // File
+          file_item: {
+            url: uploadResult.url,
+            file_name: uploadResult.fileName,
+            file_size: uploadResult.fileSize,
+          },
+        }],
+        context_token: contextToken ?? undefined,
+      },
+      base_info: { channel_version: '0.0.1' },
+    };
+
+    await this.postJson('ilink/bot/sendmessage', body);
+    logger.debug({ to, fileName: uploadResult.fileName }, 'File sent');
   }
 
   // ---------------------------------------------------------------------------

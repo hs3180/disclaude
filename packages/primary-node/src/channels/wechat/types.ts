@@ -121,3 +121,23 @@ export interface WeChatTypingResponse {
   /** Return code (0 = success) */
   ret?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Media upload types (Issue #1556 Phase 3.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Response from the media upload API.
+ */
+export interface WeChatUploadMediaResponse {
+  /** Return code (0 = success) */
+  ret?: number;
+  /** CDN URL of the uploaded file */
+  url?: string;
+  /** File name */
+  file_name?: string;
+  /** File size in bytes */
+  file_size?: number;
+  /** Media type identifier */
+  media_type?: string;
+}
