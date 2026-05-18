@@ -532,6 +532,72 @@ describe('BaseAgent', () => {
     });
   });
 
+  describe('createSdkOptions - Issue #3706: GLM Agent Teams model tier mapping', () => {
+    it('should set ANTHROPIC_DEFAULT_SONNET_MODEL when GLM provider + Agent Teams enabled', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'glm-key', model: 'glm-5', provider: 'glm' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => true,
+      });
+
+      const glmAgent = new TestAgent({ apiKey: 'glm-key', model: 'glm-5', provider: 'glm' });
+      const options = glmAgent.testCreateSdkOptions();
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5');
+      expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
+    });
+
+    it('should NOT set tier model env vars when provider is anthropic', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'claude-sonnet', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => true,
+      });
+
+      const anthropicAgent = new TestAgent({ apiKey: 'key', model: 'claude-sonnet', provider: 'anthropic' });
+      const options = anthropicAgent.testCreateSdkOptions();
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+      expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+    });
+
+    it('should NOT set tier model env vars when Agent Teams is disabled', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'glm-key', model: 'glm-5', provider: 'glm' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const glmAgent = new TestAgent({ apiKey: 'glm-key', model: 'glm-5', provider: 'glm' });
+      const options = glmAgent.testCreateSdkOptions();
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    });
+
+    it('should respect user overrides in globalEnv for tier models', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'glm-key', model: 'glm-5', provider: 'glm' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'user-custom-opus',
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'user-custom-sonnet',
+        }),
+        isAgentTeamsEnabled: () => true,
+      });
+
+      const glmAgent = new TestAgent({ apiKey: 'glm-key', model: 'glm-5', provider: 'glm' });
+      const options = glmAgent.testCreateSdkOptions();
+      // User's explicit values should not be overridden
+      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('user-custom-opus');
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('user-custom-sonnet');
+    });
+  });
+
   describe('createSdkOptions - Issue #3532: CLAUDE_CONFIG_DIR for project-bound agents', () => {
     it('should NOT set CLAUDE_CONFIG_DIR when no cwd override (default)', () => {
       const options = agent.testCreateSdkOptions();

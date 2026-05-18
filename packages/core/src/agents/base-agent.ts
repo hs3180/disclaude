@@ -193,6 +193,26 @@ export abstract class BaseAgent implements Disposable {
     };
     if (this.isAgentTeamsEnabled()) {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
+
+      // Issue #3706: When using non-Anthropic provider with Agent Teams,
+      // set SDK model tier env vars so team workers use correct model names.
+      // Without this, the SDK resolves opus/sonnet/haiku to Claude model names
+      // (e.g., "claude-opus-4") that the non-Anthropic API endpoint doesn't
+      // recognize, causing workers to produce text-only responses without
+      // tool_use blocks (infinite idle loop).
+      if (this.provider !== 'anthropic') {
+        const opusModel = Config.getModelForTier('high');
+        if (opusModel && !globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL) {
+          globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = opusModel;
+        }
+        if (this.model && !globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL) {
+          globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = this.model;
+        }
+        const haikuModel = Config.getModelForTier('low');
+        if (haikuModel && !globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
+          globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = haikuModel;
+        }
+      }
     }
 
     // Issue #3532: Set CLAUDE_CONFIG_DIR to workspace .claude dir when project-bound.
