@@ -563,5 +563,32 @@ describe('BaseAgent', () => {
       const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
       expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
     });
+
+    it('should not leak CLAUDE_CONFIG_DIR into process.env (injection isolation)', () => {
+      const originalEnvValue = process.env.CLAUDE_CONFIG_DIR;
+      delete process.env.CLAUDE_CONFIG_DIR;
+
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({ EXISTING_VAR: 'preserved' }),
+        isAgentTeamsEnabled: () => false,
+      });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
+
+      // CLAUDE_CONFIG_DIR should be in SDK options env
+      expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
+      // But should NOT leak into process.env
+      expect(process.env.CLAUDE_CONFIG_DIR).toBeUndefined();
+      // Other env vars should be preserved
+      expect(options.env?.EXISTING_VAR).toBe('preserved');
+
+      // Restore original env
+      if (originalEnvValue !== undefined) {
+        process.env.CLAUDE_CONFIG_DIR = originalEnvValue;
+      }
+    });
   });
 });
