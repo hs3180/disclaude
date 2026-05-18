@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildChatHistorySection,
   buildPersistedHistorySection,
+  buildThreadContextSection,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
@@ -57,6 +58,26 @@ describe('buildPersistedHistorySection', () => {
     expect(result).toContain('Previous Session Context');
     expect(result).toContain('service was recently restarted');
     expect(result).toContain('Previous conversation...');
+  });
+});
+
+describe('buildThreadContextSection', () => {
+  it('should return empty string when no context is provided', () => {
+    expect(buildThreadContextSection()).toBe('');
+    expect(buildThreadContextSection(undefined)).toBe('');
+  });
+
+  it('should return formatted section when thread context is provided', () => {
+    const result = buildThreadContextSection('👤 Root message\n\n🤖 Bot reply');
+    expect(result).toContain('Thread Context');
+    expect(result).toContain('topic group thread');
+    expect(result).toContain('👤 Root message');
+    expect(result).toContain('🤖 Bot reply');
+  });
+
+  it('should mention conversation history from oldest to newest', () => {
+    const result = buildThreadContextSection('some thread context');
+    expect(result).toContain('oldest to newest');
   });
 });
 

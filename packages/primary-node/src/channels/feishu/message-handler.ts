@@ -503,6 +503,102 @@ export class MessageHandler {
   }
 
   /**
+   * Get thread context by walking up the parent_id chain in topic groups.
+   *
+   * Fetches messages in the reply chain from root to the immediate parent,
+   * building a chronological thread history for the agent to understand
+   * the full conversation context within the thread.
+   *
+   * Issue #3641 sub-problem 1: Thread context retrieval for topic groups.
+   */
+  private async getThreadContext(parentId: string, maxDepth: number = 10): Promise<string | undefined> {
+    if (!this.client) {
+      return undefined;
+    }
+
+    try {
+      // Walk up the parent_id chain to collect all thread messages
+      const threadMessages: Array<{ messageId: string; content: string; senderType: string }> = [];
+      const visitedIds = new Set<string>();
+      let currentId: string | undefined = parentId;
+
+      while (currentId && threadMessages.length < maxDepth && !visitedIds.has(currentId)) {
+        visitedIds.add(currentId);
+
+        const response = await this.client.im.message.get({
+          path: { message_id: currentId },
+          params: { user_id_type: 'open_id' },
+        });
+
+        const msg = response.data as {
+          message?: {
+            message_type?: string;
+            content?: string;
+            message_id?: string;
+            parent_id?: string;
+            sender?: { sender_type?: string };
+          };
+        };
+
+        if (!msg?.message) {
+          break;
+        }
+
+        const text = this.extractMessageText(msg.message.message_type, msg.message.content || '{}');
+        if (text) {
+          threadMessages.push({
+            messageId: msg.message.message_id || currentId,
+            content: text,
+            senderType: msg.message.sender?.sender_type === 'app' ? 'bot' : 'user',
+          });
+        }
+
+        // Walk to parent
+        currentId = msg.message.parent_id;
+      }
+
+      if (threadMessages.length === 0) {
+        return undefined;
+      }
+
+      // Reverse to get chronological order (oldest first)
+      threadMessages.reverse();
+
+      // Format as thread history
+      const lines = threadMessages.map(m => {
+        const label = m.senderType === 'bot' ? '🤖' : '👤';
+        return `${label} ${m.content}`;
+      });
+
+      return lines.join('\n\n');
+    } catch (error) {
+      logger.debug({ err: error, parentId }, 'Failed to get thread context');
+      return undefined;
+    }
+  }
+
+  /**
+   * Extract plain text from a Feishu message content string.
+   */
+  private extractMessageText(messageType: string | undefined, content: string): string {
+    if (!messageType || !content) {
+      return '';
+    }
+
+    try {
+      const parsed = JSON.parse(content);
+      if (messageType === 'text') {
+        return parsed.text || '';
+      } else if (messageType === 'post' && parsed.content && Array.isArray(parsed.content)) {
+        return this.parsePostContent(parsed.content);
+      }
+    } catch {
+      return '';
+    }
+    return '';
+  }
+
+  /**
    * Get quoted/replied message content.
    *
    * Supports text, post, interactive, image, file, and media message types.
@@ -949,6 +1045,12 @@ export class MessageHandler {
       chatHistoryContext = await this.getChatHistoryContext(chat_id);
     }
 
+    // Issue #3641 sub-problem 1: Get thread context for topic groups
+    let threadContext: string | undefined;
+    if (chat_type === 'topic' && parent_id) {
+      threadContext = await this.getThreadContext(parent_id);
+    }
+
     // Build metadata
     const metadata: Record<string, unknown> = {};
     if (chat_type) {
@@ -959,6 +1061,9 @@ export class MessageHandler {
     }
     if (chatHistoryContext) {
       metadata.chatHistoryContext = chatHistoryContext;
+    }
+    if (threadContext) {
+      metadata.threadContext = threadContext;
     }
 
     // Build attachments from quoted message if available

@@ -568,6 +568,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * @param senderOpenId - Optional sender's open_id for @ mentions
    * @param attachments - Optional file attachments
    * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
+   * @param threadContext - Optional thread context for topic groups (Issue #3641)
    */
   async processMessage(
     chatId: string,
@@ -576,7 +577,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     senderOpenId?: string,
     attachments?: MessageData['attachments'],
     chatHistoryContext?: string,
-    chatType?: string
+    chatType?: string,
+    threadContext?: string
   ): Promise<void> {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -635,6 +637,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
       chatType: this.chatType,
+      threadContext,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {

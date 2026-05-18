@@ -1447,6 +1447,172 @@ describe('MessageHandler', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Thread context for topic groups (Issue #3641 sub-problem 1)
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — thread context for topic groups', () => {
+    it('should fetch thread context in topic group when parent_id exists', async () => {
+      mockState.isBotMentioned = true;
+      // Mock responses: quoted message + thread chain (parent → root)
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id) — fetches the immediate parent
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'First reply' }),
+                    message_id: 'msg_parent',
+                  },
+                },
+              })
+              // 2nd call: getThreadContext(parent_id) — walks up from parent
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'First reply' }),
+                    message_id: 'msg_parent',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              // 3rd call: getThreadContext continues to root
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'Root message' }),
+                    message_id: 'msg_root',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.threadContext).toBeDefined();
+      // Should contain both messages in chronological order (root first)
+      expect(msg.metadata.threadContext).toContain('Root message');
+      expect(msg.metadata.threadContext).toContain('First reply');
+      // Root should appear before first reply (chronological order)
+      const rootIdx = msg.metadata.threadContext.indexOf('Root message');
+      const replyIdx = msg.metadata.threadContext.indexOf('First reply');
+      expect(rootIdx).toBeLessThan(replyIdx);
+    });
+
+    it('should not fetch thread context for non-topic groups', async () => {
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'text',
+                  content: JSON.stringify({ text: 'Parent' }),
+                  message_id: 'msg_parent',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata?.threadContext).toBeUndefined();
+    });
+
+    it('should not fetch thread context when no parent_id', async () => {
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'New topic' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata?.threadContext).toBeUndefined();
+    });
+
+    it('should not fetch thread context without client', async () => {
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata?.threadContext).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // handleCardAction error paths
   // -----------------------------------------------------------------------
   describe('handleCardAction — error paths', () => {

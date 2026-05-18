@@ -32,6 +32,8 @@ export interface MessageData {
   persistedHistoryContext?: string;
   /** Chat type from the channel (e.g., 'p2p', 'group', 'topic'). Issue #3641 */
   chatType?: string;
+  /** Thread context for topic groups (Issue #3641 sub-problem 1) */
+  threadContext?: string;
 }
 
 /**
