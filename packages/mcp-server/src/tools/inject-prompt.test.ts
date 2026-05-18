@@ -36,11 +36,6 @@ vi.mock('./ipc-utils.js', () => ({
   getIpcErrorMessage: vi.fn((_type, err) => `Error: ${err}`),
 }));
 
-// Mock credentials
-vi.mock('./credentials.js', () => ({
-  getFeishuCredentials: () => ({ appId: 'test-app-id', appSecret: 'test-secret' }),
-}));
-
 import { inject_prompt } from './inject-prompt.js';
 
 describe('inject_prompt', () => {

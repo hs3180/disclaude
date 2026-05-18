@@ -11,7 +11,6 @@
 
 import { createLogger, getIpcClient } from '@disclaude/core';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
-import { getFeishuCredentials } from './credentials.js';
 import type { SendMessageResult } from './types.js';
 
 const logger = createLogger('InjectPrompt');
@@ -39,14 +38,6 @@ export async function inject_prompt(params: {
     }
     if (!chatId) {
       throw new Error('chatId is required');
-    }
-
-    const { appId, appSecret } = getFeishuCredentials();
-
-    if (!appId || !appSecret) {
-      const errorMsg = 'Feishu credentials not configured. Please set FEISHU_APP_ID and FEISHU_APP_SECRET in disclaude.config.yaml';
-      logger.error({ chatId }, errorMsg);
-      return { success: false, error: errorMsg, message: `❌ ${errorMsg}` };
     }
 
     // Check IPC availability

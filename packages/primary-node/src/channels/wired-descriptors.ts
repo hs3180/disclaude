@@ -23,6 +23,7 @@ import {
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
+import crypto from 'crypto';
 import { messageLogger } from './feishu/message-logger.js';
 import type {
   ChannelSetupContext,
@@ -219,7 +220,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
         context.logger.info({ chatId, promptLength: prompt.length }, 'injectPrompt: routing system message');
 
         const systemMessage: SystemMessage = {
-          id: `inject_${chatId}_${Date.now()}`,
+          id: `inject_${crypto.randomUUID()}`,
           source: 'system',
           trigger: 'command',
           payload: prompt,
