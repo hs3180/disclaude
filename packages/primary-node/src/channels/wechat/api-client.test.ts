@@ -567,4 +567,215 @@ describe('WeChatApiClient', () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('sendImage (Issue #1556 Phase 3.2)', () => {
+    it('should send image message via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendImage({ to: 'user-123', imageUrl: 'https://cdn.example.com/img.png' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('sendmessage'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.item_list[0].type).toBe(2);
+      expect(callBody.msg.item_list[0].image_item.url).toBe('https://cdn.example.com/img.png');
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendImage({ to: 'user-123', imageUrl: 'https://cdn.example.com/img.png', contextToken: 'ctx-abc' });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.context_token).toBe('ctx-abc');
+    });
+  });
+
+  describe('sendFile (Issue #1556 Phase 3.2)', () => {
+    it('should send file message via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendFile({
+        to: 'user-123',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+        fileName: 'document.pdf',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('sendmessage'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.item_list[0].type).toBe(3);
+      expect(callBody.msg.item_list[0].file_item.url).toBe('https://cdn.example.com/doc.pdf');
+      expect(callBody.msg.item_list[0].file_item.file_name).toBe('document.pdf');
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await client.sendFile({
+        to: 'user-123',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+        fileName: 'doc.pdf',
+        contextToken: 'ctx-abc',
+      });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.context_token).toBe('ctx-abc');
+    });
+  });
+
+  describe('uploadMedia (Issue #1556 Phase 3.2)', () => {
+    it('should upload file and return CDN URL', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file-abc.png',
+          file_key: 'key-123',
+        })),
+      });
+
+      client.setToken('test-token');
+      const result = await client.uploadMedia({
+        fileData: Buffer.from('fake-image-data'),
+        fileName: 'test.png',
+        mimeType: 'image/png',
+      });
+
+      expect(result.url).toBe('https://cdn.example.com/file-abc.png');
+      expect(result.fileKey).toBe('key-123');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('ilink/bot/upload'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('should throw when file is too large', async () => {
+      client.setToken('test-token');
+      const hugeBuffer = Buffer.alloc(21 * 1024 * 1024); // 21MB
+
+      await expect(client.uploadMedia({
+        fileData: hugeBuffer,
+        fileName: 'huge.bin',
+      })).rejects.toThrow('File too large');
+    });
+
+    it('should throw when response missing url or file_key', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('test-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('missing url or file_key');
+    });
+
+    it('should throw on HTTP error', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Server Error'),
+      });
+
+      client.setToken('test-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('WeChat upload error [500]');
+    });
+
+    it('should throw on API error ret code', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 1001, err_msg: 'Upload failed' })),
+      });
+
+      client.setToken('test-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('WeChat upload error [1001]: Upload failed');
+    });
+
+    it('should use default MIME type when not provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file',
+          file_key: 'key',
+        })),
+      });
+
+      client.setToken('test-token');
+      await client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.bin',
+      });
+
+      // Verify the FormData was sent (can't easily inspect FormData body,
+      // but the call should succeed)
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('isImageFile', () => {
+    it('should detect PNG files', () => {
+      expect(client.isImageFile('photo.png')).toBe(true);
+    });
+
+    it('should detect JPG files', () => {
+      expect(client.isImageFile('photo.jpg')).toBe(true);
+    });
+
+    it('should detect JPEG files', () => {
+      expect(client.isImageFile('photo.jpeg')).toBe(true);
+    });
+
+    it('should detect GIF files', () => {
+      expect(client.isImageFile('animation.gif')).toBe(true);
+    });
+
+    it('should detect WebP files', () => {
+      expect(client.isImageFile('image.webp')).toBe(true);
+    });
+
+    it('should detect case-insensitively', () => {
+      expect(client.isImageFile('photo.PNG')).toBe(true);
+      expect(client.isImageFile('photo.Jpg')).toBe(true);
+    });
+
+    it('should not detect PDF files as image', () => {
+      expect(client.isImageFile('document.pdf')).toBe(false);
+    });
+
+    it('should not detect text files as image', () => {
+      expect(client.isImageFile('file.txt')).toBe(false);
+    });
+  });
 });
