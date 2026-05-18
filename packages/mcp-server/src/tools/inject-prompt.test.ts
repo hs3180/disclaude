@@ -33,7 +33,7 @@ vi.mock('@disclaude/core', () => ({
 const mockIsIpcAvailable = vi.fn().mockResolvedValue(true);
 vi.mock('./ipc-utils.js', () => ({
   isIpcAvailable: () => mockIsIpcAvailable(),
-  getIpcErrorMessage: vi.fn((type, err) => `Error: ${err}`),
+  getIpcErrorMessage: vi.fn((_type, err) => `Error: ${err}`),
 }));
 
 // Mock credentials
