@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, TaskRecordWriter, formatDuration, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -80,6 +80,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
+
+  // Task record writer (Issue #1234 Phase 1)
+  private readonly taskRecordWriter: TaskRecordWriter;
 
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
@@ -133,6 +136,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // When messageBuilderOptions is provided (e.g., by primary-node), use those;
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
+
+    // Issue #1234 Phase 1: Initialize task record writer for Markdown-based task logging
+    this.taskRecordWriter = new TaskRecordWriter(config.cwdProvider?.(config.chatId) || process.cwd());
 
     this.logger.info({ chatId: this.boundChatId, skipHistory: config.skipHistory }, 'ChatAgent created for chatId');
   }
@@ -941,6 +947,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
+
+          // Issue #1234 Phase 1: Append Markdown task record with actual duration
+          // Fire-and-forget — do not block the main iterator loop
+          this.taskRecordWriter.appendRecord({
+            title: parsed.content
+              ? parsed.content.split('\n')[0].slice(0, 80)
+              : 'Untitled task',
+            type: 'chore', // Default; the LLM can refine via prompt behavior
+            actualTime: formatDuration(completionMs),
+          }).catch(err => {
+            this.logger.debug({ err }, 'Task record write skipped');
+          });
 
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);

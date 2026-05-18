@@ -228,6 +228,7 @@ export {
 // Task module (Issue #1041 - migrated from worker-node)
 export type {
   TaskDefinitionDetails,
+  TaskRecord,
 } from './task/index.js';
 
 export {
@@ -235,6 +236,9 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  TaskRecordWriter,
+  formatDuration,
+  formatRecord,
 } from './task/index.js';
 
 // Queue module (Issue #1041)
