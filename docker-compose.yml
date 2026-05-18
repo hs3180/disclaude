@@ -130,3 +130,78 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Optional Chromium container with CDP endpoint for browser automation.
+  # Enables disclaude's site-miner agent to work in containerized deployments.
+  #
+  # Usage:
+  #   docker compose --profile playwright up -d
+  #
+  # The CDP endpoint is available at http://localhost:9222 by default.
+  # Configure the MCP server in disclaude.config.yaml to use this endpoint.
+  #
+  playwright:
+    image: ${DOCKER_IMAGE_PREFIX:-}mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    command:
+      - sh
+      - -c
+      - |
+        CHROME_BIN=$$(find /ms-playwright -name "chrome" -type f -executable | head -1)
+        if [ -z "$$CHROME_BIN" ]; then
+          echo "ERROR: Chrome binary not found in /ms-playwright"
+          exit 1
+        fi
+        echo "Starting Chromium CDP on port 9222..."
+        exec "$$CHROME_BIN" \
+          --headless=new \
+          --no-sandbox \
+          --disable-dev-shm-usage \
+          --disable-gpu \
+          --remote-debugging-port=9222 \
+          --remote-debugging-address=0.0.0.0 \
+          --disable-extensions \
+          --disable-default-apps \
+          --no-first-run \
+          --disable-background-networking \
+          --disable-sync \
+          --disable-translate \
+          --mute-audio \
+          --hide-scrollbars \
+          about:blank
+
+    ports:
+      - "9222:9222"
+
+    environment:
+      - TZ=Asia/Shanghai
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9222/json/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+    profiles:
+      - playwright
