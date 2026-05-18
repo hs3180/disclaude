@@ -31,8 +31,8 @@ export { send_card } from './send-card.js';
 // Send File
 export { send_file } from './send-file.js';
 
-// Inject Prompt (Issue #631)
-export { inject_prompt } from './inject-prompt.js';
+// Push to Agent (Issue #631)
+export { push_to_agent } from './push-to-agent.js';
 
 // Interactive Message
 export {

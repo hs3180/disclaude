@@ -685,25 +685,25 @@ export class UnixSocketIpcClient {
   }
 
   // ============================================================================
-  // Prompt injection (Issue #631)
+  // Push to agent (Issue #631)
   // ============================================================================
 
   /**
-   * Inject a prompt into a chat agent via IPC.
-   * Issue #631: Allows skills to inject initialization prompts into agents.
+   * Push an instruction to a chat agent via IPC.
+   * Issue #631: Allows skills to push instructions to agents.
    *
    * @param chatId - Target chat ID
-   * @param prompt - The prompt text to inject
+   * @param message - The instruction text to push
    */
-  async injectPrompt(
+  async pushToAgent(
     chatId: string,
-    prompt: string
+    message: string
   ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('injectPrompt', { chatId, prompt });
+      return await this.request('pushToAgent', { chatId, message });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      logger.error({ err: error, chatId }, 'injectPrompt failed');
+      logger.error({ err: error, chatId }, 'pushToAgent failed');
 
       let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
       if (err.message.startsWith('IPC_NOT_AVAILABLE')) {

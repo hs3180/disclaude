@@ -1,15 +1,15 @@
 /**
- * Tests for inject_prompt tool implementation.
+ * Tests for push_to_agent tool implementation.
  *
- * Issue #631: Non-blocking interaction — inject prompt into chat agent.
+ * Issue #631: Non-blocking interaction — push instruction to chat agent.
  *
- * @module mcp-server/tools/inject-prompt.test
+ * @module mcp-server/tools/push-to-agent.test
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock @disclaude/core before importing inject_prompt
-const mockInjectPrompt = vi.fn();
+// Mock @disclaude/core before importing push_to_agent
+const mockPushToAgent = vi.fn();
 const mockConnect = vi.fn();
 const mockIsConnected = vi.fn().mockReturnValue(false);
 const mockDisconnect = vi.fn();
@@ -22,7 +22,7 @@ vi.mock('@disclaude/core', () => ({
     warn: vi.fn(),
   }),
   getIpcClient: () => ({
-    injectPrompt: mockInjectPrompt,
+    pushToAgent: mockPushToAgent,
     connect: mockConnect,
     isConnected: mockIsConnected,
     disconnect: mockDisconnect,
@@ -36,9 +36,9 @@ vi.mock('./ipc-utils.js', () => ({
   getIpcErrorMessage: vi.fn((_type, err) => `Error: ${err}`),
 }));
 
-import { inject_prompt } from './inject-prompt.js';
+import { push_to_agent } from './push-to-agent.js';
 
-describe('inject_prompt', () => {
+describe('push_to_agent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset IPC availability mock to return true by default
@@ -49,55 +49,55 @@ describe('inject_prompt', () => {
     vi.restoreAllMocks();
   });
 
-  it('should inject prompt successfully', async () => {
-    mockInjectPrompt.mockResolvedValue({ success: true });
+  it('should push to agent successfully', async () => {
+    mockPushToAgent.mockResolvedValue({ success: true });
 
-    const result = await inject_prompt({
+    const result = await push_to_agent({
       chatId: 'oc_test123',
-      prompt: 'You are a discussion moderator.',
+      message: 'You are a discussion moderator.',
     });
 
     expect(result.success).toBe(true);
-    expect(result.message).toContain('Prompt injected');
-    expect(mockInjectPrompt).toHaveBeenCalledWith('oc_test123', 'You are a discussion moderator.');
+    expect(result.message).toContain('pushed to agent');
+    expect(mockPushToAgent).toHaveBeenCalledWith('oc_test123', 'You are a discussion moderator.');
   });
 
-  it('should return error when prompt is empty', async () => {
-    const result = await inject_prompt({
+  it('should return error when message is empty', async () => {
+    const result = await push_to_agent({
       chatId: 'oc_test123',
-      prompt: '',
+      message: '',
     });
 
     expect(result.success).toBe(false);
-    expect(result.message).toContain('prompt is required');
-    expect(mockInjectPrompt).not.toHaveBeenCalled();
+    expect(result.message).toContain('message is required');
+    expect(mockPushToAgent).not.toHaveBeenCalled();
   });
 
   it('should return error when chatId is empty', async () => {
-    const result = await inject_prompt({
+    const result = await push_to_agent({
       chatId: '',
-      prompt: 'Hello',
+      message: 'Hello',
     });
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('chatId is required');
-    expect(mockInjectPrompt).not.toHaveBeenCalled();
+    expect(mockPushToAgent).not.toHaveBeenCalled();
   });
 
   it('should return error when IPC fails', async () => {
-    mockInjectPrompt.mockResolvedValue({
+    mockPushToAgent.mockResolvedValue({
       success: false,
       error: 'Router not initialized',
       errorType: 'ipc_request_failed',
     });
 
-    const result = await inject_prompt({
+    const result = await push_to_agent({
       chatId: 'oc_test123',
-      prompt: 'Hello',
+      message: 'Hello',
     });
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('Router not initialized');
-    expect(mockInjectPrompt).toHaveBeenCalledWith('oc_test123', 'Hello');
+    expect(mockPushToAgent).toHaveBeenCalledWith('oc_test123', 'Hello');
   });
 });
