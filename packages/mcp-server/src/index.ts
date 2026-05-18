@@ -71,6 +71,7 @@ export {
   channelToolDefinitions,
   channelSdkTools,
   createChannelMcpServer,
+  report_task_progress,
 } from './channel-mcp.js';
 
 // Deprecated aliases (backward compatibility)

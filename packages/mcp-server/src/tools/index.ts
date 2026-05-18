@@ -34,6 +34,9 @@ export { send_file } from './send-file.js';
 // Push to Agent (Issue #631)
 export { push_to_agent } from './push-to-agent.js';
 
+// Report Task Progress (Issue #857)
+export { report_task_progress } from './report-task-progress.js';
+
 // Interactive Message
 export {
   send_interactive_message,

@@ -16,6 +16,7 @@ import {
   send_interactive,
   send_file,
   push_to_agent,
+  report_task_progress,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -33,6 +34,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
+export { report_task_progress } from './tools/report-task-progress.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -164,6 +166,24 @@ For display-only cards, use send_card instead.`,
       required: ['chatId', 'message'],
     },
     handler: push_to_agent,
+  },
+  report_task_progress: {
+    description: 'Send a task progress card to a chat. Use this to update the user on task progress during long-running operations.',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: 'Task identifier' },
+        chatId: { type: 'string', description: 'Target chat ID' },
+        status: { type: 'string', enum: ['running', 'completed', 'failed'], description: 'Current task status' },
+        currentStep: { type: 'string', description: 'Description of current activity' },
+        completedSteps: { type: 'number', description: 'Number of completed steps' },
+        totalSteps: { type: 'number', description: 'Total number of steps (0 if unknown)' },
+        elapsedTime: { type: 'string', description: 'Human-readable elapsed time' },
+        message: { type: 'string', description: 'Optional additional message' },
+      },
+      required: ['taskId', 'chatId', 'status', 'currentStep'],
+    },
+    handler: report_task_progress,
   },
 };
 
@@ -517,6 +537,81 @@ will be processed as a system command.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Push to agent failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  {
+    name: 'report_task_progress',
+    description: `Send a task progress card to a chat.
+
+Use this tool to update the user on task progress during long-running operations.
+The agent should decide WHEN to report based on task complexity and context —
+not at fixed intervals. Report when:
+- A significant milestone is reached
+- The user might wonder what's happening (no visible output for a while)
+- An important decision point or blocker is encountered
+- The task completes or fails
+
+## Parameters
+- **taskId**: Task identifier (string)
+- **chatId**: Target chat ID
+- **status**: Current task status: "running", "completed", or "failed"
+- **currentStep**: Description of current activity
+- **completedSteps**: Number of completed steps (optional, default 0)
+- **totalSteps**: Total number of steps (optional, 0 = unknown)
+- **elapsedTime**: Human-readable elapsed time like "2m 30s" (optional)
+- **message**: Optional additional context or details
+
+## Example
+\`\`\`json
+{
+  "taskId": "msg_abc123",
+  "chatId": "oc_xxx",
+  "status": "running",
+  "currentStep": "Running integration tests",
+  "completedSteps": 3,
+  "totalSteps": 5,
+  "elapsedTime": "2m 30s",
+  "message": "2 of 5 test suites passed so far"
+}
+\`\`\``,
+    parameters: z.object({
+      taskId: z.string().describe('Task identifier'),
+      chatId: z.string().describe('Target chat ID'),
+      status: z.enum(['running', 'completed', 'failed']).describe('Current task status'),
+      currentStep: z.string().describe('Description of current activity'),
+      completedSteps: z.number().optional().describe('Number of completed steps'),
+      totalSteps: z.number().optional().describe('Total number of steps (0 = unknown)'),
+      elapsedTime: z.string().optional().describe('Human-readable elapsed time'),
+      message: z.string().optional().describe('Optional additional message'),
+    }),
+    handler: async ({ taskId, chatId, status, currentStep, completedSteps, totalSteps, elapsedTime, message }: {
+      taskId: string;
+      chatId: string;
+      status: string;
+      currentStep: string;
+      completedSteps?: number;
+      totalSteps?: number;
+      elapsedTime?: string;
+      message?: string;
+    }) => await withTiming(timingLogger, 'mcp:report_task_progress', chatId, async () => {
+      // Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await report_task_progress({
+          taskId, chatId, status, currentStep,
+          completedSteps: completedSteps ?? 0,
+          totalSteps: totalSteps ?? 0,
+          elapsedTime: elapsedTime ?? '',
+          message: message ?? '',
+        });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Progress report failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },

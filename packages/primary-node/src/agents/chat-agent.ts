@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, TaskContext, TaskHistory, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -105,6 +105,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private taskCompletionPromise?: Promise<void>;
   private taskCompletionResolve?: () => void;
   private taskCompletionReject?: (error: Error) => void;
+
+  // Issue #857: Task progress tracking
+  private activeTaskContext?: TaskContext;
 
   constructor(config: ChatAgentConfig) {
     super(config);
@@ -565,7 +568,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * The message will be processed by the SDK via the channel's generator.
    *
    * Issue #644: Only accepts messages for the bound chatId.
-   * Issue #857: Triggers async complexity analysis for progress tracking.
+   * Issue #857: Creates TaskContext for progress tracking on each message.
    * Issue #1230: Attachs chat history on first message for new sessions.
    *
    * @param chatId - Platform-specific chat identifier (must match bound chatId)
@@ -607,6 +610,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Track thread root
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
+
+    // Issue #857: Create TaskContext for this message to track progress.
+    // The agent can use the report_task_progress MCP tool to send updates.
+    // TaskContext provides the data; the LLM decides when to report.
+    if (!this.activeTaskContext || this.activeTaskContext.isFinished) {
+      this.activeTaskContext = new TaskContext(messageId);
+      this.activeTaskContext.start(text.substring(0, 100));
+    }
 
     // Start session if needed
     if (!this.isSessionActive) {
@@ -901,6 +912,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             { chatId, toolCallCount, sinceLastToolMs: sinceLastTool, elapsedMs: now - startTime },
             'Tool call received'
           );
+          // Issue #857: Track tool calls in TaskContext
+          this.activeTaskContext?.recordToolCall();
         }
 
         this.logger.debug(
@@ -941,6 +954,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
+
+          // Issue #857: Complete TaskContext and record to TaskHistory
+          if (this.activeTaskContext?.isRunning) {
+            this.activeTaskContext.complete(parsed.content?.substring(0, 100));
+            this.recordTaskToHistory(this.activeTaskContext);
+          }
 
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
@@ -1264,6 +1283,30 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // and restart via startAgentLoop(), which creates a fresh query and channel.
 
     return true;
+  }
+
+  /**
+   * Record completed task to TaskHistory for learning (Issue #857).
+   *
+   * Persists task metrics so the agent can learn from past executions
+   * to provide better time estimates in the future.
+   */
+  private recordTaskToHistory(taskCtx: TaskContext): void {
+    const workspaceDir = Config.getWorkspaceDir();
+    const history = new TaskHistory(workspaceDir);
+    const progress = taskCtx.getProgress();
+
+    history.record({
+      taskId: taskCtx.taskId,
+      description: progress.currentActivity,
+      durationMs: taskCtx.getDurationMs(),
+      toolCallCount: progress.toolCallCount,
+      stepCount: progress.completedSteps,
+      success: progress.status === 'completed',
+      completedAt: new Date().toISOString(),
+    }).catch((err) => {
+      this.logger.error({ err, taskId: taskCtx.taskId }, 'Failed to record task to history');
+    });
   }
 
   /**
