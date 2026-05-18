@@ -26,9 +26,10 @@ describe('handleHelp', () => {
     expect(result.message).toContain('/help');
   });
 
-  it('should include /reset command', async () => {
+  it('should include /reset command with --no-context flag', async () => {
     const result = await handleHelp(mockCommand, mockContext);
     expect(result.message).toContain('/reset');
+    expect(result.message).toContain('--no-context');
   });
 
   it('should include /stop command', async () => {
@@ -46,9 +47,15 @@ describe('handleHelp', () => {
     expect(result.message).toContain('/restart');
   });
 
-  it('should include /trigger command', async () => {
+  it('should include /trigger command with auto mode', async () => {
     const result = await handleHelp(mockCommand, mockContext);
     expect(result.message).toContain('/trigger');
+    expect(result.message).toContain('auto');
+  });
+
+  it('should include /project command', async () => {
+    const result = await handleHelp(mockCommand, mockContext);
+    expect(result.message).toContain('/project');
   });
 
   it('should include /list-nodes command', async () => {
