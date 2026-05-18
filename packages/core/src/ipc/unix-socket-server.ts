@@ -78,6 +78,8 @@ export interface ChannelApiHandlers {
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
+  /** Inject a prompt into a chat agent (Issue #631) */
+  injectPrompt?: (chatId: string, prompt: string) => Promise<{ success: boolean }>;
 }
 
 /**
@@ -306,6 +308,34 @@ export function createInteractiveMessageHandler(
             request.payload as IpcRequestPayloads['markChatResponded'];
           try {
             const result = await handlers.markChatResponded(chatId, response);
+            return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Inject prompt into a chat agent (Issue #631)
+        case 'injectPrompt': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.injectPrompt) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'injectPrompt not supported by this channel',
+            };
+          }
+          const { chatId, prompt } =
+            request.payload as IpcRequestPayloads['injectPrompt'];
+          try {
+            const result = await handlers.injectPrompt(chatId, prompt);
             return { id: request.id, success: true, payload: { success: result.success } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';

@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  inject_prompt,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -31,6 +32,7 @@ export { setMessageSentCallback };
 export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
+export { inject_prompt } from './tools/inject-prompt.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -150,6 +152,18 @@ For display-only cards, use send_card instead.`,
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
+  },
+  inject_prompt: {
+    description: 'Inject a prompt into a chat agent, triggering agent creation if needed. Use this to send an initialization prompt to a newly created group/chat.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string', description: 'Target chat ID' },
+        prompt: { type: 'string', description: 'The prompt text to inject into the chat agent' },
+      },
+      required: ['chatId', 'prompt'],
+    },
+    handler: inject_prompt,
   },
 };
 
@@ -464,6 +478,45 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  {
+    name: 'inject_prompt',
+    description: `Inject a prompt into a chat agent, triggering agent creation if needed.
+
+Use this to send an initialization prompt to a newly created group/chat.
+The agent will be lazily created if it doesn't exist yet, and the prompt
+will be processed as a system command.
+
+## Parameters
+- **chatId**: Target chat ID (string)
+- **prompt**: The prompt text to inject (string)
+
+## Type Constraints (IMPORTANT)
+- **chatId**: MUST be a non-empty string
+- **prompt**: MUST be a non-empty string
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "prompt": "You are a discussion moderator. Please ask the group about their preferred coding style."}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target chat ID'),
+      prompt: z.string().describe('The prompt text to inject into the chat agent'),
+    }),
+    handler: async ({ chatId, prompt }: { chatId: string; prompt: string }) => await withTiming(timingLogger, 'mcp:inject_prompt', chatId, async () => {
+      // Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await inject_prompt({ chatId, prompt });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Prompt injection failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },

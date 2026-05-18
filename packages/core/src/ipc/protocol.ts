@@ -24,7 +24,9 @@ export type IpcRequestType =
   | 'sendInteractive'
   // Temporary chat lifecycle management (Issue #1703)
   | 'listTempChats'
-  | 'markChatResponded';
+  | 'markChatResponded'
+  // Inject prompt into a chat agent (Issue #631)
+  | 'injectPrompt';
 
 /**
  * IPC request payload types.
@@ -78,6 +80,11 @@ export interface IpcRequestPayloads {
       repliedAt: string;
     };
   };
+  // Inject prompt into a chat agent (Issue #631)
+  injectPrompt: {
+    chatId: string;
+    prompt: string;
+  };
 }
 
 /**
@@ -121,6 +128,10 @@ export interface IpcResponsePayloads {
     }>;
   };
   markChatResponded: {
+    success: boolean;
+  };
+  // Inject prompt into a chat agent (Issue #631)
+  injectPrompt: {
     success: boolean;
   };
 }

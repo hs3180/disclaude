@@ -18,6 +18,7 @@ import {
   type IncomingMessage,
   type FileRef,
   type FeishuApiHandlers,
+  type SystemMessage,
 } from '@disclaude/core';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
@@ -206,6 +207,29 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
           : buildActionPrompts(options);
 
         return { messageId, actionPrompts: resolvedActionPrompts };
+      },
+
+      // Issue #631: Inject prompt into a chat agent via InputMessageRouter
+      injectPrompt: async (chatId: string, prompt: string) => {
+        const router = context.inputMessageRouter;
+        if (!router) {
+          throw new Error('InputMessageRouter not initialized — cannot inject prompt');
+        }
+
+        context.logger.info({ chatId, promptLength: prompt.length }, 'injectPrompt: routing system message');
+
+        const systemMessage: SystemMessage = {
+          id: `inject_${chatId}_${Date.now()}`,
+          source: 'system',
+          trigger: 'command',
+          payload: prompt,
+          chatId,
+          createdAt: new Date().toISOString(),
+        };
+
+        await router.route(systemMessage);
+
+        return { success: true };
       },
     };
 
