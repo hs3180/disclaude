@@ -98,6 +98,7 @@ describe('Integration: UserMessage end-to-end (Feishu → MessageRouter → Agen
         },
       ],
       undefined,
+      undefined,
     );
   });
 
@@ -118,6 +119,7 @@ describe('Integration: UserMessage end-to-end (Feishu → MessageRouter → Agen
       'ou_sender1',
       undefined,
       '## Previous conversation\nUser: Hello\nBot: Hi!',
+      undefined,
     );
   });
 
@@ -137,9 +139,9 @@ describe('Integration: UserMessage end-to-end (Feishu → MessageRouter → Agen
     }
 
     expect(handler.handleUserMessage).toHaveBeenCalledTimes(3);
-    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(1, 'oc_chatA', 'Message A', 'fm-1', 'ou_sender1', undefined, undefined);
-    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(2, 'oc_chatB', 'Message B', 'fm-2', 'ou_sender1', undefined, undefined);
-    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(3, 'oc_chatA', 'Follow-up A', 'fm-3', 'ou_sender1', undefined, undefined);
+    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(1, 'oc_chatA', 'Message A', 'fm-1', 'ou_sender1', undefined, undefined, undefined);
+    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(2, 'oc_chatB', 'Message B', 'fm-2', 'ou_sender1', undefined, undefined, undefined);
+    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(3, 'oc_chatA', 'Follow-up A', 'fm-3', 'ou_sender1', undefined, undefined, undefined);
   });
 });
 

@@ -38,6 +38,7 @@ export interface IAgentMessageHandler {
    * @param senderOpenId - Optional sender open_id
    * @param attachments - Optional file attachments
    * @param chatHistoryContext - Optional chat history context
+   * @param chatType - Optional chat type (e.g., 'p2p', 'group', 'topic'). Issue #3641
    */
   handleUserMessage(
     chatId: string,
@@ -45,7 +46,8 @@ export interface IAgentMessageHandler {
     messageId: string,
     senderOpenId?: string,
     attachments?: FileRef[],
-    chatHistoryContext?: string
+    chatHistoryContext?: string,
+    chatType?: string
   ): Promise<void>;
 
   /**
@@ -178,7 +180,8 @@ export class MessageRouter {
       message.messageId,
       message.senderOpenId,
       message.attachments,
-      message.chatHistoryContext
+      message.chatHistoryContext,
+      message.chatType
     );
   }
 
