@@ -185,6 +185,7 @@ export function createDefaultMessageHandler(
     if (context.inputMessageRouter) {
       const senderOpenId = userId;
       const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
+      const threadContext = metadata?.threadContext as string | undefined;
       const fileRefs = options.extractAttachments?.(message);
 
       const userMessage: UserMessage = {
@@ -196,6 +197,7 @@ export function createDefaultMessageHandler(
         senderOpenId,
         attachments: fileRefs,
         chatHistoryContext,
+        threadContext,
         createdAt: message.timestamp ? new Date(message.timestamp).toISOString() : new Date().toISOString(),
       };
 
@@ -223,12 +225,13 @@ export function createDefaultMessageHandler(
     const senderOpenId = userId;
     const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
     const chatType = metadata?.chatType as string | undefined;
+    const threadContext = metadata?.threadContext as string | undefined;
 
     // Convert attachments if the channel supports them
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      void agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext, chatType);
+      void agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext, chatType, threadContext);
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);
