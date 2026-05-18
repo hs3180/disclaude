@@ -113,6 +113,9 @@ export class MessageBuilder {
   private buildRegularContent(ctx: MessageBuilderContext): string {
     const { msg, chatId, capabilities } = ctx;
 
+    // Issue #3641: Detect topic thread to skip next-step guidance
+    const isTopicThread = msg.chatType === 'topic';
+
     // Channel-specific header (e.g., "You are responding in a Feishu chat.")
     const header = this.options.buildHeader?.(ctx);
 
@@ -136,7 +139,8 @@ export class MessageBuilder {
     const toolsSection = this.options.buildToolsSection?.(ctx);
 
     // Core guidance sections (framework-agnostic)
-    const nextStepGuidance = buildNextStepGuidance(capabilities?.supportsCard !== false);
+    // Issue #3641: Skip next-step guidance in topic threads to reduce noise
+    const nextStepGuidance = isTopicThread ? '' : buildNextStepGuidance(capabilities?.supportsCard !== false);
     const outputFormatGuidance = buildOutputFormatGuidance();
     const taskRecordGuidance = buildTaskRecordGuidance();
     const locationAwarenessGuidance = buildLocationAwarenessGuidance();

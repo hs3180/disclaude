@@ -83,6 +83,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
+
+  /**
+   * Chat type for the current conversation (e.g., 'p2p', 'group', 'topic').
+   * Updated on each processMessage() call. Issue #3641.
+   */
+  private chatType?: string;
   private historyLoaded = false;
   private historyLoadPromise?: Promise<void>;
 
@@ -569,7 +575,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     messageId: string,
     senderOpenId?: string,
     attachments?: MessageData['attachments'],
-    chatHistoryContext?: string
+    chatHistoryContext?: string,
+    chatType?: string
   ): Promise<void> {
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -581,9 +588,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     this.logger.info(
-      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, hasFirstMessageHistory: !!this.firstMessageHistoryContext },
+      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, hasFirstMessageHistory: !!this.firstMessageHistoryContext, chatType },
       'processMessage called'
     );
+
+    // Issue #3641: Store chat type for topic group detection
+    if (chatType) {
+      this.chatType = chatType;
+    }
 
     // Track thread root
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
@@ -622,6 +634,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
+      chatType: this.chatType,
     }, chatId, capabilities);
 
     const userMessage: StreamingUserMessage = {
@@ -887,9 +900,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         );
 
         // Send message content to callback
+        // Issue #3641: In topic group threads, filter intermediate messages
+        // (tool_use, tool_result, tool_progress) to reduce noise.
         if (parsed.content) {
-          const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-          await this.callbacks.sendMessage(chatId, parsed.content, threadRoot);
+          const isTopicThread = this.chatType === 'topic';
+          const isIntermediateMessage = parsed.type === 'tool_use' || parsed.type === 'tool_result' || parsed.type === 'tool_progress';
+
+          if (isTopicThread && isIntermediateMessage) {
+            this.logger.debug(
+              { chatId, messageCount, type: parsed.type },
+              'Filtered intermediate message in topic thread'
+            );
+          } else {
+            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+            await this.callbacks.sendMessage(chatId, parsed.content, threadRoot);
+          }
         }
 
         // Check for completion
