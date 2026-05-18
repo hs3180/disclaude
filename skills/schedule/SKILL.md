@@ -10,14 +10,14 @@ Manage schedules with full CRUD operations.
 
 ## When to Use This Skill
 
-**✅ Use this skill for:**
+**Use this skill for:**
 - Creating scheduled/recurring tasks
 - Setting up cron jobs
 - Managing timers and reminders
 - Periodic executions (daily, weekly, monthly, etc.)
 - Viewing or modifying existing schedules
 
-**❌ DO NOT use this skill for:**
+**DO NOT use this skill for:**
 - One-time code changes → Use `/deep-task` skill instead
 - Bug fixes or feature implementations → Use `/deep-task` skill instead
 - Single execution operations → Use `/deep-task` skill instead
@@ -41,9 +41,21 @@ When invoked, you receive:
 
 ## Schedule File Location
 
-Files stored in `workspace/schedules/` as Markdown files.
+Files stored in `workspace/schedules/` using **subdirectory layout** (mirroring the skills/ convention).
 
-Filename format: `{name}-{uuid}.md`
+Each schedule lives in its own subdirectory:
+
+```
+workspace/schedules/<slug>/SCHEDULE.md
+```
+
+- `<slug>`: A short, descriptive, filesystem-safe name (lowercase, hyphens instead of spaces, no special characters)
+- The file must be named exactly `SCHEDULE.md` (uppercase)
+
+**Examples:**
+- `workspace/schedules/daily-report/SCHEDULE.md`
+- `workspace/schedules/issue-solver/SCHEDULE.md`
+- `workspace/schedules/weekly-summary/SCHEDULE.md`
 
 ---
 
@@ -53,11 +65,15 @@ Filename format: `{name}-{uuid}.md`
 
 **Steps:**
 1. Collect schedule info:
-   - Name (short description for filename)
+   - Name (short description)
+   - Slug (filesystem-safe directory name, lowercase with hyphens)
    - Cron expression (cron format or natural language)
    - Content (prompt to execute)
 
-2. Generate unique filename: `{name}-{uuid}.md`
+2. Create directory and file:
+   ```
+   workspace/schedules/<slug>/SCHEDULE.md
+   ```
 
 3. Create file with `Write` tool
 
@@ -86,6 +102,8 @@ Schedule content prompt here
 | `blocking` | No | `true` | Skip execution if previous run still in progress |
 | `chatId` | Yes | - | Chat ID for execution context |
 | `createdAt` | No | - | Creation timestamp |
+| `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
+| `modelTier` | No | - | Model tier for execution (e.g., "fast", "default") |
 
 ---
 
@@ -96,7 +114,7 @@ Schedule content prompt here
 This preserves the configuration for potential future reactivation and maintains an audit trail.
 
 **Steps:**
-1. Find schedule files with `Glob`: `workspace/schedules/*.md`
+1. Find schedule files with `Glob`: `workspace/schedules/*/SCHEDULE.md`
 2. Read files with `Read`
 3. Filter by current `chatId`
 4. Confirm schedule to disable
@@ -133,10 +151,12 @@ enabled: false
 - `name`: Schedule name
 - `enabled`: Enable/disable
 - `blocking`: Blocking mode
+- `model`: Model selection
+- `modelTier`: Model tier selection
 - Content (body text)
 
 **Steps:**
-1. Find schedule file
+1. Find schedule file via `Glob`: `workspace/schedules/*/SCHEDULE.md`
 2. Verify `chatId` ownership
 3. Confirm changes
 4. Modify with `Edit` tool
@@ -147,7 +167,7 @@ enabled: false
 ### 4. List Schedules
 
 **Steps:**
-1. Find all schedule files
+1. Find all schedule files with `Glob`: `workspace/schedules/*/SCHEDULE.md`
 2. Read each file
 3. Filter by current `chatId`
 4. Format and display
@@ -193,50 +213,50 @@ minute hour day month weekday
 
 ### 1. Be Self-Contained
 
-❌ **Bad**: "Continue the task from yesterday"
-✅ **Good**: "Check the disclaude repository for new issues and create a PR if applicable"
+**Bad**: "Continue the task from yesterday"
+**Good**: "Check the disclaude repository for new issues and create a PR if applicable"
 
 The prompt must contain ALL necessary context. The scheduler executes in a fresh session with no memory of previous conversations.
 
 ### 2. Avoid Creating New Schedules
 
-❌ **Bad**: "Create a daily reminder to check emails"
-✅ **Good**: "Check emails and report new important messages"
+**Bad**: "Create a daily reminder to check emails"
+**Good**: "Check emails and report new important messages"
 
 Scheduled tasks cannot create other scheduled tasks (anti-recursion protection). If periodic behavior is needed, report to user instead.
 
 ### 3. Specify Clear Success Criteria
 
-❌ **Bad**: "Do something with the database"
-✅ **Good**: "Run database backup and verify the backup file exists in /backups/"
+**Bad**: "Do something with the database"
+**Good**: "Run database backup and verify the backup file exists in /backups/"
 
 Define what "done" looks like. Include verification steps when possible.
 
 ### 4. Include Error Handling Instructions
 
-❌ **Bad**: "Send a report"
-✅ **Good**: "Send a report. If the API is unavailable, retry once after 5 minutes, then report failure."
+**Bad**: "Send a report"
+**Good**: "Send a report. If the API is unavailable, retry once after 5 minutes, then report failure."
 
 Specify what to do when things go wrong.
 
 ### 5. Limit Scope and Dependencies
 
-❌ **Bad**: "Fix all bugs in the system"
-✅ **Good**: "Check issue #123 and report its current status"
+**Bad**: "Fix all bugs in the system"
+**Good**: "Check issue #123 and report its current status"
 
 Avoid broad or unbounded tasks. Each execution should have clear boundaries.
 
 ### 6. Provide Resource References
 
-❌ **Bad**: "Check the config file"
-✅ **Good**: "Check the config file at `/app/workspace/config.yaml`"
+**Bad**: "Check the config file"
+**Good**: "Check the config file at `/app/workspace/config.yaml`"
 
 Include full paths, URLs, or identifiers. Don't assume the executor knows where things are.
 
 ### 7. Consider Execution Time
 
-❌ **Bad**: "Analyze the entire codebase and refactor"
-✅ **Good**: "Run the test suite for the schedule module"
+**Bad**: "Analyze the entire codebase and refactor"
+**Good**: "Run the test suite for the schedule module"
 
 Scheduled tasks should complete within reasonable time. Break large tasks into smaller scheduled checks.
 
@@ -296,7 +316,7 @@ This example demonstrates how to create a schedule for the 0.4.2 MVP use case: d
 
 ### Schedule File
 
-Create `workspace/schedules/daily-soul-question.md`:
+Create `workspace/schedules/daily-soul-question/SCHEDULE.md`:
 
 ```markdown
 ---
@@ -304,7 +324,7 @@ name: 每日灵魂拷问
 cron: "0 21 * * *"
 enabled: true
 blocking: true
-# ⚠️ Replace with your topic group's chatId
+# Replace with your topic group's chatId
 chatId: oc_your_topic_group_chat_id
 createdAt: 2026-03-06T00:00:00.000Z
 ---
