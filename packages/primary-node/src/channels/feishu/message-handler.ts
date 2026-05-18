@@ -890,6 +890,20 @@ export class MessageHandler {
         ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}`
         : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}，但下载失败。`;
 
+      // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
+      // ensuring intermediate message filtering works correctly in topic groups.
+      const fileMetadata: Record<string, unknown> = {};
+      if (chat_type) {
+        fileMetadata.chatType = chat_type;
+      }
+      let fileThreadContext: string | undefined;
+      if (chat_type === 'topic' && parent_id) {
+        fileThreadContext = await this.getThreadContext(parent_id);
+      }
+      if (fileThreadContext) {
+        fileMetadata.threadContext = fileThreadContext;
+      }
+
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
         chatId: chat_id,
@@ -899,6 +913,7 @@ export class MessageHandler {
         timestamp: create_time,
         threadId,
         attachments: localPath ? [{ fileName: fileName || fileKey, filePath: localPath }] : undefined,
+        metadata: Object.keys(fileMetadata).length > 0 ? fileMetadata : undefined,
       });
       return;
     }
