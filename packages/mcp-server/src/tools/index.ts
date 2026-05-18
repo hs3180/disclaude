@@ -34,6 +34,9 @@ export { send_file } from './send-file.js';
 // Push to Agent (Issue #631)
 export { push_to_agent } from './push-to-agent.js';
 
+// Inject Prompt (Issue #631: initialization prompt for new group agents)
+export { inject_prompt } from './inject-prompt.js';
+
 // Interactive Message
 export {
   send_interactive_message,

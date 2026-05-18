@@ -14,6 +14,7 @@ vi.mock('./tools/index.js', () => ({
   send_interactive: vi.fn(),
   send_file: vi.fn(),
   push_to_agent: vi.fn(),
+  inject_prompt: vi.fn(),
   setMessageSentCallback: vi.fn(),
 }));
 

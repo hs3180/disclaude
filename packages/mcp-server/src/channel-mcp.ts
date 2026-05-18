@@ -16,6 +16,7 @@ import {
   send_interactive,
   send_file,
   push_to_agent,
+  inject_prompt,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -33,6 +34,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
+export { inject_prompt } from './tools/inject-prompt.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -164,6 +166,18 @@ For display-only cards, use send_card instead.`,
       required: ['chatId', 'message'],
     },
     handler: push_to_agent,
+  },
+  inject_prompt: {
+    description: 'Inject an initialization prompt into a chat agent, triggering agent creation if needed. Use this to initialize a newly created group\'s agent with context before any user message arrives.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string', description: 'Target chat ID' },
+        prompt: { type: 'string', description: 'The initialization prompt text to inject into the chat agent' },
+      },
+      required: ['chatId', 'prompt'],
+    },
+    handler: inject_prompt,
   },
 };
 
@@ -517,6 +531,49 @@ will be processed as a system command.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Push to agent failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  {
+    name: 'inject_prompt',
+    description: `Inject an initialization prompt into a chat agent, triggering agent creation if needed.
+
+Use this to initialize a newly created group's agent with context before any
+user message arrives. The agent will be lazily created if it doesn't exist yet,
+and the prompt will be processed as the agent's first instruction.
+
+This is the key mechanism for non-blocking discussions (Issue #631): after creating
+a new group via lark-cli, use inject_prompt to set up the group's agent with the
+discussion context, so the agent is ready when users start chatting.
+
+## Parameters
+- **chatId**: Target chat ID (string)
+- **prompt**: The initialization prompt text (string)
+
+## Type Constraints (IMPORTANT)
+- **chatId**: MUST be a non-empty string
+- **prompt**: MUST be a non-empty string
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "prompt": "You are a discussion moderator for a code review. The PR #123 introduces a new caching layer. Please facilitate the discussion and help participants reach consensus on the cache invalidation strategy."}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target chat ID'),
+      prompt: z.string().describe('The initialization prompt text to inject into the chat agent'),
+    }),
+    handler: async ({ chatId, prompt }: { chatId: string; prompt: string }) => await withTiming(timingLogger, 'mcp:inject_prompt', chatId, async () => {
+      // Validate chatId format before IPC call
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await inject_prompt({ chatId, prompt });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Inject prompt failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },
