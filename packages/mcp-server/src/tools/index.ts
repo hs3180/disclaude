@@ -31,6 +31,9 @@ export { send_card } from './send-card.js';
 // Send File
 export { send_file } from './send-file.js';
 
+// Push to Agent (Issue #631)
+export { push_to_agent } from './push-to-agent.js';
+
 // Interactive Message
 export {
   send_interactive_message,

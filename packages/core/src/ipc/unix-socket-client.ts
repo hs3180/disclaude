@@ -684,6 +684,38 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Push to agent (Issue #631)
+  // ============================================================================
+
+  /**
+   * Push an instruction to a chat agent via IPC.
+   * Issue #631: Allows skills to push instructions to agents.
+   *
+   * @param chatId - Target chat ID
+   * @param message - The instruction text to push
+   */
+  async pushToAgent(
+    chatId: string,
+    message: string
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('pushToAgent', { chatId, message });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'pushToAgent failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

@@ -18,10 +18,12 @@ import {
   type IncomingMessage,
   type FileRef,
   type FeishuApiHandlers,
+  type SystemMessage,
 } from '@disclaude/core';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
+import crypto from 'crypto';
 import { messageLogger } from './feishu/message-logger.js';
 import type {
   ChannelSetupContext,
@@ -206,6 +208,29 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
           : buildActionPrompts(options);
 
         return { messageId, actionPrompts: resolvedActionPrompts };
+      },
+
+      // Issue #631: Push instruction to a chat agent via InputMessageRouter
+      pushToAgent: async (chatId: string, message: string) => {
+        const router = context.inputMessageRouter;
+        if (!router) {
+          throw new Error('InputMessageRouter not initialized — cannot push to agent');
+        }
+
+        context.logger.info({ chatId, messageLength: message.length }, 'pushToAgent: routing system message');
+
+        const systemMessage: SystemMessage = {
+          id: `push_${crypto.randomUUID()}`,
+          source: 'system',
+          trigger: 'command',
+          payload: message,
+          chatId,
+          createdAt: new Date().toISOString(),
+        };
+
+        await router.route(systemMessage);
+
+        return { success: true };
       },
     };
 
