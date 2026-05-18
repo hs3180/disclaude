@@ -24,7 +24,8 @@ export interface DebugGroup {
 export interface ControlHandlerContext {
   /** AgentPool 实例 */
   agentPool: {
-    reset(chatId: string): void;
+    /** Issue #3696: skipContext=true skips history loading on next agent creation */
+    reset(chatId: string, skipContext?: boolean): void;
     /** Issue #1349: Stop current query without resetting session */
     stop(chatId: string): boolean;
   };

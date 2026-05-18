@@ -69,8 +69,18 @@ describe('normalizeCommandData', () => {
       expect(result).toBeUndefined();
     });
 
-    it('should return undefined for reset', () => {
+    it('should return undefined for reset without flags', () => {
       const result = normalizeCommandData('reset', {});
+      expect(result).toBeUndefined();
+    });
+
+    it('should return skipContext for reset --no-context (Issue #3696)', () => {
+      const result = normalizeCommandData('reset', { args: ['--no-context'] });
+      expect(result).toEqual({ skipContext: true });
+    });
+
+    it('should return undefined for reset without --no-context', () => {
+      const result = normalizeCommandData('reset', { args: [] });
       expect(result).toBeUndefined();
     });
   });
@@ -94,6 +104,12 @@ describe('createControlCommand', () => {
     const cmd = createControlCommand('reset', 'chat-1', {});
     expect(cmd.type).toBe('reset');
     expect(cmd.data).toBeUndefined();
+  });
+
+  it('should create reset command with skipContext (Issue #3696)', () => {
+    const cmd = createControlCommand('reset', 'chat-1', { args: ['--no-context'] });
+    expect(cmd.type).toBe('reset');
+    expect(cmd.data).toEqual({ skipContext: true });
   });
 
   it('should create command with targetNodeId', () => {

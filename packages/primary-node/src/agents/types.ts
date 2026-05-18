@@ -127,6 +127,17 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    */
   cwdProvider?: CwdProvider;
 
+  /**
+   * Skip loading persisted and first-message history on agent startup.
+   *
+   * Issue #3696: When true, the agent starts with an empty context window,
+   * ignoring any previously persisted chat history. Used by /reset --no-context.
+   *
+   * This flag is consumed once during agent creation and does not persist
+   * across subsequent startAgentLoop() calls.
+   */
+  skipHistory?: boolean;
+
 }
 
 // Re-export MessageData from core for backward compatibility (Issue #1492)

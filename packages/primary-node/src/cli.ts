@@ -231,7 +231,7 @@ async function main(): Promise<void> {
   // Create unified control handler context
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
-      reset: (chatId: string) => agentPool.reset(chatId),
+      reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
       stop: (chatId: string) => agentPool.stop(chatId),
     },
     node: {

@@ -56,7 +56,7 @@ describe('createControlHandler', () => {
     const result = await handler(command);
 
     expect(result.success).toBe(true);
-    expect(context.agentPool.reset).toHaveBeenCalledWith('test-chat');
+    expect(context.agentPool.reset).toHaveBeenCalledWith('test-chat', undefined);
   });
 
   it('should return success for recognized command "stop"', async () => {
