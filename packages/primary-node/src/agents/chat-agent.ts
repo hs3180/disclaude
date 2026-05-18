@@ -941,6 +941,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             messageCount,
           }, 'Result received, turn complete');
 
+          // Issue #3706: Warn when turn completes with zero tool calls and Agent Teams enabled.
+          // This pattern indicates the model may not support tool_use blocks properly.
+          if (toolCallCount === 0 && this.isAgentTeamsEnabled()) {
+            this.logger.warn(
+              {
+                chatId,
+                messageCount,
+                completionMs,
+                model: this.model,
+                provider: this.provider,
+              },
+              'Turn completed with 0 tool calls while Agent Teams is enabled. '
+              + 'If team workers are stuck in idle loops, the model may not support '
+              + 'tool_use blocks (common with non-Anthropic models via '
+              + 'Anthropic-compatible API). See Issue #3706.'
+            );
+          }
+
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
 
