@@ -54,6 +54,8 @@ export interface PrimaryAgentPoolOptions {
 export class PrimaryAgentPool {
   private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;
+  /** Issue #3696: chatIds that should skip history loading on next agent creation */
+  private readonly skipHistoryChatIds = new Set<string>();
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
@@ -69,11 +71,15 @@ export class PrimaryAgentPool {
   getOrCreateChatAgent(chatId: string, callbacks: ChatAgentCallbacks): ChatAgent {
     let agent = this.agents.get(chatId);
     if (!agent) {
+      const skipHistory = this.skipHistoryChatIds.has(chatId);
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
         cwdProvider: this.options.cwdProvider,
+        skipHistory,
       });
       this.agents.set(chatId, agent);
+      // Issue #3696: clear skip-history flag after agent creation
+      this.skipHistoryChatIds.delete(chatId);
     }
     return agent;
   }
@@ -93,7 +99,10 @@ export class PrimaryAgentPool {
    * @param _keepContext - Ignored (kept for API compatibility). Context is not
    *   preserved since the old agent is fully disposed.
    */
-  reset(chatId: string, _keepContext?: boolean): void {
+  reset(chatId: string, skipContext?: boolean): void {
+    if (skipContext) {
+      this.skipHistoryChatIds.add(chatId);
+    }
     const agent = this.agents.get(chatId);
     if (agent) {
       this.agents.delete(chatId);

@@ -56,6 +56,8 @@ export class AgentPool {
   private readonly chatAgentFactory: ChatAgentFactory;
   private readonly chatAgents = new Map<string, ChatAgent>();
   private readonly log: Logger;
+  /** Issue #3696: chatIds that should skip history loading on next agent creation */
+  private readonly skipHistoryChatIds = new Set<string>();
 
   constructor(config: AgentPoolConfig) {
     this.chatAgentFactory = config.chatAgentFactory;
@@ -77,6 +79,8 @@ export class AgentPool {
       this.log.info({ chatId }, 'Creating new ChatAgent instance for chatId');
       agent = this.chatAgentFactory(chatId);
       this.chatAgents.set(chatId, agent);
+      // Issue #3696: clear skip-history flag after agent creation
+      this.skipHistoryChatIds.delete(chatId);
     }
     return agent;
   }
@@ -132,12 +136,18 @@ export class AgentPool {
    * AbortControllers) are properly released rather than accumulated across
    * multiple /reset operations.
    *
+   * Issue #3696: skipContext flag is stored so the next getOrCreateChatAgent()
+   * can pass it to the factory. Note: the core AgentPool uses a simple factory
+   * that doesn't support options, so PrimaryAgentPool handles the actual logic.
+   *
    * @param chatId - The chat identifier
-   * @param _keepContext - Ignored (kept for API compatibility). Context is not
-   *   preserved since the old agent is fully disposed.
+   * @param skipContext - If true, the next agent creation should skip history loading
    */
-  reset(chatId: string, _keepContext?: boolean): void {
-    this.log.info({ chatId }, 'Resetting ChatAgent: disposing old instance for chatId');
+  reset(chatId: string, skipContext?: boolean): void {
+    this.log.info({ chatId, skipContext }, 'Resetting ChatAgent: disposing old instance for chatId');
+    if (skipContext) {
+      this.skipHistoryChatIds.add(chatId);
+    }
     this.dispose(chatId);
   }
 

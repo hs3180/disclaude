@@ -138,6 +138,8 @@ export interface CommandDataMap {
   trigger: { mode?: string };
   /** /project — project management */
   project: { subcommand: string; workingDir?: string };
+  /** /reset — reset agent, optionally skip history loading (Issue #3696) */
+  reset: { skipContext?: boolean };
 }
 
 /**

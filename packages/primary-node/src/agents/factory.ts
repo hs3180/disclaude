@@ -100,6 +100,11 @@ export interface AgentCreateOptions {
    * @see Issue #1916
    */
   cwdProvider?: CwdProvider;
+  /**
+   * Skip history loading on agent startup (Issue #3696).
+   * Used by /reset --no-context to create a truly fresh agent.
+   */
+  skipHistory?: boolean;
 }
 
 /**
@@ -201,6 +206,7 @@ export class AgentFactory {
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
         cwdProvider: options.cwdProvider,
+        skipHistory: options.skipHistory,
       };
 
       return new ChatAgent(config);
@@ -246,6 +252,7 @@ export class AgentFactory {
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
       cwdProvider: options.cwdProvider,
+      skipHistory: options.skipHistory,
     };
 
     return new ChatAgent(config);

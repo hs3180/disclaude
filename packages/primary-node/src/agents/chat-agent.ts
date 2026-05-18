@@ -114,6 +114,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.callbacks = config.callbacks;
     this.cwdProvider = config.cwdProvider;
 
+    // Issue #3696: skip history loading when --no-context was used
+    if (config.skipHistory) {
+      this.historyLoaded = true;
+      this.firstMessageHistoryLoaded = true;
+    }
+
     // Initialize managers
     this.conversationOrchestrator = new ConversationOrchestrator({ logger: this.logger });
     this.restartManager = new RestartManager({
@@ -128,7 +134,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
 
-    this.logger.info({ chatId: this.boundChatId }, 'ChatAgent created for chatId');
+    this.logger.info({ chatId: this.boundChatId, skipHistory: config.skipHistory }, 'ChatAgent created for chatId');
   }
 
   protected getAgentName(): string {

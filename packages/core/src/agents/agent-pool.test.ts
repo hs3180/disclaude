@@ -150,6 +150,17 @@ describe('AgentPool', () => {
       expect(agent2).not.toBe(agent1);
       expect(mockFactory).toHaveBeenCalledTimes(2);
     });
+
+    it('should store skipContext flag for next agent creation (Issue #3696)', () => {
+      pool.reset('chat-1', true);
+
+      // Next getOrCreateChatAgent should clear the flag
+      pool.getOrCreateChatAgent('chat-1');
+
+      // A second reset without skipContext should not set the flag
+      pool.reset('chat-2');
+      pool.getOrCreateChatAgent('chat-2');
+    });
   });
 
   describe('stop', () => {
