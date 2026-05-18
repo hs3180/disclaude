@@ -15,6 +15,7 @@ import {
   send_card,
   send_interactive,
   send_file,
+  inject_prompt,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -464,6 +465,40 @@ For display-only cards, use send_card instead.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  // Issue #631: Inject prompt into a chat's agent session
+  {
+    name: 'inject_prompt',
+    description: `Inject a prompt into a chat's agent session.
+
+Creates the agent if it doesn't exist, then processes the prompt asynchronously (fire-and-forget).
+Used by skills to initialize agents in new or existing chats without waiting for a response.
+
+## Parameters
+- **chatId**: Target chat ID
+- **prompt**: The prompt text to inject
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "prompt": "请分析以下代码变更..."}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target chat ID'),
+      prompt: z.string().describe('The prompt text to inject into the agent session'),
+    }),
+    handler: async ({ chatId, prompt }: { chatId: string; prompt: string }) => await withTiming(timingLogger, 'mcp:inject_prompt', chatId, async () => {
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+
+      try {
+        const result = await inject_prompt({ chatId, prompt });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Prompt injection failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },

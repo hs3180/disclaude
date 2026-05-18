@@ -169,6 +169,19 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     const feishuHandlers: FeishuApiHandlers = {
       ...baseHandlers,
 
+      // Issue #631: Inject prompt into a chat's agent session
+      // Creates agent if needed and processes the prompt (fire-and-forget)
+      injectPrompt: (chatId: string, prompt: string): Promise<void> => {
+        const callbacksFactory = createChannelCallbacksFactory(feishuChannel, context.logger, {
+          sendDoneSignal: false,
+          getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
+        });
+        const callbacks = callbacksFactory(chatId);
+        const agent = context.agentPool.getOrCreateChatAgent(chatId, callbacks);
+        void agent.processMessage(chatId, prompt, `inject-${Date.now()}`);
+        return Promise.resolve();
+      },
+
       // Issue #2951: Upload image for card embedding
       uploadImage: (filePath: string) => {
         return feishuChannel.uploadImage(filePath);

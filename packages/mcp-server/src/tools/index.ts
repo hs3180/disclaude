@@ -11,6 +11,7 @@ export type {
   MessageSentCallback,
   ActionPromptMap,
   SendInteractiveResult,
+  InjectPromptResult,
 } from './types.js';
 
 // Shared utilities
@@ -42,3 +43,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Inject Prompt (Issue #631)
+export { inject_prompt } from './inject-prompt.js';

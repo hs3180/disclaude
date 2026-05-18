@@ -69,5 +69,15 @@ export interface SendInteractiveResult {
   error?: string;
 }
 
+/**
+ * Result type for inject_prompt tool.
+ * Issue #631: Non-blocking prompt injection into agent sessions.
+ */
+export interface InjectPromptResult {
+  success: boolean;
+  message: string;
+  error?: string;
+}
+
 
 

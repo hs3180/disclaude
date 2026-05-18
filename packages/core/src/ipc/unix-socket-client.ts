@@ -684,6 +684,38 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Agent prompt injection (Issue #631)
+  // ============================================================================
+
+  /**
+   * Inject a prompt into a chat's agent session via IPC.
+   * Issue #631: Creates agent if needed, then processes the prompt.
+   *
+   * @param chatId - Target chat ID
+   * @param prompt - The prompt text to inject
+   */
+  async injectPrompt(
+    chatId: string,
+    prompt: string
+  ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('injectPrompt', { chatId, prompt });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId }, 'injectPrompt failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */
