@@ -65,6 +65,24 @@ vi.mock('@disclaude/core', () => ({
     }
     return undefined;
   },
+  // Issue #857: TaskContext and TaskHistory for progress tracking
+  TaskContext: vi.fn().mockImplementation((messageId: string) => ({
+    messageId,
+    status: 'pending',
+    isFinished: false,
+    isRunning: false,
+    start: vi.fn(),
+    complete: vi.fn(),
+    fail: vi.fn(),
+    recordToolCall: vi.fn(),
+    recordProgressReport: vi.fn(),
+    getProgress: vi.fn(() => ({ completedSteps: 0, totalSteps: 0, startTime: 0 })),
+    getElapsedTimeString: vi.fn(() => '0s'),
+    getDurationMs: vi.fn(() => 0),
+  })),
+  TaskHistory: vi.fn().mockImplementation(() => ({
+    record: vi.fn(),
+  })),
 }));
 
 vi.mock('@disclaude/mcp-server', () => ({

@@ -15,6 +15,7 @@ vi.mock('./tools/index.js', () => ({
   send_file: vi.fn(),
   push_to_agent: vi.fn(),
   setMessageSentCallback: vi.fn(),
+  report_task_progress: vi.fn(),
 }));
 
 vi.mock('./utils/card-validator.js', () => ({
