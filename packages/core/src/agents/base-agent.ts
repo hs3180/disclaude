@@ -20,7 +20,7 @@ import {
   type QueryHandle,
   type AgentMessage as SdkAgentMessage,
 } from '../sdk/index.js';
-import { buildSdkEnv } from '../utils/sdk.js';
+import { buildSdkEnv, type ModelAliases } from '../utils/sdk.js';
 import { createLogger, type Logger } from '../utils/logger.js';
 import { AppError, ErrorCategory, formatError } from '../utils/error-handler.js';
 import type { AgentMessage } from '../types/index.js';
@@ -207,6 +207,7 @@ export abstract class BaseAgent implements Disposable {
       globalEnv,
       loggingConfig.sdkDebug,
       this.getSdkTimeoutMs(),
+      this.resolveModelAliases(), // Issue #3706: inject model alias env vars for team agents
     );
 
     // Set model
@@ -269,6 +270,45 @@ export abstract class BaseAgent implements Disposable {
    */
   protected getSdkTimeoutMs(): number {
     return Config.getSdkTimeoutMs();
+  }
+
+  /**
+   * Resolve model alias overrides for SDK team agent model resolution.
+   *
+   * When Agent Teams is enabled and the SDK spawns workers with `model: opus`
+   * (or sonnet/haiku), it resolves the alias via ANTHROPIC_DEFAULT_*_MODEL
+   * env vars. This method provides the disclaude tier model config so team
+   * agents use the correct GLM/Anthropic model from disclaude.config.yaml
+   * instead of potentially incompatible models from ~/.claude/settings.json.
+   *
+   * @returns Model aliases or undefined if Agent Teams is disabled
+   * @see Issue #3706
+   */
+  private resolveModelAliases(): ModelAliases | undefined {
+    if (!this.isAgentTeamsEnabled()) {
+      return undefined;
+    }
+
+    const aliases: ModelAliases = {};
+    const opusModel = Config.getModelForTier('high');
+    const haikuModel = Config.getModelForTier('low');
+    // sonnet tier maps to the default model (no dedicated tier in current config)
+    // but we can infer it from the current agent's model or the default config
+
+    if (opusModel) {
+      aliases.opus = opusModel;
+    }
+    if (haikuModel) {
+      aliases.haiku = haikuModel;
+    }
+
+    // Only return aliases if at least one is set
+    if (Object.keys(aliases).length === 0) {
+      return undefined;
+    }
+
+    this.logger.debug({ aliases }, 'Resolved model aliases for SDK team agents');
+    return aliases;
   }
 
   /**

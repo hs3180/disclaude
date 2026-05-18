@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getNodeBinDir, extractText, buildSdkEnv } from './sdk.js';
+import { getNodeBinDir, extractText, buildSdkEnv, type ModelAliases } from './sdk.js';
 import type { AgentMessage, ContentBlock } from '../types/agent.js';
 
 describe('SDK Utilities', () => {
@@ -221,6 +221,80 @@ describe('SDK Utilities', () => {
         vi.stubEnv('ANTHROPIC_TIMEOUT', '120000');
         const env = buildSdkEnv('sk-test-key');
         expect(env.ANTHROPIC_TIMEOUT).toBe('120000');
+      });
+    });
+
+    describe('modelAliases (Issue #3706)', () => {
+      it('should set ANTHROPIC_DEFAULT_OPUS_MODEL from modelAliases', () => {
+        vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', undefined);
+        const aliases: ModelAliases = { opus: 'glm-5v-turbo' };
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined, aliases);
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5v-turbo');
+      });
+
+      it('should set ANTHROPIC_DEFAULT_SONNET_MODEL from modelAliases', () => {
+        vi.stubEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', undefined);
+        const aliases: ModelAliases = { sonnet: 'glm-4.7' };
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined, aliases);
+        expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
+      });
+
+      it('should set ANTHROPIC_DEFAULT_HAIKU_MODEL from modelAliases', () => {
+        vi.stubEnv('ANTHROPIC_DEFAULT_HAIKU_MODEL', undefined);
+        const aliases: ModelAliases = { haiku: 'glm-4-flash' };
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined, aliases);
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4-flash');
+      });
+
+      it('should set all model alias env vars when all are provided', () => {
+        vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', undefined);
+        vi.stubEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', undefined);
+        vi.stubEnv('ANTHROPIC_DEFAULT_HAIKU_MODEL', undefined);
+        const aliases: ModelAliases = {
+          opus: 'glm-5v-turbo',
+          sonnet: 'glm-4.7',
+          haiku: 'glm-4-flash',
+        };
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined, aliases);
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5v-turbo');
+        expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4-flash');
+      });
+
+      it('should override process.env ANTHROPIC_DEFAULT_OPUS_MODEL with modelAliases', () => {
+        vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', 'glm-5.1');
+        const aliases: ModelAliases = { opus: 'glm-5v-turbo' };
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined, aliases);
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5v-turbo');
+      });
+
+      it('should not set model alias env vars when modelAliases is undefined', () => {
+        vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', undefined);
+        vi.stubEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', undefined);
+        vi.stubEnv('ANTHROPIC_DEFAULT_HAIKU_MODEL', undefined);
+        const env = buildSdkEnv('sk-test-key');
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+        expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+      });
+
+      it('should not set model alias env vars when modelAliases is empty', () => {
+        vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', undefined);
+        vi.stubEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', undefined);
+        vi.stubEnv('ANTHROPIC_DEFAULT_HAIKU_MODEL', undefined);
+        const aliases: ModelAliases = {};
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined, aliases);
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+        expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+      });
+
+      it('should preserve process.env model alias when modelAliases does not override it', () => {
+        vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', 'from-system-env');
+        const aliases: ModelAliases = { haiku: 'glm-4-flash' };
+        const env = buildSdkEnv('sk-test-key', undefined, undefined, true, undefined, aliases);
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('from-system-env');
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4-flash');
       });
     });
   });

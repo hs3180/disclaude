@@ -8,6 +8,25 @@ import type {
 } from '../types/agent.js';
 
 /**
+ * Model alias mapping for SDK model resolution.
+ *
+ * When the SDK spawns team agents with `model: opus` (or sonnet/haiku),
+ * it resolves the alias using `ANTHROPIC_DEFAULT_*_MODEL` env vars.
+ * This mapping overrides those env vars to ensure team agents use
+ * models from the disclaude tier configuration.
+ *
+ * @see Issue #3706
+ */
+export interface ModelAliases {
+  /** Model to use when SDK resolves `model: opus` */
+  opus?: string;
+  /** Model to use when SDK resolves `model: sonnet` */
+  sonnet?: string;
+  /** Model to use when SDK resolves `model: haiku` */
+  haiku?: string;
+}
+
+/**
  * Get directory containing node executable.
  * This is needed for SDK subprocess spawning to find node.
  */
@@ -61,6 +80,7 @@ export function extractText(message: AgentMessage): string {
  * @param extraEnv - Optional extra environment variables to merge
  * @param sdkDebug - Enable SDK debug logging (default: true)
  * @param sdkTimeoutMs - SDK HTTP request timeout in ms (Issue #2992, default: 300000)
+ * @param modelAliases - Optional model alias overrides for SDK team agent resolution (Issue #3706)
  * @returns Environment object for SDK options
  */
 export function buildSdkEnv(
@@ -68,7 +88,8 @@ export function buildSdkEnv(
   apiBaseUrl?: string,
   extraEnv?: Record<string, string | undefined>,
   sdkDebug: boolean = true,
-  sdkTimeoutMs?: number
+  sdkTimeoutMs?: number,
+  modelAliases?: ModelAliases,
 ): Record<string, string | undefined> {
   const nodeBinDir = getNodeBinDir();
 
@@ -95,6 +116,22 @@ export function buildSdkEnv(
     // Can be disabled via config logging.sdkDebug: false
     DEBUG_CLAUDE_AGENT_SDK: sdkDebug ? (process.env.DEBUG_CLAUDE_AGENT_SDK ?? '1') : undefined,
   };
+
+  // Issue #3706: Inject model alias overrides for SDK team agent resolution.
+  // When Agent Teams spawns workers with `model: opus`, the SDK resolves the
+  // alias via ANTHROPIC_DEFAULT_OPUS_MODEL env var. Without these overrides,
+  // the SDK may use a model from ~/.claude/settings.json that doesn't support
+  // tool_use (e.g., GLM glm-5.1). By injecting the disclaude tier config here,
+  // team agents correctly resolve to the provider's tier model.
+  if (modelAliases?.opus) {
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = modelAliases.opus;
+  }
+  if (modelAliases?.sonnet) {
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = modelAliases.sonnet;
+  }
+  if (modelAliases?.haiku) {
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = modelAliases.haiku;
+  }
 
   // CRITICAL: Remove CLAUDECODE to allow SDK subprocess to run inside
   // another Claude Code session. Without this, SDK will fail with:
