@@ -67,7 +67,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     threadContext?: string,
   ): Promise<void> {
     this.log.info(
-      { chatId, messageId, senderOpenId, hasAttachments: !!attachments?.length },
+      { chatId, messageId, senderOpenId, hasAttachments: !!attachments?.length, chatType },
       'Handling user message via agent pool',
     );
 
