@@ -21,6 +21,11 @@ import { PassThrough } from 'node:stream';
 export type { Logger } from 'pino';
 import path from 'path';
 import fs from 'fs';
+import type { ElasticsearchConfig } from '../config/types.js';
+import { createElasticsearchTransport, ElasticsearchTransport } from './elasticsearch-transport.js';
+
+// Re-export Elasticsearch types for consumers
+export type { ElasticsearchTransportStatus } from './elasticsearch-transport.js';
 
 /**
  * Log levels supported by Pino
@@ -43,6 +48,8 @@ export interface LoggerConfig {
   redact?: string[];
   /** Additional metadata to include in all logs */
   metadata?: Record<string, unknown>;
+  /** Elasticsearch logging configuration (Issue #3720) */
+  elasticsearch?: ElasticsearchConfig;
 }
 
 /**
@@ -78,6 +85,8 @@ let logPassthrough: PassThrough | null = null;
 let currentLogDest: any = null;
 // Recursion guard for error handlers that may try to log during flush
 let flushInProgress = false;
+// Elasticsearch transport instance (Issue #3720)
+let esTransport: ElasticsearchTransport | null = null;
 
 /**
  * Reset the root logger instance.
@@ -97,6 +106,11 @@ export function resetLogger(): void {
     currentLogDest.destroy();
   }
   currentLogDest = null;
+  // Destroy Elasticsearch transport (Issue #3720)
+  if (esTransport) {
+    esTransport.destroy();
+    esTransport = null;
+  }
   rootLogger = null;
 }
 
@@ -333,6 +347,33 @@ export function initLogger(config: LoggerConfig = {}): Logger {
     }
   }
 
+  // Setup Elasticsearch transport if configured (Issue #3720)
+  const esConfig = config.elasticsearch;
+  if (esConfig && esConfig.enabled) {
+    try {
+      esTransport = createElasticsearchTransport(esConfig);
+      if (esTransport) {
+        // Handle ES transport warnings/errors gracefully
+        esTransport.on('warning', (msg: string) => {
+          console.warn('Elasticsearch transport warning:', msg);
+        });
+        esTransport.on('error', (err: Error) => {
+          console.warn('Elasticsearch transport error:', err.message);
+        });
+
+        // Use pino.multistream to write to both file/stdout and ES
+        const multiStream = pino.multistream([
+          { stream: logStream },
+          { stream: esTransport },
+        ]);
+        rootLogger = pino(options, multiStream as unknown as NodeJS.WritableStream);
+        return rootLogger;
+      }
+    } catch (error) {
+      console.warn('Failed to setup Elasticsearch transport, falling back to file logging:', error);
+    }
+  }
+
   // Create root logger with stream
   rootLogger = pino(options, logStream);
 
@@ -456,6 +497,8 @@ export function isLevelEnabled(level: LogLevel): boolean {
  * the filesystem. Flushes both the PassThrough proxy (if active) and
  * the underlying file stream.
  *
+ * Also flushes the Elasticsearch transport if active (Issue #3720).
+ *
  * Useful for ensuring logs are written before process exit.
  */
 export function flushLogger(): Promise<void> {
@@ -494,6 +537,11 @@ export function flushLogger(): Promise<void> {
       );
     }
 
+    // Flush Elasticsearch transport buffer (Issue #3720)
+    if (esTransport && !esTransport.writableEnded) {
+      pending.push(esTransport.flush());
+    }
+
     if (pending.length > 0) {
       flushInProgress = true;
       void Promise.all(pending).then(() => {
@@ -505,6 +553,22 @@ export function flushLogger(): Promise<void> {
       resolve();
     }
   });
+}
+
+/**
+ * Get Elasticsearch transport status.
+ *
+ * Returns the current status of the ES transport for monitoring,
+ * or null if ES logging is not enabled.
+ *
+ * @see Issue #3720
+ * @returns Transport status or null
+ */
+export function getElasticsearchStatus() {
+  if (!esTransport) {
+    return null;
+  }
+  return esTransport.getStatus();
 }
 
 /**

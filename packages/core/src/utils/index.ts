@@ -13,7 +13,15 @@ export {
   isLevelEnabled,
   flushLogger,
   closeLogger,
+  getElasticsearchStatus,
 } from './logger.js';
+
+// Elasticsearch Transport (Issue #3720)
+export {
+  ElasticsearchTransport,
+  createElasticsearchTransport,
+} from './elasticsearch-transport.js';
+export type { ElasticsearchTransportStatus } from './elasticsearch-transport.js';
 
 // Error Handler
 export {
