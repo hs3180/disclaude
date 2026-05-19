@@ -774,6 +774,287 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('triggerTask (Issue #3247, #3248)', () => {
+    it('should trigger an active (in-memory) task', async () => {
+      const task = createTask({ id: 'trigger-active' });
+      scheduler.addTask(task);
+
+      const result = await scheduler.triggerTask('trigger-active');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('开始执行'),
+      );
+    });
+
+    it('should fall back to disk lookup for non-active task', async () => {
+      const task = createTask({ id: 'trigger-disk' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      const result = await scheduler.triggerTask('trigger-disk');
+
+      expect(result).toBe(true);
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+      expect(mockScheduleManager.get).toHaveBeenCalledWith('trigger-disk');
+    });
+
+    it('should return false for non-existent task', async () => {
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(undefined);
+
+      const result = await scheduler.triggerTask('nonexistent');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should return false for disabled task', async () => {
+      const task = createTask({ id: 'trigger-disabled', enabled: false });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      const result = await scheduler.triggerTask('trigger-disabled');
+
+      expect(result).toBe(false);
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should respect blocking — skip if task already running', async () => {
+      // Use a long-running executor so the task stays "running"
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const task = createTask({ id: 'trigger-blocking', blocking: true, timeoutMs: 5000 });
+      scheduler.addTask(task);
+
+      // First trigger — fire without awaiting so the task stays running
+      void scheduler.triggerTask('trigger-blocking');
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-blocking')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger: executeTask is called but should be skipped due to blocking
+      // triggerTask still returns true because it found the task
+      const result2 = await scheduler.triggerTask('trigger-blocking');
+      expect(result2).toBe(true); // triggerTask found the task
+
+      // Executor should only have been called once (second was blocked)
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+
+      // Clean up: stop the hanging executor by stopping the scheduler
+      await scheduler.stop(0);
+    });
+
+    it('should respect cooldown — skip and send notification', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(true),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue({
+          isInCooldown: true,
+          lastExecutionTime: new Date('2026-01-01T12:00:00'),
+          cooldownEndsAt: new Date('2026-01-01T13:00:00'),
+          remainingMs: 3600000,
+        }),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'trigger-cooldown', cooldownPeriod: 3600000 });
+      cooldownScheduler.addTask(task);
+
+      const result = await cooldownScheduler.triggerTask('trigger-cooldown');
+
+      expect(result).toBe(true); // Task was found
+      // Should have sent cooldown notification
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('冷静期'),
+        );
+      }, { timeout: 2000 });
+      // Executor should NOT be called
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should send start notification on trigger', async () => {
+      const task = createTask({ id: 'trigger-notify' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-notify');
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('开始执行'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should send error notification when executor fails', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('executor crashed'));
+
+      const task = createTask({ id: 'trigger-error' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-error');
+
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should prefer active job over disk lookup', async () => {
+      const activeTask = createTask({ id: 'trigger-prio', name: 'Active Task' });
+      const diskTask = createTask({ id: 'trigger-prio', name: 'Disk Task' });
+
+      scheduler.addTask(activeTask);
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(diskTask);
+
+      await scheduler.triggerTask('trigger-prio');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Should NOT have called disk lookup since active was found
+      expect(mockScheduleManager.get).not.toHaveBeenCalled();
+      // Verify it used the active task by checking the prompt
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Active Task');
+    });
+
+    it('should pass model and createdBy to executor from active task', async () => {
+      const task = createTask({
+        id: 'trigger-params',
+        createdBy: 'user-456',
+        model: 'claude-sonnet-4-20250514',
+        modelTier: 'low',
+      });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-params');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        'user-456',
+        'claude-sonnet-4-20250514',
+        'low',
+      );
+    });
+
+    it('should pass model and modelTier from disk task', async () => {
+      const task = createTask({
+        id: 'trigger-disk-params',
+        createdBy: 'user-789',
+        model: 'claude-haiku-4',
+        modelTier: 'low',
+      });
+      vi.mocked(mockScheduleManager.get).mockResolvedValueOnce(task);
+
+      await scheduler.triggerTask('trigger-disk-params');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockExecutor).toHaveBeenCalledWith(
+        'oc_test',
+        expect.any(String),
+        'user-789',
+        'claude-haiku-4',
+        'low',
+      );
+    });
+
+    it('should clean up running state on success', async () => {
+      const task = createTask({ id: 'trigger-cleanup-ok' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-cleanup-ok');
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-cleanup-ok')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should clean up running state on failure', async () => {
+      mockExecutor.mockRejectedValueOnce(new Error('fail'));
+
+      const task = createTask({ id: 'trigger-cleanup-fail' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-cleanup-fail');
+
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('trigger-cleanup-fail')).toBe(false);
+      }, { timeout: 2000 });
+    });
+
+    it('should record cooldown after execution', async () => {
+      const mockCooldownManager = {
+        isInCooldown: vi.fn().mockResolvedValue(false),
+        recordExecution: vi.fn().mockResolvedValue(undefined),
+        getCooldownStatus: vi.fn().mockResolvedValue(null),
+        clearCooldown: vi.fn().mockResolvedValue(true),
+      } as unknown as CooldownManager;
+
+      const cooldownScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        cooldownManager: mockCooldownManager,
+      });
+
+      const task = createTask({ id: 'trigger-cooldown-record', cooldownPeriod: 60000 });
+      cooldownScheduler.addTask(task);
+
+      await cooldownScheduler.triggerTask('trigger-cooldown-record');
+
+      await vi.waitFor(() => {
+        expect(mockCooldownManager.recordExecution).toHaveBeenCalledWith(
+          'trigger-cooldown-record',
+          60000,
+        );
+      }, { timeout: 2000 });
+    });
+
+    it('should wrap prompt with anti-recursion instructions', async () => {
+      const task = createTask({ id: 'trigger-prompt', name: 'Triggered Task', prompt: 'Do the thing' });
+      scheduler.addTask(task);
+
+      await scheduler.triggerTask('trigger-prompt');
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // eslint-disable-next-line prefer-destructuring
+      const [, promptArg] = mockExecutor.mock.calls[0];
+      expect(promptArg).toContain('Scheduled Task Execution Context');
+      expect(promptArg).toContain('Triggered Task');
+      expect(promptArg).toContain('Do NOT create new scheduled tasks');
+      expect(promptArg).toContain('Do the thing');
+    });
+  });
+
   describe('TaskTimeoutError', () => {
     it('should have correct name and message', () => {
       const error = new TaskTimeoutError(30000);

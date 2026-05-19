@@ -481,6 +481,33 @@ ${task.prompt}`;
   }
 
   /**
+   * Manually trigger a task by ID.
+   *
+   * Issue #3247: Event-driven schedule trigger mechanism.
+   * Two-phase lookup: activeJobs (memory) → ScheduleManager (disk).
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and triggered, false otherwise
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    // Phase 1: Memory lookup in activeJobs
+    const activeEntry = this.activeJobs.get(taskId);
+    if (activeEntry) {
+      await this.executeTask(activeEntry.task);
+      return true;
+    }
+
+    // Phase 2: Disk lookup via ScheduleManager
+    const task = await this.scheduleManager.get(taskId);
+    if (!task || !task.enabled) {
+      return false;
+    }
+
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
    * Reload all tasks from ScheduleManager.
    * Useful after external changes to the schedule storage.
    */
