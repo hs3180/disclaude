@@ -130,3 +130,61 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Headless Chromium with CDP endpoint for browser automation (site-miner, etc.)
+  # Use --profile playwright to start: docker compose --profile playwright up -d
+  #
+  # Exposes CDP (Chrome DevTools Protocol) on port 9222 via headless Chromium.
+  # The primary container (network_mode: host) connects via http://localhost:9222.
+  #
+  # Setup:
+  #   1. Start with profile: docker compose --profile playwright up -d
+  #   2. In disclaude.config.yaml, the playwright MCP server should use:
+  #      args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
+  #   3. Override CDP port via PLAYWRIGHT_CDP_PORT in docker-source.env if needed
+  #
+  playwright:
+    image: ${DOCKER_IMAGE_PREFIX:-}mcr.microsoft.com/playwright:v1.52.0-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Launch headless Chromium with CDP enabled
+    # --remote-debugging-port: exposes CDP on the specified port
+    # --remote-debugging-address=0.0.0.0: allows connections from any host
+    command: >
+      sh -c 'exec chromium
+      --headless=new
+      --no-sandbox
+      --disable-dev-shm-usage
+      --disable-gpu
+      --remote-debugging-port=$${PLAYWRIGHT_CDP_PORT:-9222}
+      --remote-debugging-address=0.0.0.0
+      about:blank'
+
+    # Use host network so primary container can reach CDP on localhost
+    network_mode: host
+
+    environment:
+      - PLAYWRIGHT_CDP_PORT=${PLAYWRIGHT_CDP_PORT:-9222}
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:$${PLAYWRIGHT_CDP_PORT:-9222}/json/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    profiles:
+      - playwright
