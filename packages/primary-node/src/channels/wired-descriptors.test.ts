@@ -9,7 +9,7 @@
 
  
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   REST_WIRED_DESCRIPTOR,
   FEISHU_WIRED_DESCRIPTOR,
@@ -19,7 +19,7 @@ import type {
   ChannelSetupContext,
   WiredContext,
 } from '../channel-lifecycle-manager.js';
-import type { IChannel, ControlHandler, ChannelCapabilities } from '@disclaude/core';
+import type { IChannel, ControlHandler, ChannelCapabilities, FeishuApiHandlers } from '@disclaude/core';
 
 // Mock logger
 const mockLogger = {
@@ -325,6 +325,105 @@ describe('WiredChannelDescriptors', () => {
         type: 'text',
         text: '❌ Error: Agent processing failed',
       });
+    });
+  });
+
+  describe('FEISHU_WIRED_DESCRIPTOR.setup — pushToAgent (Issue #631)', () => {
+    let registeredHandlers: FeishuApiHandlers | undefined;
+    const mockRoute = vi.fn();
+
+    function createFeishuSetupContext(overrides?: Partial<ChannelSetupContext>): ChannelSetupContext {
+      return createMockContext({
+        inputMessageRouter: { route: mockRoute } as any,
+        primaryNode: {
+          getInteractiveContextStore: vi.fn().mockReturnValue({
+            generatePrompt: vi.fn().mockReturnValue('Generated prompt'),
+          }),
+          registerFeishuHandlers: vi.fn((handlers: FeishuApiHandlers) => {
+            registeredHandlers = handlers;
+          }),
+        } as any,
+        ...overrides,
+      });
+    }
+
+    function createMockFeishuChannel() {
+      return {
+        id: 'feishu-test',
+        name: 'Feishu Test',
+        status: 'stopped',
+        onMessage: vi.fn(),
+        onControl: vi.fn(),
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        sendMessage: vi.fn().mockResolvedValue('msg_123'),
+        getCapabilities: vi.fn().mockReturnValue(DEFAULT_CAPABILITIES),
+        getTriggerModeManager: vi.fn().mockReturnValue({
+          getMode: vi.fn().mockReturnValue('mention'),
+          setMode: vi.fn(),
+        }),
+        uploadImage: vi.fn().mockResolvedValue('img_key_123'),
+      } as any;
+    }
+
+    beforeEach(() => {
+      registeredHandlers = undefined;
+      mockRoute.mockReset();
+    });
+
+    it('should register pushToAgent handler via registerFeishuHandlers', () => {
+      const channel = createMockFeishuChannel();
+      const context = createFeishuSetupContext();
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      expect(registeredHandlers).toBeDefined();
+      expect(registeredHandlers!.pushToAgent).toBeDefined();
+      expect(typeof registeredHandlers!.pushToAgent).toBe('function');
+    });
+
+    it('should push instruction to agent via InputMessageRouter', async () => {
+      const channel = createMockFeishuChannel();
+      const context = createFeishuSetupContext();
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      const result = await registeredHandlers!.pushToAgent!('oc_test123', 'You are a discussion moderator.');
+
+      expect(result).toEqual({ success: true });
+      expect(mockRoute).toHaveBeenCalledTimes(1);
+      expect(mockRoute).toHaveBeenCalledWith(expect.objectContaining({
+        chatId: 'oc_test123',
+        payload: 'You are a discussion moderator.',
+        source: 'system',
+        trigger: 'command',
+      }));
+      expect(mockRoute.mock.calls[0][0].id).toMatch(/^push_/);
+    });
+
+    it('should throw when InputMessageRouter is not initialized', async () => {
+      const channel = createMockFeishuChannel();
+      const context = createFeishuSetupContext({ inputMessageRouter: undefined } as any);
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      await expect(
+        registeredHandlers!.pushToAgent!('oc_test123', 'Hello')
+      ).rejects.toThrow('InputMessageRouter not initialized — cannot push to agent');
+
+      expect(mockRoute).not.toHaveBeenCalled();
+    });
+
+    it('should propagate routing errors', async () => {
+      const channel = createMockFeishuChannel();
+      const context = createFeishuSetupContext();
+      mockRoute.mockRejectedValue(new Error('Agent pool full'));
+
+      void FEISHU_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      await expect(
+        registeredHandlers!.pushToAgent!('oc_test123', 'Hello')
+      ).rejects.toThrow('Agent pool full');
     });
   });
 });
