@@ -33,3 +33,42 @@ export interface TaskDefinitionDetails {
   constraints: string[];
   quality_criteria: string[];
 }
+
+/**
+ * Task execution status.
+ * Determined by file existence in the task directory.
+ */
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'unknown';
+
+/**
+ * Iteration status within a task.
+ */
+export interface IterationStatus {
+  /** Iteration number (1-indexed) */
+  iteration: number;
+  /** Whether evaluation.md exists */
+  hasEvaluation: boolean;
+  /** Whether execution.md exists */
+  hasExecution: boolean;
+}
+
+/**
+ * Structured task status returned by getTaskStatus().
+ * Provides all information an agent needs to decide whether and how to report progress.
+ *
+ * Issue #857: Task status reading interface for progress reporting.
+ */
+export interface TaskStatusInfo {
+  /** Task identifier */
+  taskId: string;
+  /** Current execution status */
+  status: TaskStatus;
+  /** Number of completed iterations */
+  totalIterations: number;
+  /** Whether final summary has been written */
+  hasFinalSummary: boolean;
+  /** Whether final result exists (task is COMPLETE) */
+  hasFinalResult: boolean;
+  /** Status of each iteration */
+  iterations: IterationStatus[];
+}

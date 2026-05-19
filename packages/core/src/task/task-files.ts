@@ -460,6 +460,93 @@ export class TaskFileManager {
   }
 
   /**
+   * Get structured task status information.
+   *
+   * Reads the task directory and returns a comprehensive status object
+   * that agents can use to decide whether and how to report progress.
+   *
+   * Status determination:
+   * - pending: task.md exists, no running.lock, no final_result.md, no failed.md
+   * - running: running.lock exists
+   * - completed: final_result.md exists
+   * - failed: failed.md exists
+   * - unknown: task directory does not exist
+   *
+   * Issue #857: Task status reading interface for progress reporting.
+   *
+   * @param taskId - Task identifier
+   * @returns Structured task status information
+   */
+  async getTaskStatus(taskId: string): Promise<import('./types.js').TaskStatusInfo> {
+    const taskDir = this.getTaskDir(taskId);
+
+    // Check if task directory exists
+    if (!await this.taskExists(taskId)) {
+      return {
+        taskId,
+        status: 'unknown',
+        totalIterations: 0,
+        hasFinalSummary: false,
+        hasFinalResult: false,
+        iterations: [],
+      };
+    }
+
+    // Determine status from file existence
+    const runningLockPath = path.join(taskDir, 'running.lock');
+    const failedPath = path.join(taskDir, 'failed.md');
+    const finalResultPath = this.getFinalResultPath(taskId);
+
+    let hasRunningLock = false;
+    let hasFailed = false;
+    let hasFinalResult = false;
+
+    try { await fs.access(runningLockPath); hasRunningLock = true; } catch { /* no lock */ }
+    try { await fs.access(failedPath); hasFailed = true; } catch { /* no failed */ }
+    try { await fs.access(finalResultPath); hasFinalResult = true; } catch { /* no final result */ }
+
+    let status: import('./types.js').TaskStatus;
+    if (hasFinalResult) {
+      status = 'completed';
+    } else if (hasFailed) {
+      status = 'failed';
+    } else if (hasRunningLock) {
+      status = 'running';
+    } else {
+      status = 'pending';
+    }
+
+    // Get iteration details
+    const iterationNumbers = await this.listIterations(taskId);
+    const iterations: import('./types.js').IterationStatus[] = [];
+
+    for (const iter of iterationNumbers) {
+      iterations.push({
+        iteration: iter,
+        hasEvaluation: await this.hasEvaluation(taskId, iter),
+        hasExecution: await this.hasExecution(taskId, iter),
+      });
+    }
+
+    // Check final summary
+    const iterationsDir = this.getIterationsDir(taskId);
+    let hasFinalSummary = false;
+    try {
+      await fs.access(path.join(iterationsDir, 'final-summary.md'));
+      hasFinalSummary = true;
+    } catch { /* no final summary */ }
+
+    return {
+      taskId,
+      status,
+      totalIterations: iterationNumbers.length,
+      hasFinalSummary,
+      hasFinalResult,
+      iterations,
+    };
+  }
+
+  /**
    * Clean up a task directory (use with caution).
    *
    * @param taskId - Task identifier

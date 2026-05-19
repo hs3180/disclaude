@@ -347,4 +347,90 @@ describe('TaskFileManager', () => {
       await expect(manager.cleanupTask('nonexistent')).resolves.toBeUndefined();
     });
   });
+
+  describe('getTaskStatus', () => {
+    it('should return unknown for non-existent task', async () => {
+      const status = await manager.getTaskStatus('nonexistent');
+      expect(status.status).toBe('unknown');
+      expect(status.totalIterations).toBe(0);
+      expect(status.hasFinalResult).toBe(false);
+      expect(status.iterations).toEqual([]);
+    });
+
+    it('should return pending for initialized task with no files', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+
+      const status = await manager.getTaskStatus('task-1');
+      expect(status.status).toBe('pending');
+      expect(status.taskId).toBe('task-1');
+      expect(status.totalIterations).toBe(0);
+    });
+
+    it('should return running when running.lock exists', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+      const lockPath = path.join(manager.getTaskDir('task-1'), 'running.lock');
+      await fs.writeFile(lockPath, '', 'utf-8');
+
+      const status = await manager.getTaskStatus('task-1');
+      expect(status.status).toBe('running');
+    });
+
+    it('should return completed when final_result.md exists', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+      await fs.writeFile(manager.getFinalResultPath('task-1'), 'Done', 'utf-8');
+
+      const status = await manager.getTaskStatus('task-1');
+      expect(status.status).toBe('completed');
+      expect(status.hasFinalResult).toBe(true);
+    });
+
+    it('should return failed when failed.md exists', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+      const failedPath = path.join(manager.getTaskDir('task-1'), 'failed.md');
+      await fs.writeFile(failedPath, 'Task failed', 'utf-8');
+
+      const status = await manager.getTaskStatus('task-1');
+      expect(status.status).toBe('failed');
+    });
+
+    it('should prioritize completed over running status', async () => {
+      await manager.initializeTask('task-1');
+      await manager.writeTaskSpec('task-1', '# Task');
+      const lockPath = path.join(manager.getTaskDir('task-1'), 'running.lock');
+      await fs.writeFile(lockPath, '', 'utf-8');
+      await fs.writeFile(manager.getFinalResultPath('task-1'), 'Done', 'utf-8');
+
+      const status = await manager.getTaskStatus('task-1');
+      expect(status.status).toBe('completed');
+    });
+
+    it('should return iteration details', async () => {
+      await manager.initializeTask('task-1');
+      await manager.createIteration('task-1', 1);
+      await manager.createIteration('task-1', 2);
+      await manager.writeEvaluation('task-1', 1, 'eval-1');
+      await manager.writeExecution('task-1', 1, 'exec-1');
+      await manager.writeEvaluation('task-1', 2, 'eval-2');
+
+      const status = await manager.getTaskStatus('task-1');
+      expect(status.totalIterations).toBe(2);
+      expect(status.iterations).toEqual([
+        { iteration: 1, hasEvaluation: true, hasExecution: true },
+        { iteration: 2, hasEvaluation: true, hasExecution: false },
+      ]);
+    });
+
+    it('should detect final summary', async () => {
+      await manager.initializeTask('task-1');
+      await manager.createIteration('task-1', 1);
+      await manager.writeFinalSummary('task-1', 'Summary');
+
+      const status = await manager.getTaskStatus('task-1');
+      expect(status.hasFinalSummary).toBe(true);
+    });
+  });
 });
