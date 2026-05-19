@@ -380,6 +380,13 @@ export interface DisclaudeConfig {
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
   /**
+   * WorkBuddy remote agent configuration (Issue #3442).
+   *
+   * Configures project-scoped WorkBuddy instances running on user's local
+   * machine. disclaude communicates with them via HTTP for local operations.
+   */
+  workbuddy?: import('../workbuddy/types.js').WorkBuddyConfig;
+  /**
    * Project template configuration overrides (Issue #2227).
    *
    * Extends or overrides auto-discovered templates with display metadata.

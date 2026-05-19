@@ -256,6 +256,45 @@ sessionRestore:
   maxContextLength: 4000
 
 # -----------------------------------------------------------------------------
+# WorkBuddy Configuration (Issue #3442)
+# -----------------------------------------------------------------------------
+# WorkBuddy is a lightweight agent running on the user's local machine.
+# disclaude communicates with WorkBuddy via HTTP to execute local operations
+# like building, previewing, and publishing WeChat mini programs.
+#
+# Prerequisites:
+#   1. Start WorkBuddy on the local machine (listens on an HTTP port)
+#   2. Ensure the WorkBuddy URL is reachable from the disclaude server
+#   3. Optionally configure an API key for authentication
+#
+# workbuddy:
+#   # Default timeout for HTTP requests to WorkBuddy (ms)
+#   timeout: 30000
+#
+#   projects:
+#     my-miniprogram:
+#       # WorkBuddy HTTP endpoint (required)
+#       url: "http://192.168.1.100:8765"
+#
+#       # Working directory on the remote machine
+#       cwd: "/Users/dev/my-miniprogram"
+#
+#       # Feishu chat ID to bind this WorkBuddy to (optional)
+#       # When set, messages in this chat will be routed to this WorkBuddy
+#       chatId: "oc_xxxx"
+#
+#       # API key for authentication (optional)
+#       apiKey: "your-workbuddy-api-key"
+#
+#       # Enabled tool integrations
+#       tools:
+#         - wechat-devtools
+#
+#       # Custom environment variables
+#       env:
+#         WECHAT_DEVTOOLS_PATH: "/Applications/wechatwebdevtools.app"
+
+# -----------------------------------------------------------------------------
 # Global Environment Variables
 # -----------------------------------------------------------------------------
 # Environment variables defined here will be passed to all agent processes.
