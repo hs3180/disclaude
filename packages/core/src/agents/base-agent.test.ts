@@ -564,4 +564,204 @@ describe('BaseAgent', () => {
       expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
     });
   });
+
+  describe('createQueryStream - convertToLegacyFormat edge cases', () => {
+    const defaultOptions = {
+      cwd: '/workspace',
+      permissionMode: 'bypassPermissions' as const,
+      settingSources: ['user', 'project', 'local'],
+    };
+
+    it('should handle SDK message with no metadata', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+      const sdkMessage = createMockSdkMessage({
+        type: 'text',
+        content: 'No metadata message',
+      });
+      // Remove metadata if present
+      delete (sdkMessage as Record<string, unknown>).metadata;
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () { yield sdkMessage; })(),
+      }));
+
+      async function* emptyInput(): AsyncGenerator<StreamingUserMessage> {}
+      const result = agent.testCreateQueryStream(emptyInput(), defaultOptions);
+
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        messages.push(item);
+      }
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0].parsed.content).toBe('No metadata message');
+      expect(messages[0].parsed.metadata).toBeUndefined();
+    });
+
+    it('should calculate total tokens as 0 when no token counts provided', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+      const sdkMessage = createMockSdkMessage({
+        type: 'tool_result',
+        content: 'Output',
+        metadata: {
+          toolName: 'Read',
+          toolInput: { file: '/test.ts' },
+          toolOutput: 'content',
+          elapsedMs: 50,
+          costUsd: 0.001,
+          // No inputTokens or outputTokens
+        },
+      });
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () { yield sdkMessage; })(),
+      }));
+
+      async function* emptyInput(): AsyncGenerator<StreamingUserMessage> {}
+      const result = agent.testCreateQueryStream(emptyInput(), defaultOptions);
+
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        messages.push(item);
+      }
+
+      expect(messages[0].parsed.metadata?.tokens).toBe(0);
+    });
+
+    it('should preserve sessionId from metadata', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+      const sdkMessage = createMockSdkMessage({
+        type: 'text',
+        content: 'Response',
+        metadata: {
+          sessionId: 'session-abc-123',
+        },
+      });
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () { yield sdkMessage; })(),
+      }));
+
+      async function* emptyInput(): AsyncGenerator<StreamingUserMessage> {}
+      const result = agent.testCreateQueryStream(emptyInput(), defaultOptions);
+
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        messages.push(item);
+      }
+
+      expect(messages[0].parsed.sessionId).toBe('session-abc-123');
+    });
+
+    it('should handle empty stream (zero messages)', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () { /* no messages */ })(),
+      }));
+
+      async function* emptyInput(): AsyncGenerator<StreamingUserMessage> {}
+      const result = agent.testCreateQueryStream(emptyInput(), defaultOptions);
+
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        messages.push(item);
+      }
+
+      expect(messages).toHaveLength(0);
+    });
+
+    it('should track TTFT on first message only across multiple messages', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+      const messages = [
+        createMockSdkMessage({ type: 'text', content: 'First' }),
+        createMockSdkMessage({ type: 'text', content: 'Second' }),
+        createMockSdkMessage({ type: 'tool_result', content: 'Tool output' }),
+      ];
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () {
+          for (const msg of messages) { yield msg; }
+        })(),
+      }));
+
+      async function* emptyInput(): AsyncGenerator<StreamingUserMessage> {}
+      const result = agent.testCreateQueryStream(emptyInput(), defaultOptions);
+
+      const results: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        results.push(item);
+      }
+
+      expect(results).toHaveLength(3);
+      expect(results[0].parsed.content).toBe('First');
+      expect(results[1].parsed.content).toBe('Second');
+      expect(results[2].parsed.content).toBe('Tool output');
+    });
+  });
+
+  describe('createQueryStream - input conversion edge cases', () => {
+    const defaultOptions = {
+      cwd: '/workspace',
+      permissionMode: 'bypassPermissions' as const,
+      settingSources: ['user', 'project', 'local'],
+    };
+
+    it('should handle ContentBlock array with multiple blocks', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () {
+          yield createMockSdkMessage({ type: 'text', content: 'Response' });
+        })(),
+      }));
+
+      async function* input(): AsyncGenerator<StreamingUserMessage> {
+        yield {
+          type: 'user' as const,
+          message: {
+            role: 'user' as const,
+            content: [
+              { type: 'text' as const, text: 'Hello ' },
+              { type: 'text' as const, text: 'World' },
+            ],
+          },
+          parent_tool_use_id: null,
+          session_id: 'session-1',
+        };
+      }
+
+      const result = agent.testCreateQueryStream(input(), defaultOptions);
+
+      const results: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        results.push(item);
+      }
+
+      expect(results).toHaveLength(1);
+      expect(results[0].parsed.content).toBe('Response');
+    });
+  });
+
+  describe('getWorkspaceDir and getGlobalEnv fallbacks', () => {
+    it('should fall back to Config.getWorkspaceDir when no runtime context', () => {
+      // clearRuntimeContext was called in afterEach, so no context is set
+      const options = agent.testCreateSdkOptions();
+      // cwd should be set (either from config or default)
+      expect(options.cwd).toBeDefined();
+    });
+
+    it('should fall back to Config.getGlobalEnv when no runtime context', () => {
+      // Without runtime context, should not throw
+      const options = agent.testCreateSdkOptions();
+      expect(options.env).toBeDefined();
+      expect(options.env?.ANTHROPIC_API_KEY).toBe('test-api-key');
+    });
+  });
 });

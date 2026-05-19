@@ -484,6 +484,210 @@ describe('MessageBuilder', () => {
     });
   });
 
+  describe('buildEnhancedContent - topic thread (Issue #3641)', () => {
+    it('should skip next-step guidance when chatType is topic', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'topic',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Next Steps After Response');
+      // Other guidance sections should still be present
+      expect(result).toContain('Output Format Requirements');
+      expect(result).toContain('Location Awareness');
+    });
+
+    it('should include next-step guidance when chatType is p2p', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'p2p',
+      }, 'chat-456');
+
+      expect(result).toContain('Next Steps After Response');
+    });
+
+    it('should include next-step guidance when chatType is undefined', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Next Steps After Response');
+    });
+
+    it('should include thread context section when threadContext is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'topic',
+        threadContext: 'User: What is X?\nBot: X is Y.',
+      }, 'chat-456');
+
+      expect(result).toContain('Thread Context');
+      expect(result).toContain('User: What is X?');
+    });
+
+    it('should not include thread context section when threadContext is not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'topic',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Thread Context');
+    });
+  });
+
+  describe('buildEnhancedContent - edge cases', () => {
+    it('should not produce chat history section for empty string context', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatHistoryContext: '',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Recent Chat History');
+    });
+
+    it('should not produce persisted history section for empty string context', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        persistedHistoryContext: '',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Previous Session Context');
+    });
+
+    it('should not produce attachment section for empty attachment array', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments: [],
+      }, 'chat-456');
+
+      expect(result).not.toContain('Attachments');
+    });
+
+    it('should show unknown MIME type when mimeType is not provided', () => {
+      const attachments = [{
+        id: 'att-1',
+        fileName: 'data.bin',
+        localPath: '/tmp/data.bin',
+        size: 100,
+        source: 'user' as const,
+        createdAt: Date.now(),
+      }];
+
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        attachments,
+      }, 'chat-456');
+
+      expect(result).toContain('unknown');
+      expect(result).toContain('data.bin');
+    });
+
+    it('should handle skill command without messageId', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/help',
+      }, 'chat-456');
+
+      expect(result).toContain('/help');
+      expect(result).toContain('chat-456');
+      // Note: Message ID shows as "undefined" when not provided
+      // This is expected behavior for the current implementation
+      expect(result).toContain('**Message ID:**');
+    });
+
+    it('should handle skill command with senderOpenId', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        senderOpenId: 'user-abc',
+      }, 'chat-456');
+
+      expect(result).toContain('user-abc');
+      expect(result).toContain('/reset');
+    });
+  });
+
+  describe('buildEnhancedContent - channel callbacks invocation', () => {
+    it('should not call buildHeader for skill commands', () => {
+      const buildHeader = vi.fn(() => 'Header content');
+      const builder = new MessageBuilder({ buildHeader });
+
+      builder.buildEnhancedContent({
+        text: '/command',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(buildHeader).not.toHaveBeenCalled();
+    });
+
+    it('should not call buildPostHistory for skill commands', () => {
+      const buildPostHistory = vi.fn(() => 'Post history');
+      const builder = new MessageBuilder({ buildPostHistory });
+
+      builder.buildEnhancedContent({
+        text: '/command',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(buildPostHistory).not.toHaveBeenCalled();
+    });
+
+    it('should not call buildToolsSection for skill commands', () => {
+      const buildToolsSection = vi.fn(() => 'Tools section');
+      const builder = new MessageBuilder({ buildToolsSection });
+
+      builder.buildEnhancedContent({
+        text: '/command',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(buildToolsSection).not.toHaveBeenCalled();
+    });
+
+    it('should not call buildAttachmentExtra for skill commands', () => {
+      const buildAttachmentExtra = vi.fn(() => 'Extra');
+      const builder = new MessageBuilder({ buildAttachmentExtra });
+
+      builder.buildEnhancedContent({
+        text: '/command',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(buildAttachmentExtra).not.toHaveBeenCalled();
+    });
+
+    it('should call all callbacks for regular messages', () => {
+      const buildHeader = vi.fn(() => 'Header');
+      const buildPostHistory = vi.fn(() => 'Post');
+      const buildToolsSection = vi.fn(() => 'Tools');
+      const buildAttachmentExtra = vi.fn(() => 'Extra');
+      const builder = new MessageBuilder({
+        buildHeader,
+        buildPostHistory,
+        buildToolsSection,
+        buildAttachmentExtra,
+      });
+
+      builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(buildHeader).toHaveBeenCalledTimes(1);
+      expect(buildPostHistory).toHaveBeenCalledTimes(1);
+      expect(buildToolsSection).toHaveBeenCalledTimes(1);
+      expect(buildAttachmentExtra).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('buildEnhancedContent - output ordering', () => {
     it('should place user message after guidance sections', () => {
       const result = messageBuilder.buildEnhancedContent({
@@ -506,6 +710,55 @@ describe('MessageBuilder', () => {
       const historyIdx = result.indexOf('Recent Chat History');
       const outputFormatIdx = result.indexOf('Output Format Requirements');
       expect(outputFormatIdx).toBeGreaterThan(historyIdx);
+    });
+
+    it('should place header before metadata', () => {
+      const builder = new MessageBuilder({
+        buildHeader: () => '## Platform Header',
+      });
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      const headerIdx = result.indexOf('Platform Header');
+      const metadataIdx = result.indexOf('**Chat ID:**');
+      expect(metadataIdx).toBeGreaterThan(headerIdx);
+    });
+
+    it('should place thread context after persisted and chat history', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        persistedHistoryContext: 'Persisted...',
+        chatHistoryContext: 'Chat...',
+        threadContext: 'Thread...',
+      }, 'chat-456');
+
+      const persistedIdx = result.indexOf('Previous Session Context');
+      const chatIdx = result.indexOf('Recent Chat History');
+      const threadIdx = result.indexOf('Thread Context');
+      expect(chatIdx).toBeGreaterThan(persistedIdx);
+      expect(threadIdx).toBeGreaterThan(chatIdx);
+    });
+
+    it('should place tools section between history and guidance', () => {
+      const builder = new MessageBuilder({
+        buildToolsSection: () => '- Tool: `read`',
+      });
+
+      const result = builder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatHistoryContext: 'History...',
+      }, 'chat-456');
+
+      const historyIdx = result.indexOf('Recent Chat History');
+      const toolsIdx = result.indexOf('## Tools');
+      const guidanceIdx = result.indexOf('Next Steps After Response');
+      expect(toolsIdx).toBeGreaterThan(historyIdx);
+      expect(guidanceIdx).toBeGreaterThan(toolsIdx);
     });
   });
 });
