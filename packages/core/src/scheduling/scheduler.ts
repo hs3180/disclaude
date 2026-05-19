@@ -491,6 +491,42 @@ ${task.prompt}`;
   }
 
   /**
+   * Trigger a task for immediate execution by its ID.
+   *
+   * Bypasses the cron schedule and directly invokes executeTask().
+   * Useful for event-driven triggering (e.g., webhook → triggerTask).
+   *
+   * Two-phase lookup:
+   * 1. Check activeJobs (in-memory, fast) — tasks currently scheduled
+   * 2. Fall back to ScheduleManager.get() (disk) — tasks not yet loaded
+   *
+   * Automatically inherits all executeTask() protections:
+   * blocking, cooldown, timeout, error notifications.
+   *
+   * Issue #3247: triggerTask() core method.
+   *
+   * @param taskId - Task ID to trigger
+   * @returns true if task was found and triggered, false if not found or disabled
+   */
+  async triggerTask(taskId: string): Promise<boolean> {
+    // Phase 1: Look up in activeJobs (fast, in-memory)
+    const activeEntry = this.activeJobs.get(taskId);
+    if (activeEntry) {
+      await this.executeTask(activeEntry.task);
+      return true;
+    }
+
+    // Phase 2: Fall back to ScheduleManager disk lookup
+    const task = await this.scheduleManager.get(taskId);
+    if (!task || !task.enabled) {
+      return false;
+    }
+
+    await this.executeTask(task);
+    return true;
+  }
+
+  /**
    * Get all active jobs.
    */
   getActiveJobs(): ActiveJob[] {
