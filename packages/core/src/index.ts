@@ -235,6 +235,10 @@ export {
   TaskTracker,
   TaskFileManager,
   type TaskFileManagerConfig,
+  EtaRulesUpdater,
+  parseTimeToMinutes,
+  extractRecordsFromMarkdown,
+  analyzeTypePatterns,
 } from './task/index.js';
 
 // Queue module (Issue #1041)

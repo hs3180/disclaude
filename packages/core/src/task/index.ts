@@ -17,3 +17,11 @@ export { TaskTracker } from './task-tracker.js';
 
 // Task Files
 export { TaskFileManager, type TaskFileManagerConfig } from './task-files.js';
+
+// ETA Rules Updater (Issue #1234 Phase 2: ETA learning from task records)
+export {
+  EtaRulesUpdater,
+  parseTimeToMinutes,
+  extractRecordsFromMarkdown,
+  analyzeTypePatterns,
+} from './eta-rules-updater.js';
