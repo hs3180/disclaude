@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, forceCleanupLeakedListeners, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -793,12 +793,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #3378: Log process exit listener count for leak monitoring.
     // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
     // Normal range is 1-3; values > 8 indicate a leak.
+    // Issue #3745: Forcefully clean up leaked listeners when count is elevated.
     const exitListenerCount = process.listenerCount('exit');
     if (exitListenerCount > 5) {
-      this.logger.warn(
-        { chatId, exitListenerCount, timing: 'agent:startLoop' },
-        'Process exit listener count is elevated — possible ProcessTransport leak'
-      );
+      const cleaned = forceCleanupLeakedListeners();
+      if (cleaned > 0) {
+        this.logger.info(
+          { chatId, before: exitListenerCount, after: process.listenerCount('exit'), cleaned, timing: 'agent:startLoop' },
+          'Forcefully cleaned up leaked exit listeners'
+        );
+      } else {
+        this.logger.warn(
+          { chatId, exitListenerCount, timing: 'agent:startLoop' },
+          'Process exit listener count is elevated but no leaked listeners found (may be legitimate)'
+        );
+      }
     }
     this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: Date.now() - startMs, exitListenerCount, ok: true });
 
@@ -1273,11 +1282,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   dispose(): void {
     // Issue #3745: Synchronously close queryHandle and channel to prevent
-    // process exit listener leaks when agents are created in rapid succession
-    // (e.g., scheduled tasks, CLI tests). Previously, shutdown() was called as
-    // fire-and-forget — the async closure of queryHandle meant the next agent's
-    // snapshotProcessListeners() could capture the old exit listener before it
-    // was removed, making cleanup blind to it and causing monotonic accumulation.
+    // exit listener leaks. The previous fire-and-forget pattern (dispose →
+    // shutdown() without await) meant shutdown()'s `await Promise.resolve()`
+    // deferred the close() calls to the next microtask. If a new agent was
+    // created immediately after dispose() (e.g., schedule-executor runOnce),
+    // the old exit listener was still registered when the new snapshot was
+    // taken, making the cleanup blind to it.
     if (this.queryHandle) {
       this.queryHandle.close();
       this.queryHandle = undefined;
@@ -1287,6 +1297,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.channel = undefined;
     }
 
+    // Fire-and-forget the rest of shutdown (abort, clear state, etc.)
     this.shutdown().catch((err) => {
       this.logger.error({ err }, 'Error during dispose shutdown');
     });
@@ -1298,7 +1309,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Cleanup resources on shutdown.
    */
   async shutdown(): Promise<void> {
-    await Promise.resolve(); // No-op to satisfy linter
     this.logger.info({ chatId: this.boundChatId }, 'Shutting down ChatAgent');
 
     // Mark session as inactive
@@ -1310,7 +1320,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.abortController = null;
     }
 
-    // Close channel and query
+    // Close channel and query (may already be closed by dispose() — that's fine,
+    // close() is idempotent since queryHandle/channel are set to undefined first)
     if (this.channel) {
       this.channel.close();
       this.channel = undefined;
@@ -1327,5 +1338,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.restartManager.clearAll();
 
     this.logger.info({ chatId: this.boundChatId }, 'ChatAgent shutdown complete');
+
+    // Yield to satisfy require-await lint rule; shutdown is intentionally synchronous
+    // to ensure immediate cleanup (Issue #3745).
+    await Promise.resolve();
   }
 }
