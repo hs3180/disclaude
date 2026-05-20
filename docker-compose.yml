@@ -130,3 +130,71 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Headless Chromium with CDP endpoint for browser automation (site-miner, etc.)
+  # Disabled by default — enable with: docker compose --profile playwright up -d
+  #
+  # Prerequisites:
+  #   - Primary container uses network_mode: host (default), so it can reach
+  #     the CDP endpoint at http://localhost:{CDP_PORT}
+  #   - Update disclaude.config.yaml mcpServers.playwright to match CDP_PORT
+  #
+  # Usage:
+  #   docker compose --profile playwright up -d
+  #
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.52.1-noble
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    # Start headless Chromium with remote debugging (CDP)
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        CHROMIUM=$$(find /ms-playwright -name "chrome" -type f -executable 2>/dev/null | head -1)
+        if [ -z "$$CHROMIUM" ]; then
+          echo "Error: Chromium not found in /ms-playwright" >&2
+          exit 1
+        fi
+        echo "Starting Chromium CDP server: $$CHROMIUM"
+        echo "CDP endpoint: http://0.0.0.0:$${CDP_PORT:-9222}"
+        exec "$$CHROMIUM" \
+          --headless=new \
+          --no-sandbox \
+          --disable-dev-shm-usage \
+          --remote-debugging-port=$${CDP_PORT:-9222} \
+          --remote-debugging-address=0.0.0.0 \
+          --disable-gpu \
+          --mute-audio \
+          --no-first-run \
+          --hide-scrollbars \
+          --disable-features=site-per-process \
+          about:blank
+
+    environment:
+      - CDP_PORT=${CDP_PORT:-9222}
+
+    # network_mode: host allows primary container to reach CDP via localhost
+    network_mode: host
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:$${CDP_PORT:-9222}/json/version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    profiles:
+      - playwright
