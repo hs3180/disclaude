@@ -52,7 +52,19 @@ describe('handleRestart', () => {
 
     expect(result.success).toBe(true);
     // reset() now internally calls dispose() to fully recycle the agent
-    expect(context.agentPool.reset).toHaveBeenCalledWith('chat-456');
+    expect(context.agentPool.reset).toHaveBeenCalledWith('chat-456', undefined);
     expect(result.message).toContain('Agent 实例已重启');
+  });
+
+  it('should pass skipContext when --no-context flag is set (Issue #3696)', async () => {
+    const context = createMockContext();
+    const result = await handleRestart(
+      { type: 'restart', chatId: 'chat-456', data: { skipContext: true } },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect(context.agentPool.reset).toHaveBeenCalledWith('chat-456', true);
+    expect(result.message).toContain('历史上下文已跳过');
   });
 });

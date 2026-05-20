@@ -34,8 +34,9 @@ export function normalizeCommandData<T extends ControlCommandType>(
       const mode = Array.isArray(rawArgs) ? rawArgs[0] as string : rawArgs as string | undefined;
       return { mode };
     }
-    case 'reset': {
-      // Issue #3696: parse --no-context flag
+    case 'reset':
+    case 'restart': {
+      // Issue #3696: parse --no-context flag (restart is an alias for reset)
       const resetArgs = rawData.args;
       const argsList = Array.isArray(resetArgs) ? resetArgs as string[] : [];
       const skipContext = argsList.includes('--no-context');

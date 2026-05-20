@@ -140,6 +140,8 @@ export interface CommandDataMap {
   project: { subcommand: string; workingDir?: string };
   /** /reset — reset agent, optionally skip history loading (Issue #3696) */
   reset: { skipContext?: boolean };
+  /** /restart — alias for /reset, supports same flags */
+  restart: { skipContext?: boolean };
 }
 
 /**

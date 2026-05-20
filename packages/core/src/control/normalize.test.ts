@@ -83,6 +83,16 @@ describe('normalizeCommandData', () => {
       const result = normalizeCommandData('reset', { args: [] });
       expect(result).toBeUndefined();
     });
+
+    it('should return skipContext for restart --no-context (restart is alias for reset)', () => {
+      const result = normalizeCommandData('restart', { args: ['--no-context'] });
+      expect(result).toEqual({ skipContext: true });
+    });
+
+    it('should return undefined for restart without --no-context', () => {
+      const result = normalizeCommandData('restart', {});
+      expect(result).toBeUndefined();
+    });
   });
 });
 
