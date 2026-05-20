@@ -380,6 +380,11 @@ export interface DisclaudeConfig {
   /** Global environment variables applied to all agent processes */
   env?: Record<string, string>;
   /**
+   * WorkBuddy configuration — remote local-agent control.
+   * @see Issue #3442
+   */
+  workbuddy?: WorkBuddyConfig;
+  /**
    * Project template configuration overrides (Issue #2227).
    *
    * Extends or overrides auto-discovered templates with display metadata.
@@ -441,6 +446,32 @@ export interface ConfigChannelConfig {
  */
 export interface ChannelsConfig {
   [channelName: string]: ConfigChannelConfig | undefined;
+}
+
+/**
+ * WorkBuddy project configuration for remote local-agent control.
+ * @see Issue #3442
+ */
+export interface WorkBuddyProjectConfig {
+  /** Working directory on the local machine */
+  cwd: string;
+  /** Bound chat ID */
+  chatId?: string;
+  /** HTTP endpoint of the WorkBuddy process */
+  endpoint: string;
+  /** Enabled tool integrations */
+  tools?: string[];
+  /** Environment variables */
+  env?: Record<string, string>;
+}
+
+/**
+ * WorkBuddy configuration section.
+ * @see Issue #3442
+ */
+export interface WorkBuddyConfig {
+  /** Named project configurations */
+  projects: Record<string, WorkBuddyProjectConfig>;
 }
 
 /**

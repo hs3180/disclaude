@@ -45,3 +45,11 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// WorkBuddy (Issue #3442)
+export {
+  workbuddy_execute,
+  workbuddy_list,
+  workbuddy_health,
+  resetManager,
+} from './workbuddy.js';

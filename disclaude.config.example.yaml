@@ -267,6 +267,27 @@ env:
   # Example: Enable debug mode
   # DEBUG: "false"
 
+# -----------------------------------------------------------------------------
+# WorkBuddy Configuration (Issue #3442)
+# -----------------------------------------------------------------------------
+# WorkBuddy is a lightweight Agent running on the user's local machine.
+# It allows disclaude (server) to execute local operations remotely.
+#
+# Prerequisites:
+#   - WorkBuddy process must be running on the local machine
+#   - WorkBuddy exposes an HTTP API at the configured endpoint
+#
+# workbuddy:
+#   projects:
+#     my-miniprogram:
+#       cwd: /Users/dev/my-miniprogram
+#       chatId: oc_xxxx
+#       endpoint: http://192.168.1.100:8765
+#       tools:
+#         - wechat-devtools
+#       env:
+#         WECHAT_DEVTOOLS_PATH: /Applications/wechatwebdevtools.app
+
 # =============================================================================
 # Notes
 # =============================================================================

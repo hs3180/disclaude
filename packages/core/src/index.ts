@@ -361,3 +361,19 @@ export {
   STATE_FILE_NAME,
   STATE_VERSION,
 } from './project/index.js';
+
+// WorkBuddy module — remote local-agent control (Issue #3442)
+export type {
+  WorkBuddyResult,
+  WorkBuddyProjectConfig as WorkBuddyProjectConfigType,
+  WorkBuddyConfig as WorkBuddyConfigType,
+  WorkBuddyStatus,
+  WorkBuddyInstance,
+  WorkBuddyCommand,
+  WorkBuddyCommandResult,
+  WorkBuddyManagerOptions,
+} from './workbuddy/index.js';
+
+export {
+  WorkBuddyManager,
+} from './workbuddy/index.js';

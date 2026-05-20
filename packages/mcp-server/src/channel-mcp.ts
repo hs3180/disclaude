@@ -16,6 +16,9 @@ import {
   send_interactive,
   send_file,
   push_to_agent,
+  workbuddy_execute,
+  workbuddy_list,
+  workbuddy_health,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -33,6 +36,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
+export { workbuddy_execute, workbuddy_list, workbuddy_health, resetManager } from './tools/workbuddy.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -519,6 +523,47 @@ will be processed as a system command.
         return toolError(`Push to agent failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
+  },
+  // WorkBuddy tools (Issue #3442)
+  {
+    name: 'workbuddy_execute',
+    description: `Execute a command on a WorkBuddy instance (remote local-agent).
+
+WorkBuddy is a lightweight Agent running on the user's local machine.
+It can execute local CLI commands like building, previewing, and uploading mini-programs.
+
+## Parameters
+- **project**: Project name as configured in disclaude.config.yaml (string)
+- **command**: Command to execute, e.g., 'preview', 'upload', 'open' (string)
+- **args**: Optional command arguments (object)
+
+## Example
+\`\`\`json
+{"project": "my-miniprogram", "command": "preview"}
+\`\`\``,
+    parameters: z.object({
+      project: z.string().describe('Project name as configured in disclaude.config.yaml'),
+      command: z.string().describe('Command to execute (e.g., preview, upload, open)'),
+      args: z.record(z.unknown()).optional().describe('Optional command arguments'),
+    }),
+    handler: async ({ project, command, args }: { project: string; command: string; args?: Record<string, unknown> }) =>
+      await workbuddy_execute({ project, command, args }),
+  },
+  {
+    name: 'workbuddy_list',
+    description: `List all configured WorkBuddy instances and their status.
+
+Returns a list of registered WorkBuddy projects with their connection status and configuration.`,
+    parameters: z.object({}),
+    handler: () => workbuddy_list(),
+  },
+  {
+    name: 'workbuddy_health',
+    description: `Check health of all configured WorkBuddy instances.
+
+Sends a health check request to each registered WorkBuddy and reports their connection status.`,
+    parameters: z.object({}),
+    handler: async () => await workbuddy_health(),
   },
 ];
 
