@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseAgent, type SdkOptionsExtra, type IteratorYieldResult, type QueryStreamResult } from './base-agent.js';
 import { setRuntimeContext, clearRuntimeContext, type BaseAgentConfig } from './types.js';
 import type { AgentMessage, StreamingUserMessage, QueryHandle } from '../sdk/index.js';
+import { Config } from '../config/index.js';
 
 // Create a concrete implementation of BaseAgent for testing
 class TestAgent extends BaseAgent {
@@ -562,6 +563,109 @@ describe('BaseAgent', () => {
       const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
       const options = ctxAgent.testCreateSdkOptions({ cwd: '/other/project' });
       expect(options.env?.CLAUDE_CONFIG_DIR).toBe('/workspace/.claude');
+    });
+  });
+
+  describe('createSdkOptions - Issue #3706: model tier env vars for Agent Teams', () => {
+    // Spy on Config.getModelForTier static method — use 'never' cast because
+    // vitest's spyOn generic doesn't recognize static method keys in some TS configs.
+    const getModelForTierSpy = vi.spyOn(Config, 'getModelForTier' as never);
+
+    afterEach(() => {
+      getModelForTierSpy.mockRestore();
+    });
+
+    it('should inject model tier env vars when Agent Teams is enabled', () => {
+       
+      getModelForTierSpy.mockImplementation(((tier: string) => {
+        if (tier === 'high') {return 'glm-5.1';}
+        if (tier === 'low') {return 'glm-4-flash';}
+        return undefined;
+      }) as any);
+
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => true,
+      });
+
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' });
+      const options = glmAgent.testCreateSdkOptions();
+
+      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.1');
+      expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4-flash');
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5v-turbo');
+    });
+
+    it('should NOT inject model tier env vars when Agent Teams is disabled', () => {
+       
+      getModelForTierSpy.mockImplementation(((tier: string) => {
+        if (tier === 'high') {return 'glm-5.1';}
+        return undefined;
+      }) as any);
+
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' });
+      const options = glmAgent.testCreateSdkOptions();
+
+      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    });
+
+    it('should respect user overrides in globalEnv for model tier env vars', () => {
+       
+      getModelForTierSpy.mockImplementation(((tier: string) => {
+        if (tier === 'high') {return 'glm-5.1';}
+        return undefined;
+      }) as any);
+
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({
+          ANTHROPIC_DEFAULT_OPUS_MODEL: 'user-custom-opus',
+          ANTHROPIC_DEFAULT_SONNET_MODEL: 'user-custom-sonnet',
+        }),
+        isAgentTeamsEnabled: () => true,
+      });
+
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' });
+      const options = glmAgent.testCreateSdkOptions();
+
+      // User's explicit values should not be overridden
+      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('user-custom-opus');
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('user-custom-sonnet');
+    });
+
+    it('should handle undefined tier models gracefully', () => {
+      getModelForTierSpy.mockReturnValue(undefined);
+
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'my-model', provider: 'glm' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => true,
+      });
+
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'my-model', provider: 'glm' });
+      const options = glmAgent.testCreateSdkOptions();
+
+      // opus/haiku not set since getModelForTier returned undefined
+      expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+      expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+      // sonnet always uses the agent's model
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('my-model');
     });
   });
 });
