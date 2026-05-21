@@ -716,6 +716,36 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // ============================================================================
+  // Integration testing (Issue #1626)
+  // ============================================================================
+
+  /**
+   * Send an incoming message event through IPC for integration testing.
+   * Issue #1626: Enables end-to-end testing of message filtering pipeline.
+   *
+   * @param event - Feishu event data to process
+   */
+  async receiveMessage(
+    event: Record<string, unknown>
+  ): Promise<{ success: boolean; emitted: boolean; filterReason?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('receiveMessage', { event });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error }, 'receiveMessage failed');
+
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+
+      return { success: false, emitted: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

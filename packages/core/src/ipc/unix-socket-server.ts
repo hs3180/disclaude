@@ -80,6 +80,8 @@ export interface ChannelApiHandlers {
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
   /** Push instruction to a chat agent (Issue #631) */
   pushToAgent?: (chatId: string, message: string) => Promise<{ success: boolean }>;
+  /** Receive incoming message for integration testing (Issue #1626) */
+  receiveMessage?: (event: Record<string, unknown>) => Promise<{ emitted: boolean; filterReason?: string }>;
 }
 
 /**
@@ -337,6 +339,34 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.pushToAgent(chatId, message);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Receive incoming message for integration testing (Issue #1626)
+        case 'receiveMessage': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'Channel API handlers not available',
+            };
+          }
+          if (!handlers.receiveMessage) {
+            return {
+              id: request.id,
+              success: false,
+              error: 'receiveMessage not supported by this channel',
+            };
+          }
+          const { event } =
+            request.payload as IpcRequestPayloads['receiveMessage'];
+          try {
+            const result = await handlers.receiveMessage(event);
+            return { id: request.id, success: true, payload: { success: true, ...result } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

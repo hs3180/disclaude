@@ -26,7 +26,9 @@ export type IpcRequestType =
   | 'listTempChats'
   | 'markChatResponded'
   // Push instruction to a chat agent (Issue #631)
-  | 'pushToAgent';
+  | 'pushToAgent'
+  // Receive incoming message for integration testing (Issue #1626)
+  | 'receiveMessage';
 
 /**
  * IPC request payload types.
@@ -85,6 +87,11 @@ export interface IpcRequestPayloads {
     chatId: string;
     message: string;
   };
+  // Receive incoming message for integration testing (Issue #1626)
+  receiveMessage: {
+    /** Feishu event data (FeishuEventData) */
+    event: Record<string, unknown>;
+  };
 }
 
 /**
@@ -133,6 +140,14 @@ export interface IpcResponsePayloads {
   // Push instruction to a chat agent (Issue #631)
   pushToAgent: {
     success: boolean;
+  };
+  // Receive incoming message for integration testing (Issue #1626)
+  receiveMessage: {
+    success: boolean;
+    /** Whether the message passed all filters and was emitted to the agent */
+    emitted: boolean;
+    /** If filtered, the reason (e.g., 'trigger_mode', 'bot', 'old', 'empty') */
+    filterReason?: string;
   };
 }
 

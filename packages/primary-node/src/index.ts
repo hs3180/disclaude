@@ -133,6 +133,17 @@ export {
   type CardConfig,
 } from './platforms/index.js';
 
+// Feishu channel components (Issue #1626: integration testing)
+// Renamed to avoid conflict with the MessageHandler type from @disclaude/core
+export {
+  TriggerModeManager,
+  type TriggerModeRecord,
+  MentionDetector,
+  type BotInfo,
+  MessageHandler as FeishuMessageHandler,
+  type MessageCallbacks as FeishuMessageCallbacks,
+} from './channels/feishu/index.js';
+
 // Routers (Issue #1040)
 export {
   CardActionRouter,
