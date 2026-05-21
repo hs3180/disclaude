@@ -195,6 +195,26 @@ export abstract class BaseAgent implements Disposable {
       globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
     }
 
+    // Issue #3770: Inject model tier env vars so SDK sub-agents (Task tool,
+    // Team workers) resolve opus/sonnet/haiku aliases to the correct model
+    // names for the active provider. Without this, the SDK resolves "haiku"
+    // to a Claude default (e.g., "claude-haiku-4-5-20251001") that
+    // non-Anthropic endpoints don't recognize, causing sub-agents to fail
+    // with 400 Invalid model name errors.
+    const opusModel = Config.getModelForTier('high');
+    const haikuModel = Config.getModelForTier('low');
+    const sonnetModel = Config.getModelForTier('multimodal');
+
+    if (opusModel && !globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL) {
+      globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = opusModel;
+    }
+    if (sonnetModel && !globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL) {
+      globalEnv.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnetModel;
+    }
+    if (haikuModel && !globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
+      globalEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = haikuModel;
+    }
+
     // Issue #3532: Set CLAUDE_CONFIG_DIR to workspace .claude dir when project-bound.
     // This redirects SDK's user scope to workspace, making workspace skills always available.
     if (isProjectBound) {
