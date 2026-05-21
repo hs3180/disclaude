@@ -35,6 +35,7 @@ import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
+import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -247,6 +248,20 @@ async function main(): Promise<void> {
   // Create unified control handler for all channels
   const controlHandler = createControlHandler(controlHandlerContext);
 
+  // Issue #3329: Initialize InputMessageRouter for unified message routing.
+  // Activates the MessageRouter so both the scheduler (SystemMessage) and
+  // channels (UserMessage) route through the unified path.
+  // Must be called before primaryNode.start() (which calls initScheduler)
+  // and before ChannelLifecycleManager construction (which passes the router to channels).
+  const routerCallbacksFactory = (chatId: string) => {
+    const channel = primaryNode.getChannelManager().getFirstChannel();
+    if (!channel) {
+      throw new Error('No channel available for InputMessageRouter callbacks');
+    }
+    return createChannelCallbacksFactory(channel, logger)(chatId);
+  };
+  primaryNode.initInputMessageRouter(agentPool, routerCallbacksFactory);
+
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
   const lifecycleManager = new ChannelLifecycleManager(channelManager, {
     agentPool,
@@ -254,6 +269,8 @@ async function main(): Promise<void> {
     controlHandlerContext,
     logger,
     primaryNode,
+    // Issue #3329: Pass InputMessageRouter so channels route through unified path
+    inputMessageRouter: primaryNode.getInputMessageRouter(),
   });
 
   // Register all built-in channel descriptors (Issue #1594 Phase 3)
