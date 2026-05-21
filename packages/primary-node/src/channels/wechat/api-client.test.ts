@@ -507,6 +507,210 @@ describe('WeChatApiClient', () => {
     });
   });
 
+  describe('sendImage (Issue #1556 Phase 3.3)', () => {
+    it('should send image message via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendImage({ to: 'user-1', imageUrl: 'https://cdn.example.com/img.png' });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('sendmessage'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.item_list[0].type).toBe(2);
+      expect(callBody.msg.item_list[0].image_item.url).toBe('https://cdn.example.com/img.png');
+      expect(callBody.msg.to_user_id).toBe('user-1');
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendImage({ to: 'user-1', imageUrl: 'https://cdn.example.com/img.png', contextToken: 'ctx-1' });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.context_token).toBe('ctx-1');
+    });
+  });
+
+  describe('sendFile (Issue #1556 Phase 3.3)', () => {
+    it('should send file message via POST', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendFile({
+        to: 'user-1',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+        fileName: 'document.pdf',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('sendmessage'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.item_list[0].type).toBe(3);
+      expect(callBody.msg.item_list[0].file_item.url).toBe('https://cdn.example.com/doc.pdf');
+      expect(callBody.msg.item_list[0].file_item.file_name).toBe('document.pdf');
+      expect(callBody.msg.to_user_id).toBe('user-1');
+    });
+
+    it('should include contextToken when provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendFile({
+        to: 'user-1',
+        fileUrl: 'https://cdn.example.com/doc.pdf',
+        fileName: 'doc.pdf',
+        contextToken: 'ctx-2',
+      });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.context_token).toBe('ctx-2');
+    });
+
+    it('should work without fileName', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0 })),
+      });
+
+      client.setToken('bot-token');
+      await client.sendFile({ to: 'user-1', fileUrl: 'https://cdn.example.com/file' });
+
+      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(callBody.msg.item_list[0].file_item.url).toBe('https://cdn.example.com/file');
+      expect(callBody.msg.item_list[0].file_item.file_name).toBeUndefined();
+    });
+  });
+
+  describe('uploadMedia (Issue #1556 Phase 3.3)', () => {
+    it('should upload file and return CDN URL and file key', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/file-abc.png',
+          file_key: 'key-123',
+        })),
+      });
+
+      client.setToken('bot-token');
+      const result = await client.uploadMedia({
+        fileData: Buffer.from('fake-image-data'),
+        fileName: 'test.png',
+        mimeType: 'image/png',
+      });
+
+      expect(result.url).toBe('https://cdn.example.com/file-abc.png');
+      expect(result.fileKey).toBe('key-123');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('ilink/bot/upload'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('should throw when file exceeds 20MB limit', async () => {
+      client.setToken('bot-token');
+      const hugeBuffer = Buffer.alloc(21 * 1024 * 1024); // 21MB
+
+      await expect(client.uploadMedia({
+        fileData: hugeBuffer,
+        fileName: 'huge.bin',
+      })).rejects.toThrow('File too large');
+    });
+
+    it('should throw when response missing url', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, file_key: 'key-1' })),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('missing url or file_key');
+    });
+
+    it('should throw when response missing file_key', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 0, url: 'https://cdn.example.com/f' })),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('missing url or file_key');
+    });
+
+    it('should throw on API error response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({ ret: 1001, err_msg: 'Upload failed' })),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('WeChat upload error [1001]: Upload failed');
+    });
+
+    it('should throw on HTTP error', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 503,
+        text: () => Promise.resolve('Service Unavailable'),
+      });
+
+      client.setToken('bot-token');
+      await expect(client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.txt',
+      })).rejects.toThrow('WeChat upload error [503]');
+    });
+
+    it('should use default mime type when not provided', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          ret: 0,
+          url: 'https://cdn.example.com/f',
+          file_key: 'k',
+        })),
+      });
+
+      client.setToken('bot-token');
+      await client.uploadMedia({
+        fileData: Buffer.from('data'),
+        fileName: 'test.bin',
+      });
+
+      // Verify FormData was used (body is FormData, not string)
+      expect(mockFetch.mock.calls[0][1].body).toBeInstanceOf(FormData);
+    });
+  });
+
   describe('sendTyping (Issue #1556 Phase 3.2)', () => {
     it('should send typing indicator via POST', async () => {
       mockFetch.mockResolvedValue({
