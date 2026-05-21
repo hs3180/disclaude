@@ -124,6 +124,30 @@ describe('MessageRouter', () => {
       );
     });
 
+    it('should pass chatType and threadContext to handler (Issue #3641)', async () => {
+      const handler = createMockHandler();
+      const router = new MessageRouter({ handler });
+      const msg = createUserMessage({
+        chatType: 'topic',
+        threadContext: 'User: Hello\nBot: Hi there',
+      });
+
+      await router.route(msg);
+
+      expect(handler.handleUserMessage).toHaveBeenCalledWith(
+        'oc_chat123',
+        'Hello!',
+        'feishu-msg-1',
+        undefined,
+        undefined,
+        undefined,
+        'topic',
+        'User: Hello\nBot: Hi there'
+      );
+    });
+      );
+    });
+
     it('should pass attachments to handler', async () => {
       const handler = createMockHandler();
       const router = new MessageRouter({ handler });
