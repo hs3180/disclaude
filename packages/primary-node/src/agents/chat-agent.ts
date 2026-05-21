@@ -35,7 +35,7 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, forceCleanupLeakedListeners, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type MessageData } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, forceCleanupLeakedListeners, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type UserMessageParams } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
@@ -157,7 +157,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    *
    * Consumers (e.g., ScheduleExecutor) can use this to await task completion:
    * ```typescript
-   * agent.processMessage(chatId, prompt, messageId, userId);
+   * agent.processMessage({ chatId, payload: prompt, messageId, senderOpenId: userId });
    * await agent.taskComplete;
    * ```
    */
@@ -544,7 +544,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // The processIterator running in the background will handle the SDK responses
       // and resolve/reject the taskComplete promise.
       const effectiveMessageId = messageId ?? `once-${Date.now()}`;
-      await this.processMessage(chatId, text, effectiveMessageId, senderOpenId);
+      await this.processMessage({ chatId, payload: text, messageId: effectiveMessageId, senderOpenId });
 
       // Wait for the task to complete via the unified streaming path
       if (this.taskCompletionPromise) {
@@ -573,19 +573,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * @param messageId - Unique message identifier
    * @param senderOpenId - Optional sender's open_id for @ mentions
    * @param attachments - Optional file attachments
-   * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
-   * @param threadContext - Optional thread context for topic groups (Issue #3641)
+   * Issue #3779: Converted to options object for type safety.
    */
   async processMessage(
-    chatId: string,
-    text: string,
-    messageId: string,
-    senderOpenId?: string,
-    attachments?: MessageData['attachments'],
-    chatHistoryContext?: string,
-    chatType?: string,
-    threadContext?: string
+    params: UserMessageParams,
   ): Promise<void> {
+    const { chatId, payload: text, messageId, senderOpenId, attachments, chatHistoryContext, chatType, threadContext } = params;
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
       this.logger.error(

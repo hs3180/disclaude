@@ -242,7 +242,7 @@ export function createDefaultMessageHandler(
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      void agent.processMessage(chatId, content, messageId, senderOpenId, fileRefs, chatHistoryContext, chatType, threadContext);
+      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, chatType, threadContext });
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

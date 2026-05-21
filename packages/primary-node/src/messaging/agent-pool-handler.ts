@@ -11,7 +11,7 @@
 import {
   createLogger,
   type IAgentMessageHandler,
-  type FileRef,
+  type UserMessageParams,
 } from '@disclaude/core';
 import type { Logger } from 'pino';
 import type { ChatAgent } from '../agents/chat-agent.js';
@@ -56,16 +56,8 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     this.log = options.logger ?? defaultLogger;
   }
 
-  handleUserMessage(
-    chatId: string,
-    payload: string,
-    messageId: string,
-    senderOpenId?: string,
-    attachments?: FileRef[],
-    chatHistoryContext?: string,
-    chatType?: string,
-    threadContext?: string,
-  ): Promise<void> {
+  handleUserMessage(params: UserMessageParams): Promise<void> {
+    const { chatId, messageId, senderOpenId, attachments, chatType } = params;
     this.log.info(
       { chatId, messageId, senderOpenId, hasAttachments: !!attachments?.length, chatType },
       'Handling user message via agent pool',
@@ -75,16 +67,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
 
     // Fire-and-forget pattern matches existing createDefaultMessageHandler
-    void agent.processMessage(
-      chatId,
-      payload,
-      messageId,
-      senderOpenId,
-      attachments,
-      chatHistoryContext,
-      chatType,
-      threadContext,
-    );
+    void agent.processMessage(params);
 
     return Promise.resolve();
   }
@@ -106,7 +89,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
       // Fallback: use persistent agent from pool
       const callbacks = this.callbacksFactory(chatId);
       const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
-      void agent.processMessage(chatId, payload, messageId);
+      void agent.processMessage({ chatId, payload, messageId });
     }
   }
 }
