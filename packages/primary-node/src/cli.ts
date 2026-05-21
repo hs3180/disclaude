@@ -258,7 +258,12 @@ async function main(): Promise<void> {
     if (!channel) {
       throw new Error('No channel available for InputMessageRouter callbacks');
     }
-    return createChannelCallbacksFactory(channel, logger)(chatId);
+    // Issue #3776: Preserve channel-specific callback options.
+    // REST channel requires sendDoneSignal for synchronous HTTP response resolution;
+    // without it, PendingResponse never resolves and requests time out (HTTP 000).
+    // Feishu channel operates in async mode without done signal.
+    const options = channel.id === 'rest' ? { sendDoneSignal: true } : undefined;
+    return createChannelCallbacksFactory(channel, logger, options)(chatId);
   };
   primaryNode.initInputMessageRouter(agentPool, routerCallbacksFactory);
 
