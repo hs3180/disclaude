@@ -185,6 +185,7 @@ export function createDefaultMessageHandler(
     if (context.inputMessageRouter) {
       const senderOpenId = userId;
       const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
+      const chatType = metadata?.chatType as string | undefined;
       const threadContext = metadata?.threadContext as string | undefined;
       const fileRefs = options.extractAttachments?.(message);
 
@@ -197,6 +198,7 @@ export function createDefaultMessageHandler(
         senderOpenId,
         attachments: fileRefs,
         chatHistoryContext,
+        chatType,
         threadContext,
         createdAt: message.timestamp ? new Date(message.timestamp).toISOString() : new Date().toISOString(),
       };

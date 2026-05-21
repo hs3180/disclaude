@@ -96,6 +96,8 @@ describe('MessageRouter', () => {
         'feishu-msg-1',
         undefined,
         undefined,
+        undefined,
+        undefined,
         undefined
       );
     });
@@ -116,7 +118,9 @@ describe('MessageRouter', () => {
         'feishu-msg-1',
         'ou_sender1',
         undefined,
-        'previous messages...'
+        'previous messages...',
+        undefined,
+        undefined
       );
     });
 
@@ -134,7 +138,31 @@ describe('MessageRouter', () => {
         'feishu-msg-1',
         undefined,
         attachments,
+        undefined,
+        undefined,
         undefined
+      );
+    });
+
+    it('should pass chatType and threadContext to handler', async () => {
+      const handler = createMockHandler();
+      const router = new MessageRouter({ handler });
+      const msg = createUserMessage({
+        chatType: 'topic',
+        threadContext: 'User: Hello\nBot: Hi!',
+      });
+
+      await router.route(msg);
+
+      expect(handler.handleUserMessage).toHaveBeenCalledWith(
+        'oc_chat123',
+        'Hello!',
+        'feishu-msg-1',
+        undefined,
+        undefined,
+        undefined,
+        'topic',
+        'User: Hello\nBot: Hi!'
       );
     });
   });
@@ -200,10 +228,10 @@ describe('MessageRouter', () => {
 
       expect(handler.handleUserMessage).toHaveBeenCalledTimes(2);
       expect(handler.handleUserMessage).toHaveBeenNthCalledWith(
-        1, 'oc_chatA', 'Hello!', 'feishu-msg-1', undefined, undefined, undefined
+        1, 'oc_chatA', 'Hello!', 'feishu-msg-1', undefined, undefined, undefined, undefined, undefined
       );
       expect(handler.handleUserMessage).toHaveBeenNthCalledWith(
-        2, 'oc_chatB', 'Hello!', 'feishu-msg-2', undefined, undefined, undefined
+        2, 'oc_chatB', 'Hello!', 'feishu-msg-2', undefined, undefined, undefined, undefined, undefined
       );
     });
   });

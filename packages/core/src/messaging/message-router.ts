@@ -45,7 +45,9 @@ export interface IAgentMessageHandler {
     messageId: string,
     senderOpenId?: string,
     attachments?: FileRef[],
-    chatHistoryContext?: string
+    chatHistoryContext?: string,
+    chatType?: string,
+    threadContext?: string
   ): Promise<void>;
 
   /**
@@ -178,7 +180,9 @@ export class MessageRouter {
       message.messageId,
       message.senderOpenId,
       message.attachments,
-      message.chatHistoryContext
+      message.chatHistoryContext,
+      message.chatType,
+      message.threadContext
     );
   }
 
