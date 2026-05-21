@@ -1272,6 +1272,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Implements Disposable interface (Issue #328).
    */
   dispose(): void {
+    // Issue #3745: Synchronously close queryHandle and channel to prevent
+    // process exit listener leaks when agents are created in rapid succession
+    // (e.g., scheduled tasks, CLI tests). Previously, shutdown() was called as
+    // fire-and-forget — the async closure of queryHandle meant the next agent's
+    // snapshotProcessListeners() could capture the old exit listener before it
+    // was removed, making cleanup blind to it and causing monotonic accumulation.
+    if (this.queryHandle) {
+      this.queryHandle.close();
+      this.queryHandle = undefined;
+    }
+    if (this.channel) {
+      this.channel.close();
+      this.channel = undefined;
+    }
+
     this.shutdown().catch((err) => {
       this.logger.error({ err }, 'Error during dispose shutdown');
     });
