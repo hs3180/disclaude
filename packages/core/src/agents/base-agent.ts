@@ -203,7 +203,7 @@ export abstract class BaseAgent implements Disposable {
     // with 400 Invalid model name errors.
     const opusModel = Config.getModelForTier('high');
     const haikuModel = Config.getModelForTier('low');
-    const sonnetModel = this.model;
+    const sonnetModel = Config.getModelForTier('multimodal');
 
     if (opusModel && !globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL) {
       globalEnv.ANTHROPIC_DEFAULT_OPUS_MODEL = opusModel;

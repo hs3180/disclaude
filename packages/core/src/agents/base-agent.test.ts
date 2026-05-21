@@ -570,13 +570,14 @@ describe('BaseAgent', () => {
     const getModelForTierSpy = vi.spyOn(Config, 'getModelForTier' as never);
 
     afterEach(() => {
-      getModelForTierSpy.mockRestore();
+      getModelForTierSpy.mockClear();
     });
 
     it('should inject model tier env vars for GLM provider even without Agent Teams', () => {
       getModelForTierSpy.mockImplementation(((tier: string) => {
         if (tier === 'high') {return 'glm-5.1';}
         if (tier === 'low') {return 'glm-5-turbo';}
+        if (tier === 'multimodal') {return 'glm-5v-turbo';}
         return undefined;
       }) as any);
 
@@ -593,7 +594,7 @@ describe('BaseAgent', () => {
 
       expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.1');
       expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
-      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.1');
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5v-turbo');
       // Agent Teams should NOT be enabled
       expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBeUndefined();
     });
@@ -602,18 +603,19 @@ describe('BaseAgent', () => {
       getModelForTierSpy.mockImplementation(((tier: string) => {
         if (tier === 'high') {return 'glm-5.1';}
         if (tier === 'low') {return 'glm-5-turbo';}
+        if (tier === 'multimodal') {return 'glm-5v-turbo';}
         return undefined;
       }) as any);
 
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
-        getAgentConfig: () => ({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' }),
+        getAgentConfig: () => ({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' }),
         getLoggingConfig: () => ({ sdkDebug: false }),
         getGlobalEnv: () => ({}),
         isAgentTeamsEnabled: () => true,
       });
 
-      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5v-turbo', provider: 'glm' });
+      const glmAgent = new TestAgent({ apiKey: 'key', model: 'glm-5.1', provider: 'glm' });
       const options = glmAgent.testCreateSdkOptions();
 
       expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.1');
@@ -647,7 +649,7 @@ describe('BaseAgent', () => {
       expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('user-custom-sonnet');
     });
 
-    it('should always inject sonnet model even when tier models are undefined', () => {
+    it('should not inject sonnet model when multimodal tier is undefined', () => {
       getModelForTierSpy.mockImplementation((() => {
         // All tiers return undefined - simulates no tier models configured
         return undefined;
@@ -664,8 +666,8 @@ describe('BaseAgent', () => {
       const glmAgent = new TestAgent({ apiKey: 'key', model: 'my-model', provider: 'glm' });
       const options = glmAgent.testCreateSdkOptions();
 
-      // sonnet always uses the agent's own model regardless of tier config
-      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('my-model');
+      // sonnet uses Config.getModelForTier('multimodal'), not this.model
+      expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
     });
   });
 });
