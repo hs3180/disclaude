@@ -396,6 +396,128 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  describe('Issue #3641: topic thread intermediate message filtering', () => {
+    it('should filter tool_use messages in topic threads', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_topic_filter',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* topicIterator() {
+        yield { parsed: { type: 'text', content: 'Let me check...' } };
+        yield { parsed: { type: 'tool_use', content: 'Calling Read tool...' } };
+        yield { parsed: { type: 'tool_result', content: 'File content...' } };
+        yield { parsed: { type: 'text', content: 'Here is the answer' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: topicIterator(),
+      });
+
+      void agent.processMessage('oc_topic_filter', 'hello', 'msg_1', undefined, undefined, undefined, 'topic');
+      await new Promise<void>(r => setTimeout(r, 150));
+
+      const sendMessageCalls = localCallbacks.sendMessage.mock.calls.map((c: any[]) => c[1]);
+      // tool_use and tool_result should be filtered
+      expect(sendMessageCalls).not.toContain('Calling Read tool...');
+      expect(sendMessageCalls).not.toContain('File content...');
+      // Regular text and result should still be sent
+      expect(sendMessageCalls).toContain('Let me check...');
+      expect(sendMessageCalls).toContain('Here is the answer');
+    });
+
+    it('should not filter intermediate messages in non-topic chats', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_group_nofilter',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* groupIterator() {
+        yield { parsed: { type: 'text', content: 'Thinking...' } };
+        yield { parsed: { type: 'tool_use', content: 'Tool call...' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: groupIterator(),
+      });
+
+      void agent.processMessage('oc_group_nofilter', 'hello', 'msg_1', undefined, undefined, undefined, 'group');
+      await new Promise<void>(r => setTimeout(r, 150));
+
+      const sendMessageCalls = localCallbacks.sendMessage.mock.calls.map((c: any[]) => c[1]);
+      // In group chat, tool_use should NOT be filtered
+      expect(sendMessageCalls).toContain('Tool call...');
+    });
+
+    it('should not filter intermediate messages when chatType is undefined', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_default_nofilter',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* defaultIterator() {
+        yield { parsed: { type: 'tool_use', content: 'Tool call...' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: defaultIterator(),
+      });
+
+      void agent.processMessage('oc_default_nofilter', 'hello', 'msg_1');
+      await new Promise<void>(r => setTimeout(r, 150));
+
+      const sendMessageCalls = localCallbacks.sendMessage.mock.calls.map((c: any[]) => c[1]);
+      expect(sendMessageCalls).toContain('Tool call...');
+    });
+
+    it('should filter tool_progress messages in topic threads', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_topic_progress',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* progressIterator() {
+        yield { parsed: { type: 'text', content: 'Working...' } };
+        yield { parsed: { type: 'tool_progress', content: '50% done...' } };
+        yield { parsed: { type: 'result', content: 'Complete' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: progressIterator(),
+      });
+
+      void agent.processMessage('oc_topic_progress', 'hello', 'msg_1', undefined, undefined, undefined, 'topic');
+      await new Promise<void>(r => setTimeout(r, 150));
+
+      const sendMessageCalls = localCallbacks.sendMessage.mock.calls.map((c: any[]) => c[1]);
+      expect(sendMessageCalls).not.toContain('50% done...');
+      expect(sendMessageCalls).toContain('Working...');
+    });
+  });
+
   describe('Issue #2926: abort mechanism for immediate stop/reset', () => {
     it('should break out of iterator when reset() is called during processing', async () => {
       const agent = new ChatAgent({
