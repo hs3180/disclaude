@@ -11,10 +11,9 @@
 # Usage:
 #   cp disclaude.config.example.yaml disclaude.config.yaml
 #   # Edit disclaude.config.yaml with your API keys and settings
-#   # (Optional) Configure source mirrors for faster downloads in China:
-#   # cp docker-source.env.example docker-source.env
-#   # Uncomment desired mirrors in docker-source.env, then:
-#   # source docker-source.env && docker compose build
+#   # (Optional) Configure source mirrors for faster downloads:
+#   # Uncomment desired mirrors in .env, then:
+#   # docker compose up -d --build
 #   docker compose up -d
 #
 #   # View logs
