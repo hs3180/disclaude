@@ -61,6 +61,8 @@ export interface UserMessage extends Message {
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */
   threadContext?: string;
+  /** Chat type for topic group detection (Issue #3641) — e.g. 'p2p', 'group', 'topic' */
+  chatType?: string;
 }
 
 // ============================================================================
