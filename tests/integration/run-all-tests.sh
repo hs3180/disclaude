@@ -233,28 +233,69 @@ check_server_health_detailed() {
 # Sends a lightweight sync request to ensure the agent is fully initialized,
 # addressing cold-start behavior where the first AI request might return
 # inconsistent responses (e.g., raw tool call format instead of text).
-# Returns: 0 on success, 1 on failure (non-fatal — tests still proceed)
+# Issue #3777: Added retry with exponential backoff and fail-fast behavior.
+# When the API is unreachable (HTTP 000 on all retries), the test suite
+# fails immediately instead of letting every test time out individually.
+# Returns: 0 on success, 1 on failure (fatal — test suite aborts)
 warmup_agent() {
-    log_info "Warming up agent (cold start prevention)..."
-    local warmup_chat_id="warmup-$$-$(date +%s)"
-    local result
-    result=$(make_sync_request "ping" "$warmup_chat_id" 2>/dev/null) || true
+    local max_retries="${WARMUP_MAX_RETRIES:-3}"
+    local initial_delay="${WARMUP_INITIAL_DELAY:-10}"
+    local backoff="${WARMUP_BACKOFF:-2}"
 
-    parse_response "$result"
+    log_info "Warming up agent (cold start prevention, max $((max_retries + 1)) attempts)..."
 
-    if [ "$RESPONSE_STATUS" = "200" ]; then
-        log_info "Agent warm-up successful (HTTP 200)"
-        # Record baseline exit listener count after warm-up
-        check_server_health_detailed
-        return 0
-    elif [ "$RESPONSE_STATUS" = "000" ]; then
-        # Warm-up timeout — agent might be slow on cold start, not a failure
-        log_warn "Agent warm-up: no response (HTTP 000) — agent may be initializing"
-        return 0
-    else
-        log_warn "Agent warm-up returned HTTP $RESPONSE_STATUS (non-fatal)"
-        return 0
-    fi
+    local attempt=0
+    while [ $attempt -le $max_retries ]; do
+        local warmup_chat_id="warmup-$$-$(date +%s)-$attempt"
+        local result
+        result=$(make_sync_request "ping" "$warmup_chat_id" 2>/dev/null) || true
+
+        parse_response "$result"
+
+        if [ "$RESPONSE_STATUS" = "200" ]; then
+            if [ $attempt -gt 0 ]; then
+                log_info "Agent warm-up succeeded on attempt $((attempt + 1))"
+            fi
+            log_info "Agent warm-up successful (HTTP 200)"
+            # Record baseline exit listener count after warm-up
+            check_server_health_detailed
+            return 0
+        fi
+
+        # Attempt failed
+        if [ $attempt -lt $max_retries ]; then
+            local delay=$((initial_delay * backoff ** attempt))
+            if [ "$RESPONSE_STATUS" = "000" ]; then
+                log_warn "Agent warm-up: no response (HTTP 000) — attempt $((attempt + 1))/$((max_retries + 1)), retrying in ${delay}s..."
+            else
+                log_warn "Agent warm-up returned HTTP $RESPONSE_STATUS — attempt $((attempt + 1))/$((max_retries + 1)), retrying in ${delay}s..."
+            fi
+            sleep "$delay"
+            # Restart server between retries if it's not healthy
+            if ! is_server_running; then
+                log_warn "Server not responding during warm-up, restarting..."
+                stop_server 2>/dev/null || true
+                wait_for_port_release "$REST_PORT" 10 || true
+                start_server || {
+                    log_error "Failed to restart server during warm-up"
+                    return 1
+                }
+            fi
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    # All retries exhausted
+    log_error "Agent warm-up failed after $((max_retries + 1)) attempts (HTTP $RESPONSE_STATUS)"
+    log_error "This usually means the AI API endpoint is unreachable or misconfigured."
+    log_error "Possible causes:"
+    log_error "  - API endpoint is down or rate-limiting"
+    log_error "  - Network/TLS connectivity issues"
+    log_error "  - API key is invalid or expired"
+    log_error "  - Server-side SDK error (check ${SERVER_LOG})"
+    show_server_logs
+    return 1
 }
 
 run_suite() {
@@ -315,7 +356,12 @@ main() {
     start_server || exit 1
 
     # Issue #3378: Warm up agent before first AI test to prevent cold-start issues
-    warmup_agent
+    # Issue #3777: Fail fast if API is unreachable instead of letting tests time out
+    warmup_agent || {
+        log_error "Agent warm-up failed — API appears unreachable. Aborting tests."
+        cleanup
+        exit 1
+    }
 
     local failed=0
     local RETRIED_SUCCESSES=0
