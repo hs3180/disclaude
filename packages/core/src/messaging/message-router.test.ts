@@ -145,8 +145,6 @@ describe('MessageRouter', () => {
         'User: Hello\nBot: Hi there'
       );
     });
-      );
-    });
 
     it('should pass attachments to handler', async () => {
       const handler = createMockHandler();
