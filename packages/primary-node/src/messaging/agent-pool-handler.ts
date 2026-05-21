@@ -63,6 +63,8 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     senderOpenId?: string,
     attachments?: FileRef[],
     chatHistoryContext?: string,
+    chatType?: string,
+    threadContext?: string,
   ): Promise<void> {
     this.log.info(
       { chatId, messageId, senderOpenId, hasAttachments: !!attachments?.length },
@@ -80,6 +82,8 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
       senderOpenId,
       attachments,
       chatHistoryContext,
+      chatType,
+      threadContext,
     );
 
     return Promise.resolve();
