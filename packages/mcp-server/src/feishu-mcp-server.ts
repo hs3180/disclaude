@@ -10,6 +10,7 @@
  * - send_card: Send a display-only card to a chat
  * - send_interactive: Send an interactive card with buttons/actions
  * - send_file: Send a file to a chat
+ * - push_to_agent: Push an instruction to a chat agent
  *
  * Environment Variables Required:
  * - FEISHU_APP_ID: Platform app ID
@@ -21,7 +22,7 @@
  */
 
 import { createLogger } from '@disclaude/core';
-import { send_file, send_text, send_card, send_interactive_message } from './channel-mcp.js';
+import { send_file, send_text, send_card, send_interactive_message, push_to_agent } from './channel-mcp.js';
 
 const logger = createLogger('ContextMCPServer');
 
@@ -167,6 +168,24 @@ async function handleMessage(message: unknown) {
                   required: ['filePath', 'chatId'],
                 },
               },
+              {
+                name: 'push_to_agent',
+                description: 'Push an instruction to a chat agent, triggering agent creation if needed. Use this to send an instruction to the agent handling a specific chat.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    chatId: {
+                      type: 'string',
+                      description: 'Target chat ID',
+                    },
+                    message: {
+                      type: 'string',
+                      description: 'The instruction text to push to the chat agent',
+                    },
+                  },
+                  required: ['chatId', 'message'],
+                },
+              },
             ],
           },
         };
@@ -241,6 +260,24 @@ async function handleMessage(message: unknown) {
         if (name === 'send_file') {
           const args = toolArgs as { filePath: string; chatId: string; parentMessageId?: string };
           const result = await send_file(args);
+
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{
+                type: 'text',
+                text: result.success
+                  ? result.message
+                  : `⚠️ ${result.message}`,
+              }],
+            },
+          };
+        }
+
+        if (name === 'push_to_agent') {
+          const args = toolArgs as { chatId: string; message: string };
+          const result = await push_to_agent(args);
 
           return {
             jsonrpc: '2.0',
