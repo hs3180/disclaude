@@ -31,6 +31,8 @@ const logger = createLogger('ChannelManager');
  */
 export class ChannelManager {
   private channels: Map<string, IChannel> = new Map();
+  /** Issue #3773: chatId → Channel mapping for multi-channel routing */
+  private chatIdChannelMap: Map<string, IChannel> = new Map();
 
   /**
    * Register a communication channel.
@@ -55,6 +57,8 @@ export class ChannelManager {
     controlHandler: ControlHandler
   ): void {
     channel.onMessage(async (message) => {
+      // Issue #3773: Register chatId → Channel mapping on incoming message
+      this.registerChatId(message.chatId, channel);
       try {
         await messageHandler(message);
       } catch (error) {
@@ -126,6 +130,31 @@ export class ChannelManager {
    */
   getFirstChannel(): IChannel | undefined {
     return this.channels.values().next().value;
+  }
+
+  /**
+   * Register a chatId → Channel mapping.
+   * Called automatically when a channel receives a message (Issue #3773).
+   * Can also be called manually to establish ownership for system-initiated messages.
+   */
+  registerChatId(chatId: string, channel: IChannel): void {
+    const existing = this.chatIdChannelMap.get(chatId);
+    if (existing && existing.id !== channel.id) {
+      logger.debug(
+        { chatId, fromChannelId: existing.id, toChannelId: channel.id },
+        'ChatId ownership reassigned to different channel'
+      );
+    }
+    this.chatIdChannelMap.set(chatId, channel);
+  }
+
+  /**
+   * Resolve the channel that owns a given chatId.
+   * Falls back to getFirstChannel() for system-initiated messages
+   * that have no originating channel (Issue #3773).
+   */
+  getChannelForChatId(chatId: string): IChannel | undefined {
+    return this.chatIdChannelMap.get(chatId) ?? this.getFirstChannel();
   }
 
   /**
@@ -242,5 +271,6 @@ export class ChannelManager {
    */
   clear(): void {
     this.channels.clear();
+    this.chatIdChannelMap.clear();
   }
 }
