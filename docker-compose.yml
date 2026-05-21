@@ -130,3 +130,77 @@ services:
 
     profiles:
       - test
+
+  # ===========================================================================
+  # Playwright Browser (optional)
+  # ===========================================================================
+  # Headless Chromium with CDP for browser automation.
+  # Start with: docker compose --profile playwright up -d
+  #
+  # The CDP endpoint is available at http://localhost:9222
+  # Configure in disclaude.config.yaml:
+  #   tools:
+  #     mcpServers:
+  #       playwright:
+  #         command: npx
+  #         args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
+  playwright:
+    image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.52.2-noble}
+    container_name: disclaude-playwright
+    restart: unless-stopped
+
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        exec $$(node -e "process.stdout.write(require('playwright').chromium.executablePath())") \
+          --headless=new \
+          --no-sandbox \
+          --disable-setuid-sandbox \
+          --disable-dev-shm-usage \
+          --disable-gpu \
+          --disable-software-rasterizer \
+          --disable-background-networking \
+          --disable-default-apps \
+          --disable-extensions \
+          --disable-sync \
+          --disable-translate \
+          --hide-scrollbars \
+          --metrics-recording-only \
+          --mute-audio \
+          --no-first-run \
+          --safebrowsing-disable-auto-update \
+          --disable-features=site-per-process \
+          --remote-debugging-port=$${CDP_PORT:-9222} \
+          --remote-debugging-address=0.0.0.0 \
+          --user-data-dir=/tmp/chrome-cdp \
+          about:blank
+
+    network_mode: host
+
+    environment:
+      - CDP_PORT=${CDP_PORT:-9222}
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:$${CDP_PORT:-9222}/json/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    profiles:
+      - playwright
