@@ -288,6 +288,7 @@ export {
 export type {
   IAgentMessageHandler,
   MessageRouterConfig,
+  UserMessageParams,
 } from './messaging/index.js';
 
 // Channels module (Issue #1041 - migrated from primary-node)

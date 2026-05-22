@@ -295,7 +295,7 @@ describe('WiredChannelDescriptors', () => {
         sendFile: expect.any(Function),
         onDone: expect.any(Function),
       }));
-      expect(mockAgent.processMessage).toHaveBeenCalledWith('chat-1', 'Hello from WeChat', 'msg-1', 'user-1', undefined, undefined, undefined, undefined);
+      expect(mockAgent.processMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-1', payload: 'Hello from WeChat', messageId: 'msg-1', senderOpenId: 'user-1' }));
     });
 
     it('should handle errors in message processing', async () => {

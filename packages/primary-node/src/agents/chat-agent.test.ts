@@ -180,12 +180,12 @@ describe('ChatAgent (primary-node)', () => {
 
   describe('processMessage', () => {
     it('should ignore messages for wrong chatId', () => {
-      void chatAgent.processMessage('oc_wrong', 'hello', 'msg_1');
+      void chatAgent.processMessage({ chatId: 'oc_wrong', payload: 'hello', messageId: 'msg_1' });
       expect(chatAgent.hasActiveSession()).toBe(false);
     });
 
     it('should start a session when processing first message', () => {
-      void chatAgent.processMessage('oc_test_chat', 'hello', 'msg_1');
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
       expect(chatAgent.hasActiveSession()).toBe(true);
     });
   });
@@ -248,7 +248,7 @@ describe('ChatAgent (primary-node)', () => {
 
   describe('session lifecycle', () => {
     it('should allow reset after processMessage', () => {
-      void chatAgent.processMessage('oc_test_chat', 'hello', 'msg_1');
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
       expect(chatAgent.hasActiveSession()).toBe(true);
 
       chatAgent.reset();
@@ -256,13 +256,13 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('should allow new session after reset', () => {
-      void chatAgent.processMessage('oc_test_chat', 'first', 'msg_1');
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'first', messageId: 'msg_1' });
       expect(chatAgent.hasActiveSession()).toBe(true);
 
       chatAgent.reset();
       expect(chatAgent.hasActiveSession()).toBe(false);
 
-      void chatAgent.processMessage('oc_test_chat', 'second', 'msg_2');
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'second', messageId: 'msg_2' });
       expect(chatAgent.hasActiveSession()).toBe(true);
     });
   });
@@ -289,7 +289,7 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       // Trigger the agent loop
-      void agent.processMessage('oc_startup_fail', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_startup_fail', payload: 'hello', messageId: 'msg_1' });
 
       // Wait for processIterator to handle the error
       await new Promise<void>(r => setTimeout(r, 100));
@@ -333,7 +333,7 @@ describe('ChatAgent (primary-node)', () => {
         iterator: failingIteratorWithStderr(),
       });
 
-      void agent.processMessage('oc_startup_stderr', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_startup_stderr', payload: 'hello', messageId: 'msg_1' });
       await new Promise<void>(r => setTimeout(r, 100));
 
       // Should show stderr content in the diagnostic message
@@ -365,7 +365,7 @@ describe('ChatAgent (primary-node)', () => {
         iterator: failingIterator(),
       });
 
-      void agent.processMessage('oc_startup_no_retry', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_startup_no_retry', payload: 'hello', messageId: 'msg_1' });
       await new Promise<void>(r => setTimeout(r, 100));
 
       // Session should be inactive (not restarted)
@@ -407,7 +407,7 @@ describe('ChatAgent (primary-node)', () => {
         iterator: runtimeErrorIterator(),
       });
 
-      void agent.processMessage('oc_runtime_error', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_runtime_error', payload: 'hello', messageId: 'msg_1' });
       await new Promise<void>(r => setTimeout(r, 150));
 
       // Should show Session error (not startup failure)
@@ -454,7 +454,7 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       // Start the session by sending a message
-      void agent.processMessage('oc_abort_test', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_abort_test', payload: 'hello', messageId: 'msg_1' });
 
       // Wait a bit for some messages to process, then reset
       await new Promise<void>(r => setTimeout(r, 50));
@@ -488,7 +488,7 @@ describe('ChatAgent (primary-node)', () => {
         iterator: slowIterator(),
       });
 
-      void agent.processMessage('oc_stop_test', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });
 
       // Wait then stop
       await new Promise<void>(r => setTimeout(r, 50));
@@ -507,7 +507,7 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       // Start a session to create AbortController
-      void agent.processMessage('oc_reset_abort_test', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_reset_abort_test', payload: 'hello', messageId: 'msg_1' });
       expect(agent.hasActiveSession()).toBe(true);
 
       // The abortController should exist
@@ -530,7 +530,7 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      void agent.processMessage('oc_stop_abort_test', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_stop_abort_test', payload: 'hello', messageId: 'msg_1' });
       const ac = (agent as any).abortController as AbortController;
 
       agent.stop();
@@ -546,7 +546,7 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      void agent.processMessage('oc_shutdown_abort_test', 'hello', 'msg_1');
+      void agent.processMessage({ chatId: 'oc_shutdown_abort_test', payload: 'hello', messageId: 'msg_1' });
       const ac = (agent as any).abortController as AbortController;
 
       await agent.shutdown();
