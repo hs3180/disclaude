@@ -90,7 +90,7 @@ vi.mock('./feishu/index.js', () => ({
     initialize: vi.fn(),
     clearClient: vi.fn(),
   })),
-  messageLogger: { init: vi.fn().mockResolvedValue(undefined) },
+  messageLogger: { init: vi.fn().mockResolvedValue(undefined), logOutgoingMessage: vi.fn().mockResolvedValue(undefined) },
   WsConnectionManager: vi.fn().mockImplementation(() => ({
     state: 'connected',
     start: vi.fn().mockResolvedValue(undefined),
