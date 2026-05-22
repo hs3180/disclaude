@@ -377,15 +377,11 @@ describe('ChannelManager', () => {
       expect(manager.getChannelForChatId('chat-rest-1')).toBe(restChannel);
     });
 
-    it('should fall back to getFirstChannel() for unknown chatId', () => {
+    it('should return undefined for unknown chatId', () => {
       const channel = createMockChannel('feishu');
       manager.register(channel);
 
-      // No chatId registered, should fall back to first channel
-      expect(manager.getChannelForChatId('unknown-chat')).toBe(channel);
-    });
-
-    it('should return undefined when no channels registered and no mapping', () => {
+      // No chatId registered, should return undefined
       expect(manager.getChannelForChatId('unknown-chat')).toBeUndefined();
     });
 

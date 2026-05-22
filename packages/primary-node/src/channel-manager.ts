@@ -150,11 +150,10 @@ export class ChannelManager {
 
   /**
    * Resolve the channel that owns a given chatId.
-   * Falls back to getFirstChannel() for system-initiated messages
-   * that have no originating channel (Issue #3773).
+   * Returns undefined if no mapping exists — the caller must handle this case.
    */
   getChannelForChatId(chatId: string): IChannel | undefined {
-    return this.chatIdChannelMap.get(chatId) ?? this.getFirstChannel();
+    return this.chatIdChannelMap.get(chatId);
   }
 
   /**
