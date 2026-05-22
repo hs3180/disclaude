@@ -29,6 +29,15 @@ import type { WiredContext } from '../channel-lifecycle-manager.js';
 
 const routingLogger = coreCreateLogger('ChannelMessageRouter');
 
+/** Convert a timestamp (seconds or milliseconds) to ISO string, falling back to now. */
+function toISOStringSafe(ts: number | undefined): string {
+  if (ts === null || ts === undefined || !Number.isFinite(ts)) {return new Date().toISOString();}
+  // Feishu create_time is in seconds; values < 1e12 are seconds, otherwise ms
+  const ms = ts < 1e12 ? ts * 1000 : ts;
+  const d = new Date(ms);
+  return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -200,7 +209,7 @@ export function createDefaultMessageHandler(
         chatHistoryContext,
         chatType,
         threadContext,
-        createdAt: message.timestamp ? new Date(message.timestamp).toISOString() : new Date().toISOString(),
+        createdAt: toISOStringSafe(message.timestamp),
       };
 
       try {
