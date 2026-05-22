@@ -30,10 +30,10 @@ const logger = createLogger('ClaudeSDKProvider');
  * The SDK accumulates these listeners across queries without proper cleanup,
  * causing MaxListenersExceededWarning after multiple queries.
  */
-const SDK_PROCESS_EVENTS = ['exit', 'SIGINT', 'SIGTERM'] as const;
+export const SDK_PROCESS_EVENTS = ['exit', 'SIGINT', 'SIGTERM'] as const;
 
 /** Type-safe access to process listeners/off for events not in Node.js typings. */
-type ProcessEventListener = (...args: unknown[]) => void;
+export type ProcessEventListener = (...args: unknown[]) => void;
 const _process = process as unknown as {
   listeners(e: string): ProcessEventListener[];
   off(e: string, fn: ProcessEventListener): void;
@@ -43,7 +43,7 @@ const _process = process as unknown as {
  * Snapshot of process listeners for a set of events.
  * Used to detect and clean up listeners added by the SDK during a query.
  */
-interface ProcessListenerSnapshot {
+export interface ProcessListenerSnapshot {
   /** Map of event name → set of listener functions at snapshot time */
   listeners: Map<string, Set<ProcessEventListener>>;
 }
@@ -52,7 +52,7 @@ interface ProcessListenerSnapshot {
  * Capture a snapshot of current process listeners for SDK-monitored events.
  * Call this BEFORE invoking `query()` to establish a baseline.
  */
-function snapshotProcessListeners(): ProcessListenerSnapshot {
+export function snapshotProcessListeners(): ProcessListenerSnapshot {
   const listeners = new Map<string, Set<ProcessEventListener>>();
   for (const event of SDK_PROCESS_EVENTS) {
     listeners.set(event, new Set(_process.listeners(event)));
@@ -72,7 +72,7 @@ function snapshotProcessListeners(): ProcessListenerSnapshot {
  * This function restores the listener state to what it was before the query,
  * effectively cleaning up the SDK's leaked listeners.
  */
-function cleanupNewProcessListeners(snapshot: ProcessListenerSnapshot): void {
+export function cleanupNewProcessListeners(snapshot: ProcessListenerSnapshot): void {
   let cleaned = 0;
   for (const event of SDK_PROCESS_EVENTS) {
     const before = snapshot.listeners.get(event);
@@ -94,8 +94,53 @@ function cleanupNewProcessListeners(snapshot: ProcessListenerSnapshot): void {
 }
 
 // ============================================================================
-// stderr 捕获工具（Issue #2920）
+// Process Listener Baseline (Issue #3745)
 // ============================================================================
+
+/**
+ * Baseline snapshot captured once at module load time.
+ * Used by `forceCleanupLeakedListeners()` to restore listener counts when
+ * the per-query snapshot/cleanup mechanism misses leaked listeners.
+ */
+const baselineSnapshot = snapshotProcessListeners();
+
+/**
+ * Forcefully remove all SDK-registered process listeners that have accumulated
+ * beyond the baseline captured at module load time.
+ *
+ * Issue #3745: When agents are created/destroyed in rapid succession (CLI tests,
+ * scheduled tasks), the per-query snapshot/cleanup can miss listeners if the
+ * iterator's finally block hasn't run by the time the next agent is created.
+ * This function provides a process-level ceiling check: if listener counts are
+ * elevated, restore them to the baseline.
+ *
+ * @returns Number of listeners removed, or 0 if no cleanup was needed
+ */
+export function forceCleanupLeakedListeners(): number {
+  const before = process.listenerCount('exit');
+  if (before <= (baselineSnapshot.listeners.get('exit')?.size ?? 0)) {
+    return 0; // No leak detected
+  }
+  let cleaned = 0;
+  for (const event of SDK_PROCESS_EVENTS) {
+    const baseline = baselineSnapshot.listeners.get(event);
+    if (!baseline) { continue; }
+    for (const listener of _process.listeners(event)) {
+      if (!baseline.has(listener)) {
+        try {
+          _process.off(event, listener);
+          cleaned++;
+        } catch {
+          // Listener may have already been removed
+        }
+      }
+    }
+  }
+  if (cleaned > 0) {
+    logger.info({ cleaned, before, after: process.listenerCount('exit') }, 'Force-cleaned leaked process listeners above baseline');
+  }
+  return cleaned;
+}
 
 /**
  * stderr 捕获器 — 缓冲 Claude Code 进程的 stderr 输出行
