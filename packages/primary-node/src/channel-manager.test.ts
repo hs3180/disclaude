@@ -362,4 +362,65 @@ describe('ChannelManager', () => {
       expect(manager.getFirstChannel()).toBe(channel1);
     });
   });
+
+  describe('registerChatId / getChannelForChatId (Issue #3773)', () => {
+    it('should resolve registered chatId to correct channel', () => {
+      const feishuChannel = createMockChannel('feishu');
+      const restChannel = createMockChannel('rest');
+      manager.register(feishuChannel);
+      manager.register(restChannel);
+
+      manager.registerChatId('chat-feishu-1', feishuChannel);
+      manager.registerChatId('chat-rest-1', restChannel);
+
+      expect(manager.getChannelForChatId('chat-feishu-1')).toBe(feishuChannel);
+      expect(manager.getChannelForChatId('chat-rest-1')).toBe(restChannel);
+    });
+
+    it('should return undefined for unknown chatId', () => {
+      const channel = createMockChannel('feishu');
+      manager.register(channel);
+
+      // No chatId registered, should return undefined
+      expect(manager.getChannelForChatId('unknown-chat')).toBeUndefined();
+    });
+
+    it('should update mapping when chatId is reassigned', () => {
+      const feishuChannel = createMockChannel('feishu');
+      const restChannel = createMockChannel('rest');
+      manager.register(feishuChannel);
+      manager.register(restChannel);
+
+      manager.registerChatId('chat-1', feishuChannel);
+      expect(manager.getChannelForChatId('chat-1')).toBe(feishuChannel);
+
+      manager.registerChatId('chat-1', restChannel);
+      expect(manager.getChannelForChatId('chat-1')).toBe(restChannel);
+    });
+
+    it('should auto-register chatId on incoming message via setupHandlers', async () => {
+      const channel = createMockChannel('feishu');
+      manager.register(channel);
+
+      const messageHandler = vi.fn().mockResolvedValue(undefined);
+      const controlHandler = vi.fn().mockResolvedValue({ success: true } as ControlResponse);
+
+      manager.setupHandlers(channel, messageHandler, controlHandler);
+
+      // Get the wrapper handler passed to onMessage
+      const [[registeredHandler]] = (channel.onMessage as any).mock.calls;
+
+      // Simulate incoming message
+      const message: IncomingMessage = {
+        messageId: 'msg-1',
+        chatId: 'chat-auto-1',
+        content: 'Hello',
+        messageType: 'text',
+      };
+      await registeredHandler(message);
+
+      // chatId should now be mapped to feishu channel
+      expect(manager.getChannelForChatId('chat-auto-1')).toBe(channel);
+    });
+  });
 });

@@ -438,8 +438,8 @@ export class PrimaryNode extends EventEmitter {
     const schedulerCallbacks: SchedulerCallbacks = {
       sendMessage: async (chatId: string, message: string): Promise<void> => {
         // Find channel and send message via ChannelManager (Issue #1594)
-        // Issue #1594 Phase 3: Use getFirstChannel() instead of getAll()[0]
-        const channel = this.channelManager.getFirstChannel();
+        // Issue #3773: Use getChannelForChatId() for correct multi-channel routing
+        const channel = this.channelManager.getChannelForChatId(chatId);
         if (channel) {
           // Construct proper OutgoingMessage object (Issue #1384)
           await channel.sendMessage({
