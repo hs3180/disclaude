@@ -173,7 +173,6 @@ clearSession(chatId)            // Reset conversation
 Internal MCP servers providing custom tools:
 
 - **`channel-mcp.ts`** - Platform-agnostic MCP implementation (send messages, files, cards, SDK integration) communicating via IPC
-- **`feishu-mcp-server.ts`** - Thin stdio wrapper around channel-mcp.ts for external tool integration
 - **`task-skill-mcp.ts`** - Custom skill integration
 
 External MCP servers can be configured via `disclaude.config.yaml`.

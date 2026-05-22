@@ -66,7 +66,6 @@ export default defineConfig({
         // Entry point files - hard to test in unit tests
         'src/runners/**',
         // Integration-test only modules (require complex setup)
-        'src/mcp/feishu-mcp-server.ts',
         'src/nodes/**',
         // Dead code — scheduled for removal in #2717 Phase 3
         'packages/worker-node/**',
