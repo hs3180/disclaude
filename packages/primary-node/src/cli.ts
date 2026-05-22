@@ -254,7 +254,7 @@ async function main(): Promise<void> {
   // Must be called before primaryNode.start() (which calls initScheduler)
   // and before ChannelLifecycleManager construction (which passes the router to channels).
   const routerCallbacksFactory = (chatId: string) => {
-    const channel = primaryNode.getChannelManager().getFirstChannel();
+    const channel = primaryNode.getChannelManager().getChannelForChatId(chatId);
     if (!channel) {
       throw new Error('No channel available for InputMessageRouter callbacks');
     }
