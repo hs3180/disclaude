@@ -16,7 +16,8 @@
  * @module agents/types
  */
 
-import type { AgentMessage, FileRef } from '../types/index.js';
+import type { AgentMessage } from '../types/index.js';
+import type { UserMessageParams } from '../messaging/message-router.js';
 
 // ============================================================================
 // Disposable Interface (Issue #328)
@@ -133,21 +134,9 @@ export interface ChatAgent extends Disposable {
   /**
    * Process a message from a user.
    *
-   * @param chatId - Chat/conversation ID
-   * @param text - Message text
-   * @param messageId - Unique message identifier
-   * @param senderOpenId - Optional sender's open_id for @ mentions
-   * @param attachments - Optional file attachments
-   * @param chatHistoryContext - Optional chat history context for passive mode (Issue #517)
+   * Issue #3779: Converted to options object for type safety.
    */
-  processMessage(
-    chatId: string,
-    text: string,
-    messageId: string,
-    senderOpenId?: string,
-    attachments?: FileRef[],
-    chatHistoryContext?: string
-  ): void;
+  processMessage(params: UserMessageParams): void;
 
   /**
    * Promise that resolves when the current task completes.

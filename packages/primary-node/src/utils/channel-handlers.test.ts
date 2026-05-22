@@ -280,14 +280,12 @@ describe('createDefaultMessageHandler', () => {
 
     const agent = (context.agentPool.getOrCreateChatAgent as any).mock.results[0].value;
     expect(agent.processMessage).toHaveBeenCalledWith(
-      'chat-001',
-      'Hello, agent!',
-      'msg-001',
-      'user-001',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
+      expect.objectContaining({
+        chatId: 'chat-001',
+        payload: 'Hello, agent!',
+        messageId: 'msg-001',
+        senderOpenId: 'user-001',
+      }),
     );
   });
 
@@ -308,14 +306,13 @@ describe('createDefaultMessageHandler', () => {
 
     const agent = (context.agentPool.getOrCreateChatAgent as any).mock.results[0].value;
     expect(agent.processMessage).toHaveBeenCalledWith(
-      'chat-001',
-      'Hello, agent!',
-      'msg-001',
-      'user-001',
-      fileRefs,
-      undefined,
-      undefined,
-      undefined,
+      expect.objectContaining({
+        chatId: 'chat-001',
+        payload: 'Hello, agent!',
+        messageId: 'msg-001',
+        senderOpenId: 'user-001',
+        attachments: fileRefs,
+      }),
     );
   });
 
@@ -330,14 +327,13 @@ describe('createDefaultMessageHandler', () => {
 
     const agent = (context.agentPool.getOrCreateChatAgent as any).mock.results[0].value;
     expect(agent.processMessage).toHaveBeenCalledWith(
-      'chat-001',
-      'Hello, agent!',
-      'msg-001',
-      'user-001',
-      undefined,
-      'Previous conversation context',
-      undefined,
-      undefined,
+      expect.objectContaining({
+        chatId: 'chat-001',
+        payload: 'Hello, agent!',
+        messageId: 'msg-001',
+        senderOpenId: 'user-001',
+        chatHistoryContext: 'Previous conversation context',
+      }),
     );
   });
 
@@ -350,14 +346,11 @@ describe('createDefaultMessageHandler', () => {
 
     const agent = (context.agentPool.getOrCreateChatAgent as any).mock.results[0].value;
     expect(agent.processMessage).toHaveBeenCalledWith(
-      'chat-001',
-      'Hello, agent!',
-      'msg-001',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
+      expect.objectContaining({
+        chatId: 'chat-001',
+        payload: 'Hello, agent!',
+        messageId: 'msg-001',
+      }),
     );
   });
 
@@ -400,14 +393,12 @@ describe('createDefaultMessageHandler', () => {
     // Verify the card message is still forwarded to the agent
     const agent = (context.agentPool.getOrCreateChatAgent as any).mock.results[0].value;
     expect(agent.processMessage).toHaveBeenCalledWith(
-      'chat-001',
-      'User clicked confirm button',
-      'card-msg-001-action1',
-      'user-001',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
+      expect.objectContaining({
+        chatId: 'chat-001',
+        payload: 'User clicked confirm button',
+        messageId: 'card-msg-001-action1',
+        senderOpenId: 'user-001',
+      }),
     );
   });
 

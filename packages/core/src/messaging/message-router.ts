@@ -18,6 +18,38 @@ import type { FileRef } from '../types/file.js';
 const defaultLogger = createLogger('InputMessageRouter');
 
 // ============================================================================
+// UserMessageParams — Options object for user message handling
+// ============================================================================
+
+/**
+ * Parameters for handling a user message.
+ *
+ * Used by IAgentMessageHandler.handleUserMessage() and ChatAgent.processMessage()
+ * to avoid positional parameter sprawl. New fields can be added without updating
+ * all call sites and test assertions.
+ *
+ * Issue #3779: Convert positional parameters to options objects for type safety.
+ */
+export interface UserMessageParams {
+  /** Target chat ID */
+  chatId: string;
+  /** Message text / prompt */
+  payload: string;
+  /** Unique message identifier */
+  messageId: string;
+  /** Optional sender open_id */
+  senderOpenId?: string;
+  /** Optional file attachments */
+  attachments?: FileRef[];
+  /** Optional chat history context */
+  chatHistoryContext?: string;
+  /** Optional chat type (e.g., 'p2p', 'group', 'topic'). Issue #3641. */
+  chatType?: string;
+  /** Optional thread context for topic groups. Issue #3641. */
+  threadContext?: string;
+}
+
+// ============================================================================
 // Agent Handler Interface
 // ============================================================================
 
@@ -31,24 +63,8 @@ const defaultLogger = createLogger('InputMessageRouter');
 export interface IAgentMessageHandler {
   /**
    * Handle a user message by getting/creating an agent and delivering it.
-   *
-   * @param chatId - Target chat ID
-   * @param payload - Message text
-   * @param messageId - Unique message identifier
-   * @param senderOpenId - Optional sender open_id
-   * @param attachments - Optional file attachments
-   * @param chatHistoryContext - Optional chat history context
    */
-  handleUserMessage(
-    chatId: string,
-    payload: string,
-    messageId: string,
-    senderOpenId?: string,
-    attachments?: FileRef[],
-    chatHistoryContext?: string,
-    chatType?: string,
-    threadContext?: string
-  ): Promise<void>;
+  handleUserMessage(params: UserMessageParams): Promise<void>;
 
   /**
    * Handle a system message by getting/creating an agent and delivering it.
@@ -102,13 +118,13 @@ export interface MessageRouterConfig {
  * ```typescript
  * const router = new MessageRouter({
  *   handler: {
- *     handleUserMessage(chatId, payload, messageId, senderOpenId, attachments, ctx) {
+ *     handleUserMessage({ chatId, payload, messageId, senderOpenId, attachments, chatHistoryContext }) {
  *       const agent = agentPool.getOrCreateChatAgent(chatId);
- *       agent.processMessage(chatId, payload, messageId, senderOpenId, attachments, ctx);
+ *       agent.processMessage({ chatId, payload, messageId, senderOpenId, attachments, chatHistoryContext });
  *     },
  *     handleSystemMessage(chatId, payload, messageId) {
  *       const agent = agentPool.getOrCreateChatAgent(chatId);
- *       agent.processMessage(chatId, payload, messageId);
+ *       agent.processMessage({ chatId, payload, messageId });
  *     },
  *   },
  * });
@@ -174,16 +190,16 @@ export class MessageRouter {
   }
 
   private async routeUserMessage(message: UserMessage): Promise<void> {
-    await this.handler.handleUserMessage(
-      message.chatId,
-      message.payload,
-      message.messageId,
-      message.senderOpenId,
-      message.attachments,
-      message.chatHistoryContext,
-      message.chatType,
-      message.threadContext
-    );
+    await this.handler.handleUserMessage({
+      chatId: message.chatId,
+      payload: message.payload,
+      messageId: message.messageId,
+      senderOpenId: message.senderOpenId,
+      attachments: message.attachments,
+      chatHistoryContext: message.chatHistoryContext,
+      chatType: message.chatType,
+      threadContext: message.threadContext,
+    });
   }
 
   private async routeSystemMessage(message: SystemMessage): Promise<void> {

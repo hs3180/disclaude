@@ -91,14 +91,11 @@ describe('MessageRouter', () => {
       await router.route(msg);
 
       expect(handler.handleUserMessage).toHaveBeenCalledWith(
-        'oc_chat123',
-        'Hello!',
-        'feishu-msg-1',
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined
+        expect.objectContaining({
+          chatId: 'oc_chat123',
+          payload: 'Hello!',
+          messageId: 'feishu-msg-1',
+        }),
       );
     });
 
@@ -113,14 +110,13 @@ describe('MessageRouter', () => {
       await router.route(msg);
 
       expect(handler.handleUserMessage).toHaveBeenCalledWith(
-        'oc_chat123',
-        'Hello!',
-        'feishu-msg-1',
-        'ou_sender1',
-        undefined,
-        'previous messages...',
-        undefined,
-        undefined
+        expect.objectContaining({
+          chatId: 'oc_chat123',
+          payload: 'Hello!',
+          messageId: 'feishu-msg-1',
+          senderOpenId: 'ou_sender1',
+          chatHistoryContext: 'previous messages...',
+        }),
       );
     });
 
@@ -135,14 +131,13 @@ describe('MessageRouter', () => {
       await router.route(msg);
 
       expect(handler.handleUserMessage).toHaveBeenCalledWith(
-        'oc_chat123',
-        'Hello!',
-        'feishu-msg-1',
-        undefined,
-        undefined,
-        undefined,
-        'topic',
-        'User: Hello\nBot: Hi there'
+        expect.objectContaining({
+          chatId: 'oc_chat123',
+          payload: 'Hello!',
+          messageId: 'feishu-msg-1',
+          chatType: 'topic',
+          threadContext: 'User: Hello\nBot: Hi there',
+        }),
       );
     });
 
@@ -155,14 +150,12 @@ describe('MessageRouter', () => {
       await router.route(msg);
 
       expect(handler.handleUserMessage).toHaveBeenCalledWith(
-        'oc_chat123',
-        'Hello!',
-        'feishu-msg-1',
-        undefined,
-        attachments,
-        undefined,
-        undefined,
-        undefined
+        expect.objectContaining({
+          chatId: 'oc_chat123',
+          payload: 'Hello!',
+          messageId: 'feishu-msg-1',
+          attachments,
+        }),
       );
     });
 
@@ -177,14 +170,13 @@ describe('MessageRouter', () => {
       await router.route(msg);
 
       expect(handler.handleUserMessage).toHaveBeenCalledWith(
-        'oc_chat123',
-        'Hello!',
-        'feishu-msg-1',
-        undefined,
-        undefined,
-        undefined,
-        'topic',
-        'User: Hello\nBot: Hi!'
+        expect.objectContaining({
+          chatId: 'oc_chat123',
+          payload: 'Hello!',
+          messageId: 'feishu-msg-1',
+          chatType: 'topic',
+          threadContext: 'User: Hello\nBot: Hi!',
+        }),
       );
     });
   });
@@ -250,10 +242,10 @@ describe('MessageRouter', () => {
 
       expect(handler.handleUserMessage).toHaveBeenCalledTimes(2);
       expect(handler.handleUserMessage).toHaveBeenNthCalledWith(
-        1, 'oc_chatA', 'Hello!', 'feishu-msg-1', undefined, undefined, undefined, undefined, undefined
+        1, expect.objectContaining({ chatId: 'oc_chatA', payload: 'Hello!', messageId: 'feishu-msg-1' })
       );
       expect(handler.handleUserMessage).toHaveBeenNthCalledWith(
-        2, 'oc_chatB', 'Hello!', 'feishu-msg-2', undefined, undefined, undefined, undefined, undefined
+        2, expect.objectContaining({ chatId: 'oc_chatB', payload: 'Hello!', messageId: 'feishu-msg-2' })
       );
     });
   });

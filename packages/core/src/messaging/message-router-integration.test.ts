@@ -84,22 +84,21 @@ describe('Integration: UserMessage end-to-end (Feishu → MessageRouter → Agen
 
     // Verify handler received the message correctly
     expect(handler.handleUserMessage).toHaveBeenCalledWith(
-      'oc_group_abc',
-      '请帮我分析一下最近的代码提交',
-      'feishu-msg-001',
-      'ou_user_zhangsan',
-      [
-        {
-          id: 'file-uuid-1',
-          fileName: 'report.pdf',
-          source: 'user',
-          createdAt: expect.any(Number),
-          localPath: '/tmp/downloads/report.pdf',
-        },
-      ],
-      undefined,
-      undefined,
-      undefined,
+      expect.objectContaining({
+        chatId: 'oc_group_abc',
+        payload: '请帮我分析一下最近的代码提交',
+        messageId: 'feishu-msg-001',
+        senderOpenId: 'ou_user_zhangsan',
+        attachments: [
+          {
+            id: 'file-uuid-1',
+            fileName: 'report.pdf',
+            source: 'user',
+            createdAt: expect.any(Number),
+            localPath: '/tmp/downloads/report.pdf',
+          },
+        ],
+      }),
     );
   });
 
@@ -114,14 +113,13 @@ describe('Integration: UserMessage end-to-end (Feishu → MessageRouter → Agen
     await router.route(userMessage);
 
     expect(handler.handleUserMessage).toHaveBeenCalledWith(
-      'oc_chat123',
-      'Hello from Feishu!',
-      'feishu-msg-1',
-      'ou_sender1',
-      undefined,
-      '## Previous conversation\nUser: Hello\nBot: Hi!',
-      undefined,
-      undefined,
+      expect.objectContaining({
+        chatId: 'oc_chat123',
+        payload: 'Hello from Feishu!',
+        messageId: 'feishu-msg-1',
+        senderOpenId: 'ou_sender1',
+        chatHistoryContext: '## Previous conversation\nUser: Hello\nBot: Hi!',
+      }),
     );
   });
 
@@ -141,9 +139,9 @@ describe('Integration: UserMessage end-to-end (Feishu → MessageRouter → Agen
     }
 
     expect(handler.handleUserMessage).toHaveBeenCalledTimes(3);
-    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(1, 'oc_chatA', 'Message A', 'fm-1', 'ou_sender1', undefined, undefined, undefined, undefined);
-    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(2, 'oc_chatB', 'Message B', 'fm-2', 'ou_sender1', undefined, undefined, undefined, undefined);
-    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(3, 'oc_chatA', 'Follow-up A', 'fm-3', 'ou_sender1', undefined, undefined, undefined, undefined);
+    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({ chatId: 'oc_chatA', payload: 'Message A', messageId: 'fm-1' }));
+    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({ chatId: 'oc_chatB', payload: 'Message B', messageId: 'fm-2' }));
+    expect(handler.handleUserMessage).toHaveBeenNthCalledWith(3, expect.objectContaining({ chatId: 'oc_chatA', payload: 'Follow-up A', messageId: 'fm-3' }));
   });
 });
 

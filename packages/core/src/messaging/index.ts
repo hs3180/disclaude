@@ -46,4 +46,5 @@ export {
 export type {
   IAgentMessageHandler,
   MessageRouterConfig,
+  UserMessageParams,
 } from './message-router.js';
