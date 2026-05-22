@@ -13,20 +13,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock all @disclaude/core dependencies
-vi.mock('@disclaude/core', () => ({
-  Config: {
-    getSessionRestoreConfig: vi.fn(() => ({
-      historyDays: 1,
-      maxContextLength: 50000,
-    })),
-    getMcpServersConfig: vi.fn(() => null),
-  },
-  BaseAgent: vi.fn().mockImplementation(function(this: any) {
+vi.mock('@disclaude/core', () => {
+  const BaseAgent = vi.fn().mockImplementation(function(this: any) {
     this.createSdkOptions = vi.fn(() => ({ mcpServers: {} }));
     this.createQueryStream = vi.fn(() => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
       iterator: (async function* () { /* empty */ })(),
     }));
+    this.initialized = true;
     this.dispose = vi.fn();
     this.logger = {
       info: vi.fn(),
@@ -34,7 +28,21 @@ vi.mock('@disclaude/core', () => ({
       error: vi.fn(),
       debug: vi.fn(),
     };
-  }),
+  });
+  // Add dispose to prototype so super.dispose() works from ChatAgent (Issue #3745)
+  BaseAgent.prototype.dispose = function(this: any) {
+    if (!this.initialized) { return; }
+    this.initialized = false;
+  };
+  return ({
+  Config: {
+    getSessionRestoreConfig: vi.fn(() => ({
+      historyDays: 1,
+      maxContextLength: 50000,
+    })),
+    getMcpServersConfig: vi.fn(() => null),
+  },
+  BaseAgent,
   MessageBuilder: vi.fn().mockImplementation(() => ({
     buildEnhancedContent: vi.fn((input: any) => input.text),
   })),
@@ -65,7 +73,8 @@ vi.mock('@disclaude/core', () => ({
     }
     return undefined;
   },
-}));
+  });
+});
 
 vi.mock('@disclaude/mcp-server', () => ({
   createChannelMcpServer: vi.fn(() => ({ type: 'inline' })),
@@ -203,6 +212,30 @@ describe('ChatAgent (primary-node)', () => {
 
   describe('dispose', () => {
     it('should call dispose without throwing', () => {
+      expect(() => chatAgent.dispose()).not.toThrow();
+    });
+
+    it('Issue #3745: should synchronously close queryHandle and channel', () => {
+      const closeHandle = vi.fn();
+      const closeChannel = vi.fn();
+
+      // Simulate an active agent with queryHandle and channel
+      (chatAgent as any).queryHandle = { close: closeHandle, cancel: vi.fn() };
+      (chatAgent as any).channel = { close: closeChannel };
+
+      // Call the real ChatAgent dispose via prototype (BaseAgent mock overrides instance)
+      ChatAgent.prototype.dispose.call(chatAgent);
+
+      // Both should be closed synchronously before dispose() returns
+      expect(closeHandle).toHaveBeenCalledTimes(1);
+      expect(closeChannel).toHaveBeenCalledTimes(1);
+      expect((chatAgent as any).queryHandle).toBeUndefined();
+      expect((chatAgent as any).channel).toBeUndefined();
+    });
+
+    it('Issue #3745: should not throw when queryHandle/channel are undefined', () => {
+      (chatAgent as any).queryHandle = undefined;
+      (chatAgent as any).channel = undefined;
       expect(() => chatAgent.dispose()).not.toThrow();
     });
   });
