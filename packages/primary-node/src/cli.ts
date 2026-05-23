@@ -248,32 +248,42 @@ async function main(): Promise<void> {
   // Create unified control handler for all channels
   const controlHandler = createControlHandler(controlHandlerContext);
 
-  // Issue #3329: Initialize InputMessageRouter for unified message routing.
-  // Activates the MessageRouter so both the scheduler (SystemMessage) and
-  // channels (UserMessage) route through the unified path.
-  // Must be called before primaryNode.start() (which calls initScheduler)
-  // and before ChannelLifecycleManager construction (which passes the router to channels).
-  const routerCallbacksFactory = (chatId: string) => {
-    const channel = primaryNode.getChannelManager().getChannelForChatId(chatId);
-    if (!channel) {
-      throw new Error('No channel available for InputMessageRouter callbacks');
-    }
-    // Issue #3776: Preserve channel-specific callback options.
-    // REST channel requires sendDoneSignal for synchronous HTTP response resolution;
-    // without it, PendingResponse never resolves and requests time out (HTTP 000).
-    // Feishu channel operates in async mode without done signal.
-    const options = channel.id === 'rest' ? { sendDoneSignal: true } : undefined;
-    return createChannelCallbacksFactory(channel, logger, options)(chatId);
-  };
-  primaryNode.initInputMessageRouter(agentPool, routerCallbacksFactory);
-
-  // Create ChannelLifecycleManager (Issue #1594 Phase 3)
-  const lifecycleManager = new ChannelLifecycleManager(channelManager, {
+  // Shared context for both ChannelLifecycleManager and routerCallbacksFactory.
+  // Issue #3801: Extract to avoid duplication and ensure consistent dependency injection.
+  const channelSetupContext = {
     agentPool,
     controlHandler,
     controlHandlerContext,
     logger,
     primaryNode,
+  };
+
+  // Issue #3329: Initialize InputMessageRouter for unified message routing.
+  // Activates the MessageRouter so both the scheduler (SystemMessage) and
+  // channels (UserMessage) route through the unified path.
+  // Must be called before primaryNode.start() (which calls initScheduler)
+  // and before ChannelLifecycleManager construction (which passes the router to channels).
+  // Issue #3801: Use descriptor-driven callback creation instead of hardcoded channel.id checks.
+  // Each WiredChannelDescriptor declares its own callback options (e.g., sendDoneSignal),
+  // so the routerCallbacksFactory looks up the descriptor by channel type.
+  const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
+  const routerCallbacksFactory = (chatId: string) => {
+    const channel = primaryNode.getChannelManager().getChannelForChatId(chatId);
+    if (!channel) {
+      throw new Error('No channel available for InputMessageRouter callbacks');
+    }
+    const descriptor = descriptorMap.get(channel.id);
+    if (descriptor) {
+      return descriptor.createCallbacks(channel, channelSetupContext)(chatId);
+    }
+    // Fallback for channels without a registered descriptor
+    return createChannelCallbacksFactory(channel, logger)(chatId);
+  };
+  primaryNode.initInputMessageRouter(agentPool, routerCallbacksFactory);
+
+  // Create ChannelLifecycleManager (Issue #1594 Phase 3)
+  const lifecycleManager = new ChannelLifecycleManager(channelManager, {
+    ...channelSetupContext,
     // Issue #3329: Pass InputMessageRouter so channels route through unified path
     inputMessageRouter: primaryNode.getInputMessageRouter(),
   });
