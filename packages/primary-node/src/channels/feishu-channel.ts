@@ -763,7 +763,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
     try {
-      await this.client.im.message.create({
+      const resp = await this.client.im.message.create({
         params: { receive_id_type: 'chat_id' },
         data: {
           receive_id: chatId,
@@ -771,6 +771,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           content: JSON.stringify({ text }),
         },
       });
+      const msgId = resp.data?.message_id;
+      if (msgId) {
+        messageLogger.logOutgoingMessage(msgId, chatId, text, 'text').catch(err => {
+          logger.warn({ err, chatId, msgId }, 'Failed to log outgoing notification message');
+        });
+      }
     } catch (notifyErr) {
       // Never throw from error notification — just log the secondary failure
       logger.error({ err: notifyErr, chatId }, 'Failed to send error notification to user');
