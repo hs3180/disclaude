@@ -44,21 +44,21 @@ Analyze the current conversation and determine:
 1. **Topic**: A concise title for the discussion (max 64 chars for group name)
 2. **Question**: The specific question or issue to discuss
 3. **Background**: Relevant context — chat history excerpts, file references, error logs, etc.
-4. **Participants**: Open IDs of users to include (optional — bot-only group if omitted)
+4. **Participants**: Open IDs of additional users to include (optional — sender is always included automatically)
 
 ### Step 2: Create Discussion Group
 
-Use `lark-cli` to create a new Feishu group:
+Use `lark-cli` to create a new Feishu group. **Always include the triggering user** (Sender Open ID) in the group:
 
 ```bash
-# Create group
-lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}"
+# Create group with the triggering user
+lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}" --users "{sender_open_id}"
 ```
 
-If specific users need to be included:
+If additional participants need to be included, merge them into the same `--users` list:
 
 ```bash
-lark-cli im +chat-create --name "讨论: {topic}" --users "ou_xxx,ou_yyy"
+lark-cli im +chat-create --name "讨论: {topic}" --description "Agent 发起的讨论: {topic}" --users "{sender_open_id},ou_xxx,ou_yyy"
 ```
 
 **Parse the response** to extract the new group's `chatId` (format: `oc_xxx`).
@@ -125,8 +125,8 @@ Report to the **source chat** that the discussion has been initiated:
 
 | Operation | Command |
 |-----------|---------|
-| Create group | `lark-cli im +chat-create --name "..." --description "..."` |
-| Create group with users | `lark-cli im +chat-create --name "..." --users "ou_xxx,ou_yyy"` |
+| Create group | `lark-cli im +chat-create --name "..." --description "..." --users "{sender_open_id}"` |
+| Create group with extra participants | `lark-cli im +chat-create --name "..." --users "{sender_open_id},ou_xxx,ou_yyy"` |
 | Add members | `lark-cli im chat.members create --params '{"chat_id":"oc_xxx","member_id_type":"open_id","succeed_type":1}' --data '{"id_list":["ou_aaa"]}'` |
 | Dissolve group | `lark-cli api DELETE /open-apis/im/v1/chats/oc_xxx` |
 
