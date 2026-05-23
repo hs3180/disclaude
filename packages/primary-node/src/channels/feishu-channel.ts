@@ -403,6 +403,17 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return createResp.data?.message_id;
     };
 
+    /**
+     * Helper: log an outgoing message to the chat history (Issue #3795).
+     * Fire-and-forget to avoid blocking the send flow.
+     */
+    const logOutgoing = (msgId: string | undefined, contentSummary: string, msgType: string): void => {
+      if (!msgId) {return;}
+      messageLogger.logOutgoingMessage(msgId, message.chatId, contentSummary, msgType).catch(err => {
+        logger.warn({ err, chatId: message.chatId, msgId }, 'Failed to log outgoing message');
+      });
+    };
+
     switch (message.type) {
       case 'text': {
         // Issue #1742: If mentions are provided, send as post (rich text) with @mention tags
@@ -410,6 +421,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           const postContent = this.buildPostContentWithMentions(message.mentions, message.text || '');
           const messageId = await sendFeishuMessage('post', JSON.stringify(postContent));
           logger.debug({ chatId: message.chatId, messageId, mentionCount: message.mentions.length, threadReply: useThreadReply }, 'Post message (with mentions) sent');
+          logOutgoing(messageId, message.text || '', 'post');
           return messageId;
         }
         const messageId = await sendFeishuMessage(
@@ -417,6 +429,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           JSON.stringify({ text: message.text || '' }),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Text message sent');
+        logOutgoing(messageId, message.text || '', 'text');
         return messageId;
       }
 
@@ -426,6 +439,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           JSON.stringify(message.card || {}),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
+        logOutgoing(messageId, message.description || '[card]', 'interactive');
         return messageId;
       }
 
@@ -473,6 +487,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             JSON.stringify({ image_key: imageKey }),
           );
           logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply }, 'Image message sent');
+          logOutgoing(fileMessageId, `[image: ${fileName}]`, 'image');
         } else if (VIDEO_EXTENSIONS.has(ext)) {
           // Upload video file — use msg_type:'media' with auto-generated cover image
           // Issue #2265: Proper video support via Feishu media message type.
@@ -527,6 +542,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             );
           }
           logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply, hasCover: !!imageKey }, 'Video message sent');
+          logOutgoing(fileMessageId, `[video: ${fileName}]`, 'media');
         } else {
           // Upload file using im.file.create
           if (fileSize > 30 * 1024 * 1024) {
@@ -563,6 +579,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             JSON.stringify({ file_key: fileKey }),
           );
           logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply }, 'File message sent');
+          logOutgoing(fileMessageId, `[file: ${fileName}]`, 'file');
         }
         return fileMessageId;
       }
@@ -746,7 +763,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       return;
     }
     try {
-      await this.client.im.message.create({
+      const resp = await this.client.im.message.create({
         params: { receive_id_type: 'chat_id' },
         data: {
           receive_id: chatId,
@@ -754,6 +771,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           content: JSON.stringify({ text }),
         },
       });
+      const msgId = resp.data?.message_id;
+      if (msgId) {
+        messageLogger.logOutgoingMessage(msgId, chatId, text, 'text').catch(err => {
+          logger.warn({ err, chatId, msgId }, 'Failed to log outgoing notification message');
+        });
+      }
     } catch (notifyErr) {
       // Never throw from error notification — just log the secondary failure
       logger.error({ err: notifyErr, chatId }, 'Failed to send error notification to user');
