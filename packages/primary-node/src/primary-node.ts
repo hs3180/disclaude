@@ -53,6 +53,8 @@ import {
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
+  // Issue #3803: CwdProvider for project-mode path resolution in scheduled tasks
+  type CwdProvider,
 } from '@disclaude/core';
 import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
@@ -97,6 +99,15 @@ export interface PrimaryNodeOptions {
 
   /** REST channel port */
   restPort?: number;
+
+  /**
+   * Dynamic cwd provider for project-scoped agent context switching.
+   * When provided, scheduled task agents will resolve their working directory
+   * based on the chatId-to-project binding, ensuring correct path resolution
+   * in project mode.
+   * @see Issue #3803
+   */
+  cwdProvider?: CwdProvider;
 }
 
 /**
@@ -137,6 +148,9 @@ export class PrimaryNode extends EventEmitter {
   protected localNodeId: string;
   protected localExecEnabled: boolean;
 
+  // Issue #3803: CwdProvider for project-mode path resolution in scheduled tasks
+  protected readonly cwdProvider?: CwdProvider;
+
   // Services
   protected cardActionRouter: CardActionRouter;
   protected debugGroupService: DebugGroupService;
@@ -166,6 +180,7 @@ export class PrimaryNode extends EventEmitter {
     this.host = config.host || '0.0.0.0';
     this.localNodeId = config.nodeId || `primary-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.localExecEnabled = config.enableLocalExec !== false;
+    this.cwdProvider = config.cwdProvider;
 
     // Initialize CardActionRouter (Issue #2939: removed remote node stubs)
     this.cardActionRouter = new CardActionRouter();
@@ -457,9 +472,14 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1412: Use toChatAgentCallbacks helper to convert SchedulerCallbacks to ChatAgentCallbacks
     // Issue #1338: Pass model override for per-task model selection
     // Issue #3059: Pass modelTier for tier-based model resolution
+    // Issue #3803: Pass cwdProvider for project-mode path resolution in scheduled tasks
     const executor = createScheduleExecutor({
       agentFactory: (chatId, callbacks, model, modelTier) => {
-        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), { model, modelTier });
+        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), {
+          model,
+          modelTier,
+          cwdProvider: this.cwdProvider,
+        });
       },
       callbacks: schedulerCallbacks,
     });

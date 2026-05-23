@@ -191,10 +191,23 @@ async function main(): Promise<void> {
     'Starting Primary Node'
   );
 
+  // Issue #3519: Simplified ProjectManager — chatId → workingDir binding
+  // Issue #3803: Created before PrimaryNode so cwdProvider can be passed to scheduled tasks
+  const workspaceDir = Config.getWorkspaceDir();
+
+  const projectManager = new ProjectManager({
+    workspaceDir,
+  });
+  logger.info({ workspaceDir }, 'ProjectManager initialized');
+
+  const cwdProvider = projectManager.createCwdProvider();
+
   // Create PrimaryNode
+  // Issue #3803: Pass cwdProvider so scheduled task agents resolve project-mode paths correctly
   const primaryNode = new PrimaryNode({
     host,
     enableLocalExec: true,
+    cwdProvider,
   });
 
   // Get ChannelManager from PrimaryNode (Issue #1594)
@@ -216,17 +229,9 @@ async function main(): Promise<void> {
 
   // Create AgentPool for Primary Node with Feishu message builder options
   // Issue #1499: Channel-specific options are injected here, not in worker-node
-  // Issue #3519: Simplified ProjectManager — chatId → workingDir binding
-  const workspaceDir = Config.getWorkspaceDir();
-
-  const projectManager = new ProjectManager({
-    workspaceDir,
-  });
-  logger.info({ workspaceDir }, 'ProjectManager initialized');
-
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
-    cwdProvider: projectManager.createCwdProvider(),
+    cwdProvider,
   });
 
   // Create unified control handler context

@@ -171,6 +171,25 @@ describe('AgentFactory', () => {
       const config = getLastConfig();
       expect(config.messageBuilderOptions).toBeUndefined();
     });
+
+    it('should pass cwdProvider to ChatAgent config (Issue #3803)', () => {
+      const callbacks = createMockCallbacks();
+      const cwdProvider = (chatId: string) => chatId === 'project-chat' ? '/my-project' : undefined;
+
+      AgentFactory.createAgent('chat-cwd', callbacks, { cwdProvider });
+
+      const config = getLastConfig();
+      expect(config.cwdProvider).toBe(cwdProvider);
+    });
+
+    it('should not include cwdProvider when not provided', () => {
+      const callbacks = createMockCallbacks();
+
+      AgentFactory.createAgent('chat-no-cwd', callbacks);
+
+      const config = getLastConfig();
+      expect(config.cwdProvider).toBeUndefined();
+    });
   });
 
   // ==========================================================================
@@ -235,6 +254,16 @@ describe('AgentFactory', () => {
 
       const config = getLastConfig();
       expect(config.messageBuilderOptions).toBe(messageBuilderOptions);
+    });
+
+    it('should pass cwdProvider through new pattern (Issue #3803)', () => {
+      const callbacks = createMockCallbacks();
+      const cwdProvider = (chatId: string) => chatId === 'project-chat' ? '/my-project' : undefined;
+
+      AgentFactory.createChatAgent('pilot', 'chat-cwd', callbacks, { cwdProvider });
+
+      const config = getLastConfig();
+      expect(config.cwdProvider).toBe(cwdProvider);
     });
   });
 
