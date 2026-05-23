@@ -30,6 +30,8 @@ const mockLogger = vi.hoisted(() => ({
   trace: vi.fn(),
 }));
 
+const mockLogOutgoingMessage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
 vi.mock('@disclaude/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@disclaude/core')>();
   return {
@@ -127,7 +129,7 @@ vi.mock('./feishu/index.js', () => ({
     initialize: vi.fn(),
     clearClient: vi.fn(),
   })),
-  messageLogger: { init: vi.fn().mockResolvedValue(undefined) },
+  messageLogger: { init: vi.fn().mockResolvedValue(undefined), logOutgoingMessage: mockLogOutgoingMessage },
   WsConnectionManager: vi.fn().mockImplementation(() => ({
     state: 'connected',
     start: vi.fn().mockResolvedValue(undefined),
@@ -611,6 +613,76 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
       expect(mocks.createMock).not.toHaveBeenCalled();
       expect(result).toBe('reply_msg_001');
+    });
+  });
+
+  describe('logOutgoingMessage — Issue #3795', () => {
+    it('should log outgoing text messages', async () => {
+      const { client } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'Hello',
+      });
+
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('new_msg_001', 'chat_123', 'Hello', 'text');
+    });
+
+    it('should log outgoing post messages with mentions', async () => {
+      const { client } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'Hello @Alice',
+        mentions: [{ openId: 'ou_user123', name: 'Alice' }],
+      });
+
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('new_msg_001', 'chat_123', 'Hello @Alice', 'post');
+    });
+
+    it('should log outgoing card messages', async () => {
+      const { client } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card: { config: {}, elements: [] },
+        description: 'Test card',
+      });
+
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith('new_msg_001', 'chat_123', 'Test card', 'interactive');
+    });
+
+    it('should not log when message_id is undefined', async () => {
+      const { client, mocks } = createMockClient();
+      mocks.createMock.mockResolvedValueOnce({ data: {} });
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'No ID',
+      });
+
+      expect(mockLogOutgoingMessage).not.toHaveBeenCalled();
+    });
+
+    it('should not log for done signal', async () => {
+      const { client } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'done',
+        success: true,
+      });
+
+      expect(mockLogOutgoingMessage).not.toHaveBeenCalled();
     });
   });
 });
