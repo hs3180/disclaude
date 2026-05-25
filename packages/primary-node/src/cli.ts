@@ -113,7 +113,12 @@ async function main(): Promise<void> {
   // Initialize logger with file logging support.
   // When LOG_TO_FILE=true (set by launchd), writes to a single log file.
   // Issue #3416: Rotation delegated to system-level tools (logrotate / newsyslog).
-  await initLogger();
+  // Pass elasticsearch config from config file to enable ES logging transport.
+  const loggingConfig = Config.getLoggingConfig();
+  await initLogger({
+    level: loggingConfig.level as import('@disclaude/core').LogLevel,
+    elasticsearch: loggingConfig.elasticsearch,
+  });
 
   // Issue #3417: Acquire process lock to prevent multiple concurrent instances.
   // When launchd restarts after a crash, the old process may still be exiting.

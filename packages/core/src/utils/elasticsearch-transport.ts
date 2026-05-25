@@ -336,7 +336,7 @@ export class ElasticsearchTransport extends Writable {
     }
 
     // Attempt final flush, then call callback
-    this.flush()
+    void this.flush()
       .catch(() => {
         // Best-effort flush on destroy
       })
