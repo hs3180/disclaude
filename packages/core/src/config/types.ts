@@ -162,13 +162,17 @@ export interface RuliuConfig {
 
 /**
  * Elasticsearch authentication configuration.
+ * Supports either Basic Auth or API Key authentication independently.
  */
 export interface ElasticsearchAuthConfig {
-  /** Username for basic auth */
-  username: string;
-  /** Password for basic auth */
-  password: string;
-  /** API Key for Elasticsearch 8.x API Key authentication (alternative to username/password) */
+  /** Basic auth credentials */
+  basic?: {
+    /** Username for basic auth */
+    username: string;
+    /** Password for basic auth */
+    password: string;
+  };
+  /** API Key for Elasticsearch 8.x API Key authentication */
   apiKey?: string;
 }
 
@@ -193,6 +197,8 @@ export interface ElasticsearchConfig {
   retryOnError?: boolean;
   /** Maximum number of retries before giving up (default: 3) */
   maxRetries?: number;
+  /** Maximum buffer size before dropping oldest entries (default: 10000) */
+  maxBufferSize?: number;
 }
 
 /**

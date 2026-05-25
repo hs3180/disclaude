@@ -65,8 +65,8 @@ function buildHeaders(config: ElasticsearchConfig): Record<string, string> {
 
   if (config.auth?.apiKey) {
     headers['Authorization'] = `ApiKey ${config.auth.apiKey}`;
-  } else if (config.auth?.username && config.auth?.password) {
-    const encoded = Buffer.from(`${config.auth.username}:${config.auth.password}`).toString('base64');
+  } else if (config.auth?.basic?.username && config.auth?.basic?.password) {
+    const encoded = Buffer.from(`${config.auth.basic.username}:${config.auth.basic.password}`).toString('base64');
     headers['Authorization'] = `Basic ${encoded}`;
   }
 
@@ -109,9 +109,12 @@ async function sendBulk(
       return { status: response.status, ok: false, errors: entries.length };
     }
 
-    const result = await response.json() as { errors?: boolean; items?: unknown[] };
+    const result = await response.json() as {
+      errors?: boolean;
+      items?: Array<{ index?: { status?: number } }>;
+    };
     const errorCount = result.errors
-      ? entries.length - (result.items?.length ?? 0)
+      ? result.items?.filter(i => (i.index?.status ?? 200) >= 400).length ?? entries.length
       : 0;
 
     return {
@@ -146,7 +149,7 @@ async function sendBulk(
  */
 export class ElasticsearchTransport extends Writable {
   private readonly esConfig: Required<
-    Pick<ElasticsearchConfig, 'node' | 'batchSize' | 'flushInterval' | 'retryOnError' | 'maxRetries'>
+    Pick<ElasticsearchConfig, 'node' | 'batchSize' | 'flushInterval' | 'retryOnError' | 'maxRetries' | 'maxBufferSize'>
   > & { index: string; enabled: boolean; auth?: ElasticsearchConfig['auth'] };
 
   private buffer: BufferedEntry[] = [];
@@ -167,9 +170,18 @@ export class ElasticsearchTransport extends Writable {
       flushInterval: config.flushInterval ?? 5000,
       retryOnError: config.retryOnError ?? true,
       maxRetries: config.maxRetries ?? 3,
+      maxBufferSize: config.maxBufferSize ?? 10000,
     };
 
     this.esHeaders = buildHeaders(config);
+
+    // Warn if using HTTP with auth credentials (Fix #5)
+    if (config.auth && config.node.startsWith('http://')) {
+      console.warn(
+        '[ES Transport] Warning: Using HTTP with authentication credentials. ' +
+        'Consider using HTTPS to protect credentials in transit.',
+      );
+    }
 
     // Start periodic flush
     if (this.esConfig.enabled && this.esConfig.flushInterval > 0) {
@@ -178,6 +190,8 @@ export class ElasticsearchTransport extends Writable {
           // Prevent unhandled rejection — errors are logged inside flush()
         });
       }, this.esConfig.flushInterval);
+      // Fix #3: Allow process to exit when only this timer is active
+      this.flushTimer.unref();
     }
   }
 
@@ -227,6 +241,15 @@ export class ElasticsearchTransport extends Writable {
       };
 
       this.buffer.push({ index: indexName, body });
+
+      // Fix #1: Enforce max buffer size to prevent unbounded memory growth
+      if (this.buffer.length > this.esConfig.maxBufferSize) {
+        const dropped = this.buffer.splice(0, this.buffer.length - this.esConfig.maxBufferSize);
+        console.warn(
+          `[ES Transport] Buffer exceeded maxBufferSize (${this.esConfig.maxBufferSize}). ` +
+          `Dropped ${dropped.length} oldest log entries.`,
+        );
+      }
 
       // Auto-flush when buffer reaches batch size
       if (this.buffer.length >= this.esConfig.batchSize) {
@@ -301,10 +324,10 @@ export class ElasticsearchTransport extends Writable {
   /**
    * Clean up resources. Flushes remaining entries before destroying.
    */
-  override async _destroy(
+  override _destroy(
     error: Error | null,
     callback: (error?: Error | null) => void,
-  ): Promise<void> {
+  ): void {
     this.isShutDown = true;
 
     if (this.flushTimer) {
@@ -312,14 +335,32 @@ export class ElasticsearchTransport extends Writable {
       this.flushTimer = null;
     }
 
-    // Attempt final flush
+    // Attempt final flush, then call callback
+    this.flush()
+      .catch(() => {
+        // Best-effort flush on destroy
+      })
+      .then(() => callback(error));
+  }
+
+  /**
+   * Graceful shutdown: flush remaining entries then destroy.
+   * Use in production code (e.g., logger.ts resetLogger).
+   */
+  async shutdown(): Promise<void> {
+    // Stop timer first to prevent concurrent flushes
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+    // Flush BEFORE setting isShutDown so flush() doesn't bail out
     try {
       await this.flush();
     } catch {
-      // Best-effort flush on destroy
+      // Best-effort flush
     }
-
-    callback(error);
+    this.isShutDown = true;
+    this.destroy();
   }
 
   /**

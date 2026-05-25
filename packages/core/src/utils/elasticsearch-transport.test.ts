@@ -122,6 +122,36 @@ describe('ElasticsearchTransport', () => {
       vi.advanceTimersByTime(1000);
       expect(flushSpy).toHaveBeenCalled();
     });
+
+    it('should warn when using HTTP with auth credentials', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      transport = new ElasticsearchTransport({
+        enabled: true,
+        node: 'http://localhost:9200',
+        auth: { basic: { username: 'elastic', password: 'changeme' } },
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('HTTP with authentication'),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('should not warn when using HTTPS with auth', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      transport = new ElasticsearchTransport({
+        enabled: true,
+        node: 'https://localhost:9200',
+        auth: { apiKey: 'test-key' },
+      });
+
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('HTTP with authentication'),
+      );
+      warnSpy.mockRestore();
+    });
   });
 
   describe('_write', () => {
@@ -349,11 +379,11 @@ describe('ElasticsearchTransport', () => {
   });
 
   describe('authentication', () => {
-    it('should include Basic auth header when username/password provided', async () => {
+    it('should include Basic auth header when basic auth provided', async () => {
       transport = new ElasticsearchTransport({
         enabled: true,
-        node: 'http://localhost:9200',
-        auth: { username: 'elastic', password: 'changeme' },
+        node: 'https://localhost:9200',
+        auth: { basic: { username: 'elastic', password: 'changeme' } },
         retryOnError: false,
       });
 
@@ -373,8 +403,8 @@ describe('ElasticsearchTransport', () => {
     it('should include ApiKey auth header when apiKey provided', async () => {
       transport = new ElasticsearchTransport({
         enabled: true,
-        node: 'http://localhost:9200',
-        auth: { username: 'elastic', password: 'changeme', apiKey: 'my-api-key' },
+        node: 'https://localhost:9200',
+        auth: { apiKey: 'my-api-key' },
         retryOnError: false,
       });
 
@@ -423,6 +453,52 @@ describe('ElasticsearchTransport', () => {
 
       transport.forceDestroy();
       expect(transport.bufferSize).toBe(0);
+    });
+  });
+
+  describe('maxBufferSize', () => {
+    it('should drop oldest entries when buffer exceeds maxBufferSize', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      transport = new ElasticsearchTransport({
+        enabled: true,
+        node: 'http://localhost:9200',
+        maxBufferSize: 3,
+        batchSize: 100, // Prevent auto-flush
+      });
+
+      transport.write(JSON.stringify({ level: 30, msg: 'msg1', time: 1 }));
+      transport.write(JSON.stringify({ level: 30, msg: 'msg2', time: 2 }));
+      transport.write(JSON.stringify({ level: 30, msg: 'msg3', time: 3 }));
+      transport.write(JSON.stringify({ level: 30, msg: 'msg4', time: 4 }));
+
+      // Should have dropped the oldest entry to stay at maxBufferSize
+      expect(transport.bufferSize).toBe(3);
+      const buffer = (transport as any).buffer as Array<{ body: Record<string, unknown> }>;
+      expect(buffer[0].body.msg).toBe('msg2'); // msg1 was dropped
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('maxBufferSize'),
+      );
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('shutdown', () => {
+    it('should flush remaining entries before destroying', async () => {
+      transport = new ElasticsearchTransport({
+        enabled: true,
+        node: 'http://localhost:9200',
+        retryOnError: false,
+      });
+
+      const mockFetch = vi.fn().mockResolvedValue(mockEsSuccessResponse());
+      vi.stubGlobal('fetch', mockFetch);
+
+      transport.write(JSON.stringify({ level: 30, msg: 'test', time: Date.now() }));
+      expect(transport.bufferSize).toBe(1);
+
+      await transport.shutdown();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 });

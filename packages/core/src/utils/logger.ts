@@ -106,6 +106,8 @@ export function resetLogger(): void {
   currentLogDest = null;
   // Destroy the Elasticsearch transport if active (Issue #3720).
   if (esTransport) {
+    // Use forceDestroy in resetLogger since it may be called during
+    // process teardown where async flush is not possible
     esTransport.forceDestroy();
     esTransport = null;
   }
@@ -392,7 +394,8 @@ export function initLogger(config: LoggerConfig = {}): Logger {
   if (config.elasticsearch?.enabled) {
     esTransport = setupElasticsearchTransport(config.elasticsearch);
     if (esTransport) {
-      // Combine file stream + ES transport via multistream
+      // Combine existing primary stream + ES transport via multistream.
+      // Only wrap with multistream when both streams are needed.
       streams.push(primaryStream as unknown as Writable);
       streams.push(esTransport);
       primaryStream = combineStreams(streams);
