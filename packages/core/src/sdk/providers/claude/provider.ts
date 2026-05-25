@@ -329,6 +329,13 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
       try {
         let firstMessageMs: number | undefined;
+        // Issue #3706: Track consecutive text-only assistant responses for idle loop detection.
+        // When a model fails to emit tool_use blocks, it enters an idle loop producing
+        // only text responses. Detect this pattern and warn with diagnostic info.
+        let consecutiveTextOnlyCount = 0;
+        const IDLE_LOOP_THRESHOLD = 3;
+        const model = options.model as string | undefined;
+
         for await (const message of queryResult) {
           const now = Date.now();
           messageCount++;
@@ -351,7 +358,33 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
               'SDK message received'
             );
           }
-          yield adaptSDKMessage(message);
+
+          // Issue #3706: Idle loop detection.
+          // Count consecutive assistant messages that produce text only (no tool_use).
+          // If this exceeds the threshold, the model may not support tool_use properly.
+          const adapted = adaptSDKMessage(message);
+          if (adapted.type === 'text' && adapted.role === 'assistant' && adapted.content) {
+            consecutiveTextOnlyCount++;
+            if (consecutiveTextOnlyCount === IDLE_LOOP_THRESHOLD) {
+              logger.warn(
+                {
+                  messageCount,
+                  consecutiveTextOnlyCount,
+                  model,
+                  apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
+                  hasAgentTeams: options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1',
+                },
+                `Idle loop detected: ${IDLE_LOOP_THRESHOLD}+ consecutive text-only responses `
+                + 'without tool_use. The model may not support tool execution. '
+                + 'Check model compatibility (e.g., GLM models via Anthropic-compatible API '
+                + 'may not emit tool_use blocks for in-process team workers).'
+              );
+            }
+          } else if (adapted.type === 'tool_use') {
+            consecutiveTextOnlyCount = 0;
+          }
+
+          yield adapted;
         }
         // Issue #3003: log iterator completion timing
         const totalMs = Date.now() - queryStartMs;

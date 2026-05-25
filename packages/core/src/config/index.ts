@@ -364,6 +364,19 @@ export class Config {
     // Prefer GLM if configured
     if (this.GLM_API_KEY) {
       logger.debug({ provider: 'GLM', model: this.GLM_MODEL }, 'Using GLM API configuration');
+
+      // Issue #3706: Warn when GLM + Agent Teams is enabled.
+      // GLM models proxied through Anthropic-compatible API may not properly
+      // support tool_use blocks for in-process team workers, causing idle loops.
+      if (this.isAgentTeamsEnabled()) {
+        logger.warn(
+          { provider: 'GLM', model: this.GLM_MODEL, enableAgentTeams: true },
+          'GLM + Agent Teams enabled: GLM models may not emit tool_use blocks for '
+          + 'in-process team workers. If workers are stuck in idle loops, try '
+          + 'disabling Agent Teams or using Anthropic models for workers.'
+        );
+      }
+
       return {
         apiKey: this.GLM_API_KEY,
         model: this.GLM_MODEL,
