@@ -15,6 +15,9 @@ export {
   closeLogger,
 } from './logger.js';
 
+// Elasticsearch Transport (Issue #3720)
+export { ElasticsearchTransport, buildIndexName } from './elasticsearch-transport.js';
+
 // Error Handler
 export {
   AppError,
