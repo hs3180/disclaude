@@ -24,7 +24,7 @@ Agent 识别到需要深入讨论的话题后，创建飞书讨论群、通过 `
 - ✅ Record mapping in `workspace/bot-chat-mapping.json`
 - ✅ Return immediately — non-blocking by design
 - ❌ DO NOT wait for user response in the discussion group
-- ❌ DO NOT dissolve groups — let users or `chat-timeout` skill handle lifecycle
+- ❌ DO NOT dissolve groups — let users handle lifecycle
 - ❌ DO NOT use IPC Channel for group operations — use `lark-cli` via Bash
 - ❌ DO NOT create PR review groups (use PR Scanner skill)
 
@@ -151,7 +151,6 @@ Report to the **source chat** that the discussion has been initiated:
 
 | Skill | Relationship |
 |-------|-------------|
-| `chat-timeout` | Automatic dissolution of expired inactive groups |
 | `pr-scanner` | Separate system for PR review groups (purpose: `pr-review`) |
 | `daily-chat-review` | May trigger `start-discussion` when repetitive issues detected |
 | `daily-soul-question` | May trigger `start-discussion` for deep reflection topics |
