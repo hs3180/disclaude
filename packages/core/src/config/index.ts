@@ -23,7 +23,11 @@ import type {
   McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
+  ElasticsearchConfig,
 } from './types.js';
+
+// Re-export Elasticsearch config type for consumers (Issue #3720)
+export type { ElasticsearchConfig } from './types.js';
 import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js';
 
 // Re-export sub-modules
@@ -484,6 +488,7 @@ export class Config {
     pretty: boolean;
     rotate: boolean;
     sdkDebug: boolean;
+    elasticsearch?: ElasticsearchConfig;
   } {
     return {
       level: this.LOG_LEVEL,
@@ -491,6 +496,7 @@ export class Config {
       pretty: this.LOG_PRETTY,
       rotate: this.LOG_ROTATE,
       sdkDebug: this.SDK_DEBUG,
+      elasticsearch: fileConfigOnly.logging?.elasticsearch,
     };
   }
 

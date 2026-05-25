@@ -161,6 +161,47 @@ export interface RuliuConfig {
 }
 
 /**
+ * Elasticsearch authentication configuration.
+ * Supports either Basic Auth or API Key authentication independently.
+ */
+export interface ElasticsearchAuthConfig {
+  /** Basic auth credentials */
+  basic?: {
+    /** Username for basic auth */
+    username: string;
+    /** Password for basic auth */
+    password: string;
+  };
+  /** API Key for Elasticsearch 8.x API Key authentication */
+  apiKey?: string;
+}
+
+/**
+ * Elasticsearch logging configuration.
+ * @see Issue #3720
+ */
+export interface ElasticsearchConfig {
+  /** Enable/disable Elasticsearch logging */
+  enabled: boolean;
+  /** Elasticsearch node URL (e.g., "http://localhost:9200") */
+  node: string;
+  /** Index name prefix (default: "disclaude-logs") */
+  index?: string;
+  /** Authentication configuration */
+  auth?: ElasticsearchAuthConfig;
+  /** Batch size for bulk writes (default: 100) */
+  batchSize?: number;
+  /** Flush interval in milliseconds (default: 5000) */
+  flushInterval?: number;
+  /** Retry on write failure (default: true) */
+  retryOnError?: boolean;
+  /** Maximum number of retries before giving up (default: 3) */
+  maxRetries?: number;
+  /** Maximum buffer size before dropping oldest entries (default: 10000) */
+  maxBufferSize?: number;
+}
+
+/**
  * Logging configuration section.
  */
 export interface LoggingConfig {
@@ -174,6 +215,8 @@ export interface LoggingConfig {
   rotate?: boolean;
   /** Enable SDK debug logging and capture subprocess stderr */
   sdkDebug?: boolean;
+  /** Elasticsearch logging configuration */
+  elasticsearch?: ElasticsearchConfig;
 }
 
 /**
