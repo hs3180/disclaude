@@ -6,11 +6,11 @@
  * - Text message sending (ilink/bot/sendmessage)
  * - Message listening via getUpdates long-poll (Issue #1556 Phase 3.1)
  * - Typing indicator (ilink/bot/typing) (Issue #1556 Phase 3.2)
+ * - Media handling: image/file sending via CDN upload (Issue #1556 Phase 3.2)
  *
  * Based on official @tencent-weixin/openclaw-weixin implementation.
  *
  * Not yet implemented (future phases):
- * - Media handling (CDN upload) — Issue #1556 Phase 3.3
  * - Thread send support via context_token — Issue #1556 Phase 3.4
  *
  * @module channels/wechat/wechat-channel
@@ -19,6 +19,8 @@
  */
 
 import { createLogger, BaseChannel, type OutgoingMessage, type ChannelCapabilities, type IncomingMessage } from '@disclaude/core';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { WeChatApiClient } from './api-client.js';
 import { WeChatAuth } from './auth.js';
 import { WeChatMessageListener, type MessageProcessor } from './message-listener.js';
@@ -127,8 +129,8 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Send a message through the WeChat channel.
    *
-   * MVP: Supports 'text' and 'card' (downgraded to JSON text) types.
-   * Other types are logged as warnings and silently ignored.
+   * Supports 'text', 'card' (downgraded to JSON text), and 'file' types.
+   * File messages are uploaded to CDN first, then sent via sendImage/sendFile.
    */
   protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
     if (!this.client) {
@@ -159,10 +161,16 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       return;
     }
 
+    // File sending via CDN upload (Issue #1556 Phase 3.2)
+    if (message.type === 'file' && message.filePath) {
+      await this.sendViaCdn(message);
+      return;
+    }
+
     // Unsupported message types
     logger.warn(
       { type: message.type, chatId: message.chatId },
-      'WeChat MVP unsupported message type, ignoring'
+      'WeChat unsupported message type, ignoring'
     );
   }
 
@@ -178,18 +186,61 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   /**
    * Get the capabilities of the WeChat channel.
    *
-   * MVP capabilities: only send_text is supported.
+   * Supports text and file sending. Cards are downgraded to JSON text.
    */
   getCapabilities(): ChannelCapabilities {
     return {
       supportsCard: false,
       supportsThread: false,
-      supportsFile: false,
+      supportsFile: true,
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
-      supportedMcpTools: ['send_text'],
+      supportedMcpTools: ['send_text', 'send_file'],
     };
+  }
+
+  /**
+   * Send a file via CDN upload + sendImage/sendFile.
+   *
+   * Flow: read file → upload to CDN → send CDN URL as image or file message.
+   * Auto-detects image vs file based on file extension.
+   */
+  private async sendViaCdn(message: OutgoingMessage): Promise<void> {
+    if (!this.client || !message.filePath) {
+      return;
+    }
+
+    const { filePath } = message;
+    const fileName = path.basename(filePath);
+
+    // Read file from disk
+    const fileData = await fs.promises.readFile(filePath);
+
+    // Upload to CDN
+    const { url: cdnUrl } = await this.client.uploadMedia({
+      fileData,
+      fileName,
+    });
+
+    // Auto-detect image vs file by extension
+    const ext = path.extname(fileName).toLowerCase();
+    const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+
+    if (imageExtensions.has(ext)) {
+      await this.client.sendImage({
+        to: message.chatId,
+        imageUrl: cdnUrl,
+        contextToken: message.threadId,
+      });
+    } else {
+      await this.client.sendFile({
+        to: message.chatId,
+        fileUrl: cdnUrl,
+        fileName,
+        contextToken: message.threadId,
+      });
+    }
   }
 
   /**
