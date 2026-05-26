@@ -121,18 +121,6 @@ export class ChannelManager {
   }
 
   /**
-   * Get the first registered channel in insertion order.
-   *
-   * Useful for components that need a default channel for sending messages
-   * (e.g., scheduler). Returns undefined if no channels are registered.
-   *
-   * Issue #1594: Replaces hardcoded `getAll()[0]` destructuring.
-   */
-  getFirstChannel(): IChannel | undefined {
-    return this.channels.values().next().value;
-  }
-
-  /**
    * Register a chatId → Channel mapping.
    * Called automatically when a channel receives a message (Issue #3773).
    * Can also be called manually to establish ownership for system-initiated messages.

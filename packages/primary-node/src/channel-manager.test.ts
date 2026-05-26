@@ -341,28 +341,6 @@ describe('ChannelManager', () => {
     });
   });
 
-  describe('getFirstChannel', () => {
-    it('should return the first registered channel', () => {
-      const channel = createMockChannel('feishu');
-      manager.register(channel);
-
-      expect(manager.getFirstChannel()).toBe(channel);
-    });
-
-    it('should return undefined when no channels are registered', () => {
-      expect(manager.getFirstChannel()).toBeUndefined();
-    });
-
-    it('should return the first channel when multiple are registered', () => {
-      const channel1 = createMockChannel('rest');
-      const channel2 = createMockChannel('feishu');
-      manager.register(channel1);
-      manager.register(channel2);
-
-      expect(manager.getFirstChannel()).toBe(channel1);
-    });
-  });
-
   describe('registerChatId / getChannelForChatId (Issue #3773)', () => {
     it('should resolve registered chatId to correct channel', () => {
       const feishuChannel = createMockChannel('feishu');
