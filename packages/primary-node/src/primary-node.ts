@@ -36,6 +36,7 @@ import { EventEmitter } from 'events';
 import {
   createLogger,
   type IChannel,
+  type OutgoingMessage,
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   generateSocketPath,
@@ -437,19 +438,16 @@ export class PrimaryNode extends EventEmitter {
     // Issue #1384: Fixed sendMessage to construct proper OutgoingMessage object
     const schedulerCallbacks: SchedulerCallbacks = {
       sendMessage: async (chatId: string, message: string): Promise<void> => {
-        // Find channel and send message via ChannelManager (Issue #1594)
-        // Issue #3773: Use getChannelForChatId() for correct multi-channel routing
-        const channel = this.channelManager.getChannelForChatId(chatId);
-        if (channel) {
-          // Construct proper OutgoingMessage object (Issue #1384)
-          await channel.sendMessage({
-            type: 'text',
-            chatId,
-            text: message,
-          });
-        } else {
-          logger.warn({ chatId }, 'No channel available for scheduler message');
-        }
+        // Issue #1594: Send message via ChannelManager.
+        // Use broadcast() instead of getFirstChannel() so that the correct
+        // channel (Feishu, REST, etc.) receives and delivers the message.
+        // Channels that don't recognize the chatId simply ignore it.
+        const outgoingMessage: OutgoingMessage = {
+          type: 'text',
+          chatId,
+          text: message,
+        };
+        await this.channelManager.broadcast(outgoingMessage);
       },
     };
 
