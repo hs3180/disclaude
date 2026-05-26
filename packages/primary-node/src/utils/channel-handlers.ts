@@ -200,7 +200,7 @@ export function createDefaultMessageHandler(
         chatHistoryContext,
         chatType,
         threadContext,
-        createdAt: message.timestamp ? new Date(message.timestamp).toISOString() : new Date().toISOString(),
+        createdAt: message.timestamp ? new Date(Number(message.timestamp)).toISOString() : new Date().toISOString(),
       };
 
       try {
