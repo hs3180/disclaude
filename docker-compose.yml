@@ -145,14 +145,14 @@ services:
   #         command: npx
   #         args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
   playwright:
-    image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.52.2-noble}
+    image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.60.0-noble}
     container_name: disclaude-playwright
     restart: unless-stopped
 
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        exec $$(node -e "process.stdout.write(require('playwright').chromium.executablePath())") \
+        exec /ms-playwright/chromium-*/chrome-linux64/chrome \
           --headless=new \
           --no-sandbox \
           --disable-setuid-sandbox \
