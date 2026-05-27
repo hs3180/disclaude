@@ -228,15 +228,9 @@ export {
 } from './scheduling/index.js';
 
 // Task module (Issue #1041 - migrated from worker-node)
-export type {
-  TaskDefinitionDetails,
-} from './task/index.js';
-
 export {
   DialogueMessageTracker,
   TaskTracker,
-  TaskFileManager,
-  type TaskFileManagerConfig,
 } from './task/index.js';
 
 // Queue module (Issue #1041)
