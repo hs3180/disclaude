@@ -36,6 +36,7 @@ import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-m
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
+import { AgentFactory } from './agents/factory.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -284,7 +285,23 @@ async function main(): Promise<void> {
     // Fallback for channels without a registered descriptor
     return createChannelCallbacksFactory(channel, logger)(chatId);
   };
-  primaryNode.initInputMessageRouter(agentPool, routerCallbacksFactory);
+  // Issue #3803: Provide systemExecutor so scheduled task agents are created
+  // WITHOUT cwdProvider, ensuring they use the workspace directory instead
+  // of project-scoped directories. Without this, system messages routed via
+  // InputMessageRouter fall back to agentPool.getOrCreateChatAgent() which
+  // receives cwdProvider from the project manager.
+  const systemExecutor = async (chatId: string, payload: string, messageId: string): Promise<void> => {
+    const callbacks = routerCallbacksFactory(chatId);
+    const agent = AgentFactory.createAgent(chatId, callbacks);
+    try {
+      void agent.processMessage({ chatId, payload, messageId });
+      await agent.taskComplete;
+    } finally {
+      agent.dispose();
+    }
+  };
+
+  primaryNode.initInputMessageRouter(agentPool, routerCallbacksFactory, systemExecutor);
 
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
   const lifecycleManager = new ChannelLifecycleManager(channelManager, {
