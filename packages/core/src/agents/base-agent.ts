@@ -221,6 +221,10 @@ export abstract class BaseAgent implements Disposable {
       globalEnv.CLAUDE_CONFIG_DIR = path.join(workspaceDir, '.claude');
     }
 
+    // Issue #3803: Expose workspace directory to agent so skills (e.g., schedule)
+    // can resolve workspace paths correctly regardless of the agent's cwd.
+    globalEnv.DISCLAUDE_WORKSPACE_DIR = workspaceDir;
+
     options.env = buildSdkEnv(
       this.apiKey,
       this.apiBaseUrl,
