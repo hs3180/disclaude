@@ -1,11 +1,12 @@
 /**
  * AgentPoolMessageHandler — IAgentMessageHandler that delegates to agent pool.
  *
- * Bridges the InputMessageRouter (Phase 1) with the existing ChatAgent system.
- * For UserMessage: reuses persistent agents from the pool (backward compatible).
- * For SystemMessage: creates short-lived agents via injected executor.
+ * Bridges the InputMessageRouter with the existing ChatAgent system.
+ * Both UserMessage and SystemMessage are routed through persistent agents
+ * from the pool (RFC #3329 unified path).
  *
  * Issue #3582: Channel + Scheduler integration via MessageRouter (Phase 3)
+ * Issue #3806: Removed systemExecutor — SystemMessage now always uses AgentPool
  */
 
 import {
@@ -29,8 +30,6 @@ export interface AgentPoolHandlerOptions {
   };
   /** Callbacks factory for ChatAgent creation */
   callbacksFactory: (chatId: string) => ChatAgentCallbacks;
-  /** Optional executor for short-lived system message agents */
-  systemExecutor?: (chatId: string, payload: string, messageId: string) => Promise<void>;
   /** Optional logger */
   logger?: Logger;
 }
@@ -39,20 +38,19 @@ export interface AgentPoolHandlerOptions {
  * AgentPoolMessageHandler implements IAgentMessageHandler.
  *
  * - handleUserMessage: gets/creates persistent ChatAgent from pool, processes message
- * - handleSystemMessage: delegates to injected systemExecutor (short-lived agent pattern)
+ * - handleSystemMessage: gets/creates persistent ChatAgent from pool (unified path, RFC #3329)
  *
- * Design: Fully backward compatible with existing agent pool behavior.
+ * Design: Both user and system messages use the same AgentPool path,
+ * ensuring persistent context across sessions.
  */
 export class AgentPoolMessageHandler implements IAgentMessageHandler {
   private readonly agentPool: AgentPoolHandlerOptions['agentPool'];
   private readonly callbacksFactory: (chatId: string) => ChatAgentCallbacks;
-  private readonly systemExecutor?: AgentPoolHandlerOptions['systemExecutor'];
   private readonly log: Logger;
 
   constructor(options: AgentPoolHandlerOptions) {
     this.agentPool = options.agentPool;
     this.callbacksFactory = options.callbacksFactory;
-    this.systemExecutor = options.systemExecutor;
     this.log = options.logger ?? defaultLogger;
   }
 
@@ -82,14 +80,9 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
       'Handling system message',
     );
 
-    if (this.systemExecutor) {
-      // Delegate to injected executor (short-lived agent pattern)
-      await this.systemExecutor(chatId, payload, messageId);
-    } else {
-      // Fallback: use persistent agent from pool
-      const callbacks = this.callbacksFactory(chatId);
-      const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
-      void agent.processMessage({ chatId, payload, messageId });
-    }
+    // Unified path: use persistent agent from pool (RFC #3329)
+    const callbacks = this.callbacksFactory(chatId);
+    const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
+    void agent.processMessage({ chatId, payload, messageId });
   }
 }
