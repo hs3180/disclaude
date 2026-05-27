@@ -105,6 +105,8 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       sendDoneSignal: false,
       // Issue #1863: Wire getChatHistory callback for session restoration
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
+      // Issue #3809: Forward agent messages to debug group via Feishu channel
+      debugForwardChannel: channel,
     }),
 
   createMessageHandler: (channel, context) =>

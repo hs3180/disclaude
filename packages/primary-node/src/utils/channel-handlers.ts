@@ -26,6 +26,7 @@ import {
 import type { ChatAgentCallbacks } from '../agents/types.js';
 import type { Logger } from 'pino';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
+import { getDebugGroupService } from '../services/debug-group-service.js';
 
 const routingLogger = coreCreateLogger('ChannelMessageRouter');
 
@@ -58,6 +59,13 @@ export interface ChannelCallbacksOptions {
    * @see Issue #1863 - Wire getChatHistory callback for session restoration
    */
   getChatHistory?: (chatId: string) => Promise<string | undefined>;
+  /**
+   * Channel to use for forwarding messages to the debug group (Issue #3809).
+   * When provided, agent messages are forwarded to the debug group (if set)
+   * through this channel. Typically the Feishu channel, since debug groups
+   * are Feishu chats.
+   */
+  debugForwardChannel?: IChannel;
 }
 
 /**
@@ -104,6 +112,23 @@ export function createChannelCallbacksFactory(
   logger: Logger,
   options?: ChannelCallbacksOptions
 ): (chatId: string) => ChatAgentCallbacks {
+  // Issue #3809: Helper to forward messages to debug group
+  const forwardToDebugGroup = async (chatId: string, text: string): Promise<void> => {
+    const forwardChannel = options?.debugForwardChannel;
+    if (!forwardChannel) return;
+    const debugGroup = getDebugGroupService().getDebugGroup();
+    if (!debugGroup || debugGroup.chatId === chatId) return;
+    try {
+      await forwardChannel.sendMessage({
+        chatId: debugGroup.chatId,
+        type: 'text',
+        text: `[debug] ${text}`,
+      });
+    } catch (error) {
+      logger.warn({ err: error, debugChatId: debugGroup.chatId }, 'Failed to forward message to debug group');
+    }
+  };
+
   return (_chatId: string): ChatAgentCallbacks => ({
     sendMessage: async (chatId: string, text: string, parentMessageId?: string) => {
       await channel.sendMessage({
@@ -112,6 +137,8 @@ export function createChannelCallbacksFactory(
         text,
         threadId: parentMessageId,
       });
+      // Issue #3809: Forward to debug group (fire-and-forget, non-blocking)
+      void forwardToDebugGroup(chatId, text);
     },
     sendCard: async (
       chatId: string,
@@ -126,6 +153,10 @@ export function createChannelCallbacksFactory(
         description,
         threadId: parentMessageId,
       });
+      // Issue #3809: Forward card description to debug group (fire-and-forget)
+      if (description) {
+        void forwardToDebugGroup(chatId, description);
+      }
     },
     // eslint-disable-next-line require-await
     sendFile: async (chatId: string, filePath: string) => {

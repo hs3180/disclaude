@@ -15,6 +15,7 @@ import {
 } from './channel-handlers.js';
 import type { IChannel, IncomingMessage } from '@disclaude/core';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
+import { DebugGroupService, resetDebugGroupService } from '../services/debug-group-service.js';
 
 // ============================================================================
 // Helpers
@@ -230,6 +231,142 @@ describe('createChannelCallbacksFactory', () => {
     const history = await callbacks.getChatHistory!('chat-001');
     expect(mockGetChatHistory).toHaveBeenCalledWith('chat-001');
     expect(history).toBe('chat history content');
+  });
+
+  // Issue #3809: Debug group forwarding tests
+  describe('debug group forwarding (Issue #3809)', () => {
+    let forwardChannel: IChannel;
+
+    beforeEach(() => {
+      resetDebugGroupService();
+      forwardChannel = createMockChannel();
+    });
+
+    afterEach(() => {
+      resetDebugGroupService();
+    });
+
+    it('should forward sendMessage to debug group when set', async () => {
+      // Set debug group on the singleton
+      const { getDebugGroupService } = await import('../services/debug-group-service.js');
+      getDebugGroupService().setDebugGroup('oc_debug_group');
+
+      const factory = createChannelCallbacksFactory(channel, mockLogger, {
+        debugForwardChannel: forwardChannel,
+      });
+      const callbacks = factory('chat-001');
+      await callbacks.sendMessage('chat-001', 'Agent response');
+
+      // Give fire-and-forget microtask time to resolve
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The forward channel should receive the forwarded message
+      expect(forwardChannel.sendMessage).toHaveBeenCalledWith({
+        chatId: 'oc_debug_group',
+        type: 'text',
+        text: '[debug] Agent response',
+      });
+    });
+
+    it('should NOT forward when no debugForwardChannel is provided', async () => {
+      const { getDebugGroupService } = await import('../services/debug-group-service.js');
+      getDebugGroupService().setDebugGroup('oc_debug_group');
+
+      const factory = createChannelCallbacksFactory(channel, mockLogger);
+      const callbacks = factory('chat-001');
+      await callbacks.sendMessage('chat-001', 'Hello');
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Only the original channel should be called
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT forward when debug group is not set', async () => {
+      const factory = createChannelCallbacksFactory(channel, mockLogger, {
+        debugForwardChannel: forwardChannel,
+      });
+      const callbacks = factory('chat-001');
+      await callbacks.sendMessage('chat-001', 'Hello');
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT forward when target chat IS the debug group', async () => {
+      const { getDebugGroupService } = await import('../services/debug-group-service.js');
+      getDebugGroupService().setDebugGroup('oc_debug_group');
+
+      const factory = createChannelCallbacksFactory(channel, mockLogger, {
+        debugForwardChannel: forwardChannel,
+      });
+      const callbacks = factory('oc_debug_group');
+      await callbacks.sendMessage('oc_debug_group', 'Debug message');
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Only the original send, no forwarding (same chat)
+      expect(forwardChannel.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should forward card description to debug group', async () => {
+      const { getDebugGroupService } = await import('../services/debug-group-service.js');
+      getDebugGroupService().setDebugGroup('oc_debug_group');
+
+      const factory = createChannelCallbacksFactory(channel, mockLogger, {
+        debugForwardChannel: forwardChannel,
+      });
+      const callbacks = factory('chat-001');
+      const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
+      await callbacks.sendCard('chat-001', card, 'Card description');
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(forwardChannel.sendMessage).toHaveBeenCalledWith({
+        chatId: 'oc_debug_group',
+        type: 'text',
+        text: '[debug] Card description',
+      });
+    });
+
+    it('should NOT forward card without description', async () => {
+      const { getDebugGroupService } = await import('../services/debug-group-service.js');
+      getDebugGroupService().setDebugGroup('oc_debug_group');
+
+      const factory = createChannelCallbacksFactory(channel, mockLogger, {
+        debugForwardChannel: forwardChannel,
+      });
+      const callbacks = factory('chat-001');
+      const card = { config: {}, header: { title: { tag: 'plain_text', content: 'Test' } }, elements: [] };
+      await callbacks.sendCard('chat-001', card);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Only the original card send, no forwarding (no description)
+      expect(forwardChannel.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should handle forwarding errors gracefully', async () => {
+      const { getDebugGroupService } = await import('../services/debug-group-service.js');
+      getDebugGroupService().setDebugGroup('oc_debug_group');
+      (forwardChannel.sendMessage as any).mockRejectedValueOnce(new Error('Forward failed'));
+
+      const factory = createChannelCallbacksFactory(channel, mockLogger, {
+        debugForwardChannel: forwardChannel,
+      });
+      const callbacks = factory('chat-001');
+
+      // Should NOT throw even if forwarding fails
+      await callbacks.sendMessage('chat-001', 'Test');
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ debugChatId: 'oc_debug_group' }),
+        'Failed to forward message to debug group',
+      );
+    });
   });
 });
 
