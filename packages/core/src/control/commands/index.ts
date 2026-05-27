@@ -16,7 +16,7 @@ export const commandRegistry: CommandDefinition[] = [
   { type: 'help', handler: handleHelp, description: '显示帮助信息' },
   { type: 'status', handler: handleStatus, description: '查看服务状态' },
   { type: 'reset', handler: handleReset, description: '重置当前会话' },
-  { type: 'restart', handler: handleRestart, description: '重启 Agent 实例' },
+  { type: 'restart', handler: handleRestart, description: '重启整个服务进程' },
   { type: 'stop', handler: handleStop, description: '停止当前响应' },
   { type: 'list-nodes', handler: handleListNodes, description: '查看执行节点' },
   { type: 'debug', handler: handleDebug, description: '切换 Debug 群设置' },

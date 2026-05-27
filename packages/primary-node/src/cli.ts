@@ -235,6 +235,8 @@ async function main(): Promise<void> {
   });
 
   // Create unified control handler context
+  // Issue #3807: shutdown function placeholder, set after shutdown is defined below
+  let shutdownFn: (() => Promise<void>) | undefined;
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
@@ -247,6 +249,8 @@ async function main(): Promise<void> {
       clearDebugGroup: () => primaryNode.getDebugGroupService().clearDebugGroup(),
     },
     projectManager,
+    // Issue #3807: /restart command calls this to trigger graceful shutdown
+    get shutdown() { return shutdownFn; },
     logger,
   };
 
@@ -338,6 +342,9 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+
+  // Issue #3807: Wire shutdown to control handler context for /restart command
+  shutdownFn = shutdown;
 
   // Issue #3494: Ensure process lock is released on uncaught exceptions.
   // Without this, a crash (e.g., logger "sonic boom is not ready yet") leaves
