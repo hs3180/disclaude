@@ -273,7 +273,25 @@ async function main(): Promise<void> {
   // so the routerCallbacksFactory looks up the descriptor by channel type.
   const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
   const routerCallbacksFactory = (chatId: string) => {
-    const channel = primaryNode.getChannelManager().getChannelForChatId(chatId);
+    const channelManager = primaryNode.getChannelManager();
+    let channel = channelManager.getChannelForChatId(chatId);
+    if (!channel) {
+      // Issue #3824: After restart, chatIdChannelMap is empty (in-memory).
+      // Scheduled tasks routing through InputMessageRouter fail because
+      // getChannelForChatId() returns undefined. Fallback: use the first
+      // registered channel. Channels that don't own the chatId will still
+      // deliver the message (broadcast pattern from PR #3820).
+      const allChannels = channelManager.getAll();
+      if (allChannels.length > 0) {
+        channel = allChannels[0];
+        logger.warn(
+          { chatId, fallbackChannelId: channel.id },
+          'No channel mapping for chatId, falling back to first registered channel (post-restart scenario)',
+        );
+        // Pre-register so subsequent calls resolve directly
+        channelManager.registerChatId(chatId, channel);
+      }
+    }
     if (!channel) {
       throw new Error('No channel available for InputMessageRouter callbacks');
     }

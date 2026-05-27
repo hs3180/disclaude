@@ -400,5 +400,25 @@ describe('ChannelManager', () => {
       // chatId should now be mapped to feishu channel
       expect(manager.getChannelForChatId('chat-auto-1')).toBe(channel);
     });
+
+    it('Issue #3824: fallback pattern — getAll() returns channels when chatIdChannelMap is empty', () => {
+      // Simulate post-restart: channels are registered but chatIdChannelMap is empty
+      const feishuChannel = createMockChannel('feishu');
+      manager.register(feishuChannel);
+
+      // chatId is NOT registered (post-restart, empty chatIdChannelMap)
+      expect(manager.getChannelForChatId('sched-chat-123')).toBeUndefined();
+
+      // But channels ARE available via getAll() — fallback path
+      const allChannels = manager.getAll();
+      expect(allChannels.length).toBeGreaterThan(0);
+
+      // Simulate the fallback from cli.ts: pick first channel and pre-register
+      const fallbackChannel = allChannels[0];
+      manager.registerChatId('sched-chat-123', fallbackChannel);
+
+      // Now the chatId resolves correctly for subsequent calls
+      expect(manager.getChannelForChatId('sched-chat-123')).toBe(feishuChannel);
+    });
   });
 });
