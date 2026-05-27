@@ -49,6 +49,13 @@ export interface ControlHandlerContext {
   /** ProjectManager for /project commands (Issue #3335) */
   projectManager?: ProjectManager;
 
+  /**
+   * Restart the entire service process (Issue #3807).
+   * Called by /restart command to trigger graceful shutdown so the
+   * process manager (launchd/PM2) can restart the service.
+   */
+  shutdown?: () => Promise<void>;
+
   /** 日志记录器 */
   logger?: Logger;
 }

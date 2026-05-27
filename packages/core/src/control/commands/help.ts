@@ -19,7 +19,7 @@ export const handleHelp: CommandHandler = (
       '| `/reset` | 重置当前会话 | `/reset [--no-context]` |',
       '| `/stop` | 停止当前响应 | `/stop` |',
       '| `/status` | 查看服务状态 | `/status` |',
-      '| `/restart` | 重启 Agent 实例 | `/restart` |',
+      '| `/restart` | 重启整个服务进程 | `/restart` |',
       '| `/trigger` | 切换触发模式 | `/trigger [mention\\|always\\|auto]` |',
       '| `/project` | 项目管理 | `/project [use\\|reset\\|info]` |',
       '| `/list-nodes` | 查看已连接的执行节点 | `/list-nodes` |',

@@ -21,15 +21,37 @@ export const handleReset: CommandHandler = (
 };
 
 /**
- * /restart 命令处理（reset 的别名）
+ * /restart 命令处理 — 重启整个服务进程 (Issue #3807)
+ *
+ * Unlike /reset which only resets a single chat's agent session,
+ * /restart triggers a graceful shutdown of the entire service process.
+ * The process manager (launchd/PM2) will then automatically restart it.
  */
 export const handleRestart: CommandHandler = (
-  command: ControlCommand,
+  _command: ControlCommand,
   context: ControlHandlerContext
 ): ControlResponse => {
-  context.agentPool.reset(command.chatId);
+  const doShutdown = (): void => {
+    if (context.shutdown) {
+      context.shutdown().catch(() => {
+        // Best-effort: if graceful shutdown fails, force exit
+        process.exit(0);
+      });
+    } else {
+      // Fallback: if no shutdown handler is registered, force exit
+      // (process manager will restart the service)
+      process.exit(0);
+    }
+  };
+
+  // Delay shutdown to allow the response message to be sent through
+  // the channel before connections are closed. Without this delay,
+  // shutdown() may close the WebSocket before the caller (message-handler)
+  // finishes sending the "服务正在重启" response.
+  setTimeout(doShutdown, 2000);
+
   return {
     success: true,
-    message: '🔄 **Agent 实例已重启**\n\n已清除会话状态并重建 Agent。',
+    message: '🔄 **服务正在重启**\n\n服务进程即将关闭并由进程管理器自动重启。',
   };
 };
