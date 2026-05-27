@@ -45,6 +45,7 @@ function createMockChannel(): IChannel {
       supportsMention: false,
       supportsUpdate: false,
     }),
+    ownsChatId: vi.fn().mockReturnValue(false),
   } as unknown as IChannel;
 }
 

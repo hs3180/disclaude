@@ -29,6 +29,7 @@ function createMockDescriptor(overrides?: Partial<ChannelDescriptor>): ChannelDe
       start: async () => {},
       stop: async () => {},
       isHealthy: () => true,
+      ownsChatId: () => false,
       getCapabilities: () => ({
         supportsCard: false,
         supportsThread: false,
@@ -167,6 +168,7 @@ describe('ChannelRegistry', () => {
             start: async () => {},
             stop: async () => {},
             isHealthy: () => true,
+            ownsChatId: () => false,
             getCapabilities: () => ({
               supportsCard: false,
               supportsThread: false,

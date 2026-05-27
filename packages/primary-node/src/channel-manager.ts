@@ -145,6 +145,41 @@ export class ChannelManager {
   }
 
   /**
+   * Resolve the channel for a chatId, with ownership query fallback.
+   *
+   * Tries chatIdChannelMap first. On miss (e.g., after restart), queries all
+   * registered channels via ownsChatId() to find the correct one, then caches
+   * the result for future lookups.
+   *
+   * Issue #3824: Post-restart routing when chatIdChannelMap is empty.
+   *
+   * @param chatId - Chat ID to resolve
+   * @returns The owning channel, or undefined if no channel claims ownership
+   */
+  resolveChannelForChatId(chatId: string): IChannel | undefined {
+    // Fast path: check in-memory map first
+    const cached = this.chatIdChannelMap.get(chatId);
+    if (cached) {
+      return cached;
+    }
+
+    // Slow path: query all channels for ownership
+    for (const channel of this.channels.values()) {
+      if (channel.ownsChatId(chatId)) {
+        logger.info(
+          { chatId, channelId: channel.id, channelName: channel.name },
+          'Resolved channel ownership via ownsChatId query (map miss)'
+        );
+        this.registerChatId(chatId, channel);
+        return channel;
+      }
+    }
+
+    logger.warn({ chatId }, 'No channel claims ownership for chatId');
+    return undefined;
+  }
+
+  /**
    * Broadcast a message to all registered channels.
    * Uses Promise.allSettled to ensure one channel's failure doesn't affect others.
    */
