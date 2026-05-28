@@ -80,6 +80,17 @@ vi.mock('@disclaude/mcp-server', () => ({
   createChannelMcpServer: vi.fn(() => ({ type: 'inline' })),
 }));
 
+// Mock debug-group-service (Issue #3809)
+const mockGetDebugGroup = vi.fn(() => null);
+vi.mock('../services/debug-group-service.js', () => ({
+  getDebugGroupService: vi.fn(() => ({
+    getDebugGroup: mockGetDebugGroup,
+    setDebugGroup: vi.fn(),
+    clearDebugGroup: vi.fn(),
+    isDebugGroup: vi.fn(),
+  })),
+}));
+
 import { ChatAgent } from './chat-agent.js';
 
 const createMockCallbacks = () => ({
@@ -552,6 +563,253 @@ describe('ChatAgent (primary-node)', () => {
       await agent.shutdown();
       expect(ac.signal.aborted).toBe(true);
       expect((agent as any).abortController).toBeNull();
+    });
+  });
+
+  describe('Issue #3809: debug group forwarding', () => {
+    it('should forward tool_use messages to debug group', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Set up debug group
+      mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
+
+      // Create iterator that yields a tool_use message
+      async function* toolUseIterator() {
+        yield { parsed: { type: 'tool_use', content: '🔧 Using Read tool' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: toolUseIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_user_chat', payload: 'read file', messageId: 'msg_1' });
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // Should forward to debug group with prefix
+      const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0] === 'oc_debug_group',
+      );
+      expect(debugCalls.length).toBe(1);
+      expect(debugCalls[0][1]).toContain('[tool_use]');
+      expect(debugCalls[0][1]).toContain('Using Read tool');
+
+      // Should also send to user chat (non-topic)
+      const userCalls = localCallbacks.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0] === 'oc_user_chat',
+      );
+      expect(userCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should forward tool_result messages to debug group', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
+
+      async function* toolResultIterator() {
+        yield { parsed: { type: 'tool_result', content: 'Result: file contents here' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: toolResultIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_user_chat', payload: 'read file', messageId: 'msg_1' });
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0] === 'oc_debug_group',
+      );
+      expect(debugCalls.length).toBe(1);
+      expect(debugCalls[0][1]).toContain('[tool_result]');
+    });
+
+    it('should forward tool_progress messages to debug group', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
+
+      async function* progressIterator() {
+        yield { parsed: { type: 'tool_progress', content: 'Running bash (2.5s)' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: progressIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_user_chat', payload: 'run command', messageId: 'msg_1' });
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0] === 'oc_debug_group',
+      );
+      expect(debugCalls.length).toBe(1);
+      expect(debugCalls[0][1]).toContain('[tool_progress]');
+    });
+
+    it('should NOT forward text or result messages to debug group', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
+
+      async function* textIterator() {
+        yield { parsed: { type: 'text', content: 'Hello user' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: textIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_user_chat', payload: 'hello', messageId: 'msg_1' });
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // No messages should go to debug group
+      const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0] === 'oc_debug_group',
+      );
+      expect(debugCalls.length).toBe(0);
+    });
+
+    it('should not forward when no debug group is set', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // No debug group set (default mock returns null)
+      mockGetDebugGroup.mockReturnValue(null);
+
+      async function* toolUseIterator() {
+        yield { parsed: { type: 'tool_use', content: 'Using tool' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: toolUseIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_user_chat', payload: 'test', messageId: 'msg_1' });
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // No messages to debug group
+      const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0] !== 'oc_user_chat',
+      );
+      expect(debugCalls.length).toBe(0);
+    });
+
+    it('should not forward when current chat IS the debug group (prevent loop)', async () => {
+      const localCallbacks = createMockCallbacks();
+      // Chat is the debug group itself
+      const agent = new ChatAgent({
+        chatId: 'oc_debug_group',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
+
+      async function* toolUseIterator() {
+        yield { parsed: { type: 'tool_use', content: 'Using tool' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: toolUseIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_debug_group', payload: 'test', messageId: 'msg_1' });
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // Should only send to user chat (which is the same as debug group)
+      // but NOT double-forward
+      const allCalls = localCallbacks.sendMessage.mock.calls;
+      // Only normal user-facing calls, no extra debug forwarding
+      expect(allCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should forward intermediate messages even in topic threads (normally filtered)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_topic_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Set as topic type
+      (agent as any).chatType = 'topic';
+      mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
+
+      async function* toolUseIterator() {
+        yield { parsed: { type: 'tool_use', content: 'Using tool in topic' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: toolUseIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_topic_chat', payload: 'test', messageId: 'msg_1' });
+      await new Promise<void>(r => setTimeout(r, 100));
+
+      // Debug group should still get the forwarded message
+      const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0] === 'oc_debug_group',
+      );
+      expect(debugCalls.length).toBe(1);
+      expect(debugCalls[0][1]).toContain('Using tool in topic');
+
+      // User chat should NOT receive the filtered intermediate message
+      const userCalls = localCallbacks.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0] === 'oc_topic_chat' && typeof call[1] === 'string' && call[1].includes('Using tool'),
+      );
+      expect(userCalls.length).toBe(0);
     });
   });
 });
