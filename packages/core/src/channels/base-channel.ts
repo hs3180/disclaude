@@ -321,4 +321,17 @@ export abstract class BaseChannel<TConfig extends ChannelConfig = ChannelConfig>
   getCapabilities(): ChannelCapabilities {
     return DEFAULT_CHANNEL_CAPABILITIES;
   }
+
+  /**
+   * Check if this channel owns a given chatId.
+   * Default implementation returns false — subclasses must override.
+   *
+   * Issue #3824: Channel ownership query for post-restart routing.
+   *
+   * @param _chatId - Chat ID to check
+   * @returns true if this channel handles the given chatId
+   */
+  ownsChatId(_chatId: string): boolean {
+    return false;
+  }
 }

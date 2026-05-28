@@ -317,6 +317,22 @@ export interface IChannel {
    * @returns Channel capabilities describing what features are supported
    */
   getCapabilities(): ChannelCapabilities;
+
+  /**
+   * Check if this channel owns (can handle) a given chatId.
+   * Used for channel ownership resolution after restart when chatIdChannelMap is empty.
+   *
+   * Each channel implementation knows how to identify its own chatIds:
+   * - Feishu: chatId starts with "oc_" (group) or "ou_" (user)
+   * - WeChat: chatId follows WeChat format conventions
+   * - REST: chatId follows REST channel format
+   *
+   * @param chatId - Chat ID to check ownership for
+   * @returns true if this channel can handle the given chatId
+   *
+   * Issue #3824: Channel ownership query for post-restart routing.
+   */
+  ownsChatId(chatId: string): boolean;
 }
 
 /**

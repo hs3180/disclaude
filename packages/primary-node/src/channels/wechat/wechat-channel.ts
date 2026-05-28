@@ -201,6 +201,23 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
   }
 
   /**
+   * Check if this channel owns a given chatId.
+   * WeChat chatIds are user IDs from the WeChat API (e.g., "wxid_xxx", numeric IDs).
+   * Returns true for chatIds that don't match Feishu ("oc_"/"ou_") or REST formats.
+   *
+   * Issue #3824: Channel ownership query for post-restart routing.
+   */
+  ownsChatId(chatId: string): boolean {
+    // WeChat user IDs are not Feishu format (oc_/ou_) or REST format (rest-/UUID)
+    // This is a conservative check — if it doesn't match known patterns for other
+    // channels, WeChat claims it as a fallback.
+    return !chatId.startsWith('oc_')
+      && !chatId.startsWith('ou_')
+      && !chatId.startsWith('rest-')
+      && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatId);
+  }
+
+  /**
    * Send a file via CDN upload + sendImage/sendFile.
    *
    * Flow: read file → upload to CDN → send CDN URL as image or file message.
