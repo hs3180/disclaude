@@ -401,4 +401,73 @@ describe('ChannelManager', () => {
       expect(manager.getChannelForChatId('chat-auto-1')).toBe(channel);
     });
   });
+
+  describe('preregisterScheduleChatIds (Issue #3835)', () => {
+    it('should register chatIds to the first non-REST channel', () => {
+      const feishuChannel = createMockChannel('feishu');
+      const restChannel = createMockChannel('rest');
+      manager.register(restChannel);
+      manager.register(feishuChannel);
+
+      const count = manager.preregisterScheduleChatIds(['oc_111', 'oc_222']);
+
+      expect(count).toBe(2);
+      expect(manager.getChannelForChatId('oc_111')).toBe(feishuChannel);
+      expect(manager.getChannelForChatId('oc_222')).toBe(feishuChannel);
+    });
+
+    it('should skip already-registered chatIds', () => {
+      const feishuChannel = createMockChannel('feishu');
+      const restChannel = createMockChannel('rest');
+      manager.register(restChannel);
+      manager.register(feishuChannel);
+
+      // Pre-register one chatId manually
+      manager.registerChatId('oc_111', feishuChannel);
+
+      const count = manager.preregisterScheduleChatIds(['oc_111', 'oc_222']);
+
+      expect(count).toBe(1); // Only oc_222 is newly registered
+      expect(manager.getChannelForChatId('oc_222')).toBe(feishuChannel);
+    });
+
+    it('should return 0 when no channels are registered', () => {
+      const count = manager.preregisterScheduleChatIds(['oc_111']);
+      expect(count).toBe(0);
+    });
+
+    it('should return 0 when chatIds array is empty', () => {
+      const channel = createMockChannel('feishu');
+      manager.register(channel);
+
+      const count = manager.preregisterScheduleChatIds([]);
+      expect(count).toBe(0);
+    });
+
+    it('should fall back to first channel when all channels are REST', () => {
+      const restChannel = createMockChannel('rest');
+      manager.register(restChannel);
+
+      const count = manager.preregisterScheduleChatIds(['oc_111']);
+
+      expect(count).toBe(1);
+      expect(manager.getChannelForChatId('oc_111')).toBe(restChannel);
+    });
+
+    it('should not overwrite existing mapping on re-registration', () => {
+      const feishuChannel = createMockChannel('feishu');
+      const restChannel = createMockChannel('rest');
+      manager.register(feishuChannel);
+      manager.register(restChannel);
+
+      // Manually register to REST channel
+      manager.registerChatId('oc_111', restChannel);
+
+      // Pre-register should skip the already-mapped chatId
+      manager.preregisterScheduleChatIds(['oc_111']);
+
+      // Should still map to REST (not overwritten)
+      expect(manager.getChannelForChatId('oc_111')).toBe(restChannel);
+    });
+  });
 });

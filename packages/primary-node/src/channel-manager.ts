@@ -254,6 +254,46 @@ export class ChannelManager {
   }
 
   /**
+   * Pre-register chatIds to available channels.
+   * Issue #3835: Ensures chatId→Channel mappings exist at startup,
+   * before any user message triggers the lazy registration via setupHandlers.
+   *
+   * @param chatIds - Array of chatIds to register (e.g. from scheduled tasks)
+   * @returns Number of newly registered chatIds
+   */
+  preregisterScheduleChatIds(chatIds: string[]): number {
+    if (chatIds.length === 0 || this.channels.size === 0) {
+      return 0;
+    }
+
+    const channels = this.getAll();
+    let registered = 0;
+
+    for (const chatId of chatIds) {
+      if (this.chatIdChannelMap.has(chatId)) {
+        continue;
+      }
+
+      // Prefer non-REST channels: REST channels don't handle chatId-based routing,
+      // while Feishu/WeChat channels can deliver to any chatId they own.
+      const channel = channels.find(ch => ch.id !== 'rest') || channels[0];
+      if (channel) {
+        this.registerChatId(chatId, channel);
+        registered++;
+      }
+    }
+
+    if (registered > 0) {
+      logger.info(
+        { registered, total: chatIds.length },
+        'Pre-registered chatId→Channel mappings from scheduled tasks'
+      );
+    }
+
+    return registered;
+  }
+
+  /**
    * Clear all channels without stopping them.
    */
   clear(): void {

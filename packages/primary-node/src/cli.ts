@@ -277,7 +277,22 @@ async function main(): Promise<void> {
   // so the routerCallbacksFactory looks up the descriptor by channel type.
   const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
   const routerCallbacksFactory = (chatId: string) => {
-    const channel = primaryNode.getChannelManager().getChannelForChatId(chatId);
+    let channel = primaryNode.getChannelManager().getChannelForChatId(chatId);
+    if (!channel) {
+      // Issue #3835: Fallback when chatId→Channel mapping is missing.
+      // This can happen if a scheduled task fires before any user message
+      // has triggered the lazy registration. Find a suitable channel and
+      // register the mapping so subsequent calls resolve immediately.
+      const channels = primaryNode.getChannelManager().getAll();
+      channel = channels.find(ch => ch.id !== 'rest') || channels[0];
+      if (channel) {
+        primaryNode.getChannelManager().registerChatId(chatId, channel);
+        logger.info(
+          { chatId, channelId: channel.id },
+          'Registered chatId→Channel mapping via fallback'
+        );
+      }
+    }
     if (!channel) {
       throw new Error('No channel available for InputMessageRouter callbacks');
     }

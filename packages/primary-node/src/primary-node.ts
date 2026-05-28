@@ -432,6 +432,27 @@ export class PrimaryNode extends EventEmitter {
     this.scheduleManager = new ScheduleManager({ schedulesDir });
     logger.info({ schedulesDir }, 'Scheduler init step 2/5: ✓ ScheduleManager ready');
 
+    // Issue #3835: Pre-register chatId→Channel mappings from scheduled tasks.
+    // After restart, chatIdChannelMap is empty (in-memory only). Scheduled tasks
+    // need these mappings to route messages via InputMessageRouter. Without
+    // pre-registration, tasks fail until a user sends a message in each chat.
+    try {
+      const enabledTasks = await this.scheduleManager.listEnabled();
+      const chatIds = [...new Set(enabledTasks.map(t => t.chatId).filter(Boolean))];
+      if (chatIds.length > 0) {
+        const preregCount = this.channelManager.preregisterScheduleChatIds(chatIds);
+        if (preregCount > 0) {
+          logger.info(
+            { preregCount, totalChatIds: chatIds.length },
+            'Pre-registered schedule chatIds to channels'
+          );
+        }
+      }
+    } catch (error) {
+      // Non-fatal: pre-registration failure should not block scheduler init
+      logger.warn({ err: error }, 'Failed to pre-register schedule chatIds (non-fatal)');
+    }
+
     // Step 3: Create executor and callbacks
     logger.info('Scheduler init step 3/5: Creating schedule executor');
     // Issue #1382: Create callbacks for scheduler
