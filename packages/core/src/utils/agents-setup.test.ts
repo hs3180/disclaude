@@ -89,24 +89,24 @@ describe('setupAgentsInWorkspace', () => {
       ).rejects.toThrow();
     });
 
-    it('should not overwrite existing agent definitions', async () => {
+    it('should overwrite existing agent definitions with latest built-in version', async () => {
       // Create source agents
       await fs.mkdir(sourceDir, { recursive: true });
       await fs.writeFile(path.join(sourceDir, 'site-miner.md'), '# New Content');
 
-      // Create existing target agent
+      // Create existing target agent with outdated content
       await fs.mkdir(targetDir, { recursive: true });
-      await fs.writeFile(path.join(targetDir, 'site-miner.md'), '# Existing Content');
+      await fs.writeFile(path.join(targetDir, 'site-miner.md'), '# Old Content');
 
       const result = await setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
 
-      // Verify existing file was NOT overwritten
+      // Verify existing file WAS overwritten with latest built-in version
       const content = await fs.readFile(
         path.join(targetDir, 'site-miner.md'), 'utf-8',
       );
-      expect(content).toBe('# Existing Content');
+      expect(content).toBe('# New Content');
     });
 
     it('should succeed with empty agents directory', async () => {

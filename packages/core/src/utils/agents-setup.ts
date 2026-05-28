@@ -19,7 +19,9 @@ const logger = createLogger('AgentsSetup');
  *
  * This enables Claude Code to load agent definitions via `.claude/agents/` in the
  * working directory. Only `.md` files are copied (agent definitions are Markdown).
- * Existing files are never overwritten (preserves user customizations).
+ * Existing files are always overwritten to ensure users get the latest built-in
+ * definitions. For customizations, users should place their versions in
+ * `<cwd>/.claude/agents/` (project-level) which has higher priority.
  *
  * @returns Success status and error message if failed
  */
@@ -68,14 +70,13 @@ export async function setupAgentsInWorkspace(): Promise<{
         const targetPath = path.join(targetDir, agentName);
 
         try {
-          // Skip if target already exists (preserve user customizations)
-          await fs.access(targetPath);
-          logger.debug({ agentName }, 'Agent definition already exists, skipping');
-        } catch {
-          // Target doesn't exist, copy it
+          // Always copy (overwrite) to ensure latest built-in definitions
           await fs.copyFile(sourcePath, targetPath);
           copiedCount++;
           logger.debug({ agentName, sourcePath, targetPath }, 'Copied agent definition');
+        } catch (error) {
+          const err = error as Error;
+          logger.warn({ err, agentName }, 'Failed to copy agent definition');
         }
       }
     }
