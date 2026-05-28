@@ -37,6 +37,7 @@
 
 import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, forceCleanupLeakedListeners, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type UserMessageParams } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
+import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 
 // Type alias for backward compatibility within this module
@@ -913,9 +914,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Send message content to callback
         // Issue #3641: In topic group threads, filter intermediate messages
         // (tool_use, tool_result, tool_progress) to reduce noise.
+        // Issue #3809: Forward intermediate messages to debug group.
         if (parsed.content) {
           const isTopicThread = this.chatType === 'topic';
           const isIntermediateMessage = parsed.type === 'tool_use' || parsed.type === 'tool_result' || parsed.type === 'tool_progress';
+
+          // Issue #3809: Forward intermediate process messages to debug group.
+          // This surfaces tool_use/tool_result/tool_progress events that are
+          // normally hidden from the user, giving visibility into agent internals.
+          // Fire-and-forget: non-blocking, errors are logged but not awaited.
+          if (isIntermediateMessage) {
+            const debugGroup = getDebugGroupService().getDebugGroup();
+            if (debugGroup && debugGroup.chatId !== chatId) {
+              const prefix = `[${parsed.type}]`;
+              const debugContent = `${prefix} ${parsed.content}`;
+              this.callbacks.sendMessage(debugGroup.chatId, debugContent).catch((err) => {
+                this.logger.debug({ err, debugChatId: debugGroup.chatId, type: parsed.type }, 'Failed to forward debug message');
+              });
+            }
+          }
 
           if (isTopicThread && isIntermediateMessage) {
             this.logger.debug(
