@@ -904,6 +904,31 @@ export class MessageHandler {
         fileMetadata.threadContext = fileThreadContext;
       }
 
+      // Issue #3828: Apply @mention/trigger mode check for file/image messages in group/topic chats
+      const fileBotMentioned = this.mentionDetector.isBotMentioned(mentions);
+      if (this.isGroupChat(chat_type) && !fileBotMentioned) {
+        if (this.triggerModeManager.getMode(chat_id) === 'auto'
+          && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
+          await this.checkAndAutoDisableSmallGroup(chat_id);
+        }
+        if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
+          logger.debug(
+            { messageId: message_id, chatId: chat_id, chat_type, messageType: message_type },
+            'Skipped file/image message in group chat without @mention (trigger mode disabled)'
+          );
+          this.forwardFilteredMessage('trigger_mode', message_id, chat_id, filePrompt, this.extractOpenId(sender), { chat_type, messageType: message_type });
+          return;
+        }
+      }
+
+      // Get chat history context when bot IS mentioned in group/topic for file messages
+      if (this.isGroupChat(chat_type) && fileBotMentioned) {
+        const chatHistoryContext = await this.getChatHistoryContext(chat_id);
+        if (chatHistoryContext) {
+          fileMetadata.chatHistoryContext = chatHistoryContext;
+        }
+      }
+
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
         chatId: chat_id,
