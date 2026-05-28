@@ -244,4 +244,3 @@ When helping create a Skill, provide a structured response:
 
 - `/schedule` - For setting up scheduled execution of Skills
 - `/feedback` - For submitting feature requests that should be core features
-- `/deep-task` - For one-time code changes and implementations

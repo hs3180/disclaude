@@ -1,6 +1,6 @@
 ---
 name: schedule
-description: Schedule management specialist for RECURRING/SCHEDULED tasks. Use when user wants to create, view, modify, or delete scheduled/cron jobs, timers, reminders, or periodic executions. Triggered by keywords: "schedule", "timer", "cron", "定时任务", "提醒", "定期", "周期", "每天", "每周", "recurring", "periodic". For one-time tasks with full workflow, use /deep-task skill instead.
+description: Schedule management specialist for RECURRING/SCHEDULED tasks. Use when user wants to create, view, modify, or delete scheduled/cron jobs, timers, reminders, or periodic executions. Triggered by keywords: "schedule", "timer", "cron", "定时任务", "提醒", "定期", "周期", "每天", "每周", "recurring", "periodic".
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 user-invocable: false
 ---
@@ -19,9 +19,9 @@ Manage schedules with full CRUD operations.
 - Viewing or modifying existing schedules
 
 **DO NOT use this skill for:**
-- One-time code changes → Use `/deep-task` skill instead
-- Bug fixes or feature implementations → Use `/deep-task` skill instead
-- Single execution operations → Use `/deep-task` skill instead
+- One-time code changes → Ask the agent directly
+- Bug fixes or feature implementations → Ask the agent directly
+- Single execution operations → Ask the agent directly
 
 **Keywords that trigger this skill**: "定时任务", "schedule", "cron", "timer", "reminder", "每天", "每周", "定期", "周期性", "recurring", "periodic"
 
