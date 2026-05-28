@@ -541,17 +541,14 @@ export class PrimaryNode extends EventEmitter {
    *
    * @param agentPool - Agent pool for creating/getting persistent agents
    * @param callbacksFactory - Factory for creating ChatAgentCallbacks per chat
-   * @param systemExecutor - Optional executor for system message handling (short-lived agents)
    */
   initInputMessageRouter(
     agentPool: { getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent },
     callbacksFactory: (chatId: string) => import('./agents/types.js').ChatAgentCallbacks,
-    systemExecutor?: (chatId: string, payload: string, messageId: string) => Promise<void>,
   ): void {
     const handler = new AgentPoolMessageHandler({
       agentPool,
       callbacksFactory,
-      systemExecutor,
     });
 
     this.inputMessageRouter = new InputMessageRouter({ handler });
