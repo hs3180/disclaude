@@ -177,6 +177,11 @@ export {
   type InteractiveContext,
 } from './interactive-context.js';
 
+// Feishu message handling (Issue #1626: integration test exports)
+export { MessageHandler as FeishuMessageHandler, type MessageCallbacks } from './channels/feishu/message-handler.js';
+export { TriggerModeManager, type TriggerModeRecord } from './channels/feishu/passive-mode.js';
+export { MentionDetector, type BotInfo } from './channels/feishu/mention-detector.js';
+
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 

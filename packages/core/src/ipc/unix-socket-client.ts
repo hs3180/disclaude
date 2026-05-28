@@ -205,15 +205,16 @@ export class UnixSocketIpcClient {
     this.connecting = true;
 
     return new Promise((resolve, reject) => {
-      this.socket = createConnection(this.socketPath);
+      const socket = createConnection(this.socketPath);
+      this.socket = socket;
 
       const timeoutId = setTimeout(() => {
-        this.socket?.destroy();
+        socket.destroy();
         this.connecting = false;
         reject(new Error(`IPC connection timeout (attempt ${attempt})`));
       }, this.timeout);
 
-      this.socket.on('connect', () => {
+      socket.on('connect', () => {
         clearTimeout(timeoutId);
         this.connected = true;
         this.connecting = false;
@@ -223,22 +224,27 @@ export class UnixSocketIpcClient {
         resolve();
       });
 
-      this.socket.on('error', (error) => {
+      socket.on('error', (error) => {
         clearTimeout(timeoutId);
         this.connecting = false;
         logger.debug({ err: error, attempt }, 'IPC connection error');
         reject(error);
       });
 
-      this.socket.on('data', (data) => {
+      socket.on('data', (data) => {
         this.handleData(data.toString());
       });
 
-      this.socket.on('close', () => {
-        this.connected = false;
-        this.connecting = false;
-        this.socket = null;
-        this.availabilityCache = null; // Invalidate cache on disconnect
+      socket.on('close', () => {
+        // Only reset state if this socket is still the current one.
+        // Prevents a stale close event from a previous socket from
+        // overwriting state after reconnection.
+        if (this.socket === socket) {
+          this.connected = false;
+          this.connecting = false;
+          this.socket = null;
+          this.availabilityCache = null; // Invalidate cache on disconnect
+        }
         logger.debug('IPC connection closed');
 
         // Reject all pending requests
