@@ -50,6 +50,7 @@ function createMockChannel(id: string, name: string = `Channel ${id}`): IChannel
     stop: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn().mockResolvedValue(undefined),
     getCapabilities: vi.fn().mockReturnValue(DEFAULT_CAPABILITIES),
+    ownsChatId: vi.fn().mockReturnValue(false),
   } as unknown as IChannel;
 }
 

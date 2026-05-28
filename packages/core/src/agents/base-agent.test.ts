@@ -670,4 +670,32 @@ describe('BaseAgent', () => {
       expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
     });
   });
+
+  describe('createSdkOptions - Issue #3803: DISCLAUDE_WORKSPACE_DIR for schedule skill', () => {
+    it('should always set DISCLAUDE_WORKSPACE_DIR to workspace dir', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions();
+      expect(options.env?.DISCLAUDE_WORKSPACE_DIR).toBe('/workspace');
+    });
+
+    it('should set DISCLAUDE_WORKSPACE_DIR even in project mode', () => {
+      setRuntimeContext({
+        getWorkspaceDir: () => '/workspace',
+        getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
+        getLoggingConfig: () => ({ sdkDebug: false }),
+        getGlobalEnv: () => ({}),
+        isAgentTeamsEnabled: () => false,
+      });
+      const ctxAgent = new TestAgent({ apiKey: 'key', model: 'model', provider: 'anthropic' });
+      const options = ctxAgent.testCreateSdkOptions({ cwd: '/workspace/projects/my-app' });
+      expect(options.env?.DISCLAUDE_WORKSPACE_DIR).toBe('/workspace');
+    });
+  });
 });

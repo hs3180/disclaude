@@ -21,7 +21,7 @@ vi.mock('@disclaude/core', () => ({
 }));
 
 // Helper to create mock channel
-function createMockChannel(id: string, name: string = `Channel ${id}`): IChannel {
+function createMockChannel(id: string, name: string = `Channel ${id}`, ownsChatIdFn?: (chatId: string) => boolean): IChannel {
   return {
     id,
     name,
@@ -33,6 +33,7 @@ function createMockChannel(id: string, name: string = `Channel ${id}`): IChannel
     stop: vi.fn().mockResolvedValue(undefined),
     isHealthy: vi.fn().mockReturnValue(true),
     getCapabilities: vi.fn().mockReturnValue({ supportsCard: true, supportsThread: true, supportsFile: true, supportsMarkdown: true, supportsMention: true, supportsUpdate: true }),
+    ownsChatId: ownsChatIdFn || vi.fn().mockReturnValue(false),
   };
 }
 
@@ -399,6 +400,61 @@ describe('ChannelManager', () => {
 
       // chatId should now be mapped to feishu channel
       expect(manager.getChannelForChatId('chat-auto-1')).toBe(channel);
+    });
+  });
+
+  describe('resolveChannelForChatId (Issue #3824)', () => {
+    it('should return cached channel from chatIdChannelMap', () => {
+      const feishuChannel = createMockChannel('feishu', 'Feishu');
+      manager.register(feishuChannel);
+      manager.registerChatId('oc_123', feishuChannel);
+
+      expect(manager.resolveChannelForChatId('oc_123')).toBe(feishuChannel);
+    });
+
+    it('should query channels via ownsChatId when map misses', () => {
+      const feishuChannel = createMockChannel('feishu', 'Feishu', (chatId) => chatId.startsWith('oc_'));
+      const restChannel = createMockChannel('rest', 'REST', (chatId) => chatId.startsWith('rest-'));
+      manager.register(feishuChannel);
+      manager.register(restChannel);
+
+      // No chatId registered — should query channels
+      const result = manager.resolveChannelForChatId('oc_xyz');
+      expect(result).toBe(feishuChannel);
+    });
+
+    it('should cache resolved channel in chatIdChannelMap', () => {
+      const feishuChannel = createMockChannel('feishu', 'Feishu', (chatId) => chatId.startsWith('oc_'));
+      manager.register(feishuChannel);
+
+      // First call: map miss, queries channels
+      const result = manager.resolveChannelForChatId('oc_abc');
+      expect(result).toBe(feishuChannel);
+
+      // Second call: should use cache (getChannelForChatId returns the channel)
+      expect(manager.getChannelForChatId('oc_abc')).toBe(feishuChannel);
+    });
+
+    it('should return undefined when no channel claims ownership', () => {
+      const feishuChannel = createMockChannel('feishu', 'Feishu', (chatId) => chatId.startsWith('oc_'));
+      manager.register(feishuChannel);
+
+      expect(manager.resolveChannelForChatId('unknown-format')).toBeUndefined();
+    });
+
+    it('should return undefined when no channels are registered', () => {
+      expect(manager.resolveChannelForChatId('oc_123')).toBeUndefined();
+    });
+
+    it('should resolve to correct channel among multiple channels', () => {
+      const feishuChannel = createMockChannel('feishu', 'Feishu', (chatId) => chatId.startsWith('oc_') || chatId.startsWith('ou_'));
+      const restChannel = createMockChannel('rest', 'REST', (chatId) => chatId.startsWith('rest-'));
+      manager.register(feishuChannel);
+      manager.register(restChannel);
+
+      expect(manager.resolveChannelForChatId('oc_group1')).toBe(feishuChannel);
+      expect(manager.resolveChannelForChatId('ou_user1')).toBe(feishuChannel);
+      expect(manager.resolveChannelForChatId('rest-api-1')).toBe(restChannel);
     });
   });
 });

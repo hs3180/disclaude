@@ -53,10 +53,20 @@ workspace/schedules/<slug>/SCHEDULE.md
 - `<slug>`: A short, descriptive, filesystem-safe name (lowercase, hyphens instead of spaces, no special characters)
 - The file must be named exactly `SCHEDULE.md` (uppercase)
 
+**IMPORTANT (Issue #3803)**: Schedule files MUST live in the **workspace** `schedules/` directory, NOT the current working directory's `schedules/`. When in project mode, the agent's cwd is the project directory, but schedules must still be written to the workspace directory.
+
+To determine the workspace schedules directory, use:
+```bash
+echo "${DISCLAUDE_WORKSPACE_DIR:-$(pwd)}/schedules"
+```
+
+- If `DISCLAUDE_WORKSPACE_DIR` is set → use `$DISCLAUDE_WORKSPACE_DIR/schedules/`
+- If not set → use `schedules/` relative to current directory
+
 **Examples:**
-- `workspace/schedules/daily-report/SCHEDULE.md`
-- `workspace/schedules/issue-solver/SCHEDULE.md`
-- `workspace/schedules/weekly-summary/SCHEDULE.md`
+- `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-report/SCHEDULE.md`
+- `$DISCLAUDE_WORKSPACE_DIR/schedules/issue-solver/SCHEDULE.md`
+- `$DISCLAUDE_WORKSPACE_DIR/schedules/weekly-summary/SCHEDULE.md`
 
 ---
 
@@ -73,8 +83,9 @@ workspace/schedules/<slug>/SCHEDULE.md
 
 2. Create directory and file:
    ```
-   workspace/schedules/<slug>/SCHEDULE.md
+   $DISCLAUDE_WORKSPACE_DIR/schedules/<slug>/SCHEDULE.md
    ```
+   (Use `$DISCLAUDE_WORKSPACE_DIR` to ensure schedules go to workspace, not project dir.)
 
 3. Create file with `Write` tool
 
@@ -115,7 +126,7 @@ Schedule content prompt here
 This preserves the configuration for potential future reactivation and maintains an audit trail.
 
 **Steps:**
-1. Find schedule files with `Glob`: `workspace/schedules/*/SCHEDULE.md`
+1. Find schedule files with `Glob`: `$DISCLAUDE_WORKSPACE_DIR/schedules/*/SCHEDULE.md` (or `schedules/*/SCHEDULE.md` if env var not set)
 2. Read files with `Read`
 3. Filter by current `chatId`
 4. Confirm schedule to disable
@@ -157,7 +168,7 @@ enabled: false
 - Content (body text)
 
 **Steps:**
-1. Find schedule file via `Glob`: `workspace/schedules/*/SCHEDULE.md`
+1. Find schedule file via `Glob`: `$DISCLAUDE_WORKSPACE_DIR/schedules/*/SCHEDULE.md` (or `schedules/*/SCHEDULE.md` if env var not set)
 2. Verify `chatId` ownership
 3. Confirm changes
 4. Modify with `Edit` tool
@@ -168,7 +179,7 @@ enabled: false
 ### 4. List Schedules
 
 **Steps:**
-1. Find all schedule files with `Glob`: `workspace/schedules/*/SCHEDULE.md`
+1. Find all schedule files with `Glob`: `$DISCLAUDE_WORKSPACE_DIR/schedules/*/SCHEDULE.md` (or `schedules/*/SCHEDULE.md` if env var not set)
 2. Read each file
 3. Filter by current `chatId`
 4. Format and display
@@ -317,7 +328,7 @@ This example demonstrates how to create a schedule for the 0.4.2 MVP use case: d
 
 ### Schedule File
 
-Create `workspace/schedules/daily-soul-question/SCHEDULE.md`:
+Create `$DISCLAUDE_WORKSPACE_DIR/schedules/daily-soul-question/SCHEDULE.md`:
 
 ```markdown
 ---

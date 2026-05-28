@@ -321,4 +321,12 @@ describe('BaseChannel', () => {
       expect(caps).toBeDefined();
     });
   });
+
+  describe('ownsChatId (Issue #3824)', () => {
+    it('should return false by default in BaseChannel', () => {
+      const channel = createTestChannel();
+      expect(channel.ownsChatId('oc_test')).toBe(false);
+      expect(channel.ownsChatId('any-id')).toBe(false);
+    });
+  });
 });

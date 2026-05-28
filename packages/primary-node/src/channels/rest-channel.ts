@@ -417,6 +417,18 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   /**
+   * Check if this channel owns a given chatId.
+   * REST channel chatIds follow the pattern "rest-" prefix or are UUIDs.
+   * Since REST channel is a fallback, it only claims chatIds it explicitly recognizes.
+   *
+   * Issue #3824: Channel ownership query for post-restart routing.
+   */
+  ownsChatId(chatId: string): boolean {
+    // REST channel typically uses "rest-" prefixed or UUID-format chatIds
+    return chatId.startsWith('rest-') || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(chatId);
+  }
+
+  /**
    * Get the server port.
    */
   getPort(): number {

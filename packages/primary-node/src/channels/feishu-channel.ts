@@ -689,6 +689,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     };
   }
 
+  /**
+   * Check if this channel owns a given chatId.
+   * Feishu chatIds follow specific patterns: "oc_" (group) or "ou_" (user).
+   *
+   * Issue #3824: Channel ownership query for post-restart routing.
+   */
+  ownsChatId(chatId: string): boolean {
+    return chatId.startsWith('oc_') || chatId.startsWith('ou_');
+  }
+
   // Delegate trigger mode methods to TriggerModeManager (Issue #2193: renamed from PassiveMode)
   isTriggerEnabled(chatId: string): boolean {
     return this.triggerModeManager.isTriggerEnabled(chatId);

@@ -236,6 +236,7 @@ async function main(): Promise<void> {
 
   // Create unified control handler context
   // Issue #3807: shutdown function placeholder, set after shutdown is defined below
+  // eslint-disable-next-line prefer-const
   let shutdownFn: (() => Promise<void>) | undefined;
   const controlHandlerContext: ControlHandlerContext = {
     agentPool: {
@@ -277,7 +278,10 @@ async function main(): Promise<void> {
   // so the routerCallbacksFactory looks up the descriptor by channel type.
   const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
   const routerCallbacksFactory = (chatId: string) => {
-    const channel = primaryNode.getChannelManager().getChannelForChatId(chatId);
+    // Issue #3824: Use resolveChannelForChatId for ownership query fallback.
+    // After restart, chatIdChannelMap is empty. resolveChannelForChatId queries
+    // all channels via ownsChatId() to find the correct one.
+    const channel = primaryNode.getChannelManager().resolveChannelForChatId(chatId);
     if (!channel) {
       throw new Error('No channel available for InputMessageRouter callbacks');
     }
