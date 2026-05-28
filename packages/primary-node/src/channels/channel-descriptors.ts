@@ -63,11 +63,11 @@ export const WECHAT_CHANNEL_DESCRIPTOR: ChannelDescriptor<WeChatChannelConfig> =
   defaultCapabilities: {
     supportsCard: false,
     supportsThread: false,
-    supportsFile: false,
+    supportsFile: true,
     supportsMarkdown: false,
     supportsMention: false,
     supportsUpdate: false,
-    supportedMcpTools: ['send_text'],
+    supportedMcpTools: ['send_text', 'send_file'],
   },
 };
 
