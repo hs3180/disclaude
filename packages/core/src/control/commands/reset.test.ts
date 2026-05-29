@@ -8,6 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { handleReset, handleRestart } from './reset.js';
 import type { ControlHandlerContext } from '../types.js';
+import type { ControlResponse } from '../../types/channel.js';
 
 function createMockContext(overrides?: Partial<ControlHandlerContext>): ControlHandlerContext {
   return {
@@ -47,12 +48,12 @@ describe('handleReset', () => {
 });
 
 describe('handleRestart', () => {
-  it('should delay shutdown by 2s to allow response to be sent (Issue #3807)', async () => {
+  it('should delay shutdown by 2s to allow response to be sent (Issue #3807)', () => {
     vi.useFakeTimers();
     const mockShutdown = vi.fn().mockResolvedValue(undefined);
     const context = createMockContext({ shutdown: mockShutdown });
 
-    const result = handleRestart({ type: 'restart', chatId: 'chat-456' }, context);
+    const result = handleRestart({ type: 'restart', chatId: 'chat-456' }, context) as ControlResponse;
 
     // Response is immediate
     expect(result.success).toBe(true);
@@ -69,12 +70,12 @@ describe('handleRestart', () => {
     vi.useRealTimers();
   });
 
-  it('should fall back to process.exit(0) after 2s when no shutdown handler (Issue #3807)', async () => {
+  it('should fall back to process.exit(0) after 2s when no shutdown handler (Issue #3807)', () => {
     vi.useFakeTimers();
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     const context = createMockContext(); // no shutdown
 
-    const result = handleRestart({ type: 'restart', chatId: 'chat-789' }, context);
+    const result = handleRestart({ type: 'restart', chatId: 'chat-789' }, context) as ControlResponse;
 
     expect(result.success).toBe(true);
     // process.exit NOT called yet
@@ -90,7 +91,7 @@ describe('handleRestart', () => {
   it('should not call agentPool.reset — /restart is different from /reset', () => {
     const mockShutdown = vi.fn().mockResolvedValue(undefined);
     const context = createMockContext({ shutdown: mockShutdown });
-    handleRestart({ type: 'restart', chatId: 'chat-999' }, context);
+    void handleRestart({ type: 'restart', chatId: 'chat-999' }, context);
 
     expect(context.agentPool.reset).not.toHaveBeenCalled();
   });

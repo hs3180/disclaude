@@ -70,7 +70,7 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     return Promise.resolve();
   }
 
-  async handleSystemMessage(
+  handleSystemMessage(
     chatId: string,
     payload: string,
     messageId: string,
@@ -84,5 +84,6 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     const callbacks = this.callbacksFactory(chatId);
     const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
     void agent.processMessage({ chatId, payload, messageId });
+    return Promise.resolve();
   }
 }
