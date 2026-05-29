@@ -24,6 +24,7 @@ import type {
   ChannelDescriptor,
   MessageHandler,
   ControlHandler,
+  ChannelApiHandlers,
   FeishuApiHandlers,
   MessageRouter as InputMessageRouter,
 } from '@disclaude/core';
@@ -52,6 +53,14 @@ export interface IPrimaryNodeForSetup {
     ): string | undefined;
   };
   registerFeishuHandlers(handlers: FeishuApiHandlers): void;
+  /**
+   * Register channel API handlers for IPC routing.
+   * Issue #3814: Generalized handler registration for multi-channel IPC.
+   * @param channelType - Channel type identifier (e.g., 'feishu', 'wechat')
+   * @param handlers - Channel API handlers for IPC dispatch
+   * @param channel - Channel instance for chatId ownership resolution
+   */
+  registerChannelHandlers(channelType: string, handlers: ChannelApiHandlers, channel: IChannel): void;
 }
 
 /**
