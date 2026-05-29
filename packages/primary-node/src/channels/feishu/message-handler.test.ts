@@ -1683,6 +1683,161 @@ describe('MessageHandler', () => {
   });
 
   // -----------------------------------------------------------------------
+  // File/image message metadata in topic groups (PR #3704)
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — file metadata in topic groups', () => {
+    it('should pass chatType metadata for file messages in topic group', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_topic',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('topic');
+    });
+
+    it('should pass chatType metadata for image messages in topic group', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_img_topic',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ image_key: 'img_001' }),
+            message_type: 'image',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('topic');
+    });
+
+    it('should pass threadContext for file messages in topic group with parent_id', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // getThreadContext walks up: parent → root
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'Reply in thread' }),
+                    message_id: 'msg_parent',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'Root message' }),
+                    message_id: 'msg_root',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_thread',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('topic');
+      expect(msg.metadata.threadContext).toBeDefined();
+      expect(msg.metadata.threadContext).toContain('Root message');
+      expect(msg.metadata.threadContext).toContain('Reply in thread');
+    });
+
+    it('should pass chatType metadata for file messages in group chat', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_group',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('group');
+      // group chat should NOT have threadContext even with chat_type set
+      expect(msg.metadata.threadContext).toBeUndefined();
+    });
+
+    it('should set chatType but not threadContext for p2p file messages', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_p2p',
+            chat_id: 'chat_p2p',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatType).toBe('p2p');
+      expect(msg.metadata.threadContext).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Topic group chat detection
   // -----------------------------------------------------------------------
   describe('handleMessageReceive — topic chat type', () => {
