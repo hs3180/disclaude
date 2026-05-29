@@ -50,7 +50,7 @@ interface CliOptions {
   configPath?: string;
 }
 
-function parseArgs(args: string[]): CliOptions {
+export function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = { command: 'help' };
 
   for (let i = 0; i < args.length; i++) {
@@ -394,12 +394,14 @@ async function main(): Promise<void> {
   }
 }
 
-// Run main
-main().catch((error) => {
-  logger.error({ err: error }, 'Unhandled error in main');
-  console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+// Run main (only when executed directly, not when imported by tests)
+if (process.argv[1]?.includes('cli.ts') || process.argv[1]?.includes('disclaude-primary')) {
+  main().catch((error) => {
+    logger.error({ err: error }, 'Unhandled error in main');
+    console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
 
 // ============================================================================
 // Port Availability Check (Issue #3417)
@@ -423,7 +425,7 @@ interface PortCheckOptions {
  *
  * @returns `true` if port is available, `false` if still in use after all retries
  */
-async function waitForPortAvailable(
+export async function waitForPortAvailable(
   port: number,
   host: string,
   options: PortCheckOptions = {}
@@ -458,7 +460,7 @@ async function waitForPortAvailable(
  * If binding succeeds, the port is available (server is immediately closed).
  * If binding fails with EADDRINUSE, the port is occupied.
  */
-function isPortAvailable(port: number, host: string): Promise<boolean> {
+export function isPortAvailable(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer();
     server.once('error', (err: NodeJS.ErrnoException) => {
@@ -519,7 +521,7 @@ interface ResolvedChannelConfig {
  * @param config - The Config singleton for accessing top-level getters
  * @returns Array of resolved channel configs
  */
-function resolveChannelConfigs(
+export function resolveChannelConfigs(
   rawConfig: DisclaudeConfigWithChannels,
   config: typeof Config
 ): ResolvedChannelConfig[] {
