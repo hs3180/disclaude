@@ -5,7 +5,7 @@
  * Issue #3807: /restart now triggers process shutdown instead of agent reset.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { handleReset, handleRestart } from './reset.js';
 import type { ControlHandlerContext } from '../types.js';
 import type { ControlResponse } from '../../types/channel.js';
@@ -48,6 +48,10 @@ describe('handleReset', () => {
 });
 
 describe('handleRestart', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('should delay shutdown by 2s to allow response to be sent (Issue #3807)', () => {
     vi.useFakeTimers();
     const mockShutdown = vi.fn().mockResolvedValue(undefined);
@@ -66,8 +70,6 @@ describe('handleRestart', () => {
     expect(mockShutdown).toHaveBeenCalled();
     // Should NOT call agentPool.reset — that's /reset's job
     expect(context.agentPool.reset).not.toHaveBeenCalled();
-
-    vi.useRealTimers();
   });
 
   it('should fall back to process.exit(0) after 2s when no shutdown handler (Issue #3807)', () => {
@@ -85,7 +87,6 @@ describe('handleRestart', () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
 
     exitSpy.mockRestore();
-    vi.useRealTimers();
   });
 
   it('should not call agentPool.reset — /restart is different from /reset', () => {
@@ -98,6 +99,5 @@ describe('handleRestart', () => {
 
     // Advance timers to fire the pending shutdown so it doesn't leak
     vi.advanceTimersByTime(2000);
-    vi.useRealTimers();
   });
 });

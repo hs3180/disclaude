@@ -33,17 +33,10 @@ export const handleRestart: CommandHandler = (
 ): ControlResponse => {
   const doShutdown = (): void => {
     if (context.shutdown) {
-      const result = context.shutdown();
-      // Defensive: shutdown() must return a Promise, but guard against
-      // test mocks or accidental undefined returns
-      if (result && typeof result.catch === 'function') {
-        result.catch(() => {
-          // Best-effort: if graceful shutdown fails, force exit
-          process.exit(0);
-        });
-      } else {
+      context.shutdown().catch(() => {
+        // Best-effort: if graceful shutdown fails, force exit
         process.exit(0);
-      }
+      });
     } else {
       // Fallback: if no shutdown handler is registered, force exit
       // (process manager will restart the service)
