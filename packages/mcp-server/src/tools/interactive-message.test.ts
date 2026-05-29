@@ -2,7 +2,7 @@
  * Tests for send_interactive_message tool (packages/mcp-server/src/tools/interactive-message.ts)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies
 vi.mock('@disclaude/core', () => ({
@@ -307,7 +307,7 @@ describe('IPC server lifecycle', () => {
       expect(UnixSocketIpcServer).toHaveBeenCalledTimes(1);
       expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
 
-      const mockInstance = UnixSocketIpcServer.mock.results[0].value;
+      const mockInstance = vi.mocked(UnixSocketIpcServer).mock.results[0].value;
       expect(mockInstance.start).toHaveBeenCalledTimes(1);
 
       expect(isIpcServerRunning()).toBe(true);
@@ -327,9 +327,9 @@ describe('IPC server lifecycle', () => {
       await startIpcServer(handlers);
 
       expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
-      // eslint-disable-next-line prefer-destructuring
-      const [, container] = createInteractiveMessageHandler.mock.calls[0];
-      expect(container.handlers).toBe(handlers);
+       
+      const [, container] = vi.mocked(createInteractiveMessageHandler).mock.calls[0]!;
+      expect(container!.handlers).toBe(handlers);
     });
 
     it('should update handlers on idempotent call when provided', async () => {
@@ -340,9 +340,9 @@ describe('IPC server lifecycle', () => {
       await startIpcServer(handlers2);
 
       expect(UnixSocketIpcServer).toHaveBeenCalledTimes(1);
-      // eslint-disable-next-line prefer-destructuring
-      const [, container] = createInteractiveMessageHandler.mock.calls[0];
-      expect(container.handlers).toBe(handlers2);
+       
+      const [, container] = vi.mocked(createInteractiveMessageHandler).mock.calls[0]!;
+      expect(container!.handlers).toBe(handlers2);
     });
 
     it('should pass no-op callback to createInteractiveMessageHandler', async () => {
@@ -350,40 +350,40 @@ describe('IPC server lifecycle', () => {
 
       expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
       // eslint-disable-next-line prefer-destructuring
-      const [callback] = createInteractiveMessageHandler.mock.calls[0];
+      const [callback] = vi.mocked(createInteractiveMessageHandler).mock.calls[0];
       expect(typeof callback).toBe('function');
-      expect(callback()).toBeUndefined();
+      expect((callback as any)()).toBeUndefined();
     });
 
     it('should reset ipcServer to null on start failure and re-throw', async () => {
       const startError = new Error('Server start failed');
-      vi.mocked(UnixSocketIpcServer).mockImplementation(() => ({
+      vi.mocked(UnixSocketIpcServer).mockImplementation((() => ({
         start: vi.fn().mockRejectedValue(startError),
         stop: vi.fn(),
         getSocketPath: vi.fn(() => '/tmp/test.sock'),
         isRunning: vi.fn(() => false),
-      }));
+      })) as any);
 
       try {
         await expect(startIpcServer()).rejects.toThrow('Server start failed');
         expect(isIpcServerRunning()).toBe(false);
         expect(getIpcServerSocketPath()).toBeNull();
       } finally {
-        vi.mocked(UnixSocketIpcServer).mockImplementation(() => ({
+        vi.mocked(UnixSocketIpcServer).mockImplementation((() => ({
           start: vi.fn(),
           stop: vi.fn(),
           getSocketPath: vi.fn(() => '/tmp/test.sock'),
           isRunning: vi.fn(() => true),
-        }));
+        })) as any);
       }
     });
 
     it('should not register handlers when none are provided', async () => {
       await startIpcServer();
 
-      // eslint-disable-next-line prefer-destructuring
-      const [, container] = createInteractiveMessageHandler.mock.calls[0];
-      expect(container.handlers).toBeUndefined();
+       
+      const [, container] = vi.mocked(createInteractiveMessageHandler).mock.calls[0]!;
+      expect(container!.handlers).toBeUndefined();
     });
   });
 
@@ -395,7 +395,7 @@ describe('IPC server lifecycle', () => {
     it('should stop the running server and clear state', async () => {
       await startIpcServer();
 
-      const mockInstance = UnixSocketIpcServer.mock.results[0].value;
+      const mockInstance = vi.mocked(UnixSocketIpcServer).mock.results[0].value;
       await stopIpcServer();
 
       expect(mockInstance.stop).toHaveBeenCalledTimes(1);
