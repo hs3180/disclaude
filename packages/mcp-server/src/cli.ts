@@ -37,7 +37,7 @@ interface CliOptions {
   configPath?: string;
 }
 
-function parseArgs(args: string[]): CliOptions {
+export function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = { command: 'help' };
 
   for (let i = 0; i < args.length; i++) {
@@ -92,7 +92,7 @@ Examples:
 /**
  * Handle incoming JSON-RPC requests.
  */
-async function handleRequest(request: {
+export async function handleRequest(request: {
   jsonrpc: string;
   id: number;
   method: string;
@@ -605,9 +605,11 @@ async function main(): Promise<void> {
   logger.info('MCP Server started (stdio mode)');
 }
 
-// Run main
-main().catch((error) => {
-  logger.error({ err: error }, 'Unhandled error in main');
-  console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+// Run main (skip in test environment)
+if (process.env.NODE_ENV !== 'test') {
+  main().catch((error) => {
+    logger.error({ err: error }, 'Unhandled error in main');
+    console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
