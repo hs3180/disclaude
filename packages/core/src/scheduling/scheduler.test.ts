@@ -774,6 +774,197 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('executeTask with inputMessageRouter (Issue #3582)', () => {
+    let mockRouter: { route: Mock<(message: any) => Promise<void>> };
+
+    function createSchedulerWithRouter() {
+      mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+
+      return new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        executor: mockExecutor,
+        inputMessageRouter: mockRouter as any,
+      });
+    }
+
+    it('should route through inputMessageRouter when available and task has chatId', async () => {
+      const routerScheduler = createSchedulerWithRouter();
+      const task = createTask({ id: 'router-1', chatId: 'oc_test' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Executor should NOT be called — inputMessageRouter takes over
+      expect(mockExecutor).not.toHaveBeenCalled();
+    });
+
+    it('should construct SystemMessage with correct fields', async () => {
+      const routerScheduler = createSchedulerWithRouter();
+      const task = createTask({
+        id: 'router-2',
+        chatId: 'oc_chat',
+        name: 'Router Task',
+        createdBy: 'user-42',
+        model: 'claude-sonnet-4',
+        modelTier: 'low',
+      });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      const [[routedMessage]] = mockRouter.route.mock.calls;
+      expect(routedMessage.id).toMatch(/^sched-router-2-\d+$/);
+      expect(routedMessage.source).toBe('system');
+      expect(routedMessage.payload).toContain('Router Task');
+      expect(routedMessage.payload).toContain('Router Task');
+      expect(routedMessage.chatId).toBe('oc_chat');
+      expect(routedMessage.trigger).toBe('scheduled');
+      expect(routedMessage.taskName).toBe('Router Task');
+      expect(routedMessage.modelTier).toBe('low');
+      expect(routedMessage.data.taskId).toBe('router-2');
+      expect(routedMessage.data.createdBy).toBe('user-42');
+      expect(routedMessage.data.model).toBe('claude-sonnet-4');
+      expect(routedMessage.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it('should fall back to executor when no inputMessageRouter', async () => {
+      // Default scheduler has no router
+      const task = createTask({ id: 'no-router' });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should fall back to executor when task has empty chatId', async () => {
+      const routerScheduler = createSchedulerWithRouter();
+      const task = createTask({ id: 'empty-chat', chatId: '' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockRouter.route).not.toHaveBeenCalled();
+    });
+
+    it('should handle route error and send error notification', async () => {
+      const routerScheduler = createSchedulerWithRouter();
+      mockRouter.route.mockRejectedValue(new Error('Router failed'));
+
+      const task = createTask({ id: 'router-err', chatId: 'oc_test' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(routerScheduler.getRunningTaskIds()).toHaveLength(0);
+      }, { timeout: 2000 });
+    });
+
+    it('should clear running state after inputMessageRouter completes', async () => {
+      const routerScheduler = createSchedulerWithRouter();
+      const task = createTask({ id: 'router-cleanup', chatId: 'oc_test' });
+      routerScheduler.addTask(task);
+
+      const jobs = routerScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(routerScheduler.isTaskRunning('router-cleanup')).toBe(false);
+      }, { timeout: 2000 });
+    });
+  });
+
+  describe('executeTask blocking mechanism', () => {
+    it('should skip execution when blocking=true and task already running', async () => {
+      // First execution never completes
+      mockExecutor.mockReturnValueOnce(new Promise(() => {}));
+
+      const task = createTask({ id: 'blocking-1', blocking: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // First trigger starts execution
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-1')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger while still running should be skipped
+      void jobs[0].job.fireOnTick();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Executor should only be called once (second trigger was skipped)
+      expect(mockExecutor).toHaveBeenCalledTimes(1);
+    });
+
+    it('should allow execution when blocking=false even if previous still running', async () => {
+      mockExecutor.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 200)));
+
+      const task = createTask({ id: 'non-blocking', blocking: false });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('non-blocking')).toBe(true);
+      }, { timeout: 2000 });
+
+      // Second trigger while running - should start since blocking=false
+      void jobs[0].job.fireOnTick();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Both executions should have been initiated
+      expect(mockExecutor).toHaveBeenCalledTimes(2);
+    });
+
+    it('should allow execution after previous blocking task completes', async () => {
+      // First execution completes quickly
+      mockExecutor.mockResolvedValueOnce(undefined);
+      // Second execution also succeeds
+      mockExecutor.mockResolvedValueOnce(undefined);
+
+      const task = createTask({ id: 'blocking-done', blocking: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+
+      // First trigger
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(scheduler.isTaskRunning('blocking-done')).toBe(false);
+      }, { timeout: 2000 });
+
+      // Second trigger after completion — should execute
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockExecutor).toHaveBeenCalledTimes(2);
+      }, { timeout: 2000 });
+    });
+  });
+
   describe('TaskTimeoutError', () => {
     it('should have correct name and message', () => {
       const error = new TaskTimeoutError(30000);

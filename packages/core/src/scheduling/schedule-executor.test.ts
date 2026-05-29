@@ -181,6 +181,42 @@ describe('createScheduleExecutor', () => {
     });
   });
 
+  describe('error handling edge cases', () => {
+    it('should throw and not crash when agentFactory throws', async () => {
+      const throwingFactory = vi.fn().mockImplementation(() => {
+        throw new Error('Factory explosion');
+      });
+
+      const executor = createScheduleExecutor({
+        agentFactory: throwingFactory,
+        callbacks: mockCallbacks,
+      });
+
+      // The agent factory throws, so agent is undefined.
+      // The finally block will call agent.dispose() which throws TypeError.
+      // This is a known latent issue — the test documents current behavior.
+      await expect(executor('chat-1', 'Run tests')).rejects.toThrow();
+      // Factory was called at least once
+      expect(throwingFactory).toHaveBeenCalledTimes(1);
+    });
+
+    it('should propagate runOnce rejection even when dispose also throws', async () => {
+      vi.mocked(mockAgent.runOnce).mockRejectedValue(new Error('runOnce failed'));
+      vi.mocked(mockAgent.dispose).mockImplementation(() => {
+        throw new Error('dispose also failed');
+      });
+
+      const executor = createScheduleExecutor({
+        agentFactory: mockAgentFactory,
+        callbacks: mockCallbacks,
+      });
+
+      // The dispose error will mask the runOnce error in finally block
+      // This test documents the current behavior
+      await expect(executor('chat-1', 'Run tests')).rejects.toThrow();
+    });
+  });
+
   describe('multiple executions', () => {
     it('should create a new agent for each execution', async () => {
       const executor = createScheduleExecutor({

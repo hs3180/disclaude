@@ -179,6 +179,105 @@ describe('CooldownManager', () => {
     });
   });
 
+  describe('getFilePath sanitization', () => {
+    it('should sanitize special characters in task IDs', async () => {
+      await manager.recordExecution('task/with@special#chars', 60000);
+
+      // Should write to a sanitized filename
+      expect(fsPromises.writeFile).toHaveBeenCalledWith(
+        expect.stringContaining('task_with_special_chars.json'),
+        expect.any(String),
+        'utf-8'
+      );
+    });
+
+    it('should sanitize task IDs with dots and spaces', async () => {
+      await manager.recordExecution('my task.name', 60000);
+
+      expect(fsPromises.writeFile).toHaveBeenCalledWith(
+        expect.stringContaining('my_task_name.json'),
+        expect.any(String),
+        'utf-8'
+      );
+    });
+
+    it('should preserve alphanumeric, hyphens, and underscores', async () => {
+      await manager.recordExecution('my-task_123', 60000);
+
+      expect(fsPromises.writeFile).toHaveBeenCalledWith(
+        expect.stringContaining('my-task_123.json'),
+        expect.any(String),
+        'utf-8'
+      );
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should return false for isInCooldown with zero cooldownPeriod', async () => {
+      await manager.recordExecution('task-zero', 60000);
+      // Check with zero cooldown period — should return false
+      const result = await manager.isInCooldown('task-zero', 0);
+      expect(result).toBe(false);
+    });
+
+    it('should return null cooldownEndsAt with zero cooldownPeriod in getCooldownStatus', async () => {
+      await manager.recordExecution('task-zero-status', 60000);
+      const status = await manager.getCooldownStatus('task-zero-status', 0);
+
+      expect(status.cooldownEndsAt).toBeNull();
+      expect(status.remainingMs).toBe(0);
+      expect(status.isInCooldown).toBe(false);
+    });
+
+    it('should skip non-JSON files during initialization', async () => {
+      vi.mocked(fsPromises.readdir).mockResolvedValue(['readme.txt', 'data.json', '.gitkeep'] as any);
+
+      const validRecord = {
+        taskId: 'data',
+        lastExecutionTime: new Date().toISOString(),
+        cooldownPeriod: 60000,
+      };
+      vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(validRecord));
+
+      const freshManager = new CooldownManager({ cooldownDir });
+      const inCooldown = await freshManager.isInCooldown('data');
+      expect(inCooldown).toBe(true);
+    });
+
+    it('should skip files with invalid JSON during initialization', async () => {
+      vi.mocked(fsPromises.readdir).mockResolvedValue(['bad.json', 'good.json'] as any);
+      vi.mocked(fsPromises.readFile)
+        .mockResolvedValueOnce('not valid json{{{')
+        .mockResolvedValueOnce(JSON.stringify({
+          taskId: 'good',
+          lastExecutionTime: new Date().toISOString(),
+          cooldownPeriod: 60000,
+        }));
+
+      const freshManager = new CooldownManager({ cooldownDir });
+
+      // Bad file should be skipped silently
+      const badResult = await freshManager.isInCooldown('bad');
+      expect(badResult).toBe(false);
+
+      // Good file should load fine
+      const goodResult = await freshManager.isInCooldown('good');
+      expect(goodResult).toBe(true);
+    });
+
+    it('should handle clearCooldown with non-ENOENT unlink error', async () => {
+      await manager.recordExecution('task-perm', 60000);
+
+      const permError = new Error('Permission denied') as NodeJS.ErrnoException;
+      permError.code = 'EACCES';
+      vi.mocked(fsPromises.unlink).mockRejectedValue(permError);
+
+      // Should not throw — logs error but continues
+      const result = await manager.clearCooldown('task-perm');
+      expect(result).toBe(true); // Still removed from memory
+    });
+  });
+
   describe('initialization', () => {
     it('should load existing records from disk', async () => {
       const record = {

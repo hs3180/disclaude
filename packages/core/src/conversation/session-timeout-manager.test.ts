@@ -417,4 +417,180 @@ describe('SessionTimeoutManager', () => {
       expect(result!.evicted).toEqual([]);
     });
   });
+
+  describe('boundary conditions', () => {
+    it('should NOT close session when idle is exactly at threshold (strictly greater)', async () => {
+      const now = Date.now();
+      const idleMinutes = 30;
+      // Session idle for exactly 30 minutes (30 * 60 * 1000 ms)
+      const exactlyIdle = now - idleMinutes * 60 * 1000;
+
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-boundary'],
+        getLastActivity: () => exactlyIdle,
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes },
+        callbacks,
+        logger,
+      );
+
+      const result = await manager.checkNow();
+      // Source uses `idleMs > idleThresholdMs` (strictly greater)
+      // exactlyIdle should NOT be closed
+      expect(result!.idleClosed).toEqual([]);
+    });
+
+    it('should close session when idle is 1ms beyond threshold', async () => {
+      const now = Date.now();
+      const idleMinutes = 30;
+      const idleThresholdMs = idleMinutes * 60 * 1000;
+
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-just-over'],
+        getLastActivity: () => now - idleThresholdMs - 1, // 1ms over
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes },
+        callbacks,
+        logger,
+      );
+
+      const result = await manager.checkNow();
+      expect(result!.idleClosed).toEqual(['chat-just-over']);
+    });
+
+    it('should include reason string in closeSession callback for idle timeout', async () => {
+      const now = Date.now();
+      const closeSession = vi.fn();
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-reason'],
+        getLastActivity: () => now - 60 * 60 * 1000, // 60 min idle
+        closeSession,
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes: 30 },
+        callbacks,
+        logger,
+      );
+
+      await manager.checkNow();
+      expect(closeSession).toHaveBeenCalledWith(
+        'chat-reason',
+        expect.stringContaining('idle for'),
+      );
+      expect(closeSession).toHaveBeenCalledWith(
+        'chat-reason',
+        expect.stringContaining('threshold: 30m'),
+      );
+    });
+
+    it('should include maxSessions in eviction reason string', async () => {
+      const now = Date.now();
+      const closeSession = vi.fn();
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-1', 'chat-2', 'chat-3'],
+        getLastActivity: (chatId: string) => {
+          switch (chatId) {
+            case 'chat-1': return now - 5 * 60 * 1000;
+            case 'chat-2': return now - 20 * 60 * 1000;
+            case 'chat-3': return now - 10 * 60 * 1000;
+            default: return now;
+          }
+        },
+        closeSession,
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes: 60, maxSessions: 2 },
+        callbacks,
+        logger,
+      );
+
+      await manager.checkNow();
+      expect(closeSession).toHaveBeenCalledWith(
+        'chat-2',
+        expect.stringContaining('maxSessions=2'),
+      );
+    });
+  });
+
+  describe('Phase 2 edge cases', () => {
+    it('should exclude candidates with undefined lastActivity from eviction', async () => {
+      const now = Date.now();
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-known', 'chat-unknown-1', 'chat-unknown-2'],
+        getLastActivity: (chatId: string) => {
+          // Only one session has known last activity
+          return chatId === 'chat-known' ? now - 5 * 60 * 1000 : undefined;
+        },
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes: 60, maxSessions: 1 }, // 3 sessions > 1 max
+        callbacks,
+        logger,
+      );
+
+      const result = await manager.checkNow();
+      // Only chat-known has known lastActivity and becomes a candidate for eviction
+      // candidates.length = 1, toEvict = 1 - 1 = 0, so no eviction happens
+      expect(result!.evicted).toEqual([]);
+    });
+
+    it('should evict correct number when multiple sessions have known activity', async () => {
+      const now = Date.now();
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-1', 'chat-2', 'chat-3', 'chat-4'],
+        getLastActivity: (chatId: string) => {
+          switch (chatId) {
+            case 'chat-1': return now - 5 * 60 * 1000;
+            case 'chat-2': return now - 20 * 60 * 1000;
+            case 'chat-3': return undefined; // Unknown
+            case 'chat-4': return now - 10 * 60 * 1000;
+            default: return now;
+          }
+        },
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes: 60, maxSessions: 2 },
+        callbacks,
+        logger,
+      );
+
+      const result = await manager.checkNow();
+      // remainingSessions (non-idle, non-processing): chat-1, chat-2, chat-3, chat-4
+      // Phase 1: none closed (all under 60 min or unknown)
+      // Phase 2: candidates with known activity: chat-2(20m), chat-4(10m), chat-1(5m)
+      // toEvict = 3 - 2 = 1, evict oldest: chat-2
+      expect(result!.evicted).toEqual(['chat-2']);
+    });
+  });
+
+  describe('sequential checks', () => {
+    it('should allow sequential checkNow() calls after previous completes', async () => {
+      const now = Date.now();
+      const callbacks = createMockCallbacks({
+        getActiveSessions: () => ['chat-1'],
+        getLastActivity: () => now - 60 * 60 * 1000,
+      });
+
+      const manager = new SessionTimeoutManager(
+        { enabled: true, idleMinutes: 30 },
+        callbacks,
+        logger,
+      );
+
+      const result1 = await manager.checkNow();
+      expect(result1!.idleClosed).toEqual(['chat-1']);
+
+      const result2 = await manager.checkNow();
+      expect(result2).not.toBeNull();
+      // Second check also processes (closeSession called again)
+    });
+  });
 });
