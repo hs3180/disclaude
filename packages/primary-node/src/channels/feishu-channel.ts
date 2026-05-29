@@ -52,7 +52,7 @@ const logger = createLogger('FeishuChannel');
  *
  * Issue #1357: Used in event dispatcher catch blocks to notify users of errors.
  */
-function extractChatIdFromEvent(data: unknown): string | undefined {
+export function extractChatIdFromEvent(data: unknown): string | undefined {
   const raw = data as Record<string, unknown>;
   if (!raw) {
     return undefined;
