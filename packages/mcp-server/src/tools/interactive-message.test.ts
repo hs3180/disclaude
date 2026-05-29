@@ -41,8 +41,10 @@ import {
   unregisterFeishuHandlers,
   isIpcServerRunning,
   getIpcServerSocketPath,
+  startIpcServer,
+  stopIpcServer,
 } from './interactive-message.js';
-import { getIpcClient } from '@disclaude/core';
+import { getIpcClient, UnixSocketIpcServer, createInteractiveMessageHandler } from '@disclaude/core';
 import { isIpcAvailable } from './ipc-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
 
@@ -285,5 +287,217 @@ describe('IPC server helpers', () => {
 
   it('should return null when IPC server socket path is not available', () => {
     expect(getIpcServerSocketPath()).toBeNull();
+  });
+});
+
+describe('IPC server lifecycle', () => {
+  afterEach(async () => {
+    await stopIpcServer();
+    unregisterFeishuHandlers();
+  });
+
+  describe('startIpcServer', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('should create and start a new IPC server', async () => {
+      await startIpcServer();
+
+      expect(UnixSocketIpcServer).toHaveBeenCalledTimes(1);
+      expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
+
+      const mockInstance = UnixSocketIpcServer.mock.results[0].value;
+      expect(mockInstance.start).toHaveBeenCalledTimes(1);
+
+      expect(isIpcServerRunning()).toBe(true);
+      expect(getIpcServerSocketPath()).toBe('/tmp/test.sock');
+    });
+
+    it('should be idempotent when server already exists', async () => {
+      await startIpcServer();
+      vi.clearAllMocks();
+      await startIpcServer();
+
+      expect(UnixSocketIpcServer).not.toHaveBeenCalled();
+    });
+
+    it('should register handlers on first call when provided', async () => {
+      const handlers = { sendMessage: vi.fn() } as any;
+      await startIpcServer(handlers);
+
+      expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
+      // eslint-disable-next-line prefer-destructuring
+      const [, container] = createInteractiveMessageHandler.mock.calls[0];
+      expect(container.handlers).toBe(handlers);
+    });
+
+    it('should update handlers on idempotent call when provided', async () => {
+      const handlers1 = { sendMessage: vi.fn() } as any;
+      await startIpcServer(handlers1);
+
+      const handlers2 = { sendMessage: vi.fn(), sendCard: vi.fn() } as any;
+      await startIpcServer(handlers2);
+
+      expect(UnixSocketIpcServer).toHaveBeenCalledTimes(1);
+      // eslint-disable-next-line prefer-destructuring
+      const [, container] = createInteractiveMessageHandler.mock.calls[0];
+      expect(container.handlers).toBe(handlers2);
+    });
+
+    it('should pass no-op callback to createInteractiveMessageHandler', async () => {
+      await startIpcServer();
+
+      expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
+      // eslint-disable-next-line prefer-destructuring
+      const [callback] = createInteractiveMessageHandler.mock.calls[0];
+      expect(typeof callback).toBe('function');
+      expect(callback()).toBeUndefined();
+    });
+
+    it('should reset ipcServer to null on start failure and re-throw', async () => {
+      const startError = new Error('Server start failed');
+      vi.mocked(UnixSocketIpcServer).mockImplementation(() => ({
+        start: vi.fn().mockRejectedValue(startError),
+        stop: vi.fn(),
+        getSocketPath: vi.fn(() => '/tmp/test.sock'),
+        isRunning: vi.fn(() => false),
+      }));
+
+      try {
+        await expect(startIpcServer()).rejects.toThrow('Server start failed');
+        expect(isIpcServerRunning()).toBe(false);
+        expect(getIpcServerSocketPath()).toBeNull();
+      } finally {
+        vi.mocked(UnixSocketIpcServer).mockImplementation(() => ({
+          start: vi.fn(),
+          stop: vi.fn(),
+          getSocketPath: vi.fn(() => '/tmp/test.sock'),
+          isRunning: vi.fn(() => true),
+        }));
+      }
+    });
+
+    it('should not register handlers when none are provided', async () => {
+      await startIpcServer();
+
+      // eslint-disable-next-line prefer-destructuring
+      const [, container] = createInteractiveMessageHandler.mock.calls[0];
+      expect(container.handlers).toBeUndefined();
+    });
+  });
+
+  describe('stopIpcServer', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('should stop the running server and clear state', async () => {
+      await startIpcServer();
+
+      const mockInstance = UnixSocketIpcServer.mock.results[0].value;
+      await stopIpcServer();
+
+      expect(mockInstance.stop).toHaveBeenCalledTimes(1);
+      expect(isIpcServerRunning()).toBe(false);
+      expect(getIpcServerSocketPath()).toBeNull();
+    });
+
+    it('should be a no-op when server is not running', async () => {
+      await expect(stopIpcServer()).resolves.toBeUndefined();
+    });
+  });
+});
+
+describe('send_interactive_message edge cases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    vi.mocked(isIpcAvailable).mockResolvedValue(true);
+    vi.mocked(getMessageSentCallback).mockReturnValue(null);
+  });
+
+  it('should report first invalid option when multiple options are invalid', async () => {
+    const result = await send_interactive_message({
+      question: 'Q?',
+      options: [{ text: '', value: 'a' }, { text: 'B', value: '' }],
+      chatId: 'oc_test',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('options[0].text');
+    expect(result.error).not.toContain('options[1]');
+  });
+
+  it('should reject whitespace-only option text', async () => {
+    const result = await send_interactive_message({
+      question: 'Q?',
+      options: [{ text: '   ', value: 'a' }],
+      chatId: 'oc_test',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('options[0].text');
+  });
+
+  it('should reject whitespace-only option value', async () => {
+    const result = await send_interactive_message({
+      question: 'Q?',
+      options: [{ text: 'A', value: '   ' }],
+      chatId: 'oc_test',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('options[0].value');
+  });
+
+  it('should accept option with type explicitly undefined', async () => {
+    mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+    const result = await send_interactive_message({
+      question: 'Q?',
+      options: [{ text: 'A', value: 'a', type: undefined }],
+      chatId: 'oc_test',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should use fallback error message when IPC result has no error string', async () => {
+    mockIpcClient.sendInteractive.mockResolvedValue({
+      success: false,
+      error: null as any,
+      errorType: 'ipc_request_failed',
+    });
+    const result = await send_interactive_message({
+      question: 'Q?',
+      options: [{ text: 'A', value: 'a' }],
+      chatId: 'oc_test',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Failed to send interactive message via IPC');
+  });
+
+  it('should handle IPC failure with ipc_unavailable error type', async () => {
+    mockIpcClient.sendInteractive.mockResolvedValue({
+      success: false,
+      error: 'Connection lost',
+      errorType: 'ipc_unavailable',
+    });
+    const result = await send_interactive_message({
+      question: 'Q?',
+      options: [{ text: 'A', value: 'a' }],
+      chatId: 'oc_test',
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Connection lost');
+    expect(result.message).toContain('IPC');
+  });
+
+  it('should not invoke callback when callback is null', async () => {
+    const callback = vi.fn();
+    vi.mocked(getMessageSentCallback).mockReturnValue(null);
+    mockIpcClient.sendInteractive.mockResolvedValue({ success: true });
+    await send_interactive_message({
+      question: 'Q?',
+      options: [{ text: 'A', value: 'a' }],
+      chatId: 'oc_test',
+    });
+    expect(callback).not.toHaveBeenCalled();
   });
 });

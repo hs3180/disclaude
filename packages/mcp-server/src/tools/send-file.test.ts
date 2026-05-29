@@ -211,4 +211,74 @@ describe('send_file', () => {
       expect(result.fileName).toBe('image.png');
     });
   });
+
+  describe('credential validation edge cases', () => {
+    it('should return error when appSecret is missing but appId is present', async () => {
+      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: undefined });
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Platform is not configured');
+    });
+
+    it('should return error when both appId and appSecret are missing', async () => {
+      vi.mocked(getFeishuCredentials).mockReturnValue({ appId: undefined, appSecret: undefined });
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Platform is not configured');
+    });
+  });
+
+  describe('platform error edge cases', () => {
+    it('should not extract platform code when err.code is a string', async () => {
+      const error = new Error('API Error') as Error & { code: string };
+      error.code = 'EACCES';
+      mockIpcClient.uploadFile.mockRejectedValue(error);
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(result.success).toBe(false);
+      expect(result.platformCode).toBeUndefined();
+    });
+
+    it('should handle non-array response data gracefully', async () => {
+      const error = new Error('API Error') as Error & { response: { data: object } };
+      error.response = { data: { code: 123, msg: 'error' } };
+      mockIpcClient.uploadFile.mockRejectedValue(error);
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(result.success).toBe(false);
+      expect(result.platformCode).toBeUndefined();
+    });
+
+    it('should use err.msg fallback when platform msg is not set from response data', async () => {
+      const error = new Error('Default message') as Error & {
+        msg: string;
+        response: { data: Array<{ code?: number; msg?: string }> };
+      };
+      error.msg = 'Fallback message';
+      error.response = { data: [{ code: 9999 }] };
+      mockIpcClient.uploadFile.mockRejectedValue(error);
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(result.success).toBe(false);
+      expect(result.platformMsg).toBe('Fallback message');
+    });
+
+    it('should use err.message as final fallback when both response data msg and err.msg are missing', async () => {
+      const error = new Error('Final fallback message') as Error & {
+        response: { data: Array<{ code?: number }> };
+      };
+      error.response = { data: [{ code: 1001 }] };
+      mockIpcClient.uploadFile.mockRejectedValue(error);
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(result.success).toBe(false);
+      expect(result.platformMsg).toBe('Final fallback message');
+    });
+  });
+
+  describe('IPC upload fallback fields', () => {
+    it('should use fallbacks when IPC upload returns success with missing fields', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({ success: true });
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
+      expect(result.success).toBe(true);
+      expect(result.fileSize).toBe(0);
+      expect(result.sizeMB).toBe('0.00');
+    });
+  });
 });
