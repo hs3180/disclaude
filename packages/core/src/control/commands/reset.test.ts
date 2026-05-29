@@ -89,10 +89,15 @@ describe('handleRestart', () => {
   });
 
   it('should not call agentPool.reset — /restart is different from /reset', () => {
+    vi.useFakeTimers();
     const mockShutdown = vi.fn().mockResolvedValue(undefined);
     const context = createMockContext({ shutdown: mockShutdown });
     void handleRestart({ type: 'restart', chatId: 'chat-999' }, context);
 
     expect(context.agentPool.reset).not.toHaveBeenCalled();
+
+    // Advance timers to fire the pending shutdown so it doesn't leak
+    vi.advanceTimersByTime(2000);
+    vi.useRealTimers();
   });
 });
