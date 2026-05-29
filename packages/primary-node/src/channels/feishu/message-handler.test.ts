@@ -1688,6 +1688,7 @@ describe('MessageHandler', () => {
   describe('handleMessageReceive — file metadata in topic groups', () => {
     it('should pass chatType metadata for file messages in topic group', async () => {
       const { handler } = createHandler();
+      mockState.isBotMentioned = true;
       await handler.handleMessageReceive({
         event: {
           message: {
@@ -1710,6 +1711,7 @@ describe('MessageHandler', () => {
 
     it('should pass chatType metadata for image messages in topic group', async () => {
       const { handler } = createHandler();
+      mockState.isBotMentioned = true;
       await handler.handleMessageReceive({
         event: {
           message: {
@@ -1764,6 +1766,7 @@ describe('MessageHandler', () => {
 
       const { handler } = createHandler();
       handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
 
       await handler.handleMessageReceive({
         event: {
@@ -1791,6 +1794,7 @@ describe('MessageHandler', () => {
 
     it('should pass chatType metadata for file messages in group chat', async () => {
       const { handler } = createHandler();
+      mockState.isBotMentioned = true;
       await handler.handleMessageReceive({
         event: {
           message: {

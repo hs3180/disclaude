@@ -81,7 +81,7 @@ vi.mock('@disclaude/mcp-server', () => ({
 }));
 
 // Mock debug-group-service (Issue #3809)
-const mockGetDebugGroup = vi.fn(() => null);
+const mockGetDebugGroup = vi.fn<(chatId?: string) => { chatId: string; setAt: number } | null>(() => null);
 vi.mock('../services/debug-group-service.js', () => ({
   getDebugGroupService: vi.fn(() => ({
     getDebugGroup: mockGetDebugGroup,

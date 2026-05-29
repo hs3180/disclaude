@@ -68,7 +68,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-1',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: false },
       );
     });
 
@@ -105,7 +105,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-opts',
         callbacks,
-        { messageBuilderOptions, cwdProvider: undefined },
+        { messageBuilderOptions, cwdProvider: undefined, skipHistory: false },
       );
     });
 
@@ -120,7 +120,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-cwd',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider },
+        { messageBuilderOptions: undefined, cwdProvider, skipHistory: false },
       );
     });
 
@@ -136,7 +136,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-both',
         callbacks,
-        { messageBuilderOptions, cwdProvider },
+        { messageBuilderOptions, cwdProvider, skipHistory: false },
       );
     });
   });

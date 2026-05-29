@@ -22,8 +22,11 @@ const { mockGetConfigFromFile } = vi.hoisted(() => ({
     // HTTP transport config
     transport: {
       type: 'http',
-      execution: { url: 'http://localhost:3000/api/execute', authToken: 'secret-token' },
-      communication: { url: 'http://localhost:3000/api/comm' },
+      http: {
+        execution: { host: 'localhost', port: 3000 },
+        communication: { callbackHost: 'localhost', callbackPort: 3000, executionUrl: 'http://localhost:3000/api/execute' },
+        authToken: 'secret-token',
+      },
     },
     // No logging section — tests defaults
     // No explicit logging field at all
@@ -72,18 +75,20 @@ describe('Config.getTransportConfig — HTTP transport', () => {
     expect(transport.type).toBe('http');
   });
 
-  it('should include execution URL and auth token', () => {
+  it('should include execution config and auth token', () => {
     const transport = Config.getTransportConfig();
     if (transport.type === 'http') {
-      expect(transport.execution?.url).toBe('http://localhost:3000/api/execute');
-      expect(transport.execution?.authToken).toBe('secret-token');
+      expect(transport.http?.execution?.host).toBe('localhost');
+      expect(transport.http?.execution?.port).toBe(3000);
+      expect(transport.http?.authToken).toBe('secret-token');
     }
   });
 
-  it('should include communication URL', () => {
+  it('should include communication config', () => {
     const transport = Config.getTransportConfig();
     if (transport.type === 'http') {
-      expect(transport.communication?.url).toBe('http://localhost:3000/api/comm');
+      expect(transport.http?.communication?.callbackHost).toBe('localhost');
+      expect(transport.http?.communication?.callbackPort).toBe(3000);
     }
   });
 });

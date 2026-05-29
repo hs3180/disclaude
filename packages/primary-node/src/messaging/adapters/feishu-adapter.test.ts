@@ -704,7 +704,7 @@ describe('FeishuAdapter — Issue #1619', () => {
         content: {
           type: 'card',
           title: 'Unknown Theme',
-          theme: 'nonexistent',
+          theme: 'nonexistent' as any,
           sections: [],
         },
       }) as { msg_type: string; content: string };

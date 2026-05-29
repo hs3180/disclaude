@@ -181,10 +181,11 @@ describe('WiredChannelDescriptors', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.defaultCapabilities).toEqual({
         supportsCard: false,
         supportsThread: false,
-        supportsFile: false,
+        supportsFile: true,
         supportsMarkdown: false,
         supportsMention: false,
         supportsUpdate: false,
+        supportedMcpTools: ['send_text', 'send_file'],
       });
     });
 

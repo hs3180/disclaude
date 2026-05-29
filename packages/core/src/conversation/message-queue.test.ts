@@ -238,7 +238,7 @@ describe('MessageQueue', () => {
       expect(second.value.text).toBe('B');
 
       queue.close();
-      await iterator.return?.();
+      await iterator.return?.(undefined);
     });
 
     it('should preserve full QueuedMessage fields through round-trip', async () => {
@@ -246,7 +246,7 @@ describe('MessageQueue', () => {
         text: 'Hello with attachments',
         messageId: 'msg-full',
         senderOpenId: 'ou_abc123',
-        attachments: [{ id: 'file-1', fileName: 'doc.pdf', mimeType: 'application/pdf', source: 'user' }],
+        attachments: [{ id: 'file-1', fileName: 'doc.pdf', mimeType: 'application/pdf', source: 'user', createdAt: Date.now() }],
       };
 
       const consumer = queue.consume();
