@@ -41,6 +41,9 @@ export { send_card } from './tools/send-card.js';
 // Tools - Send File
 export { send_file } from './tools/send-file.js';
 
+// Tools - Push to Agent (Issue #3808)
+export { push_to_agent } from './tools/push-to-agent.js';
+
 // Tools - Interactive Message
 export {
   send_interactive_message,
