@@ -318,7 +318,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       sendInteractive: async (chatId, params) => {
         const { question, options, title } = params;
         const parts: string[] = [];
-        if (title) {parts.push(`**${title}**`);}
+        if (title) {parts.push(`【${title}】`);}
         parts.push(question);
         for (const opt of options) {
           parts.push(`- ${opt.text}`);
@@ -329,7 +329,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
           text: parts.join('\n'),
         });
         // WeChat has no interactive support — return synthetic IDs
-        return { messageId: `wechat_interactive_${chatId}_${Date.now()}` };
+        return { messageId: `wechat_interactive_${crypto.randomUUID()}` };
       },
 
       // Issue #3814: pushToAgent reuses InputMessageRouter (same as Feishu)

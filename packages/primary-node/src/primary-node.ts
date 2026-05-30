@@ -399,6 +399,40 @@ export class PrimaryNode extends EventEmitter {
         }
         return h.sendInteractive(chatId, params);
       },
+
+      // Issue #3814 fix: proxy all optional handlers to prevent regression
+      pushToAgent: (chatId, message) => {
+        const h = resolveHandlers(chatId);
+        if (!h?.pushToAgent) {
+          throw new Error('pushToAgent not supported by this channel');
+        }
+        return h.pushToAgent(chatId, message);
+      },
+
+      uploadImage: (filePath) => {
+        // uploadImage is channel-agnostic (no chatId routing needed)
+        const h = resolveHandlers();
+        if (!h?.uploadImage) {
+          throw new Error('uploadImage not supported by this channel');
+        }
+        return h.uploadImage(filePath);
+      },
+
+      listTempChats: () => {
+        const h = resolveHandlers();
+        if (!h?.listTempChats) {
+          throw new Error('listTempChats not supported by this channel');
+        }
+        return h.listTempChats();
+      },
+
+      markChatResponded: (chatId, response) => {
+        const h = resolveHandlers(chatId);
+        if (!h?.markChatResponded) {
+          throw new Error('markChatResponded not supported by this channel');
+        }
+        return h.markChatResponded(chatId, response);
+      },
     };
 
     return container;
