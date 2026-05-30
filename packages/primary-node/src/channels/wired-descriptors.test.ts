@@ -19,7 +19,7 @@ import type {
   ChannelSetupContext,
   WiredContext,
 } from '../channel-lifecycle-manager.js';
-import type { IChannel, ControlHandler, ChannelCapabilities, FeishuApiHandlers } from '@disclaude/core';
+import type { IChannel, ControlHandler, ChannelCapabilities, FeishuApiHandlers, ChannelApiHandlers } from '@disclaude/core';
 
 // Mock logger
 const mockLogger = {
@@ -68,6 +68,7 @@ function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSet
         generatePrompt: vi.fn().mockReturnValue('Generated prompt'),
       }),
       registerFeishuHandlers: vi.fn(),
+      registerChannelHandlers: vi.fn(),
     },
     ...overrides,
   };
@@ -230,8 +231,9 @@ describe('WiredChannelDescriptors', () => {
       expect(typeof handler).toBe('function');
     });
 
-    it('should not have a setup hook (MVP)', () => {
-      expect(WECHAT_WIRED_DESCRIPTOR.setup).toBeUndefined();
+    it('should have a setup hook (Issue #3814)', () => {
+      expect(WECHAT_WIRED_DESCRIPTOR.setup).toBeDefined();
+      expect(typeof WECHAT_WIRED_DESCRIPTOR.setup).toBe('function');
     });
 
     it('should send text messages through callbacks', async () => {
@@ -327,6 +329,140 @@ describe('WiredChannelDescriptors', () => {
         type: 'text',
         text: '❌ Error: Agent processing failed',
       });
+    });
+  });
+
+  describe('WECHAT_WIRED_DESCRIPTOR.setup — IPC handlers (Issue #3814)', () => {
+    let registeredType: string | undefined;
+    let registeredHandlers: ChannelApiHandlers | undefined;
+    const mockRoute = vi.fn();
+
+    function createWechatSetupContext(overrides?: Partial<ChannelSetupContext>): ChannelSetupContext {
+      return createMockContext({
+        inputMessageRouter: { route: mockRoute } as any,
+        primaryNode: {
+          getInteractiveContextStore: vi.fn().mockReturnValue({
+            generatePrompt: vi.fn().mockReturnValue('Generated prompt'),
+          }),
+          registerFeishuHandlers: vi.fn(),
+          registerChannelHandlers: vi.fn((type: string, handlers: ChannelApiHandlers) => {
+            registeredType = type;
+            registeredHandlers = handlers;
+          }),
+        } as any,
+        ...overrides,
+      });
+    }
+
+    function createMockWechatChannel() {
+      return {
+        id: 'wechat-test',
+        name: 'WeChat Test',
+        status: 'stopped',
+        onMessage: vi.fn(),
+        onControl: vi.fn(),
+        start: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        getCapabilities: vi.fn().mockReturnValue(DEFAULT_CAPABILITIES),
+        ownsChatId: vi.fn().mockReturnValue(false),
+        getApiClient: vi.fn().mockReturnValue(undefined),
+      } as any;
+    }
+
+    beforeEach(() => {
+      registeredType = undefined;
+      registeredHandlers = undefined;
+      mockRoute.mockReset();
+    });
+
+    it('should register handlers via registerChannelHandlers', () => {
+      const channel = createMockWechatChannel();
+      const context = createWechatSetupContext();
+
+      void WECHAT_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      expect(registeredType).toBe('wechat');
+      expect(registeredHandlers).toBeDefined();
+    });
+
+    it('should register pushToAgent handler', () => {
+      const channel = createMockWechatChannel();
+      const context = createWechatSetupContext();
+
+      void WECHAT_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      expect(registeredHandlers!.pushToAgent).toBeDefined();
+      expect(typeof registeredHandlers!.pushToAgent).toBe('function');
+    });
+
+    it('should push instruction to agent via InputMessageRouter', async () => {
+      const channel = createMockWechatChannel();
+      const context = createWechatSetupContext();
+
+      void WECHAT_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      const result = await registeredHandlers!.pushToAgent!('wx_test123', 'Test instruction');
+
+      expect(result).toEqual({ success: true });
+      expect(mockRoute).toHaveBeenCalledTimes(1);
+      expect(mockRoute).toHaveBeenCalledWith(expect.objectContaining({
+        chatId: 'wx_test123',
+        payload: 'Test instruction',
+        source: 'system',
+        trigger: 'command',
+      }));
+    });
+
+    it('should throw when InputMessageRouter is not initialized', async () => {
+      const channel = createMockWechatChannel();
+      const context = createWechatSetupContext({ inputMessageRouter: undefined } as any);
+
+      void WECHAT_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      await expect(
+        registeredHandlers!.pushToAgent!('wx_test123', 'Hello')
+      ).rejects.toThrow('InputMessageRouter not initialized');
+
+      expect(mockRoute).not.toHaveBeenCalled();
+    });
+
+    it('should downgrade sendInteractive to text message', async () => {
+      const channel = createMockWechatChannel();
+      const context = createWechatSetupContext();
+
+      void WECHAT_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      await registeredHandlers!.sendInteractive!('wx_test123', {
+        question: 'Which option?',
+        options: [
+          { text: 'Option A', value: 'a' },
+          { text: 'Option B', value: 'b' },
+        ],
+        title: 'Choose',
+      });
+
+      expect(channel.sendMessage).toHaveBeenCalledWith({
+        chatId: 'wx_test123',
+        type: 'text',
+        text: expect.stringContaining('Which option?'),
+      });
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('Option A'),
+        })
+      );
+    });
+
+    it('should have base handlers (sendMessage, sendCard, uploadFile)', () => {
+      const channel = createMockWechatChannel();
+      const context = createWechatSetupContext();
+
+      void WECHAT_WIRED_DESCRIPTOR.setup!(channel, {}, context);
+
+      expect(registeredHandlers!.sendMessage).toBeDefined();
+      expect(registeredHandlers!.sendCard).toBeDefined();
+      expect(registeredHandlers!.uploadFile).toBeDefined();
     });
   });
 

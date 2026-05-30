@@ -42,6 +42,8 @@ import {
   generateSocketPath,
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
+  type ChannelApiHandlers,
+  type ChannelHandlersContainer,
   // Issue #1377: Scheduler integration
   Scheduler,
   ScheduleManager,
@@ -148,6 +150,8 @@ export class PrimaryNode extends EventEmitter {
   // IPC Server for MCP Server connections (Issue #1042)
   protected ipcServer: UnixSocketIpcServer | null = null;
   protected feishuHandlersContainer: FeishuHandlersContainer = { handlers: undefined };
+  // Issue #3814: Multi-channel IPC handler routing
+  protected channelHandlersMap = new Map<string, { handlers: ChannelApiHandlers; channel: IChannel }>();
 
   // Scheduler (Issue #1377)
   protected scheduler?: Scheduler;
@@ -280,12 +284,15 @@ export class PrimaryNode extends EventEmitter {
     // sendInteractive's internal prompt registration remains.
     const contextStore = this.interactiveContextStore;
 
-    // Create the request handler with Feishu handlers container
+    // Create the request handler with channel handlers container.
+    // Issue #3814: Use composite container that routes IPC requests to the
+    // correct channel's handlers based on chatId ownership.
+    const compositeContainer = this.createCompositeHandlersContainer();
     const requestHandler = createInteractiveMessageHandler(
       (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
         contextStore.register(messageId, chatId, actionPrompts);
       },
-      this.feishuHandlersContainer
+      compositeContainer
     );
 
     this.ipcServer = new UnixSocketIpcServer(requestHandler, {
@@ -327,6 +334,108 @@ export class PrimaryNode extends EventEmitter {
   registerFeishuHandlers(handlers: FeishuApiHandlers): void {
     this.feishuHandlersContainer.handlers = handlers;
     logger.info('Feishu API handlers registered for IPC');
+  }
+
+  /**
+   * Register channel API handlers for IPC routing.
+   * Issue #3814: Generalized handler registration for multi-channel IPC.
+   *
+   * Handlers are stored with their channel instance for chatId-based routing.
+   * The IPC dispatch resolves the correct handlers by checking which channel
+   * owns a given chatId via `channel.ownsChatId(chatId)`.
+   */
+  registerChannelHandlers(channelType: string, handlers: ChannelApiHandlers, channel: IChannel): void {
+    this.channelHandlersMap.set(channelType, { handlers, channel });
+    logger.info({ channelType }, 'Channel API handlers registered for IPC');
+  }
+
+  /**
+   * Create a composite ChannelHandlersContainer that routes IPC requests
+   * to the correct channel's handlers based on chatId ownership.
+   *
+   * Issue #3814: Multi-channel IPC routing.
+   *
+   * Resolution order:
+   * 1. Check registered channel handlers (channelHandlersMap) for chatId ownership
+   * 2. Fall back to feishuHandlersContainer for backward compatibility
+   */
+  protected createCompositeHandlersContainer(): ChannelHandlersContainer {
+    const container: ChannelHandlersContainer = { handlers: undefined };
+
+    const resolveHandlers = (chatId?: string): ChannelApiHandlers | undefined => {
+      // Try multi-channel routing first
+      if (chatId) {
+        for (const { handlers, channel } of this.channelHandlersMap.values()) {
+          if (channel.ownsChatId(chatId)) {
+            return handlers;
+          }
+        }
+      }
+      // Fall back to Feishu handlers (backward compat)
+      return this.feishuHandlersContainer.handlers;
+    };
+
+    // Create proxy handlers that delegate to the resolved channel
+    container.handlers = {
+      sendMessage: (chatId, text, threadId, mentions) => {
+        const h = resolveHandlers(chatId);
+        if (!h) {throw new Error('No channel handlers available');}
+        return h.sendMessage(chatId, text, threadId, mentions);
+      },
+      sendCard: (chatId, card, threadId, description) => {
+        const h = resolveHandlers(chatId);
+        if (!h) {throw new Error('No channel handlers available');}
+        return h.sendCard(chatId, card, threadId, description);
+      },
+      uploadFile: (chatId, filePath, threadId) => {
+        const h = resolveHandlers(chatId);
+        if (!h) {throw new Error('No channel handlers available');}
+        return h.uploadFile(chatId, filePath, threadId);
+      },
+      sendInteractive: (chatId, params) => {
+        const h = resolveHandlers(chatId);
+        if (!h?.sendInteractive) {
+          throw new Error('sendInteractive not supported by this channel');
+        }
+        return h.sendInteractive(chatId, params);
+      },
+
+      // Issue #3814 fix: proxy all optional handlers to prevent regression
+      pushToAgent: (chatId, message) => {
+        const h = resolveHandlers(chatId);
+        if (!h?.pushToAgent) {
+          throw new Error('pushToAgent not supported by this channel');
+        }
+        return h.pushToAgent(chatId, message);
+      },
+
+      uploadImage: (filePath) => {
+        // uploadImage is channel-agnostic (no chatId routing needed)
+        const h = resolveHandlers();
+        if (!h?.uploadImage) {
+          throw new Error('uploadImage not supported by this channel');
+        }
+        return h.uploadImage(filePath);
+      },
+
+      listTempChats: () => {
+        const h = resolveHandlers();
+        if (!h?.listTempChats) {
+          throw new Error('listTempChats not supported by this channel');
+        }
+        return h.listTempChats();
+      },
+
+      markChatResponded: (chatId, response) => {
+        const h = resolveHandlers(chatId);
+        if (!h?.markChatResponded) {
+          throw new Error('markChatResponded not supported by this channel');
+        }
+        return h.markChatResponded(chatId, response);
+      },
+    };
+
+    return container;
   }
 
   /**
