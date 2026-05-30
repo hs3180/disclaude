@@ -18,6 +18,7 @@ import {
   type IncomingMessage,
   type FileRef,
   type FeishuApiHandlers,
+  type ChannelApiHandlers,
   type SystemMessage,
 } from '@disclaude/core';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
@@ -289,6 +290,75 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       channelName: 'WeChat channel',
       sendDoneSignal: false,
     }),
+
+  /**
+   * Post-registration setup for WeChat channel.
+   * Issue #3814: Register IPC handlers for MCP Server tool routing.
+   *
+   * Registers handlers for:
+   * - sendMessage (base: delegates to channel.sendMessage)
+   * - sendCard (base: delegates to channel.sendMessage, WeChat downgrades to text)
+   * - uploadFile (base: delegates to channel.sendMessage for file delivery)
+   * - sendInteractive (downgraded to text message — WeChat has no card support)
+   * - pushToAgent (reuses InputMessageRouter, same as Feishu)
+   */
+  setup: (channel: IChannel, _config: WeChatChannelConfig, context: ChannelSetupContext) => {
+    const wechatChannel = channel as WeChatChannel;
+
+    // Base handlers reuse the same channel.sendMessage pattern
+    const baseHandlers = createChannelApiHandlers(wechatChannel, {
+      logger: context.logger,
+      channelName: 'WeChat',
+    });
+
+    const wechatHandlers: ChannelApiHandlers = {
+      ...baseHandlers,
+
+      // Issue #3814: sendInteractive downgraded to text for WeChat
+      sendInteractive: async (chatId, params) => {
+        const { question, options, title } = params;
+        const parts: string[] = [];
+        if (title) {parts.push(`【${title}】`);}
+        parts.push(question);
+        for (const opt of options) {
+          parts.push(`- ${opt.text}`);
+        }
+        await wechatChannel.sendMessage({
+          chatId,
+          type: 'text',
+          text: parts.join('\n'),
+        });
+        // WeChat has no interactive support — return synthetic IDs
+        return { messageId: `wechat_interactive_${crypto.randomUUID()}` };
+      },
+
+      // Issue #3814: pushToAgent reuses InputMessageRouter (same as Feishu)
+      pushToAgent: async (chatId: string, message: string) => {
+        const router = context.inputMessageRouter;
+        if (!router) {
+          throw new Error('InputMessageRouter not initialized — cannot push to agent');
+        }
+
+        context.logger.info({ chatId, messageLength: message.length }, 'pushToAgent: routing system message via WeChat');
+
+        const systemMessage: SystemMessage = {
+          id: `push_${crypto.randomUUID()}`,
+          source: 'system',
+          trigger: 'command',
+          payload: message,
+          chatId,
+          createdAt: new Date().toISOString(),
+        };
+
+        await router.route(systemMessage);
+        return { success: true };
+      },
+    };
+
+    // Register with PrimaryNode for IPC routing
+    context.primaryNode.registerChannelHandlers('wechat', wechatHandlers, wechatChannel);
+    context.logger.info('WeChat IPC handlers registered via descriptor setup');
+  },
 };
 // Built-in Wired Descriptors Registry
 // ============================================================================
