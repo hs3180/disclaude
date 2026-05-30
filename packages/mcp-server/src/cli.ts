@@ -24,6 +24,7 @@ import {
   send_text,
   send_card,
   send_interactive_message,
+  push_to_agent,
 } from './index.js';
 import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
@@ -288,6 +289,35 @@ Example:
                 required: ['filePath', 'chatId'],
               },
             },
+            {
+              name: 'push_to_agent',
+              description: `Push an instruction to a chat agent, triggering agent creation if needed.
+
+Use this to send an instruction to the agent handling a specific chat.
+The agent will be lazily created if it doesn't exist yet, and the instruction will be processed as a system message.
+
+## Parameters
+- **chatId**: Target chat ID (string)
+- **message**: The instruction text to push (string)
+
+## Type Constraints (IMPORTANT)
+- **chatId**: MUST be a non-empty string
+- **message**: MUST be a non-empty string`,
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  chatId: {
+                    type: 'string',
+                    description: 'Target chat ID',
+                  },
+                  message: {
+                    type: 'string',
+                    description: 'The instruction text to push to the agent.',
+                  },
+                },
+                required: ['chatId', 'message'],
+              },
+            },
           ],
         },
       };
@@ -498,6 +528,41 @@ Example:
           id,
           result: {
             content: [{ type: 'text' as const, text: result.success ? `File sent: ${result.message}` : `⚠️ ${result.message}` }],
+          },
+        };
+      } else if (toolName === 'push_to_agent') {
+        // Pre-validation: chatId
+        if (!toolArgs.chatId || typeof toolArgs.chatId !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+        // Pre-validation: message
+        if (!toolArgs.message || typeof toolArgs.message !== 'string') {
+          return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text' as const, text: '⚠️ Invalid message: must be a non-empty string' }],
+              isError: true,
+            },
+          };
+        }
+
+        const result = await push_to_agent({
+          chatId: toolArgs.chatId,
+          message: toolArgs.message,
+        });
+        return {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
           },
         };
       } else {

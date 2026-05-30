@@ -26,6 +26,7 @@ vi.mock('./index.js', () => ({
   send_card: vi.fn(),
   send_file: vi.fn(),
   send_interactive_message: vi.fn(),
+  push_to_agent: vi.fn(),
 }));
 
 vi.mock('./utils/card-validator.js', () => ({
@@ -39,7 +40,7 @@ vi.mock('fs', () => ({
 
 // Import after mocks are set up
 import { parseArgs, handleRequest } from './cli.js';
-import { send_text, send_card, send_file, send_interactive_message } from './index.js';
+import { push_to_agent, send_text, send_card, send_file, send_interactive_message } from './index.js';
 import { isValidFeishuCard } from './utils/card-validator.js';
 
 const VALID_CHAT_ID = 'oc_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
@@ -118,16 +119,17 @@ describe('handleRequest', () => {
   });
 
   describe('tools/list', () => {
-    it('should return all 4 tool definitions', async () => {
+    it('should return all 5 tool definitions (incl. push_to_agent)', async () => {
       const response = await handleRequest(makeRequest('tools/list'));
       expect(response.result).toBeDefined();
       const {tools} = (response.result as { tools: { name: string }[] });
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(5);
       const names = tools.map((t) => t.name);
       expect(names).toContain('send_text');
       expect(names).toContain('send_card');
       expect(names).toContain('send_interactive');
       expect(names).toContain('send_file');
+      expect(names).toContain('push_to_agent');
     });
   });
 
@@ -518,6 +520,51 @@ describe('handleRequest', () => {
           name: 'send_file',
           arguments: { filePath: '/missing.pdf', chatId: VALID_CHAT_ID },
         }),
+      );
+      const result = response.result as { content: { type: string; text: string }[] };
+      expect(result.content[0].text).toContain('⚠️');
+    });
+  });
+
+  describe('push_to_agent validation', () => {
+    it('should reject missing chatId', async () => {
+      const response = await handleRequest(
+        makeRequest('tools/call', { name: 'push_to_agent', arguments: { message: 'Hello' } }),
+      );
+      const result = response.result as { content: { type: string; text: string }[]; isError: boolean };
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('chatId');
+    });
+
+    it('should reject missing message', async () => {
+      const response = await handleRequest(
+        makeRequest('tools/call', { name: 'push_to_agent', arguments: { chatId: VALID_CHAT_ID } }),
+      );
+      const result = response.result as { content: { type: string; text: string }[]; isError: boolean };
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('message');
+    });
+
+    it('should call push_to_agent on valid input', async () => {
+      (push_to_agent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        message: 'Instruction pushed successfully',
+      });
+      const response = await handleRequest(
+        makeRequest('tools/call', { name: 'push_to_agent', arguments: { chatId: VALID_CHAT_ID, message: 'Test instruction' } }),
+      );
+      const result = response.result as { content: { type: string; text: string }[] };
+      expect(result.content[0].text).toContain('pushed');
+      expect(push_to_agent).toHaveBeenCalledWith({ chatId: VALID_CHAT_ID, message: 'Test instruction' });
+    });
+
+    it('should return warning on push_to_agent failure', async () => {
+      (push_to_agent as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: false,
+        message: 'IPC unavailable',
+      });
+      const response = await handleRequest(
+        makeRequest('tools/call', { name: 'push_to_agent', arguments: { chatId: VALID_CHAT_ID, message: 'Hello' } }),
       );
       const result = response.result as { content: { type: string; text: string }[] };
       expect(result.content[0].text).toContain('⚠️');

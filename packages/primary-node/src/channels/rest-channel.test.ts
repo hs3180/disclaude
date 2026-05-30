@@ -432,6 +432,105 @@ describe('RestChannel', () => {
         expect(response.status).toBe(400);
       });
     });
+
+    describe('POST /api/push (Issue #3808)', () => {
+      it('should return 503 when InputMessageRouter is not configured', async () => {
+        const response = await simulateRequest({
+          method: 'POST',
+          path: '/api/push',
+          body: { chatId: 'test-chat', message: 'Hello' },
+        });
+        expect(response.status).toBe(503);
+        expect(response.body.error).toContain('InputMessageRouter');
+      });
+
+      it('should return 400 for empty body', async () => {
+        // Set up InputMessageRouter mock
+        const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+        channel.setInputMessageRouter(mockRouter as any);
+
+        const response = await simulateRequest({
+          method: 'POST',
+          path: '/api/push',
+          body: '',
+        });
+        expect(response.status).toBe(400);
+      });
+
+      it('should return 400 for invalid JSON', async () => {
+        const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+        channel.setInputMessageRouter(mockRouter as any);
+
+        const response = await simulateRequest({
+          method: 'POST',
+          path: '/api/push',
+          body: 'not json',
+        });
+        expect(response.status).toBe(400);
+      });
+
+      it('should return 400 for missing chatId', async () => {
+        const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+        channel.setInputMessageRouter(mockRouter as any);
+
+        const response = await simulateRequest({
+          method: 'POST',
+          path: '/api/push',
+          body: { message: 'Hello' },
+        });
+        expect(response.status).toBe(400);
+      });
+
+      it('should return 400 for missing message', async () => {
+        const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+        channel.setInputMessageRouter(mockRouter as any);
+
+        const response = await simulateRequest({
+          method: 'POST',
+          path: '/api/push',
+          body: { chatId: 'test-chat' },
+        });
+        expect(response.status).toBe(400);
+      });
+
+      it('should push system message via InputMessageRouter', async () => {
+        const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+        channel.setInputMessageRouter(mockRouter as any);
+
+        const response = await simulateRequest({
+          method: 'POST',
+          path: '/api/push',
+          body: { chatId: 'oc_test123', message: '发现新消息，请处理' },
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.chatId).toBe('oc_test123');
+        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+        expect(mockRouter.route).toHaveBeenCalledWith(
+          expect.objectContaining({
+            source: 'system',
+            trigger: 'command',
+            chatId: 'oc_test123',
+            payload: '发现新消息，请处理',
+          }),
+        );
+      });
+
+      it('should return 500 when InputMessageRouter.route throws', async () => {
+        const mockRouter = { route: vi.fn().mockRejectedValue(new Error('Agent pool full')) };
+        channel.setInputMessageRouter(mockRouter as any);
+
+        const response = await simulateRequest({
+          method: 'POST',
+          path: '/api/push',
+          body: { chatId: 'test-chat', message: 'Hello' },
+        });
+
+        expect(response.status).toBe(500);
+        expect(response.body.error).toContain('Agent pool full');
+      });
+    });
   });
 
   describe('start/stop lifecycle', () => {

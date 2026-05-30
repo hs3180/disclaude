@@ -119,6 +119,37 @@ describe('WiredChannelDescriptors', () => {
       const handler = REST_WIRED_DESCRIPTOR.createMessageHandler(mockChannel, wiredContext);
       expect(typeof handler).toBe('function');
     });
+
+    it('should have a setup hook (Issue #3808)', () => {
+      expect(REST_WIRED_DESCRIPTOR.setup).toBeDefined();
+      expect(typeof REST_WIRED_DESCRIPTOR.setup).toBe('function');
+    });
+  });
+
+  describe('REST_WIRED_DESCRIPTOR.setup — InputMessageRouter injection (Issue #3808)', () => {
+    it('should inject InputMessageRouter into REST channel', () => {
+      const channel = REST_WIRED_DESCRIPTOR.factory({ port: 3000 });
+      const mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+      const context = createMockContext({ inputMessageRouter: mockRouter as any });
+
+      void REST_WIRED_DESCRIPTOR.setup!(channel, { port: 3000 }, context);
+
+      // Verify the channel has the router injected by checking log message
+      expect(context.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('/api/push'),
+      );
+    });
+
+    it('should warn when InputMessageRouter is not available', () => {
+      const channel = REST_WIRED_DESCRIPTOR.factory({ port: 3000 });
+      const context = createMockContext({ inputMessageRouter: undefined } as any);
+
+      void REST_WIRED_DESCRIPTOR.setup!(channel, { port: 3000 }, context);
+
+      expect(context.logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('InputMessageRouter not available'),
+      );
+    });
   });
 
   describe('FEISHU_WIRED_DESCRIPTOR', () => {

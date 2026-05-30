@@ -51,7 +51,7 @@ import {
  * Provides full wiring for the REST channel:
  * - ChatAgentCallbacks with done signal (sync mode)
  * - Message handler with basic text processing
- * - No post-registration setup needed
+ * - Post-registration setup: inject InputMessageRouter for /api/push (Issue #3808)
  */
 export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = {
   type: 'rest',
@@ -74,6 +74,22 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
       channelName: 'REST channel',
       sendDoneSignal: true,
     }),
+
+  /**
+   * Post-registration setup for REST channel.
+   *
+   * Issue #3808: Inject InputMessageRouter so the /api/push endpoint
+   * can route system messages to agents.
+   */
+  setup: (channel: IChannel, _config: RestChannelConfig, context: ChannelSetupContext) => {
+    const restChannel = channel as RestChannel;
+    if (context.inputMessageRouter) {
+      restChannel.setInputMessageRouter(context.inputMessageRouter);
+      context.logger.info('REST /api/push endpoint configured via descriptor setup');
+    } else {
+      context.logger.warn('InputMessageRouter not available — REST /api/push endpoint will return 503');
+    }
+  },
 };
 
 // ============================================================================
