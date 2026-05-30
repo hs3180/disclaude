@@ -3,7 +3,7 @@ name: "每日随机测试"
 cron: "0 14 * * 1-5"
 enabled: true
 blocking: true
-chatId: "{targetChatId}"
+# chatId 由 scheduler 在安装时根据目标群组自动填充
 ---
 
 # 每日随机测试 — 定时执行
@@ -13,9 +13,6 @@ chatId: "{targetChatId}"
 ## 执行
 
 使用 `feeling-lucky` skill 随机选择一个真实用例来测试。
-
-参数：
-- **目标群 chatId**: {targetChatId}
 
 ### 执行前检查
 
@@ -39,8 +36,5 @@ echo "- $(date +%Y-%m-%d): 测试了 [功能名] - [一句话结果]" >> workspa
 
 ## 安装说明
 
-将此文件复制到 `schedules/feeling-lucky/SCHEDULE.md`，然后替换以下占位符：
-
-| 占位符 | 替换为 |
-|--------|--------|
-| `{targetChatId}` | 实际的目标群组 chatId |
+将此文件复制到 `schedules/feeling-lucky/SCHEDULE.md`，scheduler 会自动填充 chatId。
+如需手动指定目标群组，在 frontmatter 中添加 `chatId: "oc_xxx"`。

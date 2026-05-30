@@ -1,7 +1,7 @@
 ---
 name: feeling-lucky
 description: 手气不错 — disclaude dogfooding skill. Randomly selects a real use case from disclaude's feature set, simulates a natural user interaction, and reports observations. Use when user says keywords like "手气不错", "随机测试", "feeling lucky", "dogfooding", "自我体验", "feeling-lucky".
-allowed-tools: Read, Glob, Grep, Bash, WebSearch
+allowed-tools: Read, Glob, Grep, Bash, WebSearch, mcp__channel-mcp__send_text
 ---
 
 # Feeling Lucky (手气不错)
