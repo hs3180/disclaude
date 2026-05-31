@@ -15,10 +15,10 @@
 #   PROJECT_ROOT - Path to project root directory
 #
 # Optional variables (defaults provided):
-#   REST_PORT    - REST API port (default: 3099)
+#   REST_PORT    - REST API port (auto-detected from config file, fallback: 3099)
 #   HOST         - Test server host (default: 127.0.0.1)
 #   TIMEOUT      - Request timeout in seconds (default: 10)
-#   CONFIG_PATH  - Path to config file (optional)
+#   CONFIG_PATH  - Path to config file (default: PROJECT_ROOT/disclaude.config.test.yaml)
 #
 
 # Prevent multiple sourcing
@@ -30,13 +30,25 @@ _COMMON_SH_LOADED=1
 # =============================================================================
 # Default Configuration
 # =============================================================================
+
+# Default to test config file for integration tests (no MCP servers)
+CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
+
+# Issue #3840: Extract REST port from config file to avoid port mismatch.
+# Previously hardcoded to 3099 while config file used 3199, causing health
+# checks to poll the wrong port — server appeared to never start.
+if [ -z "$REST_PORT" ] && [ -f "$CONFIG_PATH" ]; then
+    _config_port=$(sed -n '/rest:/,/^[^ ]/p' "$CONFIG_PATH" 2>/dev/null | grep 'port:' | sed 's/.*port:[[:space:]]*//' | head -1)
+    if [ -n "$_config_port" ]; then
+        REST_PORT="$_config_port"
+    fi
+fi
 REST_PORT="${REST_PORT:-3099}"
+
 HOST="${HOST:-127.0.0.1}"
 API_URL="http://${HOST}:${REST_PORT}"
 # Timeout for API requests - increased to 60s for AI processing
 TIMEOUT="${TIMEOUT:-30}"
-# Default to test config file for integration tests (no MCP servers)
-CONFIG_PATH="${CONFIG_PATH:-${PROJECT_ROOT}/disclaude.config.test.yaml}"
 SERVER_PID=""
 
 # Log file in current working directory
