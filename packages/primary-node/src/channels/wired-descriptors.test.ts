@@ -67,6 +67,7 @@ function createMockContext(overrides?: Partial<ChannelSetupContext>): ChannelSet
         generatePrompt: vi.fn().mockReturnValue('Generated prompt'),
       }),
       registerFeishuHandlers: vi.fn(),
+      registerChannelHandlers: vi.fn(),
     },
     ...overrides,
   };
@@ -176,11 +177,11 @@ describe('WiredChannelDescriptors', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.name).toBe('WeChat');
     });
 
-    it('should have MVP capabilities (text only)', () => {
+    it('should have capabilities with file support (Issue #3814)', () => {
       expect(WECHAT_WIRED_DESCRIPTOR.defaultCapabilities).toEqual({
         supportsCard: false,
         supportsThread: false,
-        supportsFile: false,
+        supportsFile: true,
         supportsMarkdown: false,
         supportsMention: false,
         supportsUpdate: false,
@@ -228,8 +229,9 @@ describe('WiredChannelDescriptors', () => {
       expect(typeof handler).toBe('function');
     });
 
-    it('should not have a setup hook (MVP)', () => {
-      expect(WECHAT_WIRED_DESCRIPTOR.setup).toBeUndefined();
+    it('should have a setup hook for IPC handlers (Issue #3814)', () => {
+      expect(WECHAT_WIRED_DESCRIPTOR.setup).toBeDefined();
+      expect(typeof WECHAT_WIRED_DESCRIPTOR.setup).toBe('function');
     });
 
     it('should send text messages through callbacks', async () => {
@@ -325,6 +327,26 @@ describe('WiredChannelDescriptors', () => {
         type: 'text',
         text: '❌ Error: Agent processing failed',
       });
+    });
+
+    it('should register IPC handlers via setup hook (Issue #3814)', () => {
+      const mockChannel = createMockChannel('wechat');
+      const context = createMockContext();
+
+      // Call the setup hook
+      WECHAT_WIRED_DESCRIPTOR.setup!(mockChannel, {}, context);
+
+      // Verify registerChannelHandlers was called
+      expect(context.primaryNode.registerChannelHandlers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sendMessage: expect.any(Function),
+          sendCard: expect.any(Function),
+          uploadFile: expect.any(Function),
+          sendInteractive: expect.any(Function),
+          uploadImage: expect.any(Function),
+          pushToAgent: expect.any(Function),
+        })
+      );
     });
   });
 });

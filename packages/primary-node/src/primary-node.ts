@@ -323,10 +323,23 @@ export class PrimaryNode extends EventEmitter {
    *
    * This method should be called after FeishuChannel starts to enable
    * MCP Server tools to send messages via IPC.
+   *
+   * @deprecated Use registerChannelHandlers() instead (Issue #3814).
    */
   registerFeishuHandlers(handlers: FeishuApiHandlers): void {
+    this.registerChannelHandlers(handlers);
+  }
+
+  /**
+   * Register channel API handlers for IPC calls.
+   *
+   * Issue #3814: Generalized from registerFeishuHandlers to support
+   * any channel type (Feishu, WeChat, etc.). The last channel to
+   * register its handlers wins — single-channel mode.
+   */
+  registerChannelHandlers(handlers: FeishuApiHandlers): void {
     this.feishuHandlersContainer.handlers = handlers;
-    logger.info('Feishu API handlers registered for IPC');
+    logger.info('Channel API handlers registered for IPC');
   }
 
   /**

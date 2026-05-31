@@ -252,19 +252,21 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
  * `ChannelLifecycleManager.createAndWire(WECHAT_WIRED_DESCRIPTOR, config)`
  * at runtime (e.g., after QR code authentication completes).
  *
- * Provides full wiring for the WeChat channel (MVP):
+ * Provides full wiring for the WeChat channel:
  * - ChatAgentCallbacks without done signal (async mode)
  * - Message handler with basic text processing
- * - No post-registration setup (MVP: no passive mode, no IPC handlers)
+ * - Post-registration setup: IPC handlers (Issue #3814)
  *
- * MVP limitations:
+ * WeChat limitations (vs Feishu):
  * - sendCard: downgrades to JSON-serialized text (WeChat API doesn't support cards)
- * - sendFile: not supported (logs warning only)
- * - No message listening / long polling (outbound-only bot)
+ * - sendInteractive: downgrades to formatted text (no interactive card support)
+ * - No passive mode (mention/always/auto)
+ * - No action prompt resolver (no interactive card buttons)
  *
  * @see Issue #1473 - WeChat Channel MVP
  * @see Issue #1554 - WeChat Channel Dynamic Registration (Phase 1)
  * @see Issue #1638 - WeChat only supports dynamic registration, no config.yaml
+ * @see Issue #3814 - WeChat setup() hook for MCP IPC handlers
  */
 export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig> = {
   type: 'wechat',
@@ -273,7 +275,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
   defaultCapabilities: {
     supportsCard: false,
     supportsThread: false,
-    supportsFile: false,
+    supportsFile: true,
     supportsMarkdown: false,
     supportsMention: false,
     supportsUpdate: false,
@@ -287,6 +289,103 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       channelName: 'WeChat channel',
       sendDoneSignal: false,
     }),
+
+  /**
+   * Post-registration setup for WeChat channel (Issue #3814).
+   *
+   * Registers IPC handlers for MCP Server connections.
+   * WeChat-specific behavior:
+   * - sendInteractive: downgrades to formatted text (no interactive cards)
+   * - pushToAgent: reuses InputMessageRouter (same as Feishu)
+   * - uploadImage: uses WeChat CDN upload (uploadMedia)
+   */
+  setup: (channel: IChannel, _config: WeChatChannelConfig, context: ChannelSetupContext) => {
+    const wechatChannel = channel as WeChatChannel;
+
+    // Register IPC handlers for MCP Server connections
+    const baseHandlers = createChannelApiHandlers(wechatChannel, {
+      logger: context.logger,
+      channelName: 'WeChat',
+    });
+
+    const wechatHandlers: FeishuApiHandlers = {
+      ...baseHandlers,
+
+      // WeChat doesn't support interactive cards — downgrade to formatted text
+      sendInteractive: async (chatId: string, params: {
+        question: string;
+        options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+        title?: string;
+        context?: string;
+        threadId?: string;
+        actionPrompts?: Record<string, string>;
+      }) => {
+        const { question, options, title } = params;
+
+        // Build a readable text representation
+        const parts: string[] = [];
+        if (title) { parts.push(`**${title}**`); }
+        parts.push(question);
+        for (const opt of options) {
+          parts.push(`• ${opt.text}`);
+        }
+
+        await wechatChannel.sendMessage({
+          chatId,
+          type: 'text',
+          text: parts.join('\n'),
+          threadId: params.threadId,
+        });
+
+        context.logger.debug(
+          { chatId, optionCount: options.length },
+          'sendInteractive: downgraded to text for WeChat'
+        );
+
+        return { messageId: undefined };
+      },
+
+      // Issue #3814: Upload image via WeChat CDN
+      uploadImage: async (filePath: string) => {
+        const client = wechatChannel.getApiClient();
+        if (!client) {
+          throw new Error('WeChat API client not initialized');
+        }
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const fileData = await fs.promises.readFile(filePath);
+        const fileName = path.basename(filePath);
+        const result = await client.uploadMedia({ fileData, fileName });
+        return { imageKey: result.url };
+      },
+
+      // Issue #3814: Push instruction to a chat agent via InputMessageRouter
+      pushToAgent: async (chatId: string, message: string) => {
+        const router = context.inputMessageRouter;
+        if (!router) {
+          throw new Error('InputMessageRouter not initialized — cannot push to agent');
+        }
+
+        context.logger.info({ chatId, messageLength: message.length }, 'pushToAgent: routing system message');
+
+        const systemMessage: SystemMessage = {
+          id: `push_${crypto.randomUUID()}`,
+          source: 'system',
+          trigger: 'command',
+          payload: message,
+          chatId,
+          createdAt: new Date().toISOString(),
+        };
+
+        await router.route(systemMessage);
+
+        return { success: true };
+      },
+    };
+
+    context.primaryNode.registerChannelHandlers(wechatHandlers);
+    context.logger.info('WeChat IPC handlers registered via descriptor setup');
+  },
 };
 // Built-in Wired Descriptors Registry
 // ============================================================================

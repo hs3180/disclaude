@@ -51,7 +51,10 @@ export interface IPrimaryNodeForSetup {
       formData?: Record<string, unknown>
     ): string | undefined;
   };
+  /** @deprecated Use registerChannelHandlers() instead */
   registerFeishuHandlers(handlers: FeishuApiHandlers): void;
+  /** Issue #3814: Platform-agnostic handler registration */
+  registerChannelHandlers(handlers: FeishuApiHandlers): void;
 }
 
 /**
