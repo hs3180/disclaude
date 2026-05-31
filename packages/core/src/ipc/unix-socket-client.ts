@@ -7,12 +7,13 @@
  * @module ipc/unix-socket-client
  */
 
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { createConnection, type Socket } from 'net';
 import { createLogger } from '../utils/logger.js';
 import type { FeishuCard } from '../types/platform.js';
 import {
   DEFAULT_IPC_CONFIG,
+  IPC_SOCKET_PATH_FILE,
   type IpcConfig,
   type IpcRequest,
   type IpcRequestPayloads,
@@ -757,14 +758,28 @@ let ipcClientInstance: UnixSocketIpcClient | null = null;
  * Priority:
  * 1. DISCLAUDE_WORKER_IPC_SOCKET env var (set by Worker Node for MCP Server)
  * 2. DISCLAUDE_IPC_SOCKET_PATH env var (manual override)
- * 3. DEFAULT_IPC_CONFIG.socketPath (Primary Node default)
+ * 3. IPC_SOCKET_PATH_FILE (written by Primary Node, Issue #3808)
+ * 4. DEFAULT_IPC_CONFIG.socketPath (Primary Node default)
  */
 export function getIpcSocketPath(): string {
-  return (
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET ||
-    process.env.DISCLAUDE_IPC_SOCKET_PATH ||
-    DEFAULT_IPC_CONFIG.socketPath
-  );
+  // Try env vars first
+  const envPath = process.env.DISCLAUDE_WORKER_IPC_SOCKET ||
+    process.env.DISCLAUDE_IPC_SOCKET_PATH;
+  if (envPath) {return envPath;}
+
+  // Issue #3808: Read from well-known file written by Primary Node
+  try {
+    if (existsSync(IPC_SOCKET_PATH_FILE)) {
+      const fileSocketPath = readFileSync(IPC_SOCKET_PATH_FILE, 'utf-8').trim();
+      if (fileSocketPath) {
+        return fileSocketPath;
+      }
+    }
+  } catch {
+    // Ignore file read errors — fall through to default
+  }
+
+  return DEFAULT_IPC_CONFIG.socketPath;
 }
 
 /**

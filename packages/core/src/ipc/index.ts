@@ -7,6 +7,7 @@
 // Protocol types and constants
 export {
   DEFAULT_IPC_CONFIG,
+  IPC_SOCKET_PATH_FILE,
   generateSocketPath,
   type IpcConfig,
   type IpcRequestType,
