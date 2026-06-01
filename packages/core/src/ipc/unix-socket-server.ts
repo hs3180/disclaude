@@ -46,6 +46,19 @@ export type IpcRequestHandler = (request: IpcRequest) => Promise<IpcResponse>;
  * Defines the common operations that all channel implementations must support.
  * Platform-specific implementations (Feishu, Slack, etc.) extend this interface.
  */
+/**
+ * Parameters for sendInteractive IPC handler.
+ * Issue #3814: Extracted from ChannelApiHandlers for reuse across descriptors.
+ */
+export interface SendInteractiveParams {
+  question: string;
+  options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+  title?: string;
+  context?: string;
+  threadId?: string;
+  actionPrompts?: Record<string, string>;
+}
+
 export interface ChannelApiHandlers {
   sendMessage: (chatId: string, text: string, threadId?: string, mentions?: Array<{ openId: string; name?: string }>) => Promise<void>;
   sendCard: (
@@ -65,14 +78,7 @@ export interface ChannelApiHandlers {
   ) => Promise<{ imageKey: string }>;
   sendInteractive: (
     chatId: string,
-    params: {
-      question: string;
-      options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
-      title?: string;
-      context?: string;
-      threadId?: string;
-      actionPrompts?: Record<string, string>;
-    }
+    params: SendInteractiveParams
   ) => Promise<{ messageId?: string }>;
   /** List all tracked temp chats (Issue #1703) */
   listTempChats?: () => Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>>;

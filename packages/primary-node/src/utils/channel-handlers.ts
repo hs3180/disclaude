@@ -21,11 +21,13 @@ import {
   type ChannelApiHandlers,
   type FeishuCard,
   type UserMessage,
+  type SystemMessage,
   createLogger as coreCreateLogger,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from '../agents/types.js';
 import type { Logger } from 'pino';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
+import crypto from 'crypto';
 
 const routingLogger = coreCreateLogger('ChannelMessageRouter');
 
@@ -356,5 +358,55 @@ export function createChannelApiHandlers(
         fileSize: 0,    // synthetic — not available via sendMessage
       };
     },
+  };
+}
+
+// ============================================================================
+// createPushToAgentHandler
+// ============================================================================
+
+/**
+ * Context required by createPushToAgentHandler.
+ */
+export interface PushToAgentContext {
+  /** InputMessageRouter for routing system messages to agents */
+  inputMessageRouter?: { route: (message: SystemMessage) => Promise<void> };
+  /** Logger instance */
+  logger: Logger;
+}
+
+/**
+ * Create a pushToAgent handler for IPC.
+ *
+ * Issue #3814 review: Extracted from duplicated implementations in
+ * FEISHU_WIRED_DESCRIPTOR and WECHAT_WIRED_DESCRIPTOR to eliminate
+ * code duplication.
+ *
+ * @param context - Context with InputMessageRouter and logger
+ * @returns A pushToAgent function conforming to ChannelApiHandlers
+ */
+export function createPushToAgentHandler(
+  context: PushToAgentContext
+): (chatId: string, message: string) => Promise<{ success: boolean }> {
+  return async (chatId: string, message: string) => {
+    const router = context.inputMessageRouter;
+    if (!router) {
+      throw new Error('InputMessageRouter not initialized — cannot push to agent');
+    }
+
+    context.logger.info({ chatId, messageLength: message.length }, 'pushToAgent: routing system message');
+
+    const systemMessage: SystemMessage = {
+      id: `push_${crypto.randomUUID()}`,
+      source: 'system',
+      trigger: 'command',
+      payload: message,
+      chatId,
+      createdAt: new Date().toISOString(),
+    };
+
+    await router.route(systemMessage);
+
+    return { success: true };
   };
 }

@@ -18,12 +18,11 @@ import {
   type IncomingMessage,
   type FileRef,
   type FeishuApiHandlers,
-  type SystemMessage,
+  type SendInteractiveParams,
 } from '@disclaude/core';
 import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
-import crypto from 'crypto';
 import { messageLogger } from './feishu/message-logger.js';
 import type {
   ChannelSetupContext,
@@ -33,6 +32,7 @@ import {
   createChannelCallbacksFactory,
   createDefaultMessageHandler,
   createChannelApiHandlers,
+  createPushToAgentHandler,
 } from '../utils/channel-handlers.js';
 import {
   buildInteractiveCard,
@@ -177,14 +177,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       },
 
       // Issue #1571: Build interactive card from raw parameters using extracted builder
-      sendInteractive: async (chatId: string, params: {
-        question: string;
-        options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
-        title?: string;
-        context?: string;
-        threadId?: string;
-        actionPrompts?: Record<string, string>;
-      }) => {
+      sendInteractive: async (chatId: string, params: SendInteractiveParams) => {
         const { question, options, title, context: cardContext, threadId, actionPrompts } = params;
 
         // Validate params at IPC boundary
@@ -211,30 +204,13 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       },
 
       // Issue #631: Push instruction to a chat agent via InputMessageRouter
-      pushToAgent: async (chatId: string, message: string) => {
-        const router = context.inputMessageRouter;
-        if (!router) {
-          throw new Error('InputMessageRouter not initialized — cannot push to agent');
-        }
-
-        context.logger.info({ chatId, messageLength: message.length }, 'pushToAgent: routing system message');
-
-        const systemMessage: SystemMessage = {
-          id: `push_${crypto.randomUUID()}`,
-          source: 'system',
-          trigger: 'command',
-          payload: message,
-          chatId,
-          createdAt: new Date().toISOString(),
-        };
-
-        await router.route(systemMessage);
-
-        return { success: true };
-      },
+      pushToAgent: createPushToAgentHandler({
+        inputMessageRouter: context.inputMessageRouter,
+        logger: context.logger,
+      }),
     };
 
-    context.primaryNode.registerFeishuHandlers(feishuHandlers);
+    context.primaryNode.registerChannelHandlers(feishuHandlers);
     context.logger.info('Feishu IPC handlers registered via descriptor setup');
   },
 };
@@ -312,14 +288,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       ...baseHandlers,
 
       // WeChat doesn't support interactive cards — downgrade to formatted text
-      sendInteractive: async (chatId: string, params: {
-        question: string;
-        options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
-        title?: string;
-        context?: string;
-        threadId?: string;
-        actionPrompts?: Record<string, string>;
-      }) => {
+      sendInteractive: async (chatId: string, params: SendInteractiveParams) => {
         const { question, options, title } = params;
 
         // Build a readable text representation
@@ -360,27 +329,10 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       },
 
       // Issue #3814: Push instruction to a chat agent via InputMessageRouter
-      pushToAgent: async (chatId: string, message: string) => {
-        const router = context.inputMessageRouter;
-        if (!router) {
-          throw new Error('InputMessageRouter not initialized — cannot push to agent');
-        }
-
-        context.logger.info({ chatId, messageLength: message.length }, 'pushToAgent: routing system message');
-
-        const systemMessage: SystemMessage = {
-          id: `push_${crypto.randomUUID()}`,
-          source: 'system',
-          trigger: 'command',
-          payload: message,
-          chatId,
-          createdAt: new Date().toISOString(),
-        };
-
-        await router.route(systemMessage);
-
-        return { success: true };
-      },
+      pushToAgent: createPushToAgentHandler({
+        inputMessageRouter: context.inputMessageRouter,
+        logger: context.logger,
+      }),
     };
 
     context.primaryNode.registerChannelHandlers(wechatHandlers);
