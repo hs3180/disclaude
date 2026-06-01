@@ -69,6 +69,31 @@ lark-cli im chat create --name "PR #{number} · {title前30字}" --description "
 
 **5b. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review"），原子写入。
 
+**5c. 注入 Review Agent 指令**: 使用 `push_to_agent` 向新建群聊的 chatId 注入 PR review 指令，指导 Agent 进行深度代码审查：
+
+```
+使用 push_to_agent 向 chatId={新群chatId} 推送以下指令：
+
+你是一个 PR Review Agent。请对 PR #{number}（{repo}）进行深度代码审查。
+
+步骤：
+1. 获取 PR 概览：gh pr view {number} --repo {repo} --json title,body,author,additions,deletions,changedFiles
+2. 克隆仓库到临时目录：
+   TMPDIR=$(mktemp -d) && cd $TMPDIR
+   gh repo clone {repo} . -- --depth=50
+   gh pr checkout {number}
+3. 查看 diff：gh pr diff {number} --repo {repo}
+4. 结合完整代码上下文审查：阅读被修改文件及其依赖、调用链、测试文件
+5. 在讨论群中发表结构化审查意见（关键问题 / 建议 / 样式）
+6. 清理：rm -rf $TMPDIR
+
+审查重点：
+- 修改是否与现有代码风格/模式一致
+- 是否破坏了其他模块的隐式依赖
+- 测试是否充分覆盖了边界条件
+- 类型推断、import 路径等需要完整代码才能验证的问题
+```
+
 ## 错误处理
 
 - `gh` 命令失败 → 记录错误，跳过/退出
