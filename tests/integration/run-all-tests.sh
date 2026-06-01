@@ -15,7 +15,7 @@
 #
 # Options:
 #   --timeout SECONDS   Request timeout (default: per-suite defaults, 30-120s)
-#   --port PORT         REST API port (default: 3099)
+#   --port PORT         REST API port (auto-detected from config, fallback: 3099)
 #   --retries N         Max retries per test suite on failure (default: 2)
 #   --delay SECONDS     Delay between test suites for rate limit avoidance (default: 5)
 #   --verbose           Enable verbose output
@@ -28,7 +28,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-REST_PORT="${REST_PORT:-3099}"
+# REST_PORT is auto-detected from config file by common.sh (Issue #3840)
 TIMEOUT="${TIMEOUT:-60}"
 MAX_RETRIES="${MAX_RETRIES:-2}"
 INTER_SUITE_DELAY="${INTER_SUITE_DELAY:-5}"
