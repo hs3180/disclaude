@@ -17,6 +17,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 | `{repo}` | Yes | — | GitHub repo (owner/name) |
 | `{controlChannelChatId}` | Yes | — | Schedule execution context chatId |
 | `{maxConcurrent}` | No | `3` | Max concurrent PR reviews |
+| `{inviteUsers}` | No | — | comma-separated user open_ids to invite when creating PR discussion groups |
 
 ## 数据结构
 
@@ -64,8 +65,10 @@ merged/closed → 记录日志，不自动解散。open → 跳过。
 
 **5a. 创建群**:
 ```bash
-lark-cli im chat create --name "PR #{number} · {title前30字}" --description "PR #{number} 审查讨论群"
+lark-cli im chat create --name "PR #{number} · {title前30字}" --description "PR #{number} 审查讨论群" {--users inviteUsers}
 ```
+
+如果 `{inviteUsers}` 参数非空，则追加 `--users {inviteUsers}` 以邀请指定用户。
 
 **5b. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review"），原子写入。
 
@@ -89,7 +92,7 @@ lark-cli im chat create --name "PR #{number} · {title前30字}" --description "
 
 ## Schedule 模板
 
-见同目录下的 `schedule.md`。将其复制到 `schedules/pr-scanner/SCHEDULE.md`，替换 `{controlChannelChatId}` 和 `{repo}` 后启用。
+见同目录下的 `schedule.md`。将其复制到 `schedules/pr-scanner/SCHEDULE.md`，替换 `{controlChannelChatId}`、`{repo}` 和 `{inviteUsers}` 后启用。
 
 ## 关联
 
