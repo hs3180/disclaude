@@ -17,6 +17,7 @@ chatId: "{controlChannelChatId}"
 参数：
 - **仓库**: {repo}
 - **并发上限**: 3
+- **邀请用户**: {inviteUsers}（可选，逗号分隔的飞书 open_id，创建讨论群时自动邀请）
 
 ## 安装说明
 
@@ -26,3 +27,4 @@ chatId: "{controlChannelChatId}"
 |--------|--------|
 | `{controlChannelChatId}` | 实际的控制频道 chatId |
 | `{repo}` | 实际监控的 GitHub 仓库（如 `owner/repo`） |
+| `{inviteUsers}` | 逗号分隔的飞书 open_id（如 `ou_xxx,ou_yyy`），留空则不邀请额外用户 |
