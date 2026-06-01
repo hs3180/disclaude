@@ -19,7 +19,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-REST_PORT="${REST_PORT:-3099}"
 HOST="${HOST:-127.0.0.1}"
 TIMEOUT="${TIMEOUT:-30}"
 CONFIG_PATH="${DISCLAUDE_CONFIG:-}"
