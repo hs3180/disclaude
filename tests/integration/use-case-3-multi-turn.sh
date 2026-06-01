@@ -19,7 +19,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-REST_PORT="${REST_PORT:-3099}"
 TIMEOUT="${TIMEOUT:-60}"
 
 source "$SCRIPT_DIR/common.sh"
