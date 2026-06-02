@@ -1,30 +1,108 @@
 ---
 name: "PR Scanner"
-cron: "*/30 * * * *"
+cron: "{cron}"
 enabled: true
 blocking: true
 chatId: "{controlChannelChatId}"
 ---
 
-# PR Scanner — 定时扫描
+扫描仓库 `{repo}` 的 open PR，通过映射表追踪已创建的讨论群，为新 PR 创建群并写入映射。
 
-每 30 分钟执行一次 PR Scanner skill。
+**适用于**: 扫描 PR、创建讨论群、追踪映射 ｜ **不适用于**: 发卡片、解散群、merge/close PR
 
-## 执行
+## 参数
 
-使用 `pr-scanner` skill 扫描仓库 `{repo}` 的 open PR。
+- **仓库**: `{repo}`
+- **并发上限**: {maxConcurrent}
 
-参数：
-- **仓库**: {repo}
-- **并发上限**: 3
-- **邀请用户**: {inviteUsers}（可选，逗号分隔的飞书 open_id，创建讨论群时自动邀请）
+## 数据结构
 
-## 安装说明
+映射文件: `workspace/bot-chat-mapping.json`（BotChatMappingStore）
 
-将此文件复制到 `schedules/pr-scanner/SCHEDULE.md`，然后替换以下占位符：
+- **Key**: `pr-{number}` → `purposeFromKey()` 推断 purpose
+- **群名**: `PR #{number} · {title前30字}` → `parseGroupNameToKey()` 解析 key
 
-| 占位符 | 替换为 |
-|--------|--------|
-| `{controlChannelChatId}` | 实际的控制频道 chatId |
-| `{repo}` | 实际监控的 GitHub 仓库（如 `owner/repo`） |
-| `{inviteUsers}` | 逗号分隔的飞书 open_id（如 `ou_xxx,ou_yyy`），留空则不邀请额外用户 |
+## 执行步骤
+
+### 1. 读取映射表
+
+```bash
+cat workspace/bot-chat-mapping.json 2>/dev/null || echo "{}"
+```
+
+提取所有 `purpose: 'pr-review'` 条目的 PR number 和 chatId。文件不存在则视为空映射表。
+
+### 2. 获取 Open PR 列表
+
+```bash
+gh pr list --repo {repo} --state open --json number,title,author,headRefName
+```
+
+### 3. 过滤与分类
+
+将获取到的 PR 分为两类：
+
+- **新 PR**：PR number 不在映射表中（`pr-{number}` key 不存在）
+- **已有群的 PR**：PR number 在映射表中存在
+
+### 4. 已有群的 PR — 状态变更检测
+
+```bash
+gh pr list --repo {repo} --state closed --json number,state
+```
+
+merged/closed → 记录日志，不自动解散。open → 跳过。
+
+### 5. 新 PR — 创建讨论群
+
+并发检查：映射表中 `purpose: 'pr-review'` 条目数 ≥ `{maxConcurrent}` 则跳过。
+
+对每个新 PR（按 number 升序）：
+
+**5a. 拉取 PR 分支到临时目录**:
+```bash
+WORKDIR=$(mktemp -d /tmp/pr-{number}-XXXXXX)
+git clone --depth 1 --no-tags https://github.com/{repo}.git "$WORKDIR"
+cd "$WORKDIR"
+git fetch origin pull/{number}/head:pr-{number}
+git checkout pr-{number}
+```
+此目录提供完整代码上下文，供 agent 阅读、review、修改和运行测试。
+
+**5b. 创建群**:
+```bash
+lark-cli im +chat-create --as bot --name "PR #{number} · {title前30字}" --description "PR #{number} 审查讨论群"
+```
+
+**5c. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review", workdir: "$WORKDIR"），原子写入。
+
+**5d. 推送 review 指令到新群**: 使用 `push_to_agent` 向新群发送 review 指令，告知 agent 工作目录为 `$WORKDIR`，可在此目录中进行代码阅读、review、修改和测试。
+
+### 6. 清理临时目录
+
+当 PR 状态变为 merged/closed 时，清理对应的临时目录：
+
+```bash
+# 从映射表读取 workdir 字段
+rm -rf "{workdir}"
+```
+
+## 错误处理
+
+- `gh` 命令失败 → 记录错误，跳过/退出
+- 映射文件读取失败 → 视为空表
+- 映射文件写入失败 → 记录错误（可通过群名重建）
+- 群创建失败 → 跳过该 PR，清理临时目录
+- PR 分支拉取失败 → 跳过该 PR
+
+## 设计原则
+
+1. **映射表是缓存** — 可从飞书 API 重建
+2. **用户驱动解散** — Bot 不自主解散群
+3. **幂等操作** — 映射表过滤防重复创建
+4. **无 Label 依赖** — 状态全在映射表
+5. **临时目录隔离** — 每个 PR 独立目录，互不干扰，PR 关闭时清理
+
+## 依赖
+
+`gh` CLI · `lark-cli` · `workspace/bot-chat-mapping.json`（BotChatMappingStore）
