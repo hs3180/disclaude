@@ -543,11 +543,15 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
         chatId: 'chat-001',
         payload: 'Hello, agent!',
         messageId: 'msg-001',
+        createdAt: expect.any(String),
       }),
     );
 
     // Should NOT call agentPool.getOrCreateChatAgent (routed through router instead)
     expect(context.agentPool.getOrCreateChatAgent).not.toHaveBeenCalled();
+
+    // Should NOT call channel.sendMessage on successful route
+    expect(channel.sendMessage).not.toHaveBeenCalled();
   });
 
   it('should pass senderOpenId from userId in UserMessage', async () => {
@@ -596,6 +600,22 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
     );
   });
 
+  it('should pass threadContext from metadata in UserMessage', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Feishu channel',
+    });
+    const message = createMockMessage({
+      metadata: { threadContext: 'thread-abc123' },
+    });
+    await handler(message);
+
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadContext: 'thread-abc123',
+      }),
+    );
+  });
+
   it('should pass attachments from extractAttachments in UserMessage', async () => {
     const fileRefs = [{
       id: 'file-001',
@@ -614,6 +634,21 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
     expect(mockRouter.route).toHaveBeenCalledWith(
       expect.objectContaining({
         attachments: fileRefs,
+      }),
+    );
+  });
+
+  it('should pass undefined attachments when extractAttachments is not provided', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'REST channel',
+      // No extractAttachments provided
+    });
+    const message = createMockMessage();
+    await handler(message);
+
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: undefined,
       }),
     );
   });
