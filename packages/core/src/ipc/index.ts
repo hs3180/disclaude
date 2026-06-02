@@ -7,6 +7,7 @@
 // Protocol types and constants
 export {
   DEFAULT_IPC_CONFIG,
+  IPC_SOCKET_PATH_FILE,
   generateSocketPath,
   type IpcConfig,
   type IpcRequestType,
@@ -43,4 +44,5 @@ export {
   resetIpcClient,
   type IpcAvailabilityStatus,
   type IpcUnavailableReason,
+  type GetIpcSocketPathOptions,
 } from './unix-socket-client.js';

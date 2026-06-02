@@ -181,6 +181,16 @@ export const DEFAULT_IPC_CONFIG: IpcConfig = {
 };
 
 /**
+ * Well-known file path where the Primary Node writes its IPC socket path.
+ *
+ * Issue #3808: External processes (e.g., cron scripts) read this file to
+ * discover the IPC socket path and call push_to_agent.
+ *
+ * Location: /tmp/disclaude-ipc-socket (OS temp directory).
+ */
+export const IPC_SOCKET_PATH_FILE = join(tmpdir(), 'disclaude-ipc-socket');
+
+/**
  * Generate a unique random socket path for IPC server.
  *
  * Issue #1355: Fixed path `/tmp/disclaude-worker.ipc` causes conflicts when
