@@ -63,6 +63,7 @@ function output(obj) {
 
 /**
  * Parse .runtime-env file into a key-value map.
+ * Handles quoted values: KEY="value with spaces" → strips surrounding quotes.
  */
 function loadRuntimeEnv() {
   if (!existsSync(RUNTIME_ENV_PATH)) return {};
@@ -73,7 +74,11 @@ function loadRuntimeEnv() {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
     if (eq > 0) {
-      const val = trimmed.slice(eq + 1).trim();
+      let val = trimmed.slice(eq + 1).trim();
+      // Strip surrounding double or single quotes
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
       env[trimmed.slice(0, eq).trim()] = val;
     }
   }
