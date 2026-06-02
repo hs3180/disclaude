@@ -44,4 +44,5 @@ export {
   resetIpcClient,
   type IpcAvailabilityStatus,
   type IpcUnavailableReason,
+  type GetIpcSocketPathOptions,
 } from './unix-socket-client.js';

@@ -4,24 +4,21 @@
  *
  * Usage:
  *   disclaude-push --chat-id <chatId> --message <message>
+ *   disclaude-push --chat-id <chatId> --message -   (read message from stdin)
  *   disclaude-push --help
  *
  * Issue #3808: Allows external scripts (cron jobs, shell loops) to push
  * messages to chat agents via the IPC server, without needing the full
  * disclaude agent stack running in the caller process.
  *
- * The socket path is discovered via:
- * 1. --socket CLI argument
- * 2. DISCLAUDE_WORKER_IPC_SOCKET env var
- * 3. DISCLAUDE_IPC_SOCKET_PATH env var
- * 4. IPC_SOCKET_PATH_FILE (/tmp/disclaude-ipc-socket)
- * 5. DEFAULT_IPC_CONFIG.socketPath (/tmp/disclaude-interactive.ipc)
+ * The socket path is discovered via getIpcSocketPath() from @disclaude/core,
+ * with --socket CLI argument taking highest priority.
  *
  * @module primary-node/push-cli
  */
 
-import { UnixSocketIpcClient, IPC_SOCKET_PATH_FILE } from '@disclaude/core';
-import { readFileSync, existsSync } from 'node:fs';
+import { UnixSocketIpcClient, getIpcSocketPath } from '@disclaude/core';
+import { existsSync } from 'node:fs';
 
 interface PushCliOptions {
   chatId: string;
@@ -63,25 +60,29 @@ disclaude-push - Push a message to a chat agent via IPC
 
 Usage:
   disclaude-push --chat-id <chatId> --message <message> [options]
+  disclaude-push --chat-id <chatId> --message -   (read message from stdin)
 
 Required:
   --chat-id, -c <id>       Target chat ID to push the message to
   --message, -m <text>     The instruction text to push to the chat agent
+                            Use "-" to read message from stdin
 
 Options:
   --socket, -s <path>      IPC socket path (auto-detected if omitted)
   --help, -h               Show this help message
 
-Socket Discovery (in order):
-  1. --socket CLI argument
-  2. DISCLAUDE_WORKER_IPC_SOCKET env var
-  3. DISCLAUDE_IPC_SOCKET_PATH env var
-  4. Socket path file: ${IPC_SOCKET_PATH_FILE}
-  5. Default: /tmp/disclaude-interactive.ipc
+Socket Discovery (handled by getIpcSocketPath() in @disclaude/core):
+  1. --socket CLI argument (highest priority)
+  2. DISCLAUDE_WORKER_IPC_SOCKET / DISCLAUDE_IPC_SOCKET_PATH env vars
+  3. Socket path discovery file (written by Primary Node)
+  4. Default fallback
 
 Examples:
   # Push a message to a Feishu chat
   disclaude-push --chat-id "oc_xxx" --message "发现新消息，请处理"
+
+  # Read message from stdin (useful for piping)
+  echo "New messages found" | disclaude-push -c "oc_xxx" -m -
 
   # Push with explicit socket path
   disclaude-push -c "oc_xxx" -m "继续执行步骤 2" -s /tmp/custom.ipc
@@ -94,17 +95,16 @@ Examples:
 }
 
 /**
- * Read the socket path from the well-known discovery file.
+ * Read message from stdin when --message is "-".
  */
-function readSocketPathFile(): string | undefined {
-  try {
-    if (existsSync(IPC_SOCKET_PATH_FILE)) {
-      return readFileSync(IPC_SOCKET_PATH_FILE, 'utf-8').trim() || undefined;
-    }
-  } catch {
-    // Ignore
-  }
-  return undefined;
+function readMessageFromStdin(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf-8');
+    process.stdin.on('data', (chunk) => { data += chunk; });
+    process.stdin.on('end', () => { resolve(data.trim()); });
+    process.stdin.on('error', reject);
+  });
 }
 
 async function main(): Promise<void> {
@@ -119,12 +119,22 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Resolve socket path
-  const socketPath = options.socketPath
-    || process.env.DISCLAUDE_WORKER_IPC_SOCKET
-    || process.env.DISCLAUDE_IPC_SOCKET_PATH
-    || readSocketPathFile()
-    || '/tmp/disclaude-interactive.ipc';
+  // Handle stdin message
+  let message = options.message;
+  if (message === '-') {
+    if (process.stdin.isTTY) {
+      console.error('Error: --message - requires stdin input (pipe or redirect).');
+      process.exit(1);
+    }
+    message = await readMessageFromStdin();
+    if (!message) {
+      console.error('Error: stdin is empty.');
+      process.exit(1);
+    }
+  }
+
+  // Resolve socket path using core's getIpcSocketPath() with CLI override
+  const socketPath = getIpcSocketPath({ override: options.socketPath });
 
   // Check if socket file exists
   if (!existsSync(socketPath)) {
@@ -137,16 +147,24 @@ async function main(): Promise<void> {
   const client = new UnixSocketIpcClient({ socketPath });
 
   try {
-    const result = await client.pushToAgent(options.chatId, options.message);
+    const result = await client.pushToAgent(options.chatId, message);
     if (result.success) {
       console.log('Message pushed successfully.');
     } else {
-      console.error('Error: push_to_agent returned failure.');
+      // Output detailed error info (Issue #3808 review fix)
+      const errorType = result.errorType || 'unknown';
+      const errorDetail = result.error || 'No details available';
+      console.error(`Error: push_to_agent failed [${errorType}]: ${errorDetail}`);
+      if (result.errorType === 'ipc_unavailable') {
+        console.error('The Primary Node may not be running or IPC is not available.');
+      } else if (result.errorType === 'ipc_timeout') {
+        console.error('The request timed out. The agent may be busy or unresponsive.');
+      }
       process.exit(1);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`Error: ${message}`);
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${msg}`);
     process.exit(1);
   } finally {
     client.disconnect();

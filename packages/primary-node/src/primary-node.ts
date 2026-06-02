@@ -32,6 +32,7 @@
  */
 
 import * as path from 'path';
+import { promises as fsp } from 'node:fs';
 import { EventEmitter } from 'events';
 import {
   createLogger,
@@ -308,9 +309,10 @@ export class PrimaryNode extends EventEmitter {
 
     // Issue #3808: Write socket path to well-known file for external processes.
     // External scripts (e.g., cron jobs) read this file to discover the IPC socket.
+    // Includes PID for stale file detection by CLI consumers.
     try {
-      const fs = await import('node:fs');
-      await fs.promises.writeFile(IPC_SOCKET_PATH_FILE, socketPath, 'utf-8');
+      const content = `${socketPath}\n${process.pid}`;
+      await fsp.writeFile(IPC_SOCKET_PATH_FILE, content, 'utf-8');
       logger.debug({ path: IPC_SOCKET_PATH_FILE }, 'IPC socket path written to discovery file');
     } catch (error) {
       logger.warn({ err: error }, 'Failed to write IPC socket path discovery file');
@@ -335,10 +337,9 @@ export class PrimaryNode extends EventEmitter {
 
     // Issue #3808: Clean up socket path discovery file
     try {
-      const fs = await import('node:fs');
-      await fs.promises.unlink(IPC_SOCKET_PATH_FILE).catch(() => {});
+      await fsp.unlink(IPC_SOCKET_PATH_FILE);
     } catch {
-      // Ignore cleanup errors
+      // Ignore cleanup errors (file may not exist)
     }
 
     logger.info('IPC server stopped');
