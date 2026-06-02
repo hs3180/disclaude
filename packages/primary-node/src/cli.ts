@@ -394,8 +394,10 @@ async function main(): Promise<void> {
   }
 }
 
-// Run main (only when executed directly, not when imported by tests)
-if (process.argv[1]?.includes('cli.ts') || process.argv[1]?.includes('disclaude-primary')) {
+// Run main (only when executed directly, not when imported by tests).
+// Match both source (cli.ts) and built (cli.js) paths, plus the `disclaude-primary` bin symlink,
+// so launchd / direct `node dist/cli.js start` invocations also enter main().
+if (process.argv[1]?.match(/cli\.[jt]s$/) || process.argv[1]?.includes('disclaude-primary')) {
   main().catch((error) => {
     logger.error({ err: error }, 'Unhandled error in main');
     console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
