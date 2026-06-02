@@ -141,7 +141,7 @@ async function main(): Promise<void> {
     if (result.success) {
       console.log('Message pushed successfully.');
     } else {
-      console.error(`Error: push_to_agent returned failure.`);
+      console.error('Error: push_to_agent returned failure.');
       process.exit(1);
     }
   } catch (error) {
