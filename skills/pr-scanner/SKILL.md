@@ -16,7 +16,6 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 |-----------|----------|---------|-------------|
 | `{repo}` | Yes | — | GitHub repo (owner/name) |
 | `{controlChannelChatId}` | Yes | — | Schedule execution context chatId |
-| `{inviteUsers}` | No | — | comma-separated user open_ids to invite when creating PR discussion groups |
 
 ## 数据结构
 
@@ -58,45 +57,16 @@ merged/closed → 记录日志，不自动解散。open → 跳过。
 
 ### 5. 新 PR — 创建讨论群
 
-对每个新 PR（按 number 升序）创建讨论群。限流策略由调用方（SCHEDULE.md）控制，Skill 本身不限制创建数量。
+对每个新 PR（按 number 升序）创建讨论群。限流策略和后续操作（邀请用户、注入 Agent）由调用方（SCHEDULE.md）控制。
 
 **5a. 创建群**:
 ```bash
-lark-cli im chat create --name "PR #{number} · {title前30字}" --description "PR #{number} 审查讨论群" {--users inviteUsers}
+lark-cli im +chat-create --name "PR #{number} · {title前30字}" --description "PR #{number} 审查讨论群" --as bot --set-bot-manager
 ```
-
-如果 `{inviteUsers}` 参数非空，则追加 `--users {inviteUsers}` 以邀请指定用户。
 
 **5b. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review"），原子写入。
 
-**5c. 注入 Review Agent 指令**: 使用 `push_to_agent` 向新建群聊的 chatId 注入 PR review 指令，指导 Agent 进行深度代码审查。
-
-> **变量替换**: 以下模板中的 `{number}`、`{repo}`、`{headRefName}` 由 PR Scanner 在调用 `push_to_agent` 时从步骤 2 的 PR 列表数据中替换。`{新群chatId}` 为步骤 5a 返回的群 ID。
-
-```
-使用 push_to_agent 向 chatId={新群chatId} 推送以下指令：
-
-你是一个 PR Review Agent。请对 PR #{number}（{repo}）进行深度代码审查。
-
-步骤：
-1. 获取 PR 概览：gh pr view {number} --repo {repo} --json title,body,author,additions,deletions,changedFiles
-2. 克隆仓库到临时目录：
-   TMPDIR=$(mktemp -d) && cd $TMPDIR
-   gh repo clone {repo} . -- --depth=50
-   git fetch origin {headRefName} && git checkout -b review FETCH_HEAD
-3. 查看 diff：gh pr diff {number} --repo {repo}
-4. 结合完整代码上下文审查：阅读被修改文件及其依赖、调用链、测试文件
-5. 在讨论群中发表结构化审查意见（关键问题 / 建议 / 样式）
-6. 清理：rm -rf $TMPDIR
-
-如果步骤 2 克隆/checkout 失败，回退到仅使用 diff 审查（跳过步骤 2 和 4），并在审查结论中标注「⚠️ 基于diff审查（仓库克隆失败）」。
-
-审查重点：
-- 修改是否与现有代码风格/模式一致
-- 是否破坏了其他模块的隐式依赖
-- 测试是否充分覆盖了边界条件
-- 类型推断、import 路径等需要完整代码才能验证的问题
-```
+Skill 到此结束。后续操作（邀请用户、push_to_agent 注入 Review Agent）由 SCHEDULE.md 中的流程定义。
 
 ## 错误处理
 
@@ -104,8 +74,6 @@ lark-cli im chat create --name "PR #{number} · {title前30字}" --description "
 - 映射文件读取失败 → 视为空表
 - 映射文件写入失败 → 记录错误（可通过群名重建）
 - 群创建失败 → 跳过该 PR
-- `push_to_agent` 失败 → 记录错误并报告到控制频道；群已创建但 Agent 未初始化（用户可手动在群中触发）
-- Review Agent 克隆/checkout 失败 → 由注入指令中的回退逻辑处理，降级为 diff-only 审查
 
 ## 设计原则
 
@@ -120,7 +88,7 @@ lark-cli im chat create --name "PR #{number} · {title前30字}" --description "
 
 ## Schedule 模板
 
-见同目录下的 `schedule.md`。将其复制到 `schedules/pr-scanner/SCHEDULE.md`，替换 `{controlChannelChatId}`、`{repo}` 和 `{inviteUsers}` 后启用。
+见同目录下的 `schedule.md`。将其复制到 `schedules/pr-scanner/SCHEDULE.md`，替换占位符后启用。
 
 ## 关联
 
