@@ -167,7 +167,7 @@ async function main(): Promise<void> {
     console.error(`Error: ${msg}`);
     process.exit(1);
   } finally {
-    client.disconnect();
+    void client.disconnect();
   }
 }
 
