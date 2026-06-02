@@ -32,6 +32,7 @@
  */
 
 import * as path from 'path';
+import { promises as fsp } from 'node:fs';
 import { EventEmitter } from 'events';
 import {
   createLogger,
@@ -40,6 +41,7 @@ import {
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   generateSocketPath,
+  IPC_SOCKET_PATH_FILE,
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
   type ChannelApiHandlers,
@@ -305,6 +307,17 @@ export class PrimaryNode extends EventEmitter {
     const socketPath = this.ipcServer.getSocketPath();
     process.env.DISCLAUDE_WORKER_IPC_SOCKET = socketPath;
 
+    // Issue #3808: Write socket path to well-known file for external processes.
+    // External scripts (e.g., cron jobs) read this file to discover the IPC socket.
+    // Includes PID for stale file detection by CLI consumers.
+    try {
+      const content = `${socketPath}\n${process.pid}`;
+      await fsp.writeFile(IPC_SOCKET_PATH_FILE, content, 'utf-8');
+      logger.debug({ path: IPC_SOCKET_PATH_FILE }, 'IPC socket path written to discovery file');
+    } catch (error) {
+      logger.warn({ err: error }, 'Failed to write IPC socket path discovery file');
+    }
+
     logger.info({ socketPath }, 'IPC server started for MCP Server connections');
   }
 
@@ -321,6 +334,13 @@ export class PrimaryNode extends EventEmitter {
 
     // Clear environment variable
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
+
+    // Issue #3808: Clean up socket path discovery file
+    try {
+      await fsp.unlink(IPC_SOCKET_PATH_FILE);
+    } catch {
+      // Ignore cleanup errors (file may not exist)
+    }
 
     logger.info('IPC server stopped');
   }
