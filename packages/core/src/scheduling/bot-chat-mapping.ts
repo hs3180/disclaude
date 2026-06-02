@@ -36,6 +36,8 @@ export interface MappingEntry {
   createdAt: string;
   /** Purpose of the group (e.g. "pr-review", "discussion") */
   purpose: MappingPurpose;
+  /** Optional: PR branch temp directory path, cleaned up when PR is closed */
+  workdir?: string;
 }
 
 /**
@@ -289,6 +291,7 @@ export class BotChatMappingStore {
       chatId: entry.chatId,
       createdAt: entry.createdAt ?? new Date().toISOString(),
       purpose: entry.purpose,
+      ...(entry.workdir ? { workdir: entry.workdir } : {}),
     };
 
     this.cache[key] = fullEntry;
