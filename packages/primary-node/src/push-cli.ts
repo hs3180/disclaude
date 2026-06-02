@@ -120,7 +120,7 @@ async function main(): Promise<void> {
   }
 
   // Handle stdin message
-  let message = options.message;
+  let { message } = options;
   if (message === '-') {
     if (process.stdin.isTTY) {
       console.error('Error: --message - requires stdin input (pipe or redirect).');
