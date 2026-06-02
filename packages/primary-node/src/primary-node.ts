@@ -552,17 +552,17 @@ export class PrimaryNode extends EventEmitter {
     logger.info({ schedulesDir }, 'Initializing scheduler...');
 
     // Step 1: Initialize CooldownManager
-    logger.info('Scheduler init step 1/5: Initializing CooldownManager');
+    logger.info('Scheduler init step 1/6: Initializing CooldownManager');
     this.cooldownManager = new CooldownManager({ cooldownDir });
-    logger.info({ cooldownDir }, 'Scheduler init step 1/5: ✓ CooldownManager ready');
+    logger.info({ cooldownDir }, 'Scheduler init step 1/6: ✓ CooldownManager ready');
 
     // Step 2: Initialize ScheduleManager
-    logger.info('Scheduler init step 2/5: Initializing ScheduleManager');
+    logger.info('Scheduler init step 2/6: Initializing ScheduleManager');
     this.scheduleManager = new ScheduleManager({ schedulesDir });
-    logger.info({ schedulesDir }, 'Scheduler init step 2/5: ✓ ScheduleManager ready');
+    logger.info({ schedulesDir }, 'Scheduler init step 2/6: ✓ ScheduleManager ready');
 
     // Step 3: Create executor and callbacks
-    logger.info('Scheduler init step 3/5: Creating schedule executor');
+    logger.info('Scheduler init step 3/6: Creating schedule executor');
     // Issue #1382: Create callbacks for scheduler
     // Issue #1384: Fixed sendMessage to construct proper OutgoingMessage object
     const schedulerCallbacks: SchedulerCallbacks = {
@@ -590,10 +590,10 @@ export class PrimaryNode extends EventEmitter {
       },
       callbacks: schedulerCallbacks,
     });
-    logger.info('Scheduler init step 3/5: ✓ Schedule executor created');
+    logger.info('Scheduler init step 3/6: ✓ Schedule executor created');
 
     // Step 4: Initialize Scheduler and schedule tasks
-    logger.info('Scheduler init step 4/5: Creating Scheduler and loading tasks');
+    logger.info('Scheduler init step 4/6: Creating Scheduler and loading tasks');
     this.scheduler = new Scheduler({
       scheduleManager: this.scheduleManager,
       cooldownManager: this.cooldownManager,
@@ -603,15 +603,9 @@ export class PrimaryNode extends EventEmitter {
       inputMessageRouter: this.inputMessageRouter,
     });
 
-    await this.scheduler.start();
-    const activeJobCount = this.scheduler.getActiveJobs().length;
-    logger.info(
-      { activeJobCount },
-      'Scheduler init step 4/5: ✓ Scheduler started'
-    );
-
-    // Step 5: Initialize file watcher for hot reload
-    logger.info('Scheduler init step 5/5: Starting file watcher');
+    // Issue #3860 P1: Start file watcher BEFORE scheduler.start() to close the
+    // race window between initial load and watcher startup. File events that
+    // arrive during scheduler.start() will now be captured by the watcher.
     this.scheduleFileWatcher = new ScheduleFileWatcher({
       schedulesDir,
       onFileAdded: (task: ScheduledTask) => {
@@ -622,14 +616,34 @@ export class PrimaryNode extends EventEmitter {
         logger.info({ taskId: task.id, name: task.name }, 'Schedule file changed, updating scheduler');
         this.scheduler?.addTask(task);
       },
-      onFileRemoved: (taskId: string) => {
+      onFileRemoved: (taskId: string, _filePath: string) => {
         logger.info({ taskId }, 'Schedule file removed, removing from scheduler');
         this.scheduler?.removeTask(taskId);
       },
     });
 
     await this.scheduleFileWatcher.start();
-    logger.info('Scheduler init step 5/5: ✓ File watcher started');
+    logger.info('Scheduler init step 5/6: ✓ File watcher started (before scheduler.load)');
+
+    await this.scheduler.start();
+    const activeJobCount = this.scheduler.getActiveJobs().length;
+
+    // Sync watcher's known task IDs and mtimes with the scheduler's loaded tasks
+    const activeJobs = this.scheduler.getActiveJobs();
+    const taskMtimes = new Map<string, Date>();
+    for (const job of activeJobs) {
+      // Use current time as baseline mtime since we don't have file stats at this point
+      taskMtimes.set(job.taskId, new Date());
+    }
+    this.scheduleFileWatcher.setKnownTaskIds(
+      new Set(activeJobs.map(j => j.taskId)),
+      taskMtimes
+    );
+
+    logger.info(
+      { activeJobCount },
+      'Scheduler init step 6/6: ✓ Scheduler started'
+    );
 
     logger.info(
       { schedulesDir, activeJobCount },
