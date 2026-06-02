@@ -404,6 +404,10 @@ export interface ScheduleFileWatcherOptions {
   debounceMs?: number;
   /** Periodic re-scan interval in ms (default: 300000 = 5 min). 0 to disable. */
   rescanIntervalMs?: number;
+  /** Delay before processing file creation on rename event, to let editor finish writing (default: 50) */
+  renameCreateDelayMs?: number;
+  /** Delay before confirming file removal, to detect rename-and-replace pattern (default: 200) */
+  renameRemoveDelayMs?: number;
 }
 
 /**
@@ -416,6 +420,8 @@ export class ScheduleFileWatcher {
   private onFileRemoved: OnFileRemoved;
   private debounceMs: number;
   private rescanIntervalMs: number;
+  private renameCreateDelayMs: number;
+  private renameRemoveDelayMs: number;
   private watcher: fs.FSWatcher | null = null;
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private rescanTimer: NodeJS.Timeout | null = null;
@@ -423,6 +429,8 @@ export class ScheduleFileWatcher {
   private fileScanner: ScheduleFileScanner;
   /** Tracks known task IDs from last scan for diff-based re-scan */
   private knownTaskIds: Set<string> = new Set();
+  /** Tracks known task mtimes for content change detection during re-scan */
+  private knownTaskMtimes: Map<string, Date> = new Map();
 
   constructor(options: ScheduleFileWatcherOptions) {
     this.schedulesDir = options.schedulesDir;
@@ -431,6 +439,8 @@ export class ScheduleFileWatcher {
     this.onFileRemoved = options.onFileRemoved;
     this.debounceMs = options.debounceMs ?? 100;
     this.rescanIntervalMs = options.rescanIntervalMs ?? 5 * 60 * 1000;
+    this.renameCreateDelayMs = options.renameCreateDelayMs ?? 50;
+    this.renameRemoveDelayMs = options.renameRemoveDelayMs ?? 200;
     this.fileScanner = new ScheduleFileScanner({ schedulesDir: this.schedulesDir });
     logger.info({ schedulesDir: this.schedulesDir }, 'ScheduleFileWatcher initialized');
   }
@@ -495,10 +505,18 @@ export class ScheduleFileWatcher {
         if (!this.knownTaskIds.has(task.id)) {
           logger.info({ taskId: task.id }, 'Re-scan detected new task');
           this.onFileAdded(task);
+        } else {
+          // Check if existing task content has changed (mtime comparison)
+          const knownMtime = this.knownTaskMtimes.get(task.id);
+          if (!knownMtime || task.fileMtime.getTime() > knownMtime.getTime()) {
+            logger.info({ taskId: task.id }, 'Re-scan detected changed task (mtime updated)');
+            this.onFileChanged(task);
+          }
         }
       }
 
       this.knownTaskIds = currentTaskIds;
+      this.knownTaskMtimes = new Map(tasks.map(t => [t.id, t.fileMtime]));
       logger.debug({ taskCount: tasks.length }, 'Full re-scan completed');
     } catch (error) {
       logger.error({ err: error }, 'Full re-scan failed');
@@ -506,11 +524,14 @@ export class ScheduleFileWatcher {
   }
 
   /**
-   * Update known task IDs. Called by the scheduler integration to
+   * Update known task IDs and their mtimes. Called by the scheduler integration to
    * keep the watcher in sync after initial load.
    */
-  setKnownTaskIds(taskIds: Set<string>): void {
+  setKnownTaskIds(taskIds: Set<string>, taskMtimes?: Map<string, Date>): void {
     this.knownTaskIds = new Set(taskIds);
+    if (taskMtimes) {
+      this.knownTaskMtimes = new Map(taskMtimes);
+    }
   }
 
   /**
@@ -522,7 +543,9 @@ export class ScheduleFileWatcher {
     this.rescanTimer = setInterval(() => {
       if (this.running) {
         logger.debug('Periodic re-scan triggered');
-        void this.fullRescan();
+        this.fullRescan().catch(err => {
+          logger.error({ err }, 'Unhandled fullRescan rejection (periodic)');
+        });
       }
     }, this.rescanIntervalMs);
 
@@ -569,7 +592,9 @@ export class ScheduleFileWatcher {
     // trigger a full re-scan instead of silently discarding the event
     if (filename === null) {
       logger.warn({ eventType }, 'fs.watch emitted null filename, triggering full re-scan');
-      void this.fullRescan();
+      this.fullRescan().catch(err => {
+        logger.error({ err }, 'Unhandled fullRescan rejection (null filename)');
+      });
       return;
     }
 
@@ -609,7 +634,7 @@ export class ScheduleFileWatcher {
         if (exists) {
           // File was created or recreated (rename-and-replace pattern)
           // Brief delay to let the editor finish writing
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, this.renameCreateDelayMs));
           const task = await this.fileScanner.parseFile(filePath);
           if (task) {
             logger.info({ taskId, filePath }, 'Schedule file added');
@@ -618,7 +643,7 @@ export class ScheduleFileWatcher {
         } else {
           // File was removed. Delay briefly to check if it's a rename-and-replace
           // where the create event arrives shortly after the rename.
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, this.renameRemoveDelayMs));
           const existsAfterDelay = await this.fileExists(filePath);
 
           if (existsAfterDelay) {

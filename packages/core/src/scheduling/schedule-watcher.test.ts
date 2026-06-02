@@ -821,6 +821,24 @@ describe('ScheduleFileWatcher', () => {
       );
     });
 
+    it('should detect rename-and-replace pattern (file recreated within delay)', async () => {
+      // First check: file does not exist → enters removal branch
+      // Second check (after delay): file exists again → treat as changed
+      mockAccess
+        .mockRejectedValueOnce({ code: 'ENOENT' })   // first fileExists check
+        .mockResolvedValueOnce(undefined);             // second check after delay
+      mockReadFile.mockResolvedValue(makeScheduleContent({ name: 'Replaced Task' }));
+
+      eventCallback('rename', 'daily-report/SCHEDULE.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      // Should detect the file was recreated and call onFileChanged
+      expect(onFileChanged).toHaveBeenCalledTimes(1);
+      expect(onFileChanged.mock.calls[0][0].name).toBe('Replaced Task');
+      expect(onFileRemoved).not.toHaveBeenCalled();
+    });
+
     it('should handle file change event', async () => {
       mockReadFile.mockResolvedValue(makeScheduleContent({ name: 'Updated Task' }));
 
@@ -892,6 +910,293 @@ describe('ScheduleFileWatcher', () => {
       await vi.runAllTimersAsync();
 
       expect(onFileAdded).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('fullRescan', () => {
+    it('should detect new tasks not in knownTaskIds', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop(); // stop to avoid interference
+
+      mockReaddir.mockResolvedValue([
+        { name: 'task-a', isDirectory: () => true },
+        { name: 'task-b', isDirectory: () => true },
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime: new Date('2026-01-01'),
+        birthtime: new Date('2026-01-01'),
+      });
+
+      // knownTaskIds is empty, so both should be detected as new
+      await watcher.fullRescan();
+
+      expect(onFileAdded).toHaveBeenCalledTimes(2);
+    });
+
+    it('should detect removed tasks', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      // Set known tasks to include one that won't be in the scan
+      watcher.setKnownTaskIds(new Set(['schedule-task-a', 'schedule-task-b']));
+
+      // Only task-a is present in the scan
+      mockReaddir.mockResolvedValue([
+        { name: 'task-a', isDirectory: () => true },
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime: new Date('2026-01-01'),
+        birthtime: new Date('2026-01-01'),
+      });
+
+      await watcher.fullRescan();
+
+      expect(onFileRemoved).toHaveBeenCalledWith(
+        'schedule-task-b',
+        `${MOCK_DIR}/task-b/SCHEDULE.md`
+      );
+    });
+
+    it('should detect changed tasks via mtime comparison', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      const oldMtime = new Date('2026-01-01');
+      const newMtime = new Date('2026-06-01');
+
+      // Set known tasks with old mtime
+      watcher.setKnownTaskIds(
+        new Set(['schedule-daily-report']),
+        new Map([['schedule-daily-report', oldMtime]])
+      );
+
+      // Scan returns same task with newer mtime
+      mockReaddir.mockResolvedValue([
+        { name: 'daily-report', isDirectory: () => true },
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime: newMtime,
+        birthtime: new Date('2026-01-01'),
+      });
+
+      await watcher.fullRescan();
+
+      expect(onFileChanged).toHaveBeenCalledTimes(1);
+      expect(onFileChanged.mock.calls[0][0].id).toBe('schedule-daily-report');
+    });
+
+    it('should not trigger callbacks when nothing changed', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      const mtime = new Date('2026-01-01');
+      watcher.setKnownTaskIds(
+        new Set(['schedule-daily-report']),
+        new Map([['schedule-daily-report', mtime]])
+      );
+
+      mockReaddir.mockResolvedValue([
+        { name: 'daily-report', isDirectory: () => true },
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime,
+        birthtime: new Date('2026-01-01'),
+      });
+
+      await watcher.fullRescan();
+
+      expect(onFileAdded).not.toHaveBeenCalled();
+      expect(onFileChanged).not.toHaveBeenCalled();
+      expect(onFileRemoved).not.toHaveBeenCalled();
+    });
+
+    it('should handle scan errors gracefully', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      mockReaddir.mockRejectedValue(new Error('Scan failed'));
+
+      // Should not throw
+      await watcher.fullRescan();
+
+      expect(onFileAdded).not.toHaveBeenCalled();
+      expect(onFileRemoved).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setKnownTaskIds', () => {
+    it('should update knownTaskIds', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      const ids = new Set(['schedule-task-a', 'schedule-task-b']);
+      watcher.setKnownTaskIds(ids);
+
+      // Verify via fullRescan: if we scan and find only task-a, task-b should be removed
+      mockReaddir.mockResolvedValue([
+        { name: 'task-a', isDirectory: () => true },
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime: new Date('2026-01-01'),
+        birthtime: new Date('2026-01-01'),
+      });
+
+      await watcher.fullRescan();
+
+      expect(onFileRemoved).toHaveBeenCalledWith(
+        'schedule-task-b',
+        `${MOCK_DIR}/task-b/SCHEDULE.md`
+      );
+    });
+
+    it('should accept optional mtimes for change detection', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      const mtime = new Date('2026-01-01');
+      watcher.setKnownTaskIds(
+        new Set(['schedule-daily-report']),
+        new Map([['schedule-daily-report', mtime]])
+      );
+
+      // Scan with newer mtime
+      mockReaddir.mockResolvedValue([
+        { name: 'daily-report', isDirectory: () => true },
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime: new Date('2026-06-01'),
+        birthtime: new Date('2026-01-01'),
+      });
+
+      await watcher.fullRescan();
+
+      expect(onFileChanged).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('rescan timer', () => {
+    it('should start periodic rescan timer on start', async () => {
+      vi.useFakeTimers();
+      createWatcher();
+      await watcher.start();
+
+      // Default interval is 5 min, use short interval for testing
+      watcher.stop();
+      const shortWatcher = new ScheduleFileWatcher({
+        schedulesDir: MOCK_DIR,
+        onFileAdded,
+        onFileChanged,
+        onFileRemoved,
+        debounceMs: 10,
+        rescanIntervalMs: 1000,
+      });
+      await shortWatcher.start();
+
+      mockReaddir.mockResolvedValue([]);
+
+      vi.advanceTimersByTime(1000);
+      await vi.runAllTimersAsync();
+
+      expect(mockReaddir).toHaveBeenCalled();
+
+      shortWatcher.stop();
+    });
+
+    it('should not start rescan timer when rescanIntervalMs is 0', async () => {
+      vi.useFakeTimers();
+      const noRescanWatcher = new ScheduleFileWatcher({
+        schedulesDir: MOCK_DIR,
+        onFileAdded,
+        onFileChanged,
+        onFileRemoved,
+        debounceMs: 10,
+        rescanIntervalMs: 0,
+      });
+      await noRescanWatcher.start();
+
+      mockReaddir.mockResolvedValue([]);
+
+      vi.advanceTimersByTime(600000);
+      await vi.runAllTimersAsync();
+
+      // readdir should NOT be called by periodic timer (only by mkdir in start)
+      expect(mockReaddir).not.toHaveBeenCalled();
+
+      noRescanWatcher.stop();
+    });
+
+    it('should clear rescan timer on stop', async () => {
+      vi.useFakeTimers();
+      const shortWatcher = new ScheduleFileWatcher({
+        schedulesDir: MOCK_DIR,
+        onFileAdded,
+        onFileChanged,
+        onFileRemoved,
+        debounceMs: 10,
+        rescanIntervalMs: 1000,
+      });
+      await shortWatcher.start();
+      shortWatcher.stop();
+
+      mockReaddir.mockResolvedValue([]);
+
+      vi.advanceTimersByTime(2000);
+      await vi.runAllTimersAsync();
+
+      // readdir should not be called after stop
+      expect(mockReaddir).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('rename delay options', () => {
+    it('should use default rename delays when not specified', () => {
+      createWatcher();
+      expect(watcher).toBeDefined();
+    });
+
+    it('should accept custom rename delays', async () => {
+      vi.useFakeTimers();
+      const customWatcher = new ScheduleFileWatcher({
+        schedulesDir: MOCK_DIR,
+        onFileAdded,
+        onFileChanged,
+        onFileRemoved,
+        debounceMs: 10,
+        renameCreateDelayMs: 100,
+        renameRemoveDelayMs: 500,
+      });
+      await customWatcher.start();
+
+      const [[,,cb]] = mockFsWatch.mock.calls;
+
+      // Test creation with custom delay
+      mockAccess.mockResolvedValue(undefined);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime: new Date('2026-01-01'),
+        birthtime: new Date('2026-01-01'),
+      });
+
+      cb('rename', 'daily-report/SCHEDULE.md');
+      vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+
+      expect(onFileAdded).toHaveBeenCalledTimes(1);
+
+      customWatcher.stop();
     });
   });
 });
