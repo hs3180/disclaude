@@ -1108,8 +1108,7 @@ describe('ScheduleFileWatcher', () => {
 
       mockReaddir.mockResolvedValue([]);
 
-      vi.advanceTimersByTime(1000);
-      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
 
       expect(mockReaddir).toHaveBeenCalled();
 
