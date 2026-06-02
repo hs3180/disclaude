@@ -271,16 +271,17 @@ export class Scheduler {
     }
 
     try {
+      const timezone = task.timezone || 'Asia/Shanghai';
       const job = new CronJob(
         task.cron,
         () => this.executeTask(task),
         null,
         true, // start
-        task.timezone ?? 'Asia/Shanghai' // timezone
+        timezone
       );
 
       this.activeJobs.set(task.id, { taskId: task.id, job, task });
-      logger.info({ taskId: task.id, cron: task.cron, name: task.name }, 'Scheduled task');
+      logger.info({ taskId: task.id, cron: task.cron, name: task.name, timezone }, 'Scheduled task');
     } catch (error) {
       logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
     }
@@ -478,16 +479,6 @@ ${task.prompt}`;
         logger.debug({ taskId: task.id, cooldownPeriod: task.cooldownPeriod }, 'Recorded task execution for cooldown');
       }
     }
-  }
-
-  /**
-   * Reload all tasks from ScheduleManager.
-   * Useful after external changes to the schedule storage.
-   */
-  async reload(): Promise<void> {
-    await this.stop();
-    await this.start();
-    logger.info('Scheduler reloaded all tasks');
   }
 
   /**

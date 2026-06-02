@@ -103,6 +103,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'model':
       case 'timezone':
       case 'modelTier':
+      case 'timezone':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -240,6 +241,7 @@ export class ScheduleFileScanner {
         timezone: frontmatter['timezone'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
         modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
+        timezone: frontmatter['timezone'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -328,6 +330,9 @@ export class ScheduleFileScanner {
     }
     if (task.modelTier) {
       frontmatter.push(`modelTier: "${task.modelTier}"`);
+    }
+    if (task.timezone) {
+      frontmatter.push(`timezone: "${task.timezone}"`);
     }
 
     frontmatter.push('---', '');
