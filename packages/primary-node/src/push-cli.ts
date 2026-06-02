@@ -26,7 +26,7 @@ interface PushCliOptions {
   socketPath?: string;
 }
 
-function parseArgs(args: string[]): PushCliOptions | null {
+export function parseArgs(args: string[]): PushCliOptions | null {
   let chatId = '';
   let message = '';
   let socketPath = '';
@@ -107,7 +107,7 @@ function readMessageFromStdin(): Promise<string> {
   });
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) {
     printUsage();
@@ -167,11 +167,14 @@ async function main(): Promise<void> {
     console.error(`Error: ${msg}`);
     process.exit(1);
   } finally {
-    void client.disconnect();
+    void client.disconnect().catch(() => {});
   }
 }
 
-main().catch((error) => {
-  console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+// Auto-run only when executed directly (not when imported for testing)
+if (process.argv[1]?.endsWith('push-cli.ts') || process.argv[1]?.endsWith('push-cli.js')) {
+  main().catch((error) => {
+    console.error('Unhandled error:', error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
