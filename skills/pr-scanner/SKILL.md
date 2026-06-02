@@ -16,7 +16,6 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 |-----------|----------|---------|-------------|
 | `{repo}` | Yes | — | GitHub repo (owner/name) |
 | `{controlChannelChatId}` | Yes | — | Schedule execution context chatId |
-| `{maxConcurrent}` | No | `3` | Max concurrent PR reviews |
 | `{inviteUsers}` | No | — | comma-separated user open_ids to invite when creating PR discussion groups |
 
 ## 数据结构
@@ -59,9 +58,7 @@ merged/closed → 记录日志，不自动解散。open → 跳过。
 
 ### 5. 新 PR — 创建讨论群
 
-并发检查：映射表中 `purpose: 'pr-review'` 条目数 ≥ `{maxConcurrent}` 则跳过。
-
-对每个新 PR（按 number 升序）：
+对每个新 PR（按 number 升序）创建讨论群。限流策略由调用方（SCHEDULE.md）控制，Skill 本身不限制创建数量。
 
 **5a. 创建群**:
 ```bash
