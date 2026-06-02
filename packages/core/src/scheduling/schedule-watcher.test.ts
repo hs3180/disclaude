@@ -755,11 +755,16 @@ describe('ScheduleFileWatcher', () => {
       eventCallback = cb;
     });
 
-    it('should ignore events without filename', () => {
-      eventCallback('change', null);
-      vi.advanceTimersByTime(20);
+    it('should trigger full re-scan when filename is null (Issue #3860)', async () => {
+      // P0: null filename triggers full re-scan instead of silent discard
+      mockReaddir.mockResolvedValue([]);
 
-      expect(onFileChanged).not.toHaveBeenCalled();
+      eventCallback('change', null);
+      // Allow the fullRescan async to complete
+      await vi.runAllTimersAsync();
+
+      // fullRescan should have been called (uses scanAll which calls readdir)
+      expect(mockReaddir).toHaveBeenCalled();
     });
 
     it('should ignore non-SCHEDULE.md files', () => {
@@ -805,6 +810,9 @@ describe('ScheduleFileWatcher', () => {
 
       eventCallback('rename', 'daily-report/SCHEDULE.md');
       vi.advanceTimersByTime(20);
+      await vi.runAllTimersAsync();
+      // Issue #3860 P1: Additional 200ms delay for rename-and-replace detection
+      vi.advanceTimersByTime(250);
       await vi.runAllTimersAsync();
 
       expect(onFileRemoved).toHaveBeenCalledWith(

@@ -583,15 +583,9 @@ export class PrimaryNode extends EventEmitter {
       inputMessageRouter: this.inputMessageRouter,
     });
 
-    await this.scheduler.start();
-    const activeJobCount = this.scheduler.getActiveJobs().length;
-    logger.info(
-      { activeJobCount },
-      'Scheduler init step 4/5: ✓ Scheduler started'
-    );
-
-    // Step 5: Initialize file watcher for hot reload
-    logger.info('Scheduler init step 5/5: Starting file watcher');
+    // Issue #3860 P1: Start file watcher BEFORE scheduler.start() to close the
+    // race window between initial load and watcher startup. File events that
+    // arrive during scheduler.start() will now be captured by the watcher.
     this.scheduleFileWatcher = new ScheduleFileWatcher({
       schedulesDir,
       onFileAdded: (task: ScheduledTask) => {
@@ -609,7 +603,20 @@ export class PrimaryNode extends EventEmitter {
     });
 
     await this.scheduleFileWatcher.start();
-    logger.info('Scheduler init step 5/5: ✓ File watcher started');
+    logger.info('Scheduler init step 4/5: ✓ File watcher started (before scheduler.load)');
+
+    await this.scheduler.start();
+    const activeJobCount = this.scheduler.getActiveJobs().length;
+
+    // Sync watcher's known task IDs with the scheduler's loaded tasks
+    this.scheduleFileWatcher.setKnownTaskIds(
+      new Set(this.scheduler.getActiveJobs().map(j => j.taskId))
+    );
+
+    logger.info(
+      { activeJobCount },
+      'Scheduler init step 4/5: ✓ Scheduler started'
+    );
 
     logger.info(
       { schedulesDir, activeJobCount },

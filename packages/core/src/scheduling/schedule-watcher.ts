@@ -402,6 +402,8 @@ export interface ScheduleFileWatcherOptions {
   onFileRemoved: OnFileRemoved;
   /** Debounce interval in ms (default: 100) */
   debounceMs?: number;
+  /** Periodic re-scan interval in ms (default: 300000 = 5 min). 0 to disable. */
+  rescanIntervalMs?: number;
 }
 
 /**
@@ -413,10 +415,14 @@ export class ScheduleFileWatcher {
   private onFileChanged: OnFileChanged;
   private onFileRemoved: OnFileRemoved;
   private debounceMs: number;
+  private rescanIntervalMs: number;
   private watcher: fs.FSWatcher | null = null;
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private rescanTimer: NodeJS.Timeout | null = null;
   private running = false;
   private fileScanner: ScheduleFileScanner;
+  /** Tracks known task IDs from last scan for diff-based re-scan */
+  private knownTaskIds: Set<string> = new Set();
 
   constructor(options: ScheduleFileWatcherOptions) {
     this.schedulesDir = options.schedulesDir;
@@ -424,6 +430,7 @@ export class ScheduleFileWatcher {
     this.onFileChanged = options.onFileChanged;
     this.onFileRemoved = options.onFileRemoved;
     this.debounceMs = options.debounceMs ?? 100;
+    this.rescanIntervalMs = options.rescanIntervalMs ?? 5 * 60 * 1000;
     this.fileScanner = new ScheduleFileScanner({ schedulesDir: this.schedulesDir });
     logger.info({ schedulesDir: this.schedulesDir }, 'ScheduleFileWatcher initialized');
   }
@@ -455,10 +462,71 @@ export class ScheduleFileWatcher {
       this.running = true;
       logger.info({ schedulesDir: this.schedulesDir }, 'File watcher started');
 
+      // Issue #3860: Start periodic re-scan as safety net for missed fs.watch events
+      this.startRescanTimer();
+
     } catch (error) {
       logger.error({ err: error }, 'Failed to start file watcher');
       throw error;
     }
+  }
+
+  /**
+   * Perform a full re-scan and reconcile differences with known tasks.
+   * Used as fallback when fs.watch events may have been missed.
+   *
+   * Issue #3860 P2: Periodic re-scan safety net.
+   */
+  async fullRescan(): Promise<void> {
+    try {
+      const tasks = await this.fileScanner.scanAll();
+      const currentTaskIds = new Set(tasks.map(t => t.id));
+
+      // Find removed tasks
+      for (const knownId of this.knownTaskIds) {
+        if (!currentTaskIds.has(knownId)) {
+          logger.info({ taskId: knownId }, 'Re-scan detected removed task');
+          this.onFileRemoved(knownId, this.fileScanner.getFilePath(knownId));
+        }
+      }
+
+      // Find added/changed tasks
+      for (const task of tasks) {
+        if (!this.knownTaskIds.has(task.id)) {
+          logger.info({ taskId: task.id }, 'Re-scan detected new task');
+          this.onFileAdded(task);
+        }
+      }
+
+      this.knownTaskIds = currentTaskIds;
+      logger.debug({ taskCount: tasks.length }, 'Full re-scan completed');
+    } catch (error) {
+      logger.error({ err: error }, 'Full re-scan failed');
+    }
+  }
+
+  /**
+   * Update known task IDs. Called by the scheduler integration to
+   * keep the watcher in sync after initial load.
+   */
+  setKnownTaskIds(taskIds: Set<string>): void {
+    this.knownTaskIds = new Set(taskIds);
+  }
+
+  /**
+   * Start the periodic re-scan timer.
+   */
+  private startRescanTimer(): void {
+    if (this.rescanIntervalMs <= 0) return;
+
+    this.rescanTimer = setInterval(() => {
+      if (this.running) {
+        logger.debug('Periodic re-scan triggered');
+        void this.fullRescan();
+      }
+    }, this.rescanIntervalMs);
+
+    logger.info({ intervalMs: this.rescanIntervalMs }, 'Periodic re-scan timer started');
   }
 
   /**
@@ -468,6 +536,11 @@ export class ScheduleFileWatcher {
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
+    }
+
+    if (this.rescanTimer) {
+      clearInterval(this.rescanTimer);
+      this.rescanTimer = null;
     }
 
     for (const timer of this.debounceTimers.values()) {
@@ -492,7 +565,15 @@ export class ScheduleFileWatcher {
    * Issue #2526: Filters for `SCHEDULE.md` files inside subdirectories.
    */
   private handleFileEvent(eventType: string, filename: string | null): void {
-    if (!filename || !filename.endsWith('SCHEDULE.md')) {
+    // Issue #3860 P0: When filename is null (possible under high load or certain platforms),
+    // trigger a full re-scan instead of silently discarding the event
+    if (filename === null) {
+      logger.warn({ eventType }, 'fs.watch emitted null filename, triggering full re-scan');
+      void this.fullRescan();
+      return;
+    }
+
+    if (!filename.endsWith('SCHEDULE.md')) {
       return;
     }
 
@@ -520,17 +601,37 @@ export class ScheduleFileWatcher {
 
     try {
       if (eventType === 'rename') {
+        // Issue #3860 P1: Editors (vim, VSCode) use rename → create pattern on save.
+        // Wait briefly before processing removal to avoid false remove when
+        // the file is immediately recreated by the editor.
         const exists = await this.fileExists(filePath);
 
         if (exists) {
+          // File was created or recreated (rename-and-replace pattern)
+          // Brief delay to let the editor finish writing
+          await new Promise(resolve => setTimeout(resolve, 50));
           const task = await this.fileScanner.parseFile(filePath);
           if (task) {
             logger.info({ taskId, filePath }, 'Schedule file added');
             this.onFileAdded(task);
           }
         } else {
-          logger.info({ taskId, filePath }, 'Schedule file removed');
-          this.onFileRemoved(taskId, filePath);
+          // File was removed. Delay briefly to check if it's a rename-and-replace
+          // where the create event arrives shortly after the rename.
+          await new Promise(resolve => setTimeout(resolve, 200));
+          const existsAfterDelay = await this.fileExists(filePath);
+
+          if (existsAfterDelay) {
+            // File was recreated — treat as update, not remove+add
+            const task = await this.fileScanner.parseFile(filePath);
+            if (task) {
+              logger.info({ taskId, filePath }, 'Schedule file replaced (rename-and-replace pattern)');
+              this.onFileChanged(task);
+            }
+          } else {
+            logger.info({ taskId, filePath }, 'Schedule file removed');
+            this.onFileRemoved(taskId, filePath);
+          }
         }
       } else if (eventType === 'change') {
         const task = await this.fileScanner.parseFile(filePath);
