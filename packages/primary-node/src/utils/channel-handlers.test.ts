@@ -13,7 +13,7 @@ import {
   createDefaultMessageHandler,
   createChannelApiHandlers,
 } from './channel-handlers.js';
-import type { IChannel, IncomingMessage } from '@disclaude/core';
+import type { IChannel, IncomingMessage, MessageRouter } from '@disclaude/core';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
 
 // ============================================================================
@@ -505,6 +505,202 @@ describe('createDefaultMessageHandler', () => {
       type: 'text',
       text: '❌ Error: string error',
     });
+  });
+});
+
+// ============================================================================
+// Tests: createDefaultMessageHandler with InputMessageRouter (Issue #3776)
+// ============================================================================
+
+describe('createDefaultMessageHandler with InputMessageRouter', () => {
+  let channel: IChannel;
+  let context: WiredContext;
+  let mockRouter: { route: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    channel = createMockChannel();
+    mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+    context = createMockWiredContext({
+      channel,
+      inputMessageRouter: mockRouter as unknown as MessageRouter,
+    });
+    vi.clearAllMocks();
+  });
+
+  it('should route through InputMessageRouter when available', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'REST channel',
+      sendDoneSignal: true,
+    });
+    const message = createMockMessage();
+    await handler(message);
+
+    // Should call router.route() instead of agent pool directly
+    expect(mockRouter.route).toHaveBeenCalledTimes(1);
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'user',
+        chatId: 'chat-001',
+        payload: 'Hello, agent!',
+        messageId: 'msg-001',
+      }),
+    );
+
+    // Should NOT call agentPool.getOrCreateChatAgent (routed through router instead)
+    expect(context.agentPool.getOrCreateChatAgent).not.toHaveBeenCalled();
+  });
+
+  it('should pass senderOpenId from userId in UserMessage', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'REST channel',
+    });
+    const message = createMockMessage({ userId: 'ou_user123' });
+    await handler(message);
+
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        senderOpenId: 'ou_user123',
+      }),
+    );
+  });
+
+  it('should pass chatHistoryContext from metadata in UserMessage', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'REST channel',
+    });
+    const message = createMockMessage({
+      metadata: { chatHistoryContext: 'Previous context' },
+    });
+    await handler(message);
+
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatHistoryContext: 'Previous context',
+      }),
+    );
+  });
+
+  it('should pass chatType from metadata in UserMessage', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Feishu channel',
+    });
+    const message = createMockMessage({
+      metadata: { chatType: 'group' },
+    });
+    await handler(message);
+
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatType: 'group',
+      }),
+    );
+  });
+
+  it('should pass attachments from extractAttachments in UserMessage', async () => {
+    const fileRefs = [{
+      id: 'file-001',
+      fileName: 'test.pdf',
+      source: 'user' as const,
+      localPath: '/tmp/test.pdf',
+      createdAt: Date.now(),
+    }];
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Feishu channel',
+      extractAttachments: () => fileRefs,
+    });
+    const message = createMockMessage();
+    await handler(message);
+
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: fileRefs,
+      }),
+    );
+  });
+
+  it('should send error message to channel when router.route() throws', async () => {
+    mockRouter.route.mockRejectedValue(new Error('No channel available'));
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'REST channel',
+      sendDoneSignal: true,
+    });
+    const message = createMockMessage();
+    await handler(message);
+
+    // Should send error text to the originating channel
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: '❌ Error: No channel available',
+    });
+  });
+
+  it('should send done signal on router error when sendDoneSignal is true', async () => {
+    mockRouter.route.mockRejectedValue(new Error('Routing failed'));
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'REST channel',
+      sendDoneSignal: true,
+    });
+    const message = createMockMessage();
+    await handler(message);
+
+    // Error message + done signal = 2 calls
+    expect(channel.sendMessage).toHaveBeenCalledTimes(2);
+    expect(channel.sendMessage).toHaveBeenLastCalledWith({
+      chatId: 'chat-001',
+      type: 'done',
+    });
+  });
+
+  it('should NOT send done signal on router error when sendDoneSignal is false', async () => {
+    mockRouter.route.mockRejectedValue(new Error('Routing failed'));
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Feishu channel',
+      sendDoneSignal: false,
+    });
+    const message = createMockMessage();
+    await handler(message);
+
+    // Only error message, no done signal
+    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: '❌ Error: Routing failed',
+    });
+  });
+
+  it('should handle non-Error exceptions from router', async () => {
+    mockRouter.route.mockRejectedValue('string error');
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'REST channel',
+    });
+    const message = createMockMessage();
+    await handler(message);
+
+    expect(channel.sendMessage).toHaveBeenCalledWith({
+      chatId: 'chat-001',
+      type: 'text',
+      text: '❌ Error: string error',
+    });
+  });
+
+  it('should fall back to direct agent pool when inputMessageRouter is not present', async () => {
+    // Remove router from context
+    const contextWithoutRouter = createMockWiredContext({ channel });
+    const handler = createDefaultMessageHandler(channel, contextWithoutRouter, {
+      channelName: 'Test channel',
+    });
+    const message = createMockMessage();
+    await handler(message);
+
+    // Should use agentPool directly (backward compatible path)
+    expect(contextWithoutRouter.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
+      'chat-001',
+      expect.objectContaining({
+        sendMessage: expect.any(Function),
+      }),
+    );
   });
 });
 
