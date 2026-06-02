@@ -223,12 +223,13 @@ describe('Config', () => {
     });
 
     it('should fall back to config when env var is empty string', () => {
+      // Capture the no-override result first (may use real config in singleFork mode)
+      const noOverrideResult = Config.getWorkspaceDir();
       process.env.DISCLAUDE_WORKSPACE_DIR = '';
       try {
         const wsDir = Config.getWorkspaceDir();
-        // Empty string is falsy, should fall back to config
-        expect(typeof wsDir).toBe('string');
-        expect(path.isAbsolute(wsDir)).toBe(true);
+        // Empty string is falsy, should fall back to same value as no-override
+        expect(wsDir).toBe(noOverrideResult);
       } finally {
         delete process.env.DISCLAUDE_WORKSPACE_DIR;
       }
