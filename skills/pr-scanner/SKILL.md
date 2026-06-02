@@ -21,6 +21,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 | `{repo}` | Yes | — | GitHub repo (owner/name) |
 | `{controlChannelChatId}` | Yes | — | 控制频道 chatId（当前对话的 chatId） |
 | `{maxConcurrent}` | No | `3` | 最大并发 PR 讨论群数 |
+| `{inviteUsers}` | No | — | 逗号分隔的飞书 open_id，创建讨论群时邀请 |
 | `{cron}` | No | `0 */6 * * *` | 扫描频率（默认每6小时） |
 
 ### 2. 实例化 Schedule
@@ -39,6 +40,8 @@ cp disclaude/skills/pr-scanner/schedule.md schedules/pr-scanner/SCHEDULE.md
 | `{controlChannelChatId}` | 实际的控制频道 chatId |
 | `{repo}` | 实际监控的 GitHub 仓库（如 `owner/repo`） |
 | `{maxConcurrent}` | 并发上限（默认 `3`） |
+| `{inviteUsers}` | 逗号分隔的飞书 open_id（如 `ou_xxx,ou_yyy`），留空则不邀请 |
+| `{inviteUsersFlag}` | 空字符串（不邀请）或 `--users ou_xxx,ou_yyy` |
 | `{cron}` | 实际的 cron 表达式（默认 `0 */6 * * *`） |
 
 ### 3. 验证

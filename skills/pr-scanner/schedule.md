@@ -14,6 +14,7 @@ chatId: "{controlChannelChatId}"
 
 - **仓库**: `{repo}`
 - **并发上限**: {maxConcurrent}
+- **邀请用户**: `{inviteUsers}`（可选，逗号分隔的飞书 open_id，创建讨论群时自动邀请）
 
 ## 数据结构
 
@@ -62,17 +63,19 @@ merged/closed → 记录日志，不自动解散。open → 跳过。
 **5a. 拉取 PR 分支到临时目录**:
 ```bash
 WORKDIR=$(mktemp -d /tmp/pr-{number}-XXXXXX)
-git clone --depth 1 --no-tags https://github.com/{repo}.git "$WORKDIR"
+gh repo clone {repo} "$WORKDIR" -- --depth=50
 cd "$WORKDIR"
 git fetch origin pull/{number}/head:pr-{number}
 git checkout pr-{number}
 ```
-此目录提供完整代码上下文，供 agent 阅读、review、修改和运行测试。
+此目录提供完整代码上下文，供 agent 阅读、review、修改和运行测试。`gh repo clone` 使用 GitHub CLI 认证，支持私有仓库。
 
 **5b. 创建群**:
 ```bash
-lark-cli im +chat-create --as bot --name "PR #{number} · {title前30字}" --description "PR #{number} 审查讨论群"
+lark-cli im +chat-create --as bot --name "PR #{number} · {title前30字}" --description "PR #{number} 审查讨论群" {inviteUsersFlag}
 ```
+
+如果 `{inviteUsers}` 非空，则 `{inviteUsersFlag}` 替换为 `--users {inviteUsers}`；否则替换为空字符串。
 
 **5c. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review", workdir: "$WORKDIR"），原子写入。
 
