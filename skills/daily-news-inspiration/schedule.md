@@ -1,9 +1,9 @@
 ---
 name: "每日新闻灵感提问"
 cron: "0 9 * * *"
-enabled: true
+enabled: false
 blocking: true
-chatId: "{targetChatId}"
+chatId: "REPLACE_WITH_ACTUAL_CHAT_ID"
 ---
 
 # 每日新闻灵感提问 — 定时执行
@@ -15,7 +15,7 @@ chatId: "{targetChatId}"
 使用 `daily-news-inspiration` skill 浏览新闻并生成提问。
 
 参数：
-- **目标群 chatId**: {targetChatId}
+- **目标群 chatId**: REPLACE_WITH_ACTUAL_CHAT_ID
 
 ### 执行前检查
 
@@ -46,4 +46,4 @@ cat workspace/chat/{chatId}.md 2>/dev/null | tail -100 || echo "No chat history"
 
 | 占位符 | 替换为 |
 |--------|--------|
-| `{targetChatId}` | 实际的目标群组 chatId |
+| `REPLACE_WITH_ACTUAL_CHAT_ID` | 实际的目标群组 chatId |
