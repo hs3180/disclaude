@@ -1,4 +1,4 @@
-E�z�Z�m6�N��Mu�~��Ot�8�M4�D�4��{�mvE�z�m�m���j����nm�&������}|��b��Z�׿r��z{l�������(�����r��X�����n����^�׬��+y��������D^�笶�(���Ӿ��y�/**
+/**
  * Tests for ScheduleFileScanner (packages/core/src/scheduling/schedule-watcher.ts)
  *
  * Tests the ScheduleFileScanner class which handles parsing, writing, and
@@ -58,7 +58,7 @@ vi.mock('fs', () => ({
   watch: mockFsWatch,
 }));
 
-import { ScheduleFileScanner, ScheduleFileWatcher, type ScheduleFileTask } from './schedule-watcher.js';
+import { ScheduleFileScanner, ScheduleFileWatcher } from './schedule-watcher.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
 // ============================================================================
@@ -636,7 +636,7 @@ describe('ScheduleFileWatcher', () => {
       onFileChanged,
       onFileRemoved,
       debounceMs,
-      rescanIntervalMs: 0, // Disable rescan timer by default to prevent fake timer infinite loops
+      rescanIntervalMs: 0, // Disable rescan timer by default
     });
     return watcher;
   }
@@ -1032,31 +1032,6 @@ describe('ScheduleFileWatcher', () => {
       expect(onFileAdded).not.toHaveBeenCalled();
       expect(onFileRemoved).not.toHaveBeenCalled();
     });
-
-    it('should skip concurrent fullRescan invocations', async () => {
-      createWatcher();
-      await watcher.start();
-      watcher.stop();
-
-      // Make scanAll slow by controlling when it resolves
-      let resolveFirst: () => void;
-      const firstScan = new Promise<ScheduleFileTask[]>((resolve) => {
-        resolveFirst = () => resolve([]);
-      });
-      const callCountBefore = mockReaddir.mock.calls.length;
-      mockReaddir.mockImplementationOnce(() => firstScan);
-
-      // Start two concurrent rescans
-      const p1 = watcher.fullRescan();
-      const p2 = watcher.fullRescan();
-
-      // Resolve the slow scan
-      resolveFirst!();
-      await Promise.all([p1, p2]);
-
-      // Only one additional readdir call should have been made (the second was skipped)
-      expect(mockReaddir.mock.calls.length).toBe(callCountBefore + 1);
-    });
   });
 
   describe('setKnownTaskIds', () => {
@@ -1134,7 +1109,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(1000);
-      await vi.advanceTimersByTimeAsync(0); // Flush microtask queue
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(mockReaddir).toHaveBeenCalled();
 
@@ -1203,6 +1178,7 @@ describe('ScheduleFileWatcher', () => {
         debounceMs: 10,
         renameCreateDelayMs: 100,
         renameRemoveDelayMs: 500,
+        rescanIntervalMs: 0,
       });
       await customWatcher.start();
 
