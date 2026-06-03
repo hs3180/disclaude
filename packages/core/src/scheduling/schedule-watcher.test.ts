@@ -636,6 +636,7 @@ describe('ScheduleFileWatcher', () => {
       onFileChanged,
       onFileRemoved,
       debounceMs,
+      rescanIntervalMs: 0, // Disable rescan timer by default
     });
     return watcher;
   }
@@ -1108,7 +1109,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(1000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(mockReaddir).toHaveBeenCalled();
 
@@ -1130,7 +1131,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(600000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       // readdir should NOT be called by periodic timer (only by mkdir in start)
       expect(mockReaddir).not.toHaveBeenCalled();
@@ -1154,7 +1155,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(2000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       // readdir should not be called after stop
       expect(mockReaddir).not.toHaveBeenCalled();
@@ -1177,6 +1178,7 @@ describe('ScheduleFileWatcher', () => {
         debounceMs: 10,
         renameCreateDelayMs: 100,
         renameRemoveDelayMs: 500,
+        rescanIntervalMs: 0,
       });
       await customWatcher.start();
 

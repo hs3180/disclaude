@@ -101,6 +101,7 @@ function parseScheduleFrontmatter(content: string): {
       case 'createdAt':
       case 'lastExecutedAt':
       case 'model':
+      case 'timezone':
       case 'modelTier':
         frontmatter[key] = stripQuotes(value);
         break;
@@ -236,6 +237,7 @@ export class ScheduleFileScanner {
         createdBy: frontmatter['createdBy'] as string | undefined,
         createdAt: (frontmatter['createdAt'] as string) || stats.birthtime.toISOString(),
         lastExecutedAt: frontmatter['lastExecutedAt'] as string | undefined,
+        timezone: frontmatter['timezone'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
         modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
         sourceFile: filePath,
@@ -259,6 +261,17 @@ export class ScheduleFileScanner {
           logger.info({ taskId: task.id, name: task.name, model: task.model }, 'Schedule task has both model and modelTier; explicit model takes priority');
         } else {
           logger.info({ taskId: task.id, name: task.name, modelTier: task.modelTier }, 'Schedule task will use model tier');
+        }
+      }
+
+      // Validate IANA timezone if specified
+      if (task.timezone) {
+        try {
+          new Intl.DateTimeFormat(undefined, { timeZone: task.timezone });
+        } catch {
+          logger.warn({ taskId: task.id, name: task.name, timezone: task.timezone },
+            'Invalid IANA timezone, falling back to default');
+          task.timezone = undefined;
         }
       }
 
@@ -306,6 +319,9 @@ export class ScheduleFileScanner {
     }
     if (task.createdAt) {
       frontmatter.push(`createdAt: "${task.createdAt}"`);
+    }
+    if (task.timezone) {
+      frontmatter.push(`timezone: "${task.timezone}"`);
     }
     if (task.model) {
       frontmatter.push(`model: "${task.model}"`);
@@ -426,6 +442,8 @@ export class ScheduleFileWatcher {
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private rescanTimer: NodeJS.Timeout | null = null;
   private running = false;
+  /** Guard against concurrent rescan execution */
+  private rescanInProgress = false;
   private fileScanner: ScheduleFileScanner;
   /** Tracks known task IDs from last scan for diff-based re-scan */
   private knownTaskIds: Set<string> = new Set();
@@ -488,6 +506,11 @@ export class ScheduleFileWatcher {
    * Issue #3860 P2: Periodic re-scan safety net.
    */
   async fullRescan(): Promise<void> {
+    if (this.rescanInProgress) {
+      logger.debug('Re-scan already in progress, skipping');
+      return;
+    }
+    this.rescanInProgress = true;
     try {
       const tasks = await this.fileScanner.scanAll();
       const currentTaskIds = new Set(tasks.map(t => t.id));
@@ -520,6 +543,8 @@ export class ScheduleFileWatcher {
       logger.debug({ taskCount: tasks.length }, 'Full re-scan completed');
     } catch (error) {
       logger.error({ err: error }, 'Full re-scan failed');
+    } finally {
+      this.rescanInProgress = false;
     }
   }
 
@@ -538,7 +563,7 @@ export class ScheduleFileWatcher {
    * Start the periodic re-scan timer.
    */
   private startRescanTimer(): void {
-    if (this.rescanIntervalMs <= 0) return;
+    if (this.rescanIntervalMs <= 0) { return; }
 
     this.rescanTimer = setInterval(() => {
       if (this.running) {
@@ -663,6 +688,8 @@ export class ScheduleFileWatcher {
         if (task) {
           logger.info({ taskId, filePath }, 'Schedule file changed');
           this.onFileChanged(task);
+        } else {
+          logger.warn({ taskId, filePath }, 'Schedule file became unparseable on change event');
         }
       }
     } catch (error) {
