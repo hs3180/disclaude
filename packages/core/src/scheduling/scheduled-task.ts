@@ -29,6 +29,7 @@ export interface ScheduledTask {
   /**
    * Timezone for cron scheduling (IANA timezone name, e.g., "America/New_York").
    * Defaults to "Asia/Shanghai" when not specified.
+   * Can be set in schedule markdown frontmatter (e.g., `timezone: "UTC"`).
    *
    * Issue #3860: Configurable timezone for scheduled tasks.
    */
@@ -76,13 +77,4 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
-  /**
-   * Timezone for cron expression evaluation (e.g., "America/New_York").
-   * Defaults to "Asia/Shanghai" when not specified.
-   *
-   * Defined in schedule markdown frontmatter (e.g., `timezone: "UTC"`).
-   *
-   * Issue #3860: Configurable timezone per task.
-   */
-  timezone?: string;
 }
