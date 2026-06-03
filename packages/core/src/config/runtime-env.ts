@@ -26,6 +26,8 @@ const FILENAME = '.runtime-env';
 /**
  * Load runtime env vars from workspace directory.
  * Returns empty object if file doesn't exist or is unreadable.
+ * Handles quoted values: KEY="value with spaces" → strips surrounding quotes.
+ * Only strips one layer of quotes; nested quotes like KEY=""val"" become "val".
  */
 export function loadRuntimeEnv(workspaceDir: string): Record<string, string> {
   const filePath = path.join(workspaceDir, FILENAME);
@@ -39,7 +41,12 @@ export function loadRuntimeEnv(workspaceDir: string): Record<string, string> {
       if (!trimmed || trimmed.startsWith('#')) { continue; }
       const eqIndex = trimmed.indexOf('=');
       if (eqIndex > 0) {
-        env[trimmed.slice(0, eqIndex).trim()] = trimmed.slice(eqIndex + 1).trim();
+        let val = trimmed.slice(eqIndex + 1).trim();
+        // Strip one layer of surrounding double or single quotes
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        env[trimmed.slice(0, eqIndex).trim()] = val;
       }
     }
 
@@ -56,13 +63,14 @@ export function loadRuntimeEnv(workspaceDir: string): Record<string, string> {
  * Write a runtime env var to the workspace file.
  * Creates or appends to `.runtime-env` in the workspace directory.
  * Thread-safe for single-writer scenarios.
+ * Values containing spaces are wrapped in double quotes to preserve round-trip integrity.
  */
 export function setRuntimeEnv(workspaceDir: string, key: string, value: string): void {
   const filePath = path.join(workspaceDir, FILENAME);
   const existing = loadRuntimeEnv(workspaceDir);
   existing[key] = value;
 
-  const lines = Object.entries(existing).map(([k, v]) => `${k}=${v}`);
+  const lines = Object.entries(existing).map(([k, v]) => v.includes(' ') ? `${k}="${v}"` : `${k}=${v}`);
   fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
 
   logger.debug({ key }, 'Set runtime env var');
@@ -81,7 +89,7 @@ export function deleteRuntimeEnv(workspaceDir: string, key: string): void {
   if (Object.keys(existing).length === 0) {
     fs.rmSync(filePath, { force: true });
   } else {
-    const lines = Object.entries(existing).map(([k, v]) => `${k}=${v}`);
+    const lines = Object.entries(existing).map(([k, v]) => v.includes(' ') ? `${k}="${v}"` : `${k}=${v}`);
     fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
   }
 
