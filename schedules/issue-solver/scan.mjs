@@ -21,8 +21,8 @@ import crypto from "node:crypto";
 // Config
 // ---------------------------------------------------------------------------
 
-const REPO = "hs3180/disclaude";
-const REPO_OWNER = REPO.split("/")[0]; // "hs3180"
+const REPO = process.env.TARGET_REPO || "hs3180/disclaude";
+const REPO_OWNER = REPO.split("/")[0];
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 // Use project root .runtime-env (consistent with packages/core/src/config/runtime-env.ts)
