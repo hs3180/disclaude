@@ -58,7 +58,7 @@ vi.mock('fs', () => ({
   watch: mockFsWatch,
 }));
 
-import { ScheduleFileScanner, ScheduleFileWatcher } from './schedule-watcher.js';
+import { ScheduleFileScanner, ScheduleFileWatcher, type ScheduleFileTask } from './schedule-watcher.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
 // ============================================================================
@@ -1031,6 +1031,31 @@ describe('ScheduleFileWatcher', () => {
 
       expect(onFileAdded).not.toHaveBeenCalled();
       expect(onFileRemoved).not.toHaveBeenCalled();
+    });
+
+    it('should skip concurrent fullRescan invocations', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      // Make scanAll slow by controlling when it resolves
+      let resolveFirst: () => void;
+      const firstScan = new Promise<ScheduleFileTask[]>((resolve) => {
+        resolveFirst = () => resolve([]);
+      });
+      const callCountBefore = mockReaddir.mock.calls.length;
+      mockReaddir.mockImplementationOnce(() => firstScan);
+
+      // Start two concurrent rescans
+      const p1 = watcher.fullRescan();
+      const p2 = watcher.fullRescan();
+
+      // Resolve the slow scan
+      resolveFirst!();
+      await Promise.all([p1, p2]);
+
+      // Only one additional readdir call should have been made (the second was skipped)
+      expect(mockReaddir.mock.calls.length).toBe(callCountBefore + 1);
     });
   });
 

@@ -1,6 +1,6 @@
 # Environment variables
 .env
-.runtime-env
+**/.runtime-env
 
 # Configuration file with secrets
 disclaude.config.yaml

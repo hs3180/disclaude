@@ -19,6 +19,13 @@ export interface ScheduledTask {
   name: string;
   /** Cron expression (e.g., "0 9 * * *" for daily at 9am) */
   cron: string;
+  /**
+   * Timezone for cron scheduling (IANA timezone name, e.g., "America/New_York").
+   * Defaults to "Asia/Shanghai" when not specified.
+   *
+   * Issue #3860: Configurable timezone for scheduled tasks.
+   */
+  timezone?: string;
   /** Prompt to execute when task triggers */
   prompt: string;
   /** Chat ID where task was created (scope) */
