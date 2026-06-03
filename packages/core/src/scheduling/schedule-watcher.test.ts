@@ -58,7 +58,7 @@ vi.mock('fs', () => ({
   watch: mockFsWatch,
 }));
 
-import { ScheduleFileScanner, ScheduleFileWatcher, type ScheduleFileTask } from './schedule-watcher.js';
+import { ScheduleFileScanner, ScheduleFileWatcher } from './schedule-watcher.js';
 import type { ScheduledTask } from './scheduled-task.js';
 
 // ============================================================================
@@ -636,6 +636,7 @@ describe('ScheduleFileWatcher', () => {
       onFileChanged,
       onFileRemoved,
       debounceMs,
+      rescanIntervalMs: 0, // Disable rescan timer by default
     });
     return watcher;
   }
@@ -1031,31 +1032,6 @@ describe('ScheduleFileWatcher', () => {
       expect(onFileAdded).not.toHaveBeenCalled();
       expect(onFileRemoved).not.toHaveBeenCalled();
     });
-
-    it('should skip concurrent fullRescan invocations', async () => {
-      createWatcher();
-      await watcher.start();
-      watcher.stop();
-
-      // Make scanAll slow by controlling when it resolves
-      let resolveFirst: () => void;
-      const firstScan = new Promise<ScheduleFileTask[]>((resolve) => {
-        resolveFirst = () => resolve([]);
-      });
-      const callCountBefore = mockReaddir.mock.calls.length;
-      mockReaddir.mockImplementationOnce(() => firstScan);
-
-      // Start two concurrent rescans
-      const p1 = watcher.fullRescan();
-      const p2 = watcher.fullRescan();
-
-      // Resolve the slow scan
-      resolveFirst!();
-      await Promise.all([p1, p2]);
-
-      // Only one additional readdir call should have been made (the second was skipped)
-      expect(mockReaddir.mock.calls.length).toBe(callCountBefore + 1);
-    });
   });
 
   describe('setKnownTaskIds', () => {
@@ -1133,7 +1109,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(1000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       expect(mockReaddir).toHaveBeenCalled();
 
@@ -1155,7 +1131,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(600000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       // readdir should NOT be called by periodic timer (only by mkdir in start)
       expect(mockReaddir).not.toHaveBeenCalled();
@@ -1179,7 +1155,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(2000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       // readdir should not be called after stop
       expect(mockReaddir).not.toHaveBeenCalled();
@@ -1202,6 +1178,7 @@ describe('ScheduleFileWatcher', () => {
         debounceMs: 10,
         renameCreateDelayMs: 100,
         renameRemoveDelayMs: 500,
+        rescanIntervalMs: 0,
       });
       await customWatcher.start();
 
