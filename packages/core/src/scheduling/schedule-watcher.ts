@@ -266,14 +266,13 @@ export class ScheduleFileScanner {
         }
       }
 
-      // Validate IANA timezone if specified
+      // Issue #3860: Validate timezone against IANA database
       if (task.timezone) {
-        try {
-          new Intl.DateTimeFormat(undefined, { timeZone: task.timezone });
-        } catch {
-          logger.warn({ taskId: task.id, name: task.name, timezone: task.timezone },
-            'Invalid IANA timezone, falling back to default');
-          task.timezone = undefined;
+        const validTimezones = Intl.supportedValuesOf('timeZone');
+        if (!validTimezones.includes(task.timezone)) {
+          throw new Error(
+            `Invalid timezone: "${task.timezone}". Must be a valid IANA timezone (e.g., "America/New_York", "UTC")`
+          );
         }
       }
 
@@ -331,6 +330,7 @@ export class ScheduleFileScanner {
     if (task.modelTier) {
       frontmatter.push(`modelTier: "${task.modelTier}"`);
     }
+    // Treat undefined and empty string as "not set" — don't write to frontmatter
     if (task.timezone) {
       frontmatter.push(`timezone: "${task.timezone}"`);
     }

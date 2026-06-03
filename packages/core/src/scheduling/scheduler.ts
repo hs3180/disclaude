@@ -27,7 +27,7 @@ import { CronJob } from 'cron';
 import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
-import type { ScheduledTask } from './scheduled-task.js';
+import { DEFAULT_TIMEZONE, type ScheduledTask } from './scheduled-task.js';
 import type { ModelTier } from '../config/types.js';
 import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import type { SystemMessage } from '../types/message.js';
@@ -271,7 +271,7 @@ export class Scheduler {
     }
 
     try {
-      const timezone = task.timezone || 'Asia/Shanghai';
+      const timezone = task.timezone || DEFAULT_TIMEZONE;
       const job = new CronJob(
         task.cron,
         () => this.executeTask(task),
@@ -283,7 +283,12 @@ export class Scheduler {
       this.activeJobs.set(task.id, { taskId: task.id, job, task });
       logger.info({ taskId: task.id, cron: task.cron, name: task.name, timezone }, 'Scheduled task');
     } catch (error) {
-      logger.error({ err: error, taskId: task.id, cron: task.cron }, 'Invalid cron expression');
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const isCronError = errorMsg.toLowerCase().includes('cron');
+      logger.error(
+        { err: error, taskId: task.id, cron: task.cron, timezone: task.timezone || DEFAULT_TIMEZONE },
+        isCronError ? 'Invalid cron expression' : 'Failed to schedule task (check cron expression and timezone)'
+      );
     }
   }
 

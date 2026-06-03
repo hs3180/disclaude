@@ -10,6 +10,13 @@
 import type { ModelTier } from '../config/types.js';
 
 /**
+ * Default timezone for scheduled tasks when not explicitly specified.
+ *
+ * Issue #3860: Configurable timezone per task.
+ */
+export const DEFAULT_TIMEZONE = 'Asia/Shanghai';
+
+/**
  * Scheduled task definition.
  */
 export interface ScheduledTask {

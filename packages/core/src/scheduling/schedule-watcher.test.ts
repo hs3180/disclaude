@@ -665,6 +665,43 @@ describe('ScheduleFileScanner', () => {
       const writtenContent = mockWriteFile.mock.calls[0][1] as string;
       expect(writtenContent).not.toContain('timezone:');
     });
+
+    it('should reject invalid IANA timezone', async () => {
+      const content = [
+        '---',
+        'name: "Bad TZ"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_bad"',
+        'timezone: "Invalid/Timezone"',
+        '---',
+        '',
+        'Task with bad timezone.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/bad-tz/SCHEDULE.md`);
+      // Invalid timezone causes parseFile to catch the error and return null
+      expect(task).toBeNull();
+    });
+
+    it('should reject timezone with typo (missing underscore)', async () => {
+      const content = [
+        '---',
+        'name: "Typo TZ"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_typo"',
+        'timezone: "America/NewYork"',
+        '---',
+        '',
+        'Task with typo timezone.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/typo-tz/SCHEDULE.md`);
+      expect(task).toBeNull();
+    });
   });
 });
 
