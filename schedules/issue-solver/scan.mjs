@@ -38,6 +38,12 @@ const SKIP_KEYWORDS = [
 ];
 
 const MAX_CANDIDATES = 3;
+const GH_TIMEOUT_MS = 30000;
+const TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1000; // 5 minutes
+const JWT_LIFETIME_S = 600; // 10 minutes
+const ISSUE_DETAIL_TRUNCATE = 1500;
+const CLOSE_REASON_MAX_LENGTH = 200;
+const MAX_REJECTED_PR_COMMENTS = 3;
 
 const DEBUG = process.argv.includes("--debug");
 
@@ -62,6 +68,7 @@ function output(obj) {
 
 /**
  * Parse .runtime-env file into a key-value map.
+ * Handles quoted values (single or double quotes) and values containing '='.
  */
 function loadRuntimeEnv() {
   if (!existsSync(RUNTIME_ENV_PATH)) return {};
@@ -72,7 +79,13 @@ function loadRuntimeEnv() {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
     if (eq > 0) {
-      env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+      const key = trimmed.slice(0, eq).trim();
+      let val = trimmed.slice(eq + 1).trim();
+      // Strip surrounding quotes (single or double)
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      env[key] = val;
     }
   }
   return env;
@@ -87,15 +100,14 @@ function saveRuntimeEnv(env) {
 }
 
 /**
- * Check if the stored GH_TOKEN is still valid (with 5-minute safety margin).
+ * Check if the stored GH_TOKEN is still valid (with safety margin).
  */
 function isTokenValid(env) {
   const expiresAt = env.GH_TOKEN_EXPIRES_AT;
   if (!expiresAt || !env.GH_TOKEN) return false;
   const expiry = new Date(expiresAt).getTime();
   const now = Date.now();
-  const margin = 5 * 60 * 1000; // 5 minutes
-  return now < expiry - margin;
+  return now < expiry - TOKEN_EXPIRY_MARGIN_MS;
 }
 
 /**
@@ -122,9 +134,10 @@ function selectInstallation(installations, targetOwner) {
 
 /**
  * Generate a new GitHub App Installation Access Token via JWT signing.
+ * Uses Node.js fetch() instead of curl to avoid leaking tokens in /proc/cmdline.
  * Writes the new token (and detected installation ID) to .runtime-env.
  */
-function refreshGitHubToken() {
+async function refreshGitHubToken() {
   const APP_ID = process.env.GITHUB_APP_ID;
   const KEY_PATH = process.env.GITHUB_APP_PRIVATE_KEY_PATH;
   const INSTALL_ID = process.env.GITHUB_APP_INSTALLATION_ID;
@@ -151,7 +164,7 @@ function refreshGitHubToken() {
   const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({
     iat: now - 60,
-    exp: now + 600,
+    exp: now + JWT_LIFETIME_S,
     iss: APP_ID,
   })).toString("base64url");
   const sigInput = `${header}.${payload}`;
@@ -160,29 +173,21 @@ function refreshGitHubToken() {
   const signature = sign.sign(privateKey, "base64url");
   const jwt = `${sigInput}.${signature}`;
 
-  // Resolve GitHub API IP (DNS may rotate between .166 and .168)
-  let resolvedIp;
-  try {
-    const nsResult = execSync("nslookup api.github.com 2>/dev/null", { encoding: "utf-8", timeout: 10000 });
-    const ipMatch = nsResult.match(/Address:\s*(\d+\.\d+\.\d+\.\d+)/g);
-    if (ipMatch && ipMatch.length > 0) {
-      // Take the last IP address (the actual resolved address, not the DNS server)
-      resolvedIp = ipMatch[ipMatch.length - 1].replace("Address:\t", "").replace("Address: ", "");
-    }
-  } catch { /* ignore */ }
-  if (!resolvedIp) resolvedIp = "20.205.243.168";
-  const curlResolve = `--resolve api.github.com:443:${resolvedIp}`;
+  const headers = {
+    Authorization: `Bearer ${jwt}`,
+    Accept: "application/vnd.github+json",
+  };
 
-  // Get installation token via synchronous fetch (using execSync + curl for reliability)
   try {
     // Step A: Get installation ID if not provided
     let iid = INSTALL_ID;
     if (!iid) {
-      const listResult = execSync(
-        `curl -s -f ${curlResolve} -H "Authorization: Bearer ${jwt}" -H "Accept: application/vnd.github+json" https://api.github.com/app/installations`,
-        { encoding: "utf-8", timeout: 30000 },
-      );
-      const installs = JSON.parse(listResult);
+      const resp = await fetch("https://api.github.com/app/installations", { headers });
+      if (!resp.ok) {
+        const text = await resp.text();
+        return { ok: false, error: "TOKEN_REFRESH_FAILED", message: `Failed to list installations: ${resp.status} ${text}` };
+      }
+      const installs = await resp.json();
       if (!installs.length) {
         return { ok: false, error: "NO_INSTALLATIONS", message: "No installations found" };
       }
@@ -194,11 +199,15 @@ function refreshGitHubToken() {
     }
 
     // Step B: Create installation access token
-    const tokenResult = execSync(
-      `curl -s -f -X POST ${curlResolve} -H "Authorization: Bearer ${jwt}" -H "Accept: application/vnd.github+json" https://api.github.com/app/installations/${iid}/access_tokens`,
-      { encoding: "utf-8", timeout: 30000 },
-    );
-    const data = JSON.parse(tokenResult);
+    const resp = await fetch(`https://api.github.com/app/installations/${iid}/access_tokens`, {
+      method: "POST",
+      headers,
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      return { ok: false, error: "TOKEN_REFRESH_FAILED", message: `Failed to create token: ${resp.status} ${text}` };
+    }
+    const data = await resp.json();
 
     // Write to runtime env (including installation ID for future reference)
     const env = loadRuntimeEnv();
@@ -225,7 +234,7 @@ let cachedToken = null;
  * Ensure a valid GH_TOKEN is available. Returns the token or exits with error.
  * Uses in-memory cache to avoid redundant checks within a single run.
  */
-function ensureToken() {
+async function ensureToken() {
   if (cachedToken) return cachedToken;
 
   const env = loadRuntimeEnv();
@@ -237,7 +246,7 @@ function ensureToken() {
   }
 
   log("GH_TOKEN expired or missing, refreshing...");
-  const result = refreshGitHubToken();
+  const result = await refreshGitHubToken();
   if (!result.ok) {
     output({
       status: "auth_error",
@@ -255,27 +264,27 @@ function ensureToken() {
 // ---------------------------------------------------------------------------
 
 /**
- * Run a gh CLI command. Returns parsed JSON or fallback on failure.
+ * Run a gh CLI command. Returns stdout string or null on auth/fatal failure.
+ * For non-auth errors, returns empty string to distinguish from auth failures.
  */
-function gh(...args) {
-  const token = ensureToken();
+async function gh(...args) {
+  const token = await ensureToken();
   const cmd = `GH_TOKEN=${token} gh ${args.join(" ")}`;
   try {
     const result = execSync(cmd, {
       encoding: "utf-8",
-      timeout: 30000,
+      timeout: GH_TIMEOUT_MS,
       stdio: ["pipe", "pipe", "pipe"],
     });
     return result;
   } catch (err) {
     const stderr = err.stderr || "";
-    // Detect auth errors specifically
     if (stderr.includes("401") || stderr.includes("Bad credentials")) {
       log(`Auth error from gh: ${stderr.trim()}`);
-      return null;
+      return null; // null = auth failure, caller should abort
     }
-    log(`gh ${args.join(" ")} failed: ${(err.stderr || err.message).trim()}`);
-    return null;
+    log(`gh ${args.join(" ")} failed: ${(stderr || err.message).trim()}`);
+    return ""; // empty string = non-auth failure, caller can treat as empty data
   }
 }
 
@@ -283,53 +292,67 @@ function gh(...args) {
 // Data fetching
 // ---------------------------------------------------------------------------
 
-function fetchOpenIssues() {
-  const out = gh(
+async function fetchOpenIssues() {
+  const out = await gh(
     "issue", "list", "--repo", REPO, "--state", "open",
-    "--json", "number,title,labels", "--limit", "200",
+    "--json", "number,title,labels", "--limit", "500",
   );
-  if (!out) return null; // null = auth/network failure
+  if (out === null) return null; // auth failure
   try { return JSON.parse(out); } catch { return []; }
 }
 
-function fetchOpenPRs() {
-  const out = gh(
+async function fetchOpenPRs() {
+  const out = await gh(
     "pr", "list", "--repo", REPO, "--state", "open",
-    "--json", "number,title,body,headRefName", "--limit", "200",
+    "--json", "number,title,body,headRefName", "--limit", "500",
   );
-  if (!out) return null;
+  if (out === null) return null;
   try { return JSON.parse(out); } catch { return []; }
 }
 
-// Only match explicit issue association patterns (not casual references like "see #123")
+// Only match explicit issue association patterns in PR body (not casual references like "see #123")
 const ISSUE_LINK_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related:?|ref:?|addresses)\s+#(\d+)/gi;
+
+// Branch names like fix/issue-123 or fix/123 are also considered explicit associations
+const BRANCH_ISSUE_PATTERN = /(?:fix|close|resolve|issue)[\/\-_](\d+)/i;
 
 function buildPrIssueSet(prs) {
   const nums = new Set();
   for (const pr of prs) {
-    const combined = `${pr.body || ""} ${pr.headRefName || ""}`;
-    for (const m of combined.matchAll(ISSUE_LINK_PATTERN)) {
+    // Match explicit association patterns in body
+    const body = pr.body || "";
+    for (const m of body.matchAll(ISSUE_LINK_PATTERN)) {
       nums.add(Number(m[1]));
+    }
+    // Match issue number in branch name (e.g. fix/issue-3872)
+    const branch = pr.headRefName || "";
+    const branchMatch = branch.match(BRANCH_ISSUE_PATTERN);
+    if (branchMatch) {
+      nums.add(Number(branchMatch[1]));
     }
   }
   return nums;
 }
 
-function checkCommentsResolved(issueNumber) {
-  const out = gh("issue", "view", String(issueNumber), "--repo", REPO, "--comments");
+/**
+ * Check if an issue's comments indicate it's already resolved.
+ * Uses gh api to fetch only comments (not the issue body) to avoid false positives.
+ */
+async function checkCommentsResolved(issueNumber) {
+  const out = await gh("api", `repos/${REPO}/issues/${issueNumber}/comments`, "--jq", ".[].body");
   if (!out) return false;
-  // Search full comment text instead of just the last 30 lines
-  const fullText = out.trim().toLowerCase();
-  return SKIP_KEYWORDS.some((kw) => fullText.includes(kw.toLowerCase()));
+  const commentsText = out.trim().toLowerCase();
+  return SKIP_KEYWORDS.some((kw) => commentsText.includes(kw.toLowerCase()));
 }
 
-function fetchAllPRs() {
-  const out = gh(
+async function fetchAllPRs() {
+  // Use --limit 500 per page and paginate; for most repos this covers enough history
+  const out = await gh(
     "pr", "list", "--repo", REPO, "--state", "all",
-    "--json", "number,title,state,body,headRefName", "--limit", "200",
+    "--json", "number,title,state,body,headRefName", "--limit", "500",
   );
   if (!out) return [];
-  return JSON.parse(out);
+  try { return JSON.parse(out); } catch { return []; }
 }
 
 function findRelatedPRs(issueNumber, allPRs) {
@@ -342,14 +365,14 @@ function findRelatedPRs(issueNumber, allPRs) {
   });
 }
 
-function fetchPRComments(prNumber) {
-  const out = gh("api", `repos/${REPO}/issues/${prNumber}/comments`, "--jq", ".[].body");
+async function fetchPRComments(prNumber) {
+  const out = await gh("api", `repos/${REPO}/issues/${prNumber}/comments`, "--jq", ".[].body");
   if (!out) return "";
   return out.trim();
 }
 
-function fetchIssueDetail(issueNumber) {
-  const out = gh("issue", "view", String(issueNumber), "--repo", REPO, "--comments");
+async function fetchIssueDetail(issueNumber) {
+  const out = await gh("issue", "view", String(issueNumber), "--repo", REPO, "--comments");
   if (!out) return `_(Failed to fetch issue #${issueNumber} details)_`;
   return out.trim();
 }
@@ -367,7 +390,7 @@ function extractCloseReason(comments) {
   for (const line of comments.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    return trimmed.substring(0, 200);
+    return trimmed.substring(0, CLOSE_REASON_MAX_LENGTH);
   }
   return null;
 }
@@ -404,9 +427,6 @@ function scoreIssue(issue, relatedPRs) {
   const rejectedCount = relatedPRs.filter((pr) => (pr.state || "").toUpperCase() === "CLOSED").length;
   score -= rejectedCount * 2;
 
-  // Very old issues → slight penalty (likely stale or blocked)
-  score -= 1;
-
   return score;
 }
 
@@ -414,11 +434,11 @@ function scoreIssue(issue, relatedPRs) {
 // Main
 // ---------------------------------------------------------------------------
 
-function main() {
+async function main() {
   log(`Scanning ${REPO} ...`);
 
   // Step 1: Fetch issues
-  const issues = fetchOpenIssues();
+  const issues = await fetchOpenIssues();
   if (issues === null) {
     output({
       status: "auth_error",
@@ -434,7 +454,7 @@ function main() {
   }
 
   // Step 2: Fetch open PRs
-  const prs = fetchOpenPRs();
+  const prs = await fetchOpenPRs();
   if (prs === null) {
     output({
       status: "auth_error",
@@ -493,13 +513,15 @@ function main() {
   }
 
   // Step 4: Check comments for resolution
-  const final = candidates.filter((c) => {
-    if (checkCommentsResolved(c.number)) {
+  const final = [];
+  for (const c of candidates) {
+    const resolved = await checkCommentsResolved(c.number);
+    if (resolved) {
       log(`Skipping #${c.number} (resolved in comments): ${c.title}`);
-      return false;
+    } else {
+      final.push(c);
     }
-    return true;
-  });
+  }
 
   log(`${final.length} candidate(s) after comment check`);
 
@@ -513,7 +535,7 @@ function main() {
 
   // Step 5: Fetch all PRs for cross-reference and scoring
   log("Fetching all PRs for cross-reference...");
-  const allPRs = fetchAllPRs();
+  const allPRs = await fetchAllPRs();
   log(`Found ${allPRs.length} total PRs`);
 
   // Score candidates and sort by score (descending)
@@ -525,14 +547,16 @@ function main() {
     // Fetch rejected PR comments (only for top candidates)
     const rejected = related.filter((pr) => (pr.state || "").toUpperCase() === "CLOSED");
     if (rejected.length) {
-      // Only fetch comments for the 3 most recently closed PRs
-      const topRejected = rejected.slice(-3);
+      const topRejected = rejected.slice(-MAX_REJECTED_PR_COMMENTS);
       log(`Fetching comments for ${topRejected.length} rejected PR(s) on issue #${c.number}`);
-      c.rejected_prs = topRejected.map((pr) => ({
-        number: pr.number,
-        title: pr.title,
-        closeReason: extractCloseReason(fetchPRComments(pr.number)),
-      }));
+      c.rejected_prs = [];
+      for (const pr of topRejected) {
+        c.rejected_prs.push({
+          number: pr.number,
+          title: pr.title,
+          closeReason: extractCloseReason(await fetchPRComments(pr.number)),
+        });
+      }
     }
   }
 
@@ -545,7 +569,7 @@ function main() {
     log(`Limiting output from ${final.length} to ${MAX_CANDIDATES} candidates (score-based)`);
   }
 
-  // Step 6: Output as Markdown with truncated details
+  // Step 6: Output as JSON with embedded Markdown
   let md = `# Issue Scan Results\n\n`;
   md += `**Status:** candidates  |  **Count:** ${final.length} (showing top ${limited.length})  |  **Repo:** ${REPO}\n\n---\n\n`;
 
@@ -558,10 +582,9 @@ function main() {
 
     // Truncated issue body + limited comments
     md += `### Issue Details & Comments\n\n`;
-    const detail = fetchIssueDetail(c.number);
-    // Truncate to ~1500 chars to keep output manageable
-    const truncated = detail.length > 1500
-      ? detail.substring(0, 1500) + "\n... (truncated, use `gh issue view` for full details)"
+    const detail = await fetchIssueDetail(c.number);
+    const truncated = detail.length > ISSUE_DETAIL_TRUNCATE
+      ? detail.substring(0, ISSUE_DETAIL_TRUNCATE) + "\n... (truncated, use `gh issue view` for full details)"
       : detail;
     md += "```\n" + truncated + "\n```\n\n";
 
@@ -579,7 +602,13 @@ function main() {
     md += `---\n\n`;
   }
 
-  console.log(md);
+  output({
+    status: "candidates",
+    count: final.length,
+    showing: limited.length,
+    repo: REPO,
+    markdown: md,
+  });
 }
 
 main();
