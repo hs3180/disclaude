@@ -1,4 +1,4 @@
-/**
+E�z�Z�m6�N��Mu�~��Ot�8�M4�D�4��{�mvE�z�m�m���j����nm�&������}|��b��Z�׿r��z{l�������(�����r��X�����n����^�׬��+y��������D^�笶�(���Ӿ��y�/**
  * Tests for ScheduleFileScanner (packages/core/src/scheduling/schedule-watcher.ts)
  *
  * Tests the ScheduleFileScanner class which handles parsing, writing, and
@@ -636,6 +636,7 @@ describe('ScheduleFileWatcher', () => {
       onFileChanged,
       onFileRemoved,
       debounceMs,
+      rescanIntervalMs: 0, // Disable rescan timer by default to prevent fake timer infinite loops
     });
     return watcher;
   }
@@ -1108,7 +1109,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(1000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0); // Flush microtask queue
 
       expect(mockReaddir).toHaveBeenCalled();
 
@@ -1130,7 +1131,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(600000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       // readdir should NOT be called by periodic timer (only by mkdir in start)
       expect(mockReaddir).not.toHaveBeenCalled();
@@ -1154,7 +1155,7 @@ describe('ScheduleFileWatcher', () => {
       mockReaddir.mockResolvedValue([]);
 
       vi.advanceTimersByTime(2000);
-      await vi.runAllTimersAsync();
+      await vi.advanceTimersByTimeAsync(0);
 
       // readdir should not be called after stop
       expect(mockReaddir).not.toHaveBeenCalled();
