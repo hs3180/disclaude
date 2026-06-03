@@ -59,7 +59,11 @@ function loadRuntimeEnv() {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
     if (eq > 0) {
-      env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+      let val = trimmed.slice(eq + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      env[trimmed.slice(0, eq).trim()] = val;
     }
   }
   return env;
@@ -69,7 +73,12 @@ function loadRuntimeEnv() {
  * Write key-value pairs back to .runtime-env.
  */
 function saveRuntimeEnv(env) {
-  const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const lines = Object.entries(env).map(([k, v]) => {
+    if (v.includes(" ") || v.includes('"')) {
+      return `${k}="${v.replace(/"/g, '\\"')}"`;
+    }
+    return `${k}=${v}`;
+  });
   writeFileSync(RUNTIME_ENV_PATH, lines.join("\n") + "\n", "utf-8");
 }
 
