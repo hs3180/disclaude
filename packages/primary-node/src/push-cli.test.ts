@@ -37,7 +37,7 @@ describe('push-cli', () => {
     // Clear call history without resetting implementations
     mockPushToAgent.mockClear();
     mockDisconnect.mockClear();
-    exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => { throw new Error(`process.exit ${code ?? 0}`); }) as never);
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); }) as any;
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     originalArgv = process.argv;
