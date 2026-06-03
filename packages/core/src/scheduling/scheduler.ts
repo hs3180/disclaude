@@ -25,13 +25,31 @@ import type { SystemMessage } from '../types/message.js';
 const logger = createLogger('Scheduler');
 
 /**
- * Default timeout for scheduled task execution.
- * 30 minutes — generous enough for long-running agent tasks,
- * but prevents indefinite hangs that block subsequent executions.
- *
- * Issue #3346: Timeout protection for scheduled tasks.
+ * Default task execution timeout (5 minutes).
+ * Issue #3894: Prevents indefinitely hung scheduled tasks from blocking
+ * subsequent executions.
  */
-const DEFAULT_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_TASK_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Error thrown when a scheduled task execution times out.
+ *
+ * Issue #3894: Used to distinguish timeout errors from other failures,
+ * allowing specific error notification to the user.
+ */
+export class TaskTimeoutError extends Error {
+  /** Task ID that timed out */
+  readonly taskId: string;
+  /** Timeout duration in milliseconds */
+  readonly timeoutMs: number;
+
+  constructor(taskId: string, timeoutMs: number) {
+    super(`Scheduled task "${taskId}" timed out after ${timeoutMs}ms`);
+    this.name = 'TaskTimeoutError';
+    this.taskId = taskId;
+    this.timeoutMs = timeoutMs;
+  }
+}
 
 /**
  * Active cron job entry.
@@ -280,7 +298,7 @@ ${task.prompt}`;
    * Called by cron job when the schedule triggers.
    *
    * Issue #869: Added cooldown period check before execution.
-   * Issue #3346: Timeout protection via Promise.race on route() call.
+   * Issue #3894: Timeout protection via TaskTimeoutError on route() call.
    * Issue #3582: Routes through InputMessageRouter as SystemMessage.
    *
    * @param task - Task to execute
@@ -360,21 +378,16 @@ ${task.prompt}`;
 
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
 
-        // Issue #3346: Wrap route() with timeout to prevent indefinite hangs.
-        // Even though routing goes through InputMessageRouter, the downstream
-        // agent execution may hang, so we apply timeout protection here.
+        // Issue #3894: Timeout protection for InputMessageRouter route.
+        // Prevents hung routes from keeping task in runningTasks forever.
         const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error(
-            `Scheduled task timed out after ${timeoutMs}ms`
-          )), timeoutMs);
-        });
-
         try {
           await Promise.race([
             this.inputMessageRouter.route(systemMessage),
-            timeoutPromise,
+            new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(() => reject(new TaskTimeoutError(task.id, timeoutMs)), timeoutMs);
+            }),
           ]);
         } finally {
           if (timeoutId !== undefined) {
@@ -401,11 +414,12 @@ ${task.prompt}`;
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
 
-      // Send error notification
-      await this.callbacks.sendMessage(
-        task.chatId,
-        `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
-      );
+      // Issue #3894: Send specific timeout notification
+      const userMessage = error instanceof TaskTimeoutError
+        ? `⏱️ 定时任务「${task.name}」执行超时 (${Math.round(error.timeoutMs / 60000)} 分钟)，已自动终止`
+        : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`;
+
+      await this.callbacks.sendMessage(task.chatId, userMessage);
     } finally {
       // Always remove from running tasks
       this.runningTasks.delete(task.id);

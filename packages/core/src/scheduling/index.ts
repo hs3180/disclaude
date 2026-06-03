@@ -56,6 +56,7 @@ export {
 // Scheduler
 export {
   Scheduler,
+  TaskTimeoutError,
   type SchedulerCallbacks,
   type SchedulerOptions,
 } from './scheduler.js';
