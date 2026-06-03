@@ -141,6 +141,29 @@ describe('BotChatMappingStore', () => {
       expect(result!.chatId).toBe('oc_new');
     });
 
+    it('should store workdir when provided', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review', workdir: '/tmp/pr-123-abc' });
+
+      const result = await store.get('pr-123');
+      expect(result!.workdir).toBe('/tmp/pr-123-abc');
+    });
+
+    it('should preserve workdir when updating other fields', async () => {
+      await store.set('pr-123', { chatId: 'oc_old', purpose: 'pr-review', workdir: '/tmp/pr-123-abc' });
+      await store.set('pr-123', { chatId: 'oc_new', purpose: 'pr-review' });
+
+      const result = await store.get('pr-123');
+      expect(result!.chatId).toBe('oc_new');
+      expect(result!.workdir).toBeUndefined();
+    });
+
+    it('should not include workdir when not provided', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+
+      const result = await store.get('pr-123');
+      expect(result!.workdir).toBeUndefined();
+    });
+
     it('should handle writeFile errors gracefully', async () => {
       vi.mocked(fsPromises.writeFile).mockRejectedValue(new Error('Write error'));
 
@@ -445,6 +468,20 @@ describe('BotChatMappingStore', () => {
       expect(entry).not.toBeNull();
       expect(entry!.chatId).toBe('oc_loaded');
       expect(entry!.purpose).toBe('pr-review');
+    });
+
+    it('should load workdir from persisted mapping file', async () => {
+      const existingData: MappingTable = {
+        'pr-123': { chatId: 'oc_loaded', createdAt: '2026-04-28T10:00:00Z', purpose: 'pr-review', workdir: '/tmp/pr-123-xyz' },
+      };
+
+      vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(existingData));
+
+      const freshStore = new BotChatMappingStore({ filePath });
+      const entry = await freshStore.get('pr-123');
+
+      expect(entry).not.toBeNull();
+      expect(entry!.workdir).toBe('/tmp/pr-123-xyz');
     });
 
     it('should handle ENOENT gracefully (new file)', async () => {

@@ -1,94 +1,52 @@
 ---
 name: pr-scanner
-description: PR Scanner - scans a GitHub repository for open PRs, creates discussion groups for new PRs, and tracks PR-to-chatId mappings. Triggered by schedule or manual invocation. Keywords: "PR Scanner", "扫描 PR", "scan pull requests", "PR review".
+description: PR Scanner - creates a scheduled task to scan a GitHub repository for open PRs and create discussion groups. Use when user wants to set up PR scanning for a repo. Keywords: "PR Scanner", "扫描 PR", "scan pull requests", "PR review".
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
-# PR Scanner — 映射表驱动扫描
+# PR Scanner — Schedule 安装器
 
-扫描仓库的 open PR，通过映射表追踪已创建的讨论群，为新 PR 创建群并写入映射。
+为指定 GitHub 仓库创建 PR 扫描定时任务。将 schedule 模板实例化为可执行的 SCHEDULE.md。
 
-**适用于**: 扫描 PR、创建讨论群、追踪映射 ｜ **不适用于**: 发卡片、解散群、merge/close PR
+**适用于**: 安装/配置 PR 扫描定时任务 ｜ **不适用于**: 直接执行扫描、发卡片、解散群
 
-## Parameters
+> schedule 模板会在映射表中记录 `workdir` 字段（PR 分支的临时目录路径），PR 关闭时自动清理。
+
+## 安装步骤
+
+### 1. 收集参数
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `{repo}` | Yes | — | GitHub repo (owner/name) |
-| `{controlChannelChatId}` | Yes | — | Schedule execution context chatId |
+| `{controlChannelChatId}` | Yes | — | 控制频道 chatId（当前对话的 chatId） |
+| `{maxConcurrent}` | No | `3` | 最大并发 PR 讨论群数 |
+| `{cron}` | No | `0 */6 * * *` | 扫描频率（默认每6小时） |
 
-## 数据结构
+### 2. 实例化 Schedule
 
-映射文件: `workspace/bot-chat-mapping.json`（BotChatMappingStore）
-
-- **Key**: `pr-{number}` → `purposeFromKey()` 推断 purpose
-- **群名**: `PR #{number} · {title前30字}` → `parseGroupNameToKey()` 解析 key
-
-## 执行步骤
-
-### 1. 读取映射表
+将同目录下的 `schedule.md` 模板复制到 `schedules/pr-scanner/SCHEDULE.md`，替换所有 `{placeholder}` 为实际值：
 
 ```bash
-cat workspace/bot-chat-mapping.json 2>/dev/null || echo "{}"
+mkdir -p schedules/pr-scanner
+cp disclaude/skills/pr-scanner/schedule.md schedules/pr-scanner/SCHEDULE.md
 ```
 
-提取所有 `purpose: 'pr-review'` 条目的 PR number 和 chatId。文件不存在则视为空映射表。
+替换占位符：
 
-### 2. 获取 Open PR 列表
+| 占位符 | 替换为 |
+|--------|--------|
+| `{controlChannelChatId}` | 实际的控制频道 chatId |
+| `{repo}` | 实际监控的 GitHub 仓库（如 `owner/repo`） |
+| `{maxConcurrent}` | 并发上限（默认 `3`） |
+| `{cron}` | 实际的 cron 表达式（默认 `0 */6 * * *`） |
 
-```bash
-gh pr list --repo {repo} --state open --json number,title,author,headRefName
-```
+### 3. 验证
 
-### 3. 过滤与分类
-
-将获取到的 PR 分为两类：
-
-- **新 PR**：PR number 不在映射表中（`pr-{number}` key 不存在）
-- **已有群的 PR**：PR number 在映射表中存在
-
-### 4. 已有群的 PR — 状态变更检测
-
-```bash
-gh pr list --repo {repo} --state closed --json number,state
-```
-
-merged/closed → 记录日志，不自动解散。open → 跳过。
-
-### 5. 新 PR — 创建讨论群
-
-对每个新 PR（按 number 升序）创建讨论群。限流策略和后续操作（邀请用户、注入 Agent）由调用方（SCHEDULE.md）控制。
-
-**5a. 创建群**:
-```bash
-lark-cli im +chat-create --name "PR #{number} · {title前30字}" --description "PR #{number} 审查讨论群" --as bot --set-bot-manager
-```
-
-**5b. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review"），原子写入。
-
-Skill 到此结束。后续操作（邀请用户、push_to_agent 注入 Review Agent）由 SCHEDULE.md 中的流程定义。
-
-## 错误处理
-
-- `gh` 命令失败 → 记录错误，跳过/退出
-- 映射文件读取失败 → 视为空表
-- 映射文件写入失败 → 记录错误（可通过群名重建）
-- 群创建失败 → 跳过该 PR
-
-## 设计原则
-
-1. **映射表是缓存** — 可从飞书 API 重建
-2. **用户驱动解散** — Bot 不自主解散群
-3. **幂等操作** — 映射表过滤防重复创建
-4. **无 Label 依赖** — 状态全在映射表
-
-## 依赖
-
-`gh` CLI · `lark-cli` · `workspace/bot-chat-mapping.json`（BotChatMappingStore）
-
-## Schedule 模板
-
-见同目录下的 `schedule.md`。将其复制到 `schedules/pr-scanner/SCHEDULE.md`，替换占位符后启用。
+读取生成的 `schedules/pr-scanner/SCHEDULE.md`，确认：
+- frontmatter 中无未替换的占位符
+- `chatId` 为实际 chatId
+- `enabled: true`
 
 ## 关联
 
