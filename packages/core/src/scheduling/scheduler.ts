@@ -4,20 +4,11 @@
  * Uses node-cron to schedule task execution.
  * Integrates with ScheduleManager for task management.
  *
- * Issue #711: Uses short-lived ChatAgents instead of AgentPool.
- * - Each task execution creates a new ChatAgent via injected executor
- * - ChatAgent is disposed after execution completes
- * - No persistent agent state between executions
- *
- * Issue #1041: Refactored to use dependency injection for agent execution.
- * - Executor function is injected via options
- * - Decouples scheduler from agents module
- * - Allows scheduler to be migrated independently
- * - Migrated from @disclaude/worker-node to @disclaude/core
+ * Issue #3582: Routes tasks through InputMessageRouter as SystemMessage.
+ * Tasks are delivered to existing persistent agents via AgentPool.
  *
  * Features:
  * - Dynamic task scheduling
- * - Integration with executor function for task execution
  * - Automatic reload of tasks on schedule changes
  *
  * @module @disclaude/core/scheduling
@@ -28,36 +19,10 @@ import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import { DEFAULT_TIMEZONE, type ScheduledTask } from './scheduled-task.js';
-import type { ModelTier } from '../config/types.js';
 import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import type { SystemMessage } from '../types/message.js';
 
 const logger = createLogger('Scheduler');
-
-/**
- * Default timeout for scheduled task execution.
- * 30 minutes — generous enough for long-running agent tasks,
- * but prevents indefinite hangs that block subsequent executions.
- *
- * Issue #3346: Timeout protection for scheduled tasks.
- */
-const DEFAULT_TASK_TIMEOUT_MS = 30 * 60 * 1000;
-
-/**
- * Error thrown when a scheduled task exceeds its timeout.
- *
- * Issue #3346: Timeout protection for scheduled tasks.
- */
-export class TaskTimeoutError extends Error {
-  /** The timeout duration in milliseconds */
-  readonly timeoutMs: number;
-
-  constructor(timeoutMs: number) {
-    super(`Scheduled task timed out after ${timeoutMs}ms`);
-    this.name = 'TaskTimeoutError';
-    this.timeoutMs = timeoutMs;
-  }
-}
 
 /**
  * Active cron job entry.
@@ -78,39 +43,21 @@ export interface SchedulerCallbacks {
 }
 
 /**
- * Task executor function type.
- * This function is called to execute a scheduled task.
- *
- * @param chatId - Chat ID to send messages to
- * @param prompt - The task prompt to execute
- * @param userId - Optional user ID for context
- * @param model - Optional model override for this task (Issue #1338)
- * @param modelTier - Optional model tier for tier-based model resolution (Issue #3059)
- */
-export type TaskExecutor = (chatId: string, prompt: string, userId?: string, model?: string, modelTier?: ModelTier) => Promise<void>;
-
-/**
  * Scheduler options.
  *
- * Issue #711: No longer requires AgentPool.
- * Uses executor function for task execution.
+ * Issue #3582: Uses InputMessageRouter for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
- * Issue #1041: Uses dependency injection for executor.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
   scheduleManager: ScheduleManager;
   /** Callbacks for sending messages */
   callbacks: SchedulerCallbacks;
-  /** Task executor function */
-  executor: TaskExecutor;
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
   /**
-   * Input MessageRouter for unified message routing (Issue #3582 Phase 3).
-   * When provided, scheduled tasks route through this router as SystemMessage
-   * instead of using the direct executor. Tasks without chatId (future: projectKey)
-   * fall back to the existing executor path (backward compatible).
+   * Input MessageRouter for routing scheduled tasks as SystemMessage.
+   * Issue #3582: Routes through existing agents via AgentPool.
    */
   inputMessageRouter?: InputMessageRouter;
 }
@@ -118,29 +65,18 @@ export interface SchedulerOptions {
 /**
  * Scheduler - Manages cron-based task execution.
  *
- * Issue #711: Uses short-lived ChatAgents (max 24h lifetime).
- * Each execution creates a fresh ChatAgent, ensuring isolation.
- * Issue #1041: Uses dependency injection for task execution.
+ * Issue #3582: Routes tasks through InputMessageRouter to existing agents.
  *
  * Usage:
  * ```typescript
  * const scheduler = new Scheduler({
  *   scheduleManager,
  *   callbacks,
- *   executor: async (chatId, prompt, userId) => {
- *     // Create and run agent
- *     const agent = AgentFactory.createAgent(chatId, callbacks);
- *     await agent.processMessage({ chatId, payload: prompt, messageId, senderOpenId: userId });
- *     await agent.taskComplete;
- *     agent.dispose();
- *   },
+ *   inputMessageRouter,
  * });
  *
  * // Start scheduler (loads and schedules all enabled tasks)
  * await scheduler.start();
- *
- * // Add a new task dynamically
- * await scheduler.addTask(task);
  *
  * // Stop scheduler
  * await scheduler.stop();
@@ -149,7 +85,6 @@ export interface SchedulerOptions {
 export class Scheduler {
   private scheduleManager: ScheduleManager;
   private callbacks: SchedulerCallbacks;
-  private executor: TaskExecutor;
   private cooldownManager?: CooldownManager;
   private inputMessageRouter?: InputMessageRouter;
   private activeJobs: Map<string, ActiveJob> = new Map();
@@ -170,7 +105,6 @@ export class Scheduler {
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
     this.callbacks = options.callbacks;
-    this.executor = options.executor;
     this.cooldownManager = options.cooldownManager;
     this.inputMessageRouter = options.inputMessageRouter;
     logger.info('Scheduler created');
@@ -398,7 +332,7 @@ ${task.prompt}`;
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
 
-      // Issue #3582: Route through InputMessageRouter when available (Phase 3)
+      // Issue #3582: Route through InputMessageRouter
       if (this.inputMessageRouter && task.chatId) {
         const systemMessage: SystemMessage = {
           id: `sched-${task.id}-${Date.now()}`,
@@ -419,53 +353,21 @@ ${task.prompt}`;
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
         await this.inputMessageRouter.route(systemMessage);
         logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
-        return;
+      } else {
+        logger.warn(
+          { taskId: task.id, hasRouter: !!this.inputMessageRouter, hasChatId: !!task.chatId },
+          'Cannot execute scheduled task: InputMessageRouter not configured or task has no chatId'
+        );
       }
-
-      // Existing executor path (backward compatible fallback)
-
-      // Issue #1041: Use injected executor function
-      // Issue #1338: Pass model override for per-task model selection
-      // Issue #3059: Pass modelTier for tier-based model resolution
-      // Issue #3346: Wrap with timeout to prevent indefinite hangs
-      const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new TaskTimeoutError(timeoutMs)), timeoutMs);
-      });
-
-      try {
-        await Promise.race([
-          this.executor(task.chatId, wrappedPrompt, task.createdBy, task.model, task.modelTier),
-          timeoutPromise,
-        ]);
-      } finally {
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId);
-        }
-      }
-
-      logger.info({ taskId: task.id }, 'Scheduled task completed');
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const isTimeout = error instanceof TaskTimeoutError;
-
-      if (isTimeout) {
-        logger.warn(
-          { taskId: task.id, name: task.name, timeoutMs: error.timeoutMs },
-          'Scheduled task timed out'
-        );
-      } else {
-        logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
-      }
+      logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
 
       // Send error notification
       await this.callbacks.sendMessage(
         task.chatId,
-        isTimeout
-          ? `⏰ 定时任务「${task.name}」执行超时 (${error.timeoutMs / 1000}s)`
-          : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
+        `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
       );
     } finally {
       // Always remove from running tasks
