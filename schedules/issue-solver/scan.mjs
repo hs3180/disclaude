@@ -2,8 +2,9 @@
 /**
  * Issue Scanner for hs3180/disclaude
  *
- * Filters open issues: removes those with PRs, skip labels, or resolved in comments.
- * Includes GitHub App token auto-refresh before scanning.
+ * Lists open issues that don't have an associated open PR.
+ * Outputs Markdown with full issue details + comments for each candidate.
+ * Downstream agent decides priority and actionability.
  *
  * Usage:
  *   node scan.mjs           # List all candidates
@@ -28,20 +29,6 @@ const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, "..", "..");
 const RUNTIME_ENV_PATH = join(PROJECT_ROOT, ".runtime-env");
 
-const SKIP_LABELS = new Set(["wontfix", "invalid", "duplicate", "wont-fix", "not-planned", "report", "documentation"]);
-
-const SKIP_TITLE_KEYWORDS = ["[postponed]", "[deferred]"];
-
-const SKIP_TITLE_PATTERNS = [/^📊/, /^📋/, /^📝/];
-
-const SKIP_KEYWORDS = [
-  "已完成", "不需要了", "已解决", "已修复", "可以关了",
-  "duplicate of", "resolved in", "fixed in", "already fixed",
-  "closing as", "already resolved",
-];
-
-const MAX_CANDIDATES = 3;
-
 const DEBUG = process.argv.includes("--debug");
 
 // ---------------------------------------------------------------------------
@@ -56,7 +43,7 @@ function log(msg) {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime Env File I/O (aligned with packages/core/src/config/runtime-env.ts)
+// Runtime Env File I/O
 // ---------------------------------------------------------------------------
 
 /**
@@ -263,7 +250,7 @@ function ensureToken() {
 }
 
 // ---------------------------------------------------------------------------
-// GitHub CLI helpers
+// GitHub CLI helper
 // ---------------------------------------------------------------------------
 
 /**
@@ -315,117 +302,34 @@ function fetchOpenPRs() {
   try { return JSON.parse(out); } catch { return []; }
 }
 
+/**
+ * Build a set of issue numbers that have open PRs referencing them.
+ * Only matches explicit close/fix/resolve keywords + bare #N in branch names.
+ */
 function buildPrIssueSet(prs) {
   const nums = new Set();
+  const ISSUE_LINK_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related:?|ref:?|addresses)\s+#(\d+)/gi;
+  const BRANCH_ISSUE_PATTERN = /(\d+)/g;
+
   for (const pr of prs) {
-    const combined = `${pr.body || ""} ${pr.headRefName || ""}`;
-    for (const m of combined.matchAll(/#(\d+)/g)) {
+    // Match keyword-prefixed issue references in body
+    const body = pr.body || "";
+    for (const m of body.matchAll(ISSUE_LINK_PATTERN)) {
+      nums.add(Number(m[1]));
+    }
+    // Match issue numbers in branch name (e.g. fix/issue-123)
+    const branch = pr.headRefName || "";
+    for (const m of branch.matchAll(BRANCH_ISSUE_PATTERN)) {
       nums.add(Number(m[1]));
     }
   }
   return nums;
 }
 
-function checkCommentsResolved(issueNumber) {
-  const out = gh("issue", "view", String(issueNumber), "--repo", REPO, "--comments");
-  if (!out) return false;
-  // Check all comment lines (not just last 30) for resolution keywords
-  const full = out.trim().toLowerCase();
-  return SKIP_KEYWORDS.some((kw) => full.includes(kw.toLowerCase()));
-}
-
-function fetchAllPRs() {
-  const out = gh(
-    "pr", "list", "--repo", REPO, "--state", "all",
-    "--json", "number,title,state,body,headRefName", "--limit", "200",
-  );
-  if (!out) return null; // null = auth/network failure (consistent with other fetchers)
-  try { return JSON.parse(out); } catch { return []; }
-}
-
-function findRelatedPRs(issueNumber, allPRs) {
-  const issueStr = `#${issueNumber}`;
-  return allPRs.filter((pr) => {
-    const body = pr.body || "";
-    const branch = pr.headRefName || "";
-    const title = pr.title || "";
-    return body.includes(issueStr) || title.includes(issueStr) || branch.includes(String(issueNumber));
-  });
-}
-
-function fetchPRComments(prNumber) {
-  const out = gh("pr", "view", String(prNumber), "--repo", REPO, "--comments");
-  if (!out) return "";
-  return out.trim().split("\n").slice(-80).join("\n");
-}
-
 function fetchIssueDetail(issueNumber) {
   const out = gh("issue", "view", String(issueNumber), "--repo", REPO, "--comments");
   if (!out) return `_(Failed to fetch issue #${issueNumber} details)_`;
   return out.trim();
-}
-
-// ---------------------------------------------------------------------------
-// Close reason extraction
-// ---------------------------------------------------------------------------
-
-/**
- * Extract a one-line close reason from PR comments.
- * Returns the first substantive comment from the author who closed the PR.
- */
-function extractCloseReason(comments) {
-  if (!comments) return null;
-  const lines = comments.split("\n");
-  // Look for the first non-empty, non-header line after the comment metadata
-  let reason = null;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    // Skip metadata-like lines (author:, association:, etc.)
-    if (/^(author|association|edited|status|--)/.test(line)) continue;
-    if (!line) continue;
-    // Take the first substantive line as the reason
-    reason = line.substring(0, 200);
-    break;
-  }
-  return reason;
-}
-
-// ---------------------------------------------------------------------------
-// Scoring
-// ---------------------------------------------------------------------------
-
-/**
- * Score an issue candidate for prioritization.
- * Higher score = more actionable.
- */
-function scoreIssue(issue, relatedPRs) {
-  let score = 0;
-  const title = (issue.title || "").toLowerCase();
-  const labels = (issue.labels || []).map((l) => (l.name || l || "").toLowerCase());
-
-  // Bug labels → high priority
-  if (labels.includes("bug")) score += 10;
-
-  // Enhancement/feature → medium
-  if (labels.includes("enhancement") || title.startsWith("feat")) score += 5;
-
-  // Test-related → medium-low
-  if (title.startsWith("test")) score += 3;
-
-  // CI monitor bugs → lower (often API-side issues)
-  if (labels.includes("ci-monitor")) score -= 5;
-
-  // Automation label → medium (operational improvements)
-  if (labels.includes("automation")) score += 4;
-
-  // Many rejected PRs → penalty (heavy historical baggage)
-  const rejectedCount = relatedPRs.filter((pr) => (pr.state || "").toUpperCase() === "CLOSED").length;
-  score -= rejectedCount * 2;
-
-  // Very old issues → slight penalty (likely stale or blocked)
-  score -= 1;
-
-  return score;
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +352,7 @@ function main() {
     return;
   }
 
-  // Step 2: Fetch open PRs
+  // Step 2: Fetch open PRs and build issue→PR mapping
   const prs = fetchOpenPRs();
   if (prs === null) {
     console.log("# Auth Error\n\nGitHub API authentication failed while fetching PRs.\n");
@@ -459,132 +363,44 @@ function main() {
   const prIssueNums = buildPrIssueSet(prs);
   log(`Issues with open PRs: ${[...prIssueNums].sort((a, b) => a - b)}`);
 
-  // Step 3: Filter — remove issues with PRs, skip labels, skip title patterns
+  // Step 3: Filter out issues with open PRs
   const candidates = [];
   for (const issue of issues) {
-    const num = issue.number;
-    const title = issue.title;
-    const titleLower = title.toLowerCase();
-    const labels = (issue.labels || []).map((l) => (l.name || "").toLowerCase());
-
-    if (prIssueNums.has(num)) {
-      log(`Skipping #${num} (has open PR): ${title}`);
+    if (prIssueNums.has(issue.number)) {
+      log(`Skipping #${issue.number} (has open PR): ${issue.title}`);
       continue;
     }
-
-    if (labels.some((ln) => SKIP_LABELS.has(ln))) {
-      log(`Skipping #${num} (skip label): ${title}`);
-      continue;
-    }
-
-    if (SKIP_TITLE_KEYWORDS.some((kw) => titleLower.includes(kw))) {
-      log(`Skipping #${num} (skip title keyword): ${title}`);
-      continue;
-    }
-
-    if (SKIP_TITLE_PATTERNS.some((pat) => pat.test(title))) {
-      log(`Skipping #${num} (skip title pattern): ${title}`);
-      continue;
-    }
-
     candidates.push({
-      number: num,
-      title,
+      number: issue.number,
+      title: issue.title,
       labels: (issue.labels || []).map((l) => l.name || ""),
     });
   }
 
-  log(`${candidates.length} candidate(s) after PR/label filtering`);
+  log(`${candidates.length} candidate(s) after PR filtering`);
 
   if (!candidates.length) {
-    console.log("# No Candidates\n\nAll open issues have PRs or are disqualified by labels.\n");
+    console.log("# No Candidates\n\nAll open issues have associated open PRs.\n");
     return;
   }
 
-  // Step 4: Check comments for resolution
-  const final = candidates.filter((c) => {
-    if (checkCommentsResolved(c.number)) {
-      log(`Skipping #${c.number} (resolved in comments): ${c.title}`);
-      return false;
-    }
-    return true;
-  });
-
-  log(`${final.length} candidate(s) after comment check`);
-
-  if (!final.length) {
-    console.log("# No Candidates\n\nAll candidates appear resolved in comments.\n");
-    return;
-  }
-
-  // Step 5: Fetch all PRs for cross-reference and scoring
-  log("Fetching all PRs for cross-reference...");
-  const allPRs = fetchAllPRs();
-  if (allPRs === null) {
-    console.log("# Auth Error\n\nGitHub API authentication failed while fetching all PRs.\n");
-    process.exit(1);
-  }
-  log(`Found ${allPRs.length} total PRs`);
-
-  // Score candidates and sort by score (descending)
-  for (const c of final) {
-    const related = findRelatedPRs(c.number, allPRs);
-    c.score = scoreIssue(c, related);
-    log(`Issue #${c.number} score: ${c.score} — ${c.title}`);
-
-    // Fetch rejected PR comments (only for top candidates)
-    const rejected = related.filter((pr) => (pr.state || "").toUpperCase() === "CLOSED");
-    if (rejected.length) {
-      // Only fetch comments for the 3 most recently closed PRs
-      const topRejected = rejected.slice(-3);
-      log(`Fetching comments for ${topRejected.length} rejected PR(s) on issue #${c.number}`);
-      c.rejected_prs = topRejected.map((pr) => ({
-        number: pr.number,
-        title: pr.title,
-        closeReason: extractCloseReason(fetchPRComments(pr.number)),
-      }));
-    }
-  }
-
-  final.sort((a, b) => b.score - a.score);
-
-  // Limit to top N candidates
-  const limited = final.slice(0, MAX_CANDIDATES);
-
-  if (final.length > MAX_CANDIDATES) {
-    log(`Limiting output from ${final.length} to ${MAX_CANDIDATES} candidates (score-based)`);
-  }
-
-  // Step 6: Output as Markdown
+  // Step 4: Output as Markdown with full issue details
   let md = `# Issue Scan Results\n\n`;
-  md += `**Status:** candidates  |  **Count:** ${final.length} (showing top ${limited.length})  |  **Repo:** ${REPO}\n\n---\n\n`;
+  md += `**Status:** candidates  |  **Count:** ${candidates.length}  |  **Repo:** ${REPO}\n\n---\n\n`;
 
-  for (const c of limited) {
+  for (const c of candidates) {
     md += `## Issue #${c.number}: ${c.title}\n\n`;
-    md += `**Score:** ${c.score}  |  `;
     if (c.labels.length) {
       md += `**Labels:** ${c.labels.join(", ")}\n\n`;
     }
 
-    // Truncated issue body + limited comments
     md += `### Issue Details & Comments\n\n`;
     const detail = fetchIssueDetail(c.number);
-    // Truncate to ~1500 chars to keep output manageable
-    const truncated = detail.length > 1500
-      ? detail.substring(0, 1500) + "\n... (truncated, use `gh issue view` for full details)"
+    // Truncate to ~2000 chars to keep output manageable
+    const truncated = detail.length > 2000
+      ? detail.substring(0, 2000) + "\n... (truncated, use `gh issue view` for full details)"
       : detail;
     md += "```\n" + truncated + "\n```\n\n";
-
-    // Rejected PRs (summary only)
-    if (c.rejected_prs && c.rejected_prs.length) {
-      md += `### Rejected PRs\n\n`;
-      for (const pr of c.rejected_prs) {
-        md += `**PR #${pr.number}: ${pr.title}** (CLOSED)\n\n`;
-        if (pr.closeReason) {
-          md += `> ${pr.closeReason}\n\n`;
-        }
-      }
-    }
 
     md += `---\n\n`;
   }
