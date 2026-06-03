@@ -46,6 +46,22 @@ mkdirSync(TEST_DIR, { recursive: true });
 // The scan.mjs functions are not exported, so we replicate the pure logic here
 // for unit testing (the actual implementations are identical).
 
+function unquoteValue(val) {
+  if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+    val = val.slice(1, -1);
+    if (val.includes('\\"')) val = val.replace(/\\"/g, '"');
+    if (val.includes("\\'")) val = val.replace(/\\'/g, "'");
+  }
+  return val;
+}
+
+function quoteValue(val) {
+  if (val.includes(" ") || val.includes('"')) {
+    return `"${val.replace(/"/g, '\\"')}"`;
+  }
+  return val;
+}
+
 function loadRuntimeEnv(filePath) {
   if (!existsSync(filePath)) return {};
   const content = readFileSync(filePath, "utf-8");
@@ -55,14 +71,14 @@ function loadRuntimeEnv(filePath) {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
     if (eq > 0) {
-      env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+      env[trimmed.slice(0, eq).trim()] = unquoteValue(trimmed.slice(eq + 1).trim());
     }
   }
   return env;
 }
 
 function saveRuntimeEnv(filePath, env) {
-  const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const lines = Object.entries(env).map(([k, v]) => `${k}=${quoteValue(v)}`);
   writeFileSync(filePath, lines.join("\n") + "\n", "utf-8");
 }
 
@@ -104,6 +120,35 @@ console.log("Runtime Env I/O:");
   const loaded = loadRuntimeEnv(fp);
   assertEqual(loaded.GH_TOKEN, "ghs_new", "save round-trip: GH_TOKEN");
   assertEqual(loaded.EXPIRES, "2026-06-03", "save round-trip: EXPIRES");
+
+  // Quoted values — double quotes
+  writeFileSync(fp, 'KEY="hello world"\n');
+  assertEqual(loadRuntimeEnv(fp).KEY, "hello world", "strips double quotes from value");
+
+  // Quoted values — single quotes
+  writeFileSync(fp, "KEY='hello world'\n");
+  assertEqual(loadRuntimeEnv(fp).KEY, "hello world", "strips single quotes from value");
+
+  // Mismatched quotes are NOT stripped
+  writeFileSync(fp, 'KEY="hello\'\n');
+  assertEqual(loadRuntimeEnv(fp).KEY, "\"hello'", "mismatched quotes kept as-is");
+
+  // saveRuntimeEnv quotes values with spaces
+  saveRuntimeEnv(fp, { MSG: "hello world" });
+  const raw = readFileSync(fp, "utf-8");
+  assert(raw.includes('MSG="hello world"'), "saves value with spaces in double quotes");
+  assertEqual(loadRuntimeEnv(fp).MSG, "hello world", "round-trip: value with spaces");
+
+  // saveRuntimeEnv escapes and quotes values with double quotes
+  saveRuntimeEnv(fp, { MSG: 'say "hi"' });
+  const raw2 = readFileSync(fp, "utf-8");
+  assert(raw2.includes('MSG="say \\"hi\\""'), "escapes internal double quotes");
+  assertEqual(loadRuntimeEnv(fp).MSG, 'say "hi"', "round-trip: value with double quotes");
+
+  // Unquoted values without spaces are preserved as-is
+  saveRuntimeEnv(fp, { TOKEN: "ghs_abc123" });
+  const raw3 = readFileSync(fp, "utf-8");
+  assert(raw3.includes("TOKEN=ghs_abc123"), "simple value written without quotes");
 }
 
 // ---------------------------------------------------------------------------
