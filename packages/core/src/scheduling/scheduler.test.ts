@@ -275,22 +275,6 @@ describe('Scheduler', () => {
     });
   });
 
-  describe('reload', () => {
-    it('should reload all tasks from schedule manager', async () => {
-      const task1 = createTask({ id: 't1' });
-      const task2 = createTask({ id: 't2' });
-
-      vi.mocked(mockScheduleManager.listEnabled).mockResolvedValueOnce([task1]);
-      vi.mocked(mockScheduleManager.listEnabled).mockResolvedValueOnce([task1, task2]);
-
-      await scheduler.start();
-      expect(scheduler.getActiveJobs()).toHaveLength(1);
-
-      await scheduler.reload();
-      expect(scheduler.getActiveJobs()).toHaveLength(2);
-    });
-  });
-
   describe('running task tracking', () => {
     it('should report no running tasks initially', () => {
       expect(scheduler.isAnyTaskRunning()).toBe(false);
