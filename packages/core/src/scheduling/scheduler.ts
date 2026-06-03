@@ -276,7 +276,7 @@ export class Scheduler {
         () => this.executeTask(task),
         null,
         true, // start
-        'Asia/Shanghai' // timezone
+        task.timezone ?? 'Asia/Shanghai' // timezone
       );
 
       this.activeJobs.set(task.id, { taskId: task.id, job, task });
