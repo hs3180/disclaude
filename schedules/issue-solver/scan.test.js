@@ -190,6 +190,9 @@ function selectInstallation(installations, targetOwner) {
       (inst) => inst.account && inst.account.login.toLowerCase() === targetOwner.toLowerCase(),
     );
     if (match) return match.id;
+    return {
+      error: `No installation found for owner '${targetOwner}'. Available: ${installations.map((i) => i.account?.login).join(", ")}. Set GITHUB_APP_INSTALLATION_ID explicitly or ensure the app is installed on the target repository.`,
+    };
   }
   return installations[0].id;
 }
@@ -202,7 +205,9 @@ function selectInstallation(installations, targetOwner) {
 
   assertEqual(selectInstallation(installs, "hs3180"), 200, "matches by owner");
   assertEqual(selectInstallation(installs, "HS3180"), 200, "case-insensitive match");
-  assertEqual(selectInstallation(installs, "unknown"), 100, "falls back to first");
+  const unknownResult = selectInstallation(installs, "unknown");
+  assert(unknownResult.error, "unknown owner → returns error object");
+  assert(unknownResult.error.includes("unknown"), "error message mentions owner name");
   assertEqual(selectInstallation(installs, null), 100, "null owner → first");
 }
 
@@ -340,6 +345,29 @@ function extractCloseReason(comments) {
   assertEqual(extractCloseReason(""), null, "empty string → null");
   assertEqual(extractCloseReason("author: bot\n\nThis was fixed in #42"), "This was fixed in #42", "extracts reason after metadata");
   assertEqual(extractCloseReason("--\nstatus: closed\n\nDuplicate of #10\n"), "Duplicate of #10", "skips status line");
+}
+
+// ---------------------------------------------------------------------------
+// Test: TARGET_REPO validation regex
+// ---------------------------------------------------------------------------
+
+console.log("TARGET_REPO Validation:");
+
+{
+  const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+
+  // Valid formats
+  assert(REPO_RE.test("hs3180/disclaude"), "standard owner/repo");
+  assert(REPO_RE.test("my-org/my.repo"), "repo with dots");
+  assert(REPO_RE.test("org_name/repo_name"), "underscores");
+  assert(REPO_RE.test("org/repo-name"), "hyphens");
+
+  // Invalid formats
+  assert(!REPO_RE.test(""), "empty string");
+  assert(!REPO_RE.test("noslash"), "missing slash");
+  assert(!REPO_RE.test("too/many/slashes"), "too many slashes");
+  assert(!REPO_RE.test("space owner/repo"), "space in owner");
+  assert(!REPO_RE.test("owner/repo space"), "space in repo");
 }
 
 // ---------------------------------------------------------------------------

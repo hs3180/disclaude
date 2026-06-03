@@ -34,6 +34,7 @@ node schedules/issue-solver/scan.mjs --debug
 
 | 变量 | 必需 | 说明 |
 |------|------|------|
+| `TARGET_REPO` | 否 | 目标仓库（owner/repo 格式），默认 `hs3180/disclaude` |
 | `GITHUB_APP_ID` | 是 | GitHub App ID |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | 是 | GitHub App 私钥 PEM 文件路径 |
 | `GITHUB_APP_INSTALLATION_ID` | 否 | Installation ID（自动检测） |
