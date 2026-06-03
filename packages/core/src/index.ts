@@ -209,6 +209,7 @@ export {
   ScheduleFileWatcher,
   ScheduleManager,
   Scheduler,
+  TaskTimeoutError,
   type ScheduledTask,
   type ScheduleFileTask,
   type ScheduleFileScannerOptions,

@@ -25,6 +25,33 @@ import type { SystemMessage } from '../types/message.js';
 const logger = createLogger('Scheduler');
 
 /**
+ * Default task execution timeout (5 minutes).
+ * Issue #3894: Prevents indefinitely hung scheduled tasks from blocking
+ * subsequent executions.
+ */
+const DEFAULT_TASK_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Error thrown when a scheduled task execution times out.
+ *
+ * Issue #3894: Used to distinguish timeout errors from other failures,
+ * allowing specific error notification to the user.
+ */
+export class TaskTimeoutError extends Error {
+  /** Task ID that timed out */
+  readonly taskId: string;
+  /** Timeout duration in milliseconds */
+  readonly timeoutMs: number;
+
+  constructor(taskId: string, timeoutMs: number) {
+    super(`Scheduled task "${taskId}" timed out after ${timeoutMs}ms`);
+    this.name = 'TaskTimeoutError';
+    this.taskId = taskId;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
  * Active cron job entry.
  */
 interface ActiveJob {
@@ -351,7 +378,17 @@ ${task.prompt}`;
         };
 
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
-        await this.inputMessageRouter.route(systemMessage);
+
+        // Issue #3894: Timeout protection for InputMessageRouter route.
+        // Prevents hung routes from keeping task in runningTasks forever.
+        const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+        await Promise.race([
+          this.inputMessageRouter.route(systemMessage),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new TaskTimeoutError(task.id, timeoutMs)), timeoutMs)
+          ),
+        ]);
+
         logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
       } else {
         logger.warn(
@@ -364,11 +401,12 @@ ${task.prompt}`;
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
 
-      // Send error notification
-      await this.callbacks.sendMessage(
-        task.chatId,
-        `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
-      );
+      // Issue #3894: Send specific timeout notification
+      const userMessage = error instanceof TaskTimeoutError
+        ? `⏱️ 定时任务「${task.name}」执行超时 (${Math.round(error.timeoutMs / 60000)} 分钟)，已自动终止`
+        : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`;
+
+      await this.callbacks.sendMessage(task.chatId, userMessage);
     } finally {
       // Always remove from running tasks
       this.runningTasks.delete(task.id);
