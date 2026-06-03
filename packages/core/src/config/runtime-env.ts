@@ -3,6 +3,7 @@
  *
  * Reads runtime env vars from `{workspace}/.runtime-env` file.
  * Format: simple KEY=VALUE per line, # comments, blank lines ignored.
+ * Values may be quoted with single or double quotes; escaped quotes are unescaped.
  *
  * Why file-based? Agent runs in an SDK subprocess — in-memory singletons
  * in the main process are not accessible. A workspace file is readable
@@ -24,6 +25,28 @@ const logger = createLogger('RuntimeEnv');
 const FILENAME = '.runtime-env';
 
 /**
+ * Strip surrounding quotes and unescape internal escaped quotes from an env value.
+ */
+function unquoteValue(val: string): string {
+  if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+    val = val.slice(1, -1);
+    if (val.includes('\\"')) { val = val.replace(/\\"/g, '"'); }
+    if (val.includes("\\'")) { val = val.replace(/\\'/g, "'"); }
+  }
+  return val;
+}
+
+/**
+ * Quote an env value if it contains spaces or double-quotes, escaping as needed.
+ */
+function quoteValue(val: string): string {
+  if (val.includes(' ') || val.includes('"')) {
+    return `"${val.replace(/"/g, '\\"')}"`;
+  }
+  return val;
+}
+
+/**
  * Load runtime env vars from workspace directory.
  * Returns empty object if file doesn't exist or is unreadable.
  */
@@ -39,7 +62,7 @@ export function loadRuntimeEnv(workspaceDir: string): Record<string, string> {
       if (!trimmed || trimmed.startsWith('#')) { continue; }
       const eqIndex = trimmed.indexOf('=');
       if (eqIndex > 0) {
-        env[trimmed.slice(0, eqIndex).trim()] = trimmed.slice(eqIndex + 1).trim();
+        env[trimmed.slice(0, eqIndex).trim()] = unquoteValue(trimmed.slice(eqIndex + 1).trim());
       }
     }
 
@@ -62,7 +85,7 @@ export function setRuntimeEnv(workspaceDir: string, key: string, value: string):
   const existing = loadRuntimeEnv(workspaceDir);
   existing[key] = value;
 
-  const lines = Object.entries(existing).map(([k, v]) => `${k}=${v}`);
+  const lines = Object.entries(existing).map(([k, v]) => `${k}=${quoteValue(v)}`);
   fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
 
   logger.debug({ key }, 'Set runtime env var');
@@ -81,7 +104,7 @@ export function deleteRuntimeEnv(workspaceDir: string, key: string): void {
   if (Object.keys(existing).length === 0) {
     fs.rmSync(filePath, { force: true });
   } else {
-    const lines = Object.entries(existing).map(([k, v]) => `${k}=${v}`);
+    const lines = Object.entries(existing).map(([k, v]) => `${k}=${quoteValue(v)}`);
     fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
   }
 

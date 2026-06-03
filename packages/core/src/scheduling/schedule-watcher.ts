@@ -241,7 +241,6 @@ export class ScheduleFileScanner {
         timezone: frontmatter['timezone'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
         modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
-        timezone: frontmatter['timezone'] as string | undefined,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
