@@ -538,7 +538,7 @@ export class ScheduleFileWatcher {
    * Start the periodic re-scan timer.
    */
   private startRescanTimer(): void {
-    if (this.rescanIntervalMs <= 0) return;
+    if (this.rescanIntervalMs <= 0) { return; }
 
     this.rescanTimer = setInterval(() => {
       if (this.running) {
