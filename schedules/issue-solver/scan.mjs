@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Issue Scanner for hs3180/disclaude
+ * Issue Scanner — configurable target repository via TARGET_REPO env var
  *
  * Lists open issues that don't have an associated open PR.
  * Outputs Markdown with full issue details + comments for each candidate.
@@ -22,6 +22,10 @@ import crypto from "node:crypto";
 // ---------------------------------------------------------------------------
 
 const REPO = process.env.TARGET_REPO || "hs3180/disclaude";
+if (!/^[\w.-]+\/[\w.-]+$/.test(REPO)) {
+  console.error(`Invalid TARGET_REPO: "${REPO}". Expected owner/repo format.`);
+  process.exit(1);
+}
 const REPO_OWNER = REPO.split("/")[0];
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -106,7 +110,9 @@ function selectInstallation(installations, targetOwner) {
       log(`Matched installation by owner: ${targetOwner} -> ID ${match.id}`);
       return match.id;
     }
-    log(`WARNING: No installation found for owner '${targetOwner}', falling back to first`);
+    return {
+      error: `No installation found for owner '${targetOwner}'. Available: ${installations.map((i) => i.account?.login).join(", ")}. Set GITHUB_APP_INSTALLATION_ID explicitly or ensure the app is installed on the target repository.`,
+    };
   }
   return installations[0].id;
 }
@@ -173,7 +179,11 @@ function refreshGitHubToken() {
         return { ok: false, error: "NO_INSTALLATIONS", message: "No installations found" };
       }
       log(`Available installations: ${installs.map((i) => `${i.account?.login}(${i.id})`).join(", ")}`);
-      iid = selectInstallation(installs, REPO_OWNER);
+      const selected = selectInstallation(installs, REPO_OWNER);
+      if (selected.error) {
+        return { ok: false, error: "INSTALLATION_NOT_FOUND", message: selected.error };
+      }
+      iid = selected;
       log(`Selected installation ID: ${iid}`);
     } else {
       log(`Using explicit GITHUB_APP_INSTALLATION_ID=${iid}`);
