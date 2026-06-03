@@ -47,8 +47,33 @@ function log(msg) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Strip surrounding quotes and unescape internal escaped quotes from an env value.
+ * Handles both single and double quoted values.
+ */
+function unquoteValue(val) {
+  if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+    val = val.slice(1, -1);
+    // Unescape internal escaped quotes matching the outer quote type
+    if (val.includes('\\"')) val = val.replace(/\\"/g, '"');
+    if (val.includes("\\'")) val = val.replace(/\\'/g, "'");
+  }
+  return val;
+}
+
+/**
+ * Quote an env value if it contains spaces or double-quotes, escaping as needed.
+ */
+function quoteValue(val) {
+  if (val.includes(" ") || val.includes('"')) {
+    return `"${val.replace(/"/g, '\\"')}"`;
+  }
+  return val;
+}
+
+/**
  * Parse .runtime-env file into a key-value map.
  * Format: KEY=VALUE per line, # comments and blank lines ignored.
+ * Values may be quoted with single or double quotes; escaped quotes are unescaped.
  */
 function loadRuntimeEnv() {
   if (!existsSync(RUNTIME_ENV_PATH)) return {};
@@ -59,7 +84,7 @@ function loadRuntimeEnv() {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
     if (eq > 0) {
-      env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+      env[trimmed.slice(0, eq).trim()] = unquoteValue(trimmed.slice(eq + 1).trim());
     }
   }
   return env;
@@ -69,7 +94,7 @@ function loadRuntimeEnv() {
  * Write key-value pairs back to .runtime-env.
  */
 function saveRuntimeEnv(env) {
-  const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const lines = Object.entries(env).map(([k, v]) => `${k}=${quoteValue(v)}`);
   writeFileSync(RUNTIME_ENV_PATH, lines.join("\n") + "\n", "utf-8");
 }
 

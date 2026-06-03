@@ -1277,7 +1277,6 @@ describe('ScheduleFileWatcher', () => {
         rescanIntervalMs: 0,
         renameCreateDelayMs: 100,
         renameRemoveDelayMs: 500,
-        rescanIntervalMs: 0,
       });
       await customWatcher.start();
 
