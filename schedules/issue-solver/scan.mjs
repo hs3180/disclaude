@@ -22,6 +22,12 @@ import crypto from "node:crypto";
 // ---------------------------------------------------------------------------
 
 const REPO = process.env.TARGET_REPO || "hs3180/disclaude";
+
+if (process.env.TARGET_REPO && !process.env.TARGET_REPO.includes("/")) {
+  console.error("TARGET_REPO must be in 'owner/repo' format (e.g. org/name)");
+  process.exit(1);
+}
+
 const REPO_OWNER = REPO.split("/")[0];
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RUNTIME_ENV_PATH = join(__dirname, ".runtime-env");

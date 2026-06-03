@@ -14,7 +14,7 @@ createdAt: "2026-02-26T00:00:00.000Z"
 
 ## 配置
 
-- **仓库**: hs3180/disclaude
+- **仓库**: hs3180/disclaude（可通过 `TARGET_REPO` 环境变量覆盖，格式：`owner/repo`）
 - **扫描间隔**: 每分钟（配合 cooldownPeriod 控制实际执行频率）
 - **冷却时间**: 120 秒（两次执行之间至少间隔 2 分钟）
 - **通知目标**: 配置的 chatId
