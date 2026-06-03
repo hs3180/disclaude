@@ -22,8 +22,11 @@ import crypto from "node:crypto";
 
 const REPO = "hs3180/disclaude";
 const REPO_OWNER = REPO.split("/")[0]; // "hs3180"
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const RUNTIME_ENV_PATH = join(__dirname, ".runtime-env");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// Use project root .runtime-env (consistent with packages/core/src/config/runtime-env.ts)
+const PROJECT_ROOT = join(__dirname, "..", "..");
+const RUNTIME_ENV_PATH = join(PROJECT_ROOT, ".runtime-env");
 
 const SKIP_LABELS = new Set(["wontfix", "invalid", "duplicate", "wont-fix", "not-planned", "report", "documentation"]);
 
@@ -52,16 +55,13 @@ function log(msg) {
   }
 }
 
-function output(obj) {
-  console.log(JSON.stringify(obj, null, 2));
-}
-
 // ---------------------------------------------------------------------------
-// GitHub App Token Management
+// Runtime Env File I/O (aligned with packages/core/src/config/runtime-env.ts)
 // ---------------------------------------------------------------------------
 
 /**
  * Parse .runtime-env file into a key-value map.
+ * Format: KEY=VALUE per line, # comments and blank lines ignored.
  */
 function loadRuntimeEnv() {
   if (!existsSync(RUNTIME_ENV_PATH)) return {};
@@ -85,6 +85,10 @@ function saveRuntimeEnv(env) {
   const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
   writeFileSync(RUNTIME_ENV_PATH, lines.join("\n") + "\n", "utf-8");
 }
+
+// ---------------------------------------------------------------------------
+// GitHub App Token Management
+// ---------------------------------------------------------------------------
 
 /**
  * Check if the stored GH_TOKEN is still valid (with 5-minute safety margin).
@@ -122,6 +126,7 @@ function selectInstallation(installations, targetOwner) {
 
 /**
  * Generate a new GitHub App Installation Access Token via JWT signing.
+ * Uses gh api instead of curl to avoid external dependency and DNS resolution hacks.
  * Writes the new token (and detected installation ID) to .runtime-env.
  */
 function refreshGitHubToken() {
@@ -160,37 +165,21 @@ function refreshGitHubToken() {
   const signature = sign.sign(privateKey, "base64url");
   const jwt = `${sigInput}.${signature}`;
 
-  // Resolve GitHub API IP (DNS may rotate between .166 and .168)
-  let resolvedIp;
-  try {
-    const nsResult = spawnSync("nslookup", ["api.github.com"], {
-      encoding: "utf-8",
-      timeout: 10000,
-    });
-    if (nsResult.status === 0 && nsResult.stdout) {
-      const ipMatch = nsResult.stdout.match(/Address:\s*(\d+\.\d+\.\d+\.\d+)/g);
-      if (ipMatch && ipMatch.length > 0) {
-        // Take the last IP address (the actual resolved address, not the DNS server)
-        resolvedIp = ipMatch[ipMatch.length - 1].replace("Address:\t", "").replace("Address: ", "");
-      }
-    }
-  } catch { /* ignore */ }
-  if (!resolvedIp) resolvedIp = "20.205.243.168";
-
-  // Get installation token via spawnSync + curl (avoiding shell injection)
   try {
     // Step A: Get installation ID if not provided
     let iid = INSTALL_ID;
     if (!iid) {
-      const listResult = spawnSync("curl", [
-        "-s", "-f",
-        "--resolve", `api.github.com:443:${resolvedIp}`,
-        "-H", "Authorization: Bearer " + jwt,
+      const listResult = spawnSync("gh", [
+        "api", "app/installations",
         "-H", "Accept: application/vnd.github+json",
-        "https://api.github.com/app/installations",
-      ], { encoding: "utf-8", timeout: 30000 });
+      ], {
+        env: { ...process.env, GH_TOKEN: jwt },
+        encoding: "utf-8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
       if (listResult.status !== 0 || !listResult.stdout) {
-        return { ok: false, error: "INSTALLATIONS_FETCH_FAILED", message: `curl failed: ${listResult.stderr || "unknown error"}` };
+        return { ok: false, error: "INSTALLATIONS_FETCH_FAILED", message: `gh api failed: ${listResult.stderr || "unknown error"}` };
       }
       const installs = JSON.parse(listResult.stdout);
       if (!installs.length) {
@@ -204,15 +193,19 @@ function refreshGitHubToken() {
     }
 
     // Step B: Create installation access token
-    const tokenResult = spawnSync("curl", [
-      "-s", "-f", "-X", "POST",
-      "--resolve", `api.github.com:443:${resolvedIp}`,
-      "-H", "Authorization: Bearer " + jwt,
+    const tokenResult = spawnSync("gh", [
+      "api",
+      "-X", "POST",
+      `app/installations/${iid}/access_tokens`,
       "-H", "Accept: application/vnd.github+json",
-      `https://api.github.com/app/installations/${iid}/access_tokens`,
-    ], { encoding: "utf-8", timeout: 30000 });
+    ], {
+      env: { ...process.env, GH_TOKEN: jwt },
+      encoding: "utf-8",
+      timeout: 30000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     if (tokenResult.status !== 0 || !tokenResult.stdout) {
-      return { ok: false, error: "TOKEN_FETCH_FAILED", message: `curl failed: ${tokenResult.stderr || "unknown error"}` };
+      return { ok: false, error: "TOKEN_FETCH_FAILED", message: `gh api failed: ${tokenResult.stderr || "unknown error"}` };
     }
     const data = JSON.parse(tokenResult.stdout);
 
@@ -234,35 +227,38 @@ function refreshGitHubToken() {
   }
 }
 
-// Cached token to avoid repeated file reads / refresh attempts
+// Token cache with invalidation support
 let cachedToken = null;
+let cachedTokenExpiry = 0;
 
 /**
  * Ensure a valid GH_TOKEN is available. Returns the token or exits with error.
- * Uses in-memory cache to avoid redundant checks within a single run.
+ * Uses in-memory cache with expiry awareness to avoid redundant checks.
  */
 function ensureToken() {
-  if (cachedToken) return cachedToken;
+  // Check cache validity (token must not be within 3-minute margin of expiry)
+  if (cachedToken && Date.now() < cachedTokenExpiry - 3 * 60 * 1000) {
+    return cachedToken;
+  }
+  cachedToken = null;
 
   const env = loadRuntimeEnv();
 
   if (isTokenValid(env)) {
     log("Using existing GH_TOKEN");
     cachedToken = env.GH_TOKEN;
+    cachedTokenExpiry = new Date(env.GH_TOKEN_EXPIRES_AT).getTime();
     return cachedToken;
   }
 
   log("GH_TOKEN expired or missing, refreshing...");
   const result = refreshGitHubToken();
   if (!result.ok) {
-    output({
-      status: "auth_error",
-      error: result.error,
-      message: result.message,
-    });
+    console.log(`# Auth Error\n\n**Error:** ${result.error}\n**Message:** ${result.message}\n`);
     process.exit(1);
   }
   cachedToken = result.token;
+  cachedTokenExpiry = new Date(result.expiresAt).getTime();
   return cachedToken;
 }
 
@@ -271,7 +267,7 @@ function ensureToken() {
 // ---------------------------------------------------------------------------
 
 /**
- * Run a gh CLI command. Returns parsed JSON or fallback on failure.
+ * Run a gh CLI command. Returns stdout string or null on failure.
  * Uses spawnSync to avoid shell injection from token or arguments.
  */
 function gh(...args) {
@@ -284,9 +280,11 @@ function gh(...args) {
   });
   if (result.status !== 0) {
     const stderr = result.stderr || "";
-    // Detect auth errors specifically
+    // Detect auth errors specifically — invalidate cache and retry once
     if (stderr.includes("401") || stderr.includes("Bad credentials")) {
       log(`Auth error from gh: ${stderr.trim()}`);
+      // Invalidate cache so next call triggers a refresh
+      cachedToken = null;
       return null;
     }
     log(`gh ${args.join(" ")} failed: ${(stderr || "unknown error").trim()}`);
@@ -331,8 +329,9 @@ function buildPrIssueSet(prs) {
 function checkCommentsResolved(issueNumber) {
   const out = gh("issue", "view", String(issueNumber), "--repo", REPO, "--comments");
   if (!out) return false;
-  const tail = out.trim().split("\n").slice(-30).join("\n").toLowerCase();
-  return SKIP_KEYWORDS.some((kw) => tail.includes(kw.toLowerCase()));
+  // Check all comment lines (not just last 30) for resolution keywords
+  const full = out.trim().toLowerCase();
+  return SKIP_KEYWORDS.some((kw) => full.includes(kw.toLowerCase()));
 }
 
 function fetchAllPRs() {
@@ -340,8 +339,8 @@ function fetchAllPRs() {
     "pr", "list", "--repo", REPO, "--state", "all",
     "--json", "number,title,state,body,headRefName", "--limit", "200",
   );
-  if (!out) return [];
-  return JSON.parse(out);
+  if (!out) return null; // null = auth/network failure (consistent with other fetchers)
+  try { return JSON.parse(out); } catch { return []; }
 }
 
 function findRelatedPRs(issueNumber, allPRs) {
@@ -439,26 +438,20 @@ function main() {
   // Step 1: Fetch issues
   const issues = fetchOpenIssues();
   if (issues === null) {
-    output({
-      status: "auth_error",
-      message: "GitHub API authentication failed. Token refresh also failed. Check GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH.",
-    });
+    console.log("# Auth Error\n\nGitHub API authentication failed. Token refresh also failed.\nCheck GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH.\n");
     process.exit(1);
   }
 
   log(`Found ${issues.length} open issues`);
   if (!issues.length) {
-    output({ status: "no_issues", message: "No open issues found" });
+    console.log("# No Issues\n\nNo open issues found.\n");
     return;
   }
 
   // Step 2: Fetch open PRs
   const prs = fetchOpenPRs();
   if (prs === null) {
-    output({
-      status: "auth_error",
-      message: "GitHub API authentication failed while fetching PRs.",
-    });
+    console.log("# Auth Error\n\nGitHub API authentication failed while fetching PRs.\n");
     process.exit(1);
   }
 
@@ -504,10 +497,7 @@ function main() {
   log(`${candidates.length} candidate(s) after PR/label filtering`);
 
   if (!candidates.length) {
-    output({
-      status: "no_candidates",
-      message: "All open issues have PRs or are disqualified by labels",
-    });
+    console.log("# No Candidates\n\nAll open issues have PRs or are disqualified by labels.\n");
     return;
   }
 
@@ -523,16 +513,17 @@ function main() {
   log(`${final.length} candidate(s) after comment check`);
 
   if (!final.length) {
-    output({
-      status: "no_candidates",
-      message: "All candidates appear resolved in comments",
-    });
+    console.log("# No Candidates\n\nAll candidates appear resolved in comments.\n");
     return;
   }
 
   // Step 5: Fetch all PRs for cross-reference and scoring
   log("Fetching all PRs for cross-reference...");
   const allPRs = fetchAllPRs();
+  if (allPRs === null) {
+    console.log("# Auth Error\n\nGitHub API authentication failed while fetching all PRs.\n");
+    process.exit(1);
+  }
   log(`Found ${allPRs.length} total PRs`);
 
   // Score candidates and sort by score (descending)
@@ -564,7 +555,7 @@ function main() {
     log(`Limiting output from ${final.length} to ${MAX_CANDIDATES} candidates (score-based)`);
   }
 
-  // Step 6: Output as Markdown with truncated details
+  // Step 6: Output as Markdown
   let md = `# Issue Scan Results\n\n`;
   md += `**Status:** candidates  |  **Count:** ${final.length} (showing top ${limited.length})  |  **Repo:** ${REPO}\n\n---\n\n`;
 
