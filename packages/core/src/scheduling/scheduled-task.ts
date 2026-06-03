@@ -10,6 +10,13 @@
 import type { ModelTier } from '../config/types.js';
 
 /**
+ * Default timezone for scheduled tasks when not explicitly specified.
+ *
+ * Issue #3860: Configurable timezone per task.
+ */
+export const DEFAULT_TIMEZONE = 'Asia/Shanghai';
+
+/**
  * Scheduled task definition.
  */
 export interface ScheduledTask {
@@ -69,4 +76,13 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
+  /**
+   * Timezone for cron expression evaluation (e.g., "America/New_York").
+   * Defaults to "Asia/Shanghai" when not specified.
+   *
+   * Defined in schedule markdown frontmatter (e.g., `timezone: "UTC"`).
+   *
+   * Issue #3860: Configurable timezone per task.
+   */
+  timezone?: string;
 }

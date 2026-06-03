@@ -602,6 +602,107 @@ describe('ScheduleFileScanner', () => {
       // Covers line 224-225: empty model warning branch
     });
   });
+
+  describe('parseFile - timezone support (Issue #3860)', () => {
+    it('should parse timezone field from frontmatter', async () => {
+      const content = [
+        '---',
+        'name: "NYC Task"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_nyc"',
+        'timezone: "America/New_York"',
+        '---',
+        '',
+        'Task in NYC timezone.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/nyc-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.timezone).toBe('America/New_York');
+    });
+
+    it('should default timezone to undefined when not specified', async () => {
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/default-tz/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.timezone).toBeUndefined();
+    });
+
+    it('should write timezone to frontmatter when present', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-tz-test',
+        name: 'TZ Task',
+        cron: '0 9 * * *',
+        prompt: 'Timezone task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+        timezone: 'Europe/London',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).toContain('timezone: "Europe/London"');
+    });
+
+    it('should not write timezone when undefined', async () => {
+      const task: ScheduledTask = {
+        id: 'schedule-no-tz',
+        name: 'No TZ',
+        cron: '0 9 * * *',
+        prompt: 'Task',
+        chatId: 'oc_test',
+        enabled: true,
+        createdAt: '2026-01-01',
+      };
+
+      await scanner.writeTask(task);
+
+      const writtenContent = mockWriteFile.mock.calls[0][1] as string;
+      expect(writtenContent).not.toContain('timezone:');
+    });
+
+    it('should reject invalid IANA timezone', async () => {
+      const content = [
+        '---',
+        'name: "Bad TZ"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_bad"',
+        'timezone: "Invalid/Timezone"',
+        '---',
+        '',
+        'Task with bad timezone.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/bad-tz/SCHEDULE.md`);
+      // Invalid timezone causes parseFile to catch the error and return null
+      expect(task).toBeNull();
+    });
+
+    it('should reject timezone with typo (missing underscore)', async () => {
+      const content = [
+        '---',
+        'name: "Typo TZ"',
+        'cron: "0 9 * * *"',
+        'chatId: "oc_typo"',
+        'timezone: "America/NewYork"',
+        '---',
+        '',
+        'Task with typo timezone.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/typo-tz/SCHEDULE.md`);
+      expect(task).toBeNull();
+    });
+  });
 });
 
 // ============================================================================
@@ -636,7 +737,7 @@ describe('ScheduleFileWatcher', () => {
       onFileChanged,
       onFileRemoved,
       debounceMs,
-      rescanIntervalMs: 0, // Disable rescan timer by default
+      rescanIntervalMs: 0, // Disable periodic rescan in tests to avoid fake timer infinite loop
     });
     return watcher;
   }
@@ -1091,11 +1192,6 @@ describe('ScheduleFileWatcher', () => {
   describe('rescan timer', () => {
     it('should start periodic rescan timer on start', async () => {
       vi.useFakeTimers();
-      createWatcher();
-      await watcher.start();
-
-      // Default interval is 5 min, use short interval for testing
-      watcher.stop();
       const shortWatcher = new ScheduleFileWatcher({
         schedulesDir: MOCK_DIR,
         onFileAdded,
@@ -1108,11 +1204,14 @@ describe('ScheduleFileWatcher', () => {
 
       mockReaddir.mockResolvedValue([]);
 
-      await vi.advanceTimersByTimeAsync(1000);
+      // Advance by interval to trigger rescan, then stop before interval fires again
+      vi.advanceTimersByTime(1000);
+      shortWatcher.stop();
+
+      // Use vi.runOnlyPendingTimersAsync to settle pending async without infinite loop
+      await vi.runOnlyPendingTimersAsync();
 
       expect(mockReaddir).toHaveBeenCalled();
-
-      shortWatcher.stop();
     });
 
     it('should not start rescan timer when rescanIntervalMs is 0', async () => {
@@ -1175,6 +1274,7 @@ describe('ScheduleFileWatcher', () => {
         onFileChanged,
         onFileRemoved,
         debounceMs: 10,
+        rescanIntervalMs: 0,
         renameCreateDelayMs: 100,
         renameRemoveDelayMs: 500,
         rescanIntervalMs: 0,
