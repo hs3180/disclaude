@@ -45,6 +45,31 @@ describe('runtime-env', () => {
       fs.writeFileSync(path.join(tmpDir, '.runtime-env'), 'EQUATION=a=b=c\n');
       expect(loadRuntimeEnv(tmpDir)).toEqual({ EQUATION: 'a=b=c' });
     });
+
+    it('strips double-quoted values', () => {
+      fs.writeFileSync(path.join(tmpDir, '.runtime-env'), 'KEY="value with spaces"\n');
+      expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: 'value with spaces' });
+    });
+
+    it('strips single-quoted values', () => {
+      fs.writeFileSync(path.join(tmpDir, '.runtime-env'), "KEY='single quoted'\n");
+      expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: 'single quoted' });
+    });
+
+    it('handles empty quoted values', () => {
+      fs.writeFileSync(path.join(tmpDir, '.runtime-env'), 'KEY=""\n');
+      expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: '' });
+    });
+
+    it('only strips one layer of quotes', () => {
+      fs.writeFileSync(path.join(tmpDir, '.runtime-env'), 'KEY=""nested""\n');
+      expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: '"nested"' });
+    });
+
+    it('does not strip mismatched quotes', () => {
+      fs.writeFileSync(path.join(tmpDir, '.runtime-env'), 'KEY="value\n');
+      expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: '"value' });
+    });
   });
 
   describe('setRuntimeEnv', () => {
@@ -63,6 +88,17 @@ describe('runtime-env', () => {
       setRuntimeEnv(tmpDir, 'KEY', 'old');
       setRuntimeEnv(tmpDir, 'KEY', 'new');
       expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: 'new' });
+    });
+
+    it('wraps values with spaces in double quotes', () => {
+      setRuntimeEnv(tmpDir, 'KEY', 'value with spaces');
+      const content = fs.readFileSync(path.join(tmpDir, '.runtime-env'), 'utf-8');
+      expect(content).toContain('KEY="value with spaces"');
+    });
+
+    it('round-trips values with spaces', () => {
+      setRuntimeEnv(tmpDir, 'KEY', 'value with spaces');
+      expect(loadRuntimeEnv(tmpDir)).toEqual({ KEY: 'value with spaces' });
     });
   });
 

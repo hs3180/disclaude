@@ -64,6 +64,7 @@ function output(obj) {
 /**
  * Parse .runtime-env file into a key-value map.
  * Handles quoted values: KEY="value with spaces" → strips surrounding quotes.
+ * Only strips one layer of quotes; nested quotes like KEY=""val"" become "val".
  */
 function loadRuntimeEnv() {
   if (!existsSync(RUNTIME_ENV_PATH)) return {};
@@ -75,7 +76,7 @@ function loadRuntimeEnv() {
     const eq = trimmed.indexOf("=");
     if (eq > 0) {
       let val = trimmed.slice(eq + 1).trim();
-      // Strip surrounding double or single quotes
+      // Strip one layer of surrounding double or single quotes
       if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
         val = val.slice(1, -1);
       }
@@ -87,9 +88,13 @@ function loadRuntimeEnv() {
 
 /**
  * Write key-value pairs back to .runtime-env.
+ * Values containing spaces are wrapped in double quotes to preserve round-trip integrity.
  */
 function saveRuntimeEnv(env) {
-  const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const lines = Object.entries(env).map(([k, v]) => {
+    const needsQuotes = v.includes(" ");
+    return needsQuotes ? `${k}="${v}"` : `${k}=${v}`;
+  });
   writeFileSync(RUNTIME_ENV_PATH, lines.join("\n") + "\n", "utf-8");
 }
 
