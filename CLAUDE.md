@@ -93,7 +93,7 @@ File-based configuration using `disclaude.config.yaml`:
 **Configuration file structure**:
 ```yaml
 workspace:
-  dir: ./workspace
+  dir: ./workspace   # Docker: /data/workspace | Local: ./workspace
 glm:
   apiKey: "..."
   model: "glm-5"
