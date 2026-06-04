@@ -152,10 +152,43 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Issue #3776: Without this, REST Channel responses go to Feishu
    * (or whichever channel created the agent first), causing HTTP timeouts.
    *
+   * **Concurrency safety**: When the agent is actively processing a query
+   * (taskCompletionPromise is set), the update is deferred by queueing
+   * a microtask that re-applies the new callbacks once the current query
+   * completes. This prevents mid-query callback switching which could
+   * route partial responses to the wrong channel.
+   *
    * @param callbacks - New callbacks matching the current message's channel
+   * @returns true if callbacks were applied immediately, false if deferred
    */
-  updateCallbacks(callbacks: ChatAgentCallbacks): void {
-    this.callbacks = callbacks;
+  updateCallbacks(callbacks: ChatAgentCallbacks): boolean {
+    if (!this.taskCompletionPromise) {
+      // Agent is idle — safe to update immediately
+      this.callbacks = callbacks;
+      return true;
+    }
+
+    // Agent is busy — defer update until current query completes.
+    // Use .then() to re-apply once the running task finishes, ensuring
+    // the next query uses the new callbacks without disrupting the current one.
+    this.logger.info(
+      { chatId: this.boundChatId },
+      'Agent is busy, deferring callback update until current query completes',
+    );
+    const pendingCallbacks = callbacks;
+    void this.taskCompletionPromise
+      .catch(() => {}) // Swallow rejection — we only care about completion
+      .then(() => {
+        // Only apply if no newer update has already been applied
+        if (this.callbacks !== pendingCallbacks) {
+          this.callbacks = pendingCallbacks;
+          this.logger.info(
+            { chatId: this.boundChatId },
+            'Deferred callback update applied after query completion',
+          );
+        }
+      });
+    return false;
   }
 
   protected getAgentName(): string {

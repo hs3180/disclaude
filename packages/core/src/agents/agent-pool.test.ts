@@ -19,6 +19,7 @@ function createMockChatAgent(chatId: string): ChatAgent {
     reset: vi.fn(),
     stop: vi.fn().mockReturnValue(true),
     dispose: vi.fn(),
+    updateCallbacks: vi.fn().mockReturnValue(true),
   };
 }
 

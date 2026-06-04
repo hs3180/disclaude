@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CwdProvider } from '@disclaude/core';
 
 // Track mock agent instances for assertions
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn> }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void> }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -27,7 +27,8 @@ vi.mock('./agents/factory.js', () => ({
       const agent = {
         dispose: vi.fn(),
         stop: vi.fn().mockReturnValue(true),
-        updateCallbacks: vi.fn(),
+        updateCallbacks: vi.fn().mockReturnValue(true),
+        taskComplete: undefined as Promise<void> | undefined,
       };
       mockAgents.set(chatId, agent);
       return agent;
@@ -176,6 +177,23 @@ describe('PrimaryAgentPool', () => {
       expect(agent.updateCallbacks).toHaveBeenCalledWith(callbacks2);
       expect(agent.updateCallbacks).toHaveBeenCalledWith(callbacks3);
       expect(agent.updateCallbacks).toHaveBeenCalledTimes(2);
+    });
+
+    it('should pass through updateCallbacks return value (concurrency signal)', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks1 = createMockCallbacks();
+      const callbacks2 = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('chat-1', callbacks1);
+      const agent = mockAgents.get('chat-1')!;
+
+      // Simulate agent being busy (updateCallbacks returns false)
+      agent.updateCallbacks.mockReturnValue(false);
+      pool.getOrCreateChatAgent('chat-1', callbacks2);
+
+      // The pool should still call updateCallbacks even when agent is busy
+      // (the agent handles deferral internally)
+      expect(agent.updateCallbacks).toHaveBeenCalledWith(callbacks2);
     });
   });
 

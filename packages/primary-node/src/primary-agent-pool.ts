@@ -89,6 +89,9 @@ export class PrimaryAgentPool {
       // Issue #3776: Update callbacks so responses route to the correct channel.
       // Without this, REST Channel responses go to Feishu's callbacks (which
       // don't resolve PendingResponse), causing HTTP timeouts.
+      //
+      // updateCallbacks() handles concurrency: if the agent is busy, the update
+      // is deferred until the current query completes.
       agent.updateCallbacks(callbacks);
     }
     return agent;
