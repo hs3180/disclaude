@@ -8,37 +8,64 @@ chatId: "{controlChannelChatId}"
 
 # Issue Solver — 定时扫描
 
-每 2 小时执行一次 Issue 扫描，筛选出适合自动处理的 open issue。
+你必须完成以下任务：扫描 open issues，剔除有 open PR 的，从中选择一个 issue，在临时目录中实现修复并提交 PR。
 
-## 执行流程
+## 你的任务
 
-### 1. 运行 scan.mjs
+### 第一步：运行扫描脚本
+
+执行以下命令：
 
 ```bash
-node skills/issue-solver/scan.mjs --debug
+node schedules/issue-solver/scan.mjs
 ```
 
-脚本会自动完成：
-- 检查 `.runtime-env` 中的 GH_TOKEN 是否有效，过期则自动刷新
-- 调用 `gh api` 获取 GitHub App Installation Access Token（使用 `gh` CLI，不依赖 `curl`）
-- 扫描 open issues，过滤掉已有 PR、skip 标签、评论中已解决的 issue
-- 按评分排序，输出 top N 候选 issue
+脚本会输出候选 issue 列表（Markdown 格式，包含标题、描述、评论），已自动剔除有 open PR 的 issue。
 
-### 2. 处理输出
+### 第二步：选择一个 issue
 
-脚本输出 Markdown 格式的候选 issue 列表。若无候选 issue，脚本输出提示信息并正常退出。
+根据脚本输出的标题和描述，凭你的直觉选择一个优先级最高、最适合当前处理的 issue。
 
-若存在候选 issue，将输出转发到控制频道，等待人工确认或自动分配给 agent 处理。
+### 第三步：克隆仓库到临时目录
+
+```bash
+cd /tmp && rm -rf disclaude-issue-$ISSUE_NUMBER && git clone https://github.com/hs3180/disclaude.git disclaude-issue-$ISSUE_NUMBER
+```
+
+### 第四步：在临时目录中实现修复
+
+```bash
+cd /tmp/disclaude-issue-$ISSUE_NUMBER
+```
+
+根据 issue 描述阅读代码并修改实现修复。
+
+### 第五步：运行测试
+
+确保你的修改不破坏现有测试。
+
+### 第六步：提交 PR
+
+```bash
+git checkout -b fix/issue-$ISSUE_NUMBER
+git add -A && git commit -m "fix #$ISSUE_NUMBER: ..."
+git push origin fix/issue-$ISSUE_NUMBER
+gh pr create --title "fix #$ISSUE_NUMBER: ..." --body "Closes #$ISSUE_NUMBER"
+```
+
+### 第七步：报告结果
+
+在控制频道（当前聊天）发送 PR 链接。
+
+---
+
+若脚本输出无候选 issue，直接回复"无候选 issue"并结束，不做任何操作。
 
 ## 环境变量
 
 | 变量 | 必需 | 说明 |
 |------|------|------|
-| `TARGET_REPO` | 否 | 目标仓库（owner/repo 格式），默认 `hs3180/disclaude` |
+| `TARGET_REPO` | 否 | 目标仓库（默认 `hs3180/disclaude`） |
 | `GITHUB_APP_ID` | 是 | GitHub App ID |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | 是 | GitHub App 私钥 PEM 文件路径 |
 | `GITHUB_APP_INSTALLATION_ID` | 否 | Installation ID（自动检测） |
-
-## 输出文件
-
-Token 写入 workspace 目录下的 `.runtime-env`（与 `packages/core/src/config/runtime-env.ts` 一致）。
