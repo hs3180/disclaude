@@ -166,7 +166,6 @@ describe('Runtime Context', () => {
         async sendMessage() {},
         async sendCard() {},
         async sendFile() {},
-        findSkill() { return Promise.resolve(undefined); },
       };
 
       setRuntimeContext(ctx);

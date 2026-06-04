@@ -159,17 +159,6 @@ export {
   type MessageBuilderOptions,
 } from './agents/message-builder/index.js';
 
-// Skills module (Issue #430)
-export {
-  type DiscoveredSkill,
-  type SkillSearchPath,
-  getDefaultSearchPaths,
-  findSkill,
-  listSkills,
-  skillExists,
-  readSkillContent,
-} from './skills/index.js';
-
 // Conversation module (Issue #1041)
 export {
   MessageQueue,
