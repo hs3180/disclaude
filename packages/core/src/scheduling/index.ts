@@ -8,8 +8,7 @@
  * - ScheduleFileScanner: Scans and parses schedule markdown files
  * - ScheduleFileWatcher: Hot reload for schedule files
  * - ScheduleManager: Query operations for scheduled tasks
- * - Scheduler: Cron-based task execution (with dependency injection)
- * - ScheduleExecutor: Unified executor factory (Issue #1382)
+ * - Scheduler: Cron-based task execution (via InputMessageRouter)
  *
  * @module @disclaude/core/scheduling
  */
@@ -57,15 +56,6 @@ export {
 // Scheduler
 export {
   Scheduler,
-  TaskTimeoutError,
   type SchedulerCallbacks,
-  type TaskExecutor,
   type SchedulerOptions,
 } from './scheduler.js';
-
-// Schedule Executor (Issue #1382, Issue #2941: ChatAgent-only)
-export {
-  createScheduleExecutor,
-  type AgentFactory,
-  type ScheduleExecutorOptions,
-} from './schedule-executor.js';

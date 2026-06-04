@@ -53,13 +53,10 @@ import {
   CooldownManager,
   Config,
   type ScheduledTask,
-  // Issue #1382: Unified schedule executor
-  createScheduleExecutor,
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
 } from '@disclaude/core';
-import { AgentFactory, toChatAgentCallbacks } from './agents/factory.js';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
 import { ChannelManager } from './channel-manager.js';
@@ -539,7 +536,7 @@ export class PrimaryNode extends EventEmitter {
    * Initialize the scheduler for scheduled task execution.
    *
    * Issue #1377: Scheduler integration for Primary Node
-   * Issue #1382: Use unified createScheduleExecutor for task execution
+   * Issue #3582: Route tasks through InputMessageRouter to existing agents
    * Issue #3361: Added step-by-step logging for diagnostics.
    *   Each initialization phase logs success/failure explicitly so that
    *   operators can pinpoint which step failed when scheduler appears silent.
@@ -561,16 +558,10 @@ export class PrimaryNode extends EventEmitter {
     this.scheduleManager = new ScheduleManager({ schedulesDir });
     logger.info({ schedulesDir }, 'Scheduler init step 2/6: ✓ ScheduleManager ready');
 
-    // Step 3: Create executor and callbacks
-    logger.info('Scheduler init step 3/6: Creating schedule executor');
-    // Issue #1382: Create callbacks for scheduler
-    // Issue #1384: Fixed sendMessage to construct proper OutgoingMessage object
+    // Step 3: Create callbacks
+    logger.info('Scheduler init step 3/6: Creating schedule callbacks');
     const schedulerCallbacks: SchedulerCallbacks = {
       sendMessage: async (chatId: string, message: string): Promise<void> => {
-        // Issue #1594: Send message via ChannelManager.
-        // Use broadcast() instead of getFirstChannel() so that the correct
-        // channel (Feishu, REST, etc.) receives and delivers the message.
-        // Channels that don't recognize the chatId simply ignore it.
         const outgoingMessage: OutgoingMessage = {
           type: 'text',
           chatId,
@@ -579,18 +570,7 @@ export class PrimaryNode extends EventEmitter {
         await this.channelManager.broadcast(outgoingMessage);
       },
     };
-
-    // Issue #1382: Use unified createScheduleExecutor
-    // Issue #1412: Use toChatAgentCallbacks helper to convert SchedulerCallbacks to ChatAgentCallbacks
-    // Issue #1338: Pass model override for per-task model selection
-    // Issue #3059: Pass modelTier for tier-based model resolution
-    const executor = createScheduleExecutor({
-      agentFactory: (chatId, callbacks, model, modelTier) => {
-        return AgentFactory.createAgent(chatId, toChatAgentCallbacks(callbacks), { model, modelTier });
-      },
-      callbacks: schedulerCallbacks,
-    });
-    logger.info('Scheduler init step 3/6: ✓ Schedule executor created');
+    logger.info('Scheduler init step 3/6: ✓ Schedule callbacks created');
 
     // Step 4: Initialize Scheduler and schedule tasks
     logger.info('Scheduler init step 4/6: Creating Scheduler and loading tasks');
@@ -598,8 +578,7 @@ export class PrimaryNode extends EventEmitter {
       scheduleManager: this.scheduleManager,
       cooldownManager: this.cooldownManager,
       callbacks: schedulerCallbacks,
-      executor,
-      // Issue #3582: Pass InputMessageRouter for unified scheduling (Phase 3)
+      // Issue #3582: Route through InputMessageRouter to existing agents
       inputMessageRouter: this.inputMessageRouter,
     });
 

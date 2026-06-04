@@ -1313,7 +1313,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
     // shutdown() without await) meant shutdown()'s `await Promise.resolve()`
     // deferred the close() calls to the next microtask. If a new agent was
-    // created immediately after dispose() (e.g., schedule-executor runOnce),
+    // created immediately after dispose() (e.g., scheduled task via InputMessageRouter),
     // the old exit listener was still registered when the new snapshot was
     // taken, making the cleanup blind to it.
     if (this.queryHandle) {
