@@ -913,10 +913,12 @@ describe('Scheduler', () => {
       const jobs = busyScheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Use vi.waitFor for robust async assertion instead of fixed setTimeout
+      await vi.waitFor(() => {
+        // Should check agent busy state
+        expect(isAgentBusy).toHaveBeenCalledWith('oc_test');
+      }, { timeout: 2000 });
 
-      // Should check agent busy state
-      expect(isAgentBusy).toHaveBeenCalledWith('oc_test');
       // Router should NOT be called when agent is busy
       expect(mockRouterAsMock.route).not.toHaveBeenCalled();
       // Task should not be running
@@ -990,6 +992,90 @@ describe('Scheduler', () => {
         isAgentBusy: () => false,
       });
       expect(busyScheduler.hasAgentBusyCheck()).toBe(true);
+    });
+
+    it('should notify user every 3 consecutive agent-busy skips', async () => {
+      const isAgentBusy = vi.fn().mockReturnValue(true);
+      const sendMsgSpy = vi.fn().mockResolvedValue(undefined);
+      const busyScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: { sendMessage: sendMsgSpy },
+        inputMessageRouter: mockRouter,
+        isAgentBusy,
+      });
+
+      const task = createTask({ id: 'skip-notify', blocking: true });
+      busyScheduler.addTask(task);
+
+      // Trigger 3 consecutive skips
+      for (let i = 0; i < 3; i++) {
+        const jobs = busyScheduler.getActiveJobs();
+        void jobs[0].job.fireOnTick();
+        await vi.waitFor(() => {
+          expect(isAgentBusy).toHaveBeenCalledTimes(i + 1);
+        }, { timeout: 2000 });
+      }
+
+      // Should have sent notification on the 3rd skip
+      expect(sendMsgSpy).toHaveBeenCalledTimes(1);
+      expect(sendMsgSpy).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('已连续 3 次')
+      );
+    });
+
+    it('should reset skip counter when task executes successfully', async () => {
+      let busy = true;
+      const isAgentBusy = vi.fn(() => busy);
+      const sendMsgSpy = vi.fn().mockResolvedValue(undefined);
+      const busyScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: { sendMessage: sendMsgSpy },
+        inputMessageRouter: mockRouter,
+        isAgentBusy,
+      });
+
+      const task = createTask({ id: 'reset-counter', blocking: true });
+      busyScheduler.addTask(task);
+
+      // Skip twice (below notification threshold)
+      for (let i = 0; i < 2; i++) {
+        const jobs = busyScheduler.getActiveJobs();
+        void jobs[0].job.fireOnTick();
+        await vi.waitFor(() => {
+          expect(isAgentBusy).toHaveBeenCalledTimes(i + 1);
+        }, { timeout: 2000 });
+      }
+
+      // No skip notification yet (threshold is 3)
+      const skipNotifications = sendMsgSpy.mock.calls.filter(
+        (call: string[]) => call[1]?.includes('已连续')
+      );
+      expect(skipNotifications).toHaveLength(0);
+
+      // Agent becomes idle — task executes, counter resets
+      busy = false;
+      const jobs = busyScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalled();
+      }, { timeout: 2000 });
+
+      // Agent becomes busy again — skip count should restart from 1, not 3
+      busy = true;
+      mockRouterAsMock.route.mockClear();
+      isAgentBusy.mockClear();
+      const jobs2 = busyScheduler.getActiveJobs();
+      void jobs2[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(isAgentBusy).toHaveBeenCalled();
+      }, { timeout: 2000 });
+
+      // Still no skip notification because counter was reset (only 1 new skip)
+      const skipNotificationsAfter = sendMsgSpy.mock.calls.filter(
+        (call: string[]) => call[1]?.includes('已连续')
+      );
+      expect(skipNotificationsAfter).toHaveLength(0);
     });
   });
 });

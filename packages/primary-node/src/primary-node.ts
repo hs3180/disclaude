@@ -658,6 +658,11 @@ export class PrimaryNode extends EventEmitter {
    * @param callback - Function that returns true if the agent for the given chatId is busy
    */
   setIsAgentBusy(callback: (chatId: string) => boolean): void {
+    if (this.scheduler) {
+      logger.warn(
+        'setIsAgentBusy called after scheduler is already initialized - callback will not take effect until scheduler is recreated'
+      );
+    }
     this.isAgentBusy = callback;
   }
 

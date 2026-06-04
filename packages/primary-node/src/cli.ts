@@ -296,10 +296,9 @@ async function main(): Promise<void> {
 
   // Issue #3931: Wire agent-busy check so blocking tasks skip when agent is busy.
   // Must be called before primaryNode.start() (which calls initScheduler).
-  primaryNode.setIsAgentBusy((chatId: string) => {
-    const agent = agentPool.get(chatId);
-    return agent ? agent.taskComplete !== undefined : false;
-  });
+  // Uses PrimaryAgentPool.isAgentBusy() which encapsulates the check via
+  // ChatAgent.isBusy, avoiding direct access to agent internals.
+  primaryNode.setIsAgentBusy((chatId: string) => agentPool.isAgentBusy(chatId));
 
   // Create ChannelLifecycleManager (Issue #1594 Phase 3)
   const lifecycleManager = new ChannelLifecycleManager(channelManager, {
