@@ -42,9 +42,9 @@ services:
     container_name: disclaude-primary
     restart: unless-stopped
 
-    # Command: run Primary Node with PM2
-    # PM2 provides process management and logging support
-    command: ["pm2-runtime", "start", "ecosystem.primary.config.json"]
+    # Command: run Primary Node directly
+    # Docker restart policy handles process management
+    command: ["node", "packages/primary-node/dist/cli.js", "start"]
 
     # Network mode: host allows container to access host's CDP endpoint
     network_mode: host
@@ -91,7 +91,7 @@ services:
     container_name: disclaude-test-primary
     restart: unless-stopped
 
-    command: ["pm2-runtime", "start", "ecosystem.primary.config.json"]
+    command: ["node", "packages/primary-node/dist/cli.js", "start"]
 
     network_mode: host
 
