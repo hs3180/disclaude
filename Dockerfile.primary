@@ -89,8 +89,9 @@ RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index
 RUN apk add --no-cache github-cli
 
 # Install PM2 globally for process management
+# Issue #3888: Install Feishu/Lark CLI for skill support (dissolve-group, lark-docs, pr-scanner)
 RUN npm config set registry ${NPM_REGISTRY} && \
-    npm install -g pm2@latest
+    npm install -g pm2@latest @larksuite/cli
 
 # Create non-root user for running the application
 RUN addgroup -g 1001 disclaude && \
