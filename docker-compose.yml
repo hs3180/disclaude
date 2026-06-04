@@ -53,6 +53,7 @@ services:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - DISCLAUDE_MODE=primary
+      - DISCLAUDE_WORKSPACE_DIR=/app/workspace
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
@@ -100,6 +101,7 @@ services:
       - NODE_ENV=test
       - TZ=Asia/Shanghai
       - DISCLAUDE_MODE=primary
+      - DISCLAUDE_WORKSPACE_DIR=/data/workspace
       - PORT=3011                    # WebSocket port (different from primary's 3001)
       - HOST=0.0.0.0
 
