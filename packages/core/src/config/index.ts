@@ -105,14 +105,73 @@ export class Config {
 
   // Workspace configuration
   // Resolve to absolute path to ensure getWorkspaceDir() always returns absolute path.
-  // Relative paths are resolved against the config file's directory (not process.cwd()).
+  // Relative paths are resolved against the config file's directory.
+  //
+  // When the config file is inside a git repo and the relative path resolves
+  // to a directory inside that repo, the resolved path is likely wrong — it
+  // points to the repo's internal workspace/ instead of the production workspace.
+  // In that case, fall back to resolving against process.cwd() (Issue #3902).
   private static readonly CONFIG_DIR = fileConfig._source
     ? path.dirname(fileConfig._source)
     : process.cwd();
   private static readonly RAW_WORKSPACE_DIR = fileConfigOnly.workspace?.dir || Config.CONFIG_DIR;
-  static readonly WORKSPACE_DIR = path.isAbsolute(Config.RAW_WORKSPACE_DIR)
+  private static readonly RESOLVED_VIA_CONFIG = path.isAbsolute(Config.RAW_WORKSPACE_DIR)
     ? Config.RAW_WORKSPACE_DIR
     : path.resolve(Config.CONFIG_DIR, Config.RAW_WORKSPACE_DIR);
+  // Private: use getWorkspaceDir() for all access. This ensures callers
+  // consistently go through the env-var override path (DISCLAUDE_WORKSPACE_DIR).
+  private static readonly WORKSPACE_DIR = Config.resolveWorkspaceDir(Config.RAW_WORKSPACE_DIR, Config.RESOLVED_VIA_CONFIG);
+
+  /**
+   * Determine the correct workspace directory.
+   *
+   * Resolution strategy (for relative paths only; absolute paths pass through):
+   *
+   * 1. Resolve relative path against config file's directory (config-relative).
+   * 2. If config is inside a git repo (.git/ exists in config dir) **and**
+   *    the config-relative result points inside that repo, the path is likely
+   *    wrong — it resolves to the repo's internal directory instead of the
+   *    production workspace. Fall back to resolving against process.cwd().
+   * 3. If config-relative and cwd-relative resolve to the same path (e.g.
+   *    process.cwd() == config dir), no fallback is needed.
+   *
+   * **Note**: In production (Docker), this fallback is bypassed entirely when
+   * `DISCLAUDE_WORKSPACE_DIR` env var is set — getWorkspaceDir() returns the
+   * env var value directly. The git-repo detection here serves as a defensive
+   * fallback for development environments without the env var.
+   *
+   * @param rawDir - The raw workspace.dir value from config (may be relative or absolute)
+   * @param configRelativeDir - rawDir resolved against the config file's directory
+   * @returns The resolved absolute workspace directory path
+   */
+  private static resolveWorkspaceDir(rawDir: string, configRelativeDir: string): string {
+    if (path.isAbsolute(rawDir)) {
+      return rawDir;
+    }
+
+    // Check if config file is inside a git repo
+    const configDir = Config.CONFIG_DIR;
+    const gitDir = path.join(configDir, '.git');
+    if (existsSync(gitDir) && configRelativeDir.startsWith(configDir + path.sep)) {
+      // Config is in a git repo and the resolved dir is inside that repo.
+      // This is likely wrong — try resolving against cwd instead.
+      const cwdRelativeDir = path.resolve(process.cwd(), rawDir);
+      if (cwdRelativeDir !== configRelativeDir) {
+        logger.warn(
+          {
+            configRelativeDir,
+            cwdRelativeDir,
+            configSource: Config.CONFIG_SOURCE,
+          },
+          'workspace.dir resolved inside git repo; falling back to cwd-relative path. '
+          + 'Consider setting DISCLAUDE_WORKSPACE_DIR env var or using an absolute path.',
+        );
+        return cwdRelativeDir;
+      }
+    }
+
+    return configRelativeDir;
+  }
 
   // Feishu/Lark configuration (from config file)
   static readonly FEISHU_APP_ID = fileConfigOnly.feishu?.appId || '';
