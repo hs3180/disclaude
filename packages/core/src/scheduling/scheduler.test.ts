@@ -482,7 +482,7 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
     });
 
-    it('should timeout when route() hangs beyond timeoutMs (Issue #3346)', async () => {
+    it('should timeout when route() hangs beyond timeoutMs (Issue #3894)', async () => {
       // Create a route() that never resolves
       mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
@@ -496,7 +496,7 @@ describe('Scheduler', () => {
       await vi.waitFor(() => {
         expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
           'oc_test',
-          expect.stringContaining('执行失败'),
+          expect.stringContaining('执行超时'),
         );
       }, { timeout: 3000 });
     });

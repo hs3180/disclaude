@@ -25,6 +25,18 @@ import type { SystemMessage } from '../types/message.js';
 const logger = createLogger('Scheduler');
 
 /**
+ * Format timeout duration for display.
+ * Shows seconds when under 1 minute, otherwise shows minutes.
+ */
+function formatTimeout(ms: number): string {
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) {
+    return `${Math.round(ms / 1000)}秒`;
+  }
+  return `${minutes}分钟`;
+}
+
+/**
  * Default task execution timeout (5 minutes).
  * Issue #3894: Prevents indefinitely hung scheduled tasks from blocking
  * subsequent executions.
@@ -44,7 +56,7 @@ export class TaskTimeoutError extends Error {
   readonly timeoutMs: number;
 
   constructor(taskId: string, timeoutMs: number) {
-    super(`Scheduled task "${taskId}" timed out after ${Math.round(timeoutMs / 60000)} minutes`);
+    super(`Scheduled task "${taskId}" timed out after ${formatTimeout(timeoutMs)}`);
     this.name = 'TaskTimeoutError';
     this.taskId = taskId;
     this.timeoutMs = timeoutMs;
@@ -416,7 +428,7 @@ ${task.prompt}`;
 
       // Issue #3894: Send specific timeout notification
       const userMessage = error instanceof TaskTimeoutError
-        ? `⏱️ 定时任务「${task.name}」执行超时 (${Math.round(error.timeoutMs / 60000)} 分钟)，已自动终止`
+        ? `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已自动终止`
         : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`;
 
       await this.callbacks.sendMessage(task.chatId, userMessage);
