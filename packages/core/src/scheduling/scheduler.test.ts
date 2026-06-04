@@ -14,20 +14,24 @@ import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
 import type { MessageRouter } from '../messaging/message-router.js';
+import type { SystemMessage } from '../types/message.js';
 
 /**
- * Type for the mock InputMessageRouter used in tests.
- * Uses Pick to extract only the `route` method that Scheduler calls,
- * avoiding the need for `as any` casts.
+ * Create a mock InputMessageRouter for use in Scheduler tests.
+ * Uses `as unknown as MessageRouter` because MessageRouter is a concrete class
+ * with private fields (handler, log) that cannot be satisfied by a plain object.
  */
-type MockMessageRouter = Pick<MessageRouter, 'route'> & { route: Mock<MessageRouter['route']> };
-
-/**
- * Create a mock InputMessageRouter that satisfies the SchedulerOptions type.
- */
-function createMockRouter(): MockMessageRouter {
-  return { route: vi.fn().mockResolvedValue(undefined) } as MockMessageRouter;
+function createMockRouter() {
+  return {
+    route: vi.fn<((message: SystemMessage) => Promise<void>)[]>().mockResolvedValue(undefined),
+  } as unknown as MessageRouter;
 }
+
+/**
+ * Type helper: extracts the mock type from createMockRouter for use in assertions.
+ * The mock route function is typed to accept SystemMessage for proper type inference.
+ */
+type MockRouter = { route: Mock<(message: SystemMessage) => Promise<void>> };
 
 function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -45,7 +49,7 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
-  let mockRouter: ReturnType<typeof createMockRouter>;
+  let mockRouter: ReturnType<typeof createMockRouter> & MockRouter;
   let scheduler: Scheduler;
 
   beforeEach(() => {
@@ -364,6 +368,12 @@ describe('Scheduler', () => {
       void jobs[0].job.fireOnTick();
     }
 
+    /** Helper: extract the first SystemMessage from mock route calls */
+    function getRoutedMessage(): SystemMessage {
+      const [[msg]] = mockRouter.route.mock.calls as unknown as [[SystemMessage]];
+      return msg;
+    }
+
     it('should route task through InputMessageRouter and send start message', async () => {
       const task = createTask({ id: 'exec-1' });
       scheduler.addTask(task);
@@ -381,7 +391,7 @@ describe('Scheduler', () => {
         expect.stringContaining('开始执行'),
       );
 
-      const [[routedMessage]] = mockRouter.route.mock.calls;
+      const routedMessage = getRoutedMessage();
       expect(routedMessage.chatId).toBe('oc_test');
       expect(routedMessage.payload).toContain('Run tests');
       expect(routedMessage.source).toBe('system');
@@ -403,7 +413,7 @@ describe('Scheduler', () => {
         expect(mockRouter.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
-      const [[routedMessage]] = mockRouter.route.mock.calls;
+      const routedMessage = getRoutedMessage();
       expect(routedMessage.data!.taskId).toBe('exec-2');
       expect(routedMessage.data!.createdBy).toBe('user-123');
       expect(routedMessage.data!.model).toBe('claude-sonnet-4');
@@ -436,7 +446,7 @@ describe('Scheduler', () => {
         expect(mockRouter.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
-      const [[routedMessage]] = mockRouter.route.mock.calls;
+      const routedMessage = getRoutedMessage();
       expect(routedMessage.payload).toContain('Scheduled Task Execution Context');
       expect(routedMessage.payload).toContain('My Task');
       expect(routedMessage.payload).toContain('Do NOT create new scheduled tasks');
