@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CwdProvider } from '@disclaude/core';
 
 // Track mock agent instances for assertions
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn> }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -27,6 +27,7 @@ vi.mock('./agents/factory.js', () => ({
       const agent = {
         dispose: vi.fn(),
         stop: vi.fn().mockReturnValue(true),
+        updateCallbacks: vi.fn(),
       };
       mockAgents.set(chatId, agent);
       return agent;
@@ -138,6 +139,43 @@ describe('PrimaryAgentPool', () => {
         callbacks,
         { messageBuilderOptions, cwdProvider, skipHistory: false },
       );
+    });
+
+    it('should update callbacks on existing agent (Issue #3776)', () => {
+      const pool = new PrimaryAgentPool();
+      const feishuCallbacks = createMockCallbacks();
+      const restCallbacks = createMockCallbacks();
+
+      // First call: Feishu creates the agent
+      const agent = pool.getOrCreateChatAgent('chat-1', feishuCallbacks);
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledOnce();
+
+      // Second call: REST sends a message for the same chatId
+      const sameAgent = pool.getOrCreateChatAgent('chat-1', restCallbacks);
+
+      // Should return the same agent instance
+      expect(sameAgent).toBe(agent);
+      // Should NOT create a new agent
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledOnce();
+      // Should update callbacks to REST's callbacks
+      expect(agent.updateCallbacks).toHaveBeenCalledWith(restCallbacks);
+    });
+
+    it('should update callbacks on each call with different callbacks', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks1 = createMockCallbacks();
+      const callbacks2 = createMockCallbacks();
+      const callbacks3 = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('chat-1', callbacks1);
+      pool.getOrCreateChatAgent('chat-1', callbacks2);
+      pool.getOrCreateChatAgent('chat-1', callbacks3);
+
+      const agent = mockAgents.get('chat-1')!;
+      // First call creates, next two update callbacks
+      expect(agent.updateCallbacks).toHaveBeenCalledWith(callbacks2);
+      expect(agent.updateCallbacks).toHaveBeenCalledWith(callbacks3);
+      expect(agent.updateCallbacks).toHaveBeenCalledTimes(2);
     });
   });
 

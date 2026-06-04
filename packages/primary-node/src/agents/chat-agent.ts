@@ -62,7 +62,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /** The chatId this ChatAgent is bound to (Issue #644) */
   private readonly boundChatId: string;
 
-  private readonly callbacks: ChatAgentCallbacks;
+  /**
+   * Callbacks for sending responses to the channel.
+   * Updated per-message to support multi-channel routing (Issue #3776).
+   */
+  private callbacks: ChatAgentCallbacks;
 
   // Issue #1916: Dynamic cwd resolution for project-scoped Agent context switching
   private readonly cwdProvider?: (chatId: string) => string | undefined;
@@ -136,6 +140,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
 
     this.logger.info({ chatId: this.boundChatId, skipHistory: config.skipHistory }, 'ChatAgent created for chatId');
+  }
+
+  /**
+   * Update the callbacks used by this agent.
+   *
+   * Called by PrimaryAgentPool when an existing agent receives a message
+   * from a different channel than the one that created it. This ensures
+   * responses are routed to the correct channel.
+   *
+   * Issue #3776: Without this, REST Channel responses go to Feishu
+   * (or whichever channel created the agent first), causing HTTP timeouts.
+   *
+   * @param callbacks - New callbacks matching the current message's channel
+   */
+  updateCallbacks(callbacks: ChatAgentCallbacks): void {
+    this.callbacks = callbacks;
   }
 
   protected getAgentName(): string {
