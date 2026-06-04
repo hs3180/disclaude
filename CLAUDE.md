@@ -600,6 +600,27 @@ export function buildWriteContentCard(...) {
 - ✅ Do: Update CLAUDE.md for architecture-level decisions
 - ✅ Do: Add inline comments for complex logic
 
+## PR Submission Guidelines
+
+### Change Threshold
+
+- PRs exceeding **3 files or 200 lines** of meaningful changes should be split into smaller PRs
+- Each PR should address a single concern (one issue, one refactor, one fix)
+- If a change naturally spans multiple files (e.g., renaming), document why splitting is not practical
+
+### Reviewer Feedback Response
+
+- Address **each review comment individually** — do not batch responses
+- If disagreeing with feedback, explain the reasoning clearly rather than ignoring it
+- When a reviewer suggests an alternative approach, evaluate it before pushing back
+- After addressing feedback, explicitly confirm which comments were resolved
+
+### Issue Linking
+
+- Use `Related: #N` by default — avoid premature issue closure
+- Use `Closes #N` / `Fixes #N` only when the PR **fully resolves** the issue
+- Never use closure keywords for partial implementations
+
 ## Configuration Reference
 
 ### File-Based Configuration (`disclaude.config.yaml`)
