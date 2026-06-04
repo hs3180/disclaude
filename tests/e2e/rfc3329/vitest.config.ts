@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * Vitest configuration for RFC #3329 integration tests.
+ * Vitest configuration for RFC #3329 e2e tests.
  *
  * Tests the cross-component integration of:
  * - ProjectManager / CwdProvider
@@ -21,7 +21,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/integration/rfc3329/**/*.test.ts'],
+    include: ['tests/e2e/rfc3329/**/*.test.ts'],
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
