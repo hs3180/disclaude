@@ -91,6 +91,10 @@ describe('WeChatMessageListener', () => {
       await vi.advanceTimersByTimeAsync(50);
 
       await listener.stop();
+
+      // Flush any pending setImmediate from pollLoop's macrotask yield
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
       await listener.stop(); // second call should be no-op
       expect(listener.isListening()).toBe(false);
     });
@@ -470,6 +474,8 @@ describe('WeChatMessageListener', () => {
       listener.start();
       await vi.advanceTimersByTimeAsync(100);
       await listener.stop();
+      // Flush any pending setImmediate from pollLoop's macrotask yield
+      await new Promise<void>((resolve) => setImmediate(resolve));
       expect(listener.isListening()).toBe(false);
     });
   });
