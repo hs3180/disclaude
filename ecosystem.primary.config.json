@@ -8,8 +8,8 @@
     "watch": false,
     "max_memory_restart": "2G",
     "log_date_format": "YYYY-MM-DD HH:mm:ss Z",
-    "error_file": "/app/logs/pm2-error.log",
-    "out_file": "/app/logs/pm2-out.log",
+    "error_file": "/data/logs/pm2-error.log",
+    "out_file": "/data/logs/pm2-out.log",
     "merge_logs": true,
     "env": {
       "NODE_ENV": "production"
