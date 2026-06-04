@@ -62,7 +62,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /** The chatId this ChatAgent is bound to (Issue #644) */
   private readonly boundChatId: string;
 
-  private readonly callbacks: ChatAgentCallbacks;
+  /**
+   * Callbacks for sending responses to the channel.
+   * Updated per-message to support multi-channel routing (Issue #3776).
+   */
+  private callbacks: ChatAgentCallbacks;
 
   // Issue #1916: Dynamic cwd resolution for project-scoped Agent context switching
   private readonly cwdProvider?: (chatId: string) => string | undefined;
@@ -136,6 +140,55 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
 
     this.logger.info({ chatId: this.boundChatId, skipHistory: config.skipHistory }, 'ChatAgent created for chatId');
+  }
+
+  /**
+   * Update the callbacks used by this agent.
+   *
+   * Called by PrimaryAgentPool when an existing agent receives a message
+   * from a different channel than the one that created it. This ensures
+   * responses are routed to the correct channel.
+   *
+   * Issue #3776: Without this, REST Channel responses go to Feishu
+   * (or whichever channel created the agent first), causing HTTP timeouts.
+   *
+   * **Concurrency safety**: When the agent is actively processing a query
+   * (taskCompletionPromise is set), the update is deferred by queueing
+   * a microtask that re-applies the new callbacks once the current query
+   * completes. This prevents mid-query callback switching which could
+   * route partial responses to the wrong channel.
+   *
+   * @param callbacks - New callbacks matching the current message's channel
+   * @returns true if callbacks were applied immediately, false if deferred
+   */
+  updateCallbacks(callbacks: ChatAgentCallbacks): boolean {
+    if (!this.taskCompletionPromise) {
+      // Agent is idle — safe to update immediately
+      this.callbacks = callbacks;
+      return true;
+    }
+
+    // Agent is busy — defer update until current query completes.
+    // Use .then() to re-apply once the running task finishes, ensuring
+    // the next query uses the new callbacks without disrupting the current one.
+    this.logger.info(
+      { chatId: this.boundChatId },
+      'Agent is busy, deferring callback update until current query completes',
+    );
+    const pendingCallbacks = callbacks;
+    void this.taskCompletionPromise
+      .catch(() => {}) // Swallow rejection — we only care about completion
+      .then(() => {
+        // Only apply if no newer update has already been applied
+        if (this.callbacks !== pendingCallbacks) {
+          this.callbacks = pendingCallbacks;
+          this.logger.info(
+            { chatId: this.boundChatId },
+            'Deferred callback update applied after query completion',
+          );
+        }
+      });
+    return false;
   }
 
   protected getAgentName(): string {

@@ -64,8 +64,13 @@ export class PrimaryAgentPool {
   /**
    * Get or create a ChatAgent instance for the given chatId.
    *
+   * Issue #3776: When an agent already exists, updates its callbacks to match
+   * the current message's channel. This ensures responses are routed correctly
+   * when multiple channels (e.g., Feishu and REST) share the same chatId.
+   *
    * @param chatId - Chat ID to get/create agent for
-   * @param callbacks - Callbacks for sending messages (required for new agents)
+   * @param callbacks - Callbacks for the current channel (used for new agents
+   *   or to update existing agents)
    * @returns ChatAgent instance
    */
   getOrCreateChatAgent(chatId: string, callbacks: ChatAgentCallbacks): ChatAgent {
@@ -80,6 +85,14 @@ export class PrimaryAgentPool {
       this.agents.set(chatId, agent);
       // Issue #3696: clear skip-history flag after agent creation
       this.skipHistoryChatIds.delete(chatId);
+    } else {
+      // Issue #3776: Update callbacks so responses route to the correct channel.
+      // Without this, REST Channel responses go to Feishu's callbacks (which
+      // don't resolve PendingResponse), causing HTTP timeouts.
+      //
+      // updateCallbacks() handles concurrency: if the agent is busy, the update
+      // is deferred until the current query completes.
+      agent.updateCallbacks(callbacks);
     }
     return agent;
   }
