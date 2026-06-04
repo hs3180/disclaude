@@ -118,16 +118,31 @@ export class Config {
   private static readonly RESOLVED_VIA_CONFIG = path.isAbsolute(Config.RAW_WORKSPACE_DIR)
     ? Config.RAW_WORKSPACE_DIR
     : path.resolve(Config.CONFIG_DIR, Config.RAW_WORKSPACE_DIR);
-  static readonly WORKSPACE_DIR = Config.resolveWorkspaceDir(Config.RAW_WORKSPACE_DIR, Config.RESOLVED_VIA_CONFIG);
+  // Private: use getWorkspaceDir() for all access. This ensures callers
+  // consistently go through the env-var override path (DISCLAUDE_WORKSPACE_DIR).
+  private static readonly WORKSPACE_DIR = Config.resolveWorkspaceDir(Config.RAW_WORKSPACE_DIR, Config.RESOLVED_VIA_CONFIG);
 
   /**
    * Determine the correct workspace directory.
    *
-   * When workspace.dir is a relative path and the config file is inside a git
-   * repository, the config-relative resolution may point to the wrong location
-   * (e.g. /app/workspace/disclaude/workspace instead of /app/workspace).
-   * Detect this by checking if the config file's parent contains .git/ and the
-   * resolved path is inside that repo. If so, resolve against process.cwd() instead.
+   * Resolution strategy (for relative paths only; absolute paths pass through):
+   *
+   * 1. Resolve relative path against config file's directory (config-relative).
+   * 2. If config is inside a git repo (.git/ exists in config dir) **and**
+   *    the config-relative result points inside that repo, the path is likely
+   *    wrong — it resolves to the repo's internal directory instead of the
+   *    production workspace. Fall back to resolving against process.cwd().
+   * 3. If config-relative and cwd-relative resolve to the same path (e.g.
+   *    process.cwd() == config dir), no fallback is needed.
+   *
+   * **Note**: In production (Docker), this fallback is bypassed entirely when
+   * `DISCLAUDE_WORKSPACE_DIR` env var is set — getWorkspaceDir() returns the
+   * env var value directly. The git-repo detection here serves as a defensive
+   * fallback for development environments without the env var.
+   *
+   * @param rawDir - The raw workspace.dir value from config (may be relative or absolute)
+   * @param configRelativeDir - rawDir resolved against the config file's directory
+   * @returns The resolved absolute workspace directory path
    */
   private static resolveWorkspaceDir(rawDir: string, configRelativeDir: string): string {
     if (path.isAbsolute(rawDir)) {
