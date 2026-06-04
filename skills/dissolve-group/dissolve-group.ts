@@ -74,9 +74,13 @@ function findKeyByChatId(table: MappingTable, chatId: string): string | null {
 
 function findLarkCli(): string {
   // Check common locations
+  // Issue #3888: Added npm global bin paths for @larksuite/cli
   const candidates = [
     '/app/.local/bin/lark-cli',
     path.join(process.env.HOME || '/root', '.local/bin/lark-cli'),
+    path.join(process.env.HOME || '/root', '.npm-global/bin/lark-cli'),
+    // npm global install in Docker (Alpine): /usr/local/bin/lark-cli
+    '/usr/local/bin/lark-cli',
     'lark-cli',
   ];
   for (const c of candidates) {
