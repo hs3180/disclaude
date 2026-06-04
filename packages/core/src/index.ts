@@ -215,16 +215,10 @@ export {
   type ScheduleFileWatcherOptions,
   type ScheduleManagerOptions,
   type SchedulerCallbacks,
-  type TaskExecutor,
   type SchedulerOptions,
   type OnFileAdded,
   type OnFileChanged,
   type OnFileRemoved,
-  // Issue #1382: Unified schedule executor
-  // Issue #2941: Uses ChatAgent directly (no intermediate abstractions)
-  createScheduleExecutor,
-  type AgentFactory,
-  type ScheduleExecutorOptions,
 } from './scheduling/index.js';
 
 // Task module (Issue #1041 - migrated from worker-node)

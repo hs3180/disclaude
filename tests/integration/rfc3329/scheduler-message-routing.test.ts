@@ -8,13 +8,12 @@
  * it correctly builds a SystemMessage and routes it through the MessageRouter
  * to the IAgentMessageHandler.
  *
- * Also verifies the fallback path (direct executor) when no router is configured.
- *
  * Uses fireOnTick() for deterministic test execution (no cron timing dependency).
  *
  * @see Issue #3662 — category 2
  * @see RFC #3329 — Message — Unified Agent Input Abstraction
  * @see Issue #3582 — Phase 3: Scheduler → InputMessageRouter wiring
+ * @see Issue #3901 — Removed dead executor path
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -96,7 +95,6 @@ describe('Scheduler → InputMessageRouter → Handler (RFC #3329)', () => {
     scheduler = new Scheduler({
       scheduleManager: createMockScheduleManager([task]),
       callbacks: { sendMessage: vi.fn() },
-      executor: vi.fn(), // should NOT be called when router is configured
       inputMessageRouter: router,
     });
 
@@ -113,36 +111,6 @@ describe('Scheduler → InputMessageRouter → Handler (RFC #3329)', () => {
     expect(handlerCalls[0].chatId).toBe('oc_routed_chat');
     expect(handlerCalls[0].payload).toContain('Generate daily report');
     expect(typeof handlerCalls[0].messageId).toBe('string');
-  });
-
-  it('should use direct executor when no inputMessageRouter is configured', async () => {
-    const task = createTask({
-      id: 'direct-task',
-      prompt: 'Execute directly',
-      chatId: 'oc_direct_chat',
-    });
-
-    const executorCalls: Array<{ chatId: string; prompt: string }> = [];
-    const executor = vi.fn().mockImplementation(async (chatId: string, prompt: string) => {
-      executorCalls.push({ chatId, prompt });
-    });
-
-    scheduler = new Scheduler({
-      scheduleManager: createMockScheduleManager([task]),
-      callbacks: { sendMessage: vi.fn() },
-      executor,
-      // No inputMessageRouter → falls back to direct executor
-    });
-
-    await scheduler.start();
-    fireJob();
-
-    await vi.waitFor(() => {
-      expect(executorCalls.length).toBeGreaterThanOrEqual(1);
-    }, { timeout: 2000 });
-
-    expect(executorCalls[0].chatId).toBe('oc_direct_chat');
-    expect(executorCalls[0].prompt).toContain('Execute directly');
   });
 
   it('should send start notification before routing through MessageRouter', async () => {
@@ -164,7 +132,6 @@ describe('Scheduler → InputMessageRouter → Handler (RFC #3329)', () => {
     scheduler = new Scheduler({
       scheduleManager: createMockScheduleManager([task]),
       callbacks,
-      executor: vi.fn(),
       inputMessageRouter: router,
     });
 
