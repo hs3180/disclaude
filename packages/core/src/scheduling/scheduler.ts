@@ -25,6 +25,15 @@ import type { SystemMessage } from '../types/message.js';
 const logger = createLogger('Scheduler');
 
 /**
+ * Default timeout for scheduled task execution.
+ * 30 minutes — generous enough for long-running agent tasks,
+ * but prevents indefinite hangs that block subsequent executions.
+ *
+ * Issue #3346: Timeout protection for scheduled tasks.
+ */
+const DEFAULT_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
  * Active cron job entry.
  */
 interface ActiveJob {
@@ -270,10 +279,9 @@ ${task.prompt}`;
    * Execute a scheduled task.
    * Called by cron job when the schedule triggers.
    *
-   * Issue #711: Creates a short-lived ChatAgent for each execution.
-   * ChatAgent is disposed after execution to free resources.
    * Issue #869: Added cooldown period check before execution.
-   * Issue #1041: Uses injected executor function.
+   * Issue #3346: Timeout protection via Promise.race on route() call.
+   * Issue #3582: Routes through InputMessageRouter as SystemMessage.
    *
    * @param task - Task to execute
    */
@@ -351,13 +359,42 @@ ${task.prompt}`;
         };
 
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
-        await this.inputMessageRouter.route(systemMessage);
+
+        // Issue #3346: Wrap route() with timeout to prevent indefinite hangs.
+        // Even though routing goes through InputMessageRouter, the downstream
+        // agent execution may hang, so we apply timeout protection here.
+        const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error(
+            `Scheduled task timed out after ${timeoutMs}ms`
+          )), timeoutMs);
+        });
+
+        try {
+          await Promise.race([
+            this.inputMessageRouter.route(systemMessage),
+            timeoutPromise,
+          ]);
+        } finally {
+          if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+          }
+        }
+
         logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
       } else {
         logger.warn(
           { taskId: task.id, hasRouter: !!this.inputMessageRouter, hasChatId: !!task.chatId },
           'Cannot execute scheduled task: InputMessageRouter not configured or task has no chatId'
         );
+        // Notify user that the task could not execute
+        if (task.chatId) {
+          await this.callbacks.sendMessage(
+            task.chatId,
+            `⚠️ 定时任务「${task.name}」无法执行: InputMessageRouter 未配置`
+          );
+        }
       }
 
     } catch (error) {
