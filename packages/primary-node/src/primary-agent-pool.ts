@@ -62,6 +62,17 @@ export class PrimaryAgentPool {
   }
 
   /**
+   * Get the ChatAgent for a chatId without creating one.
+   * Issue #3931: Used to check agent busy state for scheduler.
+   *
+   * @param chatId - Chat ID to look up
+   * @returns ChatAgent if one exists, undefined otherwise
+   */
+  get(chatId: string): ChatAgent | undefined {
+    return this.agents.get(chatId);
+  }
+
+  /**
    * Get or create a ChatAgent instance for the given chatId.
    *
    * Issue #3776: When an agent already exists, updates its callbacks to match

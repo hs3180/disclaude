@@ -896,4 +896,100 @@ describe('Scheduler', () => {
       expect(err).toBeInstanceOf(Error);
     });
   });
+
+  describe('executeTask agent busy check (Issue #3931)', () => {
+    it('should skip blocking task when agent is busy', async () => {
+      const isAgentBusy = vi.fn().mockReturnValue(true);
+      const busyScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        isAgentBusy,
+      });
+
+      const task = createTask({ id: 'busy-1', blocking: true });
+      busyScheduler.addTask(task);
+
+      const jobs = busyScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Should check agent busy state
+      expect(isAgentBusy).toHaveBeenCalledWith('oc_test');
+      // Router should NOT be called when agent is busy
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+      // Task should not be running
+      expect(busyScheduler.isTaskRunning('busy-1')).toBe(false);
+    });
+
+    it('should execute blocking task when agent is idle', async () => {
+      const isAgentBusy = vi.fn().mockReturnValue(false);
+      const idleScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        isAgentBusy,
+      });
+
+      const task = createTask({ id: 'idle-1', blocking: true });
+      idleScheduler.addTask(task);
+
+      const jobs = idleScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(isAgentBusy).toHaveBeenCalledWith('oc_test');
+    });
+
+    it('should not check agent busy state for non-blocking tasks', async () => {
+      const isAgentBusy = vi.fn().mockReturnValue(true);
+      const nonBlockScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        isAgentBusy,
+      });
+
+      const task = createTask({ id: 'nonblock-1', blocking: false });
+      nonBlockScheduler.addTask(task);
+
+      const jobs = nonBlockScheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Should NOT check agent busy for non-blocking tasks
+      expect(isAgentBusy).not.toHaveBeenCalled();
+    });
+
+    it('should execute task when isAgentBusy callback is not configured', async () => {
+      const task = createTask({ id: 'no-callback-1', blocking: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should report hasAgentBusyCheck correctly', () => {
+      expect(scheduler.hasAgentBusyCheck()).toBe(false);
+
+      const busyScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        isAgentBusy: () => false,
+      });
+      expect(busyScheduler.hasAgentBusyCheck()).toBe(true);
+    });
+  });
 });
