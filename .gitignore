@@ -26,9 +26,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# PM2
-.pm2/
-
 # Logs (keep directory, ignore contents)
 logs/*
 !logs/.gitkeep
@@ -59,7 +56,6 @@ tasks/
 # Workspace directory (keep directory structure, ignore contents)
 workspace/*
 !workspace/.gitkeep
-ecosystem.config.cjs
 
 # Integration test environment (contains secrets)
 tests/integration/test-env.yaml

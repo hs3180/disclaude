@@ -6,27 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # === Development ===
-npm run dev          # Start with auto-reload (tsx watch)
-npm run build        # Build to dist/
-npm run type-check   # TypeScript type checking
-npm run lint         # ESLint
-npm run lint:fix     # ESLint with auto-fix
-npm run test         # Run tests
-npm run test:coverage # Run tests with coverage
+npx tsx watch          # Start with auto-reload
+npx tsc -b             # Build to dist/
+npx tsc --noEmit        # TypeScript type checking
+npx eslint .            # ESLint
+npx eslint . --fix      # ESLint with auto-fix
+npx vitest run          # Run tests
+npx vitest run --coverage # Run tests with coverage
 
-# === Production (PM2) ===
-npm run pm2:start     # Build and start PM2 service
-npm run pm2:restart   # Restart after code changes (manual only - not automatic)
-npm run pm2:reload    # Zero-downtime reload
-npm run pm2:logs      # View logs (nostream mode - default, shows current logs)
-npm run pm2:logs:follow # View logs with live tail (follow mode)
-npm run pm2:logs:err  # View error logs only (nostream)
-npm run pm2:logs:out  # View output logs only (nostream)
-npm run pm2:status    # Check status
-npm run pm2:stop      # Stop service
-npm run pm2:delete    # Remove from PM2
+# === Production (Docker — recommended) ===
+# No local build needed. Docker builds inside the container.
+docker compose up -d              # Build and start
+docker compose up -d --build      # Force rebuild
+docker compose logs -f            # View logs (live tail)
+docker compose down               # Stop
 
-# === Production (launchd — macOS recommended) ===
+# === Production (launchd — macOS local) ===
 npm run launchd:install   # First-time: generate plist + build + start
 npm run launchd:start     # Build + start service
 npm run launchd:stop      # Stop service
@@ -36,8 +31,8 @@ npm run launchd:status    # Check service status
 npm run launchd:uninstall # Remove plist and stop service
 
 # === CLI usage ===
-disclaude feishu              # Start Feishu bot
-disclaude --prompt "<query>"  # Single prompt query
+npx tsx packages/primary-node/src/cli.ts feishu              # Start Feishu bot
+npx tsx packages/primary-node/src/cli.ts --prompt "<query>"  # Single prompt query
 ```
 
 ## Architecture Overview
@@ -234,8 +229,8 @@ For each SDK message:
 - **Coverage**: `@vitest/coverage-v8`
 
 ```bash
-npm run test               # Run tests
-npm run test -- --coverage # With coverage
+npx vitest run               # Run tests
+npx vitest run --coverage    # With coverage
 ```
 
 ## Testing Rules (Mandatory)
@@ -330,9 +325,9 @@ try { /* assertions */ } finally { await server.stop().catch(() => {}); }
 
 ### Service Restart Policy
 
-**macOS (launchd — recommended):** `npm run launchd:restart` automatically builds before restarting.
+**Docker (recommended):** `docker compose up -d --build` handles build + restart. No local build step needed.
 
-**Linux (PM2):** `npm run pm2:restart` does NOT build. Use `npm run pm2:restart:build` or build manually first.
+**macOS (launchd):** `npm run launchd:restart` automatically builds before restarting.
 
 General rules:
 - Always test changes with CLI mode before deploying
@@ -348,15 +343,14 @@ General rules:
 vim packages/primary-node/src/agents/chat-agent.ts
 
 # 2. Build
-npm run build
+npx tsc -b
 
 # 3. Test with CLI (instant feedback)
-disclaude --prompt "Read packages/primary-node/src/agents/chat-agent.ts and summarize it"
-disclaude --prompt "List all TypeScript files in src/"
-disclaude --prompt "Run npm run type-check"
+npx tsx packages/primary-node/src/cli.ts --prompt "Read packages/primary-node/src/agents/chat-agent.ts and summarize it"
+npx tsx packages/primary-node/src/cli.ts --prompt "List all TypeScript files in src/"
 
-# 4. If working, deploy to Feishu (manual step)
-npm run pm2:restart
+# 4. If working, deploy:
+#    Docker: docker compose up -d --build
 ```
 
 ### CLI vs Feishu Mode Comparison
@@ -382,9 +376,9 @@ The agent uses `workspace/` as its working directory:
 
 ### 1. Forgetting to Build
 
-After code changes, always run `npm run build` before:
+After code changes, always run `npx tsc -b` before:
 - Testing with CLI mode
-- Deploying to PM2
+- **Note**: Docker deployments build inside the container — no local build needed
 
 ### 2. WebSocket Event Duplication
 
@@ -401,7 +395,7 @@ When implementing new features:
 ### 4. Session Loss on Restart
 
 Current implementation uses in-memory sessions:
-- All conversations reset on PM2 restart
+- All conversations reset on process restart
 - For persistence, consider implementing Redis/file-based storage
 
 ### 5. Tool Configuration
@@ -479,14 +473,6 @@ npm run launchd:logs          # View recent logs (stdout + stderr)
 tail -100 /tmp/disclaude-stdout.log   # stdout directly
 tail -100 /tmp/disclaude-stderr.log   # stderr directly
 tail -f /tmp/disclaude-stdout.log     # Live tail (Ctrl+C to exit)
-```
-
-**PM2 (Linux) — local real-time only:**
-
-```bash
-npm run pm2:logs        # All logs (nostream, shows current logs)
-npm run pm2:logs:err    # Error logs only (nostream)
-npm run pm2:logs:out    # Output logs only (nostream)
 ```
 
 ### WebSocket Connection Issues

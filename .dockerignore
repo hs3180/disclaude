@@ -49,9 +49,6 @@ disclaude.config.yaml
 logs/
 *.log
 
-# PM2
-.pm2/
-
 # Claude Code
 .claude/
 
@@ -72,11 +69,6 @@ dist/
 Dockerfile*
 docker-compose*
 .dockerignore
-
-# PM2 example configs (not needed in production)
-ecosystem.config.example.cjs
-ecosystem.config.conda.example.cjs
-ecosystem.config.shell.example.cjs
 
 # Analysis reports (not needed in production)
 *_ANALYSIS.md
