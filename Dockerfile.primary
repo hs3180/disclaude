@@ -48,7 +48,6 @@ RUN npm config set registry ${NPM_REGISTRY} && \
 
 # Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
 COPY skills ./skills
-COPY ecosystem.primary.config.json ./ecosystem.primary.config.json
 
 # Build the project
 RUN npm run build
@@ -79,7 +78,8 @@ RUN apk add --no-cache \
     procps \
     bash \
     python3 \
-    py3-pip
+    py3-pip \
+    tini
 
 # Install common Python data analysis packages
 # PIP_INDEX_URL: override PyPI mirror (default: official https://pypi.org/simple)
@@ -88,17 +88,17 @@ RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index
 # Install GitHub CLI (gh)
 RUN apk add --no-cache github-cli
 
-# Install PM2 and @larksuite/cli globally
+# Install @larksuite/cli globally
 # Issue #3888: @larksuite/cli needed by dissolve-group, lark-docs, pr-scanner skills
 RUN npm config set registry ${NPM_REGISTRY} && \
-    npm install -g pm2@latest "@larksuite/cli@>=1.0.0"
+    npm install -g "@larksuite/cli@>=1.0.0"
 
 # Create non-root user for running the application
 RUN addgroup -g 1001 disclaude && \
     adduser -D -u 1001 -G disclaude -h /app -s /sbin/nologin disclaude
 
 # Create directories for runtime with proper permissions
-RUN mkdir -p /data/workspace /data/logs /app/.claude /app/.claude/backups /app/.claude/debug /app/.pm2 && \
+RUN mkdir -p /data/workspace /data/logs /app/.claude /app/.claude/backups /app/.claude/debug && \
     echo '{}' > /app/.claude.json && \
     chown -R disclaude:disclaude /app /data
 
@@ -107,19 +107,22 @@ COPY --from=builder --chown=disclaude:disclaude /app/packages ./packages
 COPY --from=builder --chown=disclaude:disclaude /app/node_modules ./node_modules
 COPY --from=builder --chown=disclaude:disclaude /app/package.json ./
 COPY --from=builder --chown=disclaude:disclaude /app/package-lock.json ./
-COPY --from=builder --chown=disclaude:disclaude /app/ecosystem.primary.config.json ./
 COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 
 # Set environment variables
 ENV NODE_ENV=production
 ENV DISCLAUDE_MODE=primary
 
-# Health check - check if PM2 process is running
+# Health check - verify Node.js process is running
+# Uses pgrep with exact binary path to avoid false positives
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD pm2 pid disclaude-primary > /dev/null 2>&1 || exit 1
+    CMD pgrep -f "packages/primary-node/dist/cli.js" > /dev/null 2>&1 || exit 1
 
 # Switch to non-root user
 USER disclaude
 
-# Default command: run Primary Node with PM2
-CMD ["pm2-runtime", "start", "ecosystem.primary.config.json"]
+# Use tini as PID 1 for proper signal handling and zombie reaping
+ENTRYPOINT ["tini", "--"]
+
+# Default command: run Primary Node directly
+CMD ["node", "packages/primary-node/dist/cli.js", "start"]
