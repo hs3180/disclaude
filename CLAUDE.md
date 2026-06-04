@@ -416,17 +416,21 @@ To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.startA
 
 ## Logging Guidelines
 
-**IMPORTANT**: All Agent outputs MUST be logged in full, not just metadata (like length).
+**IMPORTANT**: Most application logs are shipped to **Elasticsearch (ES)** for centralized storage and querying. The application uses Pino (structured JSON logging) which writes to local files; a log shipper forwards these to ES. Local log files are short-lived — always prefer ES (Kibana) for log analysis and retrospection.
+
+### Logging to ES — Implications for Code
+
+All Agent outputs MUST be logged in full, not just metadata (like length). Since logs end up in ES, structured fields matter for searchability.
 
 - **Agent outputs** (Evaluator/Executor): Must include a `content` field with the full text
 - **Example**: `logger.debug({ content: text, textLength: text.length }, 'Agent output')`
-- **Purpose**: Enables task retrospection and debugging by showing actual Agent output
+- **Purpose**: Enables task retrospection and debugging via ES/Kibana full-text search
 
 ### Why This Matters
 
-When reviewing logs to understand what happened during a task execution:
+When reviewing logs in Kibana/ES to understand what happened during a task execution:
 - **Only `textLength`**: Tells you the output was 2463 bytes, but not what it said
-- **With `content`**: You can see the actual instructions, responses, and reasoning
+- **With `content`**: You can Kibana-search the actual instructions, responses, and reasoning
 
 ### Example Pattern
 
@@ -437,16 +441,17 @@ logger.debug({
   textLength: text.length,
 }, 'Manager output received');
 
-// ✅ Good - includes content
+// ✅ Good - includes content (searchable in ES)
 logger.debug({
   iteration: this.iteration,
   textLength: text.length,
-  content: text,  // Full output for retrospection
+  content: text,  // Full output for ES/Kibana retrospection
 }, 'Manager output received');
 ```
 
 ### Locations
 
+- `packages/core/src/utils/logger.ts`: Pino logger factory (JSON structured output)
 - `src/task/iteration-bridge.ts`: Evaluator and Executor outputs
 
 ## Debugging Tips
@@ -460,7 +465,14 @@ console.log('[DEBUG]', { context });
 
 ### Check Service Logs
 
-**launchd (macOS):**
+**IMPORTANT**: Most logs are in **Elasticsearch**. Local files are short-lived and mainly useful for real-time tailing during active development. For historical analysis and searching, always use ES/Kibana.
+
+**Elasticsearch/Kibana (primary — recommended):**
+- Use Kibana for log search, filtering, and retrospection
+- Pino writes structured JSON logs — all fields (`content`, `context`, `level`, etc.) are ES-searchable
+- Prefer ES over local files for any post-incident or historical analysis
+
+**launchd (macOS) — local real-time only:**
 
 ```bash
 npm run launchd:logs          # View recent logs (stdout + stderr)
@@ -469,7 +481,7 @@ tail -100 /tmp/disclaude-stderr.log   # stderr directly
 tail -f /tmp/disclaude-stdout.log     # Live tail (Ctrl+C to exit)
 ```
 
-**PM2 (Linux):**
+**PM2 (Linux) — local real-time only:**
 
 ```bash
 npm run pm2:logs        # All logs (nostream, shows current logs)
@@ -655,6 +667,8 @@ agent:
   model: "claude-sonnet-4-20250514"  # Used when Anthropic is provider
 
 # Logging configuration
+# NOTE: Most logs are shipped to Elasticsearch (ES) for centralized querying.
+# Local files are short-lived — use ES/Kibana for log analysis.
 logging:
   level: info          # trace | debug | info | warn | error
   file: undefined      # Optional log file path
