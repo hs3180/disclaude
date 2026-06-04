@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for schedules/issue-solver/scan.mjs
+ * Tests for skills/issue-solver/scan.mjs
  *
  * Tests the pure logic functions (scoring, filtering, env parsing)
  * without requiring GitHub API access.

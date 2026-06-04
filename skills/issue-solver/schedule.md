@@ -1,6 +1,6 @@
 ---
 name: "Issue Solver — Scan"
-cron: "0 */2 * * *"
+cron: "{cron}"
 enabled: true
 blocking: true
 chatId: "{controlChannelChatId}"
@@ -15,7 +15,7 @@ chatId: "{controlChannelChatId}"
 ### 1. 运行 scan.mjs
 
 ```bash
-node schedules/issue-solver/scan.mjs --debug
+node skills/issue-solver/scan.mjs --debug
 ```
 
 脚本会自动完成：
@@ -46,9 +46,5 @@ Token 写入项目根目录 `.runtime-env`（与 `packages/core/src/config/runti
 ## 测试
 
 ```bash
-node schedules/issue-solver/scan.test.js
+node skills/issue-solver/scan.test.js
 ```
-
-## 安装说明
-
-将此文件放置在 `schedules/issue-solver/SCHEDULE.md`，替换 `{controlChannelChatId}` 为实际的控制频道 chatId。
