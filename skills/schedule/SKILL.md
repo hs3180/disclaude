@@ -1,6 +1,6 @@
 ---
 name: schedule
-description: Schedule management specialist for RECURRING/SCHEDULED tasks. Use when user wants to create, view, modify, or delete scheduled/cron jobs, timers, reminders, or periodic executions. Triggered by keywords: "schedule", "timer", "cron", "定时任务", "提醒", "定期", "周期", "每天", "每周", "recurring", "periodic".
+description: "Schedule management specialist for RECURRING/SCHEDULED tasks. Use when user wants to create, view, modify, or delete scheduled/cron jobs, timers, reminders, or periodic executions. Triggered by keywords: \"schedule\", \"timer\", \"cron\", \"定时任务\", \"提醒\", \"定期\", \"周期\", \"每天\", \"每周\", \"recurring\", \"periodic\"."
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 user-invocable: false
 ---

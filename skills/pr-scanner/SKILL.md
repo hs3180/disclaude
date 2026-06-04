@@ -1,6 +1,6 @@
 ---
 name: pr-scanner
-description: PR Scanner - creates a scheduled task to scan a GitHub repository for open PRs and create discussion groups. Use when user wants to set up PR scanning for a repo. Keywords: "PR Scanner", "扫描 PR", "scan pull requests", "PR review".
+description: "PR Scanner - creates a scheduled task to scan a GitHub repository for open PRs and create discussion groups. Use when user wants to set up PR scanning for a repo. Keywords: \"PR Scanner\", \"扫描 PR\", \"scan pull requests\", \"PR review\"."
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
