@@ -360,6 +360,26 @@ ${task.prompt}`;
       });
     }
 
+    // Issue #3929: Verify the schedule file still exists before executing.
+    // Placed after runningTasks.add() so that the blocking mechanism still
+    // works synchronously. fs.watch may miss deletion events on Linux and
+    // the periodic fullRescan may not have run yet.
+    const currentTask = await this.scheduleManager.get(task.id);
+    if (!currentTask) {
+      logger.info(
+        { taskId: task.id, name: task.name },
+        'Task file no longer exists, removing stale cron job'
+      );
+      this.runningTasks.delete(task.id);
+      this.removeTask(task.id);
+      if (this.runningTasks.size === 0 && this._drainResolve) {
+        this._drainResolve();
+        this._drainPromise = null;
+        this._drainResolve = null;
+      }
+      return;
+    }
+
     try {
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);

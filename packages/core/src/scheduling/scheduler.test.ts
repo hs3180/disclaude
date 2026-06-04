@@ -55,7 +55,9 @@ describe('Scheduler', () => {
     mockScheduleManager = {
       listEnabled: vi.fn().mockResolvedValue([]),
       listAll: vi.fn().mockResolvedValue([]),
-      get: vi.fn().mockResolvedValue(undefined),
+      // Issue #3929: Default get() returns a dummy task so stale-file detection
+      // does not skip execution in existing tests. Override per-test when needed.
+      get: vi.fn().mockResolvedValue(createTask()),
       listByChatId: vi.fn().mockResolvedValue([]),
       getFileScanner: vi.fn(),
     } as unknown as ScheduleManager;
@@ -756,6 +758,48 @@ describe('Scheduler', () => {
       await vi.waitFor(() => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
       }, { timeout: 2000 });
+    });
+  });
+
+  describe('executeTask stale job detection (Issue #3929)', () => {
+    it('should remove cron job and skip execution when schedule file is deleted', async () => {
+      // scheduleManager.get() returns undefined = file no longer exists
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(undefined);
+
+      const task = createTask({ id: 'stale-1' });
+      scheduler.addTask(task);
+      expect(scheduler.getActiveJobs()).toHaveLength(1);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait for the stale detection to run
+      await vi.waitFor(() => {
+        expect(scheduler.getActiveJobs()).toHaveLength(0);
+      }, { timeout: 2000 });
+
+      // Router should NOT have been called
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+      // Task should not be in running state
+      expect(scheduler.isTaskRunning('stale-1')).toBe(false);
+    });
+
+    it('should execute normally when schedule file still exists', async () => {
+      // scheduleManager.get() returns the task = file still exists
+      const task = createTask({ id: 'fresh-1' });
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(task);
+
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Job should still be active
+      expect(scheduler.getActiveJobs()).toHaveLength(1);
     });
   });
 
