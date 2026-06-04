@@ -535,7 +535,7 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
 
       // Should NOT send start notification when router is missing
-      const calls = vi.mocked(mockCallbacks.sendMessage).mock.calls;
+      const calls = vi.mocked(mockCallbacks.sendMessage).mock.calls; // eslint-disable-line prefer-destructuring
       const startCall = calls.find(c => c[1].includes('开始执行'));
       expect(startCall).toBeUndefined();
     });
