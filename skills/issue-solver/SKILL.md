@@ -22,20 +22,27 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 
 ### 2. 实例化 Schedule
 
-将同目录下的 `schedule.md` 模板复制到 `schedules/issue-solver/SCHEDULE.md`，替换所有 `{placeholder}` 为实际值：
+使用 Glob 找到 skill 目录中的 `schedule.md` 模板，替换占位符后写入 workspace：
 
-```bash
-mkdir -p schedules/issue-solver
-cp skills/issue-solver/schedule.md schedules/issue-solver/SCHEDULE.md
 ```
+# 1. 定位模板（使用 Glob 工具搜索）
+模板路径: skills/issue-solver/schedule.md
 
-替换占位符：
+# 2. 读取模板内容（使用 Read 工具）
+
+# 3. 替换所有占位符
+```
 
 | 占位符 | 替换为 |
 |--------|--------|
 | `{controlChannelChatId}` | 实际的控制频道 chatId |
 | `{repo}` | 实际监控的 GitHub 仓库（如 `owner/repo`） |
 | `{cron}` | 实际的 cron 表达式（默认 `0 */2 * * *`） |
+
+```
+# 4. 使用 Write 工具写入目标文件
+目标路径: schedules/issue-solver/SCHEDULE.md
+```
 
 ### 3. 验证
 

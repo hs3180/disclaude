@@ -41,10 +41,4 @@ node skills/issue-solver/scan.mjs --debug
 
 ## 输出文件
 
-Token 写入项目根目录 `.runtime-env`（与 `packages/core/src/config/runtime-env.ts` 一致）。
-
-## 测试
-
-```bash
-node skills/issue-solver/scan.test.js
-```
+Token 写入 workspace 目录下的 `.runtime-env`（与 `packages/core/src/config/runtime-env.ts` 一致）。
