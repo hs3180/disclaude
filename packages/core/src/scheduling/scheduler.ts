@@ -309,9 +309,9 @@ ${task.prompt}`;
    * Execute a scheduled task.
    * Called by cron job when the schedule triggers.
    *
+   * Issue #3582: Routes task through InputMessageRouter to existing agents.
    * Issue #869: Added cooldown period check before execution.
-   * Issue #3894: Timeout protection via TaskTimeoutError on route() call.
-   * Issue #3582: Routes through InputMessageRouter as SystemMessage.
+   * Issue #3894: Added timeout protection for route execution.
    *
    * @param task - Task to execute
    */
@@ -361,17 +361,29 @@ ${task.prompt}`;
     }
 
     try {
+      // Build wrapped prompt with anti-recursion instructions
+      const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
+      // Issue #3582: Route through InputMessageRouter
+      if (!this.inputMessageRouter || !task.chatId) {
+        logger.warn(
+          { taskId: task.id, hasRouter: !!this.inputMessageRouter, hasChatId: !!task.chatId },
+          'Cannot execute scheduled task: InputMessageRouter not configured or task has no chatId'
+        );
+        await this.callbacks.sendMessage(
+          task.chatId,
+          `⚠️ 定时任务「${task.name}」无法执行: InputMessageRouter 未配置或任务缺少 chatId`
+        );
+        return;
+      }
+
       // Send start notification
       await this.callbacks.sendMessage(
         task.chatId,
         `⏰ 定时任务「${task.name}」开始执行...`
       );
 
-      // Build wrapped prompt with anti-recursion instructions
-      const wrappedPrompt = this.buildScheduledTaskPrompt(task);
-
-      // Issue #3582: Route through InputMessageRouter
-      if (this.inputMessageRouter && task.chatId) {
+      {
         const systemMessage: SystemMessage = {
           id: `sched-${task.id}-${Date.now()}`,
           source: 'system',
@@ -394,12 +406,13 @@ ${task.prompt}`;
         // Prevents hung routes from keeping task in runningTasks forever.
         const timeoutMs = task.timeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new TaskTimeoutError(task.id, timeoutMs)), timeoutMs);
+        });
         try {
           await Promise.race([
             this.inputMessageRouter.route(systemMessage),
-            new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => reject(new TaskTimeoutError(task.id, timeoutMs)), timeoutMs);
-            }),
+            timeoutPromise,
           ]);
         } finally {
           if (timeoutId !== undefined) {
@@ -408,18 +421,6 @@ ${task.prompt}`;
         }
 
         logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
-      } else {
-        logger.warn(
-          { taskId: task.id, hasRouter: !!this.inputMessageRouter, hasChatId: !!task.chatId },
-          'Cannot execute scheduled task: InputMessageRouter not configured or task has no chatId'
-        );
-        // Notify user that the task could not execute
-        if (task.chatId) {
-          await this.callbacks.sendMessage(
-            task.chatId,
-            `⚠️ 定时任务「${task.name}」无法执行: InputMessageRouter 未配置`
-          );
-        }
       }
 
     } catch (error) {
