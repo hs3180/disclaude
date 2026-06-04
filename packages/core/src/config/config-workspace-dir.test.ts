@@ -11,7 +11,7 @@
  * @see Issue #3902 — Schedule file version mismatch
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, existsSync } from 'fs';
 import path, { sep } from 'path';
 import { tmpdir } from 'os';
@@ -38,6 +38,10 @@ import { Config } from './index.js';
 describe('Config workspace.dir resolution (Issue #3902)', () => {
   const originalEnv = process.env.DISCLAUDE_WORKSPACE_DIR;
 
+  beforeEach(() => {
+    delete process.env.DISCLAUDE_WORKSPACE_DIR;
+  });
+
   afterEach(() => {
     if (originalEnv !== undefined) {
       process.env.DISCLAUDE_WORKSPACE_DIR = originalEnv;
@@ -51,7 +55,6 @@ describe('Config workspace.dir resolution (Issue #3902)', () => {
   // ---------------------------------------------------------------
   describe('resolveWorkspaceDir — absolute path', () => {
     it('should return absolute paths unchanged (no fallback)', () => {
-      delete process.env.DISCLAUDE_WORKSPACE_DIR;
       const wsDir = Config.getWorkspaceDir();
       expect(path.isAbsolute(wsDir)).toBe(true);
     });
@@ -80,6 +83,13 @@ describe('Config workspace.dir resolution (Issue #3902)', () => {
     it('should fall back to config when env var is empty string', () => {
       const noOverrideResult = Config.getWorkspaceDir();
       process.env.DISCLAUDE_WORKSPACE_DIR = '';
+
+      expect(Config.getWorkspaceDir()).toBe(noOverrideResult);
+    });
+
+    it('should fall back to config when env var is whitespace-only', () => {
+      const noOverrideResult = Config.getWorkspaceDir();
+      process.env.DISCLAUDE_WORKSPACE_DIR = '   ';
 
       expect(Config.getWorkspaceDir()).toBe(noOverrideResult);
     });
