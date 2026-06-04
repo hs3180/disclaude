@@ -285,7 +285,7 @@ export class Config {
    */
   static getWorkspaceDir(): string {
     // Allow override via environment variable for test isolation
-    if (process.env.DISCLAUDE_WORKSPACE_DIR) {
+    if (process.env.DISCLAUDE_WORKSPACE_DIR && process.env.DISCLAUDE_WORKSPACE_DIR.trim() !== '') {
       const overrideDir = path.resolve(process.env.DISCLAUDE_WORKSPACE_DIR);
       logger.debug({ workspaceDir: overrideDir, source: 'environment-variable' }, 'Using workspace directory');
       return overrideDir;
