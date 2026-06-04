@@ -7,7 +7,7 @@
 #   docker build -f Dockerfile.primary -t disclaude:primary .
 #
 # Run:
-#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:primary
+#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml -v $(pwd)/workspace:/data/workspace -v $(pwd)/logs:/data/logs disclaude:primary
 #
 # For production deployment, use docker-compose.yml.
 # =============================================================================

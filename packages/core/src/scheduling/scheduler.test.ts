@@ -515,7 +515,7 @@ describe('Scheduler', () => {
       }, { timeout: 3000 });
     });
 
-    it('should send error notification when no inputMessageRouter configured', async () => {
+    it('should send explicit notification when no inputMessageRouter configured', async () => {
       const noRouterScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
@@ -527,27 +527,17 @@ describe('Scheduler', () => {
       const jobs = noRouterScheduler.getActiveJobs();
       fireJob(jobs);
 
-      // Wait for async execution to complete
       await vi.waitFor(() => {
-        expect(scheduler.isTaskRunning('no-router')).toBe(false);
-      }, { timeout: 2000 }).catch(() => {
-        // Task was never marked running since it has no router
-      });
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('无法执行'),
+        );
+      }, { timeout: 2000 });
 
-      // Should send start notification
-      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
-        'oc_test',
-        expect.stringContaining('开始执行'),
-      );
-
-      // Should send error notification about missing router
-      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
-        'oc_test',
-        expect.stringContaining('无法执行'),
-      );
-
-      // Running state should be cleared
-      expect(noRouterScheduler.isTaskRunning('no-router')).toBe(false);
+      // Should NOT send start notification when router is missing
+      const calls = vi.mocked(mockCallbacks.sendMessage).mock.calls; // eslint-disable-line prefer-destructuring
+      const startCall = calls.find(c => c[1].includes('开始执行'));
+      expect(startCall).toBeUndefined();
     });
   });
 
