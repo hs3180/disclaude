@@ -93,7 +93,7 @@ File-based configuration using `disclaude.config.yaml`:
 **Configuration file structure**:
 ```yaml
 workspace:
-  dir: ./workspace
+  dir: /data/workspace   # Docker: /data/workspace | Local: ./workspace
 glm:
   apiKey: "..."
   model: "glm-5"
@@ -608,8 +608,10 @@ All configuration is read from `disclaude.config.yaml`. Create this file in your
 
 ```yaml
 # Workspace directory for file operations
+# Docker: /data/workspace (separated from app source at /app)
+# Local dev: ./workspace (relative to config file)
 workspace:
-  dir: ./workspace
+  dir: /data/workspace
 
 # GLM (Zhipu AI) configuration - takes precedence over Anthropic
 glm:

@@ -7,7 +7,7 @@
 #   docker build -f Dockerfile.primary -t disclaude:primary .
 #
 # Run:
-#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml disclaude:primary
+#   docker run -v $(pwd)/disclaude.config.yaml:/app/disclaude.config.yaml -v $(pwd)/workspace:/data/workspace disclaude:primary
 #
 # For production deployment, use docker-compose.yml.
 # =============================================================================
@@ -97,9 +97,10 @@ RUN addgroup -g 1001 disclaude && \
     adduser -D -u 1001 -G disclaude -h /app -s /sbin/nologin disclaude
 
 # Create directories for runtime with proper permissions
-RUN mkdir -p /app/workspace /app/logs /app/.claude /app/.claude/backups /app/.claude/debug /app/.pm2 && \
-    echo '{}' > /app/.claude.json && \
-    chown -R disclaude:disclaude /app
+# Issue #3903: Separate runtime data (/data) from application source (/app)
+RUN mkdir -p /data/workspace /data/logs /data/.claude /data/.claude/backups /data/.claude/debug /data/.pm2 && \
+    echo '{}' > /data/.claude.json && \
+    chown -R disclaude:disclaude /data /app
 
 # Copy built artifacts and production dependencies from builder
 COPY --from=builder --chown=disclaude:disclaude /app/packages ./packages

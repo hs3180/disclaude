@@ -56,8 +56,8 @@ services:
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
-      - ./workspace:/app/workspace
-      - ./logs:/app/logs
+      - ./workspace:/data/workspace
+      - ./logs:/data/logs
 
     deploy:
       resources:

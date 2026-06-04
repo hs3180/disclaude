@@ -16,9 +16,11 @@
 # Workspace Configuration
 # -----------------------------------------------------------------------------
 workspace:
-  # Working directory for file operations
+  # Working directory for file operations.
+  # In Docker: use /data/workspace to separate runtime data from application source.
+  # In local dev: use "./workspace" (relative to config file).
   # Default: current working directory
-  dir: "./workspace"
+  dir: "/data/workspace"
 
 # -----------------------------------------------------------------------------
 # Agent/AI Configuration
