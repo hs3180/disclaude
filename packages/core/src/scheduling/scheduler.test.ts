@@ -13,14 +13,20 @@ import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './schedule
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
+import type { MessageRouter } from '../messaging/message-router.js';
 
 /**
- * Create a mock InputMessageRouter that satisfies the MessageRouter type
- * expected by SchedulerOptions.inputMessageRouter.
- * Only the `route` method is implemented since that's all Scheduler uses.
+ * Type for the mock InputMessageRouter used in tests.
+ * Uses Pick to extract only the `route` method that Scheduler calls,
+ * avoiding the need for `as any` casts.
  */
-function createMockRouter(): { route: Mock<(message: import('../types/message.js').SystemMessage) => Promise<void>> } {
-  return { route: vi.fn().mockResolvedValue(undefined) };
+type MockMessageRouter = Pick<MessageRouter, 'route'> & { route: Mock<MessageRouter['route']> };
+
+/**
+ * Create a mock InputMessageRouter that satisfies the SchedulerOptions type.
+ */
+function createMockRouter(): MockMessageRouter {
+  return { route: vi.fn().mockResolvedValue(undefined) } as MockMessageRouter;
 }
 
 function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
@@ -60,7 +66,7 @@ describe('Scheduler', () => {
     scheduler = new Scheduler({
       scheduleManager: mockScheduleManager,
       callbacks: mockCallbacks,
-      inputMessageRouter: mockRouter as any,
+      inputMessageRouter: mockRouter,
     });
   });
 
@@ -82,7 +88,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter as any,
+        inputMessageRouter: mockRouter,
       });
 
       expect(s).toBeInstanceOf(Scheduler);
@@ -321,7 +327,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter as any,
+        inputMessageRouter: mockRouter,
       });
 
       const status = await s.getCooldownStatus('task-1', 60000);
@@ -553,7 +559,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter as any,
+        inputMessageRouter: mockRouter,
       });
 
       const task = createTask({ id: 'cooldown-1', cooldownPeriod: 3600000 });
@@ -584,7 +590,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter as any,
+        inputMessageRouter: mockRouter,
       });
 
       const task = createTask({ id: 'cooldown-2', cooldownPeriod: 60000 });
@@ -611,7 +617,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter as any,
+        inputMessageRouter: mockRouter,
       });
 
       const task = createTask({ id: 'cooldown-3', cooldownPeriod: 30000 });
@@ -636,7 +642,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter as any,
+        inputMessageRouter: mockRouter,
       });
 
       // Task without cooldownPeriod
@@ -864,7 +870,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter as any,
+        inputMessageRouter: mockRouter,
       });
 
       const task = createTask({ id: 'timeout-cd', timeoutMs: 50, cooldownPeriod: 60000 });
@@ -886,7 +892,7 @@ describe('Scheduler', () => {
       expect(err.taskId).toBe('my-task');
       expect(err.timeoutMs).toBe(300000);
       expect(err.message).toContain('my-task');
-      expect(err.message).toContain('300000');
+      expect(err.message).toContain('5');
       expect(err).toBeInstanceOf(Error);
     });
   });

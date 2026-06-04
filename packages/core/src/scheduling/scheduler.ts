@@ -44,7 +44,7 @@ export class TaskTimeoutError extends Error {
   readonly timeoutMs: number;
 
   constructor(taskId: string, timeoutMs: number) {
-    super(`Scheduled task "${taskId}" timed out after ${timeoutMs}ms`);
+    super(`Scheduled task "${taskId}" timed out after ${Math.round(timeoutMs / 60000)} minutes`);
     this.name = 'TaskTimeoutError';
     this.taskId = taskId;
     this.timeoutMs = timeoutMs;

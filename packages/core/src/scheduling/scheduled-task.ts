@@ -48,9 +48,9 @@ export interface ScheduledTask {
    * Timeout in milliseconds for task execution.
    * When set, the task will be forcefully terminated after this duration,
    * preventing indefinitely hung tasks from blocking subsequent executions.
-   * Defaults to DEFAULT_TASK_TIMEOUT_MS (30 minutes) when not specified.
+   * Defaults to DEFAULT_TASK_TIMEOUT_MS (5 minutes) when not specified.
    *
-   * Issue #3346: Timeout protection for scheduled tasks.
+   * Issue #3894: Timeout protection for scheduled tasks.
    */
   timeoutMs?: number;
   /** Cooldown period in milliseconds (prevents re-execution for this duration after execution) */
