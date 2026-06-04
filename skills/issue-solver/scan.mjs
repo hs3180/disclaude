@@ -13,8 +13,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import crypto from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -27,11 +26,9 @@ if (!/^[\w.-]+\/[\w.-]+$/.test(REPO)) {
   process.exit(1);
 }
 const REPO_OWNER = REPO.split("/")[0];
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-// Use project root .runtime-env (consistent with packages/core/src/config/runtime-env.ts)
-const PROJECT_ROOT = join(__dirname, "..", "..");
-const RUNTIME_ENV_PATH = join(PROJECT_ROOT, ".runtime-env");
+// Use workspace .runtime-env (agent runs with cwd=workspace, consistent with
+// packages/core/src/config/runtime-env.ts which reads from {workspace}/.runtime-env)
+const RUNTIME_ENV_PATH = join(process.cwd(), ".runtime-env");
 
 const DEBUG = process.argv.includes("--debug");
 
