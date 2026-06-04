@@ -23,14 +23,11 @@ import type { SystemMessage } from '../types/message.js';
  */
 function createMockRouter() {
   return {
-    route: vi.fn<((message: SystemMessage) => Promise<void>)[]>().mockResolvedValue(undefined),
+    route: vi.fn().mockResolvedValue(undefined),
   } as unknown as MessageRouter;
 }
 
-/**
- * Type helper: extracts the mock type from createMockRouter for use in assertions.
- * The mock route function is typed to accept SystemMessage for proper type inference.
- */
+/** Type for accessing mock route call assertions (MessageRouter cast loses mock type info) */
 type MockRouter = { route: Mock<(message: SystemMessage) => Promise<void>> };
 
 function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
@@ -49,7 +46,9 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
-  let mockRouter: ReturnType<typeof createMockRouter> & MockRouter;
+  let mockRouter: MessageRouter;
+  /** Typed view of mockRouter for assertion access (mock.calls etc.) */
+  let mockRouterAsMock: MockRouter;
   let scheduler: Scheduler;
 
   beforeEach(() => {
@@ -66,6 +65,7 @@ describe('Scheduler', () => {
     };
 
     mockRouter = createMockRouter();
+    mockRouterAsMock = mockRouter as unknown as MockRouter;
 
     scheduler = new Scheduler({
       scheduleManager: mockScheduleManager,
@@ -163,7 +163,7 @@ describe('Scheduler', () => {
       scheduler.addTask(task);
 
       // Start a task execution that takes 200ms
-      mockRouter.route.mockImplementationOnce(() => new Promise(resolve => setTimeout(resolve, 200)));
+      mockRouterAsMock.route.mockImplementationOnce(() => new Promise(resolve => setTimeout(resolve, 200)));
 
       // Fire the cron job to start execution
       const jobs = scheduler.getActiveJobs();
@@ -193,7 +193,7 @@ describe('Scheduler', () => {
       scheduler.addTask(task);
 
       // Start a task that never completes
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
       const jobs = scheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
@@ -230,7 +230,7 @@ describe('Scheduler', () => {
       scheduler.addTask(task);
 
       // Start a task that never completes
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
       const jobs = scheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
 
@@ -370,7 +370,7 @@ describe('Scheduler', () => {
 
     /** Helper: extract the first SystemMessage from mock route calls */
     function getRoutedMessage(): SystemMessage {
-      const [[msg]] = mockRouter.route.mock.calls as unknown as [[SystemMessage]];
+      const [[msg]] = mockRouterAsMock.route.mock.calls as unknown as [[SystemMessage]];
       return msg;
     }
 
@@ -383,7 +383,7 @@ describe('Scheduler', () => {
 
       fireJob(jobs);
       await vi.waitFor(() => {
-        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
       expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
@@ -410,7 +410,7 @@ describe('Scheduler', () => {
       const jobs = scheduler.getActiveJobs();
       fireJob(jobs);
       await vi.waitFor(() => {
-        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
       const routedMessage = getRoutedMessage();
@@ -421,7 +421,7 @@ describe('Scheduler', () => {
     });
 
     it('should send error message when router fails', async () => {
-      mockRouter.route.mockRejectedValueOnce(new Error('Router crashed'));
+      mockRouterAsMock.route.mockRejectedValueOnce(new Error('Router crashed'));
 
       const task = createTask({ id: 'exec-3' });
       scheduler.addTask(task);
@@ -443,7 +443,7 @@ describe('Scheduler', () => {
       const jobs = scheduler.getActiveJobs();
       fireJob(jobs);
       await vi.waitFor(() => {
-        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
       const routedMessage = getRoutedMessage();
@@ -454,7 +454,7 @@ describe('Scheduler', () => {
     });
 
     it('should handle non-Error exceptions from router', async () => {
-      mockRouter.route.mockRejectedValueOnce('string error');
+      mockRouterAsMock.route.mockRejectedValueOnce('string error');
 
       const task = createTask({ id: 'exec-5' });
       scheduler.addTask(task);
@@ -470,7 +470,7 @@ describe('Scheduler', () => {
     });
 
     it('should clear running state even when router fails', async () => {
-      mockRouter.route.mockRejectedValueOnce(new Error('failure'));
+      mockRouterAsMock.route.mockRejectedValueOnce(new Error('failure'));
 
       const task = createTask({ id: 'fail-clear' });
       scheduler.addTask(task);
@@ -484,7 +484,7 @@ describe('Scheduler', () => {
 
     it('should timeout when route() hangs beyond timeoutMs (Issue #3346)', async () => {
       // Create a route() that never resolves
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
       // Use a very short timeout for testing (50ms)
       const task = createTask({ id: 'timeout-1', timeoutMs: 50 });
@@ -502,7 +502,7 @@ describe('Scheduler', () => {
     });
 
     it('should clear running state after timeout', async () => {
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
       const task = createTask({ id: 'timeout-cleanup', timeoutMs: 50 });
       scheduler.addTask(task);
@@ -585,7 +585,7 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
 
       // Router should NOT be called when in cooldown
-      expect(mockRouter.route).not.toHaveBeenCalled();
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
     });
 
     it('should record execution after task completes with cooldown', async () => {
@@ -621,7 +621,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      mockRouter.route.mockRejectedValueOnce(new Error('task failed'));
+      mockRouterAsMock.route.mockRejectedValueOnce(new Error('task failed'));
 
       const cooldownScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
@@ -662,7 +662,7 @@ describe('Scheduler', () => {
       const jobs = cooldownScheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
       await vi.waitFor(() => {
-        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
       // isInCooldown should not be called when no cooldownPeriod
@@ -702,7 +702,7 @@ describe('Scheduler', () => {
   describe('executeTask blocking mechanism', () => {
     it('should skip execution when blocking=true and task already running', async () => {
       // First execution never completes
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
       const task = createTask({ id: 'blocking-1', blocking: true });
       scheduler.addTask(task);
@@ -720,11 +720,11 @@ describe('Scheduler', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // Router should only be called once (second trigger was skipped)
-      expect(mockRouter.route).toHaveBeenCalledTimes(1);
+      expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
     });
 
     it('should allow execution when blocking=false even if previous still running', async () => {
-      mockRouter.route.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 200)));
+      mockRouterAsMock.route.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 200)));
 
       const task = createTask({ id: 'non-blocking', blocking: false });
       scheduler.addTask(task);
@@ -741,14 +741,14 @@ describe('Scheduler', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // Both executions should have been initiated
-      expect(mockRouter.route).toHaveBeenCalledTimes(2);
+      expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
     });
 
     it('should allow execution after previous blocking task completes', async () => {
       // First execution completes quickly
-      mockRouter.route.mockResolvedValueOnce(undefined);
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
       // Second execution also succeeds
-      mockRouter.route.mockResolvedValueOnce(undefined);
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
 
       const task = createTask({ id: 'blocking-done', blocking: true });
       scheduler.addTask(task);
@@ -764,7 +764,7 @@ describe('Scheduler', () => {
       // Second trigger after completion — should execute
       void jobs[0].job.fireOnTick();
       await vi.waitFor(() => {
-        expect(mockRouter.route).toHaveBeenCalledTimes(2);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
       }, { timeout: 2000 });
     });
   });
@@ -772,7 +772,7 @@ describe('Scheduler', () => {
   describe('executeTask timeout protection (Issue #3894)', () => {
     it('should timeout when InputMessageRouter.route hangs beyond default timeout', async () => {
       // Route never resolves
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
       const task = createTask({ id: 'timeout-1', timeoutMs: 100 });
       scheduler.addTask(task);
@@ -792,7 +792,7 @@ describe('Scheduler', () => {
     });
 
     it('should use default 5-minute timeout when task has no timeoutMs', async () => {
-      mockRouter.route.mockResolvedValueOnce(undefined);
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
 
       const task = createTask({ id: 'timeout-default' });
       scheduler.addTask(task);
@@ -802,12 +802,12 @@ describe('Scheduler', () => {
 
       // Should complete normally (route resolves before 5-minute default)
       await vi.waitFor(() => {
-        expect(mockRouter.route).toHaveBeenCalledTimes(1);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
     });
 
     it('should clear running state after timeout', async () => {
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
       const task = createTask({ id: 'timeout-cleanup', timeoutMs: 50, blocking: true });
       scheduler.addTask(task);
@@ -823,9 +823,9 @@ describe('Scheduler', () => {
 
     it('should allow re-execution after timeout with blocking=true', async () => {
       // First call hangs (will timeout)
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
       // Second call succeeds
-      mockRouter.route.mockResolvedValueOnce(undefined);
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
 
       const task = createTask({ id: 'timeout-retry', timeoutMs: 50, blocking: true });
       scheduler.addTask(task);
@@ -841,12 +841,12 @@ describe('Scheduler', () => {
       // Second trigger — should execute since timeout cleared the running state
       void jobs[0].job.fireOnTick();
       await vi.waitFor(() => {
-        expect(mockRouter.route).toHaveBeenCalledTimes(2);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
       }, { timeout: 2000 });
     });
 
     it('should send specific timeout message with duration', async () => {
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
       const task = createTask({ id: 'timeout-msg', name: 'Report Gen', timeoutMs: 100 });
       scheduler.addTask(task);
@@ -874,7 +874,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      mockRouter.route.mockReturnValueOnce(new Promise(() => {}));
+      mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
       const cooldownScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
