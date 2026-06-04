@@ -78,6 +78,7 @@ describe('Config workspace.dir resolution (Issue #3902)', () => {
     });
 
     it('should fall back to config when env var is empty string', () => {
+      delete process.env.DISCLAUDE_WORKSPACE_DIR;
       const noOverrideResult = Config.getWorkspaceDir();
       process.env.DISCLAUDE_WORKSPACE_DIR = '';
 
