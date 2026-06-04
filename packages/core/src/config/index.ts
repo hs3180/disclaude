@@ -105,14 +105,58 @@ export class Config {
 
   // Workspace configuration
   // Resolve to absolute path to ensure getWorkspaceDir() always returns absolute path.
-  // Relative paths are resolved against the config file's directory (not process.cwd()).
+  // Relative paths are resolved against the config file's directory.
+  //
+  // When the config file is inside a git repo and the relative path resolves
+  // to a directory inside that repo, the resolved path is likely wrong — it
+  // points to the repo's internal workspace/ instead of the production workspace.
+  // In that case, fall back to resolving against process.cwd() (Issue #3902).
   private static readonly CONFIG_DIR = fileConfig._source
     ? path.dirname(fileConfig._source)
     : process.cwd();
   private static readonly RAW_WORKSPACE_DIR = fileConfigOnly.workspace?.dir || Config.CONFIG_DIR;
-  static readonly WORKSPACE_DIR = path.isAbsolute(Config.RAW_WORKSPACE_DIR)
+  private static readonly RESOLVED_VIA_CONFIG = path.isAbsolute(Config.RAW_WORKSPACE_DIR)
     ? Config.RAW_WORKSPACE_DIR
     : path.resolve(Config.CONFIG_DIR, Config.RAW_WORKSPACE_DIR);
+  static readonly WORKSPACE_DIR = Config.resolveWorkspaceDir(Config.RAW_WORKSPACE_DIR, Config.RESOLVED_VIA_CONFIG);
+
+  /**
+   * Determine the correct workspace directory.
+   *
+   * When workspace.dir is a relative path and the config file is inside a git
+   * repository, the config-relative resolution may point to the wrong location
+   * (e.g. /app/workspace/disclaude/workspace instead of /app/workspace).
+   * Detect this by checking if the config file's parent contains .git/ and the
+   * resolved path is inside that repo. If so, resolve against process.cwd() instead.
+   */
+  private static resolveWorkspaceDir(rawDir: string, configRelativeDir: string): string {
+    if (path.isAbsolute(rawDir)) {
+      return rawDir;
+    }
+
+    // Check if config file is inside a git repo
+    const configDir = Config.CONFIG_DIR;
+    const gitDir = path.join(configDir, '.git');
+    if (existsSync(gitDir) && configRelativeDir.startsWith(configDir + path.sep)) {
+      // Config is in a git repo and the resolved dir is inside that repo.
+      // This is likely wrong — try resolving against cwd instead.
+      const cwdRelativeDir = path.resolve(process.cwd(), rawDir);
+      if (cwdRelativeDir !== configRelativeDir) {
+        logger.warn(
+          {
+            configRelativeDir,
+            cwdRelativeDir,
+            configSource: Config.CONFIG_SOURCE,
+          },
+          'workspace.dir resolved inside git repo; falling back to cwd-relative path. '
+          + 'Consider setting DISCLAUDE_WORKSPACE_DIR env var or using an absolute path.',
+        );
+        return cwdRelativeDir;
+      }
+    }
+
+    return configRelativeDir;
+  }
 
   // Feishu/Lark configuration (from config file)
   static readonly FEISHU_APP_ID = fileConfigOnly.feishu?.appId || '';
