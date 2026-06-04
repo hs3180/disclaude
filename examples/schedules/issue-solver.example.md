@@ -171,7 +171,7 @@ gh pr view <pr_number> --comments
 
 ## 使用说明
 
-1. 复制此文件到 `workspace/schedules/issue-solver.md`
+1. 使用 `skills/issue-solver/SKILL.md` 安装器自动生成，或手动复制到 `workspace/schedules/issue-solver/SCHEDULE.md`
 2. 将 `chatId` 替换为实际的飞书群聊 ID
 3. 将 `<owner>/<repo>` 替换为目标仓库
 4. 设置 `enabled: true`
