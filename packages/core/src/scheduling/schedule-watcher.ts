@@ -103,7 +103,6 @@ function parseScheduleFrontmatter(content: string): {
       case 'model':
       case 'timezone':
       case 'modelTier':
-      case 'timezone':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -328,10 +327,6 @@ export class ScheduleFileScanner {
     }
     if (task.modelTier) {
       frontmatter.push(`modelTier: "${task.modelTier}"`);
-    }
-    // Treat undefined and empty string as "not set" — don't write to frontmatter
-    if (task.timezone) {
-      frontmatter.push(`timezone: "${task.timezone}"`);
     }
 
     frontmatter.push('---', '');

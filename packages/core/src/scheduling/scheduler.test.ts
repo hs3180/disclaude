@@ -801,6 +801,28 @@ describe('Scheduler', () => {
       // Job should still be active
       expect(scheduler.getActiveJobs()).toHaveLength(1);
     });
+
+    it('should remove cron job and clean up when scheduleManager.get() throws', async () => {
+      // scheduleManager.get() throws (e.g., disk I/O error)
+      vi.mocked(mockScheduleManager.get).mockRejectedValue(new Error('EIO: i/o error'));
+
+      const task = createTask({ id: 'error-1' });
+      scheduler.addTask(task);
+      expect(scheduler.getActiveJobs()).toHaveLength(1);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+
+      // Wait for the error handling to complete
+      await vi.waitFor(() => {
+        expect(scheduler.getActiveJobs()).toHaveLength(0);
+      }, { timeout: 2000 });
+
+      // Router should NOT have been called
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+      // Task should not be in running state
+      expect(scheduler.isTaskRunning('error-1')).toBe(false);
+    });
   });
 
   describe('executeTask timeout protection (Issue #3894)', () => {

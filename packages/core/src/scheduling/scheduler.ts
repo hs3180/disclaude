@@ -266,6 +266,18 @@ export class Scheduler {
   }
 
   /**
+   * Resolve the drain promise if no tasks are running.
+   * Extracted to avoid duplication between stale-job cleanup and finally block.
+   */
+  private resolveDrainIfNeeded(): void {
+    if (this.runningTasks.size === 0 && this._drainResolve) {
+      this._drainResolve();
+      this._drainPromise = null;
+      this._drainResolve = null;
+    }
+  }
+
+  /**
    * Remove a task from the scheduler.
    *
    * @param taskId - Task ID to remove
@@ -364,19 +376,26 @@ ${task.prompt}`;
     // Placed after runningTasks.add() so that the blocking mechanism still
     // works synchronously. fs.watch may miss deletion events on Linux and
     // the periodic fullRescan may not have run yet.
-    const currentTask = await this.scheduleManager.get(task.id);
-    if (!currentTask) {
-      logger.info(
-        { taskId: task.id, name: task.name },
-        'Task file no longer exists, removing stale cron job'
+    try {
+      const currentTask = await this.scheduleManager.get(task.id);
+      if (!currentTask) {
+        logger.info(
+          { taskId: task.id, name: task.name },
+          'Task file no longer exists, removing stale cron job'
+        );
+        this.runningTasks.delete(task.id);
+        this.removeTask(task.id);
+        this.resolveDrainIfNeeded();
+        return;
+      }
+    } catch (error) {
+      logger.error(
+        { err: error, taskId: task.id },
+        'Failed to verify schedule file existence, skipping execution'
       );
       this.runningTasks.delete(task.id);
       this.removeTask(task.id);
-      if (this.runningTasks.size === 0 && this._drainResolve) {
-        this._drainResolve();
-        this._drainPromise = null;
-        this._drainResolve = null;
-      }
+      this.resolveDrainIfNeeded();
       return;
     }
 
@@ -458,11 +477,7 @@ ${task.prompt}`;
       this.runningTasks.delete(task.id);
 
       // Resolve drain promise when all tasks have completed
-      if (this.runningTasks.size === 0 && this._drainResolve) {
-        this._drainResolve();
-        this._drainPromise = null;
-        this._drainResolve = null;
-      }
+      this.resolveDrainIfNeeded();
 
       // Issue #869: Record execution for cooldown period
       if (task.cooldownPeriod && this.cooldownManager) {
