@@ -422,7 +422,6 @@ ${task.prompt}`;
 
         logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
       }
-      }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
