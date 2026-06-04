@@ -13,10 +13,15 @@ import { Scheduler, type SchedulerCallbacks } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
-import type { SystemMessage } from '../types/message.js';
 
-/** Mock type matching the MessageRouter interface used by Scheduler */
-type MockInputMessageRouter = { route: Mock<(message: SystemMessage) => Promise<void>> };
+/**
+ * Create a mock InputMessageRouter that satisfies the MessageRouter type
+ * expected by SchedulerOptions.inputMessageRouter.
+ * Only the `route` method is implemented since that's all Scheduler uses.
+ */
+function createMockRouter(): { route: Mock<(message: import('../types/message.js').SystemMessage) => Promise<void>> } {
+  return { route: vi.fn().mockResolvedValue(undefined) };
+}
 
 function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -34,7 +39,7 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
-  let mockRouter: MockInputMessageRouter;
+  let mockRouter: ReturnType<typeof createMockRouter>;
   let scheduler: Scheduler;
 
   beforeEach(() => {
@@ -50,12 +55,12 @@ describe('Scheduler', () => {
       sendMessage: vi.fn().mockResolvedValue(undefined),
     };
 
-    mockRouter = { route: vi.fn().mockResolvedValue(undefined) };
+    mockRouter = createMockRouter();
 
     scheduler = new Scheduler({
       scheduleManager: mockScheduleManager,
       callbacks: mockCallbacks,
-      inputMessageRouter: mockRouter,
+      inputMessageRouter: mockRouter as any,
     });
   });
 
@@ -77,7 +82,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter,
+        inputMessageRouter: mockRouter as any,
       });
 
       expect(s).toBeInstanceOf(Scheduler);
@@ -316,7 +321,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter,
+        inputMessageRouter: mockRouter as any,
       });
 
       const status = await s.getCooldownStatus('task-1', 60000);
@@ -393,9 +398,9 @@ describe('Scheduler', () => {
       }, { timeout: 2000 });
 
       const [[routedMessage]] = mockRouter.route.mock.calls;
-      expect(routedMessage.data.taskId).toBe('exec-2');
-      expect(routedMessage.data.createdBy).toBe('user-123');
-      expect(routedMessage.data.model).toBe('claude-sonnet-4');
+      expect(routedMessage.data!.taskId).toBe('exec-2');
+      expect(routedMessage.data!.createdBy).toBe('user-123');
+      expect(routedMessage.data!.model).toBe('claude-sonnet-4');
       expect(routedMessage.modelTier).toBe('low');
     });
 
@@ -548,7 +553,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter,
+        inputMessageRouter: mockRouter as any,
       });
 
       const task = createTask({ id: 'cooldown-1', cooldownPeriod: 3600000 });
@@ -579,7 +584,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter,
+        inputMessageRouter: mockRouter as any,
       });
 
       const task = createTask({ id: 'cooldown-2', cooldownPeriod: 60000 });
@@ -606,7 +611,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter,
+        inputMessageRouter: mockRouter as any,
       });
 
       const task = createTask({ id: 'cooldown-3', cooldownPeriod: 30000 });
@@ -631,7 +636,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
-        inputMessageRouter: mockRouter,
+        inputMessageRouter: mockRouter as any,
       });
 
       // Task without cooldownPeriod
