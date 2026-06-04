@@ -353,7 +353,6 @@ export interface AgentConfig {
  *   getGlobalEnv: () => Config.getGlobalEnv(),
  *   isAgentTeamsEnabled: () => Config.isAgentTeamsEnabled(),
  *   createMcpServer: (chatId) => createChannelMcpServer(chatId),
- *   findSkill: (name) => findSkill(name),
  * });
  * ```
  */
@@ -379,10 +378,6 @@ export interface AgentRuntimeContext {
   sendCard?(chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string): Promise<void>;
   /** Send a file to a chat */
   sendFile?(chatId: string, filePath: string): Promise<void>;
-
-  // Skill-related methods (optional)
-  /** Find a skill by name */
-  findSkill?(skillName: string): Promise<string | undefined>;
 }
 
 // Global runtime context (set by main package)
