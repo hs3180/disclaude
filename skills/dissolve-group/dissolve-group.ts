@@ -73,23 +73,15 @@ function findKeyByChatId(table: MappingTable, chatId: string): string | null {
 }
 
 function findLarkCli(): string {
-  // Check common locations
-  // Issue #3888: Added npm global bin paths for @larksuite/cli
-  const candidates = [
-    '/app/.local/bin/lark-cli',
-    path.join(process.env.HOME || '/root', '.local/bin/lark-cli'),
-    path.join(process.env.HOME || '/root', '.npm-global/bin/lark-cli'),
-    // npm global install in Docker (Alpine): /usr/local/bin/lark-cli
-    '/usr/local/bin/lark-cli',
-    'lark-cli',
-  ];
-  for (const c of candidates) {
-    try {
-      execSync(`${c} --version`, { stdio: 'pipe' });
-      return c;
-    } catch {}
+  // Issue #3888: lark-cli is pre-installed in Docker via @larksuite/cli
+  const bin = 'lark-cli';
+  try {
+    const ver = execSync(`${bin} --version`, { stdio: 'pipe', encoding: 'utf-8' }).trim();
+    log(`lark-cli found: ${ver}`);
+    return bin;
+  } catch {
+    die('lark-cli not found or not working. Ensure @larksuite/cli is installed.');
   }
-  die('lark-cli not found. Install it first.');
 }
 
 function dissolveGroup(larkCli: string, chatId: string): boolean {
