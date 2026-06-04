@@ -4,8 +4,6 @@
  * @see Issue #1556 - WeChat Channel Feature Enhancement (Phase 3.1)
  */
 
- 
-
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock logger
@@ -56,6 +54,20 @@ describe('WeChatMessageListener', () => {
     globalThis.fetch = originalFetch;
   });
 
+  /**
+   * Helper: stop listener and flush pending setImmediate callbacks.
+   *
+   * Issue #3911: pollLoop() uses setImmediate (L157) for macrotask yielding
+   * between cycles, but vi.useFakeTimers() does not mock setImmediate.
+   * After stop() awaits pollPromise, a pending setImmediate may still be
+   * in the macrotask queue. This helper ensures pollLoop has fully exited
+   * before the test makes assertions.
+   */
+  async function stopAndFlush(listener: WeChatMessageListener): Promise<void> {
+    await listener.stop();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
   describe('start / stop lifecycle', () => {
     it('should start and stop cleanly', async () => {
       // Make getUpdates return empty to exit the loop quickly
@@ -90,10 +102,7 @@ describe('WeChatMessageListener', () => {
       listener.start();
       await vi.advanceTimersByTimeAsync(50);
 
-      await listener.stop();
-
-      // Flush any pending setImmediate from pollLoop's macrotask yield
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await stopAndFlush(listener);
 
       await listener.stop(); // second call should be no-op
       expect(listener.isListening()).toBe(false);
@@ -473,9 +482,7 @@ describe('WeChatMessageListener', () => {
       mockClient.getUpdates = vi.fn().mockResolvedValue([]);
       listener.start();
       await vi.advanceTimersByTimeAsync(100);
-      await listener.stop();
-      // Flush any pending setImmediate from pollLoop's macrotask yield
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await stopAndFlush(listener);
       expect(listener.isListening()).toBe(false);
     });
   });
