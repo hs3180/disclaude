@@ -189,6 +189,26 @@ export interface ChatAgent extends Disposable {
    * @returns true if a query was stopped, false if no active query
    */
   stop(chatId?: string): boolean;
+
+  /**
+   * Update the callbacks used for routing responses.
+   *
+   * Issue #3776: Called when an existing agent receives a message from
+   * a different channel. Ensures responses route to the correct channel
+   * when multiple channels share the same chatId.
+   *
+   * When the agent is actively processing, the update may be deferred
+   * until the current query completes to prevent mid-query routing issues.
+   *
+   * @param callbacks - New callbacks matching the current channel
+   * @returns true if applied immediately, false if deferred
+   */
+  updateCallbacks(callbacks: {
+    sendMessage: (chatId: string, text: string, parentMessageId?: string) => Promise<void>;
+    sendCard: (chatId: string, card: Record<string, unknown>, description?: string, parentMessageId?: string) => Promise<void>;
+    sendFile: (chatId: string, filePath: string) => Promise<void>;
+    onDone?: (chatId: string, parentMessageId?: string) => Promise<void>;
+  }): boolean;
 }
 
 // ============================================================================

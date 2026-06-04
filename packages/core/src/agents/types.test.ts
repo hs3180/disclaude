@@ -31,6 +31,7 @@ describe('Type Guards', () => {
         reset() {},
         stop() { return true; },
         dispose() {},
+        updateCallbacks() { return true; },
       };
 
       expect(isChatAgent(chatAgent)).toBe(true);
@@ -81,6 +82,7 @@ describe('Type Guards', () => {
         reset() {},
         stop() { return true; },
         dispose() {},
+        updateCallbacks() { return true; },
       };
 
       expect(isDisposable(chatAgent)).toBe(true);

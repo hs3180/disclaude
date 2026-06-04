@@ -257,6 +257,65 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  describe('Issue #3776: updateCallbacks concurrency safety', () => {
+    it('should apply callbacks immediately when agent is idle', () => {
+      const newCallbacks = createMockCallbacks();
+      const result = chatAgent.updateCallbacks(newCallbacks);
+      expect(result).toBe(true);
+    });
+
+    it('should defer callbacks when agent is busy (taskCompletionPromise set)', () => {
+      const newCallbacks = createMockCallbacks();
+
+      // Simulate a running task by setting taskCompletionPromise
+      let resolveTask!: () => void;
+      (chatAgent as any).taskCompletionPromise = new Promise<void>((r) => { resolveTask = r; });
+
+      const result = chatAgent.updateCallbacks(newCallbacks);
+      expect(result).toBe(false);
+
+      // Clean up
+      resolveTask();
+    });
+
+    it('should apply deferred callbacks after task completes', async () => {
+      const idleCallbacks = createMockCallbacks();
+      const busyCallbacks = createMockCallbacks();
+
+      // Set initial callbacks
+      chatAgent.updateCallbacks(idleCallbacks);
+
+      // Simulate a running task
+      let resolveTask!: () => void;
+      (chatAgent as any).taskCompletionPromise = new Promise<void>((r) => { resolveTask = r; });
+
+      // Try to update while busy — should defer
+      chatAgent.updateCallbacks(busyCallbacks);
+
+      // Complete the task
+      resolveTask();
+      (chatAgent as any).taskCompletionPromise = undefined;
+
+      // Wait for deferred update to apply
+      await new Promise<void>(r => setTimeout(r, 50));
+
+      // Verify callbacks were applied (check via processMessage which uses callbacks)
+      // The agent should use busyCallbacks now
+      // We can verify by checking that the internal callbacks reference changed
+      expect((chatAgent as any).callbacks).toBe(busyCallbacks);
+    });
+
+    it('should apply callbacks immediately again after task completes', () => {
+      const newCallbacks = createMockCallbacks();
+
+      // Simulate task completed (no taskCompletionPromise)
+      (chatAgent as any).taskCompletionPromise = undefined;
+
+      const result = chatAgent.updateCallbacks(newCallbacks);
+      expect(result).toBe(true);
+    });
+  });
+
   describe('session lifecycle', () => {
     it('should allow reset after processMessage', () => {
       void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
