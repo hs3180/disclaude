@@ -604,9 +604,10 @@ export function buildWriteContentCard(...) {
 
 ### Change Threshold
 
-- PRs exceeding **3 files or 200 lines** of meaningful changes should be split into smaller PRs
+- PRs exceeding **3 files or 200 added lines** (`git diff --stat`) of meaningful changes should be split into smaller PRs
 - Each PR should address a single concern (one issue, one refactor, one fix)
 - If a change naturally spans multiple files (e.g., renaming), document why splitting is not practical
+- Mechanical changes (config sync, doc formatting, dependency bumps) are exempt from this threshold
 
 ### Reviewer Feedback Response
 
@@ -620,6 +621,11 @@ export function buildWriteContentCard(...) {
 - Use `Related: #N` by default — avoid premature issue closure
 - Use `Closes #N` / `Fixes #N` only when the PR **fully resolves** the issue
 - Never use closure keywords for partial implementations
+
+### Split PRs
+
+- When splitting a large change, cross-reference with `Part 1/N of #N` in each PR description
+- Each split PR must be independently reviewable and mergeable
 
 ## Configuration Reference
 
