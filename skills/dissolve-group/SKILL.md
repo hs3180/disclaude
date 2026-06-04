@@ -1,6 +1,6 @@
 ---
 name: dissolve-group
-description: Dissolve a Feishu group chat and clean up associated resources. Use when a PR is merged/closed, a discussion is finished, or a group needs to be removed. Keywords: "解散群", "dissolve group", "删除群", "close group", "清理群".
+description: "Dissolve a Feishu group chat and clean up associated resources. Use when a PR is merged/closed, a discussion is finished, or a group needs to be removed. Keywords: \"解散群\", \"dissolve group\", \"删除群\", \"close group\", \"清理群\"."
 allowed-tools: [Bash, Read, Write, Edit]
 ---
 

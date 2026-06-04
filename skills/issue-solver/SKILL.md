@@ -1,6 +1,6 @@
 ---
 name: issue-solver
-description: Issue Solver - creates a scheduled task to scan a GitHub repo for open issues, pick the best candidate, and submit a fix PR. Use when user wants to set up automated issue resolution. Keywords: "Issue Solver", "自动修 Bug", "solve issues", "issue solver", "issue solver 安装".
+description: "Issue Solver - creates a scheduled task to scan a GitHub repo for open issues, pick the best candidate, and submit a fix PR. Use when user wants to set up automated issue resolution. Keywords: \"Issue Solver\", \"自动修 Bug\", \"solve issues\", \"issue solver\", \"issue solver 安装\"."
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
