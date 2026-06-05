@@ -157,6 +157,7 @@ export interface CardConfig {
 export interface BuiltCard {
   config: {
     wide_screen_mode: boolean;
+    dismissible?: boolean;
   };
   header?: {
     title: PlainTextElement;
@@ -339,6 +340,7 @@ export function buildCard(config: CardConfig): BuiltCard {
   const customCard: BuiltCard = {
     config: {
       wide_screen_mode: true,
+      ...(config.dismissible !== undefined && { dismissible: config.dismissible }),
     },
     elements: config.elements,
   };
