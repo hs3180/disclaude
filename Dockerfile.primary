@@ -35,16 +35,18 @@ WORKDIR /app
 # Configure apk mirror (default: official Alpine CDN)
 RUN sed -i "s|dl-cdn.alpinelinux.org|${APK_MIRROR}|g" /etc/apk/repositories
 
-# Install build dependencies + bun
-RUN apk add --no-cache python3 make g++ curl unzip && \
-    curl -fsSL https://bun.sh/install | bash && \
-    ln -s /root/.bun/bin/bun /usr/local/bin/bun
+# Install build dependencies + bun (via npm, since Node.js is already present in this stage)
+RUN apk add --no-cache python3 make g++ && \
+    npm config set registry ${NPM_REGISTRY} && \
+    npm install -g bun
 
 # Copy package files
 COPY package.json package-lock.json ./
 COPY packages ./packages
 
-# Install dependencies using bun (compatible with package-lock.json)
+# Install dependencies using bun (reads package-lock.json when bun.lockb is absent)
+# Configure registry via BUN_CONFIG_REGISTRY for custom npm mirrors (Issue #2283)
+ENV BUN_CONFIG_REGISTRY=${NPM_REGISTRY}
 RUN bun install --frozen-lockfile
 
 # Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
@@ -54,6 +56,7 @@ COPY skills ./skills
 RUN bun run build
 
 # Prune devDependencies for production
+# Note: cache cleanup reduces builder layer size (no impact on final multi-stage image)
 RUN bun install --production --frozen-lockfile && \
     rm -rf /root/.bun/install/cache
 
