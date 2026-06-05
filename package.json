@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "bin": {
-    "disclaude": "./packages/primary-node/dist/cli.js",
+    "disclaude": "./bin/disclaude.js",
     "disclaude-primary": "./packages/primary-node/dist/cli.js",
     "disclaude-mcp": "./packages/mcp-server/dist/cli.js"
   },
