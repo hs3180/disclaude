@@ -62,10 +62,20 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     );
 
     const callbacks = this.callbacksFactory(chatId);
-    const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
 
-    // Fire-and-forget pattern matches existing createDefaultMessageHandler
-    void agent.processMessage(params);
+    let agent;
+    try {
+      agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
+    } catch (err) {
+      this.log.error({ err, chatId, messageId }, 'Failed to create/get ChatAgent for user message');
+      void callbacks.sendMessage(chatId, '⚠️ Agent 创建失败，请发送 /reset 重试。', messageId).catch(() => {});
+      return Promise.resolve();
+    }
+
+    // Issue #3962: Catch processMessage errors instead of silently swallowing
+    void agent.processMessage(params).catch((err) => {
+      this.log.error({ err, chatId, messageId }, 'Agent processMessage failed for user message');
+    });
 
     return Promise.resolve();
   }
@@ -82,8 +92,20 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
 
     // Unified path: use persistent agent from pool (RFC #3329)
     const callbacks = this.callbacksFactory(chatId);
-    const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
-    void agent.processMessage({ chatId, payload, messageId });
+
+    let agent;
+    try {
+      agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
+    } catch (err) {
+      this.log.error({ err, chatId, messageId }, 'Failed to create/get ChatAgent for system message');
+      void callbacks.sendMessage(chatId, '⚠️ Agent 创建失败，请发送 /reset 重试。', messageId).catch(() => {});
+      return Promise.resolve();
+    }
+
+    // Issue #3962: Catch processMessage errors instead of silently swallowing
+    void agent.processMessage({ chatId, payload, messageId }).catch((err) => {
+      this.log.error({ err, chatId, messageId }, 'Agent processMessage failed for system message');
+    });
     return Promise.resolve();
   }
 }
