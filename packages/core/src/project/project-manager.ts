@@ -13,12 +13,15 @@
 
 import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { createLogger } from '../utils/logger.js';
 import type {
   CwdProvider,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
 } from './types.js';
+
+const logger = createLogger('ProjectManager');
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Internal Types
@@ -205,7 +208,6 @@ export class ProjectManager {
    * Injected into ChatAgent for dynamic cwd resolution.
    * Validates that the bound directory exists before returning it;
    * returns undefined (fallback to workspace) if the directory is missing.
-   *
    * Issue #3977: Prevents silent spawn failure when project binding
    * directory no longer exists (e.g., after container restart).
    *
@@ -220,6 +222,10 @@ export class ProjectManager {
       }
       // Issue #3977: Validate directory exists before returning
       if (!existsSync(active.workingDir)) {
+        logger.warn(
+          { chatId, workingDir: active.workingDir },
+          'Bound project directory does not exist, falling back to workspace',
+        );
         return undefined;
       }
       return active.workingDir;
