@@ -21,7 +21,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/integration/rfc3329/**/*.test.ts'],
+    include: ['tests/e2e/rfc3329/**/*.test.ts'],
     exclude: [
       '**/node_modules/**',
       '**/dist/**',

@@ -5,5 +5,5 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
-echo "🧪 Running RFC #3329 integration tests..."
-npx vitest --run --config tests/integration/rfc3329/vitest.config.ts "$@"
+echo "🧪 Running RFC #3329 e2e tests..."
+npx vitest --run --config tests/e2e/rfc3329/vitest.config.ts "$@"

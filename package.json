@@ -36,7 +36,7 @@
     "test:integration:fast": "./tests/integration/run-all-tests.sh --tag fast",
     "test:integration:ai": "./tests/integration/run-all-tests.sh --tag ai",
     "test:feishu": "./tests/integration/feishu-ipc-test.sh",
-    "test:rfc3329": "./tests/integration/rfc3329-test.sh",
+    "test:rfc3329": "./tests/e2e/rfc3329-test.sh",
     "launchd:generate": "node scripts/launchd.mjs generate",
     "launchd:install": "node scripts/launchd.mjs install",
     "launchd:uninstall": "node scripts/launchd.mjs uninstall",
