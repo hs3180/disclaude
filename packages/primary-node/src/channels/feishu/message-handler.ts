@@ -9,6 +9,8 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import {
   Config,
@@ -48,6 +50,41 @@ const logger = createLogger('MessageHandler');
  */
 function mapResourceType(messageType: string): 'image' | 'file' {
   return messageType === 'image' ? 'image' : 'file';
+}
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Download a message resource file via lark-cli instead of Feishu SDK.
+ *
+ * Uses `lark-cli im +resource-download` which handles auth via `--as bot`.
+ * Part of Issue #3960: migrate from Feishu SDK to lark-cli for file downloads.
+ *
+ * @returns The local path where the file was saved
+ * @throws on download failure
+ */
+async function downloadResourceViaLarkCli(
+  messageId: string,
+  fileKey: string,
+  resourceType: 'image' | 'file',
+  outputPath: string,
+): Promise<void> {
+  const { stdout, stderr } = await execFileAsync(
+    'lark-cli',
+    [
+      'im', '+resource-download',
+      '--message-id', messageId,
+      '--file-key', fileKey,
+      '--type', resourceType,
+      '--output', outputPath,
+      '--as', 'bot',
+    ],
+    { timeout: 60_000, encoding: 'utf-8' },
+  );
+
+  if (stderr && !stderr.includes('warn')) {
+    logger.debug({ stdout, stderr }, 'lark-cli resource-download output');
+  }
 }
 
 /**
@@ -832,44 +869,44 @@ export class MessageHandler {
         return;
       }
 
-      // Download file to workspace/downloads directory
+      // Download file to workspace/downloads directory via lark-cli (Issue #3960)
       let localPath: string | undefined;
-      if (this.client) {
+      try {
+        const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
+        await fs.mkdir(downloadDir, { recursive: true });
+        localPath = path.join(downloadDir, String(fileName || fileKey));
+
+        logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu via lark-cli');
+
+        await downloadResourceViaLarkCli(
+          message_id,
+          fileKey,
+          mapResourceType(message_type),
+          localPath,
+        );
+
+        // Issue #2411: Verify file was actually written to disk
         try {
-          const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
-          await fs.mkdir(downloadDir, { recursive: true });
-          localPath = path.join(downloadDir, String(fileName || fileKey));
-
-          logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
-
-          const response = await this.client.im.messageResource.get({
-            path: { message_id, file_key: fileKey },
-            params: { type: mapResourceType(message_type) },
-          });
-          await response.writeFile(localPath);
-
-          // Issue #2411: Verify file was actually written to disk
-          try {
-            const stat = await fs.stat(localPath);
-            if (stat.size === 0) {
-              throw new Error(`Downloaded file is empty (0 bytes): ${localPath}`);
-            }
-          } catch (statError) {
-            throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
+          const stat = await fs.stat(localPath);
+          if (stat.size === 0) {
+            throw new Error(`Downloaded file is empty (0 bytes): ${localPath}`);
           }
-
-          // Issue #1637, #1663: Ensure file has correct extension via file-utils API
-          const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
-          if (correctedPath !== localPath) {
-            localPath = correctedPath;
-            fileName = path.basename(correctedPath);
-          }
-
-          logger.info({ fileKey, localPath }, 'File downloaded successfully');
-        } catch (downloadError) {
-          logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file');
-          localPath = undefined;
+        } catch (statError) {
+          throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
         }
+
+        // Issue #1637, #1663: Ensure file has correct extension via file-utils API
+        // lark-cli doesn't return headers, so extension detection uses magic bytes fallback
+        const correctedPath = await ensureFileExtensionFromPath(localPath);
+        if (correctedPath !== localPath) {
+          localPath = correctedPath;
+          fileName = path.basename(correctedPath);
+        }
+
+        logger.info({ fileKey, localPath }, 'File downloaded successfully via lark-cli');
+      } catch (downloadError) {
+        logger.error({ err: downloadError, fileKey, messageId: message_id }, 'Failed to download file via lark-cli');
+        localPath = undefined;
       }
 
       // Log the incoming message
