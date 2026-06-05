@@ -66,6 +66,9 @@
   "lint-staged": {
     "packages/*/src/**/*.ts": [
       "eslint --max-warnings=0 --fix"
+    ],
+    "bin/*.js": [
+      "prettier --write"
     ]
   },
   "engines": {
