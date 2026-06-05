@@ -185,5 +185,8 @@ export { MentionDetector, type BotInfo } from './channels/feishu/mention-detecto
 // Version
 export const PRIMARY_NODE_VERSION = '0.0.1';
 
+// HTTP API Server (Issue #3857 Phase 2)
+export { HttpApiServer, type HttpApiServerConfig, type StatusResponse } from './http-api-server.js';
+
 // Messaging module (Issue #513, Issue #515)
 export * from './messaging/index.js';

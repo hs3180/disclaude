@@ -113,6 +113,24 @@ describe('parseArgs', () => {
     expect(result.apiPort).toBeUndefined();
   });
 
+  it('should leave apiPort undefined when --api-port has no value', () => {
+    const result = parseArgs(['start', '--api-port']);
+    expect(result.command).toBe('start');
+    expect(result.apiPort).toBeUndefined();
+  });
+
+  it('should ignore --api-port with non-numeric value', () => {
+    const result = parseArgs(['start', '--api-port', 'abc']);
+    expect(result.command).toBe('start');
+    expect(result.apiPort).toBeUndefined();
+  });
+
+  it('should ignore --api-port with out-of-range value', () => {
+    const result = parseArgs(['start', '--api-port', '99999']);
+    expect(result.command).toBe('start');
+    expect(result.apiPort).toBeUndefined();
+  });
+
   it('should handle all options together', () => {
     const result = parseArgs(['start', '--config', '/my/config.yaml']);
     expect(result.command).toBe('start');
