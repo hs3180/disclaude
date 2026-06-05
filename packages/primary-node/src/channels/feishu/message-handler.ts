@@ -52,51 +52,6 @@ function mapResourceType(messageType: string): 'image' | 'file' {
   return messageType === 'image' ? 'image' : 'file';
 }
 
-const execFileAsync = promisify(execFile);
-
-/**
- * Download a Feishu message resource file via lark-cli.
- *
- * Uses `npx @larksuite/cli im +resource-download` instead of the Feishu SDK,
- * leveraging lark-cli's built-in retry, chunked download, and error handling.
- *
- * Issue #3960: Replaces SDK-based this.client.im.messageResource.get() + writeFile()
- *
- * @param messageId - Feishu message ID
- * @param fileKey - File key from message content
- * @param resourceType - 'image' or 'file'
- * @param outputPath - Local path to save the file
- */
-async function downloadResourceViaLarkCli(
-  messageId: string,
-  fileKey: string,
-  resourceType: 'image' | 'file',
-  outputPath: string,
-): Promise<void> {
-  const tenantToken = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
-  if (!tenantToken) {
-    throw new Error('LARKSUITE_CLI_TENANT_ACCESS_TOKEN env var not set');
-  }
-
-  const env = {
-    ...process.env,
-    LARKSUITE_CLI_TENANT_ACCESS_TOKEN: tenantToken,
-  };
-
-  await execFileAsync(
-    'npx',
-    [
-      '@larksuite/cli', 'im', '+resource-download',
-      '--message-id', messageId,
-      '--file-key', fileKey,
-      '--type', resourceType,
-      '--output', outputPath,
-      '--as', 'bot',
-    ],
-    { env, timeout: 120_000 },
-  );
-}
-
 /**
  * Callback interface for emitting messages and control events.
  */
@@ -169,6 +124,7 @@ export class MessageHandler {
   private isRunning: () => boolean;
   private controlHandler: boolean;
   private getHasControlHandler: () => boolean;
+  private tenantAccessToken: string;
 
   private readonly MAX_MESSAGE_AGE = DEDUPLICATION.MAX_MESSAGE_AGE;
 
@@ -182,6 +138,7 @@ export class MessageHandler {
     callbacks: MessageCallbacks;
     isRunning: () => boolean;
     hasControlHandler: () => boolean;
+    tenantAccessToken: string;
   }) {
     this.triggerModeManager = options.triggerModeManager;
     this.mentionDetector = options.mentionDetector;
@@ -190,6 +147,11 @@ export class MessageHandler {
     this.isRunning = options.isRunning;
     this.getHasControlHandler = options.hasControlHandler;
     this.controlHandler = false;
+    this.tenantAccessToken = options.tenantAccessToken;
+
+    if (!this.tenantAccessToken) {
+      logger.warn('tenantAccessToken is empty — file downloads via lark-cli will fail');
+    }
   }
 
   /**
@@ -213,6 +175,46 @@ export class MessageHandler {
    */
   getClient(): lark.Client | undefined {
     return this.client;
+  }
+
+  /**
+   * Download a Feishu message resource file via lark-cli.
+   *
+   * Uses `npx @larksuite/cli im +resource-download` instead of the Feishu SDK,
+   * leveraging lark-cli's built-in retry, chunked download, and error handling.
+   *
+   * Issue #3960: Replaces SDK-based this.client.im.messageResource.get() + writeFile()
+   */
+  private async downloadResourceViaLarkCli(
+    messageId: string,
+    fileKey: string,
+    resourceType: 'image' | 'file',
+    outputPath: string,
+  ): Promise<void> {
+    const env = {
+      ...process.env,
+      LARKSUITE_CLI_TENANT_ACCESS_TOKEN: this.tenantAccessToken,
+    };
+
+    const { stdout, stderr } = await promisify(execFile)(
+      'npx',
+      [
+        '@larksuite/cli', 'im', '+resource-download',
+        '--message-id', messageId,
+        '--file-key', fileKey,
+        '--type', resourceType,
+        '--output', outputPath,
+        '--as', 'bot',
+      ],
+      { env, timeout: 120_000 },
+    );
+
+    if (stderr) {
+      if (!stdout) {
+        throw new Error(`lark-cli resource-download failed: ${stderr}`);
+      }
+      logger.warn({ stderr }, 'lark-cli reported warnings during resource download');
+    }
   }
 
   /**
@@ -763,14 +765,14 @@ export class MessageHandler {
 
         logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
 
-        await downloadResourceViaLarkCli(
+        await this.downloadResourceViaLarkCli(
           messageId,
           fileKey,
           mapResourceType(messageType),
           localPath,
         );
 
-        // Issue #1637, #1663: Ensure file has correct extension (lark-cli may not preserve it)
+        // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
         const correctedPath = await ensureFileExtensionFromPath(localPath);
         if (correctedPath !== localPath) {
           localPath = correctedPath;
@@ -778,16 +780,6 @@ export class MessageHandler {
         }
 
         logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
-
-        // Issue #2411: Verify file was actually written to disk
-        try {
-          const stat = await fs.stat(localPath);
-          if (stat.size === 0) {
-            throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
-          }
-        } catch (statError) {
-          throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
-        }
       } catch (downloadError) {
         logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
       }
@@ -900,7 +892,7 @@ export class MessageHandler {
 
           logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
 
-          await downloadResourceViaLarkCli(
+          await this.downloadResourceViaLarkCli(
             message_id,
             fileKey,
             mapResourceType(message_type),
@@ -917,7 +909,7 @@ export class MessageHandler {
             throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
           }
 
-          // Issue #1637, #1663: Ensure file has correct extension (lark-cli may not preserve it)
+          // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
           const correctedPath = await ensureFileExtensionFromPath(localPath);
           if (correctedPath !== localPath) {
             localPath = correctedPath;
