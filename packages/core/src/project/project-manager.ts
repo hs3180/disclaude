@@ -203,6 +203,11 @@ export class ProjectManager {
    * Create a CwdProvider closure bound to this ProjectManager.
    *
    * Injected into ChatAgent for dynamic cwd resolution.
+   * Validates that the bound directory exists before returning it;
+   * returns undefined (fallback to workspace) if the directory is missing.
+   *
+   * Issue #3977: Prevents silent spawn failure when project binding
+   * directory no longer exists (e.g., after container restart).
    *
    * @returns CwdProvider function
    */
@@ -211,6 +216,10 @@ export class ProjectManager {
       const active = this.getActive(chatId);
       // Return undefined for default → SDK falls back to getWorkspaceDir()
       if (active.name === 'default') {
+        return undefined;
+      }
+      // Issue #3977: Validate directory exists before returning
+      if (!existsSync(active.workingDir)) {
         return undefined;
       }
       return active.workingDir;

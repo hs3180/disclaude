@@ -259,23 +259,36 @@ describe('ProjectManager', () => {
       expect(cwdProvider('chat-1')).toBeUndefined();
     });
 
-    it('should return workingDir for bound chatId', () => {
+    it('should return workingDir for bound chatId with existing directory', () => {
       const opts = createOptions();
+      const projectDir = join(opts.workspaceDir, 'my-project');
+      mkdirSync(projectDir, { recursive: true });
       const pm = new ProjectManager(opts);
-      pm.use('chat-1', '/my-project');
+      pm.use('chat-1', projectDir);
 
       const cwdProvider = pm.createCwdProvider();
-      expect(cwdProvider('chat-1')).toBe('/my-project');
+      expect(cwdProvider('chat-1')).toBe(projectDir);
+    });
+
+    it('should return undefined when bound directory does not exist (Issue #3977)', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+      pm.use('chat-1', '/nonexistent/project-dir');
+
+      const cwdProvider = pm.createCwdProvider();
+      expect(cwdProvider('chat-1')).toBeUndefined();
     });
 
     it('should reflect changes after binding', () => {
       const opts = createOptions();
+      const projectDir = join(opts.workspaceDir, 'new-project');
+      mkdirSync(projectDir, { recursive: true });
       const pm = new ProjectManager(opts);
       const cwdProvider = pm.createCwdProvider();
 
       expect(cwdProvider('chat-1')).toBeUndefined();
-      pm.use('chat-1', '/new-project');
-      expect(cwdProvider('chat-1')).toBe('/new-project');
+      pm.use('chat-1', projectDir);
+      expect(cwdProvider('chat-1')).toBe(projectDir);
     });
   });
 
