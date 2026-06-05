@@ -103,7 +103,6 @@ function parseScheduleFrontmatter(content: string): {
       case 'model':
       case 'timezone':
       case 'modelTier':
-      case 'timezone':
         frontmatter[key] = stripQuotes(value);
         break;
       case 'enabled':
@@ -328,10 +327,6 @@ export class ScheduleFileScanner {
     }
     if (task.modelTier) {
       frontmatter.push(`modelTier: "${task.modelTier}"`);
-    }
-    // Treat undefined and empty string as "not set" — don't write to frontmatter
-    if (task.timezone) {
-      frontmatter.push(`timezone: "${task.timezone}"`);
     }
 
     frontmatter.push('---', '');
@@ -667,6 +662,9 @@ export class ScheduleFileWatcher {
           const task = await this.fileScanner.parseFile(filePath);
           if (task) {
             logger.info({ taskId, filePath }, 'Schedule file added');
+            // Issue #3929: Sync knownTaskIds to prevent fullRescan from re-processing
+            this.knownTaskIds.add(task.id);
+            this.knownTaskMtimes.set(task.id, task.fileMtime);
             this.onFileAdded(task);
           }
         } else {
@@ -680,10 +678,15 @@ export class ScheduleFileWatcher {
             const task = await this.fileScanner.parseFile(filePath);
             if (task) {
               logger.info({ taskId, filePath }, 'Schedule file replaced (rename-and-replace pattern)');
+              // Issue #3929: Sync knownTaskMtimes to prevent fullRescan from re-processing
+              this.knownTaskMtimes.set(task.id, task.fileMtime);
               this.onFileChanged(task);
             }
           } else {
             logger.info({ taskId, filePath }, 'Schedule file removed');
+            // Issue #3929: Sync knownTaskIds to prevent fullRescan from re-processing
+            this.knownTaskIds.delete(taskId);
+            this.knownTaskMtimes.delete(taskId);
             this.onFileRemoved(taskId, filePath);
           }
         }
@@ -691,6 +694,8 @@ export class ScheduleFileWatcher {
         const task = await this.fileScanner.parseFile(filePath);
         if (task) {
           logger.info({ taskId, filePath }, 'Schedule file changed');
+          // Issue #3929: Sync knownTaskMtimes to prevent fullRescan from re-processing
+          this.knownTaskMtimes.set(task.id, task.fileMtime);
           this.onFileChanged(task);
         } else {
           logger.warn({ taskId, filePath }, 'Schedule file became unparseable on change event');
