@@ -9,6 +9,8 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { promisify } from 'util';
+import { execFile } from 'child_process';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import {
   Config,
@@ -17,7 +19,6 @@ import {
   CHAT_HISTORY,
   createLogger,
   stripLeadingMentions,
-  ensureFileExtensionFromPath,
   type FeishuEventData,
   type FeishuMessageEvent,
   type FeishuCardActionEvent,
@@ -48,6 +49,55 @@ const logger = createLogger('MessageHandler');
  */
 function mapResourceType(messageType: string): 'image' | 'file' {
   return messageType === 'image' ? 'image' : 'file';
+}
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Download a Feishu message resource file via lark-cli.
+ *
+ * Uses `npx @larksuite/cli im +resource-download` instead of the Feishu SDK,
+ * leveraging lark-cli's built-in retry, chunked download, and error handling.
+ *
+ * Issue #3960: Replaces SDK-based this.client.im.messageResource.get() + writeFile()
+ *
+ * @param messageId - Feishu message ID
+ * @param fileKey - File key from message content
+ * @param resourceType - 'image' or 'file'
+ * @param outputPath - Local path to save the file
+ */
+async function downloadResourceViaLarkCli(
+  messageId: string,
+  fileKey: string,
+  resourceType: 'image' | 'file',
+  outputPath: string,
+): Promise<void> {
+  const tenantToken = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
+  if (!tenantToken) {
+    throw new Error('LARKSUITE_CLI_TENANT_ACCESS_TOKEN env var not set');
+  }
+
+  const env = {
+    ...process.env,
+    LARKSUITE_CLI_TENANT_ACCESS_TOKEN: tenantToken,
+  };
+
+  const { stdout, stderr } = await execFileAsync(
+    'npx',
+    [
+      '@larksuite/cli', 'im', '+resource-download',
+      '--message-id', messageId,
+      '--file-key', fileKey,
+      '--type', resourceType,
+      '--output', outputPath,
+      '--as', 'bot',
+    ],
+    { env, timeout: 120_000 },
+  );
+
+  if (stderr && !stdout) {
+    throw new Error(`lark-cli resource-download failed: ${stderr}`);
+  }
 }
 
 /**
@@ -716,18 +766,12 @@ export class MessageHandler {
 
         logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
 
-        const response = await this.client.im.messageResource.get({
-          path: { message_id: messageId, file_key: fileKey },
-          params: { type: mapResourceType(messageType) },
-        });
-        await response.writeFile(localPath);
-
-        // Issue #1637, #1663: Ensure file has correct extension via file-utils API
-        const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
-        if (correctedPath !== localPath) {
-          localPath = correctedPath;
-          fileName = path.basename(correctedPath);
-        }
+        await downloadResourceViaLarkCli(
+          messageId,
+          fileKey,
+          mapResourceType(messageType),
+          localPath,
+        );
 
         logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
       } catch (downloadError) {
@@ -842,11 +886,12 @@ export class MessageHandler {
 
           logger.info({ fileKey, fileName, localPath }, 'Downloading file from Feishu');
 
-          const response = await this.client.im.messageResource.get({
-            path: { message_id, file_key: fileKey },
-            params: { type: mapResourceType(message_type) },
-          });
-          await response.writeFile(localPath);
+          await downloadResourceViaLarkCli(
+            message_id,
+            fileKey,
+            mapResourceType(message_type),
+            localPath,
+          );
 
           // Issue #2411: Verify file was actually written to disk
           try {
@@ -856,13 +901,6 @@ export class MessageHandler {
             }
           } catch (statError) {
             throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
-          }
-
-          // Issue #1637, #1663: Ensure file has correct extension via file-utils API
-          const correctedPath = await ensureFileExtensionFromPath(localPath, response.headers);
-          if (correctedPath !== localPath) {
-            localPath = correctedPath;
-            fileName = path.basename(correctedPath);
           }
 
           logger.info({ fileKey, localPath }, 'File downloaded successfully');
