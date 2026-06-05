@@ -779,6 +779,16 @@ export class MessageHandler {
           fileName = path.basename(correctedPath);
         }
 
+        // Issue #2411: Verify file was actually written to disk
+        try {
+          const stat = await fs.stat(localPath);
+          if (stat.size === 0) {
+            throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
+          }
+        } catch (statError) {
+          throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+        }
+
         logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
       } catch (downloadError) {
         logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
