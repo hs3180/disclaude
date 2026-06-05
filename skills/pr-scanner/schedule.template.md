@@ -98,7 +98,9 @@ lark-cli api GET "/open-apis/im/v1/messages" --as bot --query container_id_type=
 - **第 2 次**（@用户）：`@用户 这条 review 群已经超过 2.5 小时没有新消息，请确认 review 状态。如已完成请回复 /dissolve。`
 - **第 3 次**（加急）：使用飞书 urgent 消息发送 `⚠️ PR review 群已超过 3 小时无活动，请尽快处理或解散群。`
 
-每次发送提醒后，原子更新映射表中该条目的 `lastReminderAt`（当前 ISO 时间戳）和 `reminderCount`。
+每次发送提醒后，使用 `store.update(key, { lastReminderAt, reminderCount })` 原子更新映射表中该条目。
+
+**活跃度恢复重置**: 如果群内有新消息（`create_time` 在 2h 以内），且 `reminderCount` > 0，则调用 `store.update(key, { reminderCount: 0 })` 重置计数器，跳过提醒。
 
 ### 5. 新 PR — 创建讨论群
 
