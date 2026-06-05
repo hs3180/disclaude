@@ -31,6 +31,7 @@ import {
   ProjectManager,
   type SystemMessage,
 } from '@disclaude/core';
+import crypto from 'node:crypto';
 import { PrimaryNode } from './primary-node.js';
 import { HttpApiServer } from './http-api-server.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
@@ -425,7 +426,7 @@ async function main(): Promise<void> {
       if (router) {
         httpApiServer.setPushHandler(async (chatId: string, message: string) => {
           const systemMessage: SystemMessage = {
-            id: `http-push-${Date.now()}`,
+            id: `http-push-${crypto.randomUUID()}`,
             source: 'system',
             trigger: 'signal',
             chatId,

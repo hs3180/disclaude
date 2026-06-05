@@ -292,7 +292,14 @@ export class HttpApiServer {
       return;
     }
 
-    const body = await readBody(req);
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
     let parsed: unknown;
     try {
       parsed = JSON.parse(body);
@@ -311,6 +318,11 @@ export class HttpApiServer {
     }
 
     const { chatId, message } = parsed as { chatId: string; message: string };
+
+    if (!chatId || !message) {
+      this.sendJson(res, 400, { ok: false, message: 'chatId and message must be non-empty' });
+      return;
+    }
 
     try {
       await this.pushHandler(chatId, message);
@@ -335,13 +347,27 @@ export class HttpApiServer {
   }
 }
 
+/** Maximum request body size (1 MB). */
+const MAX_BODY_SIZE = 1024 * 1024;
+
 /**
  * Read the full request body from an IncomingMessage.
+ *
+ * Rejects if the body exceeds MAX_BODY_SIZE to prevent memory issues.
  */
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    let totalSize = 0;
+    req.on('data', (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_BODY_SIZE) {
+        reject(new Error('Request body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
     req.on('error', reject);
   });

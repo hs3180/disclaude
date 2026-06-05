@@ -269,5 +269,58 @@ describe('HttpApiServer', () => {
       expect(data.ok).toBe(false);
       expect(data.message).toContain('Agent not found');
     });
+
+    it('should return 400 for empty chatId', async () => {
+      server.setPushHandler(vi.fn());
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ chatId: '', message: 'hello' }));
+
+      expect(statusCode).toBe(400);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(false);
+      expect(data.message).toContain('non-empty');
+    });
+
+    it('should return 400 for empty message', async () => {
+      server.setPushHandler(vi.fn());
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ chatId: 'oc_test', message: '' }));
+
+      expect(statusCode).toBe(400);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(false);
+      expect(data.message).toContain('non-empty');
+    });
+
+    it('should return 413 for oversized body', async () => {
+      server.setPushHandler(vi.fn());
+
+      const largeBody = JSON.stringify({ chatId: 'oc_test', message: 'x'.repeat(1024 * 1024 + 1) });
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, largeBody);
+
+      expect(statusCode).toBe(413);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(false);
+      expect(data.message).toContain('too large');
+    });
   });
 });
