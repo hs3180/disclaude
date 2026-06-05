@@ -22,7 +22,7 @@ ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG PIP_INDEX_URL
 
 # -----------------------------------------------------------------------------
-# Stage 1: Builder
+# Stage 1: Builder (uses bun for faster installs)
 # -----------------------------------------------------------------------------
 FROM ${DOCKER_IMAGE_PREFIX}library/node:22-alpine AS builder
 
@@ -35,26 +35,30 @@ WORKDIR /app
 # Configure apk mirror (default: official Alpine CDN)
 RUN sed -i "s|dl-cdn.alpinelinux.org|${APK_MIRROR}|g" /etc/apk/repositories
 
-# Install build dependencies
-RUN apk add --no-cache python3 make g++
+# Install build dependencies + bun (via npm, since Node.js is already present in this stage)
+RUN apk add --no-cache python3 make g++ && \
+    npm config set registry ${NPM_REGISTRY} && \
+    npm install -g bun
 
 # Copy package files
 COPY package.json package-lock.json ./
 COPY packages ./packages
 
-# Configure npm registry and install all dependencies (including devDependencies for building)
-RUN npm config set registry ${NPM_REGISTRY} && \
-    npm install
+# Install dependencies using bun (reads package-lock.json when bun.lockb is absent)
+# Configure registry via BUN_CONFIG_REGISTRY for custom npm mirrors (Issue #2283)
+ENV BUN_CONFIG_REGISTRY=${NPM_REGISTRY}
+RUN bun install --frozen-lockfile
 
 # Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
 COPY skills ./skills
 
 # Build the project
-RUN npm run build
+RUN bun run build
 
 # Prune devDependencies for production
-RUN npm prune --production && \
-    npm cache clean --force
+# Note: cache cleanup reduces builder layer size (no impact on final multi-stage image)
+RUN bun install --production --frozen-lockfile && \
+    rm -rf /root/.bun/install/cache
 
 # -----------------------------------------------------------------------------
 # Stage 2: Production Image
