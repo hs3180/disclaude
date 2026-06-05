@@ -277,7 +277,7 @@ function main() {
 
   // Build set of issue numbers referenced by open PRs
   const prIssueNums = new Set();
-  const ISSUE_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+  const ISSUE_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
   const BRANCH_NUM = /(\d+)/g;
   for (const pr of allPRs) {
     // Keyword-prefixed references in body and title (strict)

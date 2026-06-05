@@ -66,7 +66,7 @@ PR 标题格式：`fix #$ISSUE_NUMBER (part N): 简述本次修改内容`
 PR body 中说明：本 PR 实现了 issue 的哪个子任务，后续还剩哪些部分。
 
 ```bash
-GH_TOKEN=$(grep '^GH_TOKEN=' /data/workspace/.runtime-env | cut -d= -f2) gh pr create --title "fix #$ISSUE_NUMBER (part N): ..." --body "Related #$ISSUE_NUMBER" --head fix/issue-$ISSUE_NUMBER
+GH_TOKEN=$(grep '^GH_TOKEN=' /data/workspace/.runtime-env | sed 's/^GH_TOKEN=//' | tr -d '"'\'') gh pr create --title "fix #$ISSUE_NUMBER (part N): ..." --body "Related #$ISSUE_NUMBER" --head fix/issue-$ISSUE_NUMBER
 ```
 
 ### 第七步：报告结果
@@ -75,13 +75,13 @@ GH_TOKEN=$(grep '^GH_TOKEN=' /data/workspace/.runtime-env | cut -d= -f2) gh pr c
 
 ---
 
-若脚本输出无候选 issue，回复"无候选 issue"并结束。
+若脚本输出无候选 issue，直接回复"无候选 issue"并结束，不做任何操作。
 
 ## 环境变量
 
 | 变量 | 必需 | 说明 |
 |------|------|------|
-| `TARGET_REPO` | 否 | 目标仓库（默认 `hs3180/disclaude`） |
+| `TARGET_REPO` | 否 | 目标仓库（owner/repo 格式，默认 `hs3180/disclaude`） |
 | `GITHUB_APP_ID` | 是 | GitHub App ID |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | 是 | GitHub App 私钥 PEM 文件路径 |
 | `GITHUB_APP_INSTALLATION_ID` | 否 | Installation ID（自动检测） |
