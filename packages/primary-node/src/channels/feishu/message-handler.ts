@@ -19,6 +19,7 @@ import {
   CHAT_HISTORY,
   createLogger,
   stripLeadingMentions,
+  ensureFileExtensionFromPath,
   type FeishuEventData,
   type FeishuMessageEvent,
   type FeishuCardActionEvent,
@@ -82,7 +83,7 @@ async function downloadResourceViaLarkCli(
     LARKSUITE_CLI_TENANT_ACCESS_TOKEN: tenantToken,
   };
 
-  const { stdout, stderr } = await execFileAsync(
+  await execFileAsync(
     'npx',
     [
       '@larksuite/cli', 'im', '+resource-download',
@@ -94,10 +95,6 @@ async function downloadResourceViaLarkCli(
     ],
     { env, timeout: 120_000 },
   );
-
-  if (stderr && !stdout) {
-    throw new Error(`lark-cli resource-download failed: ${stderr}`);
-  }
 }
 
 /**
@@ -773,7 +770,24 @@ export class MessageHandler {
           localPath,
         );
 
+        // Issue #1637, #1663: Ensure file has correct extension (lark-cli may not preserve it)
+        const correctedPath = await ensureFileExtensionFromPath(localPath);
+        if (correctedPath !== localPath) {
+          localPath = correctedPath;
+          fileName = path.basename(correctedPath);
+        }
+
         logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
+
+        // Issue #2411: Verify file was actually written to disk
+        try {
+          const stat = await fs.stat(localPath);
+          if (stat.size === 0) {
+            throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
+          }
+        } catch (statError) {
+          throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+        }
       } catch (downloadError) {
         logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
       }
@@ -901,6 +915,13 @@ export class MessageHandler {
             }
           } catch (statError) {
             throw new Error(`Downloaded file not found on disk: ${localPath}`, { cause: statError });
+          }
+
+          // Issue #1637, #1663: Ensure file has correct extension (lark-cli may not preserve it)
+          const correctedPath = await ensureFileExtensionFromPath(localPath);
+          if (correctedPath !== localPath) {
+            localPath = correctedPath;
+            fileName = path.basename(correctedPath);
           }
 
           logger.info({ fileKey, localPath }, 'File downloaded successfully');
