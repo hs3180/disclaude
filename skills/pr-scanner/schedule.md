@@ -52,7 +52,7 @@ gh pr list --repo {repo} --state open --json number,title,author,headRefName
 gh pr list --repo {repo} --state closed --json number,state
 ```
 
-merged/closed → 记录日志，不自动解散。open → 跳过。
+merged/closed → 记录日志。如该群的 agent 会话已结束（映射表中有条目但群内无 agent 活动），scanner 主动调用 dissolve-group 清理，防止孤儿群。open → 跳过。
 
 ### 5. 新 PR — 创建讨论群
 
@@ -91,18 +91,20 @@ lark-cli im +chat-create --as bot --name "PR #{number} · {title前30字}" --des
 
 ## PR 关闭后清理
 
-定期检查 PR 状态（`gh pr view {number} --repo {repo} --json state,mergedAt`）。当 PR 已合并或关闭时：
+**每次收到用户消息时**，先检查 PR 状态（`gh pr view {number} --repo {repo} --json state,mergedAt`）。当 PR 已合并或关闭时：
 1. 在群中发送审查总结和感谢消息
-2. 调用 dissolve-group skill 解散本群并释放名额：
-   `DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`
+2. 使用 Skill 工具调用 dissolve-group 解散本群并释放名额：
+   Skill: dissolve-group，参数: DISSOLVE_KEY=pr-{number}
+   如 Skill 不可用，回退到 Bash 执行：
+   `cd {workspace_root} && DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`
 ```
 
 ### 6. 清理临时目录
 
-当 PR 状态变为 merged/closed 时，清理对应的临时目录：
+dissolve-group 执行时会自动清理 workdir（见 step 5d）。此处仅作为兜底：当 dissolve-group 未成功执行时，由 scanner 手动清理：
 
 ```bash
-# 从映射表读取 workdir 字段
+# 兜底：从映射表读取 workdir 字段（正常情况下 dissolve-group 已清理）
 rm -rf "{workdir}"
 ```
 
