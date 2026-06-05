@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Issue Scanner for hs3180/disclaude
+ * Issue Scanner — configurable target repository via TARGET_REPO env var
  *
- * Minimal filter: removes issues with open PRs, outputs remaining list.
+ * Lists open issues that don't have an associated open PR.
+ * Outputs Markdown with full issue details + comments for each candidate.
  *
  * Usage:
  *   node scan.mjs           # List candidates
@@ -19,7 +20,11 @@ import crypto from "node:crypto";
 // Config
 // ---------------------------------------------------------------------------
 
-const REPO = "hs3180/disclaude";
+const REPO = process.env.TARGET_REPO || "hs3180/disclaude";
+if (!/^[\w.-]+\/[\w.-]+$/.test(REPO)) {
+  console.error(`Invalid TARGET_REPO: "${REPO}". Expected owner/repo format.`);
+  process.exit(1);
+}
 const REPO_OWNER = REPO.split("/")[0];
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
