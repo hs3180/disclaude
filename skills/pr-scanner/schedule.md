@@ -59,7 +59,7 @@ merged/closed → 记录日志，不自动解散。open → 跳过。
 对映射表中所有 `purpose: 'pr-review'` 且未在步骤 4 中被标记为 closed/merged 的群，检查活跃度：
 
 ```bash
-lark-cli api GET "/open-apis/im/v1/messages" --as bot --query container_id_type=chat "container_id={chatId}" "page_size=1" "sort_type=ByCreateTimeDesc"
+lark-cli api GET "/open-apis/im/v1/messages" --as bot --query "container_id_type=chat" "container_id={chatId}" "page_size=1" "sort_type=ByCreateTimeDesc"
 ```
 
 从返回的最后一条消息的 `create_time` 计算时间差。如果：
