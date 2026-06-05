@@ -38,6 +38,22 @@ function log(msg) {
 // Runtime Env File I/O
 // ---------------------------------------------------------------------------
 
+function unquoteValue(val) {
+  if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+    val = val.slice(1, -1);
+    if (val.includes('\\"')) val = val.replace(/\\"/g, '"');
+    if (val.includes("\\'")) val = val.replace(/\\'/g, "'");
+  }
+  return val;
+}
+
+function quoteValue(val) {
+  if (val.includes(" ") || val.includes('"')) {
+    return `"${val.replace(/"/g, '\\"')}"`;
+  }
+  return val;
+}
+
 function loadRuntimeEnv() {
   if (!existsSync(RUNTIME_ENV_PATH)) return {};
   const content = readFileSync(RUNTIME_ENV_PATH, "utf-8");
@@ -47,14 +63,14 @@ function loadRuntimeEnv() {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
     if (eq > 0) {
-      env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
+      env[trimmed.slice(0, eq).trim()] = unquoteValue(trimmed.slice(eq + 1).trim());
     }
   }
   return env;
 }
 
 function saveRuntimeEnv(env) {
-  const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const lines = Object.entries(env).map(([k, v]) => `${k}=${quoteValue(v)}`);
   writeFileSync(RUNTIME_ENV_PATH, lines.join("\n") + "\n", "utf-8");
 }
 
@@ -180,6 +196,8 @@ function gh(...args) {
 const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
     issues(first: 100, states: [OPEN], orderBy: {field: CREATED_AT, direction: DESC}) {
+      totalCount
+      pageInfo { hasNextPage }
       nodes {
         number
         title
@@ -191,6 +209,8 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
       }
     }
     pullRequests(first: 100, states: [OPEN]) {
+      totalCount
+      pageInfo { hasNextPage }
       nodes {
         number
         title
@@ -202,20 +222,29 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
 }`;
 
 function ghGraphQL(query, owner, name) {
-  const token = ensureToken();
-  const result = spawnSync("gh", [
-    "api", "graphql",
-    "-f", `query=${query}`,
-    "-f", `owner=${owner}`,
-    "-f", `name=${name}`,
-  ], {
-    env: { ...process.env, GH_TOKEN: token }, encoding: "utf-8", timeout: 30000,
-  });
-  if (result.status !== 0) {
-    log(`gh api graphql failed: ${(result.stderr || "").trim()}`);
-    return null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = ensureToken();
+    const result = spawnSync("gh", [
+      "api", "graphql",
+      "-f", `query=${query}`,
+      "-f", `owner=${owner}`,
+      "-f", `name=${name}`,
+    ], {
+      env: { ...process.env, GH_TOKEN: token }, encoding: "utf-8", timeout: 30000,
+    });
+    if (result.status !== 0) {
+      const stderr = result.stderr || "";
+      if (attempt === 0 && (stderr.includes("401") || stderr.includes("Bad credentials"))) {
+        log(`Auth error from gh graphql, retrying with fresh token...`);
+        cachedToken = null;
+        continue;
+      }
+      log(`gh api graphql failed: ${stderr.trim()}`);
+      return null;
+    }
+    try { return JSON.parse(result.stdout); } catch { return null; }
   }
-  try { return JSON.parse(result.stdout); } catch { return null; }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,13 +263,24 @@ function main() {
   const repo = data.data.repository;
   const allIssues = repo.issues.nodes || [];
   const allPRs = repo.pullRequests.nodes || [];
+
+  if (repo.issues.pageInfo?.hasNextPage || repo.pullRequests.pageInfo?.hasNextPage) {
+    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, PRs total: ${repo.pullRequests.totalCount}. Only first 100 of each fetched.`);
+  }
+
   log(`Found ${allIssues.length} open issues, ${allPRs.length} open PRs`);
 
   // Build set of issue numbers referenced by open PRs
   const prIssueNums = new Set();
+  const ISSUE_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+  const BRANCH_NUM = /(\d+)/g;
   for (const pr of allPRs) {
-    const combined = `${pr.body || ""} ${pr.headRefName || ""} ${pr.title || ""}`;
-    for (const m of combined.matchAll(/#(\d+)/g)) {
+    // Keyword-prefixed references in body and title (strict)
+    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(ISSUE_KEYWORD)) {
+      prIssueNums.add(Number(m[1]));
+    }
+    // Loose number matching in branch name (e.g. fix/issue-123)
+    for (const m of (pr.headRefName || "").matchAll(BRANCH_NUM)) {
       prIssueNums.add(Number(m[1]));
     }
   }
