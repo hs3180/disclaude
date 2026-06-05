@@ -20,6 +20,8 @@ import type { ChatAgentCallbacks } from '../agents/types.js';
 
 const defaultLogger = createLogger('AgentPoolHandler');
 
+const AGENT_CREATION_FAILED_MESSAGE = '⚠️ Agent 创建失败，请发送 /reset 重试。';
+
 /**
  * Options for creating AgentPoolMessageHandler.
  */
@@ -61,11 +63,13 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
       'Handling user message via agent pool',
     );
 
-    const callbacks = this.callbacksFactory(chatId);
-    const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
+    const agent = this.getAgentSafely(chatId, messageId, 'user message');
+    if (!agent) {return Promise.resolve();}
 
-    // Fire-and-forget pattern matches existing createDefaultMessageHandler
-    void agent.processMessage(params);
+    // Issue #3962: Catch processMessage errors instead of silently swallowing
+    void agent.processMessage(params).catch((err) => {
+      this.log.error({ err, chatId, messageId }, 'Agent processMessage failed for user message');
+    });
 
     return Promise.resolve();
   }
@@ -81,9 +85,34 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     );
 
     // Unified path: use persistent agent from pool (RFC #3329)
-    const callbacks = this.callbacksFactory(chatId);
-    const agent = this.agentPool.getOrCreateChatAgent(chatId, callbacks);
-    void agent.processMessage({ chatId, payload, messageId });
+    const agent = this.getAgentSafely(chatId, messageId, 'system message');
+    if (!agent) {return Promise.resolve();}
+
+    // Issue #3962: Catch processMessage errors instead of silently swallowing
+    void agent.processMessage({ chatId, payload, messageId }).catch((err) => {
+      this.log.error({ err, chatId, messageId }, 'Agent processMessage failed for system message');
+    });
     return Promise.resolve();
+  }
+
+  /**
+   * Safely get or create a ChatAgent from the pool.
+   * Returns null if agent creation fails (logs error + notifies user).
+   * Issue #3962: Prevents silent failures when agent subprocess fails to spawn.
+   */
+  private getAgentSafely(
+    chatId: string,
+    messageId: string,
+    context: string,
+  ): ChatAgent | null {
+    const callbacks = this.callbacksFactory(chatId);
+    try {
+      return this.agentPool.getOrCreateChatAgent(chatId, callbacks);
+    } catch (err) {
+      this.log.error({ err, chatId, messageId }, `Failed to create/get ChatAgent for ${context}`);
+      // Silent catch: agent itself is broken, notification failure should not cause further errors
+      void callbacks.sendMessage(chatId, AGENT_CREATION_FAILED_MESSAGE, messageId).catch(() => {});
+      return null;
+    }
   }
 }
