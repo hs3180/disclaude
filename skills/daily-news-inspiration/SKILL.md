@@ -175,7 +175,7 @@ GPT-5 with multi-modal reasoning (tech-relevant, interesting)
 | `{cron}` | 实际的 cron 表达式（默认 `0 9 * * *`） |
 
 ```
-# 4. 使用 Write 工具写入目标文件
+# 3. 使用 Write 工具写入目标文件
 目标路径: schedules/daily-news-inspiration/SCHEDULE.md
 ```
 
