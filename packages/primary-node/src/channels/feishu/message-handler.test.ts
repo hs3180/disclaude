@@ -1375,7 +1375,7 @@ describe('MessageHandler', () => {
       delete process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
 
       const { execFile } = await import('child_process');
-      vi.mocked(execFile).mockImplementationOnce((...args: any[]) => {
+      (vi.mocked(execFile) as ReturnType<typeof vi.fn>).mockImplementationOnce((...args: any[]) => {
         const callback = args[args.length - 1];
         if (typeof callback === 'function') {
           callback(new Error('lark-cli not found'), { stdout: '', stderr: '' });
