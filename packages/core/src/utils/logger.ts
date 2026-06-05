@@ -322,16 +322,11 @@ export function initLogger(config: LoggerConfig = {}): Logger {
     return rootLogger;
   }
 
-  // Setup file logging for production or if explicitly requested
-  let primaryStream: NodeJS.WritableStream = process.stdout;
-
-  if (shouldFileLog) {
-    try {
-      primaryStream = setupFileLogging(logDir);
-    } catch (error) {
-      console.warn('Failed to setup file logging:', error);
-    }
-  }
+  // Setup file logging for production or if explicitly requested.
+  // setupFileLogging() handles its own errors and falls back to stdout.
+  const primaryStream: NodeJS.WritableStream = shouldFileLog
+    ? setupFileLogging(logDir)
+    : process.stdout;
 
   // Create root logger with stream
   rootLogger = pino(options, primaryStream);
