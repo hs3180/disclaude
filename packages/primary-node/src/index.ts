@@ -182,8 +182,8 @@ export { MessageHandler as FeishuMessageHandler, type MessageCallbacks } from '.
 export { TriggerModeManager, type TriggerModeRecord } from './channels/feishu/passive-mode.js';
 export { MentionDetector, type BotInfo } from './channels/feishu/mention-detector.js';
 
-// Version
-export const PRIMARY_NODE_VERSION = '0.0.1';
+// Version (Issue #3857: extracted to version.ts to avoid heavy import chain in tests)
+export { PRIMARY_NODE_VERSION } from './version.js';
 
 // HTTP API Server (Issue #3857 Phase 2)
 export { HttpApiServer, type HttpApiServerConfig, type StatusResponse } from './http-api-server.js';

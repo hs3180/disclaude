@@ -18,7 +18,7 @@
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createLogger } from '@disclaude/core';
-import { PRIMARY_NODE_VERSION } from './index.js';
+import { PRIMARY_NODE_VERSION } from './version.js';
 
 const logger = createLogger('HttpApiServer');
 
