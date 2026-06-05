@@ -634,6 +634,104 @@ describe('MessageBuilder', () => {
     });
   });
 
+  describe('buildEnhancedContent - thread context (Issue #3641)', () => {
+    it('should include thread context section when threadContext is provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        threadContext: '👤 Root message\n\n🤖 Bot reply',
+      }, 'chat-456');
+
+      expect(result).toContain('Thread Context');
+      expect(result).toContain('Root message');
+      expect(result).toContain('Bot reply');
+    });
+
+    it('should not include thread context section when threadContext is not provided', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Thread Context');
+    });
+
+    it('should not include thread context for skill commands', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '/reset',
+        messageId: 'msg-123',
+        threadContext: 'Thread data here',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Thread Context');
+      expect(result).toContain('/reset');
+    });
+
+    it('should include thread context alongside other history sections', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatHistoryContext: 'Chat history...',
+        persistedHistoryContext: 'Persisted history...',
+        threadContext: 'Thread content...',
+      }, 'chat-456');
+
+      expect(result).toContain('Previous Session Context');
+      expect(result).toContain('Recent Chat History');
+      expect(result).toContain('Thread Context');
+    });
+  });
+
+  describe('buildEnhancedContent - topic thread detection (Issue #3641)', () => {
+    it('should skip next-step guidance when chatType is topic', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'topic',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Next Steps After Response');
+      expect(result).not.toContain('actionPrompts');
+    });
+
+    it('should include next-step guidance for non-topic chatType', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'group',
+      }, 'chat-456');
+
+      expect(result).toContain('Next Steps After Response');
+    });
+
+    it('should include next-step guidance when chatType is undefined', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+      }, 'chat-456');
+
+      expect(result).toContain('Next Steps After Response');
+    });
+
+    it('should include other guidance sections for topic threads', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'topic',
+        threadContext: 'Previous thread messages...',
+      }, 'chat-456');
+
+      // Next-step guidance should be skipped for topic threads
+      expect(result).not.toContain('Next Steps After Response');
+      // But other guidance should still be present
+      expect(result).toContain('Output Format Requirements');
+      expect(result).toContain('Task Execution Recording');
+      expect(result).toContain('Location Awareness');
+      // Thread context should be present
+      expect(result).toContain('Thread Context');
+    });
+  });
+
   describe('buildEnhancedContent - output ordering', () => {
     it('should place user message after guidance sections', () => {
       const result = messageBuilder.buildEnhancedContent({

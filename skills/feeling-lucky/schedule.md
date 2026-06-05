@@ -1,6 +1,6 @@
 ---
 name: "每日随机测试"
-cron: "0 14 * * 1-5"
+cron: "{cron}"
 enabled: true
 blocking: true
 # chatId 由 scheduler 在安装时根据目标群组自动填充

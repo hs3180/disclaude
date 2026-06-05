@@ -26,7 +26,19 @@ const mockState = vi.hoisted(() => ({
   isBotMentioned: false,
   interactionHandleAction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   workspaceDir: '/tmp/mh-test',
+  execFileCallback: null as ((err: Error | null, result?: { stdout: string; stderr: string }) => void) | null,
 }));
+
+const mockExecFile = vi.hoisted(() =>
+  vi.fn((...args: unknown[]) => {
+    const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+    if (mockState.execFileCallback) {
+      mockState.execFileCallback(null, { stdout: 'ok', stderr: '' });
+    } else {
+      callback(null, { stdout: 'ok', stderr: '' });
+    }
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -48,9 +60,12 @@ vi.mock('@disclaude/core', async () => {
       warn: vi.fn(),
     }),
     stripLeadingMentions: (text: string) => text,
-    ensureFileExtensionFromPath: vi.fn<(p: string) => Promise<string>>().mockImplementation((p: string) => Promise.resolve(p)),
   };
 });
+
+vi.mock('child_process', () => ({
+  execFile: mockExecFile,
+}));
 
 vi.mock('../../platforms/feishu/interaction-manager.js', () => ({
   InteractionManager: vi.fn().mockImplementation(() => ({
@@ -119,6 +134,7 @@ function createHandler(overrides: Record<string, unknown> = {}) {
     },
     isRunning: () => mockState.isRunning,
     hasControlHandler: () => mockState.hasControlHandler,
+    tenantAccessToken: 'test-tenant-token',
     ...overrides,
   });
 
@@ -1321,15 +1337,15 @@ describe('MessageHandler', () => {
   // -----------------------------------------------------------------------
   describe('handleMessageReceive — file download with client', () => {
     it('should download file when client is available', async () => {
-      const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'download ok', stderr: '' });
+      });
 
       const mockClient = {
         im: {
-          messageResource: {
-            get: vi.fn().mockResolvedValue({
-              writeFile: mockWriteFile,
-              headers: {},
-            }),
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
           },
         },
       };
@@ -1351,11 +1367,55 @@ describe('MessageHandler', () => {
         },
       });
 
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['@larksuite/cli', 'im', '+resource-download']),
+        expect.objectContaining({ timeout: 120_000 }),
+        expect.any(Function),
+      );
+
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.content).toContain('文件已下载到本地');
       expect(msg.attachments).toBeDefined();
       expect(msg.attachments[0].fileName).toContain('image_img_001');
+    });
+
+    it('should handle download failure gracefully', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null) => void;
+        callback(new Error('lark-cli not found'));
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_dl_fail',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ image_key: 'img_fail' }),
+            message_type: 'image',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('下载失败');
+      expect(msg.attachments).toBeUndefined();
     });
   });
 
