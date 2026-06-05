@@ -26,7 +26,19 @@ const mockState = vi.hoisted(() => ({
   isBotMentioned: false,
   interactionHandleAction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   workspaceDir: '/tmp/mh-test',
+  execFileCallback: null as ((err: Error | null, result?: { stdout: string; stderr: string }) => void) | null,
 }));
+
+const mockExecFile = vi.hoisted(() =>
+  vi.fn((...args: unknown[]) => {
+    const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+    if (mockState.execFileCallback) {
+      mockState.execFileCallback(null, { stdout: 'ok', stderr: '' });
+    } else {
+      callback(null, { stdout: 'ok', stderr: '' });
+    }
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -48,9 +60,12 @@ vi.mock('@disclaude/core', async () => {
       warn: vi.fn(),
     }),
     stripLeadingMentions: (text: string) => text,
-    ensureFileExtensionFromPath: vi.fn<(p: string) => Promise<string>>().mockImplementation((p: string) => Promise.resolve(p)),
   };
 });
+
+vi.mock('child_process', () => ({
+  execFile: mockExecFile,
+}));
 
 vi.mock('../../platforms/feishu/interaction-manager.js', () => ({
   InteractionManager: vi.fn().mockImplementation(() => ({
@@ -72,16 +87,6 @@ vi.mock('fs/promises', async (importOriginal) => {
     writeFile: vi.fn().mockResolvedValue(undefined),
   };
 });
-
-vi.mock('child_process', () => ({
-  execFile: vi.fn((...args: any[]) => {
-    const callback = args[args.length - 1];
-    if (typeof callback === 'function') {
-      callback(null, { stdout: 'ok', stderr: '' });
-    }
-    return undefined;
-  }),
-}));
 
 vi.mock('./message-logger.js', () => ({
   messageLogger: {
@@ -129,6 +134,7 @@ function createHandler(overrides: Record<string, unknown> = {}) {
     },
     isRunning: () => mockState.isRunning,
     hasControlHandler: () => mockState.hasControlHandler,
+    tenantAccessToken: 'test-tenant-token',
     ...overrides,
   });
 
@@ -1330,13 +1336,18 @@ describe('MessageHandler', () => {
   // File download with client
   // -----------------------------------------------------------------------
   describe('handleMessageReceive — file download with client', () => {
-    it('should download file successfully via lark-cli', async () => {
-      const originalEnv = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
-      process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN = 'test-token';
+    it('should download file when client is available', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'download ok', stderr: '' });
+      });
 
-      // child_process is mocked at module level to return success
       const mockClient = {
-        im: {},
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
       };
 
       const { handler } = createHandler();
@@ -1356,35 +1367,32 @@ describe('MessageHandler', () => {
         },
       });
 
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['@larksuite/cli', 'im', '+resource-download']),
+        expect.objectContaining({ timeout: 120_000 }),
+        expect.any(Function),
+      );
+
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.content).toContain('文件已下载到本地');
       expect(msg.attachments).toBeDefined();
       expect(msg.attachments[0].fileName).toContain('image_img_001');
-
-      // Restore env
-      if (originalEnv) {
-        process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN = originalEnv;
-      } else {
-        delete process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
-      }
     });
 
     it('should handle download failure gracefully', async () => {
-      const originalEnv = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
-      delete process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
-
-      const { execFile } = await import('child_process');
-      (vi.mocked(execFile) as ReturnType<typeof vi.fn>).mockImplementationOnce((...args: any[]) => {
-        const callback = args[args.length - 1];
-        if (typeof callback === 'function') {
-          callback(new Error('lark-cli not found'), { stdout: '', stderr: '' });
-        }
-        return undefined;
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null) => void;
+        callback(new Error('lark-cli not found'));
       });
 
       const mockClient = {
-        im: {},
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
       };
 
       const { handler } = createHandler();
@@ -1396,7 +1404,7 @@ describe('MessageHandler', () => {
             message_id: 'msg_dl_fail',
             chat_id: 'chat_001',
             chat_type: 'p2p',
-            content: JSON.stringify({ image_key: 'img_002' }),
+            content: JSON.stringify({ image_key: 'img_fail' }),
             message_type: 'image',
             create_time: Date.now(),
           },
@@ -1407,13 +1415,7 @@ describe('MessageHandler', () => {
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.content).toContain('下载失败');
-
-      // Restore env
-      if (originalEnv) {
-        process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN = originalEnv;
-      } else {
-        delete process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
-      }
+      expect(msg.attachments).toBeUndefined();
     });
   });
 

@@ -207,6 +207,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       callbacks,
       isRunning: () => this.isRunning,
       hasControlHandler: () => !!this.controlHandler,
+      tenantAccessToken: process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN || '',
     });
 
     logger.info({ id: this.id }, 'FeishuChannel created');
