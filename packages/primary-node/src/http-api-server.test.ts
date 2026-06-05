@@ -14,6 +14,22 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'node:http';
 import { HttpApiServer, type StatusResponse, type PushResponse } from './http-api-server.js';
 
+/** Find an available port by binding to port 0. */
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.listen(0, 'localhost', () => {
+      const addr = server.address();
+      if (addr && typeof addr === 'object') {
+        server.close(() => resolve(addr.port));
+      } else {
+        server.close(() => reject(new Error('Failed to get port')));
+      }
+    });
+    server.on('error', reject);
+  });
+}
+
 /**
  * Make an HTTP request using node:http (nock-compatible).
  * Returns { statusCode, headers, body }.
@@ -321,6 +337,74 @@ describe('HttpApiServer', () => {
       const data = JSON.parse(body) as PushResponse;
       expect(data.ok).toBe(false);
       expect(data.message).toContain('too large');
+    });
+  });
+
+  describe('API Token authentication (Issue #3857)', () => {
+    let authPort: number;
+    const testToken = 'test-secret-token-123';
+    let authServer: HttpApiServer;
+
+    beforeAll(async () => {
+      authPort = await getFreePort();
+      authServer = new HttpApiServer({ port: authPort, host: 'localhost', apiToken: testToken });
+      authServer.setPushHandler(vi.fn().mockResolvedValue(undefined));
+      await authServer.start();
+    });
+
+    afterAll(async () => {
+      await authServer.stop();
+    });
+
+    it('should allow GET /api/status without token', async () => {
+      const { statusCode } = await httpGet(`http://localhost:${authPort}/api/status`);
+      expect(statusCode).toBe(200);
+    });
+
+    it('should reject POST /api/push without token', async () => {
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port: authPort,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+
+      expect(statusCode).toBe(401);
+      const data = JSON.parse(body) as { error: string };
+      expect(data.error).toBe('Unauthorized');
+    });
+
+    it('should reject POST /api/push with wrong token', async () => {
+      const { statusCode } = await httpRequest({
+        hostname: 'localhost',
+        port: authPort,
+        path: '/api/push',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer wrong-token',
+        },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+
+      expect(statusCode).toBe(401);
+    });
+
+    it('should accept POST /api/push with correct token', async () => {
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port: authPort,
+        path: '/api/push',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${testToken}`,
+        },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(true);
     });
   });
 });
