@@ -361,7 +361,7 @@ function readBody(req: IncomingMessage): Promise<string> {
     let totalSize = 0;
     let tooLarge = false;
     req.on('data', (chunk: Buffer) => {
-      if (tooLarge) return;
+      if (tooLarge) { return; }
       totalSize += chunk.length;
       if (totalSize > MAX_BODY_SIZE) {
         tooLarge = true;
