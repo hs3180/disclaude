@@ -7,7 +7,6 @@
  * - Multiple log levels (trace, debug, info, warn, error, fatal)
  * - Child loggers with context binding
  * - Sensitive data redaction
- * - Elasticsearch logging via bulk transport (Issue #3720)
  *
  * Issue #3416: Application-level log rotation (pino-roll) removed.
  * Use system-level tools (logrotate / newsyslog) for rotation.
@@ -16,14 +15,12 @@
  */
 
 import pino, { Logger, Level, LoggerOptions } from 'pino';
-import { PassThrough, Writable } from 'node:stream';
+import { PassThrough } from 'node:stream';
 
 // Re-export Logger type for consumers
 export type { Logger } from 'pino';
 import path from 'path';
 import fs from 'fs';
-import { ElasticsearchTransport } from './elasticsearch-transport.js';
-import type { ElasticsearchConfig } from '../config/types.js';
 
 /**
  * Log levels supported by Pino
@@ -46,8 +43,6 @@ export interface LoggerConfig {
   redact?: string[];
   /** Additional metadata to include in all logs */
   metadata?: Record<string, unknown>;
-  /** Elasticsearch logging configuration (Issue #3720) */
-  elasticsearch?: ElasticsearchConfig;
 }
 
 /**
@@ -83,8 +78,6 @@ let logPassthrough: PassThrough | null = null;
 let currentLogDest: any = null;
 // Recursion guard for error handlers that may try to log during flush
 let flushInProgress = false;
-// Elasticsearch transport instance (Issue #3720)
-let esTransport: ElasticsearchTransport | null = null;
 
 /**
  * Reset the root logger instance.
@@ -104,13 +97,6 @@ export function resetLogger(): void {
     currentLogDest.destroy();
   }
   currentLogDest = null;
-  // Destroy the Elasticsearch transport if active (Issue #3720).
-  if (esTransport) {
-    // Use forceDestroy in resetLogger since it may be called during
-    // process teardown where async flush is not possible
-    esTransport.forceDestroy();
-    esTransport = null;
-  }
   rootLogger = null;
 }
 
@@ -203,48 +189,6 @@ function getDevelopmentConfig(): LoggerOptions {
       }
     }
   };
-}
-
-/**
- * Setup Elasticsearch logging transport (Issue #3720).
- *
- * Creates an ElasticsearchTransport if configuration is present and enabled.
- * Returns the transport instance or null if ES logging is not configured.
- *
- * @param config - Elasticsearch configuration
- * @returns ElasticsearchTransport instance or null
- */
-function setupElasticsearchTransport(config?: ElasticsearchConfig): ElasticsearchTransport | null {
-  if (!config?.enabled) {
-    return null;
-  }
-
-  try {
-    const transport = new ElasticsearchTransport(config);
-    return transport;
-  } catch (error) {
-    console.warn('Failed to setup Elasticsearch logging, skipping:', error);
-    return null;
-  }
-}
-
-/**
- * Combine multiple writable streams using pino.multistream.
- * If only one stream is provided, returns it directly to avoid unnecessary overhead.
- *
- * @param streams - Array of writable streams
- * @returns Combined writable stream
- */
-function combineStreams(streams: Writable[]): NodeJS.WritableStream {
-  if (streams.length === 1) {
-    return streams[0] as unknown as NodeJS.WritableStream;
-  }
-
-  // pino.multistream creates a combined destination
-  const multi = pino.multistream(
-    streams.map(s => ({ level: 'trace', stream: s })),
-  );
-  return multi as unknown as NodeJS.WritableStream;
 }
 
 /**
@@ -379,7 +323,6 @@ export function initLogger(config: LoggerConfig = {}): Logger {
   }
 
   // Setup file logging for production or if explicitly requested
-  const streams: Writable[] = [];
   let primaryStream: NodeJS.WritableStream = process.stdout;
 
   if (shouldFileLog) {
@@ -387,18 +330,6 @@ export function initLogger(config: LoggerConfig = {}): Logger {
       primaryStream = setupFileLogging(logDir);
     } catch (error) {
       console.warn('Failed to setup file logging:', error);
-    }
-  }
-
-  // Setup Elasticsearch transport if configured (Issue #3720)
-  if (config.elasticsearch?.enabled) {
-    esTransport = setupElasticsearchTransport(config.elasticsearch);
-    if (esTransport) {
-      // Combine existing primary stream + ES transport via multistream.
-      // Only wrap with multistream when both streams are needed.
-      streams.push(primaryStream as unknown as Writable);
-      streams.push(esTransport);
-      primaryStream = combineStreams(streams);
     }
   }
 
@@ -560,15 +491,6 @@ export function flushLogger(): Promise<void> {
             res();
           });
         })
-      );
-    }
-
-    // Flush the Elasticsearch transport buffer (Issue #3720)
-    if (esTransport) {
-      pending.push(
-        esTransport.flush().catch(() => {
-          // ES flush failure is non-critical
-        }),
       );
     }
 
