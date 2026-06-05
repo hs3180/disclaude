@@ -40,6 +40,12 @@ describe('mock-fs', () => {
       mockFs.mkdirSync('/mydir', { recursive: true });
       expect(mockFs.existsSync('/mydir/')).toBe(true);
     });
+
+    it('should handle paths with spaces', () => {
+      mockFs.mkdirSync('/my dir', { recursive: true });
+      mockFs.writeFileSync('/my dir/file.txt', 'content');
+      expect(mockFs.existsSync('/my dir/file.txt')).toBe(true);
+    });
   });
 
   describe('writeFileSync and readFileSync', () => {
@@ -67,6 +73,15 @@ describe('mock-fs', () => {
       mockFs.mkdirSync('/mydir', { recursive: true });
       expect(() => mockFs.readFileSync('/mydir', 'utf-8')).toThrow('EISDIR');
     });
+
+    it('should write and read empty string content', () => {
+      mockFs.writeFileSync('/file.txt', '');
+      expect(mockFs.readFileSync('/file.txt', 'utf-8')).toBe('');
+    });
+
+    it('should throw ENOENT when writing to non-existent parent directory', () => {
+      expect(() => mockFs.writeFileSync('/nonexistent/file.txt', 'content')).toThrow('ENOENT');
+    });
   });
 
   describe('mkdirSync', () => {
@@ -90,6 +105,10 @@ describe('mock-fs', () => {
     it('should not throw when recursive and directory exists', () => {
       mockFs.mkdirSync('/mydir', { recursive: true });
       expect(() => mockFs.mkdirSync('/mydir', { recursive: true })).not.toThrow();
+    });
+
+    it('should throw ENOENT when parent does not exist without recursive', () => {
+      expect(() => mockFs.mkdirSync('/a/b')).toThrow('ENOENT');
     });
   });
 
@@ -154,6 +173,18 @@ describe('mock-fs', () => {
       mockFs.mkdirSync('/empty', { recursive: true });
       expect(mockFs.readdirSync('/empty')).toEqual([]);
     });
+
+    it('should normalize backslashes in readdir path', () => {
+      mockFs.mkdirSync('/mydir', { recursive: true });
+      mockFs.writeFileSync('/mydir/a.txt', 'a');
+      expect(mockFs.readdirSync('\\mydir')).toContain('a.txt');
+    });
+
+    it('should normalize trailing slashes in readdir path', () => {
+      mockFs.mkdirSync('/mydir', { recursive: true });
+      mockFs.writeFileSync('/mydir/a.txt', 'a');
+      expect(mockFs.readdirSync('/mydir/')).toContain('a.txt');
+    });
   });
 
   describe('rmSync', () => {
@@ -184,12 +215,17 @@ describe('mock-fs', () => {
       expect(mockFs.existsSync('/dir/sub/b.txt')).toBe(false);
     });
 
-    it('should not remove directory contents without recursive', () => {
+    it('should throw ENOTEMPTY when removing non-empty directory without recursive', () => {
       mockFs.mkdirSync('/dir', { recursive: true });
       mockFs.writeFileSync('/dir/file.txt', 'content');
 
-      // Without recursive, rmSync only removes the entry itself
-      // The directory entry is removed but children may remain
+      expect(() => mockFs.rmSync('/dir')).toThrow('ENOTEMPTY');
+      expect(mockFs.existsSync('/dir')).toBe(true);
+      expect(mockFs.existsSync('/dir/file.txt')).toBe(true);
+    });
+
+    it('should remove empty directory without recursive', () => {
+      mockFs.mkdirSync('/dir', { recursive: true });
       mockFs.rmSync('/dir');
       expect(mockFs.existsSync('/dir')).toBe(false);
     });
@@ -221,6 +257,15 @@ describe('mock-fs', () => {
       expect(mockFs.existsSync('/newdir/file.txt')).toBe(true);
       expect(mockFs.existsSync('/newdir/sub/nested.txt')).toBe(true);
       expect(mockFs.readFileSync('/newdir/file.txt', 'utf-8')).toBe('content');
+    });
+
+    it('should overwrite target file when renaming', () => {
+      mockFs.writeFileSync('/old.txt', 'old content');
+      mockFs.writeFileSync('/new.txt', 'new content');
+      mockFs.renameSync('/old.txt', '/new.txt');
+
+      expect(mockFs.existsSync('/old.txt')).toBe(false);
+      expect(mockFs.readFileSync('/new.txt', 'utf-8')).toBe('old content');
     });
   });
 
