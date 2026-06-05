@@ -14,6 +14,22 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'node:http';
 import { HttpApiServer, type StatusResponse, type PushResponse } from './http-api-server.js';
 
+/** Find an available port by binding to port 0. */
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.listen(0, 'localhost', () => {
+      const addr = server.address();
+      if (addr && typeof addr === 'object') {
+        server.close(() => resolve(addr.port));
+      } else {
+        server.close(() => reject(new Error('Failed to get port')));
+      }
+    });
+    server.on('error', reject);
+  });
+}
+
 /**
  * Make an HTTP request using node:http (nock-compatible).
  * Returns { statusCode, headers, body }.
@@ -325,11 +341,12 @@ describe('HttpApiServer', () => {
   });
 
   describe('API Token authentication (Issue #3857)', () => {
-    const authPort = 19204;
+    let authPort: number;
     const testToken = 'test-secret-token-123';
     let authServer: HttpApiServer;
 
     beforeAll(async () => {
+      authPort = await getFreePort();
       authServer = new HttpApiServer({ port: authPort, host: 'localhost', apiToken: testToken });
       authServer.setPushHandler(vi.fn().mockResolvedValue(undefined));
       await authServer.start();

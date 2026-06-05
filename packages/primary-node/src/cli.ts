@@ -53,6 +53,8 @@ interface CliOptions {
   configPath?: string;
   /** Issue #3857 Phase 2: HTTP API port for external tool access */
   apiPort?: number;
+  /** Issue #3857 Phase 2: API token for authenticating write routes */
+  apiToken?: string;
 }
 
 export function parseArgs(args: string[]): CliOptions {
@@ -75,6 +77,11 @@ export function parseArgs(args: string[]): CliOptions {
         if (!isNaN(port) && port >= 1 && port <= 65535) {
           options.apiPort = port;
         }
+      }
+    } else if (arg === '--api-token') {
+      const value = args[++i];
+      if (value) {
+        options.apiToken = value;
       }
     } else if (arg === '--help') {
       options.command = 'help';
@@ -100,6 +107,7 @@ Commands:
 Options:
   --config, -c PATH       Path to configuration file
   --api-port PORT         Enable HTTP API server on the given port (Issue #3857)
+  --api-token TOKEN       Bearer token for authenticating write routes (Issue #3857)
   --help                  Show this help message
 
 Configuration:
@@ -418,7 +426,7 @@ async function main(): Promise<void> {
         processLock.release();
         process.exit(1);
       }
-      httpApiServer = new HttpApiServer({ port: options.apiPort });
+      httpApiServer = new HttpApiServer({ port: options.apiPort, apiToken: options.apiToken });
       httpApiServer.setNodeId(primaryNode.getNodeId());
 
       // Issue #3857 Phase 2: Wire push handler to InputMessageRouter

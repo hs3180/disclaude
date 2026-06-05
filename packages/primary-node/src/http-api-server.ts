@@ -10,13 +10,15 @@
  * - `GET /api/status` — Basic health/status check
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
  *
- * Future endpoints (not yet implemented):
- * - API Token authentication
+ * Authentication:
+ * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
+ * - GET routes remain unauthenticated for health checks
  *
  * @module primary-node/http-api-server
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { createLogger } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
 
@@ -30,7 +32,7 @@ export interface HttpApiServerConfig {
   port: number;
   /** Host to bind to (default: 'localhost') */
   host?: string;
-  /** API token for authentication (future use) */
+  /** API token for Bearer authentication on write routes */
   apiToken?: string;
 }
 
@@ -243,7 +245,10 @@ export class HttpApiServer {
       // GET routes (health check) are unauthenticated; all other routes require Bearer token
       if (req.method !== 'GET' && this.config.apiToken) {
         const authHeader = req.headers.authorization;
-        if (authHeader !== `Bearer ${this.config.apiToken}`) {
+        const expected = `Bearer ${this.config.apiToken}`;
+        const authBuf = Buffer.from(authHeader ?? '');
+        const expectedBuf = Buffer.from(expected);
+        if (authBuf.length !== expectedBuf.length || !timingSafeEqual(authBuf, expectedBuf)) {
           this.sendJson(res, 401, { error: 'Unauthorized', message: 'Invalid or missing API token' });
           return;
         }
