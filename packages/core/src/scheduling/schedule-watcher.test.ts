@@ -1135,6 +1135,84 @@ describe('ScheduleFileWatcher', () => {
     });
   });
 
+  describe('knownTaskIds sync on file events (Issue #3929)', () => {
+    it('should prevent fullRescan from re-firing onFileAdded after file add event', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      // Simulate: processFileEvent added a task and synced knownTaskIds
+      const mtime = new Date('2026-01-01');
+      watcher.setKnownTaskIds(
+        new Set(['schedule-added-task']),
+        new Map([['schedule-added-task', mtime]])
+      );
+
+      // fullRescan finds the same task
+      mockReaddir.mockResolvedValue([
+        { name: 'added-task', isDirectory: () => true },
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime,
+        birthtime: new Date('2026-01-01'),
+      });
+
+      await watcher.fullRescan();
+
+      // Task already known → should NOT call onFileAdded
+      expect(onFileAdded).not.toHaveBeenCalled();
+      expect(onFileChanged).not.toHaveBeenCalled();
+      expect(onFileRemoved).not.toHaveBeenCalled();
+    });
+
+    it('should prevent fullRescan from re-firing onFileRemoved after file remove event', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      // Simulate: processFileEvent removed a task and synced knownTaskIds
+      watcher.setKnownTaskIds(new Set());
+
+      // fullRescan finds no files → knownTaskIds is empty → no removals detected
+      mockReaddir.mockResolvedValue([]);
+
+      await watcher.fullRescan();
+
+      expect(onFileRemoved).not.toHaveBeenCalled();
+    });
+
+    it('should prevent fullRescan from re-firing onFileChanged after file change event', async () => {
+      createWatcher();
+      await watcher.start();
+      watcher.stop();
+
+      // Simulate: processFileEvent changed a task and synced knownTaskMtimes
+      const mtime = new Date('2026-06-01');
+      watcher.setKnownTaskIds(
+        new Set(['schedule-changed-task']),
+        new Map([['schedule-changed-task', mtime]])
+      );
+
+      // fullRescan finds the task with the SAME mtime (already synced)
+      mockReaddir.mockResolvedValue([
+        { name: 'changed-task', isDirectory: () => true },
+      ]);
+      mockReadFile.mockResolvedValue(makeScheduleContent());
+      mockStat.mockResolvedValue({
+        mtime,
+        birthtime: new Date('2026-01-01'),
+      });
+
+      await watcher.fullRescan();
+
+      // mtime matches knownTaskMtimes → should NOT call onFileChanged
+      expect(onFileChanged).not.toHaveBeenCalled();
+      expect(onFileAdded).not.toHaveBeenCalled();
+      expect(onFileRemoved).not.toHaveBeenCalled();
+    });
+  });
+
   describe('setKnownTaskIds', () => {
     it('should update knownTaskIds', async () => {
       createWatcher();
