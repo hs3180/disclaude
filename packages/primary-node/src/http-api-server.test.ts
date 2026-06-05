@@ -2,10 +2,38 @@
  * Tests for HttpApiServer.
  *
  * Issue #3857 Phase 2: HTTP API server for Primary Node.
+ *
+ * NOTE: Uses node:http instead of global fetch to avoid nock/undici
+ * incompatibility in CI (Node.js 20). The test setup (tests/setup.ts)
+ * uses nock.disableNetConnect() which patches http/https modules but
+ * interferes with fetch (backed by undici in Node.js 20), causing
+ * fetch() to return undefined.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import http from 'node:http';
 import { HttpApiServer, type StatusResponse } from './http-api-server.js';
+
+/**
+ * Make an HTTP request using node:http (nock-compatible).
+ * Returns { statusCode, headers, body }.
+ */
+function httpGet(url: string): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => {
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString('utf-8'),
+        });
+      });
+    });
+    req.on('error', reject);
+  });
+}
 
 describe('HttpApiServer', () => {
   const port = 19200; // Use non-standard port for tests
@@ -23,10 +51,10 @@ describe('HttpApiServer', () => {
 
   describe('GET /api/status', () => {
     it('should return status ok', async () => {
-      const res = await fetch(`http://localhost:${port}/api/status`);
-      expect(res.ok).toBe(true);
+      const { statusCode, body } = await httpGet(`http://localhost:${port}/api/status`);
+      expect(statusCode).toBe(200);
 
-      const data = (await res.json()) as StatusResponse;
+      const data = JSON.parse(body) as StatusResponse;
       expect(data.status).toBe('ok');
       expect(data.timestamp).toBeDefined();
       expect(data.nodeId).toBe('test-node-1');
@@ -35,19 +63,19 @@ describe('HttpApiServer', () => {
     });
 
     it('should return JSON content type', async () => {
-      const res = await fetch(`http://localhost:${port}/api/status`);
-      expect(res.headers.get('content-type')).toContain('application/json');
+      const { headers } = await httpGet(`http://localhost:${port}/api/status`);
+      expect(headers['content-type']).toContain('application/json');
     });
 
     it('should increase uptime over time', async () => {
-      const res1 = await fetch(`http://localhost:${port}/api/status`);
-      const data1 = (await res1.json()) as StatusResponse;
+      const { body: body1 } = await httpGet(`http://localhost:${port}/api/status`);
+      const data1 = JSON.parse(body1) as StatusResponse;
 
       // Wait a bit
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const res2 = await fetch(`http://localhost:${port}/api/status`);
-      const data2 = (await res2.json()) as StatusResponse;
+      const { body: body2 } = await httpGet(`http://localhost:${port}/api/status`);
+      const data2 = JSON.parse(body2) as StatusResponse;
 
       expect(data2.uptime).toBeGreaterThanOrEqual(data1.uptime);
     });
@@ -55,16 +83,16 @@ describe('HttpApiServer', () => {
 
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
-      const res = await fetch(`http://localhost:${port}/unknown`);
-      expect(res.status).toBe(404);
+      const { statusCode, body } = await httpGet(`http://localhost:${port}/unknown`);
+      expect(statusCode).toBe(404);
 
-      const data = (await res.json()) as { error: string };
+      const data = JSON.parse(body) as { error: string };
       expect(data.error).toBe('Not found');
     });
 
     it('should return 404 for unknown API paths', async () => {
-      const res = await fetch(`http://localhost:${port}/api/unknown`);
-      expect(res.status).toBe(404);
+      const { statusCode } = await httpGet(`http://localhost:${port}/api/unknown`);
+      expect(statusCode).toBe(404);
     });
   });
 
