@@ -22,11 +22,11 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 
 ### 2. 实例化 Schedule
 
-使用 Glob 找到 skill 目录中的 `schedule.md` 模板，替换占位符后写入 workspace：
+使用 Glob 找到 skill 目录中的 `schedule.template.md` 模板，替换占位符后写入 workspace：
 
 ```
 # 1. 定位模板（使用 Glob 工具搜索）
-模板路径: skills/issue-solver/schedule.md
+模板路径: skills/issue-solver/schedule.template.md
 
 # 2. 读取模板内容（使用 Read 工具）
 

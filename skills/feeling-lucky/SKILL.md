@@ -237,4 +237,4 @@ This is a soft preference, not a strict rule. Randomness is still the priority.
 
 ## Schedule Configuration
 
-See `schedule.md` in this directory for daily automated execution setup.
+See `schedule.template.md` in this directory for daily automated execution setup.
