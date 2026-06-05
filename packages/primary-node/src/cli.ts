@@ -31,6 +31,7 @@ import {
   ProjectManager,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
+import { HttpApiServer } from './http-api-server.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-message-builder.js';
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
@@ -48,6 +49,8 @@ const logger = createLogger('PrimaryNodeCLI');
 interface CliOptions {
   command: 'start' | 'help';
   configPath?: string;
+  /** Issue #3857 Phase 2: HTTP API port for external tool access */
+  apiPort?: number;
 }
 
 export function parseArgs(args: string[]): CliOptions {
@@ -62,6 +65,11 @@ export function parseArgs(args: string[]): CliOptions {
       const value = args[++i];
       if (value) {
         options.configPath = value;
+      }
+    } else if (arg === '--api-port') {
+      const value = args[++i];
+      if (value) {
+        options.apiPort = parseInt(value, 10);
       }
     } else if (arg === '--help') {
       options.command = 'help';
@@ -86,6 +94,7 @@ Commands:
 
 Options:
   --config, -c PATH       Path to configuration file
+  --api-port PORT         Enable HTTP API server on the given port (Issue #3857)
   --help                  Show this help message
 
 Configuration:
@@ -322,6 +331,8 @@ async function main(): Promise<void> {
 
   // Handle graceful shutdown
   let isShuttingDown = false;
+  // Issue #3857 Phase 2: HTTP API server reference for shutdown
+  let httpApiServer: HttpApiServer | undefined;
   const shutdown = async (): Promise<void> => {
     if (isShuttingDown) {return;}
     isShuttingDown = true;
@@ -329,6 +340,7 @@ async function main(): Promise<void> {
 
     try {
       agentPool.disposeAll();
+      await httpApiServer?.stop();
       await lifecycleManager.stopAll();
       await primaryNode.stop();
       // Issue #3417: Release process lock on shutdown so next instance can start immediately.
@@ -391,6 +403,14 @@ async function main(): Promise<void> {
       console.log(`Primary Node started on http://${restConf.host}:${restConf.port}`);
     } else {
       console.log('Primary Node started (Feishu only mode)');
+    }
+
+    // Issue #3857 Phase 2: Start HTTP API server if --api-port is specified
+    if (options.apiPort) {
+      httpApiServer = new HttpApiServer({ port: options.apiPort });
+      httpApiServer.setNodeId(primaryNode.getNodeId());
+      await httpApiServer.start();
+      console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
     }
   } catch (error) {
     logger.error({ err: error }, 'Failed to start Primary Node');
