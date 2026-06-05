@@ -86,6 +86,7 @@ export interface SchedulerCallbacks {
  *
  * Issue #3582: Uses InputMessageRouter for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
+ * Issue #3931: Added isAgentBusy callback for blocking task agent-idle check.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
@@ -99,6 +100,15 @@ export interface SchedulerOptions {
    * Issue #3582: Routes through existing agents via AgentPool.
    */
   inputMessageRouter?: InputMessageRouter;
+  /**
+   * Check if the agent for a chatId is currently busy processing.
+   * Issue #3931: Blocking tasks skip execution when the agent is busy,
+   * preventing context interference with ongoing user conversations.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if the agent is busy processing a message
+   */
+  isAgentBusy?: (chatId: string) => boolean;
 }
 
 /**
@@ -126,6 +136,12 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private cooldownManager?: CooldownManager;
   private inputMessageRouter?: InputMessageRouter;
+  /** Issue #3931: Callback to check if agent is busy for a chatId */
+  private isAgentBusy?: (chatId: string) => boolean;
+  /** Issue #3931: Track consecutive agent-busy skips per task for notification throttling */
+  private agentBusySkipCount = new Map<string, number>();
+  /** Issue #3931: Notify user every N consecutive skips */
+  private static readonly AGENT_BUSY_NOTIFY_INTERVAL = 3;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -146,6 +162,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.cooldownManager = options.cooldownManager;
     this.inputMessageRouter = options.inputMessageRouter;
+    this.isAgentBusy = options.isAgentBusy;
     logger.info('Scheduler created');
   }
 
@@ -349,6 +366,38 @@ ${task.prompt}`;
       return;
     }
 
+    // Issue #3931: Check if agent is busy before executing blocking tasks.
+    // When an agent is processing a user message or other task, injecting a
+    // scheduled task would mix contexts and degrade response quality.
+    //
+    // Note: Non-blocking tasks intentionally skip this check. Non-blocking tasks
+    // are designed for fire-and-forget execution (e.g., status updates, data sync)
+    // where concurrent execution is acceptable and does not interfere with the
+    // user's active conversation context.
+    if (task.blocking && this.isAgentBusy && this.isAgentBusy(task.chatId)) {
+      const skipCount = (this.agentBusySkipCount.get(task.id) ?? 0) + 1;
+      this.agentBusySkipCount.set(task.id, skipCount);
+
+      logger.info(
+        { taskId: task.id, name: task.name, chatId: task.chatId, skipCount },
+        'Task skipped - agent is busy processing another message'
+      );
+
+      // Notify user every AGENT_BUSY_NOTIFY_INTERVAL consecutive skips
+      if (skipCount % Scheduler.AGENT_BUSY_NOTIFY_INTERVAL === 0) {
+        await this.callbacks.sendMessage(
+          task.chatId,
+          `⏰ 定时任务「${task.name}」已连续 ${skipCount} 次因 Agent 忙碌而跳过，将在下次空闲时自动执行`
+        );
+      }
+      return;
+    }
+
+    // Task executed successfully (or was not agent-busy) — reset skip counter
+    if (this.agentBusySkipCount.has(task.id)) {
+      this.agentBusySkipCount.delete(task.id);
+    }
+
     logger.info({ taskId: task.id, name: task.name }, 'Executing scheduled task');
 
     // Mark task as running
@@ -521,5 +570,13 @@ ${task.prompt}`;
   async clearCooldown(taskId: string): Promise<boolean> {
     if (!this.cooldownManager) { return false; }
     return await this.cooldownManager.clearCooldown(taskId);
+  }
+
+  /**
+   * Check if the agent busy callback is configured.
+   * Issue #3931: Used for testing and status reporting.
+   */
+  hasAgentBusyCheck(): boolean {
+    return !!this.isAgentBusy;
   }
 }

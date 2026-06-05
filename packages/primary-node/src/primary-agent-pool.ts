@@ -62,6 +62,31 @@ export class PrimaryAgentPool {
   }
 
   /**
+   * Get the ChatAgent for a chatId without creating one.
+   * Issue #3931: Used for internal lookups (e.g., isAgentBusy).
+   *
+   * @param chatId - Chat ID to look up
+   * @returns ChatAgent if one exists, undefined otherwise
+   */
+  get(chatId: string): ChatAgent | undefined {
+    return this.agents.get(chatId);
+  }
+
+  /**
+   * Check if the agent for a chatId is currently busy processing.
+   * Issue #3931: Encapsulates the busy check so callers don't depend
+   * on ChatAgent internals. Uses ChatAgent.isBusy (based on session
+   * active state) rather than taskComplete to avoid timing windows.
+   *
+   * @param chatId - Chat ID to check
+   * @returns true if the agent exists and is busy processing a message
+   */
+  isAgentBusy(chatId: string): boolean {
+    const agent = this.agents.get(chatId);
+    return agent ? agent.isBusy : false;
+  }
+
+  /**
    * Get or create a ChatAgent instance for the given chatId.
    *
    * Issue #3776: When an agent already exists, updates its callbacks to match
