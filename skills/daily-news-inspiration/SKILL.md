@@ -151,7 +151,7 @@ GPT-5 with multi-modal reasoning (tech-relevant, interesting)
 
 ## Schedule Configuration
 
-See `schedule.md` in this directory. Copy it to `schedules/daily-news-inspiration/SCHEDULE.md`, replace `{targetChatId}` with the actual chat ID, and enable.
+See `schedule.md` in this directory. Copy it to `schedules/daily-news-inspiration/SCHEDULE.md`, replace `{targetChatId}` with the actual chat ID, replace `{cron}` with the desired cron expression (e.g. `"0 9 * * *"` for daily 9 AM), and enable.
 
 ---
 
