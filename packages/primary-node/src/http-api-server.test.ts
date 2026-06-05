@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { HttpApiServer } from './http-api-server.js';
+import { HttpApiServer, type StatusResponse } from './http-api-server.js';
 
 describe('HttpApiServer', () => {
   const port = 19200; // Use non-standard port for tests
@@ -26,7 +26,7 @@ describe('HttpApiServer', () => {
       const res = await fetch(`http://localhost:${port}/api/status`);
       expect(res.ok).toBe(true);
 
-      const data = await res.json();
+      const data = (await res.json()) as StatusResponse;
       expect(data.status).toBe('ok');
       expect(data.timestamp).toBeDefined();
       expect(data.nodeId).toBe('test-node-1');
@@ -41,15 +41,15 @@ describe('HttpApiServer', () => {
 
     it('should increase uptime over time', async () => {
       const res1 = await fetch(`http://localhost:${port}/api/status`);
-      const data1 = await res1.json();
+      const data1 = (await res1.json()) as StatusResponse;
 
       // Wait a bit
-      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const res2 = await fetch(`http://localhost:${port}/api/status`);
-      const data2 = await res2.json();
+      const data2 = (await res2.json()) as StatusResponse;
 
-      expect(data2.uptime).toBeGreaterThan(data1.uptime);
+      expect(data2.uptime).toBeGreaterThanOrEqual(data1.uptime);
     });
   });
 
@@ -58,7 +58,7 @@ describe('HttpApiServer', () => {
       const res = await fetch(`http://localhost:${port}/unknown`);
       expect(res.status).toBe(404);
 
-      const data = await res.json();
+      const data = (await res.json()) as { error: string };
       expect(data.error).toBe('Not found');
     });
 

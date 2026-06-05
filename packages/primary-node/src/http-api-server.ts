@@ -18,6 +18,7 @@
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createLogger } from '@disclaude/core';
+import { PRIMARY_NODE_VERSION } from './index.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -116,14 +117,19 @@ export class HttpApiServer {
         void this.handleRequest(req, res);
       });
 
+      let listening = false;
+
       this.server.once('error', (err: NodeJS.ErrnoException) => {
-        if (err.code === 'EADDRINUSE') {
-          logger.error({ port: this.config.port }, 'Port already in use');
+        if (!listening) {
+          if (err.code === 'EADDRINUSE') {
+            logger.error({ port: this.config.port }, 'Port already in use');
+          }
+          reject(err);
         }
-        reject(err);
       });
 
       this.server.listen(this.config.port, this.config.host, () => {
+        listening = true;
         logger.info(
           { port: this.config.port, host: this.config.host },
           'HTTP API server listening',
@@ -237,7 +243,7 @@ export class HttpApiServer {
       timestamp: new Date().toISOString(),
       nodeId: this.nodeId,
       uptime: Math.floor((Date.now() - this.startTime) / 1000),
-      version: '1.0.0',
+      version: PRIMARY_NODE_VERSION,
     };
     this.sendJson(res, 200, response);
     return Promise.resolve();
