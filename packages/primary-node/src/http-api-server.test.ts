@@ -10,9 +10,9 @@
  * fetch() to return undefined.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'node:http';
-import { HttpApiServer, type StatusResponse } from './http-api-server.js';
+import { HttpApiServer, type StatusResponse, type PushResponse } from './http-api-server.js';
 
 /**
  * Make an HTTP request using node:http (nock-compatible).
@@ -158,6 +158,116 @@ describe('HttpApiServer', () => {
 
       await tempServer.stop();
       expect(tempServer.isRunning).toBe(false);
+    });
+  });
+
+  describe('POST /api/push', () => {
+    it('should return 503 when push handler is not configured', async () => {
+      // Create a separate server without push handler
+      const noPushServer = new HttpApiServer({ port: 19203, host: 'localhost' });
+      await noPushServer.start();
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port: 19203,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+
+      await noPushServer.stop();
+
+      expect(statusCode).toBe(503);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(false);
+      expect(data.message).toContain('not configured');
+    });
+
+    it('should accept push and call handler', async () => {
+      const mockHandler = vi.fn().mockResolvedValue(undefined);
+      server.setPushHandler(mockHandler);
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello world' }));
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(true);
+      expect(data.message).toBe('Push accepted');
+      expect(mockHandler).toHaveBeenCalledWith('oc_test', 'hello world');
+    });
+
+    it('should return 400 for invalid JSON', async () => {
+      server.setPushHandler(vi.fn());
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, 'not json');
+
+      expect(statusCode).toBe(400);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(false);
+      expect(data.message).toContain('Invalid JSON');
+    });
+
+    it('should return 400 for missing chatId', async () => {
+      server.setPushHandler(vi.fn());
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ message: 'hello' }));
+
+      expect(statusCode).toBe(400);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(false);
+      expect(data.message).toContain('Required fields');
+    });
+
+    it('should return 400 for missing message', async () => {
+      server.setPushHandler(vi.fn());
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ chatId: 'oc_test' }));
+
+      expect(statusCode).toBe(400);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(false);
+      expect(data.message).toContain('Required fields');
+    });
+
+    it('should return 500 when handler throws', async () => {
+      server.setPushHandler(() => Promise.reject(new Error('Agent not found')));
+
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+
+      expect(statusCode).toBe(500);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(false);
+      expect(data.message).toContain('Agent not found');
     });
   });
 });

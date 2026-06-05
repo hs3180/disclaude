@@ -8,9 +8,9 @@
  *
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
+ * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
  *
  * Future endpoints (not yet implemented):
- * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
  * - API Token authentication
  *
  * @module primary-node/http-api-server
@@ -51,6 +51,21 @@ export interface StatusResponse {
 }
 
 /**
+ * Push response returned by POST /api/push.
+ */
+export interface PushResponse {
+  /** Whether the push was accepted */
+  ok: boolean;
+  /** Descriptive message */
+  message: string;
+}
+
+/**
+ * Handler for push requests. Routes a message to the appropriate agent.
+ */
+export type PushHandler = (chatId: string, message: string) => Promise<void>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -88,6 +103,7 @@ export class HttpApiServer {
   private server: Server | null = null;
   private startTime = 0;
   private nodeId?: string;
+  private pushHandler?: PushHandler;
 
   constructor(config: HttpApiServerConfig) {
     this.config = { host: 'localhost', ...config };
@@ -99,6 +115,16 @@ export class HttpApiServer {
    */
   setNodeId(nodeId: string): void {
     this.nodeId = nodeId;
+  }
+
+  /**
+   * Set the push handler for POST /api/push.
+   *
+   * The handler receives a chatId and message string, and routes them
+   * to the appropriate agent via InputMessageRouter.
+   */
+  setPushHandler(handler: PushHandler): void {
+    this.pushHandler = handler;
   }
 
   /**
@@ -193,6 +219,7 @@ export class HttpApiServer {
    */
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
+    this.addRoute('POST', '/api/push', this.handlePush.bind(this));
   }
 
   /**
@@ -250,6 +277,52 @@ export class HttpApiServer {
   }
 
   /**
+   * POST /api/push handler.
+   *
+   * Accepts `{ chatId: string, message: string }` and routes the message
+   * to the agent via the configured PushHandler.
+   */
+  private async handlePush(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.pushHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'Push handler not configured' });
+      return;
+    }
+
+    const body = await readBody(req);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof (parsed as Record<string, unknown>).message !== 'string'
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), message (string)' });
+      return;
+    }
+
+    const { chatId, message } = parsed as { chatId: string; message: string };
+
+    try {
+      await this.pushHandler(chatId, message);
+      this.sendJson(res, 200, { ok: true, message: 'Push accepted' });
+    } catch (err) {
+      logger.error({ err, chatId }, 'Push handler error');
+      const msg = err instanceof Error ? err.message : 'Push failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
    * Send a JSON response.
    */
   private sendJson(res: ServerResponse, statusCode: number, body: unknown): void {
@@ -260,4 +333,16 @@ export class HttpApiServer {
     });
     res.end(json);
   }
+}
+
+/**
+ * Read the full request body from an IncomingMessage.
+ */
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    req.on('error', reject);
+  });
 }

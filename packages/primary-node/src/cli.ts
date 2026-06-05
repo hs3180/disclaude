@@ -29,6 +29,7 @@ import {
   type ControlHandlerContext,
   ProcessLock,
   ProjectManager,
+  type SystemMessage,
 } from '@disclaude/core';
 import { PrimaryNode } from './primary-node.js';
 import { HttpApiServer } from './http-api-server.js';
@@ -418,6 +419,23 @@ async function main(): Promise<void> {
       }
       httpApiServer = new HttpApiServer({ port: options.apiPort });
       httpApiServer.setNodeId(primaryNode.getNodeId());
+
+      // Issue #3857 Phase 2: Wire push handler to InputMessageRouter
+      const router = primaryNode.getInputMessageRouter();
+      if (router) {
+        httpApiServer.setPushHandler(async (chatId: string, message: string) => {
+          const systemMessage: SystemMessage = {
+            id: `http-push-${Date.now()}`,
+            source: 'system',
+            trigger: 'signal',
+            chatId,
+            payload: message,
+            createdAt: new Date().toISOString(),
+          };
+          await router.route(systemMessage);
+        });
+      }
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
     }
