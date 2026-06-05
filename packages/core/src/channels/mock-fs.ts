@@ -4,6 +4,9 @@
  * Provides an in-memory Map-based filesystem that replaces all `fs` operations.
  * Tests using this mock have zero side effects on the real filesystem.
  *
+ * Limitations vs real `fs`:
+ * - `readFileSync` always returns a string (never a Buffer), regardless of encoding parameter.
+ *
  * @module channels/mock-fs
  */
 
@@ -45,6 +48,11 @@ const mockFs = {
       if (vfs.has(np)) {
         throw createFsError(`EEXIST: file already exists, mkdir '${p}'`, 'EEXIST');
       }
+      // Check parent directory exists (matches real fs behavior: throws ENOENT)
+      const parent = np.substring(0, np.lastIndexOf('/'));
+      if (parent && !vfs.has(parent)) {
+        throw createFsError(`ENOENT: no such file or directory, mkdir '${p}'`, 'ENOENT');
+      }
       vfs.set(np, null);
       return;
     }
@@ -60,7 +68,13 @@ const mockFs = {
   }),
 
   writeFileSync: vi.fn((p: string, content: string, _encoding?: string): void => {
-    vfs.set(norm(p), String(content));
+    const np = norm(p);
+    // Check parent directory exists (matches real fs behavior: throws ENOENT)
+    const parent = np.substring(0, np.lastIndexOf('/'));
+    if (parent && !vfs.has(parent)) {
+      throw createFsError(`ENOENT: no such file or directory, open '${p}'`, 'ENOENT');
+    }
+    vfs.set(np, String(content));
   }),
 
   readFileSync: vi.fn((p: string, _encoding?: string): string => {
@@ -118,6 +132,15 @@ const mockFs = {
         }
       }
     } else {
+      // Check if directory has children (matches real fs: throws ENOTEMPTY)
+      if (vfs.get(np) === null) {
+        const prefix = `${np}/`;
+        for (const key of vfs.keys()) {
+          if (key.startsWith(prefix)) {
+            throw createFsError(`ENOTEMPTY: directory not empty, rm '${p}'`, 'ENOTEMPTY');
+          }
+        }
+      }
       vfs.delete(np);
     }
   }),
