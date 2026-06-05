@@ -282,6 +282,14 @@ describe('Interactive Card Builder', () => {
         elements: [{ tag: 'plain_text', content: '' }],
       });
     });
+
+    it('should handle special characters in text', () => {
+      const note = buildNote('Price: $5 & <"tag">');
+      expect(note).toEqual({
+        tag: 'note',
+        elements: [{ tag: 'plain_text', content: 'Price: $5 & <"tag">' }],
+      });
+    });
   });
 
   describe('buildColumnSet', () => {
@@ -318,6 +326,16 @@ describe('Interactive Card Builder', () => {
       const columns = buildColumnSet([]);
       expect(columns).toEqual({ tag: 'column_set', columns: [] });
     });
+
+    it('should handle single column', () => {
+      const columns = buildColumnSet([
+        { elements: [buildDiv('Only column')] },
+      ]);
+      expect(columns).toEqual({
+        tag: 'column_set',
+        columns: [{ width: undefined, vertical_align: 'center', elements: [buildDiv('Only column')] }],
+      });
+    });
   });
 
   describe('buildCard - header defaults', () => {
@@ -342,6 +360,16 @@ describe('Interactive Card Builder', () => {
     it('should always set wide_screen_mode to true', () => {
       const card = buildCard({ elements: [] });
       expect(card.config.wide_screen_mode).toBe(true);
+    });
+
+    it('should pass dismissible=true to config', () => {
+      const card = buildCard({ elements: [], dismissible: true });
+      expect(card.config.dismissible).toBe(true);
+    });
+
+    it('should not include dismissible when not provided', () => {
+      const card = buildCard({ elements: [] });
+      expect(card.config.dismissible).toBeUndefined();
     });
   });
 
