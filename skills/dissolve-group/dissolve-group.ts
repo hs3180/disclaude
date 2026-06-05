@@ -17,6 +17,8 @@ interface MappingEntry {
   createdAt: string;
   purpose: string;
   workdir?: string;
+  /** ISO timestamp of the last inactivity reminder sent (Issue #3965) */
+  lastReminderAt?: string;
 }
 
 interface MappingTable {

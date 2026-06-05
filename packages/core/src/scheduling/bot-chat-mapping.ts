@@ -38,6 +38,8 @@ export interface MappingEntry {
   purpose: MappingPurpose;
   /** Optional: PR branch temp directory path, cleaned up when PR is closed */
   workdir?: string;
+  /** Optional: ISO timestamp of the last inactivity reminder sent (Issue #3965) */
+  lastReminderAt?: string;
 }
 
 /**
@@ -288,10 +290,12 @@ export class BotChatMappingStore {
     await this.ensureInitialized();
 
     const fullEntry: MappingEntry = {
+      ...this.cache[key],
       chatId: entry.chatId,
-      createdAt: entry.createdAt ?? new Date().toISOString(),
+      createdAt: entry.createdAt ?? this.cache[key]?.createdAt ?? new Date().toISOString(),
       purpose: entry.purpose,
-      ...(entry.workdir ? { workdir: entry.workdir } : {}),
+      ...(entry.workdir !== undefined && entry.workdir !== null ? { workdir: entry.workdir } : {}),
+      ...(entry.lastReminderAt !== undefined && entry.lastReminderAt !== null ? { lastReminderAt: entry.lastReminderAt } : {}),
     };
 
     this.cache[key] = fullEntry;
