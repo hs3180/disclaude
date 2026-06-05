@@ -7,24 +7,46 @@
 # 依赖: disclaude REST channel 的 /api/push 端点 (Issue #3808)
 #
 # 用法:
-#   ./task-while-loop.sh <chat_id> <task_instruction> [max_iterations] [interval_seconds] [done_marker]
+#   ./task-while-loop.sh <chat_id> <task_instruction> [max_iterations] [interval_seconds] [done_marker] [timeout_seconds]
 #
 # 示例:
 #   ./task-while-loop.sh oc_xxx "请分析 PR #1234 的代码变更" 10 30
 #   ./task-while-loop.sh oc_xxx "重构 src/utils.ts" 5 60 /tmp/task-done
+#   ./task-while-loop.sh oc_xxx "长时间任务" 20 30 "" 600
 
 set -euo pipefail
 
 # --- 参数 ---
-CHAT_ID="${1:?用法: $0 <chat_id> <task_instruction> [max_iterations] [interval_seconds] [done_marker]}"
-TASK_INSTRUCTION="${2:?用法: $0 <chat_id> <task_instruction> [max_iterations] [interval_seconds] [done_marker]}"
+CHAT_ID="${1:?用法: $0 <chat_id> <task_instruction> [max_iterations] [interval_seconds] [done_marker] [timeout_seconds]}"
+TASK_INSTRUCTION="${2:?用法: $0 <chat_id> <task_instruction> [max_iterations] [interval_seconds] [done_marker] [timeout_seconds]}"
 MAX_ITERATIONS="${3:-10}"
 INTERVAL="${4:-30}"
 DONE_MARKER="${5:-}"
+TIMEOUT="${6:-0}"
 
 REST_HOST="${REST_HOST:-localhost}"
 REST_PORT="${REST_PORT:-3099}"
 PUSH_URL="http://${REST_HOST}:${REST_PORT}/api/push"
+
+# --- 全局超时 ---
+TIMEOUT_PID=""
+if [ "$TIMEOUT" -gt 0 ] 2>/dev/null; then
+  (
+    sleep "$TIMEOUT"
+    log "Global timeout reached (${TIMEOUT}s)"
+    push_to_agent "$CHAT_ID" "任务执行超时 (${TIMEOUT}s)，请发送当前进展报告。" 2>/dev/null || true
+    kill -TERM "$$" 2>/dev/null
+  ) &
+  TIMEOUT_PID=$!
+fi
+
+cleanup_timeout() {
+  if [ -n "$TIMEOUT_PID" ]; then
+    kill "$TIMEOUT_PID" 2>/dev/null || true
+    wait "$TIMEOUT_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_timeout EXIT
 
 # --- 辅助函数 ---
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
@@ -51,7 +73,7 @@ check_done() {
 }
 
 # --- 主循环 ---
-log "Starting task loop: chat=$CHAT_ID max=$MAX_ITERATIONS interval=${INTERVAL}s"
+log "Starting task loop: chat=$CHAT_ID max=$MAX_ITERATIONS interval=${INTERVAL}s${TIMEOUT:+ timeout=${TIMEOUT}s}"
 log "Task: $TASK_INSTRUCTION"
 
 # 发送初始任务指令
