@@ -3,7 +3,7 @@ name: "每日新闻灵感提问"
 cron: "{cron}"
 enabled: true
 blocking: true
-chatId: "{targetChatId}"
+chatId: "{controlChannelChatId}"
 ---
 
 # 每日新闻灵感提问 — 定时执行
@@ -15,7 +15,7 @@ chatId: "{targetChatId}"
 使用 `daily-news-inspiration` skill 浏览新闻并生成提问。
 
 参数：
-- **目标群 chatId**: {targetChatId}
+- **目标群 chatId**: {controlChannelChatId}
 
 ### 执行前检查
 

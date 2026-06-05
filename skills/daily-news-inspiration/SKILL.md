@@ -149,9 +149,42 @@ GPT-5 with multi-modal reasoning (tech-relevant, interesting)
 
 ---
 
-## Schedule Configuration
+## 安装步骤
 
-See `schedule.md` in this directory. Copy it to `schedules/daily-news-inspiration/SCHEDULE.md`, replace `{targetChatId}` with the actual chat ID, replace `{cron}` with the desired cron expression (e.g. `"0 9 * * *"` for daily 9 AM), and enable.
+### 1. 收集参数
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `{controlChannelChatId}` | Yes | — | 目标群组 chatId（当前对话的 chatId） |
+| `{cron}` | No | `0 9 * * *` | 执行频率（默认每天上午 9:00） |
+
+### 2. 实例化 Schedule
+
+读取 skill 目录中的 `schedule.md` 模板，替换占位符后写入 workspace：
+
+```
+# 1. 读取模板内容（使用 Read 工具）
+模板路径: skills/daily-news-inspiration/schedule.md
+
+# 2. 替换所有占位符
+```
+
+| 占位符 | 替换为 |
+|--------|--------|
+| `{controlChannelChatId}` | 实际的目标群组 chatId |
+| `{cron}` | 实际的 cron 表达式（默认 `0 9 * * *`） |
+
+```
+# 3. 使用 Write 工具写入目标文件
+目标路径: schedules/daily-news-inspiration/SCHEDULE.md
+```
+
+### 3. 验证
+
+读取生成的 `schedules/daily-news-inspiration/SCHEDULE.md`，确认：
+- frontmatter 中无未替换的占位符
+- `chatId` 为实际 chatId
+- `enabled: true`
 
 ---
 
