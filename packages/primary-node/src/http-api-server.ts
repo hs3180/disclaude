@@ -359,16 +359,22 @@ function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalSize = 0;
+    let tooLarge = false;
     req.on('data', (chunk: Buffer) => {
+      if (tooLarge) return;
       totalSize += chunk.length;
       if (totalSize > MAX_BODY_SIZE) {
+        tooLarge = true;
         reject(new Error('Request body too large'));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    req.on('end', () => {
+      if (!tooLarge) {
+        resolve(Buffer.concat(chunks).toString('utf-8'));
+      }
+    });
     req.on('error', reject);
   });
 }
