@@ -220,6 +220,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
+   * Check if this agent is currently busy processing a message.
+   * Issue #3931: Used by scheduler to skip blocking tasks when agent is busy.
+   *
+   * Uses `isSessionActive` as the authoritative indicator rather than
+   * `taskCompletionPromise` to avoid timing windows where the promise
+   * is cleared but the session is still active (e.g., during error recovery).
+   *
+   * @returns true if the agent is actively processing a message
+   */
+  get isBusy(): boolean {
+    return this.isSessionActive;
+  }
+
+  /**
    * Build MCP servers configuration (Issue #3124).
    *
    * Extracted from startAgentLoop and the former executeOnce to eliminate
