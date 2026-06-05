@@ -38,6 +38,8 @@ export interface MappingEntry {
   purpose: MappingPurpose;
   /** Optional: PR branch temp directory path, cleaned up when PR is closed */
   workdir?: string;
+  /** Optional: ISO timestamp of the last inactivity reminder sent (Issue #3965) */
+  lastReminderAt?: string;
 }
 
 /**
