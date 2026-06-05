@@ -102,6 +102,17 @@ describe('parseArgs', () => {
     expect(result.configPath).toBeUndefined();
   });
 
+  it('should parse --api-port flag with value (Issue #3857)', () => {
+    const result = parseArgs(['start', '--api-port', '9200']);
+    expect(result.command).toBe('start');
+    expect(result.apiPort).toBe(9200);
+  });
+
+  it('should leave apiPort undefined when not specified', () => {
+    const result = parseArgs(['start']);
+    expect(result.apiPort).toBeUndefined();
+  });
+
   it('should handle all options together', () => {
     const result = parseArgs(['start', '--config', '/my/config.yaml']);
     expect(result.command).toBe('start');
