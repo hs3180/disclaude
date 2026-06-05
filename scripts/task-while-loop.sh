@@ -28,26 +28,6 @@ REST_HOST="${REST_HOST:-localhost}"
 REST_PORT="${REST_PORT:-3099}"
 PUSH_URL="http://${REST_HOST}:${REST_PORT}/api/push"
 
-# --- 全局超时 ---
-TIMEOUT_PID=""
-if [ "$TIMEOUT" -gt 0 ] 2>/dev/null; then
-  (
-    sleep "$TIMEOUT"
-    log "Global timeout reached (${TIMEOUT}s)"
-    push_to_agent "$CHAT_ID" "任务执行超时 (${TIMEOUT}s)，请发送当前进展报告。" 2>/dev/null || true
-    kill -TERM "$$" 2>/dev/null
-  ) &
-  TIMEOUT_PID=$!
-fi
-
-cleanup_timeout() {
-  if [ -n "$TIMEOUT_PID" ]; then
-    kill "$TIMEOUT_PID" 2>/dev/null || true
-    wait "$TIMEOUT_PID" 2>/dev/null || true
-  fi
-}
-trap cleanup_timeout EXIT
-
 # --- 辅助函数 ---
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
@@ -63,6 +43,27 @@ push_to_agent() {
   }
   log "Pushed: ${message:0:80}..."
 }
+
+# --- 全局超时 ---
+TIMEOUT_PID=""
+if [ "$TIMEOUT" -gt 0 ] 2>/dev/null; then
+  (
+    sleep "$TIMEOUT"
+    log "Global timeout reached (${TIMEOUT}s)"
+    push_to_agent "$CHAT_ID" "任务执行超时 (${TIMEOUT}s)，请发送当前进展报告。" || true
+    kill -TERM "$$" 2>/dev/null
+  ) &
+  TIMEOUT_PID=$!
+fi
+
+cleanup_timeout() {
+  if [ -n "$TIMEOUT_PID" ]; then
+    kill "$TIMEOUT_PID" 2>/dev/null || true
+    wait "$TIMEOUT_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup_timeout EXIT
+trap 'cleanup_timeout; exit 2' TERM
 
 # --- 检查完成条件 ---
 check_done() {

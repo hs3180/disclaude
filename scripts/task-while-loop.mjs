@@ -10,6 +10,7 @@
  * 用法:
  *   node task-while-loop.mjs --chat-id oc_xxx --message "请分析 PR #1234"
  *   node task-while-loop.mjs --chat-id oc_xxx --message "重构" --max 5 --interval 60
+ *   node task-while-loop.mjs --chat-id oc_xxx --message "长时间任务" --timeout 600
  */
 
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
@@ -101,8 +102,12 @@ function checkDone() {
   let timeoutHandle;
   if (TIMEOUT_SEC > 0) {
     timeoutHandle = setTimeout(async () => {
-      log(`Global timeout reached (${TIMEOUT_SEC}s)`);
-      await pushToAgent(CHAT_ID, `任务执行超时 (${TIMEOUT_SEC}s)，请发送当前进展报告。`);
+      try {
+        log(`Global timeout reached (${TIMEOUT_SEC}s)`);
+        await pushToAgent(CHAT_ID, `任务执行超时 (${TIMEOUT_SEC}s)，请发送当前进展报告。`);
+      } catch {
+        log(`ERROR: failed to send timeout notification`);
+      }
       process.exit(2);
     }, TIMEOUT_SEC * 1000);
   }
