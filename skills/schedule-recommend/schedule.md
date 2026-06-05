@@ -1,6 +1,6 @@
 ---
 name: "智能推荐分析"
-cron: "0 3 * * *"
+cron: "{cron}"
 enabled: true
 blocking: true
 chatId: "{controlChannelChatId}"
@@ -36,10 +36,3 @@ ls workspace/chat/*.md 2>/dev/null || echo "No chat files found"
 
 将结果追加到 `workspace/data/recommend-history.json`，避免重复推荐相同模式。
 
-## 安装说明
-
-将此文件复制到 `schedules/recommend-analysis/SCHEDULE.md`，然后替换以下占位符：
-
-| 占位符 | 替换为 |
-|--------|--------|
-| `{controlChannelChatId}` | 实际的控制频道 chatId |
