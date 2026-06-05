@@ -323,4 +323,71 @@ describe('HttpApiServer', () => {
       expect(data.message).toContain('too large');
     });
   });
+
+  describe('API Token authentication (Issue #3857)', () => {
+    const authPort = 19204;
+    const testToken = 'test-secret-token-123';
+    let authServer: HttpApiServer;
+
+    beforeAll(async () => {
+      authServer = new HttpApiServer({ port: authPort, host: 'localhost', apiToken: testToken });
+      authServer.setPushHandler(vi.fn().mockResolvedValue(undefined));
+      await authServer.start();
+    });
+
+    afterAll(async () => {
+      await authServer.stop();
+    });
+
+    it('should allow GET /api/status without token', async () => {
+      const { statusCode } = await httpGet(`http://localhost:${authPort}/api/status`);
+      expect(statusCode).toBe(200);
+    });
+
+    it('should reject POST /api/push without token', async () => {
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port: authPort,
+        path: '/api/push',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+
+      expect(statusCode).toBe(401);
+      const data = JSON.parse(body) as { error: string };
+      expect(data.error).toBe('Unauthorized');
+    });
+
+    it('should reject POST /api/push with wrong token', async () => {
+      const { statusCode } = await httpRequest({
+        hostname: 'localhost',
+        port: authPort,
+        path: '/api/push',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer wrong-token',
+        },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+
+      expect(statusCode).toBe(401);
+    });
+
+    it('should accept POST /api/push with correct token', async () => {
+      const { statusCode, body } = await httpRequest({
+        hostname: 'localhost',
+        port: authPort,
+        path: '/api/push',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${testToken}`,
+        },
+      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as PushResponse;
+      expect(data.ok).toBe(true);
+    });
+  });
 });

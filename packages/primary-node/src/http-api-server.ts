@@ -239,6 +239,16 @@ export class HttpApiServer {
         continue;
       }
 
+      // API Token authentication for write routes (Issue #3857 Phase 2)
+      // GET routes (health check) are unauthenticated; all other routes require Bearer token
+      if (req.method !== 'GET' && this.config.apiToken) {
+        const authHeader = req.headers.authorization;
+        if (authHeader !== `Bearer ${this.config.apiToken}`) {
+          this.sendJson(res, 401, { error: 'Unauthorized', message: 'Invalid or missing API token' });
+          return;
+        }
+      }
+
       // Extract named parameters
       const params: Record<string, string> = {};
       for (let i = 0; i < route.paramNames.length; i++) {
