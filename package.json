@@ -2,7 +2,6 @@
   "name": "disclaude",
   "version": "0.4.0",
   "description": "Multi-platform agent bot supporting Feishu/Lark and CLI",
-  "private": true,
   "type": "module",
   "workspaces": [
     "packages/*"
@@ -11,6 +10,15 @@
     "disclaude": "./packages/primary-node/dist/cli.js",
     "disclaude-primary": "./packages/primary-node/dist/cli.js",
     "disclaude-mcp": "./packages/mcp-server/dist/cli.js"
+  },
+  "files": [
+    "packages/*/dist",
+    "skills",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "npm run build -ws --if-present",
