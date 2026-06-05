@@ -15,6 +15,8 @@ import {
   buildCard,
   buildConfirmCard,
   buildSelectionCard,
+  buildNote,
+  buildColumnSet,
 } from './interactive-card-builder.js';
 
 describe('Interactive Card Builder', () => {
@@ -233,6 +235,173 @@ describe('Interactive Card Builder', () => {
 
       const actionGroup = card.elements[1] as unknown as { actions: { tag: string }[] };
       expect(actionGroup.actions[0].tag).toBe('select_static');
+    });
+
+    it('should use turquoise template for selection card', () => {
+      const card = buildSelectionCard('Pick', 'Choose:', 'Select...', 'pick', []);
+      expect(card.header!.template).toBe('turquoise');
+    });
+
+    it('should pass menu options correctly', () => {
+      const options = [
+        { text: 'Alpha', value: 'a' },
+        { text: 'Beta', value: 'b' },
+      ];
+      const card = buildSelectionCard('Pick', 'Choose:', 'Select...', 'pick', options);
+
+      const actionGroup = card.elements[1] as unknown as {
+        actions: Array<{
+          tag: string;
+          options: Array<{ text: { tag: string; content: string }; value: string }>;
+        }>;
+      };
+      const [menu] = actionGroup.actions;
+      expect(menu.options).toEqual([
+        { text: { tag: 'plain_text', content: 'Alpha' }, value: 'a' },
+        { text: { tag: 'plain_text', content: 'Beta' }, value: 'b' },
+      ]);
+    });
+  });
+
+  describe('buildNote', () => {
+    it('should build a note element with plain text', () => {
+      const note = buildNote('Last updated 5 minutes ago');
+
+      expect(note).toEqual({
+        tag: 'note',
+        elements: [
+          { tag: 'plain_text', content: 'Last updated 5 minutes ago' },
+        ],
+      });
+    });
+
+    it('should build a note element with empty string', () => {
+      const note = buildNote('');
+      expect(note).toEqual({
+        tag: 'note',
+        elements: [{ tag: 'plain_text', content: '' }],
+      });
+    });
+
+    it('should handle special characters in text', () => {
+      const note = buildNote('Price: $5 & <"tag">');
+      expect(note).toEqual({
+        tag: 'note',
+        elements: [{ tag: 'plain_text', content: 'Price: $5 & <"tag">' }],
+      });
+    });
+  });
+
+  describe('buildColumnSet', () => {
+    it('should build a column set with default vertical alignment', () => {
+      const columns = buildColumnSet([
+        { elements: [buildDiv('Left')] },
+        { elements: [buildDiv('Right')] },
+      ]);
+
+      expect(columns).toEqual({
+        tag: 'column_set',
+        columns: [
+          { width: undefined, vertical_align: 'center', elements: [buildDiv('Left')] },
+          { width: undefined, vertical_align: 'center', elements: [buildDiv('Right')] },
+        ],
+      });
+    });
+
+    it('should build a column set with custom width and alignment', () => {
+      const columns = buildColumnSet([
+        { width: 3, verticalAlign: 'top', elements: [buildDiv('Narrow')] },
+        { width: 6, verticalAlign: 'bottom', elements: [buildDiv('Wide')] },
+      ]);
+
+      expect(columns.tag).toBe('column_set');
+      const cols = (columns as unknown as { columns: Array<{ width: number; vertical_align: string }> }).columns;
+      expect(cols[0].width).toBe(3);
+      expect(cols[0].vertical_align).toBe('top');
+      expect(cols[1].width).toBe(6);
+      expect(cols[1].vertical_align).toBe('bottom');
+    });
+
+    it('should handle empty columns array', () => {
+      const columns = buildColumnSet([]);
+      expect(columns).toEqual({ tag: 'column_set', columns: [] });
+    });
+
+    it('should handle single column', () => {
+      const columns = buildColumnSet([
+        { elements: [buildDiv('Only column')] },
+      ]);
+      expect(columns).toEqual({
+        tag: 'column_set',
+        columns: [{ width: undefined, vertical_align: 'center', elements: [buildDiv('Only column')] }],
+      });
+    });
+  });
+
+  describe('buildCard - header defaults', () => {
+    it('should default header template to blue when not specified', () => {
+      const card = buildCard({
+        header: { title: 'My Card' },
+        elements: [],
+      });
+
+      expect(card.header!.template).toBe('blue');
+    });
+
+    it('should not include subtitle when not provided', () => {
+      const card = buildCard({
+        header: { title: 'No Subtitle' },
+        elements: [],
+      });
+
+      expect(card.header!.subtitle).toBeUndefined();
+    });
+
+    it('should always set wide_screen_mode to true', () => {
+      const card = buildCard({ elements: [] });
+      expect(card.config.wide_screen_mode).toBe(true);
+    });
+
+    it('should pass dismissible=true to config', () => {
+      const card = buildCard({ elements: [], dismissible: true });
+      expect(card.config.dismissible).toBe(true);
+    });
+
+    it('should not include dismissible when not provided', () => {
+      const card = buildCard({ elements: [] });
+      expect(card.config.dismissible).toBeUndefined();
+    });
+  });
+
+  describe('buildButton - danger style', () => {
+    it('should build a danger button', () => {
+      const button = buildButton({ text: 'Delete', value: 'delete', style: 'danger' });
+      expect(button.type).toBe('danger');
+      expect(button.value).toEqual({ action: 'delete' });
+    });
+
+    it('should build a button without URL when not provided', () => {
+      const button = buildButton({ text: 'Click', value: 'click' });
+      expect(button.url).toBeUndefined();
+    });
+  });
+
+  describe('buildConfirmCard - button styles', () => {
+    it('should have primary confirm button and default cancel button', () => {
+      const card = buildConfirmCard('Confirm', 'Sure?', 'yes_val', 'no_val');
+
+      const actionGroup = card.elements[1] as unknown as {
+        actions: Array<{ type: string; value: { action: string } }>;
+      };
+      expect(actionGroup.actions[0].type).toBe('primary');
+      expect(actionGroup.actions[0].value.action).toBe('yes_val');
+      expect(actionGroup.actions[1].type).toBe('default');
+      expect(actionGroup.actions[1].value.action).toBe('no_val');
+    });
+
+    it('should use blue template', () => {
+      const card = buildConfirmCard('Confirm', 'Sure?');
+      expect(card.header!.template).toBe('blue');
     });
   });
 });
