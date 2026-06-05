@@ -69,7 +69,10 @@ export function parseArgs(args: string[]): CliOptions {
     } else if (arg === '--api-port') {
       const value = args[++i];
       if (value) {
-        options.apiPort = parseInt(value, 10);
+        const port = parseInt(value, 10);
+        if (!isNaN(port) && port >= 1 && port <= 65535) {
+          options.apiPort = port;
+        }
       }
     } else if (arg === '--help') {
       options.command = 'help';
@@ -407,6 +410,12 @@ async function main(): Promise<void> {
 
     // Issue #3857 Phase 2: Start HTTP API server if --api-port is specified
     if (options.apiPort) {
+      const apiPortReady = await isPortAvailable(options.apiPort, 'localhost');
+      if (!apiPortReady) {
+        console.error(`Error: API port ${options.apiPort} is already in use. Exiting.`);
+        processLock.release();
+        process.exit(1);
+      }
       httpApiServer = new HttpApiServer({ port: options.apiPort });
       httpApiServer.setNodeId(primaryNode.getNodeId());
       await httpApiServer.start();
