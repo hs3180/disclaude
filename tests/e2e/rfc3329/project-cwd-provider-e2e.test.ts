@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { ProjectManager } from '@disclaude/core';
 import { createTestWorkspace } from './helpers.js';
@@ -49,6 +49,7 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
 
     it('should bind chatId to a project directory and return it via CwdProvider', () => {
       const projectDir = join(workspaceDir, 'my-project');
+      mkdirSync(projectDir, { recursive: true });
 
       const bindResult = pm.use('oc_test_chat', projectDir);
       expect(bindResult.ok).toBe(true);
@@ -64,6 +65,8 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
 
     it('should persist bindings and restore them on new ProjectManager instance', () => {
       const projectDir = join(workspaceDir, 'persisted-project');
+      mkdirSync(projectDir, { recursive: true });
+      mkdirSync(join(workspaceDir, 'another'), { recursive: true });
 
       // Bind and persist
       pm.use('oc_chat_a', projectDir);
@@ -91,6 +94,7 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
 
     it('should reset binding and make CwdProvider return undefined', () => {
       const projectDir = join(workspaceDir, 'temp-project');
+      mkdirSync(projectDir, { recursive: true });
       pm.use('oc_reset_chat', projectDir);
 
       // Verify bound
@@ -111,6 +115,8 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
     });
 
     it('should isolate bindings between different chatIds', () => {
+      mkdirSync(join(workspaceDir, 'project-a'), { recursive: true });
+      mkdirSync(join(workspaceDir, 'project-b'), { recursive: true });
       pm.use('oc_chat_1', join(workspaceDir, 'project-a'));
       pm.use('oc_chat_2', join(workspaceDir, 'project-b'));
 
@@ -122,6 +128,8 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
     });
 
     it('should support re-binding to a different directory', () => {
+      mkdirSync(join(workspaceDir, 'first'), { recursive: true });
+      mkdirSync(join(workspaceDir, 'second'), { recursive: true });
       pm.use('oc_rebind_chat', join(workspaceDir, 'first'));
       pm.use('oc_rebind_chat', join(workspaceDir, 'second'));
 
@@ -135,6 +143,7 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
   describe('CLAUDE_CONFIG_DIR implication end-to-end', () => {
     it('should produce cwd for project-bound agent (implies CLAUDE_CONFIG_DIR injection)', () => {
       const projectDir = join(workspaceDir, 'bound-project');
+      mkdirSync(projectDir, { recursive: true });
       pm.use('oc_bound_chat', projectDir);
 
       const cwdProvider = pm.createCwdProvider();
@@ -159,6 +168,7 @@ describe('Project Binding + CwdProvider end-to-end (RFC #3329)', () => {
 
     it('should handle binding→reset cycle correctly for CLAUDE_CONFIG_DIR', () => {
       const projectDir = join(workspaceDir, 'cycle-project');
+      mkdirSync(projectDir, { recursive: true });
 
       // Bound → cwd is set → CLAUDE_CONFIG_DIR would be injected
       pm.use('oc_cycle_chat', projectDir);
