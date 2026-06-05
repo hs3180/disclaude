@@ -32,6 +32,7 @@ describe('ChannelDirectory', () => {
   beforeEach(() => {
     resetVfs();
     tmpDir = `/mock/channel-test-${++counter}`;
+    mockFs.mkdirSync(tmpDir, { recursive: true });
   });
 
   describe('resolveChannelsDir', () => {
