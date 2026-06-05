@@ -79,7 +79,23 @@ lark-cli im +chat-create --as bot --name "PR #{number} · {title前30字}" --des
 
 **5c. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review", workdir: "$WORKDIR"），原子写入。
 
-**5d. 推送 review 指令到新群**: 使用 `push_to_agent` 向新群发送 review 指令，告知 agent 工作目录为 `$WORKDIR`，可在此目录中进行代码阅读、review、修改和测试。
+**5d. 推送 review 指令到新群**: 使用 `push_to_agent` 向新群发送 review 指令，告知 agent 工作目录为 `$WORKDIR`，可在此目录中进行代码阅读、review、修改和测试。指令内容应包含以下 prompt 模板：
+
+```
+你是 PR #{number} 的审查员。
+
+**工作目录**: {workdir}
+**PR 链接**: https://github.com/{repo}/pull/{number}
+
+请阅读 PR 代码，完成审查并给出反馈。
+
+## PR 关闭后清理
+
+定期检查 PR 状态（`gh pr view {number} --repo {repo} --json state,mergedAt`）。当 PR 已合并或关闭时：
+1. 在群中发送审查总结和感谢消息
+2. 调用 dissolve-group skill 解散本群并释放名额：
+   `DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`
+```
 
 ### 6. 清理临时目录
 
@@ -101,7 +117,7 @@ rm -rf "{workdir}"
 ## 设计原则
 
 1. **映射表是缓存** — 可从飞书 API 重建
-2. **用户驱动解散** — Bot 不自主解散群
+2. **Agent 驱动解散** — review agent 在 PR 关闭后调用 dissolve-group 解散群（#3972）
 3. **幂等操作** — 映射表过滤防重复创建
 4. **无 Label 依赖** — 状态全在映射表
 5. **临时目录隔离** — 每个 PR 独立目录，互不干扰，PR 关闭时清理
