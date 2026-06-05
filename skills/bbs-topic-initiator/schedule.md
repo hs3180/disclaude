@@ -38,10 +38,3 @@ cat workspace/chat/{chatId}.md 2>/dev/null | tail -100 || echo "No chat history"
 | 周四 | 工具推荐 / 效率提升 |
 | 周五 | 轻松闲聊 / 本周总结 |
 
-## 安装说明
-
-将此文件复制到 `schedules/bbs-topic-initiation/SCHEDULE.md`，然后替换以下占位符：
-
-| 占位符 | 替换为 |
-|--------|--------|
-| `{controlChannelChatId}` | 实际的 BBS 群组 chatId |

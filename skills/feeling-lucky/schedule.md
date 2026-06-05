@@ -34,7 +34,3 @@ mkdir -p workspace/feeling-lucky
 echo "- $(date +%Y-%m-%d): 测试了 [功能名] - [一句话结果]" >> workspace/feeling-lucky/history.md
 ```
 
-## 安装说明
-
-将此文件复制到 `schedules/feeling-lucky/SCHEDULE.md`，scheduler 会自动填充 chatId。
-如需手动指定目标群组，在 frontmatter 中添加 `chatId: "oc_xxx"`。

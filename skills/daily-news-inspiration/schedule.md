@@ -1,6 +1,6 @@
 ---
 name: "每日新闻灵感提问"
-cron: "0 9 * * *"
+cron: "{cron}"
 enabled: true
 blocking: true
 chatId: "{targetChatId}"
@@ -40,10 +40,3 @@ cat workspace/chat/{chatId}.md 2>/dev/null | tail -100 || echo "No chat history"
 | 周四 | 开源动态 / 技术社区 |
 | 周五 | 轻松话题 / 跨界创新 |
 
-## 安装说明
-
-将此文件复制到 `schedules/daily-news-inspiration/SCHEDULE.md`，然后替换以下占位符：
-
-| 占位符 | 替换为 |
-|--------|--------|
-| `{targetChatId}` | 实际的目标群组 chatId |
