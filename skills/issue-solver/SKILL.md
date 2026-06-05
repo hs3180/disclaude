@@ -1,6 +1,6 @@
 ---
 name: issue-solver
-description: "Issue Solver - creates a scheduled task to scan a GitHub repo for open issues, pick the best candidate, and submit a fix PR. Use when user wants to set up automated issue resolution. Keywords: \"Issue Solver\", \"自动修 Bug\", \"solve issues\", \"issue solver\", \"issue solver 安装\"."
+description: Issue Solver - creates a scheduled task to scan a GitHub repo for open issues, pick the best candidate, and submit a fix PR. Use when user wants to set up automated issue resolution. Keywords: "Issue Solver", "自动修 Bug", "solve issues", "issue solver", "issue solver 安装".
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -55,8 +55,8 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 
 `scan.mjs` 是 skill 附带的扫描脚本，负责：
 - 检查 `.runtime-env` 中的 GH_TOKEN 是否有效，过期则自动刷新
-- 扫描 open issues，过滤掉已有 PR、skip 标签、评论中已解决的 issue
-- 按评分排序，输出 top N 候选 issue
+- 通过 GraphQL 一次性获取 issues + PRs + comments
+- 过滤掉已有 PR 的 issue，输出候选列表（含完整 issue body 和评论）
 
 脚本位置：`skills/issue-solver/scan.mjs`
 
