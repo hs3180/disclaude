@@ -75,6 +75,31 @@ lark-cli api GET "/open-apis/im/v1/messages" --as bot --query "container_id_type
 
 - **不超过 2 小时** 或 **已提醒不到 2 小时** → 跳过。
 
+### 4b. 已有群的 PR — 不活跃提醒与递进升级（Issue #3966）
+
+对映射表中所有 `purpose: 'pr-review'` 且未在步骤 4 中被标记为 closed/merged 的群，检查活跃度：
+
+```bash
+lark-cli api GET "/open-apis/im/v1/messages" --as bot --query container_id_type=chat "container_id={chatId}" "page_size=1" "sort_type=ByCreateTimeDesc"
+```
+
+从返回的最后一条消息的 `create_time` 计算时间差。使用映射表中的 `lastReminderAt` 和 `reminderCount` 字段控制提醒频率和升级：
+
+| 条件 | 动作 |
+|------|------|
+| **超过 2h 无消息** 且 `reminderCount` 为 0 或空 | 发送普通卡片提醒，`reminderCount` → 1，记录 `lastReminderAt` |
+| **超过 2.5h 无消息** 且 `reminderCount` = 1 且距上次提醒 > 30min | 发送 **@用户** 提醒，`reminderCount` → 2，更新 `lastReminderAt` |
+| **超过 3h 无消息** 且 `reminderCount` = 2 且距上次提醒 > 30min | 发送 **飞书加急消息**（urgent），`reminderCount` → 3，更新 `lastReminderAt` |
+| **超过 4h 无消息** 且 `reminderCount` ≥ 3 | 不再升级，保持当前状态（用户驱动解散） |
+
+提醒消息模板：
+
+- **第 1 次**（普通卡片）：`这条 review 群已经超过 2 小时没有新消息。如果 review 已完成，可以回复 /dissolve 解散群释放名额。如果需要继续，请忽略此提醒。`
+- **第 2 次**（@用户）：`@用户 这条 review 群已经超过 2.5 小时没有新消息，请确认 review 状态。如已完成请回复 /dissolve。`
+- **第 3 次**（加急）：使用飞书 urgent 消息发送 `⚠️ PR review 群已超过 3 小时无活动，请尽快处理或解散群。`
+
+每次发送提醒后，原子更新映射表中该条目的 `lastReminderAt`（当前 ISO 时间戳）和 `reminderCount`。
+
 ### 5. 新 PR — 创建讨论群
 
 并发检查：映射表中 `purpose: 'pr-review'` 条目数 ≥ `{maxConcurrent}` 则跳过。

@@ -40,6 +40,8 @@ export interface MappingEntry {
   workdir?: string;
   /** Optional: ISO timestamp of the last inactivity reminder sent (Issue #3965) */
   lastReminderAt?: string;
+  /** Optional: Number of inactivity reminders sent for escalation (Issue #3966) */
+  reminderCount?: number;
 }
 
 /**
