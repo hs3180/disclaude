@@ -18,6 +18,30 @@ import { HttpApiServer, type StatusResponse } from './http-api-server.js';
  * Make an HTTP request using node:http (nock-compatible).
  * Returns { statusCode, headers, body }.
  */
+function httpRequest(
+  options: http.RequestOptions,
+  body?: string,
+): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(options, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => {
+        resolve({
+          statusCode: res.statusCode ?? 0,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString('utf-8'),
+        });
+      });
+    });
+    req.on('error', reject);
+    if (body) {
+      req.write(body);
+    }
+    req.end();
+  });
+}
+
 function httpGet(url: string): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.get(url, (res) => {
@@ -71,7 +95,6 @@ describe('HttpApiServer', () => {
       const { body: body1 } = await httpGet(`http://localhost:${port}/api/status`);
       const data1 = JSON.parse(body1) as StatusResponse;
 
-      // Wait a bit
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const { body: body2 } = await httpGet(`http://localhost:${port}/api/status`);
@@ -96,9 +119,45 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('HTTP method matching', () => {
+    it('should return 404 for POST to GET-only route', async () => {
+      const { statusCode } = await httpRequest({
+        hostname: 'localhost',
+        port,
+        path: '/api/status',
+        method: 'POST',
+      });
+      expect(statusCode).toBe(404);
+    });
+  });
+
   describe('lifecycle', () => {
     it('should report running after start', () => {
       expect(server.isRunning).toBe(true);
+    });
+
+    it('should handle stop when already stopped', async () => {
+      const stoppedServer = new HttpApiServer({ port: 19201, host: 'localhost' });
+      stoppedServer.setNodeId('test-stopped');
+      // Not started — stop should be a no-op
+      await stoppedServer.stop();
+      expect(stoppedServer.isRunning).toBe(false);
+    });
+
+    it('should handle start when already running', async () => {
+      // server is already started in beforeAll — calling start again should be a no-op
+      await server.start();
+      expect(server.isRunning).toBe(true);
+    });
+
+    it('should report not running after stop', async () => {
+      const tempServer = new HttpApiServer({ port: 19202, host: 'localhost' });
+      tempServer.setNodeId('test-temp');
+      await tempServer.start();
+      expect(tempServer.isRunning).toBe(true);
+
+      await tempServer.stop();
+      expect(tempServer.isRunning).toBe(false);
     });
   });
 });
