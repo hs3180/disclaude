@@ -40,6 +40,8 @@ export interface MappingEntry {
   workdir?: string;
   /** Optional: ISO timestamp of the last inactivity reminder sent (Issue #3965) */
   lastReminderAt?: string;
+  /** Optional: Number of inactivity reminders sent for escalation (Issue #3966) */
+  reminderCount?: number;
 }
 
 /**
@@ -296,6 +298,7 @@ export class BotChatMappingStore {
       purpose: entry.purpose,
       ...(entry.workdir !== undefined && entry.workdir !== null ? { workdir: entry.workdir } : {}),
       ...(entry.lastReminderAt !== undefined && entry.lastReminderAt !== null ? { lastReminderAt: entry.lastReminderAt } : {}),
+      ...(entry.reminderCount !== undefined ? { reminderCount: entry.reminderCount } : {}),
     };
 
     this.cache[key] = fullEntry;
@@ -308,6 +311,33 @@ export class BotChatMappingStore {
 
     logger.debug({ key, chatId: fullEntry.chatId, persisted }, 'Mapping entry set');
     return { ...fullEntry, persisted };
+  }
+
+  /**
+   * Partially update a mapping entry (e.g. reminder fields).
+   * Preserves all existing fields; only the provided fields are overwritten.
+   * Returns null if the key does not exist.
+   *
+   * @param key - The context key (e.g. "pr-123")
+   * @param partial - Fields to update
+   * @returns The updated entry, or null if key not found
+   */
+  async update(key: string, partial: Partial<MappingEntry>): Promise<MappingEntry | null> {
+    await this.ensureInitialized();
+
+    if (!(key in this.cache)) {
+      return null;
+    }
+
+    this.cache[key] = { ...this.cache[key], ...partial };
+    try {
+      await this.persist();
+    } catch (error) {
+      logger.error({ err: error, key }, 'Failed to persist after update');
+    }
+
+    logger.debug({ key, partial }, 'Mapping entry updated');
+    return this.cache[key];
   }
 
   /**

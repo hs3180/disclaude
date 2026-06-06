@@ -150,7 +150,7 @@ describe('BotChatMappingStore', () => {
 
     it('should preserve workdir when updating other fields', async () => {
       await store.set('pr-123', { chatId: 'oc_old', purpose: 'pr-review', workdir: '/tmp/pr-123-abc' });
-      await store.set('pr-123', { chatId: 'oc_new', purpose: 'pr-review' });
+      await store.set('pr-123', { chatId: 'oc_new', purpose: 'pr-review', workdir: '/tmp/pr-123-abc' });
 
       const result = await store.get('pr-123');
       expect(result!.chatId).toBe('oc_new');
@@ -193,6 +193,104 @@ describe('BotChatMappingStore', () => {
       // Should not throw
       const entry = await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
       expect(entry.chatId).toBe('oc_xxx');
+    });
+
+    it('should store reminder fields when provided', async () => {
+      await store.set('pr-123', {
+        chatId: 'oc_xxx',
+        purpose: 'pr-review',
+        lastReminderAt: '2026-06-05T10:00:00Z',
+        reminderCount: 2,
+      });
+
+      const result = await store.get('pr-123');
+      expect(result!.lastReminderAt).toBe('2026-06-05T10:00:00Z');
+      expect(result!.reminderCount).toBe(2);
+    });
+
+    it('should preserve reminder fields when re-setting with other fields', async () => {
+      await store.set('pr-123', {
+        chatId: 'oc_xxx',
+        purpose: 'pr-review',
+        lastReminderAt: '2026-06-05T10:00:00Z',
+        reminderCount: 1,
+      });
+      await store.set('pr-123', {
+        chatId: 'oc_xxx',
+        purpose: 'pr-review',
+        lastReminderAt: '2026-06-05T10:00:00Z',
+        reminderCount: 1,
+      });
+
+      const result = await store.get('pr-123');
+      expect(result!.lastReminderAt).toBe('2026-06-05T10:00:00Z');
+      expect(result!.reminderCount).toBe(1);
+    });
+  });
+
+  // ---- update ----
+
+  describe('update', () => {
+    it('should return null for non-existent key', async () => {
+      const result = await store.update('pr-999', { reminderCount: 1 });
+      expect(result).toBeNull();
+    });
+
+    it('should partially update reminder fields', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review', workdir: '/tmp/pr-123' });
+
+      const result = await store.update('pr-123', {
+        lastReminderAt: '2026-06-05T12:00:00Z',
+        reminderCount: 1,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.chatId).toBe('oc_xxx');
+      expect(result!.workdir).toBe('/tmp/pr-123');
+      expect(result!.lastReminderAt).toBe('2026-06-05T12:00:00Z');
+      expect(result!.reminderCount).toBe(1);
+    });
+
+    it('should increment reminderCount', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+      await store.update('pr-123', { reminderCount: 1 });
+
+      await store.update('pr-123', { reminderCount: 2 });
+
+      const result = await store.get('pr-123');
+      expect(result!.reminderCount).toBe(2);
+    });
+
+    it('should reset reminderCount to 0', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+      await store.update('pr-123', { reminderCount: 2, lastReminderAt: '2026-06-05T10:00:00Z' });
+
+      await store.update('pr-123', { reminderCount: 0 });
+
+      const result = await store.get('pr-123');
+      expect(result!.reminderCount).toBe(0);
+      expect(result!.lastReminderAt).toBe('2026-06-05T10:00:00Z');
+    });
+
+    it('should persist after update', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+      vi.mocked(fsPromises.writeFile).mockClear();
+      vi.mocked(fsPromises.rename).mockClear();
+
+      await store.update('pr-123', { reminderCount: 1 });
+
+      expect(fsPromises.writeFile).toHaveBeenCalled();
+      expect(fsPromises.rename).toHaveBeenCalled();
+    });
+
+    it('should handle persist errors gracefully', async () => {
+      await store.set('pr-123', { chatId: 'oc_xxx', purpose: 'pr-review' });
+      vi.mocked(fsPromises.writeFile).mockRejectedValue(new Error('Write error'));
+
+      // Should not throw, but in-memory cache is still updated
+      const result = await store.update('pr-123', { reminderCount: 1 });
+      expect(result).not.toBeNull();
+      expect(result!.reminderCount).toBe(1);
     });
   });
 
@@ -507,9 +605,15 @@ describe('BotChatMappingStore', () => {
       expect(entry!.workdir).toBe('/tmp/pr-123-xyz');
     });
 
-    it('should load lastReminderAt from persisted mapping file', async () => {
+    it('should load reminder fields from persisted mapping file', async () => {
       const existingData: MappingTable = {
-        'pr-123': { chatId: 'oc_loaded', createdAt: '2026-04-28T10:00:00Z', purpose: 'pr-review', lastReminderAt: '2026-06-05T08:00:00Z' },
+        'pr-123': {
+          chatId: 'oc_loaded',
+          createdAt: '2026-04-28T10:00:00Z',
+          purpose: 'pr-review',
+          lastReminderAt: '2026-06-05T08:00:00Z',
+          reminderCount: 2,
+        },
       };
 
       vi.mocked(fsPromises.readFile).mockResolvedValue(JSON.stringify(existingData));
@@ -519,6 +623,7 @@ describe('BotChatMappingStore', () => {
 
       expect(entry).not.toBeNull();
       expect(entry!.lastReminderAt).toBe('2026-06-05T08:00:00Z');
+      expect(entry!.reminderCount).toBe(2);
     });
 
     it('should handle ENOENT gracefully (new file)', async () => {
