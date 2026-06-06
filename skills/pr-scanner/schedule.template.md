@@ -52,7 +52,28 @@ gh pr list --repo {repo} --state open --json number,title,author,headRefName
 gh pr list --repo {repo} --state closed --json number,state
 ```
 
-merged/closed → 记录日志，不自动解散。open → 跳过。
+merged/closed → 记录日志。如该群的 agent 会话已结束（映射表中有条目但群内无 agent 活动），scanner 主动调用 dissolve-group 清理，防止孤儿群。open → 跳过。
+
+### 4b. 已有群的 PR — 不活跃提醒（Issue #3965）
+
+对映射表中所有 `purpose: 'pr-review'` 且未在步骤 4 中被标记为 closed/merged 的群，检查活跃度：
+
+```bash
+lark-cli api GET "/open-apis/im/v1/messages" --as bot --query "container_id_type=chat" "container_id={chatId}" "page_size=1" "sort_type=ByCreateTimeDesc"
+```
+
+从返回的最后一条消息的 `create_time` 计算时间差。如果：
+
+- **超过 2 小时无消息** 且 `lastReminderAt` 为空或距今超过 2 小时 → 发送提醒卡片到该群：
+
+```
+使用 push_to_agent 向该群发送提醒：
+"这条 review 群已经超过 2 小时没有新消息。如果 review 已完成，可以回复 /dissolve 解散群释放名额。如果需要继续，请忽略此提醒。"
+```
+
+同时更新映射表中该条目的 `lastReminderAt` 为当前 ISO 时间戳。
+
+- **不超过 2 小时** 或 **已提醒不到 2 小时** → 跳过。
 
 ### 5. 新 PR — 创建讨论群
 
@@ -79,14 +100,32 @@ lark-cli im +chat-create --as bot --name "PR #{number} · {title前30字}" --des
 
 **5c. 写入映射**: 追加 `pr-{number}` 条目（chatId, createdAt, purpose: "pr-review", workdir: "$WORKDIR"），原子写入。
 
-**5d. 推送 review 指令到新群**: 使用 `push_to_agent` 向新群发送 review 指令，告知 agent 工作目录为 `$WORKDIR`，可在此目录中进行代码阅读、review、修改和测试。
+**5d. 推送 review 指令到新群**: 使用 `push_to_agent` 向新群发送 review 指令，告知 agent 工作目录为 `$WORKDIR`，可在此目录中进行代码阅读、review、修改和测试。指令内容应包含以下 prompt 模板：
+
+```
+你是 PR #{number} 的审查员。
+
+**工作目录**: {workdir}
+**PR 链接**: https://github.com/{repo}/pull/{number}
+
+请阅读 PR 代码，完成审查并给出反馈。
+
+## PR 关闭后清理
+
+**每次收到用户消息时**，先检查 PR 状态（`gh pr view {number} --repo {repo} --json state,mergedAt`）。当 PR 已合并或关闭时：
+1. 在群中发送审查总结和感谢消息
+2. 使用 Skill 工具调用 dissolve-group 解散本群并释放名额：
+   Skill: dissolve-group，参数: DISSOLVE_KEY=pr-{number}
+   如 Skill 不可用，回退到 Bash 执行：
+   `cd {workspace_root} && DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`
+```
 
 ### 6. 清理临时目录
 
-当 PR 状态变为 merged/closed 时，清理对应的临时目录：
+dissolve-group 执行时会自动清理 workdir（见 step 5d）。此处仅作为兜底：当 dissolve-group 未成功执行时，由 scanner 手动清理：
 
 ```bash
-# 从映射表读取 workdir 字段
+# 兜底：从映射表读取 workdir 字段（正常情况下 dissolve-group 已清理）
 rm -rf "{workdir}"
 ```
 
@@ -101,7 +140,7 @@ rm -rf "{workdir}"
 ## 设计原则
 
 1. **映射表是缓存** — 可从飞书 API 重建
-2. **用户驱动解散** — Bot 不自主解散群
+2. **Agent 驱动解散** — review agent 在 PR 关闭后调用 dissolve-group 解散群（#3972）
 3. **幂等操作** — 映射表过滤防重复创建
 4. **无 Label 依赖** — 状态全在映射表
 5. **临时目录隔离** — 每个 PR 独立目录，互不干扰，PR 关闭时清理
