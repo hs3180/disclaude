@@ -26,6 +26,8 @@ services:
 # fluentd/conf/fluent.conf
 
 # Accept logs from Docker logging driver
+# NOTE: In production, restrict bind to a specific interface (e.g., 127.0.0.1)
+#       or use Docker network isolation instead of 0.0.0.0.
 <source>
   @type forward
   port 24224
@@ -60,7 +62,8 @@ services:
 ### Step 3: Add Fluentd to Docker Compose (optional sidecar)
 
 ```yaml
-# docker-compose.yml — add alongside your primary service
+# docker-compose.yml — add under services: alongside your primary service
+services:
   fluentd:
     image: fluent/fluentd:v1.16
     container_name: disclaude-fluentd
@@ -91,7 +94,7 @@ filebeat.inputs:
 
 output.elasticsearch:
   hosts: ["localhost:9200"]
-  index: "disclaude-logs"
+  index: "disclaude-logs-%{+yyyy.MM.dd}"
 
 setup.ilm.enabled: false
 setup.template.name: disclaude-logs
@@ -109,13 +112,13 @@ For non-Docker macOS deployments using launchd:
 filebeat.inputs:
   - type: log
     paths:
-      - ~/Library/Logs/disclaude/*.log
+      - /Users/<username>/Library/Logs/disclaude/*.log
     json.keys_under_root: true
     json.add_error_key: true
 
 output.elasticsearch:
   hosts: ["localhost:9200"]
-  index: "disclaude-logs"
+  index: "disclaude-logs-%{+yyyy.MM.dd}"
 
 setup.ilm.enabled: false
 setup.template.name: disclaude-logs
@@ -156,15 +159,17 @@ docker compose logs primary --tail 1 | jq .
 tail -1 ~/Library/Logs/disclaude/disclaude-combined.log | jq .
 ```
 
-Expected output format:
+Expected output format (production):
 
 ```json
 {
-  "level": 30,
-  "time": 1717660800000,
+  "level": "info",
+  "time": "2024-06-06T12:00:00.000Z",
   "pid": 1,
   "hostname": "disclaude-primary",
   "msg": "Server started",
-  "module": "primary"
+  "context": "PrimaryNode"
 }
 ```
+
+> **Note**: In development mode, `level` appears as its numeric value (e.g., `30`) and `time` is an epoch millisecond timestamp. The `context` field corresponds to the module name passed to `createLogger()`.
