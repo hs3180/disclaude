@@ -160,11 +160,11 @@ GPT-5 with multi-modal reasoning (tech-relevant, interesting)
 
 ### 2. 实例化 Schedule
 
-读取 skill 目录中的 `schedule.md` 模板，替换占位符后写入 workspace：
+读取 skill 目录中的 `schedule.template.md` 模板，替换占位符后写入 workspace：
 
 ```
 # 1. 读取模板内容（使用 Read 工具）
-模板路径: skills/daily-news-inspiration/schedule.md
+模板路径: skills/daily-news-inspiration/schedule.template.md
 
 # 2. 替换所有占位符
 ```
