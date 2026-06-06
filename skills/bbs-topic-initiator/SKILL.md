@@ -198,7 +198,7 @@ React 19 正式发布了！🎉
 
 ### Schedule Configuration
 
-See `schedule.md` in this directory. Copy it to `schedules/bbs-topic-initiation/SCHEDULE.md`, replace `{controlChannelChatId}` with the actual BBS group chatId, and enable.
+See `schedule.template.md` in this directory. Copy it to `schedules/bbs-topic-initiation/SCHEDULE.md`, replace `{controlChannelChatId}` with the actual BBS group chatId, and enable.
 
 ### Topic Categories Configuration
 

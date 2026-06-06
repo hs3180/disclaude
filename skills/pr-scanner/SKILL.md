@@ -25,11 +25,11 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 
 ### 2. 实例化 Schedule
 
-将同目录下的 `schedule.md` 模板复制到 `schedules/pr-scanner/SCHEDULE.md`，替换所有 `{placeholder}` 为实际值：
+将同目录下的 `schedule.template.md` 模板复制到 `schedules/pr-scanner/SCHEDULE.md`，替换所有 `{placeholder}` 为实际值：
 
 ```bash
 mkdir -p schedules/pr-scanner
-cp disclaude/skills/pr-scanner/schedule.md schedules/pr-scanner/SCHEDULE.md
+cp disclaude/skills/pr-scanner/schedule.template.md schedules/pr-scanner/SCHEDULE.md
 ```
 
 替换占位符：
