@@ -67,6 +67,9 @@ services:
         reservations:
           memory: 512M
 
+    # Logging: json-file with rotation (default).
+    # To forward to Elasticsearch/Loki, change driver to "fluentd" or "syslog".
+    # See docs/log-forwarding.md for Fluentd/Filebeat setup examples.
     logging:
       driver: "json-file"
       options:

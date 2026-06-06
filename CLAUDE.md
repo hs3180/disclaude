@@ -410,19 +410,19 @@ To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.startA
 
 ## Logging Guidelines
 
-**IMPORTANT**: Most application logs are shipped to **Elasticsearch (ES)** for centralized storage and querying. The application uses Pino (structured JSON logging) which writes to local files; a log shipper forwards these to ES. Local log files are short-lived — always prefer ES (Kibana) for log analysis and retrospection.
+**IMPORTANT**: The application uses Pino (structured JSON logging) which writes to stdout/stderr and optionally to local files. Since v0.4.0, application-level Elasticsearch transport has been removed in favor of infrastructure-level log forwarding (see `docs/log-forwarding.md`). Log shippers like Fluentd or Filebeat can forward logs to Elasticsearch, Loki, or other backends.
 
-### Logging to ES — Implications for Code
+### Logging — Implications for Code
 
-All Agent outputs MUST be logged in full, not just metadata (like length). Since logs end up in ES, structured fields matter for searchability.
+All Agent outputs MUST be logged in full, not just metadata (like length). Structured fields matter for searchability regardless of the log backend.
 
 - **Agent outputs** (Evaluator/Executor): Must include a `content` field with the full text
 - **Example**: `logger.debug({ content: text, textLength: text.length }, 'Agent output')`
-- **Purpose**: Enables task retrospection and debugging via ES/Kibana full-text search
+- **Purpose**: Enables task retrospection and debugging via full-text search in your log backend
 
 ### Why This Matters
 
-When reviewing logs in Kibana/ES to understand what happened during a task execution:
+When reviewing logs (via Kibana, Loki, or local files) to understand what happened during a task execution:
 - **Only `textLength`**: Tells you the output was 2463 bytes, but not what it said
 - **With `content`**: You can Kibana-search the actual instructions, responses, and reasoning
 
@@ -459,12 +459,12 @@ console.log('[DEBUG]', { context });
 
 ### Check Service Logs
 
-**IMPORTANT**: Most logs are in **Elasticsearch**. Local files are short-lived and mainly useful for real-time tailing during active development. For historical analysis and searching, always use ES/Kibana.
+**IMPORTANT**: Logs can be forwarded to backends like Elasticsearch/Loki via infrastructure-level log shippers (see `docs/log-forwarding.md`). Local files are short-lived and mainly useful for real-time tailing during active development. For historical analysis and searching, use your configured log backend.
 
-**Elasticsearch/Kibana (primary — recommended):**
+**Elasticsearch/Kibana (if configured):**
 - Use Kibana for log search, filtering, and retrospection
-- Pino writes structured JSON logs — all fields (`content`, `context`, `level`, etc.) are ES-searchable
-- Prefer ES over local files for any post-incident or historical analysis
+- Pino writes structured JSON logs — all fields (`content`, `context`, `level`, etc.) are searchable
+- See `docs/log-forwarding.md` for setup instructions
 
 **launchd (macOS) — local real-time only:**
 
@@ -653,8 +653,8 @@ agent:
   model: "claude-sonnet-4-20250514"  # Used when Anthropic is provider
 
 # Logging configuration
-# NOTE: Most logs are shipped to Elasticsearch (ES) for centralized querying.
-# Local files are short-lived — use ES/Kibana for log analysis.
+# NOTE: Logs can be forwarded to Elasticsearch/Loki via infrastructure-level log shippers.
+# See docs/log-forwarding.md for setup. Local files are short-lived by default.
 logging:
   level: info          # trace | debug | info | warn | error
   file: undefined      # Optional log file path
