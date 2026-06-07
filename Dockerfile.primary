@@ -83,10 +83,12 @@ RUN apk add --no-cache \
     bash \
     python3 \
     py3-pip \
-    tini \
-    g++ \
-    gcc \
-    make
+    tini
+
+# Install build tools (cleanable via: apk del .build-deps)
+# Used by agents for compiling C/C++ code and node-gyp native addons at runtime.
+# Tagged with --virtual for on-demand cleanup to reclaim ~400MB when no longer needed.
+RUN apk add --no-cache --virtual .build-deps g++ gcc make
 
 # Install common Python data analysis packages
 # PIP_INDEX_URL: override PyPI mirror (default: official https://pypi.org/simple)
