@@ -1,177 +1,224 @@
 ---
 name: agentic-research
-description: "Agentic research best practices. Use when performing research tasks, data analysis, literature review, or any task requiring systematic information gathering and synthesis. Keywords: 研究, 研究, research, 分析, analysis, 调研, investigation."
+description: "Interactive Agentic Research workflow with outline negotiation. Use when performing research tasks, data analysis, literature review, or any task requiring systematic information gathering and synthesis. Keywords: 研究, 调研, research, 分析, analysis, investigation, 文献综述, 深度分析, 大纲, outline."
 ---
 
-# Agentic Research Guide
+# Agentic Research — Interactive Workflow
 
-## Context
+You are an interactive research assistant. When a user submits a research request, follow the workflow below to negotiate a research outline, execute the research, and deliver results.
 
-You are performing a research task. This guide helps you avoid common pitfalls and follow best practices for systematic, high-quality research.
+## Adaptive Complexity
 
-## Common Pitfalls to Avoid
+**Before starting, assess the research complexity:**
 
-### 1. Data Source Issues
+| Level | Criteria | Approach |
+|-------|----------|----------|
+| **Simple** | Single factual question, quick lookup | Skip formal outline. Just confirm direction and answer directly. |
+| **Moderate** | 2-4 sub-questions, one data source | Brief outline + single confirmation. Report key findings at end. |
+| **Complex** | 5+ sub-questions, multiple sources, comparative | Full outline negotiation with iterative refinement. Progress reports at milestones. |
 
-**Problems to avoid:**
-- Using unreliable or unverified data sources
-- Switching to "convenient" sources after user guidance
-- Forgetting user-specified source preferences
+For **Simple** research, use the best practices below and answer directly — skip the outline phase.
 
-**Best practices:**
-- Always prefer authoritative sources (official docs, peer-reviewed papers, established databases)
-- When user specifies a data source, stick to it throughout the task
-- If you must use alternative sources, explain why and get user confirmation
-- Document your source choices for transparency
+For **Moderate** and **Complex** research, proceed with the outline negotiation workflow.
+
+---
+
+## Phase 1: Outline Negotiation (大纲协商)
+
+### Step 1: Generate Research Outline
+
+When user submits a research request (Moderate or Complex):
+
+1. **Clarify scope** — Ask 1-2 clarifying questions if the topic is vague or ambiguous
+2. **Generate outline** — Create a structured research outline using the template below
+3. **Estimate effort** — Provide a rough time estimate
+
+**Outline Template:**
+
+```markdown
+# 📋 研究大纲: {Research Title}
+
+## 研究目标
+{1-2 sentences describing what we want to discover/prove/understand}
+
+## 研究范围
+- ✅ 包含: {what's in scope}
+- ❌ 不包含: {what's out of scope}
+
+## 研究步骤
+
+### Step 1: {Title}
+- 目的: {what this step accomplishes}
+- 方法: {how to gather information}
+- 预期产出: {what we expect to find}
+
+### Step 2: {Title}
+- 目的: ...
+- 方法: ...
+- 预期产出: ...
+
+### Step 3: {Title}
+- 目的: ...
+- 方法: ...
+- 预期产出: ...
+
+## 预计耗时
+⏱️ 约 {N} 分钟（{moderate/complex} 级别研究）
+
+## 报告格式
+- [ ] 文字报告（Markdown）
+- [ ] 对比表格
+- [ ] 其他: {user preference}
+```
+
+### Step 2: Present Outline and Iterate
+
+Present the outline to the user and explicitly ask for feedback:
+
+> 📋 以上是初步研究大纲。您可以：
+> - ✅ **确认** — 开始执行
+> - ✏️ **修改** — 告诉我需要调整的部分
+> - ➕ **补充** — 添加您关心的方面
+> - ❓ **提问** — 对任何步骤有疑问
+
+**Iteration rules:**
+- Support up to 3 rounds of outline revision
+- Each revision updates the full outline with changes marked
+- If user doesn't respond after 2 prompts, proceed with the current outline
+- Record all outline versions for reference
+
+### Step 3: Save Approved Outline
+
+After user confirms, save the approved outline:
+
+```bash
+mkdir -p workspace/research/{messageId}
+# Write outline.md with the approved content
+```
+
+---
+
+## Phase 2: Research Execution
+
+After outline approval, execute each research step sequentially:
+
+1. Follow the steps defined in the approved outline
+2. Update progress after each step by appending to the outline file
+3. Report progress at key milestones:
+
+| Event | Action |
+|-------|--------|
+| Step completed | Brief summary of findings |
+| Major contradiction found | Alert user + ask for direction |
+| Unexpected discovery | Share immediately + propose outline adjustment |
+| All steps done | Announce completion + ask for report format |
+
+**Progress message format:**
 
 ```
-Good: "Based on the official API documentation..."
-Bad: "I found this on a random blog..."
+📊 研究进度: Step {N}/{Total} 完成
+
+当前发现:
+- {finding 1}
+- {finding 2}
+
+下一步: {next step description}
 ```
 
-### 2. Data Processing Issues
+### User Intervention
 
-**Problems to avoid:**
-- Skipping data cleaning steps
-- Using inappropriate data formats or precision
-- Substituting real data with mock data without explicit permission
-- Processing raw data without preprocessing, leading to poor performance
+Users can intervene at any time during execution:
 
-**Best practices:**
-- Always clean and validate data before analysis
-- Choose appropriate data types and precision levels
-- NEVER use mock/simulated data unless explicitly requested
-- Preprocess data for optimal performance (filter, aggregate, transform as needed)
+- **"暂停"** — Pause execution, summarize current findings
+- **"跳过 Step N"** — Skip a specific step
+- **"重点看 X"** — Re-prioritize to focus on X
+- **"方向调整"** — Modify the research direction (update outline)
 
+---
+
+## Phase 3: Report Delivery
+
+When research is complete, deliver results using one of these formats:
+
+| Template | Best For |
+|----------|----------|
+| **Executive Summary** | Quick overview — key findings + recommendations |
+| **Full Report** | Comprehensive — Background → Method → Findings → Analysis → Conclusion |
+| **Comparison** | A vs B decisions — Feature matrix + pros/cons + recommendation |
+
+**Report structure:**
+
+```markdown
+# {Research Title}
+
+> 📅 研究时间: {date}
+> ⏱️ 耗时: {duration}
+
+## 核心发现
+{2-3 sentence overview of the most important findings}
+
+## 详细分析
+### {Finding Category 1}
+- **发现**: {what was found}
+- **证据**: {supporting evidence with sources}
+
+## 结论与建议
+- ✅ 建议: {actionable recommendations}
+- ⚠️ 注意: {caveats and limitations}
+
+## 参考来源
+- [1] {source with URL}
 ```
-Good: "I'll clean the data by removing null values and normalizing dates..."
-Bad: "I'll use some sample data to demonstrate..."
-```
 
-### 3. Research Direction Issues
+Save the final report to `workspace/research/{messageId}/report.md`.
 
-**Problems to avoid:**
-- Spending excessive time on irrelevant details
-- Missing obvious conclusions or insights
-- Ignoring visualization insights
-- Oscillating between approaches based on minor feedback
+---
 
-**Best practices:**
-- Start with clear research objectives
-- Prioritize analysis that directly addresses the core question
-- Pay attention to obvious patterns and conclusions
-- When interpreting visualizations, describe what you see before drawing conclusions
-- When receiving feedback, understand the intent before making changes
+## Quality Guidelines
 
-**Research objective checklist:**
-- [ ] What is the main question to answer?
-- [ ] What are the key metrics or outcomes?
-- [ ] What is the scope and what is out of scope?
-- [ ] What level of detail is needed?
+### Common Pitfalls to Avoid
 
-### 4. Learning and Knowledge Issues
+| Pitfall | Prevention |
+|---------|------------|
+| Using unreliable data sources | Prefer official docs, peer-reviewed papers, established databases |
+| Skipping data cleaning | Always clean and validate data before analysis |
+| Using mock data without permission | NEVER do this unless explicitly asked |
+| Spending too long on irrelevant details | Follow the approved outline, flag tangents |
+| Missing obvious conclusions | After each step, explicitly state key takeaway |
+| Switching approaches on minor feedback | Understand feedback intent before pivoting |
+| Forgetting user's source preferences | Respect and remember source preferences throughout |
+| Mixing up similar concepts | Explicitly compare and contrast when in doubt |
 
-**Problems to avoid:**
-- Not reviewing relevant existing research or documentation
-- Forgetting previously established context
-- Failing to provide supporting evidence
-- Repeating the same mistakes
+### Source Quality Hierarchy
 
-**Best practices:**
-- Before starting, review relevant docs, issues, or prior work
-- Maintain context throughout the research session
-- Always cite sources and provide evidence for claims
-- When corrected, update your understanding for future reference
+1. **Prefer**: Official documentation, peer-reviewed papers, primary sources
+2. **Accept**: Well-regarded tech blogs, Stack Overflow with high votes, Wikipedia (cross-referenced)
+3. **Avoid**: Random blogs, unsubstantiated claims, AI summaries without sources
+4. **Never**: Fabricate sources or data
 
-### 5. Knowledge Confusion Issues
+### Quality Checklist
 
-**Problems to avoid:**
-- Mixing up similar but distinct concepts
-- Repeating errors after verbal correction
-- Inconsistent application of learned knowledge
+Before completing research:
 
-**Best practices:**
-- When dealing with similar concepts, explicitly compare and contrast them
-- If corrected, restate the correct understanding to confirm
-- For complex topics, create structured summaries or comparison tables
-
-### 6. Skill Overload Awareness
-
-**Context:** Having too many skills can lead to poor skill selection, like an inexperienced waiter struggling with an oversized menu.
-
-**Best practices:**
-- Trust the skill matching system - relevant skills will be suggested
-- Focus on the task at hand rather than exploring all available capabilities
-- If a skill seems relevant, use it; don't second-guess the matching
-
-## Research Workflow
-
-### Phase 1: Planning
-
-1. **Clarify objectives**: What question(s) need to be answered?
-2. **Identify data sources**: Where will information come from?
-3. **Define scope**: What's in scope and out of scope?
-4. **Estimate effort**: Is this a quick lookup or deep analysis?
-
-### Phase 2: Execution
-
-1. **Gather data** from approved sources
-2. **Clean and validate** data quality
-3. **Analyze** using appropriate methods
-4. **Document** findings with evidence
-
-### Phase 3: Synthesis
-
-1. **Summarize** key findings
-2. **Visualize** if helpful (charts, tables, diagrams)
-3. **Cite sources** for all claims
-4. **Highlight limitations** and uncertainties
-
-### Phase 4: Review
-
-1. **Check completeness**: Did you answer the main question?
-2. **Verify accuracy**: Are sources cited correctly?
-3. **Get feedback**: Does the output meet user needs?
-
-## Quality Checklist
-
-Before completing a research task:
-
+- [ ] Research objectives clearly addressed
 - [ ] All data from approved/reliable sources
 - [ ] No mock data used without explicit permission
-- [ ] Research objectives clearly addressed
 - [ ] Evidence provided for key claims
 - [ ] Sources properly cited
 - [ ] Limitations acknowledged
-- [ ] User can reproduce the findings
 
-## Example: Good vs Bad Research
+---
 
-### Bad Example
-```
-"I searched for information about X and found some articles.
-The data shows Y is better than Z. Here's my analysis..."
-```
-Problems: No sources cited, no evidence, vague data reference.
+## DO NOT
 
-### Good Example
-```
-"Based on the official documentation from [source] and the
-research paper [citation], I analyzed the differences between
-Y and Z. Key findings:
-
-1. **Performance**: Y showed 40% better latency (source: benchmark report)
-2. **Cost**: Z is 20% cheaper for small workloads (source: pricing page)
-3. **Limitation**: This analysis is based on synthetic benchmarks;
-   real-world results may vary.
-
-Sources:
-- [1] Official docs: https://...
-- [2] Research paper: https://...
-"
-```
+- ❌ Start executing without an approved outline (except simple lookups)
+- ❌ Use mock data or fabricate sources
+- ❌ Ignore user interventions during execution
+- ❌ Deliver results without citing sources
+- ❌ Continue silently when encountering contradictions
+- ❌ Over-complicate simple requests
 
 ## Related
 
+- Issue #1339: Agentic Research interactive workflow
 - Issue #1021: Research task common complaints and improvements
-- Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
