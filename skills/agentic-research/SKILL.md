@@ -171,7 +171,17 @@ Sources:
 "
 ```
 
+## Report Templates
+
+For structured research delivery, use the templates in [report-templates.md](report-templates.md):
+
+- **Executive Summary** — Quick takeaways for decision-makers
+- **Full Report** — Comprehensive documentation with methodology
+- **Comparison** — A vs B analysis with feature matrix
+- **Annotated Bibliography** — Source survey with credibility ratings
+
 ## Related
 
+- Issue #1339: Agentic Research interactive workflow
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
