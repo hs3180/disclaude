@@ -86,6 +86,13 @@ describe('buildThreadContextSection', () => {
     const result = buildThreadContextSection('some thread context');
     expect(result).toContain('oldest to newest');
   });
+
+  it('should include coreference resolution guidance for ambiguous references', () => {
+    const result = buildThreadContextSection('context here');
+    expect(result).toContain('Coreference resolution');
+    expect(result).toContain('do NOT guess');
+    expect(result).toContain('clarify which one');
+  });
 });
 
 describe('buildNextStepGuidance', () => {

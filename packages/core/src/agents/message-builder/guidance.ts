@@ -97,6 +97,8 @@ You are responding in a topic group thread. Here is the conversation history wit
 
 ${threadContext}
 
+**Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the thread history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in this thread — which one are you referring to?"
+
 ---
 `;
 }
