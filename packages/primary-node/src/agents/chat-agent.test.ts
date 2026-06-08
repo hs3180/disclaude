@@ -47,7 +47,7 @@ vi.mock('@disclaude/core', () => {
     buildEnhancedContent: vi.fn((input: any) => input.text),
   })),
   MessageChannel: vi.fn().mockImplementation(() => ({
-    push: vi.fn(),
+    push: vi.fn().mockReturnValue(true),
     close: vi.fn(),
     generator: vi.fn(() => (async function* () { /* empty */ })()),
   })),
@@ -869,6 +869,72 @@ describe('ChatAgent (primary-node)', () => {
         (call: any[]) => call[0] === 'oc_topic_chat' && typeof call[1] === 'string' && call[1].includes('Using tool'),
       );
       expect(userCalls.length).toBe(0);
+    });
+  });
+
+  describe('Issue #3985: isBusy / isProcessingMessage', () => {
+    it('should return false for isBusy initially', () => {
+      expect(chatAgent.isBusy).toBe(false);
+    });
+
+    it('should return true for isBusy when processing a message', () => {
+      // Skip the async history loading so processMessage reaches the push synchronously
+      (chatAgent as any).firstMessageHistoryLoaded = true;
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      expect(chatAgent.isBusy).toBe(true);
+    });
+
+    it('should reset isProcessingMessage on reset', () => {
+      (chatAgent as any).firstMessageHistoryLoaded = true;
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      expect(chatAgent.isBusy).toBe(true);
+
+      chatAgent.reset();
+      expect(chatAgent.isBusy).toBe(false);
+    });
+
+    it('should reset isProcessingMessage on shutdown', async () => {
+      (chatAgent as any).firstMessageHistoryLoaded = true;
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      expect(chatAgent.isBusy).toBe(true);
+
+      await chatAgent.shutdown();
+      expect(chatAgent.isBusy).toBe(false);
+    });
+
+    it('should reset isProcessingMessage when channel push is rejected', () => {
+      (chatAgent as any).firstMessageHistoryLoaded = true;
+      // Start a session to create a channel
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      expect(chatAgent.isBusy).toBe(true);
+
+      // Simulate channel rejection by making push return false
+      const {channel} = (chatAgent as any);
+      channel.push = vi.fn().mockReturnValue(false);
+
+      // Send another message — should be rejected and isProcessingMessage reset
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'second', messageId: 'msg_2' });
+      expect(chatAgent.isBusy).toBe(false);
+    });
+
+    it('should reset isProcessingMessage after result is received', async () => {
+      // Create an iterator that yields a result message then ends
+      async function* resultIterator() {
+        yield { type: 'result', subtype: 'success', result: 'done' };
+      }
+
+      (chatAgent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: resultIterator(),
+      });
+
+      (chatAgent as any).firstMessageHistoryLoaded = true;
+      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      expect(chatAgent.isBusy).toBe(true);
+
+      // Wait for the result to be processed
+      await new Promise<void>(r => setTimeout(r, 100));
+      expect(chatAgent.isBusy).toBe(false);
     });
   });
 });
