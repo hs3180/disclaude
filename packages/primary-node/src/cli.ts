@@ -149,7 +149,7 @@ async function main(): Promise<void> {
   // can block startup after container restart due to PID reuse).
   const lockfilePath = process.env.LOCKFILE_PATH
     ?? path.resolve(process.env.LOG_DIR ?? path.join(homedir(), 'Library/Logs/disclaude'), 'disclaude.pid');
-  const processLock = lockfilePath
+  const processLock = lockfilePath.trim()
     ? new ProcessLock({ lockfilePath, logger })
     : null;
   if (processLock && !processLock.acquire()) {

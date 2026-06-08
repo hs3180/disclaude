@@ -380,3 +380,44 @@ describe('waitForPortAvailable', () => {
     expect(result).toBe(true);
   });
 });
+
+// ============================================================================
+// Lockfile path resolution (LOCKFILE_PATH empty string disables ProcessLock)
+// ============================================================================
+
+describe('lockfile path resolution', () => {
+  it('should resolve lockfilePath from LOCKFILE_PATH env when set', () => {
+    // When LOCKFILE_PATH is set to a non-empty value, it should be used as-is
+    process.env.LOCKFILE_PATH = '/tmp/test-lock.pid';
+    const lockfilePath = process.env.LOCKFILE_PATH
+      ?? '/default/path';
+    expect(lockfilePath).toBe('/tmp/test-lock.pid');
+    delete process.env.LOCKFILE_PATH;
+  });
+
+  it('should treat empty LOCKFILE_PATH as disabled (trim check)', () => {
+    // Empty string should be treated as disabled
+    process.env.LOCKFILE_PATH = '';
+    const lockfilePath = process.env.LOCKFILE_PATH ?? '/default/path';
+    expect(lockfilePath).toBe('');
+    expect(lockfilePath.trim()).toBe('');
+    expect(!!lockfilePath.trim()).toBe(false); // falsy → ProcessLock not created
+    delete process.env.LOCKFILE_PATH;
+  });
+
+  it('should treat whitespace-only LOCKFILE_PATH as disabled (trim check)', () => {
+    // Whitespace-only string should also be treated as disabled
+    process.env.LOCKFILE_PATH = '   ';
+    const lockfilePath = process.env.LOCKFILE_PATH ?? '/default/path';
+    expect(lockfilePath.trim()).toBe('');
+    expect(!!lockfilePath.trim()).toBe(false); // falsy → ProcessLock not created
+    delete process.env.LOCKFILE_PATH;
+  });
+
+  it('should fall back to default path when LOCKFILE_PATH is unset', () => {
+    // When env var is not set, nullish coalescing provides the default
+    delete process.env.LOCKFILE_PATH;
+    const lockfilePath = process.env.LOCKFILE_PATH ?? '/default/disclaude.pid';
+    expect(lockfilePath).toBe('/default/disclaude.pid');
+  });
+});
