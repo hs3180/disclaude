@@ -1251,6 +1251,7 @@ export class MessageHandler {
     ).catch(err => {
       logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
     });
+
     if (buttonText) {
       try {
         await this.callbacks.sendMessage({
