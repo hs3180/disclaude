@@ -130,7 +130,9 @@ export class MessageBuilder {
     }
 
     // History sections (framework-agnostic)
-    const chatHistorySection = buildChatHistorySection(msg.chatHistoryContext);
+    // Issue #3989: For topic threads, skip flat chat history — use thread context only
+    // to avoid mixing messages from different threads into the agent's context.
+    const chatHistorySection = isTopicThread ? '' : buildChatHistorySection(msg.chatHistoryContext);
     const persistedHistorySection = buildPersistedHistorySection(msg.persistedHistoryContext);
     const threadContextSection = buildThreadContextSection(msg.threadContext);
 

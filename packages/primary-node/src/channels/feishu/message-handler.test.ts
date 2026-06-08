@@ -1584,6 +1584,8 @@ describe('MessageHandler', () => {
       const rootIdx = msg.metadata.threadContext.indexOf('Root message');
       const replyIdx = msg.metadata.threadContext.indexOf('First reply');
       expect(rootIdx).toBeLessThan(replyIdx);
+      // Issue #3989: topic groups should NOT get flat chat history
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
     });
 
     it('should not fetch thread context for non-topic groups', async () => {
