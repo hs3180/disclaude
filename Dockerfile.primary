@@ -51,15 +51,16 @@ COPY packages ./packages
 ENV BUN_CONFIG_REGISTRY=${NPM_REGISTRY}
 RUN bun install --frozen-lockfile
 
-# Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
-COPY skills ./skills
-
 # Build the project
 # Note: root "build" script uses "npm run build -ws" which bun misinterprets
 # (recursively expands -ws flags). Call tsc directly instead.
 # Use root tsconfig references to build all packages (core → mcp-server → primary-node)
 # Using local tsc binary avoids npx resolution overhead in Alpine
 RUN ./node_modules/.bin/tsc -b
+
+# Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
+# Note: placed after build step to improve Docker layer caching - skills changes won't invalidate the build cache
+COPY skills ./skills
 
 # Prune devDependencies for production
 # Note: cache cleanup reduces builder layer size (no impact on final multi-stage image)
