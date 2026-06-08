@@ -44,17 +44,15 @@ RUN apk add --no-cache python3 make g++ && \
 COPY package.json package-lock.json ./
 COPY packages ./packages
 
-# Install dependencies using bun (uses bun.lock when present, falls back to package-lock.json)
-# Note: bun.lock is registry-agnostic (empty URL fields). BUN_CONFIG_REGISTRY controls
-# which registry bun resolves from, so mirrors like npmmirror work transparently (Issue #2283).
+# Install dependencies using bun
+# Bun reads package-lock.json and generates bun.lock on the fly (single source of truth).
+# BUN_CONFIG_REGISTRY controls which registry bun resolves from (Issue #2283).
 ENV BUN_CONFIG_REGISTRY=${NPM_REGISTRY}
 RUN bun install
 
 # Build the project
-# Note: root "build" script uses "npm run build -ws" which bun misinterprets
-# (recursively expands -ws flags). Call tsc directly instead.
-# Use root tsconfig references to build all packages (core → mcp-server → primary-node)
-# Using local tsc binary avoids npx resolution overhead in Alpine
+# Root "build" script uses "tsc -b" which follows project references to build all packages
+# (core → mcp-server → primary-node). Using local tsc binary avoids npx overhead in Alpine.
 RUN ./node_modules/.bin/tsc -b
 
 # Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
