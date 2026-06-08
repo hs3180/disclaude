@@ -143,12 +143,21 @@ async function main(): Promise<void> {
   // Issue #3417: Acquire process lock to prevent multiple concurrent instances.
   // When launchd restarts after a crash, the old process may still be exiting.
   // The PID file lock ensures only one instance runs at a time.
+  //
+  // Set LOCKFILE_PATH to empty string to disable (e.g., Docker where
+  // restart policy handles singleton enforcement and stale lockfiles
+  // can block startup after container restart due to PID reuse).
   const lockfilePath = process.env.LOCKFILE_PATH
     ?? path.resolve(process.env.LOG_DIR ?? path.join(homedir(), 'Library/Logs/disclaude'), 'disclaude.pid');
-  const processLock = new ProcessLock({ lockfilePath, logger });
-  if (!processLock.acquire()) {
+  const processLock = lockfilePath.trim()
+    ? new ProcessLock({ lockfilePath, logger })
+    : null;
+  if (processLock && !processLock.acquire()) {
     console.error('Error: Another instance is already running. Exiting.');
     process.exit(1);
+  }
+  if (!processLock) {
+    logger.info('PID lockfile disabled (LOCKFILE_PATH is empty)');
   }
 
   // Load configuration if provided
@@ -158,7 +167,7 @@ async function main(): Promise<void> {
     if (!config._fromFile) {
       logger.error({ path: options.configPath }, 'Failed to load configuration file');
       console.error(`Error: Could not load configuration file: ${options.configPath}`);
-      processLock.release();
+      processLock?.release();
       process.exit(1);
     }
     setLoadedConfig(config);
@@ -183,7 +192,7 @@ async function main(): Promise<void> {
     console.error('Error: At least one channel must be configured.');
     console.error('  - For Feishu: set feishu.appId and feishu.appSecret');
     console.error('  - For REST: set channels.rest.port, host, and fileStorageDir');
-    processLock.release();
+    processLock?.release();
     process.exit(1);
   }
 
@@ -206,7 +215,7 @@ async function main(): Promise<void> {
         'Port is still in use after waiting. Another instance may be running.'
       );
       console.error(`Error: Port ${restConf.port} is still in use after waiting. Exiting.`);
-      processLock.release();
+      processLock?.release();
       process.exit(1);
     }
   }
@@ -235,7 +244,7 @@ async function main(): Promise<void> {
   } catch (error) {
     logger.error({ err: error }, 'Failed to get agent configuration');
     console.error('Error: No API key configured. Please set up disclaude.config.yaml with glm or anthropic settings.');
-    processLock.release();
+    processLock?.release();
     process.exit(1);
   }
 
@@ -355,7 +364,7 @@ async function main(): Promise<void> {
       await lifecycleManager.stopAll();
       await primaryNode.stop();
       // Issue #3417: Release process lock on shutdown so next instance can start immediately.
-      processLock.release();
+      processLock?.release();
       logger.info('Primary Node stopped');
 
       // Flush all buffered log entries to disk before exiting.
@@ -368,7 +377,7 @@ async function main(): Promise<void> {
       logger.error({ err: error }, 'Error during shutdown');
       // Best-effort flush even on error
       await flushLogger().catch(() => {});
-      processLock.release();
+      processLock?.release();
       process.exit(1);
     }
   };
@@ -384,7 +393,7 @@ async function main(): Promise<void> {
   // the PID file behind, blocking subsequent starts if the PID gets recycled.
   process.on('uncaughtException', async (error) => {
     logger.error({ err: error }, 'Uncaught exception');
-    processLock.release();
+    processLock?.release();
     await flushLogger().catch(() => {});
     process.exit(1);
   });
@@ -421,7 +430,7 @@ async function main(): Promise<void> {
       const apiPortReady = await isPortAvailable(options.apiPort, 'localhost');
       if (!apiPortReady) {
         console.error(`Error: API port ${options.apiPort} is already in use. Exiting.`);
-        processLock.release();
+        processLock?.release();
         process.exit(1);
       }
       httpApiServer = new HttpApiServer({ port: options.apiPort, apiToken: options.apiToken });
@@ -449,7 +458,7 @@ async function main(): Promise<void> {
   } catch (error) {
     logger.error({ err: error }, 'Failed to start Primary Node');
     console.error('Failed to start Primary Node:', error instanceof Error ? error.message : String(error));
-    processLock.release();
+    processLock?.release();
     process.exit(1);
   }
 }
