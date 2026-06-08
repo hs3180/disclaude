@@ -13,8 +13,8 @@
     "disclaude-mcp": "./packages/mcp-server/dist/cli.js"
   },
   "scripts": {
-    "build": "npm run build -ws --if-present",
-    "build:packages": "npm run build -ws --if-present",
+    "build": "tsc -b",
+    "build:packages": "tsc -b",
     "build:core": "npm run build --workspace=@disclaude/core",
     "build:primary": "npm run build --workspace=@disclaude/primary-node",
     "build:mcp": "npm run build --workspace=@disclaude/mcp-server",
