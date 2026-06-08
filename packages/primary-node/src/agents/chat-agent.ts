@@ -76,6 +76,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private channel?: MessageChannel;
   private isSessionActive = false;
 
+  // Issue #3985: Track whether the agent is actively processing a user message.
+  // Unlike isSessionActive (which stays true as long as the agent loop is open),
+  // this flag is true only between receiving a user message and receiving the
+  // corresponding `result` from the SDK. This allows the scheduler to distinguish
+  // between "session exists but idle" and "actively processing a message".
+  private isProcessingMessage = false;
+
   // Issue #2926: AbortController for immediate stop/reset of running Agent loop
   private abortController: AbortController | null = null;
 
@@ -222,15 +229,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /**
    * Check if this agent is currently busy processing a message.
    * Issue #3931: Used by scheduler to skip blocking tasks when agent is busy.
-   *
-   * Uses `isSessionActive` as the authoritative indicator rather than
-   * `taskCompletionPromise` to avoid timing windows where the promise
-   * is cleared but the session is still active (e.g., during error recovery).
+   * Issue #3985: Changed from isSessionActive to isProcessingMessage to correctly
+   * distinguish between "session exists but idle" and "actively processing a message".
+   * Previously, isSessionActive stayed true as long as the agent loop was open,
+   * causing blocking tasks to be skipped even when the agent was idle between turns.
    *
    * @returns true if the agent is actively processing a message
    */
   get isBusy(): boolean {
-    return this.isSessionActive;
+    return this.isProcessingMessage;
   }
 
   /**
@@ -719,10 +726,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Push message to channel
     if (this.channel) {
+      // Issue #3985: Mark as processing when a user message is pushed to the channel.
+      this.isProcessingMessage = true;
       const accepted = this.channel.push(userMessage);
       if (!accepted) {
         // Issue #2007: Channel is closed — message would be silently dropped.
         // Notify the user so they know the action was not processed.
+        // Issue #3985: Reset isProcessingMessage since the message was not actually processed.
+        this.isProcessingMessage = false;
         this.logger.warn({ chatId, messageId }, 'Message rejected: channel is closed');
         this.callbacks.sendMessage(chatId, '⚠️ 消息未能送达，会话可能已结束。请发送 /reset 重置会话后重试。').catch((notifyErr) => {
           this.logger.error({ err: notifyErr, chatId }, 'Failed to send channel-closed notification');
@@ -881,6 +892,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         errorStack: err instanceof Error ? err.stack : undefined,
       }, 'Agent loop error');
       this.isSessionActive = false;
+      this.isProcessingMessage = false;
 
       // Issue #3124: Reject completion promise on outer catch
       this.taskCompletionReject?.(err instanceof Error ? err : new Error(String(err)));
@@ -1046,6 +1058,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
 
+          // Issue #3985: Mark as not processing after receiving result.
+          // The agent is now idle between turns — blocking tasks can execute.
+          this.isProcessingMessage = false;
+
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.onDone(chatId, threadRoot);
@@ -1119,6 +1135,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // 启动失败不触发重试，直接标记会话为非活跃
         this.isSessionActive = false;
+        this.isProcessingMessage = false;
 
         // Issue #3124: Reject completion promise on startup failure
         this.taskCompletionReject?.(iteratorError);
@@ -1172,6 +1189,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Iterator ended without explicit close - this is unexpected
     this.isSessionActive = false;
+    this.isProcessingMessage = false;
 
     // Issue #3124: In once-mode, resolve completion and skip restart logic.
     // The channel was closed by the result handler or an error occurred.
@@ -1257,6 +1275,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Mark session as inactive BEFORE closing to signal explicit close
     this.isSessionActive = false;
+    this.isProcessingMessage = false;
 
     // Close channel and query
     if (this.channel) {
@@ -1408,6 +1427,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Mark session as inactive
     this.isSessionActive = false;
+    this.isProcessingMessage = false;
 
     // Issue #2926: Abort any running agent loop
     if (this.abortController) {
