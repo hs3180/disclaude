@@ -41,10 +41,10 @@ RUN apk add --no-cache python3 make g++ && \
     npm install -g bun
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json bun.lock ./
 COPY packages ./packages
 
-# Install dependencies using bun (reads package-lock.json when bun.lockb is absent)
+# Install dependencies using bun (uses bun.lockb when present, falls back to package-lock.json)
 # Configure registry via BUN_CONFIG_REGISTRY for custom npm mirrors (Issue #2283)
 ENV BUN_CONFIG_REGISTRY=${NPM_REGISTRY}
 RUN bun install --frozen-lockfile
@@ -53,7 +53,9 @@ RUN bun install --frozen-lockfile
 COPY skills ./skills
 
 # Build the project
-RUN bun run build
+# Note: root "build" script uses "npm run build -ws" which bun misinterprets
+# (recursively expands -ws flags). Call tsc directly instead.
+RUN npx tsc -b packages/primary-node
 
 # Prune devDependencies for production
 # Note: cache cleanup reduces builder layer size (no impact on final multi-stage image)
