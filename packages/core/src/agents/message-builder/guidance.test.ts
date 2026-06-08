@@ -45,6 +45,13 @@ describe('buildChatHistorySection', () => {
     const result = buildChatHistorySection('context here');
     expect(result).toContain('Do not ask the user what they need');
   });
+
+  it('should include coreference resolution guidance for ambiguous references', () => {
+    const result = buildChatHistorySection('context here');
+    expect(result).toContain('Coreference resolution');
+    expect(result).toContain('do NOT guess');
+    expect(result).toContain('clarify which one');
+  });
 });
 
 describe('buildPersistedHistorySection', () => {

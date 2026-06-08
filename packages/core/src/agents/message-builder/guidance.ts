@@ -37,7 +37,9 @@ You were @mentioned in a group chat. Here's the recent conversation context:
 
 ${chatHistoryContext}
 
-**Important**: If the user's message above is empty (only an @mention with no text), look at the last question or request in the chat history and proactively answer it. Do not ask the user what they need — they are @mentioning you to get an answer to the pending question.
+**Important**:
+- If the user's message above is empty (only an @mention with no text), look at the last question or request in the chat history and proactively answer it. Do not ask the user what they need — they are @mentioning you to get an answer to the pending question.
+- **Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the chat history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in the recent history — which one are you referring to?"
 
 ---
 `;
