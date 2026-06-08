@@ -44,8 +44,10 @@ RUN apk add --no-cache python3 make g++ && \
 COPY package.json package-lock.json bun.lock ./
 COPY packages ./packages
 
-# Install dependencies using bun (uses bun.lockb when present, falls back to package-lock.json)
-# Configure registry via BUN_CONFIG_REGISTRY for custom npm mirrors (Issue #2283)
+# Install dependencies using bun (uses bun.lock when present, falls back to package-lock.json)
+# Note: bun.lock may contain registry URLs from the environment where it was generated.
+# BUN_CONFIG_REGISTRY overrides the registry for resolution, but lockfile URLs take precedence
+# for already-resolved packages. Regenerate bun.lock if switching registries (Issue #2283).
 ENV BUN_CONFIG_REGISTRY=${NPM_REGISTRY}
 RUN bun install --frozen-lockfile
 
@@ -55,7 +57,9 @@ COPY skills ./skills
 # Build the project
 # Note: root "build" script uses "npm run build -ws" which bun misinterprets
 # (recursively expands -ws flags). Call tsc directly instead.
-RUN npx tsc -b packages/primary-node
+# Use root tsconfig references to build all packages (core → mcp-server → primary-node)
+# Using local tsc binary avoids npx resolution overhead in Alpine
+RUN ./node_modules/.bin/tsc -b
 
 # Prune devDependencies for production
 # Note: cache cleanup reduces builder layer size (no impact on final multi-stage image)
