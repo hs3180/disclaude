@@ -1238,6 +1238,18 @@ export class MessageHandler {
       'Card action received'
     );
 
+    // Issue #3995: Log card click event as incoming message for history
+    const clickDescription = `用户点击了按钮「${action.text || action.value}」`;
+    messageLogger.logIncomingMessage(
+      `card_action_${message_id}_${Date.now()}`,
+      user?.sender_id?.open_id || 'unknown',
+      chat_id,
+      clickDescription,
+      'card_action',
+    ).catch(err => {
+      logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
+    });
+
     // Send user-visible confirmation message
     const buttonText = action.text || action.value;
     if (buttonText) {
