@@ -442,8 +442,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
         // Issue #3995: Extract card text content when description is missing
-        const cardDescription = message.description
-          || (message.card ? extractCardTextContent(message.card as Record<string, unknown>) : '[card]');
+        const rawCardDescription = message.description
+          || (message.card ? extractCardTextContent(message.card) : '[card]');
+        const cardDescription = rawCardDescription.length > 200
+          ? `${rawCardDescription.slice(0, 197)}...`
+          : rawCardDescription;
         logOutgoing(messageId, cardDescription, 'interactive');
         return messageId;
       }
@@ -590,8 +593,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
 
       case 'done':
-        logger.debug({ chatId: message.chatId }, 'Task completed (done signal)');
-        logOutgoing(`done_${message.chatId}_${Date.now()}`, '[task completed]', 'done');
+        logger.info({ chatId: message.chatId }, 'Task completed (done signal)');
         return;
 
       default:

@@ -684,5 +684,48 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
 
       expect(mockLogOutgoingMessage).not.toHaveBeenCalled();
     });
+
+    it('should extract card text content when description is missing', async () => {
+      const { client } = createMockClient();
+      const channel = createTestChannel(client);
+
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card: {
+          header: { title: { content: 'Status Update' } },
+          elements: [
+            { tag: 'markdown', content: 'Task completed successfully' },
+          ],
+        },
+      });
+
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith(
+        'new_msg_001',
+        'chat_123',
+        expect.stringContaining('Status Update'),
+        'interactive',
+      );
+    });
+
+    it('should truncate long card description in logs', async () => {
+      const { client } = createMockClient();
+      const channel = createTestChannel(client);
+
+      const longDescription = 'A'.repeat(300);
+      await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'card',
+        card: { config: {}, elements: [] },
+        description: longDescription,
+      });
+
+      expect(mockLogOutgoingMessage).toHaveBeenCalledWith(
+        'new_msg_001',
+        'chat_123',
+        expect.stringMatching(/^A{197}\.\.\.$/),
+        'interactive',
+      );
+    });
   });
 });
