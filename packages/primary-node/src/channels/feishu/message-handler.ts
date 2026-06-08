@@ -1139,17 +1139,18 @@ export class MessageHandler {
     }
 
     // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
+    // Issue #3989: For topic groups, use thread context only (not flat chat history)
+    // to avoid mixing messages from different threads.
     const isTriggerModeMention = this.isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
-
-    if (isTriggerModeMention) {
-      chatHistoryContext = await this.getChatHistoryContext(chat_id);
-    }
-
-    // Issue #3641 sub-problem 1: Get thread context for topic groups
     let threadContext: string | undefined;
+
     if (chat_type === 'topic' && parent_id) {
+      // Topic groups: build thread context from parent chain only
       threadContext = await this.getThreadContext(parent_id);
+    } else if (isTriggerModeMention) {
+      // Regular groups: use flat chat history
+      chatHistoryContext = await this.getChatHistoryContext(chat_id);
     }
 
     // Build metadata
