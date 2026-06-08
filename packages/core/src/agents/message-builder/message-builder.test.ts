@@ -680,6 +680,23 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Recent Chat History');
       expect(result).toContain('Thread Context');
     });
+
+    it('should skip flat chat history for topic threads (Issue #3989)', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'topic',
+        chatHistoryContext: 'Flat chat history...',
+        threadContext: 'Thread content...',
+      }, 'chat-456');
+
+      // Topic threads should NOT get flat chat history
+      expect(result).not.toContain('Recent Chat History');
+      expect(result).not.toContain('Flat chat history');
+      // But thread context should be present
+      expect(result).toContain('Thread Context');
+      expect(result).toContain('Thread content');
+    });
   });
 
   describe('buildEnhancedContent - topic thread detection (Issue #3641)', () => {
