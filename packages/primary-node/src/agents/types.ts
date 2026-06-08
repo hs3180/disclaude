@@ -69,6 +69,14 @@ export interface ChatAgentCallbacks {
    * @returns Chat history context string or undefined if not available
    */
   getChatHistory?: (chatId: string) => Promise<string | undefined>;
+
+  /**
+   * Get log file paths for a chat across multiple days.
+   * Issue #3996: Agent uses these paths to Read full history beyond maxContextLength.
+   * @param chatId - Platform-specific chat identifier
+   * @returns Array of absolute file paths, newest first
+   */
+  getLogFilePaths?: (chatId: string) => Promise<string[]>;
 }
 
 // ============================================================================

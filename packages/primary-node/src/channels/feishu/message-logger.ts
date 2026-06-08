@@ -285,6 +285,44 @@ export class MessageLogger {
   }
 
   /**
+   * Get log file paths for a chat across multiple days.
+   *
+   * Issue #3996: Agent can use these paths to Read full history beyond
+   * maxContextLength, enabling access to long-term conversation context
+   * after session restore or context compaction.
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @param maxDays - Maximum number of days to look back (defaults to historyDays config)
+   * @returns Array of absolute file paths, newest first
+   */
+  async getLogFilePaths(chatId: string, maxDays?: number): Promise<string[]> {
+    try {
+      const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
+
+      const dateDirs = entries
+        .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
+        .sort((a, b) => b.name.localeCompare(a.name));
+
+      const limit = maxDays ?? Config.getSessionRestoreConfig().historyDays;
+      const paths: string[] = [];
+
+      for (let i = 0; i < Math.min(dateDirs.length, limit); i++) {
+        const logPath = path.join(this.chatDir, dateDirs[i].name, `${chatId}.md`);
+        try {
+          await fs.access(logPath);
+          paths.push(logPath);
+        } catch {
+          // File doesn't exist for this day
+        }
+      }
+
+      return paths;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Clear all cached message IDs (for testing).
    */
   clearCache(): void {

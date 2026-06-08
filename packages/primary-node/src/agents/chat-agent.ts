@@ -364,6 +364,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         );
       }
 
+      // Issue #3996: Append log file paths so Agent can Read full history
+      // beyond maxContextLength (e.g., after context compaction).
+      if (this.callbacks.getLogFilePaths) {
+        const logPaths = await this.callbacks.getLogFilePaths(this.boundChatId);
+        if (logPaths.length > 0) {
+          const pathsNote = `\n\n📁 聊天记录文件路径（可 Read 获取完整历史）：\n${
+             logPaths.map(p => `- ${p}`).join('\n')}`;
+          this.persistedHistoryContext = (this.persistedHistoryContext ?? '') + pathsNote;
+        }
+      }
+
       this.historyLoaded = true;
     } catch (error) {
       this.logger.error(
