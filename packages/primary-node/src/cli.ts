@@ -39,6 +39,7 @@ import { createFeishuMessageBuilderOptions } from './messaging/adapters/feishu-m
 import { ChannelLifecycleManager } from './channel-lifecycle-manager.js';
 import { BUILTIN_WIRED_DESCRIPTORS } from './channels/wired-descriptors.js';
 import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
+import { initLarkCliAuth } from './utils/lark-cli-init.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -173,6 +174,12 @@ async function main(): Promise<void> {
   // Provides dependency injection for BaseAgent methods (getGlobalEnv, getWorkspaceDir, etc.)
   // Without this, getGlobalEnv() returns {} and config env vars are silently dropped from SDK subprocess
   createDefaultRuntimeContext();
+
+  // Issue #3987: Auto-configure lark-cli auth from feishu credentials.
+  // Must run AFTER setLoadedConfig() so Config.FEISHU_APP_ID/SECRET are available.
+  // Skills like dissolve-group, lark-docs, pr-scanner and message-handler
+  // resource-download all shell out to lark-cli and need it pre-authenticated.
+  initLarkCliAuth(Config.FEISHU_APP_ID, Config.FEISHU_APP_SECRET, logger);
 
   // Get configuration values from config file
   const rawConfig = Config.getRawConfig() as DisclaudeConfigWithChannels;
