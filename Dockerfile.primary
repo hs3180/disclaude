@@ -45,9 +45,8 @@ COPY package.json package-lock.json bun.lock ./
 COPY packages ./packages
 
 # Install dependencies using bun (uses bun.lock when present, falls back to package-lock.json)
-# Note: bun.lock may contain registry URLs from the environment where it was generated.
-# BUN_CONFIG_REGISTRY overrides the registry for resolution, but lockfile URLs take precedence
-# for already-resolved packages. Regenerate bun.lock if switching registries (Issue #2283).
+# Note: bun.lock is registry-agnostic (empty URL fields). BUN_CONFIG_REGISTRY controls
+# which registry bun resolves from, so mirrors like npmmirror work transparently (Issue #2283).
 ENV BUN_CONFIG_REGISTRY=${NPM_REGISTRY}
 RUN bun install --frozen-lockfile
 
