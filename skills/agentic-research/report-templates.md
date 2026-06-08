@@ -2,16 +2,18 @@
 
 Reference file for `agentic-research` skill. Use these templates when delivering research results.
 
+> **Note**: All templates are written in English. Adapt the output language based on user context when rendering.
+
 ---
 
 ## Template Selection Guide
 
 | Template | Best For | Key Sections |
 |----------|----------|-------------|
-| **Executive Summary** | Decision-makers needing quick takeaways | 核心发现, 建议, 风险 |
-| **Full Report** | Comprehensive research documentation | 背景, 方法, 发现, 分析, 结论 |
-| **Comparison** | A vs B decision making | 特性矩阵, 优劣势, 推荐 |
-| **Annotated Bibliography** | Literature review / source survey | 来源列表, 摘要, 评估 |
+| **Executive Summary** | Decision-makers needing quick takeaways | Key Findings, Recommendations, Risks |
+| **Full Report** | Comprehensive research documentation | Background, Methodology, Findings, Analysis, Conclusion |
+| **Comparison** | A vs B decision making | Feature Matrix, Pros/Cons, Recommendation |
+| **Annotated Bibliography** | Literature review / source survey | Source List, Summary, Assessment |
 
 ---
 
@@ -22,21 +24,21 @@ Reference file for `agentic-research` skill. Use these templates when delivering
 
 > 📅 {date} | ⏱️ {duration}
 
-## 核心发现
+## Key Findings
 
 {2-3 bullet points of the most important findings}
 
-## 建议
+## Recommendations
 
 1. **{Recommendation 1}**: { rationale }
 2. **{Recommendation 2}**: { rationale }
 
-## 风险与局限
+## Risks and Limitations
 
 - ⚠️ { risk or limitation 1 }
 - ⚠️ { risk or limitation 2 }
 
-## 参考来源
+## Sources
 
 - [1] {source}
 - [2] {source}
@@ -49,55 +51,55 @@ Reference file for `agentic-research` skill. Use these templates when delivering
 ```markdown
 # {Research Title}
 
-> 📅 研究时间: {date}
-> ⏱️ 耗时: {duration}
-> 📋 研究范围: {scope summary}
+> 📅 Research Date: {date}
+> ⏱️ Duration: {duration}
+> 📋 Scope: {scope summary}
 
-## 背景
+## Background
 
 {Why this research was needed, what question we are answering}
 
-## 研究方法
+## Methodology
 
 {How the research was conducted, what sources were used}
 
-## 研究发现
+## Findings
 
 ### {Finding Category 1}
 
-- **发现**: {what was found}
-- **证据**: {supporting evidence with source citations}
-- **影响**: {why this matters}
+- **Finding**: {what was found}
+- **Evidence**: {supporting evidence with source citations}
+- **Impact**: {why this matters}
 
 ### {Finding Category 2}
 
-- **发现**: ...
-- **证据**: ...
-- **影响**: ...
+- **Finding**: ...
+- **Evidence**: ...
+- **Impact**: ...
 
 ### {Finding Category N}
 
 ...
 
-## 分析
+## Analysis
 
 {Synthesis of findings, patterns identified, connections between findings}
 
-## 结论
+## Conclusion
 
 {Summary of conclusions drawn from the analysis}
 
-## 建议
+## Recommendations
 
 1. ✅ {actionable recommendation}
 2. ✅ {actionable recommendation}
 
-## 局限性
+## Limitations
 
 - {limitation 1}
 - {limitation 2}
 
-## 参考来源
+## Sources
 
 - [1] {full source citation with URL}
 - [2] {full source citation with URL}
@@ -108,44 +110,44 @@ Reference file for `agentic-research` skill. Use these templates when delivering
 ## 3. Comparison
 
 ```markdown
-# {Item A} vs {Item B} — 对比分析
+# {Item A} vs {Item B} — Comparative Analysis
 
 > 📅 {date} | ⏱️ {duration}
 
-## 概述
+## Overview
 
 {Brief context on why this comparison matters}
 
-## 特性对比
+## Feature Comparison
 
-| 维度 | {Item A} | {Item B} | 备注 |
-|------|----------|----------|------|
+| Dimension | {Item A} | {Item B} | Notes |
+|-----------|----------|----------|-------|
 | {Dimension 1} | {value} | {value} | {note} |
 | {Dimension 2} | {value} | {value} | {note} |
 | {Dimension 3} | {value} | {value} | {note} |
 
-## {Item A} 优势
+## {Item A} Advantages
 
 - {advantage 1}
 - {advantage 2}
 
-## {Item B} 优势
+## {Item B} Advantages
 
 - {advantage 1}
 - {advantage 2}
 
-## 使用场景推荐
+## Scenario Recommendations
 
-| 场景 | 推荐 | 原因 |
-|------|------|------|
+| Scenario | Recommended | Reason |
+|----------|------------|--------|
 | {scenario 1} | {Item A/B} | {why} |
 | {scenario 2} | {Item A/B} | {why} |
 
-## 结论
+## Conclusion
 
 {Overall recommendation with caveats}
 
-## 参考来源
+## Sources
 
 - [1] {source}
 - [2] {source}
@@ -156,35 +158,35 @@ Reference file for `agentic-research` skill. Use these templates when delivering
 ## 4. Annotated Bibliography
 
 ```markdown
-# {Research Topic} — 文献综述
+# {Research Topic} — Literature Review
 
-> 📅 {date} | 📚 {N} 篇来源
+> 📅 {date} | 📚 {N} sources reviewed
 
-## 概述
+## Overview
 
 {Brief overview of the research landscape}
 
-## 来源列表
+## Source List
 
 ### [1] {Source Title}
 
-- **作者**: {author(s)}
-- **日期**: {date}
-- **类型**: {paper/blog/doc/report}
-- **链接**: {URL}
-- **摘要**: {1-2 sentence summary}
-- **关键发现**: {main takeaway}
-- **可信度**: ⭐⭐⭐⭐ {rating with justification}
+- **Author(s)**: {author(s)}
+- **Date**: {date}
+- **Type**: {paper/blog/doc/report}
+- **URL**: {URL}
+- **Summary**: {1-2 sentence summary}
+- **Key Takeaway**: {main takeaway}
+- **Credibility**: ⭐⭐⭐⭐ {rating with justification}
 
 ### [2] {Source Title}
 
 ...
 
-## 综合分析
+## Synthesis
 
 {Common themes, contradictions, gaps in the literature}
 
-## 参考来源
+## Sources
 
 - [1] {full citation}
 - [2] {full citation}
@@ -199,3 +201,4 @@ Reference file for `agentic-research` skill. Use these templates when delivering
 - Always include source citations — never fabricate references
 - Choose the simplest template that covers the research scope
 - For Simple-level research, a brief inline answer is sufficient (no template needed)
+- Adapt output language to match user's language preference when rendering

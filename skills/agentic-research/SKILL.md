@@ -180,6 +180,8 @@ For structured research delivery, use the templates in [report-templates.md](rep
 - **Comparison** — A vs B analysis with feature matrix
 - **Annotated Bibliography** — Source survey with credibility ratings
 
+> Templates are written in English. Adapt the output language based on user context when rendering.
+
 ## Related
 
 - Issue #1339: Agentic Research interactive workflow
