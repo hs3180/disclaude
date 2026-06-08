@@ -732,6 +732,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       if (!accepted) {
         // Issue #2007: Channel is closed — message would be silently dropped.
         // Notify the user so they know the action was not processed.
+        // Issue #3985: Reset isProcessingMessage since the message was not actually processed.
+        this.isProcessingMessage = false;
         this.logger.warn({ chatId, messageId }, 'Message rejected: channel is closed');
         this.callbacks.sendMessage(chatId, '⚠️ 消息未能送达，会话可能已结束。请发送 /reset 重置会话后重试。').catch((notifyErr) => {
           this.logger.error({ err: notifyErr, chatId }, 'Failed to send channel-closed notification');

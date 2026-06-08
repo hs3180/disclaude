@@ -75,8 +75,9 @@ export class PrimaryAgentPool {
   /**
    * Check if the agent for a chatId is currently busy processing.
    * Issue #3931: Encapsulates the busy check so callers don't depend
-   * on ChatAgent internals. Uses ChatAgent.isBusy (based on session
-   * active state) rather than taskComplete to avoid timing windows.
+   * on ChatAgent internals. Uses ChatAgent.isBusy (based on
+   * isProcessingMessage flag per Issue #3985) rather than taskComplete
+   * to avoid timing windows.
    *
    * @param chatId - Chat ID to check
    * @returns true if the agent exists and is busy processing a message
