@@ -76,10 +76,27 @@ Use the `start-discussion` skill pattern:
 
 ```bash
 # Create group via lark-cli
-lark chat create --name "Research: {topic}" --user_ids "{owner_open_id}"
+lark-cli im +chat-create --name "Research: {topic}" --description "Scheduled research: {topic}" --users "{owner_open_id}"
 
-# Record mapping
-echo '{"chatId": "{new_chat_id}", "topic": "{topic}", "type": "research", "workDir": "/data/workspace/research/{slug}"}' >> /data/workspace/bot-chat-mapping.json
+# Record mapping (atomic write)
+cat /data/workspace/bot-chat-mapping.json 2>/dev/null || echo "{}"
+# Then update with new entry and write atomically:
+echo '{ ... updated JSON with new entry ... }' > /data/workspace/bot-chat-mapping.json.tmp \
+  && mv /data/workspace/bot-chat-mapping.json.tmp /data/workspace/bot-chat-mapping.json
+```
+
+New mapping entry format:
+
+```json
+{
+  "research-{slug}": {
+    "chatId": "{new_chat_id}",
+    "topic": "{topic}",
+    "type": "research",
+    "workDir": "/data/workspace/research/{slug}",
+    "createdAt": "{ISO_timestamp}"
+  }
+}
 ```
 
 ### Step 4: Register Schedule Task
@@ -152,7 +169,8 @@ Send a progress card to the Feishu group **only** on phase transitions:
 
 ```json
 {
-  "header": { "title": { "content": "Research Progress: {topic}" } },
+  "config": { "wide_screen_mode": true },
+  "header": { "title": { "content": "Research Progress: {topic}", "tag": "plain_text" }, "template": "blue" },
   "elements": [
     { "tag": "markdown", "content": "**Phase {n}/{total}: {phase_name}**" },
     { "tag": "markdown", "content": "{summary_of_what_was_done}" },
