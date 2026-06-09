@@ -105,8 +105,9 @@ Continue research on {topic}. Read RESEARCH.md state and execute the next pendin
 2. Determine the next pending step based on phase and checklist
 3. Execute that step (web search, data analysis, etc.)
 4. Update RESEARCH.md with findings and mark step complete
-5. Push a progress card to the Feishu group if a phase transition occurred
-6. If all phases complete, render the final report using report templates
+5. Check recent chat messages for user feedback and incorporate if relevant
+6. Push a progress card to the Feishu group if a phase transition occurred
+7. If all phases complete, render the final report using report templates
 ```
 
 ## Execution Flow (Per Tick)
@@ -146,7 +147,33 @@ Update RESEARCH.md:
 - Update `status` field if phase transitioned
 - Increment `phase` if all items in current phase are done
 
-### 5. Push Progress (Optional)
+### 5. Check User Feedback
+
+Before pushing progress, read recent messages in the Feishu group to check for user feedback:
+
+1. **Read last N messages** from the group chat (the chatId in RESEARCH.md frontmatter)
+2. **Filter out** your own messages (bot messages)
+3. **Identify feedback**: look for user directives, suggestions, corrections, or questions
+4. **Evaluate relevance**: does the feedback affect the current research direction?
+5. **Incorporate** if relevant: update RESEARCH.md objectives, add new tasks, or adjust scope
+6. **Acknowledge**: mention in the next progress card that feedback was incorporated
+
+**Important principles**:
+- Feedback is **advisory, not blocking** — do NOT pause execution waiting for user input
+- Agent has **discretion** to decide whether feedback warrants a direction change
+- Be **transparent**: always acknowledge feedback you've incorporated
+- Do NOT change direction for every minor comment — use your judgment
+
+Example of handling feedback:
+
+```
+User message: "我觉得应该重点看 Vue 的 Composition API 性能，而不是 Options API"
+→ Evaluate: This refines the research scope
+→ Action: Add a note in RESEARCH.md under Objectives: "Focus on Vue Composition API performance"
+→ Acknowledge: In next progress card: "已根据反馈调整研究方向，重点分析 Vue Composition API 性能"
+```
+
+### 6. Push Progress (Optional)
 
 Send a progress card to the Feishu group **only** on phase transitions:
 
@@ -163,7 +190,7 @@ Send a progress card to the Feishu group **only** on phase transitions:
 
 Do NOT push on every minor step — only on meaningful milestones to avoid notification noise.
 
-### 6. Completion
+### 7. Completion
 
 When all phases are done:
 
@@ -268,8 +295,9 @@ Continue research. Read RESEARCH.md state and execute next pending step.
 1. Read `/data/workspace/research/react-vue-perf/RESEARCH.md`
 2. Execute the next unchecked item in the current phase
 3. Update RESEARCH.md with findings
-4. Push progress card on phase transitions
-5. On completion, render comparison report using report-templates.md
+4. Check recent chat messages for user feedback
+5. Push progress card on phase transitions
+6. On completion, render comparison report using report-templates.md
 ```
 
 ## Usage Notes
