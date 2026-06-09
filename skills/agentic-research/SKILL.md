@@ -171,6 +171,19 @@ Sources:
 "
 ```
 
+## Report Templates
+
+When producing research output, use the structured templates in the [report templates reference](./report-templates.md) as a starting point. Available templates:
+
+| Template | Best For |
+|----------|----------|
+| Executive Summary | Quick overviews, decision-making |
+| Full Report | Comprehensive analysis, documentation |
+| Comparison | Evaluating 2+ options side-by-side |
+| Annotated Bibliography | Literature review, source catalog |
+
+Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
