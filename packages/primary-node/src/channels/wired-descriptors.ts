@@ -122,6 +122,8 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       sendDoneSignal: false,
       // Issue #1863: Wire getChatHistory callback for session restoration
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
+      // Issue #3996: Wire getChatLogFilePaths so agent knows where log files are
+      getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
     }),
 
   createMessageHandler: (channel, context) =>
