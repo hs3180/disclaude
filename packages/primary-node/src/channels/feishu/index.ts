@@ -14,6 +14,7 @@ export type {
   FeishuCardActionEventData,
   FeishuChatMemberAddedEventData,
   FeishuP2PChatEnteredEventData,
+  TopicNotifyConfig,
 } from '@disclaude/core';
 
 // Trigger Mode (Issue #2193: renamed from PassiveMode)
@@ -39,3 +40,6 @@ export {
   type WsConnectionManagerEvents,
   type WsConnectionManagerConfig,
 } from './ws-connection-manager.js';
+
+// Topic Group Notifier (Issue #4031)
+export { TopicNotifier } from './topic-notifier.js';

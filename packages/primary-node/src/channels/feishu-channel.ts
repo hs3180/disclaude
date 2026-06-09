@@ -36,6 +36,8 @@ import {
   messageLogger,
   type MessageCallbacks,
   WsConnectionManager,
+  TopicNotifier,
+  type TopicNotifyConfig,
 } from './feishu/index.js';
 import { VIDEO_EXTENSIONS, extractVideoCover } from '../utils/video-cover-extractor.js';
 import { extractCardTextContent } from '../platforms/feishu/card-builders/card-text-extractor.js';
@@ -102,6 +104,8 @@ export interface FeishuChannelConfig {
   appId?: string;
   /** Feishu App Secret */
   appSecret?: string;
+  /** Topic group notification config (Issue #4031) */
+  topicNotify?: TopicNotifyConfig;
   /**
    * Route card action to Worker Node if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
@@ -155,6 +159,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   /** WebSocket connection manager for health detection & auto-reconnect (Issue #1351) */
   private wsConnectionManager?: WsConnectionManager;
+
+  /** Topic group notifier (Issue #4031) */
+  private topicNotifier: TopicNotifier;
 
   // Modular components
   private triggerModeManager: TriggerModeManager;
@@ -211,6 +218,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       tenantAccessToken: process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN || '',
     });
 
+    // Initialize topic group notifier (Issue #4031)
+    this.topicNotifier = new TopicNotifier(config.topicNotify);
+
     logger.info({ id: this.id }, 'FeishuChannel created');
   }
 
@@ -232,8 +242,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     const eventDispatcher = new lark.EventDispatcher({}).register({
       'im.message.receive_v1': async (data: unknown) => {
+        // Fire-and-forget topic group notification (Issue #4031)
+        const eventData = data as FeishuEventData;
+        if (eventData.event) {
+          void this.topicNotifier.notify(eventData.event);
+        }
+
         try {
-          await this.feishuMessageHandler.handleMessageReceive(data as FeishuEventData);
+          await this.feishuMessageHandler.handleMessageReceive(eventData);
         } catch (error) {
           logger.error({ err: error }, 'Failed to handle message receive');
           await this.notifyUserDirectly(

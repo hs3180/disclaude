@@ -68,6 +68,15 @@ feishu:
   # CLI chat ID for testing (optional)
   cliChatId: ""
 
+  # Topic group notification (Issue #4031)
+  # Push real-time notifications when topic group messages are received.
+  # Requires the bot to be in the topic group(s).
+  # topicNotify:
+  #   enabled: true
+  #   backends: ['osascript']  # Options: osascript, webhook
+  #   webhookUrl: "http://localhost:3000/notify"  # Required if 'webhook' backend is used
+  #   chatIds: []  # Empty = all topic groups, or list specific chat IDs
+
   # Message deduplication settings
   deduplication:
     # Maximum number of message IDs to keep in memory

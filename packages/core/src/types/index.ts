@@ -64,6 +64,8 @@ export type {
   FeishuChatMemberAddedEventData,
   FeishuP2PChatEnteredEvent,
   FeishuP2PChatEnteredEventData,
+  TopicGroupNotification,
+  TopicNotifyConfig,
 } from './platform.js';
 
 // WebSocket message types

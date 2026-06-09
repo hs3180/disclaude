@@ -217,3 +217,44 @@ export interface FeishuP2PChatEnteredEventData {
   event?: FeishuP2PChatEnteredEvent;
   [key: string]: unknown;
 }
+
+/**
+ * Topic group notification payload.
+ * Issue #4031: Pushed to local App when a topic group message is received.
+ */
+export interface TopicGroupNotification {
+  /** Notification type */
+  type: 'topic_group_message';
+  /** Chat ID of the topic group */
+  chat_id: string;
+  /** Root message ID (thread root) */
+  root_id: string;
+  /** Thread message ID (the message itself) */
+  thread_id: string;
+  /** Sender info */
+  sender: {
+    open_id: string;
+    name?: string;
+  };
+  /** Plain text summary of the message */
+  content: string;
+  /** Whether this is a reply (vs root post) */
+  is_reply: boolean;
+  /** ISO 8601 timestamp */
+  timestamp: string;
+}
+
+/**
+ * Topic group notifier configuration.
+ * Issue #4031: Configured in disclaude.config.yaml under feishu.topicNotify.
+ */
+export interface TopicNotifyConfig {
+  /** Enable topic group notifications */
+  enabled: boolean;
+  /** Notification backends to use */
+  backends: Array<'osascript' | 'webhook'>;
+  /** Webhook URL for HTTP push (required when backend is 'webhook') */
+  webhookUrl?: string;
+  /** Chat IDs to monitor (empty = all topic groups) */
+  chatIds?: string[];
+}
