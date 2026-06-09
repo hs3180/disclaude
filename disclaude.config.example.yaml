@@ -236,6 +236,7 @@ tools:
     playwright:
       type: "stdio"
       command: "npx"
+      # ⚠️ The default below is for Docker mode. For Host mode, change to http://localhost:9222
       args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
 
     # Example: Add a custom MCP server

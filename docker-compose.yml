@@ -56,6 +56,7 @@ services:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - DISCLAUDE_MODE=primary
+      - HOST=0.0.0.0
       - DISCLAUDE_WORKSPACE_DIR=/data/workspace
       # Docker restart policy handles singleton enforcement; disable PID lockfile
       # to prevent stale lockfile from blocking startup after container restart.
