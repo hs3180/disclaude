@@ -57,11 +57,14 @@ services:
       # Docker restart policy handles singleton enforcement; disable PID lockfile
       # to prevent stale lockfile from blocking startup after container restart.
       - LOCKFILE_PATH=
+      # Enable file logging (set LOG_TO_FILE=true in .env when using Filebeat)
+      - LOG_TO_FILE=${LOG_TO_FILE:-false}
+      - LOG_DIR=/data/logs
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
       - ./workspace:/data/workspace
-      - ./logs:/data/logs
+      - log_data:/data/logs
 
     deploy:
       resources:
@@ -112,7 +115,6 @@ services:
     volumes:
       - ./disclaude.config.test.yaml:/app/disclaude.config.yaml:ro
       - ./workspace:/data/workspace
-      - ./logs:/data/logs
 
     deploy:
       resources:
@@ -212,3 +214,54 @@ services:
 
     profiles:
       - playwright
+
+  # ===========================================================================
+  # Filebeat Log Forwarder (optional)
+  # ===========================================================================
+  # Forwards Pino JSON logs from primary container to Elasticsearch.
+  # Reads from shared Docker volume (log_data), connects to ES via host network.
+  # Configure ES connection in .env (ES_HOST, ES_PORT, ES_USERNAME, ES_PASSWORD).
+  # Start with: docker compose --profile logging up -d
+  filebeat:
+    image: elastic/filebeat:${FILEBEAT_VERSION:-8.18.0}
+    container_name: disclaude-filebeat
+    restart: unless-stopped
+
+    network_mode: host
+
+    depends_on:
+      primary:
+        condition: service_started
+
+    volumes:
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - log_data:/data/logs:ro
+      - filebeat_data:/usr/share/filebeat/data
+
+    environment:
+      - ELASTICSEARCH_HOST=${ES_HOST:-localhost}
+      - ELASTICSEARCH_PORT=${ES_PORT:-9200}
+      # Uncomment the following lines only if your ES requires authentication.
+      # Passing empty strings will cause HTTP 401 on unsecured ES instances.
+      # - ELASTICSEARCH_USERNAME=${ES_USERNAME}
+      # - ELASTICSEARCH_PASSWORD=${ES_PASSWORD}
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5066"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    profiles:
+      - logging
+
+volumes:
+  log_data:
+  filebeat_data:
