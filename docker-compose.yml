@@ -46,13 +46,17 @@ services:
     # Docker restart policy handles process management
     command: ["node", "packages/primary-node/dist/cli.js", "start"]
 
-    # Network mode: host allows container to access host's CDP endpoint
-    network_mode: host
+    # Uses bridge network (disclaude-net) for container-to-container communication
+    # (e.g., CDP endpoint from playwright service). Re-add `network_mode: host`
+    # if primary needs to access other host-local services.
+    networks:
+      - disclaude-net
 
     environment:
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - DISCLAUDE_MODE=primary
+      - HOST=0.0.0.0
       - DISCLAUDE_WORKSPACE_DIR=/data/workspace
       # Docker restart policy handles singleton enforcement; disable PID lockfile
       # to prevent stale lockfile from blocking startup after container restart.
@@ -95,13 +99,14 @@ services:
   # Headless Chromium with CDP for browser automation.
   # Start with: docker compose --profile playwright up -d
   #
-  # The CDP endpoint is available at http://localhost:9222
+  # The CDP endpoint is available at http://disclaude-playwright:9222
+  # within the Docker network (internal only, not exposed to host).
   # Configure in disclaude.config.yaml:
   #   tools:
   #     mcpServers:
   #       playwright:
   #         command: npx
-  #         args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
+  #         args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
   playwright:
     image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.60.0-noble}
     container_name: disclaude-playwright
@@ -133,7 +138,8 @@ services:
           --user-data-dir=/tmp/chrome-cdp \
           about:blank
 
-    network_mode: host
+    networks:
+      - disclaude-net
 
     environment:
       - CDP_PORT=${CDP_PORT:-9222}
@@ -213,3 +219,7 @@ services:
 volumes:
   log_data:
   filebeat_data:
+
+networks:
+  disclaude-net:
+    driver: bridge
