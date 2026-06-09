@@ -141,10 +141,10 @@ Use for in-depth analysis requiring evidence, methodology, and detailed findings
 
 ## 3. Comparison
 
-Use when evaluating two or more options against defined criteria.
+Use when evaluating two or more options against defined criteria. The example below uses two subjects, but you can extend to three or more by adding columns to each table and rows to the scorecard.
 
 ```markdown
-# {Subject_A} vs {Subject_B} — Comparison Analysis
+# {Subject_A} vs {Subject_B} [vs {Subject_C}] — Comparison Analysis
 
 **Date**: {date}
 **Purpose**: {why_this_comparison_matters}
@@ -307,6 +307,7 @@ Use for literature reviews and source catalogs with critical evaluation.
 
 1. **Select the right template** based on the user's needs, not your preference. When unsure, ask the user what format they want.
 2. **Adapt, don't copy**: Templates are starting points. Add or remove sections as needed.
-3. **Always cite sources**: Every claim should have a source reference.
-4. **Be honest about limitations**: Acknowledge data gaps and assumptions.
-5. **Keep it actionable**: Reports should enable decisions, not just present data.
+3. **Finding counts are flexible**: Templates show 2-3 findings as examples. Use as many or as few as the data warrants.
+4. **Always cite sources**: Every claim should have a source reference.
+5. **Be honest about limitations**: Acknowledge data gaps and assumptions.
+6. **Keep it actionable**: Reports should enable decisions, not just present data.
