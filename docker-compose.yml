@@ -90,58 +90,6 @@ services:
       start_period: 40s
 
   # ===========================================================================
-  # Test Primary Node (optional)
-  # ===========================================================================
-  # Minimal primary node for testing - only mounts test config
-  # Use --profile test to start: docker compose --profile test up -d
-  # Note: Uses different ports (3011/3010) to avoid conflict with primary container
-  test-primary:
-    image: disclaude:primary
-    container_name: disclaude-test-primary
-    restart: unless-stopped
-
-    command: ["node", "packages/primary-node/dist/cli.js", "start"]
-
-    network_mode: host
-
-    environment:
-      - NODE_ENV=test
-      - TZ=Asia/Shanghai
-      - DISCLAUDE_MODE=primary
-      - DISCLAUDE_WORKSPACE_DIR=/data/workspace
-      - PORT=3011                    # WebSocket port (different from primary's 3001)
-      - HOST=0.0.0.0
-
-    volumes:
-      - ./disclaude.config.test.yaml:/app/disclaude.config.yaml:ro
-      - ./workspace:/data/workspace
-
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 2G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
-
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "node.*cli.js"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-    profiles:
-      - test
-
-  # ===========================================================================
   # Playwright Browser (optional)
   # ===========================================================================
   # Headless Chromium with CDP for browser automation.
