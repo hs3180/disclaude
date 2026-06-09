@@ -1240,6 +1240,18 @@ export class MessageHandler {
 
     // Send user-visible confirmation message
     const buttonText = action.text || action.value;
+
+    // Issue #3995: Log card click event as incoming message for history
+    messageLogger.logIncomingMessage(
+      `card_action_${message_id}_${Date.now()}`,
+      user?.sender_id?.open_id || 'unknown',
+      chat_id,
+      `用户点击了按钮「${buttonText}」`,
+      'card_action',
+    ).catch(err => {
+      logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
+    });
+
     if (buttonText) {
       try {
         await this.callbacks.sendMessage({

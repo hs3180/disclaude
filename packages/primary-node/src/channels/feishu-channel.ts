@@ -38,6 +38,7 @@ import {
   WsConnectionManager,
 } from './feishu/index.js';
 import { VIDEO_EXTENSIONS, extractVideoCover } from '../utils/video-cover-extractor.js';
+import { extractCardTextContent } from '../platforms/feishu/card-builders/card-text-extractor.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -440,7 +441,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           JSON.stringify(message.card || {}),
         );
         logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
-        logOutgoing(messageId, message.description || '[card]', 'interactive');
+        // Issue #3995: Extract card text content when description is missing
+        const rawCardDescription = message.description
+          || (message.card ? extractCardTextContent(message.card) : '[card]');
+        const cardDescription = rawCardDescription.length > 200
+          ? `${rawCardDescription.slice(0, 197)}...`
+          : rawCardDescription;
+        logOutgoing(messageId, cardDescription, 'interactive');
         return messageId;
       }
 
@@ -586,7 +593,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       }
 
       case 'done':
-        logger.debug({ chatId: message.chatId }, 'Task completed (done signal)');
+        logger.info({ chatId: message.chatId }, 'Task completed (done signal)');
         return;
 
       default:
