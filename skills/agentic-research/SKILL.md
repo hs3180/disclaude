@@ -184,6 +184,56 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## Research Canvas (Collaborative Document Space)
+
+When executing research as an async loop task, a **Research Canvas** can provide a shared, editable space beyond chat messages. The Canvas is a Feishu cloud document where both the agent and user collaborate on the research outline.
+
+### When to Use Canvas
+
+- Long-running research tasks (multi-tick loop execution)
+- Research that benefits from structured outline collaboration
+- When the user needs a visual overview of research progress
+
+### Canvas Setup
+
+Create the Canvas document during loop initialization:
+
+```bash
+lark-cli docs +create --api-version v2 --content '<title>Research: {topic}</title><h2>📋 研究大纲</h2><p><!-- Agent fills --></p><h2>📊 数据收集</h2><p><!-- Agent fills --></p><h2>🔍 分析发现</h2><p><!-- Agent fills --></p><h2>📝 Sources</h2><p><!-- Agent fills --></p>'
+```
+
+Store the document token in STATE.md frontmatter (`canvasUrl`) and share the link with the user.
+
+### Canvas Document Structure
+
+The Canvas uses a structured layout with sections matching research phases:
+
+| Section | Purpose | Agent Action |
+|---------|---------|-------------|
+| **研究大纲** | Research outline with checkboxes | Check off completed items, add new sub-tasks |
+| **数据收集** | Data source status and findings | Update status (pending/complete), add summaries |
+| **分析发现** | Key findings and patterns | Add findings as they emerge |
+| **Sources** | Reference list | Append cited sources with links |
+
+### Agent ↔ Canvas Sync
+
+**Agent → Canvas** (each tick):
+- Use `lark-cli docs +update` to update progress markers and add findings
+- Mark completed outline items with checked checkboxes
+- Add new data sources or findings as they emerge
+
+**Canvas → Agent** (each tick):
+- Use `lark-cli docs +fetch` to read the document
+- Detect user edits (modified text, added annotations, changed priorities)
+- Merge user changes into STATE.md / research plan
+
+### Sync Principles
+
+- **RESEARCH.md is the source of truth**: Canvas is a visual projection, not the primary state store
+- **User edits take priority**: If Canvas and RESEARCH.md conflict, user's Canvas edit wins
+- **Non-blocking**: Canvas sync failure must NOT block research execution
+- **No new infrastructure**: All operations via existing `lark-cli docs` commands
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
