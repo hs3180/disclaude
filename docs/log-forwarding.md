@@ -3,6 +3,7 @@
 The application uses [Pino](https://getpino.io/) for structured JSON logging. Since v0.4.0, application-level Elasticsearch transport has been removed in favor of infrastructure-level log forwarding. This approach is more reliable, configurable, and requires zero application code changes.
 
 Pino outputs structured JSON to stdout/stderr, which can be consumed by any log shipper.
+With `LOG_TO_FILE=true`, Pino also writes to a log file that Filebeat can read directly.
 
 ## Docker: Fluentd via Logging Driver
 
@@ -211,4 +212,4 @@ Expected output format (production):
 }
 ```
 
-> **Note**: In development mode, `level` appears as its numeric value (e.g., `30`) and `time` is an epoch millisecond timestamp. The `context` field corresponds to the module name passed to `createLogger()`.
+> **Note**: In development mode, `level` appears as its numeric value (e.g., `30`) and `time` is an epoch millisecond timestamp. The Filebeat config only handles ISO 8601 timestamps (production mode); if you need to forward development-mode logs, add an epoch layout to the timestamp processor. The `context` field corresponds to the module name passed to `createLogger()`.

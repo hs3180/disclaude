@@ -115,7 +115,6 @@ services:
     volumes:
       - ./disclaude.config.test.yaml:/app/disclaude.config.yaml:ro
       - ./workspace:/data/workspace
-      - log_data:/data/logs
 
     deploy:
       resources:
@@ -242,8 +241,10 @@ services:
     environment:
       - ELASTICSEARCH_HOST=${ES_HOST:-localhost}
       - ELASTICSEARCH_PORT=${ES_PORT:-9200}
-      - ELASTICSEARCH_USERNAME=${ES_USERNAME:-}
-      - ELASTICSEARCH_PASSWORD=${ES_PASSWORD:-}
+      # Uncomment the following lines only if your ES requires authentication.
+      # Passing empty strings will cause HTTP 401 on unsecured ES instances.
+      # - ELASTICSEARCH_USERNAME=${ES_USERNAME}
+      # - ELASTICSEARCH_PASSWORD=${ES_PASSWORD}
 
     logging:
       driver: "json-file"
@@ -256,6 +257,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
     profiles:
       - logging
