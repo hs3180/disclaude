@@ -60,3 +60,12 @@ export {
   type SchedulerCallbacks,
   type SchedulerOptions,
 } from './scheduler.js';
+
+// Loop Parser (Issue #4039: Ralph Loop execution)
+export {
+  parseLoopFile,
+  checkOffItem,
+  appendProgress,
+  type LoopCheckItem,
+  type ParsedLoopFile,
+} from './loop-parser.js';
