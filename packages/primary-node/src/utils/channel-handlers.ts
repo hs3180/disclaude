@@ -58,6 +58,16 @@ export interface ChannelCallbacksOptions {
    * @see Issue #1863 - Wire getChatHistory callback for session restoration
    */
   getChatHistory?: (chatId: string) => Promise<string | undefined>;
+
+  /**
+   * Optional callback to retrieve chat log file paths for a given chat.
+   * Wired to MessageLogger.getChatLogFilePaths() for channels that support message logging.
+   * @param chatId - Platform-specific chat identifier
+   * @returns Array of absolute file paths to chat log files
+   *
+   * @see Issue #3996 - Agent needs to know log file paths to read beyond context window
+   */
+  getChatLogFilePaths?: (chatId: string) => Promise<string[]>;
 }
 
 /**
@@ -146,6 +156,8 @@ export function createChannelCallbacksFactory(
         },
     // Issue #1863: Wire getChatHistory callback for session restoration
     getChatHistory: options?.getChatHistory,
+    // Issue #3996: Wire getChatLogFilePaths so agent knows where log files are
+    getChatLogFilePaths: options?.getChatLogFilePaths,
     // Issue #3530: Wire getCapabilities so buildMcpServers can correctly
     // include/exclude channel MCP tools based on actual channel support.
     // Without this, supportedMcpTools is always undefined and channel-mcp
