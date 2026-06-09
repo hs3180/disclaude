@@ -1,0 +1,74 @@
+# =============================================================================
+# Filebeat Configuration for Disclaude
+# =============================================================================
+# Forwards Pino structured JSON logs to Elasticsearch.
+#
+# Connection details are injected via environment variables in docker-compose.yml.
+# Auth credentials come from .env (ES_HOST, ES_PORT, ES_USERNAME, ES_PASSWORD).
+#
+# Usage:
+#   docker compose --profile logging up -d
+#
+# Verify:
+#   docker compose logs filebeat --tail=20
+#   curl -u elastic:<password> http://<es-host>:9200/_cat/indices?v&index=disclaude-logs*
+# =============================================================================
+
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /data/logs/disclaude-combined.log
+    # Pino outputs structured JSON — parse it natively
+    json.keys_under_root: true
+    json.add_error_key: true
+    json.message_key: msg
+    # Pino uses "time" (ISO 8601) as the timestamp field
+    fields_under_root: true
+    fields:
+      # Tag for Kibana filtering
+      source: disclaude
+    # Close inactive file handles to prevent resource leaks
+    close_inactive: 5m
+    # Remove registry state for deleted/rotated files
+    clean_removed: true
+    # Clean up file state for files older than 72h (after rotation)
+    clean_inactive: 72h
+
+processors:
+  # Use Pino's "time" field as @timestamp
+  - timestamp:
+      field: time
+      layouts:
+        - '2006-01-02T15:04:05.999Z07:00'
+        - '2006-01-02T15:04:05.999999Z07:00'
+      ignore_missing: true
+  # Drop the original time field (now duplicated as @timestamp)
+  - drop_fields:
+      fields: ["time", "log", "ecs", "agent", "input", "stream"]
+      ignore_missing: true
+
+output.elasticsearch:
+  hosts: ["${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}"]
+  # NOTE: For local ES without authentication, leave ES_USERNAME and ES_PASSWORD
+  # unset in .env (commented out). Setting them to empty strings may cause auth errors.
+  username: "${ELASTICSEARCH_USERNAME}"
+  password: "${ELASTICSEARCH_PASSWORD}"
+  index: "disclaude-logs-%{+yyyy.MM.dd}"
+
+# Disable ILM and data streams — use simple daily indices
+setup.ilm.enabled: false
+setup.template.name: disclaude-logs
+setup.template.pattern: disclaude-logs-*
+setup.template.type: index
+# NOTE: If you modify template settings after initial setup, you must either
+# delete the existing template from ES or set overwrite: true temporarily.
+setup.template.overwrite: false
+setup.template.settings:
+  index.number_of_shards: 1
+  # Set to 1 for multi-node ES clusters for data redundancy
+  index.number_of_replicas: 0
+
+# Filebeat's own logging
+logging.level: info
+logging.to_stderr: true

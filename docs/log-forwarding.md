@@ -76,30 +76,69 @@ services:
 
 ## Docker: Filebeat Sidecar
 
-Alternative to Fluentd, using Filebeat to read container log files:
+Filebeat reads Pino JSON log files from a shared Docker named volume (`log_data`) and forwards to Elasticsearch.
+Uses host networking — ES connection is fully configured via `.env` variables.
 
-```yaml
-# filebeat.yml
-filebeat.inputs:
-  - type: log
-    paths:
-      - /var/lib/docker/containers/*/*.log
-    json.keys_under_root: true
-    json.message_key log
-    processors:
-      - decode_json_fields:
-          fields: ["log"]
-          target: ""
-          overwrite_keys: true
+### Step 1: Configure Environment
 
-output.elasticsearch:
-  hosts: ["localhost:9200"]
-  index: "disclaude-logs-%{+yyyy.MM.dd}"
+```bash
+# .env
+LOG_TO_FILE=true                # Enable file logging for Filebeat to read
+ES_HOST=localhost               # Elasticsearch address (any reachable host)
+ES_PORT=9200
 
-setup.ilm.enabled: false
-setup.template.name: disclaude-logs
-setup.template.pattern: disclaude-logs-*
+# Authentication — ONLY set these if your ES requires authentication.
+# For local ES without security enabled, leave these commented out.
+# ES_USERNAME=elastic
+# ES_PASSWORD=your-password
 ```
+
+### Step 2: Start Filebeat
+
+```bash
+# Start with the logging profile
+docker compose --profile logging up -d
+
+# Verify Filebeat is running and connected
+docker compose logs filebeat --tail=20
+```
+
+### Architecture
+
+```
+┌──────────────────────┐  Docker volume   ┌──────────────────┐
+│  disclaude-primary   │── log_data:/data ──→│   Filebeat       │
+│  (Pino → stdout +    │   /logs (shared)   │  (host network)  │
+│   file to /data/logs)│                    └───────┬──────────┘
+└──────────────────────┘                            │
+    host network                                     │
+┌──────────────────┐                                │
+│  Elasticsearch   │←───────────────────────────────┘
+│  (any host:port) │
+└──────────────────┘
+```
+
+### Configuration Details
+
+The `filebeat.yml` reads `/data/logs/disclaude-combined.log`, parses Pino JSON
+natively (`json.keys_under_root`), and forwards to Elasticsearch using env-var
+credentials. Index pattern: `disclaude-logs-YYYY.MM.dd` with daily rollover.
+
+ES address is configured via `ES_HOST` / `ES_PORT` in `.env` — works with any
+Elasticsearch instance (local Docker, remote server, or cloud-managed).
+
+See `filebeat.yml` in the project root for the full configuration.
+
+### Notes
+
+- **Registry persistence**: Filebeat tracks read positions in a Docker named volume
+  (`filebeat_data`). This prevents re-reading all logs after container restarts.
+- **Template updates**: If you modify `setup.template.settings` after initial setup,
+  you must delete the existing template from ES (`DELETE _template/disclaude-logs`)
+  or temporarily set `setup.template.overwrite: true` in `filebeat.yml`.
+- **Network mode**: Filebeat uses `network_mode: host` for maximum compatibility
+  (same as primary and playwright services). If you need stricter network isolation,
+  replace it with a custom bridge network and expose only the ES port.
 
 ## macOS (launchd): Filebeat
 
