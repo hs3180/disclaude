@@ -977,7 +977,7 @@ export class MessageHandler {
       const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
       const filePrompt = localPath
         ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}\n\n如果文件读取失败，可以使用以下命令重新下载:\n${downloadCmd}`
-        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n原始 message_id: ${message_id}\nfile_key: ${fileKey}\n\n请使用以下命令手动下载:\n${downloadCmd}`;
+        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n你可以尝试手动下载该文件：\n- message_id: \`${message_id}\`\n- file_key: \`${fileKey}\`\n- 文件类型: ${resourceType}\n\n下载命令:\n\`\`\`bash\n${downloadCmd}\n\`\`\``;
 
       // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
       // ensuring intermediate message filtering works correctly in topic groups.
