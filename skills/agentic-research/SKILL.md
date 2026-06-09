@@ -104,6 +104,54 @@ Bad: "I'll use some sample data to demonstrate..."
 - Focus on the task at hand rather than exploring all available capabilities
 - If a skill seems relevant, use it; don't second-guess the matching
 
+## Execution Mode Awareness
+
+Research can execute in two modes. Recognizing which mode you are in changes how you handle user interaction and decision-making.
+
+### Sync Mode (User Present)
+
+The user is actively chatting with you. You can ask clarifying questions, confirm direction changes, and get real-time feedback.
+
+**Behavior:**
+- Ask clarifying questions when the objective is ambiguous
+- Confirm major direction changes before proceeding
+- Present interim findings for user validation
+- Iterate quickly based on real-time feedback
+
+### Async Mode (Scheduled / Background Execution)
+
+You are executing as part of a scheduled task or background loop. The user is not actively present. You must operate autonomously and capture intent from limited context.
+
+**Behavior:**
+- Do NOT pause to ask questions — proceed with best judgment
+- Read the task description and STATE.md carefully to extract user intent
+- Make reasonable assumptions and document them explicitly
+- Push progress updates at key milestones (via send_card or equivalent)
+- If you detect ambiguity that could significantly alter the outcome, note it in your findings and flag it for user review
+
+### Key Decision Points
+
+Regardless of mode, these are the moments where user input has the most impact on research direction:
+
+1. **Objective clarification** — Is the research question correctly understood?
+2. **Source selection** — Are the chosen data sources appropriate and sufficient?
+3. **Analysis direction** — Is the analysis track still aligned with the core question?
+4. **Conclusion validity** — Do the conclusions actually address the original question?
+
+In sync mode, pause at these points to validate with the user. In async mode, make a reasoned judgment and document the decision explicitly so the user can review later.
+
+### User Intent Capture in Async Mode
+
+When operating asynchronously, user intent comes from:
+- The initial task description (most authoritative)
+- STATE.md or RESEARCH.md (accumulated context from prior ticks)
+- Chat history (if accessible — recent messages may contain refinements)
+
+**Principles:**
+- Prioritize the original task description over secondary signals
+- Treat chat messages as suggestions, not commands — evaluate whether they warrant a direction change
+- When in doubt, stay the course and note the uncertainty
+
 ## Research Workflow
 
 ### Phase 1: Planning
