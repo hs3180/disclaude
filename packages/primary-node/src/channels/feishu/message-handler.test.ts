@@ -947,6 +947,36 @@ describe('MessageHandler', () => {
       expect(msg.metadata.cardAction).toBeDefined();
       expect(msg.metadata.cardAction.value).toBe('action_value');
     });
+
+    it('should log card click event as incoming message for history', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      expect(mockState.logIncomingMessage).toHaveBeenCalledWith(
+        expect.stringMatching(/^card_action_card_msg_001_\d+$/),
+        'user_001',
+        'chat_001',
+        '用户点击了按钮「Click me」',
+        'card_action',
+      );
+    });
+
+    it('should log card click with action.value fallback when text is missing', async () => {
+      const { handler } = createHandler();
+      await handler.handleCardAction({
+        context: { open_message_id: 'card_msg', open_chat_id: 'chat_001' },
+        operator: { open_id: 'user_001' },
+        action: { tag: 'button', value: 'fallback_val' },
+      });
+
+      expect(mockState.logIncomingMessage).toHaveBeenCalledWith(
+        expect.stringMatching(/^card_action_card_msg_\d+$/),
+        'user_001',
+        'chat_001',
+        '用户点击了按钮「fallback_val」',
+        'card_action',
+      );
+    });
   });
 
   // -----------------------------------------------------------------------
