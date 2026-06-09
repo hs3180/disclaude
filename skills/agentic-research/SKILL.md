@@ -184,6 +184,62 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## Inter-Conversation Feedback Propagation
+
+In async research execution, two conversations coexist:
+
+1. **Initial conversation** — where the user made the research request and continues to interact
+2. **Research execution group** — the temporary Feishu group where the agent pushes progress
+
+User feedback naturally originates in the **initial conversation**, not the research execution group. This creates a feedback gap that must be bridged.
+
+### Problem
+
+Without explicit propagation, the research loop agent cannot see feedback from the initial conversation. The agent only reads messages in its own group chat, missing user intent changes, corrections, and guidance from the original chat.
+
+### Propagation Pattern
+
+**Store the initial chat ID** in the research state file (STATE.md or RESEARCH.md frontmatter):
+
+```yaml
+---
+sourceChatId: oc_xxx  # The initial conversation where the user originated the request
+---
+```
+
+**Each schedule tick**, the research agent should:
+
+1. Read recent messages from the **source chat** (using `getChatHistory` or equivalent)
+2. Filter for user messages since the last tick
+3. Identify feedback that affects the research direction
+4. Evaluate and incorporate relevant feedback into the research plan
+5. Acknowledge incorporated feedback in progress cards
+
+### Feedback Detection Heuristic
+
+When reading source chat messages, look for:
+- Direct references to the research topic
+- Intent changes ("actually, focus on X instead")
+- Corrections ("that data source is wrong, use Y")
+- Scope adjustments ("narrow it down to Z")
+- Priority changes ("I care most about W")
+
+### Agent Behavior Guidelines
+
+- Feedback from the initial conversation is **suggestive**, not authoritative
+- The research agent evaluates whether feedback warrants a direction change
+- When in doubt, continue the current direction and note the feedback
+- Major direction changes should be acknowledged in progress cards sent to both chats
+- If the initial conversation's agent detects a critical intent change, it should write directly to the research state file
+
+### Why Not Just Use One Chat?
+
+Separating the execution group provides:
+- Clean progress logs (no mixed conversations)
+- Non-blocking feedback (user can continue normal conversation)
+- Isolated execution context (schedule ticks don't clutter the main chat)
+- Group lifecycle management (execution group can be dissolved when complete)
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
