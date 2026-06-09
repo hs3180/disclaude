@@ -77,15 +77,21 @@ Use the `start-discussion` skill pattern:
 ```bash
 # Create group via lark-cli
 lark-cli im +chat-create --name "Research: {topic}" --description "Scheduled research: {topic}" --users "{owner_open_id}"
+```
 
-# Record mapping (atomic write)
+> **Note**: Unlike `start-discussion`, research groups do NOT need `push_to_agent`. The agent in the research group is initialized by the schedule tick (Step 4), which drives the research autonomously. The first tick serves as the agent's initialization.
+
+Record mapping (atomic write):
+
+```bash
+# Read current mapping
 cat /data/workspace/bot-chat-mapping.json 2>/dev/null || echo "{}"
 # Then update with new entry and write atomically:
 echo '{ ... updated JSON with new entry ... }' > /data/workspace/bot-chat-mapping.json.tmp \
   && mv /data/workspace/bot-chat-mapping.json.tmp /data/workspace/bot-chat-mapping.json
 ```
 
-New mapping entry format:
+Mapping entry format:
 
 ```json
 {
@@ -101,9 +107,17 @@ New mapping entry format:
 
 ### Step 4: Register Schedule Task
 
-Create schedule file:
+Create schedule file at the standard location per the `schedule` skill convention:
 
-```markdown
+```bash
+SCHEDULE_DIR="${DISCLAUDE_WORKSPACE_DIR:-/data/workspace}/schedules/research-{slug}"
+mkdir -p "$SCHEDULE_DIR"
+```
+
+Write `SCHEDULE.md` (uppercase, required by schedule skill):
+
+```bash
+cat > "$SCHEDULE_DIR/SCHEDULE.md" << 'EOF'
 ---
 name: "Research — {topic}"
 cron: "0 */2 * * *"
@@ -124,6 +138,7 @@ Continue research on {topic}. Read RESEARCH.md state and execute the next pendin
 4. Update RESEARCH.md with findings and mark step complete
 5. Push a progress card to the Feishu group if a phase transition occurred
 6. If all phases complete, render the final report using report templates
+EOF
 ```
 
 ## Execution Flow (Per Tick)
@@ -267,6 +282,8 @@ chatId: "oc_xxx"
 ```
 
 ### Schedule Template
+
+File: `${DISCLAUDE_WORKSPACE_DIR:-/data/workspace}/schedules/research-react-vue-perf/SCHEDULE.md`
 
 ```markdown
 ---
