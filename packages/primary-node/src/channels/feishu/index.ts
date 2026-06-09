@@ -28,8 +28,8 @@ export { WelcomeHandler } from './welcome-handler.js';
 // Message Handler
 export { MessageHandler, type MessageCallbacks } from './message-handler.js';
 
-// Message Logger
-export { MessageLogger, messageLogger } from './message-logger.js';
+// Message Logger (moved to shared utils - Issue #4015)
+export { MessageLogger, messageLogger } from '../../utils/message-logger.js';
 
 // WebSocket Connection Manager (Issue #1351, #1666)
 export {

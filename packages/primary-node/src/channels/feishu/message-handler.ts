@@ -33,7 +33,7 @@ import {
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractCardTextContent, extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
-import { messageLogger } from './message-logger.js';
+import { messageLogger } from '../../utils/message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
 
