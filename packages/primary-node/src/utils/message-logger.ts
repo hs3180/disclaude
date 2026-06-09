@@ -32,7 +32,7 @@ function getDateString(date: Date = new Date()): string {
 }
 
 /**
- * Message logger class for Feishu channel.
+ * Message logger class for persistent chat history logging.
  * Handles message deduplication and chat history logging.
  */
 export class MessageLogger {

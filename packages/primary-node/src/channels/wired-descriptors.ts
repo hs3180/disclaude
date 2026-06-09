@@ -25,7 +25,7 @@ import { RestChannel, type RestChannelConfig } from './rest-channel.js';
 import { FeishuChannel, type FeishuChannelConfig } from './feishu-channel.js';
 import { WeChatChannel, type WeChatChannelConfig } from './wechat/index.js';
 import crypto from 'crypto';
-import { messageLogger } from './feishu/message-logger.js';
+import { messageLogger } from '../utils/message-logger.js';
 import type {
   ChannelSetupContext,
   WiredChannelDescriptor,
@@ -67,7 +67,11 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
   },
 
   createCallbacks: (channel, context) =>
-    createChannelCallbacksFactory(channel, context.logger, { sendDoneSignal: true }),
+    createChannelCallbacksFactory(channel, context.logger, {
+      sendDoneSignal: true,
+      getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
+      getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
+    }),
 
   createMessageHandler: (channel, context) =>
     createDefaultMessageHandler(channel, context, {
@@ -301,7 +305,11 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
   },
 
   createCallbacks: (channel, context) =>
-    createChannelCallbacksFactory(channel, context.logger, { sendDoneSignal: false }),
+    createChannelCallbacksFactory(channel, context.logger, {
+      sendDoneSignal: false,
+      getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
+      getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
+    }),
 
   createMessageHandler: (channel, context) =>
     createDefaultMessageHandler(channel, context, {
