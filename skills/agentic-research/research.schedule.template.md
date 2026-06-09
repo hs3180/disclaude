@@ -72,14 +72,20 @@ chatId: "{feishu_group_chat_id}"
 
 ### Step 3: Create Feishu Discussion Group
 
-Use the `start-discussion` skill pattern:
+Follow the `start-discussion` skill pattern — create group, inject context via `push_to_agent`, record mapping:
 
 ```bash
 # Create group via lark-cli
 lark-cli im +chat-create --name "Research: {topic}" --description "Scheduled research: {topic}" --users "{owner_open_id}"
 ```
 
-> **Note**: Unlike `start-discussion`, research groups do NOT need `push_to_agent`. The agent in the research group is initialized by the schedule tick (Step 4), which drives the research autonomously. The first tick serves as the agent's initialization.
+Parse the response to extract the new group's `chatId` (format: `oc_xxx`).
+
+Inject initialization context via `push_to_agent`:
+
+```
+push_to_agent(chatId: "{new_group_chatId}", message: "你是一个研究助手。当前研究任务：{topic}。\n\n研究目标：\n- {objective_1}\n- {objective_2}\n\n工作目录：/data/workspace/research/{slug}\n状态文件：RESEARCH.md\n\n每次被触发时，读取 RESEARCH.md 获取当前状态，执行下一个待办步骤，更新状态文件。遇到关键进展或阶段转换时推送进度卡片。")
+```
 
 Record mapping (atomic write):
 
