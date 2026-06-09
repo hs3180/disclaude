@@ -171,6 +171,21 @@ Sources:
 "
 ```
 
+## Report Templates
+
+When producing research output, use the structured templates in [`report-templates.md`](./report-templates.md) as a starting point. Available templates:
+
+| Template | Best For |
+|----------|----------|
+| Executive Summary | Quick overviews, decision-making |
+| Full Report | Comprehensive analysis, documentation |
+| Comparison | Evaluating 2+ options side-by-side |
+| Annotated Bibliography | Literature review, source catalog |
+
+Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
+
+> **Language Adaptation**: Templates are written in English. Produce the report in the same language the user uses in conversation. If the user writes in Chinese, output the report in Chinese.
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
