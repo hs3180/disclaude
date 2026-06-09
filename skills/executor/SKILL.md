@@ -1,5 +1,8 @@
 # Executor Agent
 
+> **[DEPRECATED]** This skill has been superseded by the Loop system (Issue #4039).
+> 请使用 loop skill 替代。Loop 系统提供更简洁的自主任务执行模式，通过 LOOP.md checkbox 跟踪进度，自动检测完成信号。
+
 ## Context
 
 - Task ID: {taskId}
