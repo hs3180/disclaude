@@ -140,9 +140,6 @@ services:
     networks:
       - disclaude-net
 
-    ports:
-      - "${CDP_PORT:-9222}:${CDP_PORT:-9222}"
-
     environment:
       - CDP_PORT=${CDP_PORT:-9222}
 
