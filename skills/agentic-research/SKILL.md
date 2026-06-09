@@ -175,3 +175,89 @@ Sources:
 
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+
+## Async Research Mode
+
+This section guides agent behavior during **scheduled (async) research execution**, where the agent runs autonomously without a user actively watching. Use these guidelines when research is triggered by a schedule rather than a direct user message.
+
+### RESEARCH.md State Management
+
+Maintain a `RESEARCH.md` file in the working directory to track research progress across steps.
+
+**Structure:**
+```markdown
+# Research: {topic}
+
+## Objectives
+- {primary question to answer}
+
+## Progress
+- [x] Step 1: {completed step}
+- [ ] Step 2: {next step}
+
+## Findings
+- {key findings so far}
+
+## Pending Questions
+- {unresolved questions}
+
+## Conclusions
+- {tentative conclusions}
+```
+
+**Lifecycle:**
+1. **Initialize**: Create `RESEARCH.md` at the start of research with objectives and planned steps
+2. **Update**: After each research step, update progress, findings, and pending questions
+3. **Archive**: On completion, rename to `RESEARCH-{topic}-{date}.md` for future reference
+
+### Progress Notification Guidelines
+
+Push updates to the group chat to keep stakeholders informed.
+
+**When to push:**
+- Phase transitions (e.g., "starting data collection", "moving to analysis")
+- Significant findings that change direction
+- Errors or blockers requiring attention
+
+**When NOT to push:**
+- Every minor step (avoid noise)
+- Intermediate calculations or partial results
+- Routine tool calls
+
+**Format:** Use card messages with clear status indicators:
+- Phase label (e.g., "Phase 2: Data Collection")
+- Brief progress summary (1-3 sentences)
+- Next planned action
+
+### User Feedback Handling
+
+Users may send messages during async research. Handle feedback without blocking execution.
+
+1. **Read recent chat messages** before each research step
+2. **Evaluate relevance** — does the feedback affect the current direction?
+3. **Incorporate** relevant feedback by updating `RESEARCH.md` objectives or approach
+4. **Acknowledge** in the next progress card that feedback was incorporated
+5. **Do NOT pause execution** waiting for user input — feedback is advisory, not blocking
+
+### Report Rendering
+
+When research is complete, produce a final report.
+
+1. **Choose a format** appropriate to the research type:
+   - Comparison/evaluation: structured table with pros/cons
+   - Trend analysis: narrative with key data points
+   - Feasibility study: findings + recommendation matrix
+2. **Push final report** as a card to the group chat
+3. **Adapt output language** to the user's language preference (Chinese prompts → Chinese report)
+4. **Include**: methodology summary, key findings, limitations, and actionable conclusions
+
+### Completion and Cleanup
+
+After the final report is delivered:
+
+1. **Archive** `RESEARCH.md` by renaming with topic and date
+2. **Push a final summary** card with:
+   - Research topic
+   - Key conclusion (1-2 sentences)
+   - Links to any resources or artifacts created
+3. **Trigger group dissolution** if this was a dedicated research group (optional, depends on group setup)
