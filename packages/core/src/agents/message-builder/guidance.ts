@@ -50,13 +50,36 @@ ${chatHistoryContext}
  *
  * Issue #955: Provides conversation history from the previous session
  * after a service restart.
+ * Issue #3996: Includes chat log file paths so the agent can Read them
+ * to access conversation history beyond the context window.
  *
  * @param persistedHistoryContext - Persisted history context string, or undefined to skip
+ * @param chatLogFilePaths - Optional array of log file paths to include
  * @returns Formatted persisted history section, or empty string if no context
  */
-export function buildPersistedHistorySection(persistedHistoryContext?: string): string {
-  if (!persistedHistoryContext) {
+export function buildPersistedHistorySection(persistedHistoryContext?: string, chatLogFilePaths?: string[]): string {
+  if (!persistedHistoryContext && (!chatLogFilePaths || chatLogFilePaths.length === 0)) {
     return '';
+  }
+
+  // Issue #3996: Build log file paths hint
+  const logPathsHint = chatLogFilePaths && chatLogFilePaths.length > 0
+    ? `\n📁 **Chat log files** (use Read tool to access full history beyond the context window):\n${
+        chatLogFilePaths.map(p => `- \`${p}\``).join('\n')
+      }\n`
+    : '';
+
+  if (!persistedHistoryContext) {
+    // Only log paths, no history content
+    return `
+
+---
+
+## Previous Session Context
+
+The service was recently restarted.${logPathsHint}
+---
+`;
   }
 
   return `
@@ -68,7 +91,7 @@ export function buildPersistedHistorySection(persistedHistoryContext?: string): 
 The service was recently restarted. Here's the conversation history from your previous session:
 
 ${persistedHistoryContext}
-
+${logPathsHint}
 ---
 `;
 }

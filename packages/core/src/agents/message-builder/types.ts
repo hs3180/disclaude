@@ -30,6 +30,8 @@ export interface MessageData {
   chatHistoryContext?: string;
   /** Persisted history context for session restoration (Issue #955) */
   persistedHistoryContext?: string;
+  /** Chat log file paths for accessing history beyond context window (Issue #3996) */
+  chatLogFilePaths?: string[];
   /** Chat type from the channel (e.g., 'p2p', 'group', 'topic'). Issue #3641 */
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */

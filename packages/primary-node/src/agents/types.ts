@@ -69,6 +69,17 @@ export interface ChatAgentCallbacks {
    * @returns Chat history context string or undefined if not available
    */
   getChatHistory?: (chatId: string) => Promise<string | undefined>;
+
+  /**
+   * Get chat log file paths for a given chatId.
+   *
+   * Issue #3996: Returns the list of log file absolute paths so the agent
+   * can Read them to access conversation history beyond the context window.
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @returns Array of absolute file paths to chat log files
+   */
+  getChatLogFilePaths?: (chatId: string) => Promise<string[]>;
 }
 
 // ============================================================================

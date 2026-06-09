@@ -285,6 +285,46 @@ export class MessageLogger {
   }
 
   /**
+   * Get chat log file paths for a given chatId.
+   *
+   * Returns the list of log file absolute paths that exist on disk,
+   * sorted newest-first, up to `historyDays` from session restore config.
+   *
+   * Issue #3996: Used to inform the agent where chat log files are stored,
+   * so it can Read them to access conversation history beyond context window.
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @returns Array of absolute file paths to chat log files
+   */
+  async getChatLogFilePaths(chatId: string): Promise<string[]> {
+    try {
+      const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
+
+      const dateDirs = entries
+        .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
+        .sort((a, b) => b.name.localeCompare(a.name));
+
+      const maxDays = Config.getSessionRestoreConfig().historyDays;
+      const paths: string[] = [];
+
+      for (let i = 0; i < Math.min(dateDirs.length, maxDays); i++) {
+        const dir = dateDirs[i];
+        const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
+        try {
+          await fs.access(logPath);
+          paths.push(logPath);
+        } catch {
+          // File doesn't exist for this day, continue
+        }
+      }
+
+      return paths;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Clear all cached message IDs (for testing).
    */
   clearCache(): void {

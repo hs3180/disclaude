@@ -96,6 +96,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // Session restoration (Issue #955)
   private persistedHistoryContext?: string;
 
+  // Issue #3996: Chat log file paths for agent to access beyond context window
+  private chatLogFilePaths?: string[];
+
   /**
    * Chat type for the current conversation (e.g., 'p2p', 'group', 'topic').
    * Updated on each processMessage() call. Issue #3641.
@@ -362,6 +365,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           { chatId: this.boundChatId },
           'No persisted chat history found'
         );
+      }
+
+      // Issue #3996: Load chat log file paths so the agent knows where to find
+      // full conversation history beyond the context window
+      if (this.callbacks.getChatLogFilePaths) {
+        this.chatLogFilePaths = await this.callbacks.getChatLogFilePaths(this.boundChatId);
+        if (this.chatLogFilePaths.length > 0) {
+          this.logger.info(
+            { chatId: this.boundChatId, pathCount: this.chatLogFilePaths.length },
+            'Chat log file paths loaded'
+          );
+        }
       }
 
       this.historyLoaded = true;
@@ -710,6 +725,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const enhancedContent = this.messageBuilder.buildEnhancedContent({
       text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
       persistedHistoryContext: this.persistedHistoryContext,
+      chatLogFilePaths: this.chatLogFilePaths,
       chatType: this.chatType,
       threadContext,
     }, chatId, capabilities);
