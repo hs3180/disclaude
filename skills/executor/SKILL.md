@@ -1,4 +1,6 @@
-# Executor Agent
+# Executor Agent — DEPRECATED
+
+> **此 Skill 已废弃。** 请使用 `loop` skill 替代。Loop 系统通过 LOOP.md checkbox 自动跟踪进度，无需独立的 evaluator/executor 循环。
 
 ## Context
 
