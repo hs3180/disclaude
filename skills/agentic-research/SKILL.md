@@ -184,7 +184,57 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## Async Feedback Handling
+
+When executing research via scheduled tasks (loop mode), the agent should incorporate user feedback from the group chat at each tick without blocking execution.
+
+### Feedback Collection (Per Tick)
+
+Before executing the next research step, check for recent user feedback:
+
+1. **Read recent chat messages** — Look at messages since the last tick's progress report
+2. **Filter agent messages** — Ignore messages from the agent itself
+3. **Identify feedback types**:
+   - **Direction change**: "Focus on X instead", "Skip section Y"
+   - **Correction**: "That data is wrong", "Use source Z instead"
+   - **Refinement**: "Go deeper on this", "Add comparison with W"
+   - **Approval**: "Looks good", "Continue"
+4. **Evaluate impact**: Decide whether feedback requires adjusting the research plan
+5. **Act on feedback**: If direction change, update the plan; if correction, fix and re-run
+
+### Feedback Handling Rules
+
+| Feedback Type | Action | Blocking? |
+|--------------|--------|-----------|
+| Direction change | Update research plan, continue | No |
+| Data correction | Fix data source/method, re-run affected step | No |
+| Scope refinement | Adjust remaining steps | No |
+| Approval | Continue as planned | No |
+| Emergency stop | Output `<promise>DONE</promise>` | Yes |
+
+### Progress Reporting with Feedback Acknowledgment
+
+When reporting progress after incorporating feedback:
+
+```markdown
+## Progress Update
+
+**Completed**: Step 3 — Analyzed market data
+**Feedback incorporated**: Adjusted analysis to focus on APAC region (per user direction)
+**Next**: Step 4 — Regional comparison
+```
+
+### Design Principles
+
+- **Non-blocking**: User messages are suggestions, not commands that pause execution
+- **Agent discretion**: Agent decides whether feedback warrants a direction change
+- **Transparent**: Agent always acknowledges incorporated feedback in progress reports
+- **No new infrastructure**: Reuses existing chat history reading capabilities
+
+Issue #4005: Async user feedback mechanism for research tasks.
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+- Issue #4005: Async user feedback mechanism for research tasks
