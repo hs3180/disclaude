@@ -10,7 +10,8 @@
   "bin": {
     "disclaude": "./bin/disclaude.js",
     "disclaude-primary": "./packages/primary-node/dist/cli.js",
-    "disclaude-mcp": "./packages/mcp-server/dist/cli.js"
+    "disclaude-mcp": "./packages/mcp-server/dist/cli.js",
+    "disclaude-push": "./packages/primary-node/dist/push-cli.js"
   },
   "scripts": {
     "build": "tsc -b",

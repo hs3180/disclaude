@@ -142,5 +142,6 @@ USER disclaude
 # Issue #3987: auto-configure lark-cli auth from disclaude.config.yaml
 ENTRYPOINT ["docker-entrypoint.sh"]
 
+
 # Default command: run Primary Node directly
 CMD ["node", "packages/primary-node/dist/cli.js", "start"]
