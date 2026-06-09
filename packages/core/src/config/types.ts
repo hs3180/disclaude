@@ -94,6 +94,18 @@ export interface FeishuConfig {
     /** Maximum message age in milliseconds */
     maxAgeMs?: number;
   };
+  /**
+   * Topic group notification settings.
+   * Issue #4031: Push notifications for topic group messages to local App.
+   */
+  topicNotify?: {
+    /** Enable topic group notifications (default: false) */
+    enabled?: boolean;
+    /** Notification backend: 'osascript' | 'webhook' | 'both' (default: 'osascript') */
+    backend?: 'osascript' | 'webhook' | 'both';
+    /** HTTP webhook URL for notification dispatch */
+    webhookUrl?: string;
+  };
 }
 
 /**
