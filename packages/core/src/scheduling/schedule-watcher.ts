@@ -382,6 +382,66 @@ export class ScheduleFileScanner {
       : taskId;
     return path.join(this.schedulesDir, slug, 'SCHEDULE.md');
   }
+
+  /**
+   * Disable a schedule by setting `enabled: false` in the SCHEDULE.md file.
+   *
+   * Issue #4041: Used by the completion signal handler to auto-disable
+   * schedules when the agent outputs `<promise>DONE</promise>`.
+   *
+   * Performs an in-place replacement of the `enabled` field in the frontmatter.
+   * Idempotent: if already disabled, returns false without modifying the file.
+   *
+   * @param taskId - The schedule task ID (e.g., "schedule-my-task")
+   * @returns true if the schedule was disabled, false if already disabled or not found
+   */
+  async disableSchedule(taskId: string): Promise<boolean> {
+    const filePath = this.getFilePath(taskId);
+
+    let content: string;
+    try {
+      content = await fsPromises.readFile(filePath, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        logger.warn({ taskId }, 'Cannot disable schedule: file not found');
+        return false;
+      }
+      throw error;
+    }
+
+    // Check if already disabled
+    const frontmatterRegex = /^---\s*\n([\s\S]*?)\n---\s*\n/;
+    const match = content.match(frontmatterRegex);
+    if (!match) {
+      logger.warn({ taskId, filePath }, 'Cannot disable schedule: no frontmatter found');
+      return false;
+    }
+
+    const [, frontmatterText] = match;
+    const enabledLine = frontmatterText.split('\n').find(
+      line => line.trimStart().startsWith('enabled:')
+    );
+
+    if (enabledLine && enabledLine.includes('false')) {
+      logger.debug({ taskId }, 'Schedule already disabled, skipping');
+      return false;
+    }
+
+    // Replace `enabled: true` with `enabled: false` in the frontmatter
+    const updatedContent = content.replace(
+      /^(\s*enabled:\s*)true\s*$/m,
+      '$1false'
+    );
+
+    if (updatedContent === content) {
+      logger.warn({ taskId, filePath }, 'Could not find enabled: true in frontmatter');
+      return false;
+    }
+
+    await fsPromises.writeFile(filePath, updatedContent, 'utf-8');
+    logger.info({ taskId, filePath }, 'Schedule auto-disabled (enabled: false)');
+    return true;
+  }
 }
 
 // ============================================================================

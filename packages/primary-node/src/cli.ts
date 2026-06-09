@@ -305,8 +305,12 @@ async function main(): Promise<void> {
   // Issue #3801: Use descriptor-driven callback creation instead of hardcoded channel.id checks.
   // Each WiredChannelDescriptor declares its own callback options (e.g., sendDoneSignal),
   // so the routerCallbacksFactory looks up the descriptor by channel type.
+  //
+  // Issue #4041: Wrap callbacks to detect completion signal <promise>DONE</promise>
+  // in agent output. When detected for a chatId with an active scheduled task,
+  // the schedule is auto-disabled (enabled: false).
   const descriptorMap = new Map(BUILTIN_WIRED_DESCRIPTORS.map((d) => [d.type, d]));
-  const routerCallbacksFactory = (chatId: string) => {
+  const baseRouterCallbacksFactory = (chatId: string) => {
     // Issue #3824: Use resolveChannelForChatId for ownership query fallback.
     // After restart, chatIdChannelMap is empty. resolveChannelForChatId queries
     // all channels via ownsChatId() to find the correct one.
@@ -320,6 +324,28 @@ async function main(): Promise<void> {
     }
     // Fallback for channels without a registered descriptor
     return createChannelCallbacksFactory(channel, logger)(chatId);
+  };
+
+  const COMPLETION_SIGNAL = '<promise>DONE</promise>';
+  const routerCallbacksFactory = (chatId: string) => {
+    const callbacks = baseRouterCallbacksFactory(chatId);
+    const originalSendMessage = callbacks.sendMessage.bind(callbacks);
+    callbacks.sendMessage = async (cid: string, text: string, parentMessageId?: string) => {
+      // Call original send first
+      await originalSendMessage(cid, text, parentMessageId);
+      // Check for completion signal (Issue #4041)
+      if (text.includes(COMPLETION_SIGNAL)) {
+        const scheduler = primaryNode.getScheduler();
+        if (scheduler) {
+          const taskId = scheduler.getActiveTaskForChatId(cid);
+          if (taskId) {
+            logger.info({ chatId: cid, taskId }, 'Completion signal detected, disabling schedule');
+            await scheduler.disableSchedule(taskId);
+          }
+        }
+      }
+    };
+    return callbacks;
   };
   primaryNode.initInputMessageRouter(agentPool, routerCallbacksFactory);
 

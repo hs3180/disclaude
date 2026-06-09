@@ -118,4 +118,17 @@ export class ScheduleManager {
     const tasks = await this.loadAll();
     return Array.from(tasks.values());
   }
+
+  /**
+   * Disable a schedule by setting `enabled: false` in the SCHEDULE.md file.
+   *
+   * Issue #4041: Used by the completion signal handler to auto-disable
+   * schedules when the agent outputs `<promise>DONE</promise>`.
+   *
+   * @param taskId - The schedule task ID
+   * @returns true if the schedule was disabled, false if already disabled or not found
+   */
+  async disableSchedule(taskId: string): Promise<boolean> {
+    return await this.fileScanner.disableSchedule(taskId);
+  }
 }

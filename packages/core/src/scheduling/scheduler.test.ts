@@ -58,6 +58,7 @@ describe('Scheduler', () => {
       // Issue #3929: Default get() returns a dummy task so stale-file detection
       // does not skip execution in existing tests. Override per-test when needed.
       get: vi.fn().mockResolvedValue(createTask()),
+      disableSchedule: vi.fn().mockResolvedValue(true),
       listByChatId: vi.fn().mockResolvedValue([]),
       getFileScanner: vi.fn(),
     } as unknown as ScheduleManager;
@@ -1142,6 +1143,67 @@ describe('Scheduler', () => {
         (call: string[]) => call[1]?.includes('已连续')
       );
       expect(skipNotificationsAfter).toHaveLength(0);
+    });
+  });
+
+  describe('completion signal detection (Issue #4041)', () => {
+    it('getActiveTaskForChatId returns taskId for active scheduled task', () => {
+      const task = createTask({ id: 'schedule-loop-1', chatId: 'oc_loop_chat' });
+      scheduler.addTask(task);
+
+      expect(scheduler.getActiveTaskForChatId('oc_loop_chat')).toBe('schedule-loop-1');
+    });
+
+    it('getActiveTaskForChatId returns undefined when no task matches', () => {
+      const task = createTask({ id: 'schedule-loop-1', chatId: 'oc_loop_chat' });
+      scheduler.addTask(task);
+
+      expect(scheduler.getActiveTaskForChatId('oc_other_chat')).toBeUndefined();
+    });
+
+    it('getActiveTaskForChatId returns undefined when no tasks are active', () => {
+      expect(scheduler.getActiveTaskForChatId('oc_any')).toBeUndefined();
+    });
+
+    it('disableSchedule removes cron job and calls scheduleManager.disableSchedule', async () => {
+      const task = createTask({ id: 'schedule-loop-1', chatId: 'oc_loop_chat' });
+      scheduler.addTask(task);
+
+      // Task should be in active jobs
+      expect(scheduler.getActiveJobs()).toHaveLength(1);
+
+      await scheduler.disableSchedule('schedule-loop-1');
+
+      // Cron job should be removed
+      expect(scheduler.getActiveJobs()).toHaveLength(0);
+      // scheduleManager.disableSchedule should be called
+      expect(mockScheduleManager.disableSchedule).toHaveBeenCalledWith('schedule-loop-1');
+    });
+
+    it('disableSchedule is idempotent — safe to call multiple times', async () => {
+      const task = createTask({ id: 'schedule-loop-1', chatId: 'oc_loop_chat' });
+      scheduler.addTask(task);
+
+      await scheduler.disableSchedule('schedule-loop-1');
+      await scheduler.disableSchedule('schedule-loop-1');
+
+      // Should not throw, just log and continue
+      expect(mockScheduleManager.disableSchedule).toHaveBeenCalledTimes(2);
+    });
+
+    it('disableSchedule handles file update error gracefully', async () => {
+      (mockScheduleManager.disableSchedule as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error('File write error')
+      );
+
+      const task = createTask({ id: 'schedule-loop-1', chatId: 'oc_loop_chat' });
+      scheduler.addTask(task);
+
+      // Should not throw
+      await scheduler.disableSchedule('schedule-loop-1');
+
+      // Cron job should still be removed
+      expect(scheduler.getActiveJobs()).toHaveLength(0);
     });
   });
 });

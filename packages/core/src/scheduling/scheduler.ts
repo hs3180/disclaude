@@ -309,6 +309,53 @@ export class Scheduler {
   }
 
   /**
+   * Get the task ID of an active (enabled) scheduled task for a given chatId.
+   *
+   * Issue #4041: Used by the completion signal handler to find which schedule
+   * to disable when the agent outputs `<promise>DONE</promise>` in a chat.
+   *
+   * @param chatId - Chat ID to look up
+   * @returns Task ID if found, undefined otherwise
+   */
+  getActiveTaskForChatId(chatId: string): string | undefined {
+    for (const [taskId, entry] of this.activeJobs) {
+      if (entry.task.chatId === chatId) {
+        return taskId;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Disable a schedule: removes the cron job and updates the SCHEDULE.md file.
+   *
+   * Issue #4041: Called when the completion signal `<promise>DONE</promise>`
+   * is detected in agent output. Stops the cron job and sets `enabled: false`
+   * in the schedule file.
+   *
+   * Idempotent: safe to call multiple times. If the task is already disabled
+   * or not found, logs and returns without error.
+   *
+   * @param taskId - The schedule task ID to disable
+   */
+  async disableSchedule(taskId: string): Promise<void> {
+    // Remove cron job first to stop further ticks
+    this.removeTask(taskId);
+
+    // Update the file to persist the disabled state
+    try {
+      const disabled = await this.scheduleManager.disableSchedule(taskId);
+      if (disabled) {
+        logger.info({ taskId }, 'Schedule auto-disabled due to completion signal <promise>DONE</promise>');
+      } else {
+        logger.debug({ taskId }, 'Schedule already disabled or not found');
+      }
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to update schedule file after completion signal');
+    }
+  }
+
+  /**
    * Build wrapped prompt with anti-recursion instructions.
    * Provides defense-in-depth against infinite recursion.
    *

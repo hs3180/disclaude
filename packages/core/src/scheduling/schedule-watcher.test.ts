@@ -703,6 +703,96 @@ describe('ScheduleFileScanner', () => {
       expect(task).toBeNull();
     });
   });
+
+  describe('disableSchedule (Issue #4041)', () => {
+    const scheduleContent = [
+      '---',
+      'name: "Loop: test task"',
+      'cron: "0 * * * *"',
+      'enabled: true',
+      'blocking: true',
+      'chatId: oc_test_chat',
+      '---',
+      '',
+      'Execute next item in LOOP.md',
+    ].join('\n');
+
+    it('should set enabled: false in the schedule file', async () => {
+      mockReadFile.mockResolvedValue(scheduleContent);
+
+      const result = await scanner.disableSchedule('schedule-test-task');
+
+      expect(result).toBe(true);
+      expect(mockWriteFile).toHaveBeenCalledWith(
+        expect.stringContaining('test-task/SCHEDULE.md'),
+        expect.stringContaining('enabled: false'),
+        'utf-8'
+      );
+      expect(mockWriteFile).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.not.stringContaining('enabled: true'),
+        'utf-8'
+      );
+    });
+
+    it('should return false if already disabled', async () => {
+      const disabledContent = scheduleContent.replace('enabled: true', 'enabled: false');
+      mockReadFile.mockResolvedValue(disabledContent);
+
+      const result = await scanner.disableSchedule('schedule-test-task');
+
+      expect(result).toBe(false);
+      expect(mockWriteFile).not.toHaveBeenCalled();
+    });
+
+    it('should return false if file not found', async () => {
+      const error = new Error('ENOENT');
+      (error as NodeJS.ErrnoException).code = 'ENOENT';
+      mockReadFile.mockRejectedValue(error);
+
+      const result = await scanner.disableSchedule('schedule-nonexistent');
+
+      expect(result).toBe(false);
+      expect(mockWriteFile).not.toHaveBeenCalled();
+    });
+
+    it('should return false if no frontmatter found', async () => {
+      mockReadFile.mockResolvedValue('No frontmatter here, just plain text.');
+
+      const result = await scanner.disableSchedule('schedule-test-task');
+
+      expect(result).toBe(false);
+      expect(mockWriteFile).not.toHaveBeenCalled();
+    });
+
+    it('should preserve other frontmatter fields when disabling', async () => {
+      const contentWithMoreFields = [
+        '---',
+        'name: "Loop: complex task"',
+        'cron: "*/5 * * * *"',
+        'enabled: true',
+        'blocking: false',
+        'chatId: oc_complex',
+        'createdAt: "2026-01-01T00:00:00Z"',
+        'modelTier: "fast"',
+        '---',
+        '',
+        'Task prompt here',
+      ].join('\n');
+      mockReadFile.mockResolvedValue(contentWithMoreFields);
+
+      const result = await scanner.disableSchedule('schedule-complex-task');
+
+      expect(result).toBe(true);
+      const writtenContent = (mockWriteFile as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(writtenContent).toContain('name: "Loop: complex task"');
+      expect(writtenContent).toContain('cron: "*/5 * * * *"');
+      expect(writtenContent).toContain('enabled: false');
+      expect(writtenContent).toContain('blocking: false');
+      expect(writtenContent).toContain('chatId: oc_complex');
+      expect(writtenContent).toContain('Task prompt here');
+    });
+  });
 });
 
 // ============================================================================
