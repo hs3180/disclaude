@@ -88,7 +88,7 @@ vi.mock('fs/promises', async (importOriginal) => {
   };
 });
 
-vi.mock('./message-logger.js', () => ({
+vi.mock('../../utils/message-logger.js', () => ({
   messageLogger: {
     isMessageProcessed: () => mockState.isMessageProcessed,
     logIncomingMessage: mockState.logIncomingMessage,
