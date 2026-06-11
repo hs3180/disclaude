@@ -113,7 +113,7 @@ Agent implementations using the Template Method pattern:
 
 - **`base-agent.ts`** - Abstract base class with common functionality:
   - SDK configuration building via `createSdkOptions()`
-  - `queryOnce()` - For static prompts (Evaluator, Executor)
+  - `queryOnce()` - For static prompts (ScheduleExecutor)
   - `createQueryStream()` - For streaming input (ChatAgent)
   - Error handling and logging
 
@@ -124,15 +124,6 @@ Agent implementations using the Template Method pattern:
   - **Session Cleanup**: Idle sessions cleaned up after timeout (default 30min)
   - `processMessage()` - Non-blocking, queues message for Agent processing
   - `runOnce()` - Blocking one-shot query using unified streaming path (Issue #3124)
-
-- **`evaluator.ts`** - Task completion evaluation
-- **`executor.ts`** - Task execution with progress reporting
-
-#### `src/task/` - Task Orchestration
-
-- **`dialogue-orchestrator.ts`** - Manages Evaluator-Executor flow
-- **`iteration-bridge.ts`** - Handles iteration state and streaming messages
-- **`mcp-utils.ts`** - MCP server utilities for task processing
 
 #### `src/feishu/bot.ts` - WebSocket Bot
 
@@ -416,7 +407,7 @@ To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.startA
 
 All Agent outputs MUST be logged in full, not just metadata (like length). Structured fields matter for searchability regardless of the log backend.
 
-- **Agent outputs** (Evaluator/Executor): Must include a `content` field with the full text
+- **Agent outputs**: Must include a `content` field with the full text
 - **Example**: `logger.debug({ content: text, textLength: text.length }, 'Agent output')`
 - **Purpose**: Enables task retrospection and debugging via full-text search in your log backend
 
@@ -446,7 +437,6 @@ logger.debug({
 ### Locations
 
 - `packages/core/src/utils/logger.ts`: Pino logger factory (JSON structured output)
-- `src/task/iteration-bridge.ts`: Evaluator and Executor outputs
 
 ## Debugging Tips
 
