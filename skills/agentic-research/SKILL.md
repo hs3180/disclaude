@@ -184,6 +184,67 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## Async User Feedback Handling
+
+> Issue #4005: File-based feedback propagation for research tasks executed via Loop.
+
+When research is executed autonomously via a Loop (see `skills/loop/SKILL.md`), the user continues interacting in the **initial conversation** — not the Loop execution group. User feedback (opinions, corrections, direction changes) must propagate to the Loop agent through **file-based state sharing**.
+
+### Architecture
+
+```
+Initial Conversation (user provides feedback here)
+  │
+  └─ Agent detects meaningful feedback → writes to RESEARCH.md or LOOP.md
+                                              │
+                                              ▼
+                                       Loop agent reads file at next step
+                                       Naturally absorbs feedback, adjusts direction
+```
+
+**Key principle**: Feedback does NOT pass through the Loop engine or messaging. It propagates through files (RESEARCH.md / LOOP.md). The Loop agent reads the current file state at each step.
+
+### When to Write Feedback
+
+In the **initial conversation**, when the user provides:
+- **Direction changes**: "Focus on competitor B instead" → Update RESEARCH.md research scope
+- **Corrections**: "The revenue figure is wrong, use 2025 annual report" → Update RESEARCH.md data sources
+- **New requirements**: "Also include market size analysis" → Add steps to LOOP.md TODO section
+- **Priority shifts**: "Skip the technical comparison, just give me cost analysis" → Update LOOP.md constraints
+
+### How to Write Feedback
+
+1. **Read the current LOOP.md / RESEARCH.md** from the loop's work directory
+2. **Update the relevant section** (do not overwrite the entire file):
+   - For research direction changes → update RESEARCH.md scope/outline section
+   - For execution plan changes → update LOOP.md TODO or constraints section
+   - For new data requirements → update RESEARCH.md data sources section
+3. **Append a feedback marker** in the Progress Log section so the Loop agent notices the change:
+
+```markdown
+## Progress Log
+> [Feedback from user — 2026-06-11]: User requests focusing on competitor B analysis.
+  Updated research scope accordingly.
+```
+
+### How Loop Agent Reads Feedback
+
+At each step, the Loop agent:
+1. Reads LOOP.md and RESEARCH.md (standard behavior)
+2. Detects changes since the last step (new feedback markers, updated sections)
+3. Evaluates whether changes affect the current step's execution direction
+4. If adjustment needed → follows new direction; if not → continues as planned
+5. Acknowledges incorporated feedback in progress records
+
+### Design Principles
+
+- **Non-blocking**: User messages are suggestions, not commands that pause execution
+- **File-based propagation**: Feedback propagates through files, not messaging
+- **Loop is feedback-agnostic**: Loop engine does not parse feedback — it reads current file state
+- **Agent discretion**: Loop agent decides whether file changes warrant a direction change
+- **Transparent**: Agent acknowledges incorporated feedback in progress records
+- **No new infrastructure**: Reuses existing file read/write capabilities
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
