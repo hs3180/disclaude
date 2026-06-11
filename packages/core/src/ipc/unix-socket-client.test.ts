@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
@@ -22,6 +22,7 @@ import {
   createInteractiveMessageHandler,
 } from './index.js';
 import type { ChannelHandlersContainer } from './unix-socket-server.js';
+import { IPC_SOCKET_PATH_FILE } from './protocol.js';
 
 // ============================================================================
 // Test helpers
@@ -509,6 +510,8 @@ describe('getIpcSocketPath', () => {
     const originalPath = process.env.DISCLAUDE_IPC_SOCKET_PATH;
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
     delete process.env.DISCLAUDE_IPC_SOCKET_PATH;
+    // Remove IPC_SOCKET_PATH_FILE to prevent fallback (Issue #4061)
+    try { unlinkSync(IPC_SOCKET_PATH_FILE); } catch { /* ignore if not exists */ }
     expect(getIpcSocketPath()).toBe('/tmp/disclaude-interactive.ipc');
     process.env.DISCLAUDE_WORKER_IPC_SOCKET = originalWorker;
     process.env.DISCLAUDE_IPC_SOCKET_PATH = originalPath;
