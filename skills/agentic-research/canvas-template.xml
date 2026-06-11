@@ -1,0 +1,50 @@
+<!-- Research Canvas Document Template
+  Usage: Pass as --content to `lark-cli docs +create --api-version v2`
+  Placeholders in {curly braces} are replaced at creation time.
+  This template defines the initial structure for a research collaboration space.
+-->
+<title>Research: {topic}</title>
+
+<h2>Research Questions</h2>
+<p><!-- List the core questions this research aims to answer --></p>
+<bullet>{question_1}</bullet>
+<bullet>{question_2}</bullet>
+<bullet>{question_3}</bullet>
+
+<h2>Scope</h2>
+<p><b>In scope:</b> {scope_in}</p>
+<p><b>Out of scope:</b> {scope_out}</p>
+
+<h2>Research Plan</h2>
+<checkbox checked="false">Define research questions</checkbox>
+<checkbox checked="false">Identify data sources</checkbox>
+<checkbox checked="false">Gather data</checkbox>
+<checkbox checked="false">Analyze findings</checkbox>
+<checkbox checked="false">Synthesize conclusions</checkbox>
+<checkbox checked="false">Review and finalize</checkbox>
+
+<h2>Data Sources</h2>
+<table>
+  <table_header>
+    <table_cell>Source</table_cell>
+    <table_cell>Type</table_cell>
+    <table_cell>Status</table_cell>
+  </table_header>
+  <table_row>
+    <table_cell>{source_name}</table_cell>
+    <table_cell>{source_type}</table_cell>
+    <table_cell>pending</table_cell>
+  </table_row>
+</table>
+
+<h2>Findings</h2>
+<p><!-- Agent populates this section as research progresses --></p>
+
+<h2>Analysis</h2>
+<p><!-- Key insights, patterns, and conclusions --></p>
+
+<h2>Sources &amp; References</h2>
+<p><!-- Citation list with links --></p>
+
+<h2>Notes</h2>
+<p><!-- User annotations, agent notes, and follow-up items --></p>
