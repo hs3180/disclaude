@@ -5,7 +5,7 @@
  * cooldown handling, blocking mechanism, and lifecycle management.
  *
  * Issue #1617: Phase 2 - scheduling module test coverage.
- * Issue #3901: Removed dead executor path, all tests use InputMessageRouter.
+ * Issue #3901: All tests use InputMessageRouter.
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';

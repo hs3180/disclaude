@@ -13,7 +13,7 @@
  * @see Issue #3662 — category 2
  * @see RFC #3329 — Message — Unified Agent Input Abstraction
  * @see Issue #3582 — Phase 3: Scheduler → InputMessageRouter wiring
- * @see Issue #3901 — Removed dead executor path
+ * @see Issue #3901 — Unified routing via InputMessageRouter
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
