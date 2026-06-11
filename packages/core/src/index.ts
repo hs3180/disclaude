@@ -310,6 +310,26 @@ export {
   type DebugGroup,
 } from './control/index.js';
 
+// Loop module — autonomous loop execution engine (Issue #4063 Phase 0)
+export {
+  LoopRunner,
+  readLoopState,
+  writeLoopState,
+  createInitialLoopState,
+  LOOP_STATE_FILE,
+} from './loop/index.js';
+
+export type {
+  LoopStartConfig,
+  LoopState as LoopRunState,
+  StepFailureReason,
+  LoopStepRecord,
+  LoopStateFile,
+  LoopStatusResult,
+  LoopRunnerCallbacks,
+  LoopRunnerOptions,
+} from './loop/index.js';
+
 // Project module — simplified per-chatId working directory binding (Issue #3519)
 export type {
   CwdProvider,
