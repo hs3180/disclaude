@@ -94,6 +94,17 @@ export interface FeishuConfig {
     /** Maximum message age in milliseconds */
     maxAgeMs?: number;
   };
+  /**
+   * Topic group notification settings.
+   * When enabled, topic group messages trigger a notification event
+   * for real-time push to connected clients.
+   *
+   * Issue #4031: Topic group message push notification.
+   */
+  topicNotify?: {
+    /** Enable/disable topic group message notifications (default: false) */
+    enabled: boolean;
+  };
 }
 
 /**
