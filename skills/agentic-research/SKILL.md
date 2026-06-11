@@ -104,6 +104,42 @@ Bad: "I'll use some sample data to demonstrate..."
 - Focus on the task at hand rather than exploring all available capabilities
 - If a skill seems relevant, use it; don't second-guess the matching
 
+### 7. Async/Sync Scenario Awareness
+
+**Context:** Research may run synchronously (user present, interactive) or asynchronously (scheduled/background execution). The execution mode significantly affects how you should handle decisions and user intent.
+
+**Scenario identification:**
+- **Sync mode**: User is actively chatting, providing real-time feedback and clarifications
+- **Async mode**: Triggered by a schedule or background task; user is not present to answer questions immediately
+
+**Key decision points where user intent matters:**
+
+When research direction can be influenced, watch for these critical junctures:
+1. **Goal clarity** — Is the research objective specific enough, or does it need user input to narrow scope?
+2. **Data source selection** — Are the chosen sources appropriate, or might the user prefer specific ones?
+3. **Analysis direction** — Does the current analysis still address the user's original question?
+4. **Conclusion validity** — Do findings actually answer what the user asked?
+
+**Async-specific guidelines:**
+
+In async mode, you cannot ask for immediate clarification. Apply these strategies:
+
+- **Preserve original intent**: Extract the user's core question from available context. Do not expand or reinterpret the scope beyond what was asked.
+- **Favor conservative interpretation**: When ambiguity exists, choose the interpretation closest to the user's explicit request rather than making assumptions.
+- **Flag uncertainty in output**: If a key decision point was reached without sufficient user input, note it in the report:
+  ```
+  Note: This analysis used [interpretation] because [reason]. If this doesn't
+  match your intent, please clarify and I can refine the analysis.
+  ```
+- **Avoid scope creep**: Without real-time feedback, resist the temptation to explore tangentially related topics. Stick to the stated objective.
+
+**Sync-specific guidelines:**
+
+In sync mode, take advantage of real-time interaction:
+- Proactively ask when reaching a decision point that could redirect the research
+- Confirm understanding of feedback before acting on it
+- Summarize your interpretation of user corrections to avoid miscommunication
+
 ## Research Workflow
 
 ### Phase 1: Planning
