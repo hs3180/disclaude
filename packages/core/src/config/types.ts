@@ -22,7 +22,7 @@ export interface WorkspaceConfig {
  * Model tier for three-level model configuration.
  * Allows different agent scenarios to use models with appropriate capability/cost trade-offs.
  *
- * - `'high'`: Evaluators, complex analysis (e.g., claude-opus-4)
+ * - `'high'`: Complex analysis, high-capability tasks (e.g., claude-opus-4)
  * - `'low'`: Scheduled tasks, simple operations (e.g., claude-haiku-4)
  * - `'multimodal'`: Main dialogue, multimodal processing
  *
@@ -46,7 +46,7 @@ export interface AgentConfig {
   /** Model identifier for Anthropic/Claude (only used when provider is 'anthropic') */
   model?: string;
   /**
-   * High-capability model for evaluators, complex analysis (Issue #3059).
+   * High-capability model for complex analysis (Issue #3059).
    * Falls back to `model` if not set.
    */
   highModel?: string;

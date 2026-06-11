@@ -6,7 +6,7 @@
  * from the pool (RFC #3329 unified path).
  *
  * Issue #3582: Channel + Scheduler integration via MessageRouter (Phase 3)
- * Issue #3806: Removed systemExecutor — SystemMessage now always uses AgentPool
+ * Issue #3806: SystemMessage now always uses AgentPool
  */
 
 import {
