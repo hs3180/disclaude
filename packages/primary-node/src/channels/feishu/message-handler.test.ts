@@ -27,6 +27,8 @@ const mockState = vi.hoisted(() => ({
   interactionHandleAction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   workspaceDir: '/tmp/mh-test',
   execFileCallback: null as ((err: Error | null, result?: { stdout: string; stderr: string }) => void) | null,
+  topicNotifyEnabled: false,
+  onTopicMessage: vi.fn(),
 }));
 
 const mockExecFile = vi.hoisted(() =>
@@ -49,6 +51,11 @@ vi.mock('@disclaude/core', async () => {
     ...actual,
     Config: {
       getWorkspaceDir: () => mockState.workspaceDir,
+      getRawConfig: () => ({
+        feishu: {
+          topicNotify: { enabled: mockState.topicNotifyEnabled },
+        },
+      }),
     },
     DEDUPLICATION: { MAX_MESSAGE_AGE: 300_000 },
     REACTIONS: { TYPING: 'Typing' },
@@ -131,6 +138,7 @@ function createHandler(overrides: Record<string, unknown> = {}) {
       sendMessage: mockState.sendMessage,
       routeCardAction: mockState.routeCardAction,
       resolveActionPrompt: mockState.resolveActionPrompt,
+      onTopicMessage: mockState.onTopicMessage,
     },
     isRunning: () => mockState.isRunning,
     hasControlHandler: () => mockState.hasControlHandler,
@@ -209,6 +217,7 @@ describe('MessageHandler', () => {
     mockState.hasControlHandler = false;
     mockState.isMessageProcessed = false;
     mockState.isBotMentioned = false;
+    mockState.topicNotifyEnabled = false;
   });
 
   // -----------------------------------------------------------------------
@@ -1955,6 +1964,192 @@ describe('MessageHandler', () => {
       }));
       // topic chat should behave like group chat — skip without @mention
       expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Topic group message notification (Issue #4031)
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — topic group notification (onTopicMessage)', () => {
+    it('should call onTopicMessage when topicNotify is enabled for topic chat', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_001',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello topic' }),
+            message_type: 'text',
+            create_time: 1700000000000,
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      const event = mockState.onTopicMessage.mock.calls[0][0];
+      expect(event.type).toBe('topic_group_message');
+      expect(event.chatId).toBe('chat_topic');
+      expect(event.threadId).toBe('msg_topic_001');
+      expect(event.rootId).toBe('msg_topic_001');
+      expect(event.content).toBe('Hello topic');
+      expect(event.isReply).toBe(false);
+      expect(event.timestamp).toBe(new Date(1700000000000).toISOString());
+    });
+
+    it('should set isReply=true and rootId=parent_id when parent_id exists', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'A reply' }),
+            message_type: 'text',
+            create_time: 1700000000000,
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      const event = mockState.onTopicMessage.mock.calls[0][0];
+      expect(event.rootId).toBe('msg_parent');
+      expect(event.threadId).toBe('msg_reply');
+      expect(event.isReply).toBe(true);
+    });
+
+    it('should NOT call onTopicMessage when topicNotify is disabled', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = false;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_002',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).not.toHaveBeenCalled();
+    });
+
+    it('should NOT call onTopicMessage for non-topic chats', async () => {
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(textEvent('Hello'));
+
+      expect(mockState.onTopicMessage).not.toHaveBeenCalled();
+    });
+
+    it('should truncate content to 500 characters', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      const longText = 'A'.repeat(600);
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_long',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: longText }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      const event = mockState.onTopicMessage.mock.calls[0][0];
+      expect(event.content.length).toBe(500);
+    });
+
+    it('should use current time as fallback when create_time is missing', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_notime',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: undefined as any,
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      const event = mockState.onTopicMessage.mock.calls[0][0];
+      // Should be a valid ISO timestamp
+      expect(new Date(event.timestamp).toISOString()).toBe(event.timestamp);
+    });
+
+    it('should fire notification even when trigger_mode would filter the message', async () => {
+      mockState.isBotMentioned = false; // not @mentioned
+      mockState.topicNotifyEnabled = true;
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_no_mention',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello without mention' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      // Notification should fire even though trigger_mode would filter
+      expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
+      // But the message should NOT be emitted (filtered by trigger_mode)
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('should not block main message flow if onTopicMessage throws', async () => {
+      mockState.isBotMentioned = true;
+      mockState.topicNotifyEnabled = true;
+      mockState.onTopicMessage.mockImplementation(() => {
+        throw new Error('Notification failed');
+      });
+      const { handler } = createHandler();
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_err',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Hello' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      // Main message flow should still proceed
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
     });
   });
 });
