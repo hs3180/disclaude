@@ -337,4 +337,29 @@ describe('extractFullCardContent', () => {
     expect(result).toContain('[查看结果]');
     expect(result).toContain('[继续优化]');
   });
+
+  // Issue #4083: Handle <card title="...">content</card> format
+  describe('Issue #4083: <card> tag content format', () => {
+    it('should extract content from <card> tag with title', () => {
+      const result = extractFullCardContent('<card title="A股分钟级数据访问指南">S3 数据路径: s3://data/\n查询示例: SELECT * FROM stocks</card>');
+      expect(result).toContain('**A股分钟级数据访问指南**');
+      expect(result).toContain('S3 数据路径: s3://data/');
+      expect(result).toContain('查询示例: SELECT * FROM stocks');
+    });
+
+    it('should extract content from <card> tag without title', () => {
+      const result = extractFullCardContent('<card>Simple markdown content here</card>');
+      expect(result).toBe('Simple markdown content here');
+    });
+
+    it('should return [Interactive Card] for empty <card> tag', () => {
+      const result = extractFullCardContent('<card>  </card>');
+      expect(result).toBe('[Interactive Card]');
+    });
+
+    it('should return [Interactive Card] for non-card string', () => {
+      const result = extractFullCardContent('just some random text');
+      expect(result).toBe('[Interactive Card]');
+    });
+  });
 });
