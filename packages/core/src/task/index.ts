@@ -44,3 +44,6 @@ export {
   getStepCounts,
   LoopStateCorruptedError,
 } from './loop-state.js';
+
+// Loop Runner
+export { LoopRunner, type PushToAgentFn, type PushToAgentResult } from './loop-runner.js';
