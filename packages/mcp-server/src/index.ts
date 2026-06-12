@@ -44,6 +44,11 @@ export { send_file } from './tools/send-file.js';
 // Tools - Push to Agent (Issue #3808)
 export { push_to_agent } from './tools/push-to-agent.js';
 
+// Tools - Loop Runner (Issue #4075)
+export { loop_start } from './tools/loop-start.js';
+export { loop_stop } from './tools/loop-stop.js';
+export { loop_status } from './tools/loop-status.js';
+
 // Tools - Interactive Message
 export {
   send_interactive_message,
