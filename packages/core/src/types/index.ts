@@ -73,6 +73,7 @@ export type {
   FeedbackMessage,
   CardActionMessage,
   CardContextMessage,
+  TopicGroupMessageEvent,
 } from './websocket-messages.js';
 
 // Channel types (Issue #1040)

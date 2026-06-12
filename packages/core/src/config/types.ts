@@ -94,6 +94,28 @@ export interface FeishuConfig {
     /** Maximum message age in milliseconds */
     maxAgeMs?: number;
   };
+  /**
+   * Topic group notification settings.
+   * When enabled, ALL topic group text messages trigger a notification event
+   * (TopicGroupMessageEvent) for real-time push to connected clients.
+   * Notifications fire independently of trigger_mode — they are not limited
+   * to messages where the bot is @mentioned.
+   *
+   * Disabled by default (opt-in).
+   *
+   * @example
+   * ```yaml
+   * feishu:
+   *   topicNotify:
+   *     enabled: true
+   * ```
+   *
+   * Issue #4031: Topic group message push notification.
+   */
+  topicNotify?: {
+    /** Enable/disable topic group message notifications (default: false) */
+    enabled: boolean;
+  };
 }
 
 /**
