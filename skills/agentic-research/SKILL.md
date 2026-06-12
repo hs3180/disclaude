@@ -184,7 +184,99 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## User Feedback Propagation
+
+When a research task runs in a separate execution context (e.g., a Loop or a discussion group), user feedback originates in the **initial conversation** — not in the research execution chat. This section defines how feedback propagates between the two conversations.
+
+### The Two-Conversation Model
+
+```
+┌─────────────────────┐     RESEARCH.md      ┌─────────────────────────┐
+│  Initial            │  ──── write ────►    │  Research Execution     │
+│  Conversation       │                      │  (Loop / Discussion)    │
+│  (user ↔ agent)     │  ◄── read ─────      │                         │
+└─────────────────────┘     progress          └─────────────────────────┘
+```
+
+- **Initial conversation**: Where the user made the original request, asks follow-ups, and provides corrections
+- **Research execution**: Where the agent performs the research autonomously (e.g., via Loop)
+
+### Writing Feedback (Initial Conversation Agent)
+
+When the user provides feedback, corrections, or direction changes in the **initial conversation**, the agent should write this to `RESEARCH.md` in the shared work directory.
+
+**When to write feedback:**
+
+| Signal | Example |
+|--------|---------|
+| User corrects direction | "Focus more on cost comparison instead of features" |
+| User changes scope | "Only look at 2025 data" |
+| User expresses dissatisfaction | "This doesn't answer my question" |
+| User adds new requirements | "Also compare with vendor Z" |
+
+**How to write feedback:**
+
+Append a `## User Feedback` section to `RESEARCH.md`:
+
+```markdown
+## User Feedback
+
+### [ISO timestamp] Direction Change
+> User said: "Focus more on cost comparison"
+> Action: Agent should emphasize cost metrics in subsequent analysis steps
+
+### [ISO timestamp] Scope Adjustment
+> User said: "Only look at 2025 data"
+> Action: Filter all data sources to 2025 time range
+```
+
+**Rules:**
+- Each feedback entry is timestamped and contains the user's exact words + an interpretation of the action needed
+- Append new entries — never overwrite previous feedback (history matters for context)
+- Keep interpretations concise and actionable
+- If the feedback contradicts earlier feedback, the latest entry takes priority
+
+### Reading Feedback (Research Execution Agent)
+
+At the start of each execution step, the research agent should:
+
+1. **Check for `## User Feedback`** section in `RESEARCH.md`
+2. **Evaluate each entry** against the current step's plan
+3. **Adjust execution** if feedback is relevant to the current step
+4. **Acknowledge feedback** by noting how it was incorporated in the progress update
+
+**Feedback evaluation:**
+
+```
+For each feedback entry:
+  - Is it relevant to the current step? → Adjust plan accordingly
+  - Already addressed in a previous step? → Skip, note as resolved
+  - Requires context not yet available? → Defer to next step, flag in state file
+```
+
+### Feedback Lifecycle
+
+```
+1. User provides feedback in initial conversation
+2. Initial conversation agent writes to RESEARCH.md
+3. Research agent reads feedback on next execution step
+4. Research agent adjusts execution and writes progress update
+5. User sees adjusted results (via execution chat updates)
+```
+
+Feedback is **asynchronous** — it does not block or interrupt the current execution step. It takes effect on the next step.
+
+### Key Principles
+
+- **Feedback is a skill concern, not an engine concern** — the Loop engine only provides start/stop; feedback propagation lives in this skill
+- **RESEARCH.md is the shared state** — both conversations read and write to this file
+- **Append-only feedback** — never delete user feedback entries; mark as addressed instead
+- **Asynchronous by design** — feedback takes effect on the next iteration, not immediately
+- **No direct messaging between conversations** — feedback flows through files, not through chat messages
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+- Issue #4017: User feedback propagation from initial conversation
+- Issue #4005: Async user feedback mechanism for research tasks
