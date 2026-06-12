@@ -72,11 +72,13 @@ export interface IAgentMessageHandler {
    * @param chatId - Target chat ID
    * @param payload - Message text
    * @param messageId - Unique message identifier
+   * @param options - Optional flags (Issue #4063: Loop Runner turn completion)
    */
   handleSystemMessage(
     chatId: string,
     payload: string,
-    messageId: string
+    messageId: string,
+    options?: { waitForCompletion?: boolean }
   ): Promise<void>;
 }
 
@@ -206,7 +208,8 @@ export class MessageRouter {
     await this.handler.handleSystemMessage(
       message.chatId,
       message.payload,
-      message.id
+      message.id,
+      { waitForCompletion: message.waitForCompletion }
     );
   }
 }
