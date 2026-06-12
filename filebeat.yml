@@ -69,6 +69,15 @@ setup.template.settings:
   # Set to 1 for multi-node ES clusters for data redundancy
   index.number_of_replicas: 0
 
+# HTTP monitoring endpoint — serves / and /stats with live metrics.
+# Required by the docker-compose healthcheck (curl http://localhost:5066).
+# Binds to localhost only; on the host network this stays on the host loopback
+# and is not exposed externally.
+http:
+  enabled: true
+  host: localhost
+  port: 5066
+
 # Filebeat's own logging
 logging.level: info
 logging.to_stderr: true
