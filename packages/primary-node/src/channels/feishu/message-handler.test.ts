@@ -814,6 +814,21 @@ describe('MessageHandler', () => {
       expect(msg.content).toContain('下载失败');
     });
 
+    it('should include manual download instructions in failure prompt', async () => {
+      const { handler } = createHandler();
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_abc', file_name: 'report.pdf' }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('下载失败');
+      expect(msg.content).toContain('message_id: `msg_file`');
+      expect(msg.content).toContain('file_key: `file_abc`');
+      expect(msg.content).toContain('npx @larksuite/cli im +resource-download');
+      expect(msg.content).toContain('--message-id msg_file');
+      expect(msg.content).toContain('--file-key file_abc');
+      expect(msg.content).toContain('report.pdf');
+    });
+
     it('should emit correct message type for audio messages', async () => {
       const { handler } = createHandler();
       await handler.handleMessageReceive(fileEvent('audio', { file_key: 'audio_001' }));
@@ -1460,7 +1475,7 @@ describe('MessageHandler', () => {
       expect(msg.content).toContain('img_fail');
       expect(msg.content).toContain('+messages-resources-download');
       expect(msg.content).toContain('msg_dl_fail');
-      expect(msg.content).toContain('原始 message_id');
+      expect(msg.content).toContain('message_id');
       expect(msg.content).toContain('file_key');
       expect(msg.attachments).toBeUndefined();
     });
