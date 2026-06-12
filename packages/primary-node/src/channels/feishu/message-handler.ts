@@ -958,7 +958,7 @@ export class MessageHandler {
       const typeLabel = message_type === 'image' ? '图片' : message_type === 'file' ? '文件' : message_type === 'audio' ? '语音消息' : '媒体文件';
       const filePrompt = localPath
         ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}`
-        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}，但下载失败。`;
+        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n你可以尝试手动下载该文件：\n- message_id: \`${message_id}\`\n- file_key: \`${fileKey}\`\n- 文件类型: ${mapResourceType(message_type)}\n\n下载命令:\n\`\`\`bash\nnpx @larksuite/cli im +resource-download --message-id ${message_id} --file-key ${fileKey} --type ${mapResourceType(message_type)} --output /data/workspace/downloads/${fileName || fileKey} --as bot\n\`\`\``;
 
       // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
       // ensuring intermediate message filtering works correctly in topic groups.
