@@ -66,9 +66,21 @@ setup.ilm.enabled: false
 # `disclaude-logs-YYYY.MM.dd` matches ES's data-stream naming convention
 # (type-dataset-namespace), so ES would auto-create data streams instead of
 # plain indices. With template management disabled, no data-stream template is
-# installed, and ES creates plain indices with dynamic mappings. To use explicit
-# field mappings, create your own plain template in ES, e.g.
-# `PUT _index_template/disclaude-logs` (without a `data_stream` key).
+# installed, and ES creates plain indices with dynamic mappings.
+#
+# For single-node ES deployments, create a plain index template to control
+# shard/replica settings (the default 1 replica causes yellow status on a
+# single node). For example:
+#   PUT _index_template/disclaude-logs
+#   {
+#     "index_patterns": ["disclaude-logs-*"],
+#     "template": {
+#       "settings": {
+#         "number_of_shards": 1,
+#         "number_of_replicas": 0
+#       }
+#     }
+#   }
 setup.template.enabled: false
 
 # HTTP monitoring endpoint — serves / and /stats with live metrics.
