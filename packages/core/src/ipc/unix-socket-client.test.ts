@@ -489,6 +489,8 @@ describe('UnixSocketIpcClient', () => {
 
 describe('getIpcSocketPath', () => {
   // Defensive cleanup: ensure IPC_SOCKET_PATH_FILE does not leak between tests (Issue #4061)
+  // NOTE: If you add a test for the file-based fallback path (no env vars, file exists),
+  // you must recreate the file within that test after this cleanup runs.
   beforeEach(() => {
     try { unlinkSync(IPC_SOCKET_PATH_FILE); } catch { /* ignore if not exists */ }
   });
