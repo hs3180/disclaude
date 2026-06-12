@@ -16,6 +16,9 @@ import {
   send_interactive,
   send_file,
   push_to_agent,
+  loop_start,
+  loop_stop,
+  loop_status,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -517,6 +520,72 @@ will be processed as a system command.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Push to agent failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+
+  // ===========================================================================
+  // Loop Runner tools (Issue #4063: Phase 0c)
+  // ===========================================================================
+  {
+    name: 'loop_start',
+    description: `Start a loop execution that drives an Agent in repeated turns with a fixed prompt.
+
+The loop runs autonomously until a termination condition is met:
+- maxSteps reached (default: 10)
+- maxDuration exceeded (default: 2h)
+- maxConsecutiveFailures exceeded (default: 3)
+- Manually stopped via loop_stop
+
+Returns a loopId that can be used with loop_stop and loop_status.`,
+    parameters: z.object({
+      chatId: z.string().describe('Chat ID where the Agent runs'),
+      workDir: z.string().describe('Working directory for loop state persistence'),
+      prompt: z.string().describe('Fixed prompt used for each Agent turn'),
+      maxSteps: z.number().optional().describe('Maximum number of steps (default: 10)'),
+      maxDuration: z.string().optional().describe('Maximum duration e.g. "2h", "30m" (default: "2h")'),
+      maxConsecutiveFailures: z.number().optional().describe('Maximum consecutive failures before stopping (default: 3)'),
+    }),
+    handler: async ({ chatId, workDir, prompt, maxSteps, maxDuration, maxConsecutiveFailures }) => await withTiming(timingLogger, 'mcp:loop_start', chatId, async () => {
+      try {
+        const result = await loop_start({ chatId, workDir, prompt, maxSteps, maxDuration, maxConsecutiveFailures });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`loop_start failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  {
+    name: 'loop_stop',
+    description: `Stop a running loop execution.
+
+Use the loopId returned by loop_start.`,
+    parameters: z.object({
+      loopId: z.string().describe('The loop ID to stop'),
+    }),
+    handler: async ({ loopId }) => await withTiming(timingLogger, 'mcp:loop_stop', loopId, async () => {
+      try {
+        const result = await loop_stop({ loopId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`loop_stop failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  {
+    name: 'loop_status',
+    description: `Get the status of a loop execution.
+
+Returns current step, total steps, state, and timing information.`,
+    parameters: z.object({
+      loopId: z.string().describe('The loop ID to query'),
+    }),
+    handler: async ({ loopId }) => await withTiming(timingLogger, 'mcp:loop_status', loopId, async () => {
+      try {
+        const result = await loop_status({ loopId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`loop_status failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },

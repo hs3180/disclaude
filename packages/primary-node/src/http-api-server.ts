@@ -68,6 +68,11 @@ export interface PushResponse {
 export type PushHandler = (chatId: string, message: string) => Promise<void>;
 
 /**
+ * Handler for loop operations (Issue #4063: Phase 0c).
+ */
+export type LoopRequestHandler = (action: 'start' | 'stop' | 'status', params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -106,6 +111,7 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
+  private loopHandler?: LoopRequestHandler;
 
   constructor(config: HttpApiServerConfig) {
     this.config = { host: 'localhost', ...config };
@@ -127,6 +133,13 @@ export class HttpApiServer {
    */
   setPushHandler(handler: PushHandler): void {
     this.pushHandler = handler;
+  }
+
+  /**
+   * Set the loop handler for loop REST endpoints.
+   */
+  setLoopHandler(handler: LoopRequestHandler): void {
+    this.loopHandler = handler;
   }
 
   /**
@@ -222,6 +235,10 @@ export class HttpApiServer {
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
+    // Loop Runner endpoints (Issue #4063: Phase 0c)
+    this.addRoute('POST', '/api/loop/start', this.handleLoopStart.bind(this));
+    this.addRoute('POST', '/api/loop/stop', this.handleLoopStop.bind(this));
+    this.addRoute('GET', '/api/loop/status', this.handleLoopStatus.bind(this));
   }
 
   /**
@@ -345,6 +362,107 @@ export class HttpApiServer {
     } catch (err) {
       logger.error({ err, chatId }, 'Push handler error');
       const msg = err instanceof Error ? err.message : 'Push failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Loop Runner endpoints (Issue #4063: Phase 0c)
+  // -------------------------------------------------------------------------
+
+  private async handleLoopStart(req: IncomingMessage, res: ServerResponse, _params: Record<string, string>): Promise<void> {
+    if (!this.loopHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'Loop handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON' });
+      return;
+    }
+
+    const p = parsed as Record<string, unknown>;
+    if (typeof p.chatId !== 'string' || typeof p.workDir !== 'string' || typeof p.prompt !== 'string') {
+      this.sendJson(res, 400, { ok: false, message: 'Required: chatId, workDir, prompt (all strings)' });
+      return;
+    }
+
+    try {
+      const result = await this.loopHandler('start', p);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Loop start failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  private async handleLoopStop(req: IncomingMessage, res: ServerResponse, _params: Record<string, string>): Promise<void> {
+    if (!this.loopHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'Loop handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON' });
+      return;
+    }
+
+    const p = parsed as Record<string, unknown>;
+    if (typeof p.loopId !== 'string') {
+      this.sendJson(res, 400, { ok: false, message: 'Required: loopId (string)' });
+      return;
+    }
+
+    try {
+      const result = await this.loopHandler('stop', p);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Loop stop failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  private async handleLoopStatus(req: IncomingMessage, res: ServerResponse, _params: Record<string, string>): Promise<void> {
+    if (!this.loopHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'Loop handler not configured' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    const loopId = url.searchParams.get('loopId');
+
+    if (!loopId) {
+      this.sendJson(res, 400, { ok: false, message: 'Required query param: loopId' });
+      return;
+    }
+
+    try {
+      const result = await this.loopHandler('status', { loopId });
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Loop status failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
   }

@@ -45,3 +45,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Loop Runner (Issue #4063: Phase 0c)
+export { loop_start, loop_stop, loop_status } from './loop-runner.js';

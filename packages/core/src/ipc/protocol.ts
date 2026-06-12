@@ -26,7 +26,11 @@ export type IpcRequestType =
   | 'listTempChats'
   | 'markChatResponded'
   // Push instruction to a chat agent (Issue #631)
-  | 'pushToAgent';
+  | 'pushToAgent'
+  // Loop Runner operations (Issue #4063: Phase 0c)
+  | 'loopStart'
+  | 'loopStop'
+  | 'loopStatus';
 
 /**
  * IPC request payload types.
@@ -85,6 +89,21 @@ export interface IpcRequestPayloads {
     chatId: string;
     message: string;
   };
+  // Loop Runner operations (Issue #4063: Phase 0c)
+  loopStart: {
+    chatId: string;
+    workDir: string;
+    prompt: string;
+    maxSteps?: number;
+    maxDuration?: string;
+    maxConsecutiveFailures?: number;
+  };
+  loopStop: {
+    loopId: string;
+  };
+  loopStatus: {
+    loopId: string;
+  };
 }
 
 /**
@@ -133,6 +152,28 @@ export interface IpcResponsePayloads {
   // Push instruction to a chat agent (Issue #631)
   pushToAgent: {
     success: boolean;
+  };
+  // Loop Runner operations (Issue #4063: Phase 0c)
+  loopStart: {
+    success: boolean;
+    loopId?: string;
+    error?: string;
+  };
+  loopStop: {
+    success: boolean;
+    error?: string;
+  };
+  loopStatus: {
+    success: boolean;
+    loopId?: string;
+    state?: string;
+    currentStep?: number;
+    totalSteps?: number;
+    completedSteps?: number;
+    failedSteps?: number;
+    consecutiveFailures?: number;
+    elapsedMs?: number;
+    error?: string;
   };
 }
 

@@ -450,6 +450,37 @@ async function main(): Promise<void> {
           };
           await router.route(systemMessage);
         });
+
+        // Loop Runner REST handler (Issue #4063: Phase 0c)
+        httpApiServer.setLoopHandler(async (action, params): Promise<Record<string, unknown>> => {
+          const loopRunner = primaryNode.getLoopRunner();
+          if (!loopRunner) {
+            return { success: false, error: 'Loop Runner not available' };
+          }
+          switch (action) {
+            case 'start': {
+              const result = await loopRunner.start({
+                chatId: params.chatId as string,
+                workDir: params.workDir as string,
+                prompt: params.prompt as string,
+                maxSteps: params.maxSteps as number | undefined,
+                maxDuration: params.maxDuration as string | undefined,
+                maxConsecutiveFailures: params.maxConsecutiveFailures as number | undefined,
+              });
+              return { success: true, ...result } as Record<string, unknown>;
+            }
+            case 'stop': {
+              await loopRunner.stop({ loopId: params.loopId as string });
+              return { success: true };
+            }
+            case 'status': {
+              const status = loopRunner.status({ loopId: params.loopId as string });
+              return (status ? { success: true, ...status } : { success: false, error: 'Loop not found' }) as Record<string, unknown>;
+            }
+            default:
+              return { success: false, error: `Unknown action: ${action}` };
+          }
+        });
       }
 
       await httpApiServer.start();

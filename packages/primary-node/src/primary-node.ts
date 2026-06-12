@@ -56,6 +56,8 @@ import {
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
+  // Issue #4063: Loop Runner
+  LoopRunner,
 } from '@disclaude/core';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -165,6 +167,9 @@ export class PrimaryNode extends EventEmitter {
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
+
+  // Loop Runner (Issue #4063: Phase 0c)
+  protected loopRunner?: LoopRunner;
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -452,6 +457,35 @@ export class PrimaryNode extends EventEmitter {
         }
         return h.markChatResponded(chatId, response);
       },
+
+      // Loop Runner operations (Issue #4063: Phase 0c) — system-level, no channel dispatch
+      loopStart: async (params) => {
+        const loopRunner = this.getLoopRunner();
+        if (!loopRunner) {
+          return { success: false, error: 'Loop Runner not available' };
+        }
+        const result = await loopRunner.start(params);
+        return { success: true, ...result };
+      },
+      loopStop: async (loopId) => {
+        const loopRunner = this.getLoopRunner();
+        if (!loopRunner) {
+          return { success: false, error: 'Loop Runner not available' };
+        }
+        await loopRunner.stop({ loopId });
+        return { success: true };
+      },
+      loopStatus: (loopId) => {
+        const loopRunner = this.getLoopRunner();
+        if (!loopRunner) {
+          return { success: false, error: 'Loop Runner not available' };
+        }
+        const status = loopRunner.status({ loopId });
+        if (!status) {
+          return { success: false, error: `Loop ${loopId} not found` };
+        }
+        return { success: true, ...status };
+      },
     };
 
     return container;
@@ -462,6 +496,31 @@ export class PrimaryNode extends EventEmitter {
    */
   getChannels(): IChannel[] {
     return this.channelManager.getAll();
+  }
+
+  /**
+   * Get or create the LoopRunner instance.
+   *
+   * The runner is lazily initialized with a pushToAgent function
+   * that routes through the composite handlers.
+   */
+  getLoopRunner(): LoopRunner | undefined {
+    if (!this.loopRunner) {
+      const {handlers} = this.createCompositeHandlersContainer();
+      if (!handlers?.pushToAgent) {
+        return undefined;
+      }
+      this.loopRunner = new LoopRunner(
+        (chatId: string, message: string) => {
+          const fn = handlers?.pushToAgent;
+          if (!fn) {
+            return Promise.resolve({ success: false, error: 'pushToAgent not available' });
+          }
+          return fn(chatId, message);
+        },
+      );
+    }
+    return this.loopRunner;
   }
 
   /**

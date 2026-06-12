@@ -723,6 +723,67 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Loop Runner operations (Issue #4063: Phase 0c)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Start a loop execution via IPC.
+   */
+  async loopStart(params: {
+    chatId: string;
+    workDir: string;
+    prompt: string;
+    maxSteps?: number;
+    maxDuration?: string;
+    maxConsecutiveFailures?: number;
+  }): Promise<{ success: boolean; loopId?: string; error?: string }> {
+    try {
+      return await this.request('loopStart', params);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, params }, 'loopStart failed');
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Stop a running loop via IPC.
+   */
+  async loopStop(loopId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      return await this.request('loopStop', { loopId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, loopId }, 'loopStop failed');
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Get loop status via IPC.
+   */
+  async loopStatus(loopId: string): Promise<{
+    success: boolean;
+    loopId?: string;
+    state?: string;
+    currentStep?: number;
+    totalSteps?: number;
+    completedSteps?: number;
+    failedSteps?: number;
+    consecutiveFailures?: number;
+    elapsedMs?: number;
+    error?: string;
+  }> {
+    try {
+      return await this.request('loopStatus', { loopId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, loopId }, 'loopStatus failed');
+      return { success: false, error: err.message };
+    }
+  }
+
   /**
    * Handle incoming data.
    */

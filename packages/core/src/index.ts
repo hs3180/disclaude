@@ -215,6 +215,36 @@ export {
 export {
   DialogueMessageTracker,
   TaskTracker,
+  // Loop Runner (Issue #4063)
+  LoopRunner,
+  type PushToAgentFn,
+  type PushToAgentResult,
+  LOOP_DEFAULTS,
+  LOOP_STATE_FILE,
+  TERMINAL_STATES,
+  type LoopRunState,
+  type LoopConfig,
+  type LoopStepRecord,
+  type LoopState,
+  type LoopStartParams,
+  type LoopStartResult,
+  type LoopStopParams,
+  type LoopStatusParams,
+  type LoopStatusResult,
+  type StepResult,
+  parseDuration,
+  // Note: getStateFilePath already exported from project module
+  createInitialState,
+  readLoopState,
+  readLoopStateSync,
+  writeLoopState,
+  writeLoopStateSync,
+  startLoop,
+  recordStep,
+  terminateLoop,
+  checkTermination,
+  getStepCounts,
+  LoopStateCorruptedError,
 } from './task/index.js';
 
 // Queue module (Issue #1041)
