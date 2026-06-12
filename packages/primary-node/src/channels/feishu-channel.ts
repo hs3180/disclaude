@@ -256,6 +256,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       'im.message.message_read_v1': () => {
         // No action needed for read receipts
       },
+      'im.message.reaction.created_v1': () => {
+        // No action needed — bot adds typing reactions which trigger these events
+      },
+      'im.message.reaction.deleted_v1': () => {
+        // No action needed — reaction removal events are not actionable
+      },
       'im.chat.access_event.bot_p2p_chat_entered_v1': async (data: unknown) => {
         try {
           await this.welcomeHandler.handleP2PChatEntered(data as FeishuP2PChatEnteredEventData);
