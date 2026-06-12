@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
@@ -22,6 +22,7 @@ import {
   createInteractiveMessageHandler,
 } from './index.js';
 import type { ChannelHandlersContainer } from './unix-socket-server.js';
+import { IPC_SOCKET_PATH_FILE } from './protocol.js';
 
 // ============================================================================
 // Test helpers
@@ -487,6 +488,13 @@ describe('UnixSocketIpcClient', () => {
 // ============================================================================
 
 describe('getIpcSocketPath', () => {
+  // Defensive cleanup: ensure IPC_SOCKET_PATH_FILE does not leak between tests (Issue #4061)
+  // NOTE: If you add a test for the file-based fallback path (no env vars, file exists),
+  // you must recreate the file within that test after this cleanup runs.
+  beforeEach(() => {
+    try { unlinkSync(IPC_SOCKET_PATH_FILE); } catch { /* ignore if not exists */ }
+  });
+
   it('should return env var DISCLAUDE_WORKER_IPC_SOCKET if set', () => {
     const original = process.env.DISCLAUDE_WORKER_IPC_SOCKET;
     process.env.DISCLAUDE_WORKER_IPC_SOCKET = '/tmp/worker.ipc';
@@ -509,6 +517,7 @@ describe('getIpcSocketPath', () => {
     const originalPath = process.env.DISCLAUDE_IPC_SOCKET_PATH;
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
     delete process.env.DISCLAUDE_IPC_SOCKET_PATH;
+    // IPC_SOCKET_PATH_FILE already cleaned in beforeEach (Issue #4061)
     expect(getIpcSocketPath()).toBe('/tmp/disclaude-interactive.ipc');
     process.env.DISCLAUDE_WORKER_IPC_SOCKET = originalWorker;
     process.env.DISCLAUDE_IPC_SOCKET_PATH = originalPath;
