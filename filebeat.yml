@@ -70,9 +70,10 @@ setup.template.settings:
   index.number_of_replicas: 0
 
 # HTTP monitoring endpoint — serves / and /stats with live metrics.
-# Required by the docker-compose healthcheck (curl http://localhost:5066).
-# Binds to localhost only; on the host network this stays on the host loopback
-# and is not exposed externally.
+# Required by the docker-compose healthcheck (curl http://localhost:5066/).
+# Binds to localhost only — not exposed externally.
+# NOTE: filebeat uses network_mode: host in docker-compose, so "localhost" here
+# maps directly to the host's 127.0.0.1 loopback interface.
 http:
   enabled: true
   host: localhost
