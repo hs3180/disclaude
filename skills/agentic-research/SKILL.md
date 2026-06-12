@@ -184,6 +184,40 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## Async Feedback Propagation
+
+When research is executed via the Loop System (#4039), users may provide feedback from the initial conversation while the Loop continues executing. Feedback propagation is a **skill-level concern** — the Loop engine only provides start/stop and is feedback-agnostic.
+
+### How It Works
+
+```
+User sends feedback in initial conversation
+  → Skill-layer Agent detects meaningful feedback
+  → Writes feedback into RESEARCH.md (or relevant file in workDir)
+     → Execution Agent reads updated file in next loop iteration
+     → Evaluates whether feedback affects current direction
+```
+
+### Agent Responsibilities
+
+**In the initial conversation (feedback writer):**
+1. Monitor user messages for suggestions, corrections, or direction changes
+2. When meaningful feedback is detected, append it to the research file (e.g., RESEARCH.md) in a dedicated feedback section
+3. Do NOT stop the loop — feedback is non-blocking
+
+**In the execution loop (feedback reader):**
+1. At the start of each iteration, check for new feedback in the research file
+2. Evaluate whether feedback warrants a direction change
+3. If yes: adjust approach and document the change in progress records
+4. If no: acknowledge but continue current direction
+
+### Design Principles
+
+- **Non-blocking**: User feedback is advisory, not a command that pauses execution
+- **Skill-level**: Feedback propagation is the skill's responsibility, not the Loop engine's
+- **Agent discretion**: The execution agent decides whether feedback warrants action
+- **Transparent**: Acknowledge incorporated feedback in progress records
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
