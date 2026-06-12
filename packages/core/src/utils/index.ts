@@ -91,3 +91,7 @@ export {
 // Process Lock (Issue #3417)
 export type { ProcessLockOptions } from './process-lock.js';
 export { ProcessLock } from './process-lock.js';
+
+// Data Source Scanner (Issue #933)
+export type { DataFileCategory, DiscoveredFile, DataScanResult } from './data-source-scanner.js';
+export { scanDataSources, formatScanSummary } from './data-source-scanner.js';
