@@ -1451,6 +1451,8 @@ describe('MessageHandler', () => {
       expect(msg.content).toContain('img_fail');
       expect(msg.content).toContain('+resource-download');
       expect(msg.content).toContain('msg_dl_fail');
+      expect(msg.content).toContain('原始 message_id');
+      expect(msg.content).toContain('file_key');
       expect(msg.attachments).toBeUndefined();
     });
   });

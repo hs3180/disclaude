@@ -796,9 +796,11 @@ export class MessageHandler {
     }
 
     const typeLabel = messageType === 'image' ? '图片' : messageType === 'file' ? '文件' : messageType === 'audio' ? '语音消息' : '媒体文件';
+    const resourceType = mapResourceType(messageType);
+    const downloadCmd = `npx @larksuite/cli im +resource-download --message-id ${messageId} --file-key ${fileKey} --type ${resourceType} --as bot --output <path>`;
     if (!localPath) {
       return {
-        text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}（下载失败，无法查看内容）`,
+        text: `> **引用的消息**: [${typeLabel}] ${fileName || fileKey}（下载失败）\n> 可使用以下命令下载: ${downloadCmd}`,
       };
     }
 
@@ -951,7 +953,7 @@ export class MessageHandler {
       const downloadCmd = `npx @larksuite/cli im +resource-download --message-id ${message_id} --file-key ${fileKey} --type ${resourceType} --as bot --output <path>`;
       const filePrompt = localPath
         ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}\n\n如果文件读取失败，可以使用以下命令重新下载:\n${downloadCmd}`
-        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n请使用以下命令手动下载:\n${downloadCmd}`;
+        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n原始 message_id: ${message_id}\nfile_key: ${fileKey}\n\n请使用以下命令手动下载:\n${downloadCmd}`;
 
       // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
       // ensuring intermediate message filtering works correctly in topic groups.
