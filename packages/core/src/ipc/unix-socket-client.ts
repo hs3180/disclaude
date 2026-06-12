@@ -701,13 +701,16 @@ export class UnixSocketIpcClient {
    *
    * @param chatId - Target chat ID
    * @param message - The instruction text to push
+   * @param options - Optional flags (Issue #4063)
+   * @param options.waitForCompletion - If true, wait for agent turn to complete
    */
   async pushToAgent(
     chatId: string,
-    message: string
+    message: string,
+    options?: { waitForCompletion?: boolean }
   ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('pushToAgent', { chatId, message });
+      return await this.request('pushToAgent', { chatId, message, waitForCompletion: options?.waitForCompletion });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'pushToAgent failed');

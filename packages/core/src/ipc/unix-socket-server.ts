@@ -79,7 +79,7 @@ export interface ChannelApiHandlers {
   /** Mark a temp chat as responded (Issue #1703) */
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
   /** Push instruction to a chat agent (Issue #631) */
-  pushToAgent?: (chatId: string, message: string) => Promise<{ success: boolean }>;
+  pushToAgent?: (chatId: string, message: string, options?: { waitForCompletion?: boolean }) => Promise<{ success: boolean }>;
 }
 
 /**
@@ -332,10 +332,10 @@ export function createInteractiveMessageHandler(
               error: 'pushToAgent not supported by this channel',
             };
           }
-          const { chatId, message } =
+          const { chatId, message, waitForCompletion } =
             request.payload as IpcRequestPayloads['pushToAgent'];
           try {
-            const result = await handlers.pushToAgent(chatId, message);
+            const result = await handlers.pushToAgent(chatId, message, { waitForCompletion });
             return { id: request.id, success: true, payload: { success: result.success } };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
