@@ -66,13 +66,35 @@ function extractFullFromElements(elements: unknown[]): string[] {
 }
 
 /**
+ * Extract text from `<card title="...">content</card>` format.
+ * Issue #4083: Feishu sometimes delivers card messages in this XML-like format
+ * instead of the structured JSON template format.
+ */
+function extractCardTagContent(content: string): string | null {
+  const match = content.match(/^<card[^>]*>([\s\S]*)<\/card>$/);
+  if (!match) {return null;}
+  const body = match[1].trim();
+  if (!body) {return null;}
+  // Try to extract title attribute
+  const titleMatch = content.match(/^<card[^>]*\btitle="([^"]*)"[^>]*>/);
+  const title = titleMatch ? `**${titleMatch[1]}**\n` : '';
+  return title + body;
+}
+
+/**
  * Extract full user-visible text content from a Feishu Card for agent consumption.
  * Issue #3657: Returns complete card content (not truncated).
+ * Issue #4083: Also handles `<card>` string format.
  *
- * @param card - Feishu card object
+ * @param card - Feishu card object or `<card>` string content
  * @returns Structured text representation of the card
  */
-export function extractFullCardContent(card: Record<string, unknown>): string {
+export function extractFullCardContent(card: Record<string, unknown> | string): string {
+  // Issue #4083: Handle `<card title="...">content</card>` format
+  if (typeof card === 'string') {
+    return extractCardTagContent(card) || '[Interactive Card]';
+  }
+
   const lines: string[] = [];
 
   // Header
