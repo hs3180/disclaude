@@ -1058,6 +1058,37 @@ export class MessageHandler {
       create_time
     );
 
+    // Issue #4031: Emit topic group message notification if enabled.
+    // Placed BEFORE trigger_mode check so notifications fire for all topic messages,
+    // regardless of whether the bot is @mentioned.
+    if (chat_type === 'topic' && this.callbacks.onTopicMessage
+        && Config.getRawConfig().feishu?.topicNotify?.enabled === true) {
+      try {
+        const senderOpenId = this.extractOpenId(sender);
+        const senderName = this.extractSenderName({ sender, sender_name: sender?.sender_id } as unknown as { [key: string]: unknown });
+        this.callbacks.onTopicMessage({
+          type: 'topic_group_message',
+          chatId: chat_id,
+          rootId: parent_id ?? message_id,
+          threadId: message_id,
+          sender: {
+            name: senderName,
+            openId: senderOpenId,
+          },
+          content: (text || '').substring(0, 500),
+          isReply: !!parent_id,
+          timestamp: create_time
+            ? new Date(create_time).toISOString()
+            : new Date().toISOString(),
+        });
+      } catch (topicNotifyError) {
+        logger.warn(
+          { err: topicNotifyError, messageId: message_id },
+          'Failed to emit topic group notification (non-critical)'
+        );
+      }
+    }
+
     // Check for control commands
     const botMentioned = this.mentionDetector.isBotMentioned(mentions);
     const textWithoutMentions = stripLeadingMentions(text, mentions);
@@ -1181,36 +1212,6 @@ export class MessageHandler {
     const quotedAttachments = quotedMessageResult?.attachment
       ? [quotedMessageResult.attachment]
       : undefined;
-
-    // Issue #4031: Emit topic group message notification if enabled
-    if (chat_type === 'topic' && this.callbacks.onTopicMessage) {
-      const feishuConfig = Config.getRawConfig().feishu;
-      const topicNotifyEnabled = feishuConfig?.topicNotify?.enabled === true;
-      if (topicNotifyEnabled) {
-        try {
-          const senderOpenId = this.extractOpenId(sender);
-          this.callbacks.onTopicMessage({
-            type: 'topic_group_message',
-            chatId: chat_id,
-            rootId: parent_id ?? message_id,
-            threadId: message_id,
-            sender: {
-              openId: senderOpenId,
-            },
-            content: text.substring(0, 500),
-            isReply: !!parent_id,
-            timestamp: create_time
-              ? new Date(create_time).toISOString()
-              : new Date().toISOString(),
-          });
-        } catch (topicNotifyError) {
-          logger.warn(
-            { err: topicNotifyError, messageId: message_id },
-            'Failed to emit topic group notification (non-critical)'
-          );
-        }
-      }
-    }
 
     // Emit as incoming message
     await this.callbacks.emitMessage({
