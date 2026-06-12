@@ -1416,6 +1416,9 @@ describe('MessageHandler', () => {
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.content).toContain('文件已下载到本地');
+      expect(msg.content).toContain('+resource-download');
+      expect(msg.content).toContain('msg_dl');
+      expect(msg.content).toContain('img_001');
       expect(msg.attachments).toBeDefined();
       expect(msg.attachments[0].fileName).toContain('image_img_001');
     });
@@ -1454,6 +1457,11 @@ describe('MessageHandler', () => {
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.content).toContain('下载失败');
+      expect(msg.content).toContain('img_fail');
+      expect(msg.content).toContain('+resource-download');
+      expect(msg.content).toContain('msg_dl_fail');
+      expect(msg.content).toContain('原始 message_id');
+      expect(msg.content).toContain('file_key');
       expect(msg.attachments).toBeUndefined();
     });
   });
