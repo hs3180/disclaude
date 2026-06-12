@@ -134,9 +134,14 @@ See `filebeat.yml` in the project root for the full configuration.
 
 - **Registry persistence**: Filebeat tracks read positions in a Docker named volume
   (`filebeat_data`). This prevents re-reading all logs after container restarts.
-- **Template updates**: If you modify `setup.template.settings` after initial setup,
-  you must delete the existing template from ES (`DELETE _template/disclaude-logs`)
-  or temporarily set `setup.template.overwrite: true` in `filebeat.yml`.
+- **Index templates**: Filebeat's auto-managed index template is disabled
+  (`setup.template.enabled: false`). Filebeat 8.x generates a template with a
+  top-level `data_stream: {}`, which — together with the `disclaude-logs-YYYY.MM.dd`
+  index name matching ES's data-stream naming convention — would make ES auto-create
+  data streams instead of plain indices. With the template disabled, ES creates plain
+  indices (dynamic mappings) and no data streams. To use explicit field mappings,
+  create your own plain index template in ES, e.g.
+  `PUT _index_template/disclaude-logs` (no `data_stream` key).
 - **Network mode**: Filebeat uses `network_mode: host` for maximum compatibility
   (same as primary and playwright services). If you need stricter network isolation,
   replace it with a custom bridge network and expose only the ES port.
@@ -161,8 +166,8 @@ output.elasticsearch:
   index: "disclaude-logs-%{+yyyy.MM.dd}"
 
 setup.ilm.enabled: false
-setup.template.name: disclaude-logs
-setup.template.pattern: disclaude-logs-*
+# Disable Filebeat's auto-template to avoid data streams (see Configuration Details)
+setup.template.enabled: false
 ```
 
 ### Step 2: Start Filebeat
