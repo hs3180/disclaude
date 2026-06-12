@@ -60,16 +60,28 @@ output.elasticsearch:
 
 # Disable ILM and data streams — use simple daily indices
 setup.ilm.enabled: false
-setup.template.name: disclaude-logs
-setup.template.pattern: disclaude-logs-*
-setup.template.type: index
-# NOTE: If you modify template settings after initial setup, you must either
-# delete the existing template from ES or set overwrite: true temporarily.
-setup.template.overwrite: false
-setup.template.settings:
-  index.number_of_shards: 1
-  # Set to 1 for multi-node ES clusters for data redundancy
-  index.number_of_replicas: 0
+# Disable Filebeat's auto-managed index template.
+# Filebeat 8.x generates a template containing a top-level `data_stream: {}`,
+# which marks it as a data-stream template. The daily index name
+# `disclaude-logs-YYYY.MM.dd` matches ES's data-stream naming convention
+# (type-dataset-namespace), so ES would auto-create data streams instead of
+# plain indices. With template management disabled, no data-stream template is
+# installed, and ES creates plain indices with dynamic mappings.
+#
+# For single-node ES deployments, create a plain index template to control
+# shard/replica settings (the default 1 replica causes yellow status on a
+# single node). For example:
+#   PUT _index_template/disclaude-logs
+#   {
+#     "index_patterns": ["disclaude-logs-*"],
+#     "template": {
+#       "settings": {
+#         "number_of_shards": 1,
+#         "number_of_replicas": 0
+#       }
+#     }
+#   }
+setup.template.enabled: false
 
 # HTTP monitoring endpoint — serves / and /stats with live metrics.
 # Required by the docker-compose healthcheck (curl http://localhost:5066/).
