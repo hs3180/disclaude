@@ -145,7 +145,7 @@ export interface TopicGroupMessageEvent {
   };
   /** Message content summary (plain text) */
   content: string;
-  /** Whether this is a reply to an existing thread */
+  /** Whether this message has a parent_id (i.e., is a reply within a thread, not the thread root) */
   isReply: boolean;
   /** ISO 8601 timestamp */
   timestamp: string;
