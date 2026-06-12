@@ -207,11 +207,11 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:5066"]
+      test: ["CMD", "curl", "-sf", "http://localhost:5066/"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 20s
 
     profiles:
       - logging
