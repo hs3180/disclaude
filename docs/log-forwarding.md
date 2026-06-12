@@ -134,9 +134,36 @@ See `filebeat.yml` in the project root for the full configuration.
 
 - **Registry persistence**: Filebeat tracks read positions in a Docker named volume
   (`filebeat_data`). This prevents re-reading all logs after container restarts.
-- **Template updates**: If you modify `setup.template.settings` after initial setup,
-  you must delete the existing template from ES (`DELETE _template/disclaude-logs`)
-  or temporarily set `setup.template.overwrite: true` in `filebeat.yml`.
+- **Index templates**: Filebeat's auto-managed index template is disabled
+  (`setup.template.enabled: false`). Filebeat 8.x generates a template with a
+  top-level `data_stream: {}`, which — together with the `disclaude-logs-YYYY.MM.dd`
+  index name matching ES's data-stream naming convention — would make ES auto-create
+  data streams instead of plain indices. With the template disabled, ES creates plain
+  indices (dynamic mappings) and no data streams. For single-node ES deployments,
+  create a plain index template to set shard/replica counts (the ES default of 1
+  replica causes yellow status on a single node):
+
+  ```bash
+  PUT _index_template/disclaude-logs
+  {
+    "index_patterns": ["disclaude-logs-*"],
+    "template": {
+      "settings": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0
+      }
+    }
+  }
+  ```
+
+- **Upgrading from auto-template**: If you previously used Filebeat's auto-managed
+  template, delete the old template before starting Filebeat to avoid residual
+  data-stream settings:
+
+  ```bash
+  curl -X DELETE "http://localhost:9200/_index_template/disclaude-logs"
+  curl -X DELETE "http://localhost:9200/_template/disclaude-logs"
+  ```
 - **Network mode**: Filebeat uses `network_mode: host` for maximum compatibility
   (same as primary and playwright services). If you need stricter network isolation,
   replace it with a custom bridge network and expose only the ES port.
@@ -161,8 +188,9 @@ output.elasticsearch:
   index: "disclaude-logs-%{+yyyy.MM.dd}"
 
 setup.ilm.enabled: false
-setup.template.name: disclaude-logs
-setup.template.pattern: disclaude-logs-*
+# Disable Filebeat's auto-template to avoid data streams — see Index templates
+# in the Configuration Details section for context and a custom template example.
+setup.template.enabled: false
 ```
 
 ### Step 2: Start Filebeat
