@@ -33,6 +33,8 @@ filebeat.inputs:
     # Remove registry state for deleted/rotated files
     clean_removed: true
     # Clean up file state for files older than 72h (after rotation)
+    # ignore_older is required when clean_inactive is set, and must be less than it
+    ignore_older: 71h
     clean_inactive: 72h
 
 processors:
