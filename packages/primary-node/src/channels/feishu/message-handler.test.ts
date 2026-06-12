@@ -1998,7 +1998,7 @@ describe('MessageHandler', () => {
       } as any);
 
       expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
-      const event = mockState.onTopicMessage.mock.calls[0][0];
+      const [[event]] = mockState.onTopicMessage.mock.calls;
       expect(event.type).toBe('topic_group_message');
       expect(event.chatId).toBe('chat_topic');
       expect(event.threadId).toBe('msg_topic_001');
@@ -2028,7 +2028,7 @@ describe('MessageHandler', () => {
       } as any);
 
       expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
-      const event = mockState.onTopicMessage.mock.calls[0][0];
+      const [[event]] = mockState.onTopicMessage.mock.calls;
       expect(event.rootId).toBe('msg_parent');
       expect(event.threadId).toBe('msg_reply');
       expect(event.isReply).toBe(true);
@@ -2083,7 +2083,7 @@ describe('MessageHandler', () => {
       } as any);
 
       expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
-      const event = mockState.onTopicMessage.mock.calls[0][0];
+      const [[event]] = mockState.onTopicMessage.mock.calls;
       expect(event.content.length).toBe(500);
     });
 
@@ -2106,7 +2106,7 @@ describe('MessageHandler', () => {
       } as any);
 
       expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
-      const event = mockState.onTopicMessage.mock.calls[0][0];
+      const [[event]] = mockState.onTopicMessage.mock.calls;
       // Should be a valid ISO timestamp
       expect(new Date(event.timestamp).toISOString()).toBe(event.timestamp);
     });
