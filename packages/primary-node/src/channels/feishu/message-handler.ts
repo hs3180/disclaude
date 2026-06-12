@@ -29,6 +29,7 @@ import {
   type ControlCommand,
   type ControlCommandType,
   type ControlResponse,
+  type TopicGroupMessageEvent,
   createControlCommand,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
@@ -97,6 +98,14 @@ export interface MessageCallbacks {
     actionValue: string,
     actionText?: string,
   ) => string | undefined;
+  /**
+   * Called when a topic group message is received.
+   * Issue #4031: Topic group message push notification.
+   * The callback is invoked only when topicNotify.enabled is true in config.
+   *
+   * @param event - Topic group message event with chat context and sender info
+   */
+  onTopicMessage?: (event: TopicGroupMessageEvent) => void;
 }
 
 /**
@@ -1048,6 +1057,37 @@ export class MessageHandler {
       message_type,
       create_time
     );
+
+    // Issue #4031: Emit topic group message notification if enabled.
+    // Placed BEFORE trigger_mode check so notifications fire for all topic messages,
+    // regardless of whether the bot is @mentioned.
+    if (chat_type === 'topic' && this.callbacks.onTopicMessage
+        && Config.getRawConfig().feishu?.topicNotify?.enabled === true) {
+      try {
+        const senderOpenId = this.extractOpenId(sender);
+        const senderName = this.extractSenderName({ sender, sender_name: sender?.sender_id } as unknown as { [key: string]: unknown });
+        this.callbacks.onTopicMessage({
+          type: 'topic_group_message',
+          chatId: chat_id,
+          rootId: parent_id ?? message_id,
+          threadId: message_id,
+          sender: {
+            name: senderName,
+            openId: senderOpenId,
+          },
+          content: (text || '').substring(0, 500),
+          isReply: !!parent_id,
+          timestamp: create_time
+            ? new Date(create_time).toISOString()
+            : new Date().toISOString(),
+        });
+      } catch (topicNotifyError) {
+        logger.warn(
+          { err: topicNotifyError, messageId: message_id },
+          'Failed to emit topic group notification (non-critical)'
+        );
+      }
+    }
 
     // Check for control commands
     const botMentioned = this.mentionDetector.isBotMentioned(mentions);
