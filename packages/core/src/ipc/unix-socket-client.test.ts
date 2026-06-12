@@ -488,6 +488,11 @@ describe('UnixSocketIpcClient', () => {
 // ============================================================================
 
 describe('getIpcSocketPath', () => {
+  // Defensive cleanup: ensure IPC_SOCKET_PATH_FILE does not leak between tests (Issue #4061)
+  beforeEach(() => {
+    try { unlinkSync(IPC_SOCKET_PATH_FILE); } catch { /* ignore if not exists */ }
+  });
+
   it('should return env var DISCLAUDE_WORKER_IPC_SOCKET if set', () => {
     const original = process.env.DISCLAUDE_WORKER_IPC_SOCKET;
     process.env.DISCLAUDE_WORKER_IPC_SOCKET = '/tmp/worker.ipc';
@@ -510,8 +515,7 @@ describe('getIpcSocketPath', () => {
     const originalPath = process.env.DISCLAUDE_IPC_SOCKET_PATH;
     delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
     delete process.env.DISCLAUDE_IPC_SOCKET_PATH;
-    // Remove IPC_SOCKET_PATH_FILE to prevent fallback (Issue #4061)
-    try { unlinkSync(IPC_SOCKET_PATH_FILE); } catch { /* ignore if not exists */ }
+    // IPC_SOCKET_PATH_FILE already cleaned in beforeEach (Issue #4061)
     expect(getIpcSocketPath()).toBe('/tmp/disclaude-interactive.ipc');
     process.env.DISCLAUDE_WORKER_IPC_SOCKET = originalWorker;
     process.env.DISCLAUDE_IPC_SOCKET_PATH = originalPath;
