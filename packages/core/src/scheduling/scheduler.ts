@@ -140,12 +140,16 @@ export class Scheduler {
   private isAgentBusy?: (chatId: string) => boolean;
   /** Issue #3931: Track consecutive agent-busy skips per task for notification throttling */
   private agentBusySkipCount = new Map<string, number>();
-  /** Issue #3931: Notify user every N consecutive skips */
-  private static readonly AGENT_BUSY_NOTIFY_INTERVAL = 3;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
   private runningTasks: Set<string> = new Set();
+  /**
+   * Issue #4102: Tracks chatIds that currently have a blocking scheduled task running.
+   * Blocking tasks only skip when ANOTHER blocking scheduled task is running for the
+   * same chatId — not when the agent is busy with user messages.
+   */
+  private runningBlockingTaskChatIds = new Set<string>();
   /**
    * Resolves when all running tasks have completed.
    * Created lazily when the first task starts; resolved and cleared when
@@ -295,6 +299,17 @@ export class Scheduler {
   }
 
   /**
+   * Clean up task tracking state after a task finishes or is aborted.
+   * Issue #4102: Also cleans up per-chatId blocking task tracking.
+   */
+  private cleanupTaskTracking(task: ScheduledTask): void {
+    this.runningTasks.delete(task.id);
+    if (task.blocking && task.chatId) {
+      this.runningBlockingTaskChatIds.delete(task.chatId);
+    }
+  }
+
+  /**
    * Remove a task from the scheduler.
    *
    * @param taskId - Task ID to remove
@@ -378,30 +393,15 @@ ${task.prompt}`;
       return;
     }
 
-    // Issue #3931: Check if agent is busy before executing blocking tasks.
-    // When an agent is processing a user message or other task, injecting a
-    // scheduled task would mix contexts and degrade response quality.
-    //
-    // Note: Non-blocking tasks intentionally skip this check. Non-blocking tasks
-    // are designed for fire-and-forget execution (e.g., status updates, data sync)
-    // where concurrent execution is acceptable and does not interfere with the
-    // user's active conversation context.
-    if (task.blocking && this.isAgentBusy && this.isAgentBusy(task.chatId)) {
-      const skipCount = (this.agentBusySkipCount.get(task.id) ?? 0) + 1;
-      this.agentBusySkipCount.set(task.id, skipCount);
-
+    // Issue #4102: Check if another blocking scheduled task is running for this chatId.
+    // Previously used isAgentBusy() which also blocked on user-initiated conversations,
+    // causing scheduled tasks to be indefinitely skipped in active chats.
+    // Now we only block on OTHER scheduled blocking tasks for the same chatId.
+    if (task.blocking && task.chatId && this.runningBlockingTaskChatIds.has(task.chatId)) {
       logger.info(
-        { taskId: task.id, name: task.name, chatId: task.chatId, skipCount },
-        'Task skipped - agent is busy processing another message'
+        { taskId: task.id, name: task.name, chatId: task.chatId },
+        'Task skipped - another blocking scheduled task is running for this chatId'
       );
-
-      // Notify user every AGENT_BUSY_NOTIFY_INTERVAL consecutive skips
-      if (skipCount % Scheduler.AGENT_BUSY_NOTIFY_INTERVAL === 0) {
-        await this.callbacks.sendMessage(
-          task.chatId,
-          `⏰ 定时任务「${task.name}」已连续 ${skipCount} 次因 Agent 忙碌而跳过，将在下次空闲时自动执行`
-        );
-      }
       return;
     }
 
@@ -414,6 +414,10 @@ ${task.prompt}`;
 
     // Mark task as running
     this.runningTasks.add(task.id);
+    // Issue #4102: Track blocking tasks by chatId for per-chat serialization
+    if (task.blocking && task.chatId) {
+      this.runningBlockingTaskChatIds.add(task.chatId);
+    }
     // Create drain promise if this is the first running task
     if (!this._drainPromise) {
       this._drainPromise = new Promise<void>((resolve) => {
@@ -432,7 +436,7 @@ ${task.prompt}`;
           { taskId: task.id, name: task.name },
           'Task file no longer exists, removing stale cron job'
         );
-        this.runningTasks.delete(task.id);
+        this.cleanupTaskTracking(task);
         this.removeTask(task.id);
         this.resolveDrainIfNeeded();
         return;
@@ -442,7 +446,7 @@ ${task.prompt}`;
         { err: error, taskId: task.id },
         'Failed to verify schedule file existence, skipping execution'
       );
-      this.runningTasks.delete(task.id);
+      this.cleanupTaskTracking(task);
       this.removeTask(task.id);
       this.resolveDrainIfNeeded();
       return;
@@ -523,7 +527,7 @@ ${task.prompt}`;
       await this.callbacks.sendMessage(task.chatId, userMessage);
     } finally {
       // Always remove from running tasks
-      this.runningTasks.delete(task.id);
+      this.cleanupTaskTracking(task);
 
       // Resolve drain promise when all tasks have completed
       this.resolveDrainIfNeeded();
