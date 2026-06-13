@@ -18,6 +18,7 @@ import {
   WS_HEALTH,
   createLogger,
   BaseChannel,
+  eventBus,
   type FeishuEventData,
   type FeishuCardActionEventData,
   type FeishuChatMemberAddedEventData,
@@ -199,6 +200,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       },
       routeCardAction: config.routeCardAction,
       resolveActionPrompt: config.resolveActionPrompt,
+      // Issue #4031: Emit topic message events through InternalEventBus
+      onTopicMessage: (event) => {
+        eventBus.emit('feishu.topic.message', event);
+      },
     };
 
     this.feishuMessageHandler = new FeishuMessageHandler({

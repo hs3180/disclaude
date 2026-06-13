@@ -310,6 +310,9 @@ export {
   type DebugGroup,
 } from './control/index.js';
 
+// Internal Event Bus (Issue #4031: decoupled event propagation)
+export { InternalEventBus, eventBus, type InternalEventMap } from './event-bus.js';
+
 // Project module — simplified per-chatId working directory binding (Issue #3519)
 export type {
   CwdProvider,
