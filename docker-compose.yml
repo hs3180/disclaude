@@ -159,8 +159,11 @@ services:
         max-size: "10m"
         max-file: "3"
 
+    # CMD-SHELL so the container shell expands ${CDP_PORT} at runtime (matching
+    # the --remote-debugging-port flag above). The exec-form "CMD" does not run a
+    # shell, so $${CDP_PORT:-9222} would be passed to curl literally and never expand.
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:$${CDP_PORT:-9222}/json/version"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:$${CDP_PORT:-9222}/json/version"]
       interval: 30s
       timeout: 5s
       retries: 3
