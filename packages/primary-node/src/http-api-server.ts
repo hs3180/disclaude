@@ -19,7 +19,7 @@
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { createLogger } from '@disclaude/core';
+import { createLogger, type TopicGroupMessageEvent } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
 
 const logger = createLogger('HttpApiServer');
@@ -106,6 +106,8 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
+  /** Connected SSE clients for topic notifications (Issue #4031) */
+  private readonly sseClients = new Set<ServerResponse>();
 
   constructor(config: HttpApiServerConfig) {
     this.config = { host: 'localhost', ...config };
@@ -127,6 +129,39 @@ export class HttpApiServer {
    */
   setPushHandler(handler: PushHandler): void {
     this.pushHandler = handler;
+  }
+
+  /**
+   * Broadcast a topic group message event to all connected SSE clients.
+   *
+   * Issue #4031: Local apps connect via GET /api/topic-stream to receive
+   * real-time topic group message notifications.
+   *
+   * @param event - The topic group message event to broadcast
+   */
+  broadcastTopicEvent(event: TopicGroupMessageEvent): void {
+    if (this.sseClients.size === 0) {
+      return;
+    }
+
+    const data = JSON.stringify(event);
+    const deadClients: ServerResponse[] = [];
+
+    for (const client of this.sseClients) {
+      if (client.writableEnded) {
+        deadClients.push(client);
+        continue;
+      }
+      try {
+        client.write(`data: ${data}\n\n`);
+      } catch {
+        deadClients.push(client);
+      }
+    }
+
+    for (const client of deadClients) {
+      this.sseClients.delete(client);
+    }
   }
 
   /**
@@ -175,6 +210,12 @@ export class HttpApiServer {
       return;
     }
 
+    // Close all SSE connections (Issue #4031)
+    for (const client of this.sseClients) {
+      try { client.end(); } catch { /* best effort */ }
+    }
+    this.sseClients.clear();
+
     const serverToClose = this.server;
     this.server = null;
 
@@ -222,6 +263,8 @@ export class HttpApiServer {
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
+    // Issue #4031: SSE endpoint for topic group message notifications
+    this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
   }
 
   /**
@@ -347,6 +390,45 @@ export class HttpApiServer {
       const msg = err instanceof Error ? err.message : 'Push failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
+  }
+
+  /**
+   * GET /api/topic-stream — SSE endpoint for topic group message notifications.
+   *
+   * Issue #4031: Local apps connect to this endpoint to receive real-time
+   * topic group message notifications via Server-Sent Events (SSE).
+   * This replaces the originally planned WebSocket approach since the
+   * WebSocketServerService was removed in Issue #2717.
+   *
+   * SSE is one-directional (server → client), which is exactly what's needed
+   * for push notifications. No external dependencies required.
+   */
+  private handleTopicStream(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    // SSE requires HTTP/1.1 — set appropriate headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+
+    // Send initial comment to establish connection
+    res.write(': connected\n\n');
+
+    // Track this client for broadcasting
+    this.sseClients.add(res);
+    logger.info({ clients: this.sseClients.size }, 'SSE client connected for topic notifications');
+
+    // Remove client on disconnect
+    res.on('close', () => {
+      this.sseClients.delete(res);
+      logger.info({ clients: this.sseClients.size }, 'SSE client disconnected from topic notifications');
+    });
+
+    return Promise.resolve();
   }
 
   /**
