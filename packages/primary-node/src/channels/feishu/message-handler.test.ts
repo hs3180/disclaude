@@ -1983,6 +1983,7 @@ describe('MessageHandler', () => {
       mockState.isBotMentioned = true;
       mockState.topicNotifyEnabled = true;
       const { handler } = createHandler();
+      const fixedTime = Date.now();
       await handler.handleMessageReceive({
         event: {
           message: {
@@ -1991,27 +1992,28 @@ describe('MessageHandler', () => {
             chat_type: 'topic',
             content: JSON.stringify({ text: 'Hello topic' }),
             message_type: 'text',
-            create_time: 1700000000000,
+            create_time: fixedTime,
           },
           sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
         },
       } as any);
 
       expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
-      const event = mockState.onTopicMessage.mock.calls[0][0];
+      const [[event]] = mockState.onTopicMessage.mock.calls;
       expect(event.type).toBe('topic_group_message');
       expect(event.chatId).toBe('chat_topic');
       expect(event.threadId).toBe('msg_topic_001');
       expect(event.rootId).toBe('msg_topic_001');
       expect(event.content).toBe('Hello topic');
       expect(event.isReply).toBe(false);
-      expect(event.timestamp).toBe(new Date(1700000000000).toISOString());
+      expect(event.timestamp).toBe(new Date(fixedTime).toISOString());
     });
 
     it('should set isReply=true and rootId=parent_id when parent_id exists', async () => {
       mockState.isBotMentioned = true;
       mockState.topicNotifyEnabled = true;
       const { handler } = createHandler();
+      const fixedTime = Date.now();
       await handler.handleMessageReceive({
         event: {
           message: {
@@ -2020,7 +2022,7 @@ describe('MessageHandler', () => {
             chat_type: 'topic',
             content: JSON.stringify({ text: 'A reply' }),
             message_type: 'text',
-            create_time: 1700000000000,
+            create_time: fixedTime,
             parent_id: 'msg_parent',
           },
           sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
@@ -2028,10 +2030,11 @@ describe('MessageHandler', () => {
       } as any);
 
       expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
-      const event = mockState.onTopicMessage.mock.calls[0][0];
+      const [[event]] = mockState.onTopicMessage.mock.calls;
       expect(event.rootId).toBe('msg_parent');
       expect(event.threadId).toBe('msg_reply');
       expect(event.isReply).toBe(true);
+      expect(event.timestamp).toBe(new Date(fixedTime).toISOString());
     });
 
     it('should NOT call onTopicMessage when topicNotify is disabled', async () => {
@@ -2083,7 +2086,7 @@ describe('MessageHandler', () => {
       } as any);
 
       expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
-      const event = mockState.onTopicMessage.mock.calls[0][0];
+      const [[event]] = mockState.onTopicMessage.mock.calls;
       expect(event.content.length).toBe(500);
     });
 
@@ -2106,7 +2109,7 @@ describe('MessageHandler', () => {
       } as any);
 
       expect(mockState.onTopicMessage).toHaveBeenCalledTimes(1);
-      const event = mockState.onTopicMessage.mock.calls[0][0];
+      const [[event]] = mockState.onTopicMessage.mock.calls;
       // Should be a valid ISO timestamp
       expect(new Date(event.timestamp).toISOString()).toBe(event.timestamp);
     });
