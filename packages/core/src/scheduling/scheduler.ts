@@ -44,6 +44,13 @@ function formatTimeout(ms: number): string {
 const DEFAULT_TASK_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
+ * Completion signal pattern for schedule auto-disable.
+ * When the agent outputs this string, the schedule is automatically disabled.
+ * Issue #4041: Completion signal detection.
+ */
+const COMPLETION_SIGNAL = '<promise>DONE</promise>';
+
+/**
  * Error thrown when a scheduled task execution times out.
  *
  * Issue #3894: Used to distinguish timeout errors from other failures,
@@ -109,6 +116,16 @@ export interface SchedulerOptions {
    * @returns true if the agent is busy processing a message
    */
   isAgentBusy?: (chatId: string) => boolean;
+  /**
+   * Get the agent's output text after task execution.
+   * Used to detect completion signals like `<promise>DONE</promise>`.
+   * Issue #4041: Completion signal auto-disable.
+   *
+   * @param chatId - Chat ID of the task
+   * @param taskId - Task ID
+   * @returns The agent's output text, or undefined if unavailable
+   */
+  getAgentOutput?: (chatId: string, taskId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -138,6 +155,8 @@ export class Scheduler {
   private inputMessageRouter?: InputMessageRouter;
   /** Issue #3931: Callback to check if agent is busy for a chatId */
   private isAgentBusy?: (chatId: string) => boolean;
+  /** Issue #4041: Callback to get agent output for completion signal detection */
+  private getAgentOutput?: (chatId: string, taskId: string) => Promise<string | undefined>;
   /** Issue #3931: Track consecutive agent-busy skips per task for notification throttling */
   private agentBusySkipCount = new Map<string, number>();
   /** Issue #3931: Notify user every N consecutive skips */
@@ -163,6 +182,7 @@ export class Scheduler {
     this.cooldownManager = options.cooldownManager;
     this.inputMessageRouter = options.inputMessageRouter;
     this.isAgentBusy = options.isAgentBusy;
+    this.getAgentOutput = options.getAgentOutput;
     logger.info('Scheduler created');
   }
 
@@ -332,6 +352,63 @@ Scheduled task creation is blocked during scheduled task execution to prevent in
 
 **Task Prompt:**
 ${task.prompt}`;
+  }
+
+  /**
+   * Check for completion signal in agent output and auto-disable schedule.
+   *
+   * Issue #4041: When agent outputs `<promise>DONE</promise>`, the schedule
+   * is automatically disabled by writing `enabled: false` to the schedule file.
+   *
+   * @param task - The task that was just executed
+   */
+  private async checkCompletionSignal(task: ScheduledTask): Promise<void> {
+    if (!this.getAgentOutput) {
+      return;
+    }
+
+    try {
+      const agentOutput = await this.getAgentOutput(task.chatId, task.id);
+      if (!agentOutput?.includes(COMPLETION_SIGNAL)) {
+        return;
+      }
+
+      // Completion signal detected
+      const currentTask = await this.scheduleManager.get(task.id);
+      if (!currentTask) {
+        logger.warn({ taskId: task.id }, 'Cannot disable task: not found');
+        return;
+      }
+
+      // Idempotent: skip if already disabled
+      if (!currentTask.enabled) {
+        logger.debug({ taskId: task.id }, 'Task already disabled, skipping auto-disable');
+        return;
+      }
+
+      logger.info(
+        { taskId: task.id, name: task.name },
+        'Schedule auto-disabled due to completion signal'
+      );
+
+      // Write enabled: false to schedule file
+      const disabledTask = { ...currentTask, enabled: false };
+      await this.scheduleManager.getFileScanner().writeTask(disabledTask);
+
+      // Remove the cron job
+      this.removeTask(task.id);
+
+      // Notify user
+      await this.callbacks.sendMessage(
+        task.chatId,
+        `✅ 定时任务「${task.name}」已完成，已自动禁用`
+      );
+    } catch (error) {
+      logger.error(
+        { err: error, taskId: task.id },
+        'Failed to check completion signal, skipping auto-disable'
+      );
+    }
   }
 
   /**
@@ -510,6 +587,9 @@ ${task.prompt}`;
 
         logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
       }
+
+      // Issue #4041: Check for completion signal in agent output
+      await this.checkCompletionSignal(task);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

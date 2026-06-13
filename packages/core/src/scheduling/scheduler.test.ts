@@ -59,7 +59,9 @@ describe('Scheduler', () => {
       // does not skip execution in existing tests. Override per-test when needed.
       get: vi.fn().mockResolvedValue(createTask()),
       listByChatId: vi.fn().mockResolvedValue([]),
-      getFileScanner: vi.fn(),
+      getFileScanner: vi.fn().mockReturnValue({
+        writeTask: vi.fn().mockResolvedValue('/fake/path/SCHEDULE.md'),
+      }),
     } as unknown as ScheduleManager;
 
     mockCallbacks = {
@@ -1142,6 +1144,168 @@ describe('Scheduler', () => {
         (call: string[]) => call[1]?.includes('已连续')
       );
       expect(skipNotificationsAfter).toHaveLength(0);
+    });
+  });
+
+  describe('executeTask completion signal detection (Issue #4041)', () => {
+    /** Helper: fire a cron job trigger */
+    function fireJob(s: Scheduler) {
+      const jobs = s.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+    }
+
+    it('should auto-disable schedule when agent output contains <promise>DONE</promise>', async () => {
+      const getAgentOutput = vi.fn().mockResolvedValue('All tasks completed <promise>DONE</promise>');
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(createTask({ id: 'done-1', enabled: true }));
+
+      const completionScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        getAgentOutput,
+      });
+
+      const task = createTask({ id: 'done-1' });
+      completionScheduler.addTask(task);
+      fireJob(completionScheduler);
+
+      await vi.waitFor(() => {
+        expect(getAgentOutput).toHaveBeenCalledWith('oc_test', 'done-1');
+      }, { timeout: 2000 });
+
+      // Should have written disabled task to file
+      const fileScanner = mockScheduleManager.getFileScanner();
+      expect(fileScanner.writeTask).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'done-1', enabled: false })
+      );
+      // Cron job should be removed
+      expect(completionScheduler.getActiveJobs()).toHaveLength(0);
+      // Should notify user
+      expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+        'oc_test',
+        expect.stringContaining('已完成')
+      );
+    });
+
+    it('should keep schedule enabled when agent output does not contain DONE', async () => {
+      const getAgentOutput = vi.fn().mockResolvedValue('Still working on tasks...');
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(createTask({ id: 'not-done-1', enabled: true }));
+
+      const completionScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        getAgentOutput,
+      });
+
+      const task = createTask({ id: 'not-done-1' });
+      completionScheduler.addTask(task);
+      fireJob(completionScheduler);
+
+      await vi.waitFor(() => {
+        expect(getAgentOutput).toHaveBeenCalledWith('oc_test', 'not-done-1');
+      }, { timeout: 2000 });
+
+      // Should NOT have disabled the task
+      const fileScanner = mockScheduleManager.getFileScanner();
+      expect(fileScanner.writeTask).not.toHaveBeenCalled();
+      // Cron job should still be active
+      expect(completionScheduler.getActiveJobs()).toHaveLength(1);
+    });
+
+    it('should be no-op when task is already disabled', async () => {
+      const getAgentOutput = vi.fn().mockResolvedValue('Done! <promise>DONE</promise>');
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(createTask({ id: 'already-off', enabled: false }));
+
+      const completionScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        getAgentOutput,
+      });
+
+      const task = createTask({ id: 'already-off', enabled: true });
+      completionScheduler.addTask(task);
+      fireJob(completionScheduler);
+
+      await vi.waitFor(() => {
+        expect(getAgentOutput).toHaveBeenCalledWith('oc_test', 'already-off');
+      }, { timeout: 2000 });
+
+      // Should NOT write file (task already disabled in get() response)
+      const fileScanner = mockScheduleManager.getFileScanner();
+      expect(fileScanner.writeTask).not.toHaveBeenCalled();
+    });
+
+    it('should detect DONE in the middle of output text', async () => {
+      const getAgentOutput = vi.fn().mockResolvedValue(
+        'Some output before <promise>DONE</promise> and more text after'
+      );
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(createTask({ id: 'mid-done', enabled: true }));
+
+      const completionScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        getAgentOutput,
+      });
+
+      const task = createTask({ id: 'mid-done' });
+      completionScheduler.addTask(task);
+      fireJob(completionScheduler);
+
+      await vi.waitFor(() => {
+        expect(getAgentOutput).toHaveBeenCalledWith('oc_test', 'mid-done');
+      }, { timeout: 2000 });
+
+      // Should have disabled the task
+      const fileScanner = mockScheduleManager.getFileScanner();
+      expect(fileScanner.writeTask).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'mid-done', enabled: false })
+      );
+      expect(completionScheduler.getActiveJobs()).toHaveLength(0);
+    });
+
+    it('should not check completion signal when getAgentOutput is not configured', async () => {
+      // Default scheduler has no getAgentOutput
+      const task = createTask({ id: 'no-callback' });
+      scheduler.addTask(task);
+      fireJob(scheduler);
+
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // Should NOT have disabled the task
+      const fileScanner = mockScheduleManager.getFileScanner();
+      expect(fileScanner.writeTask).not.toHaveBeenCalled();
+      // Cron job should still be active
+      expect(scheduler.getActiveJobs()).toHaveLength(1);
+    });
+
+    it('should not propagate errors from completion signal check', async () => {
+      const getAgentOutput = vi.fn().mockRejectedValue(new Error('Output store unavailable'));
+      vi.mocked(mockScheduleManager.get).mockResolvedValue(createTask({ id: 'err-signal', enabled: true }));
+
+      const completionScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        getAgentOutput,
+      });
+
+      const task = createTask({ id: 'err-signal' });
+      completionScheduler.addTask(task);
+      fireJob(completionScheduler);
+
+      // Should complete without throwing
+      await vi.waitFor(() => {
+        expect(getAgentOutput).toHaveBeenCalledWith('oc_test', 'err-signal');
+      }, { timeout: 2000 });
+
+      // Task should still be running (not disabled by error)
+      // Note: cron job should still be active
+      expect(completionScheduler.getActiveJobs()).toHaveLength(1);
     });
   });
 });
