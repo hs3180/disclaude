@@ -52,10 +52,10 @@ processors:
 
 output.elasticsearch:
   hosts: ["${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}"]
-  # Uncomment username/password only if ES requires authentication.
-  # Ensure matching lines are also uncommented in docker-compose.yml.
-  # username: "${ELASTICSEARCH_USERNAME}"
-  # password: "${ELASTICSEARCH_PASSWORD}"
+  # ES auth credentials (from ELASTICSEARCH_USERNAME/PASSWORD env vars,
+  # wired through docker-compose.yml from .env). Remove if your ES has no auth.
+  username: "${ELASTICSEARCH_USERNAME}"
+  password: "${ELASTICSEARCH_PASSWORD}"
   index: "disclaude-logs-%{+yyyy.MM.dd}"
 
 # Disable ILM and data streams — use simple daily indices

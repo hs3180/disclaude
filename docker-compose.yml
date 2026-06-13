@@ -195,10 +195,11 @@ services:
     environment:
       - ELASTICSEARCH_HOST=${ES_HOST:-localhost}
       - ELASTICSEARCH_PORT=${ES_PORT:-9200}
-      # Uncomment the following lines only if your ES requires authentication.
-      # Passing empty strings will cause HTTP 401 on unsecured ES instances.
-      # - ELASTICSEARCH_USERNAME=${ES_USERNAME}
-      # - ELASTICSEARCH_PASSWORD=${ES_PASSWORD}
+      # ES auth credentials (from .env: ES_USERNAME, ES_PASSWORD).
+      # Enabled by default for secured ES. Remove these lines if your ES has
+      # no auth — passing empty values causes HTTP 401 on unsecured instances.
+      - ELASTICSEARCH_USERNAME=${ES_USERNAME}
+      - ELASTICSEARCH_PASSWORD=${ES_PASSWORD}
 
     logging:
       driver: "json-file"
