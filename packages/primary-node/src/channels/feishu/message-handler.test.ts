@@ -2013,6 +2013,7 @@ describe('MessageHandler', () => {
       mockState.isBotMentioned = true;
       mockState.topicNotifyEnabled = true;
       const { handler } = createHandler();
+      const fixedTime = Date.now();
       await handler.handleMessageReceive({
         event: {
           message: {
@@ -2021,7 +2022,7 @@ describe('MessageHandler', () => {
             chat_type: 'topic',
             content: JSON.stringify({ text: 'A reply' }),
             message_type: 'text',
-            create_time: Date.now(),
+            create_time: fixedTime,
             parent_id: 'msg_parent',
           },
           sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
@@ -2033,6 +2034,7 @@ describe('MessageHandler', () => {
       expect(event.rootId).toBe('msg_parent');
       expect(event.threadId).toBe('msg_reply');
       expect(event.isReply).toBe(true);
+      expect(event.timestamp).toBe(new Date(fixedTime).toISOString());
     });
 
     it('should NOT call onTopicMessage when topicNotify is disabled', async () => {
