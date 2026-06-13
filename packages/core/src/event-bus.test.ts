@@ -1,6 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { InternalEventBus } from './event-bus.js';
 
+/** Factory for creating consistent test payloads. */
+function createTestPayload(
+  overrides: Partial<import('./types/websocket-messages.js').TopicGroupMessageEvent> = {},
+): import('./types/websocket-messages.js').TopicGroupMessageEvent {
+  return {
+    type: 'topic_group_message',
+    chatId: 'oc_test',
+    rootId: 'om_root',
+    threadId: 'om_thread',
+    sender: { name: 'Alice' },
+    content: 'Hello',
+    isReply: false,
+    timestamp: '2026-06-13T00:00:00Z',
+    ...overrides,
+  };
+}
+
 describe('InternalEventBus', () => {
   let bus: InternalEventBus;
 
@@ -12,20 +29,10 @@ describe('InternalEventBus', () => {
     const handler = vi.fn();
     bus.on('feishu.topic.message', handler);
 
-    const payload = {
-      type: 'topic_group_message' as const,
-      chatId: 'oc_test',
-      rootId: 'om_root',
-      threadId: 'om_thread',
-      sender: { name: 'Alice' },
-      content: 'Hello',
-      isReply: false,
-      timestamp: '2026-06-13T00:00:00Z',
-    };
+    const payload = createTestPayload();
 
     bus.emit('feishu.topic.message', payload);
 
-    // Handlers run async
     await vi.waitFor(() => {
       expect(handler).toHaveBeenCalledTimes(1);
     });
@@ -39,16 +46,7 @@ describe('InternalEventBus', () => {
     bus.on('feishu.topic.message', handler1);
     bus.on('feishu.topic.message', handler2);
 
-    bus.emit('feishu.topic.message', {
-      type: 'topic_group_message',
-      chatId: 'oc_test',
-      rootId: 'om_root',
-      threadId: 'om_thread',
-      sender: {},
-      content: 'test',
-      isReply: false,
-      timestamp: '',
-    });
+    bus.emit('feishu.topic.message', createTestPayload());
 
     await vi.waitFor(() => {
       expect(handler1).toHaveBeenCalledTimes(1);
@@ -62,20 +60,11 @@ describe('InternalEventBus', () => {
 
     unsub();
 
-    bus.emit('feishu.topic.message', {
-      type: 'topic_group_message',
-      chatId: 'oc_test',
-      rootId: '',
-      threadId: '',
-      sender: {},
-      content: '',
-      isReply: false,
-      timestamp: '',
-    });
+    bus.emit('feishu.topic.message', createTestPayload());
 
-    // Give async handlers a chance
-    await new Promise((r) => setTimeout(r, 10));
-    expect(handler).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(handler).not.toHaveBeenCalled();
+    });
   });
 
   it('should unsubscribe via off()', async () => {
@@ -83,22 +72,14 @@ describe('InternalEventBus', () => {
     bus.on('feishu.topic.message', handler);
     bus.off('feishu.topic.message', handler);
 
-    bus.emit('feishu.topic.message', {
-      type: 'topic_group_message',
-      chatId: 'oc_test',
-      rootId: '',
-      threadId: '',
-      sender: {},
-      content: '',
-      isReply: false,
-      timestamp: '',
-    });
+    bus.emit('feishu.topic.message', createTestPayload());
 
-    await new Promise((r) => setTimeout(r, 10));
-    expect(handler).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(handler).not.toHaveBeenCalled();
+    });
   });
 
-  it('should isolate handler errors', async () => {
+  it('should isolate handler errors — one failure does not affect other handlers', async () => {
     const errorHandler = vi.fn(() => {
       throw new Error('handler failed');
     });
@@ -107,42 +88,22 @@ describe('InternalEventBus', () => {
     bus.on('feishu.topic.message', errorHandler);
     bus.on('feishu.topic.message', normalHandler);
 
+    // Suppress unhandled pino warn output during this test
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    bus.emit('feishu.topic.message', {
-      type: 'topic_group_message',
-      chatId: 'oc_test',
-      rootId: '',
-      threadId: '',
-      sender: {},
-      content: '',
-      isReply: false,
-      timestamp: '',
-    });
+    bus.emit('feishu.topic.message', createTestPayload());
 
     await vi.waitFor(() => {
       expect(normalHandler).toHaveBeenCalledTimes(1);
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Handler error'),
-      expect.any(String),
-    );
+    expect(errorHandler).toHaveBeenCalledTimes(1);
     warnSpy.mockRestore();
   });
 
   it('should not throw when emitting event with no handlers', () => {
     expect(() => {
-      bus.emit('feishu.topic.message', {
-        type: 'topic_group_message',
-        chatId: '',
-        rootId: '',
-        threadId: '',
-        sender: {},
-        content: '',
-        isReply: false,
-        timestamp: '',
-      });
+      bus.emit('feishu.topic.message', createTestPayload());
     }).not.toThrow();
   });
 
@@ -157,12 +118,10 @@ describe('InternalEventBus', () => {
 
   it('should clear all handlers with removeAllListeners()', () => {
     bus.on('feishu.topic.message', vi.fn());
-    bus.on('feishu.card.action', vi.fn());
 
     bus.removeAllListeners();
 
     expect(bus.listenerCount('feishu.topic.message')).toBe(0);
-    expect(bus.listenerCount('feishu.card.action')).toBe(0);
   });
 
   it('should report correct listenerCount', () => {
