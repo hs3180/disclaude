@@ -30,6 +30,7 @@ import {
   ProcessLock,
   ProjectManager,
   type SystemMessage,
+  eventBus,
 } from '@disclaude/core';
 import crypto from 'node:crypto';
 import { PrimaryNode } from './primary-node.js';
@@ -454,6 +455,14 @@ async function main(): Promise<void> {
 
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
+
+      // Issue #4031: Subscribe InternalEventBus to HttpApiServer SSE broadcast.
+      // When a topic group message arrives in Feishu, the event bus carries the
+      // TopicGroupMessageEvent. Here we bridge it to the SSE stream so local
+      // apps connected to GET /api/topic-stream receive real-time notifications.
+      eventBus.on('feishu.topic.message', (evt) => {
+        httpApiServer?.broadcastTopicEvent(evt);
+      });
     }
   } catch (error) {
     logger.error({ err: error }, 'Failed to start Primary Node');
