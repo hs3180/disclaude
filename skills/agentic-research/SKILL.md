@@ -188,3 +188,80 @@ Select the template that best matches the user's needs. Adapt sections as needed
 
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+
+## Loop-Driven Research (Async Mode)
+
+When your research task is running inside a **Loop** (repeated execution via `loop_start`), your behavior must adapt. The Loop provides the execution framework — you provide the research intelligence.
+
+### Identifying Loop-Driven Mode
+
+You are in Loop-driven mode if:
+- You see a `LOOP.md` or `RESEARCH.md` file in your working directory
+- You were started by `loop_start` rather than a direct user message
+- Your prompt includes instructions to continue an ongoing task
+
+### Step Behavior (Each Loop Iteration)
+
+At the **start** of each step:
+
+1. **Read state files**: Check `LOOP.md`, `RESEARCH.md`, and any other state files for:
+   - Current progress and what's been done
+   - User feedback written by the initial conversation agent
+   - Any direction changes or corrections
+2. **Detect user feedback**: Look for sections like `## User Feedback` or `## Corrections` in `RESEARCH.md`. If found:
+   - Evaluate whether the feedback changes the current step's direction
+   - If yes: adjust your execution plan accordingly
+   - If no: acknowledge but continue as planned
+3. **Execute one coherent unit of work**: Do a meaningful chunk — don't just "continue" vaguely. Produce tangible output.
+4. **Update state files**: Write your progress to `RESEARCH.md` so the next step (and the user) can see what happened.
+
+### Key Decision Points
+
+These are moments where user feedback is most likely to change your direction:
+
+| Decision Point | What to Check |
+|---|---|
+| **Research goal clarification** | Does the user's feedback redefine the core question? |
+| **Data source selection** | Did the user suggest different sources or approaches? |
+| **Analysis direction** | Is your analysis drifting from the user's original intent? |
+| **Conclusion validity** | Do your findings actually answer the user's question? |
+
+### State File Conventions
+
+When writing to `RESEARCH.md`:
+
+```markdown
+## Research Progress
+
+### Completed
+- [x] Step 1: Literature search (10 papers found)
+- [x] Step 2: Data collection from [source]
+
+### Current Step
+- [ ] Step 3: Comparative analysis
+
+## Key Findings So Far
+1. Finding A (from [source])
+2. Finding B (from [source])
+
+## User Feedback (if any)
+> User said: "Focus more on cost comparison"
+→ Action: Adjusting analysis to emphasize cost metrics
+```
+
+### Async Communication Guidelines
+
+- **You cannot ask the user questions directly** — you're running in a loop
+- **Write findings clearly** so the user can review between steps
+- **Flag uncertainties** in your state file: `⚠️ Unsure about X, proceeding with Y assumption`
+- **Be decisive**: Make reasonable assumptions and document them rather than stalling
+- **Acknowledge feedback**: When you detect user feedback, note how you incorporated it
+
+### When to Stop Early
+
+If at any point you determine:
+- The research question is fully answered
+- You've hit a dead end that requires user input
+- The task is complete
+
+Write a clear summary in `RESEARCH.md` under `## Conclusion` or `## Blocked`, and the loop should be stopped (via `loop_stop` or natural completion).
