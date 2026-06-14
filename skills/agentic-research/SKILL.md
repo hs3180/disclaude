@@ -184,6 +184,12 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## Research Canvas
+
+When the agentic-research workflow is integrated with Loop, a **Research Canvas** (Feishu cloud document) can be created as a shared editing space for human-machine collaboration. The Canvas mirrors the RESEARCH.md outline and supports bidirectional sync.
+
+See the [Canvas template reference](./canvas-template.md) for the document structure, synchronization rules, and lark-cli usage examples.
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
