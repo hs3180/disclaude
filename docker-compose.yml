@@ -198,10 +198,12 @@ services:
     environment:
       - ELASTICSEARCH_HOST=${ES_HOST:-localhost}
       - ELASTICSEARCH_PORT=${ES_PORT:-9200}
-      # Uncomment the following lines only if your ES requires authentication.
-      # Passing empty strings will cause HTTP 401 on unsecured ES instances.
-      # - ELASTICSEARCH_USERNAME=${ES_USERNAME}
-      # - ELASTICSEARCH_PASSWORD=${ES_PASSWORD}
+      # ES auth credentials (from .env: ES_USERNAME, ES_PASSWORD).
+      # Enabled by default. Set credentials in .env for secured ES.
+      # For unsecured ES, comment out these two lines (and the matching
+      # username/password in filebeat.yml) to avoid HTTP 401 from empty values.
+      - ELASTICSEARCH_USERNAME=${ES_USERNAME:-}
+      - ELASTICSEARCH_PASSWORD=${ES_PASSWORD:-}
 
     logging:
       driver: "json-file"
