@@ -192,7 +192,8 @@ describe('MessageRouter', () => {
       expect(handler.handleSystemMessage).toHaveBeenCalledWith(
         'oc_chat456',
         'Run daily maintenance',
-        'msg-sys-1'
+        'msg-sys-1',
+        { waitForCompletion: undefined }
       );
     });
 
@@ -207,7 +208,8 @@ describe('MessageRouter', () => {
         expect(handler.handleSystemMessage).toHaveBeenCalledWith(
           'oc_chat456',
           'Run daily maintenance',
-          'msg-sys-1'
+          'msg-sys-1',
+          { waitForCompletion: undefined }
         );
       }
 

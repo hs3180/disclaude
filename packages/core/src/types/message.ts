@@ -88,6 +88,8 @@ export interface SystemMessage extends Message {
   modelTier?: string;
   /** Trigger-specific payload data */
   data?: Record<string, unknown>;
+  /** If true, handler should await agent turn completion (Issue #4063: Loop Runner) */
+  waitForCompletion?: boolean;
 }
 
 // ============================================================================

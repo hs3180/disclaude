@@ -78,15 +78,30 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     chatId: string,
     payload: string,
     messageId: string,
+    options?: { waitForCompletion?: boolean },
   ): Promise<void> {
     this.log.info(
-      { chatId, messageId },
+      { chatId, messageId, waitForCompletion: options?.waitForCompletion },
       'Handling system message',
     );
 
     // Unified path: use persistent agent from pool (RFC #3329)
     const agent = this.getAgentSafely(chatId, messageId, 'system message');
     if (!agent) {return Promise.resolve();}
+
+    if (options?.waitForCompletion) {
+      // Issue #4063: Wait for agent turn to complete (for Loop Runner)
+      return agent.processMessage({ chatId, payload, messageId })
+        .then(async () => {
+          const {taskComplete} = agent;
+          if (taskComplete) {
+            await taskComplete;
+          }
+        })
+        .catch((err) => {
+          this.log.error({ err, chatId, messageId }, 'Agent processMessage failed for system message (waitForCompletion)');
+        });
+    }
 
     // Issue #3962: Catch processMessage errors instead of silently swallowing
     void agent.processMessage({ chatId, payload, messageId }).catch((err) => {
