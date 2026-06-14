@@ -41,7 +41,8 @@ RUN apk add --no-cache python3 make g++ && \
     npm install -g bun
 
 # Copy package files
-COPY package.json package-lock.json ./
+# tsconfig.json is required by `tsc -b` (root project references) in the build step below.
+COPY package.json package-lock.json tsconfig.json ./
 COPY packages ./packages
 
 # Install dependencies using bun
