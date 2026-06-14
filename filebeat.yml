@@ -53,7 +53,8 @@ processors:
 output.elasticsearch:
   hosts: ["${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}"]
   # ES auth credentials (from ELASTICSEARCH_USERNAME/PASSWORD env vars,
-  # wired through docker-compose.yml from .env). Remove if your ES has no auth.
+  # wired through docker-compose.yml from .env). For unsecured ES, comment
+  # out username/password here AND the matching lines in docker-compose.yml.
   username: "${ELASTICSEARCH_USERNAME}"
   password: "${ELASTICSEARCH_PASSWORD}"
   index: "disclaude-logs-%{+yyyy.MM.dd}"
