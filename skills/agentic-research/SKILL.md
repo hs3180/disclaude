@@ -184,7 +184,55 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## Report Rendering Workflow
+
+When research reaches the delivery phase, follow this workflow to produce the final report.
+
+### Step 1: Select Template
+
+Use this decision tree to pick the right template from [report-templates.md](./report-templates.md):
+
+| User Intent | Template | Why |
+|-------------|----------|-----|
+| "Give me a quick answer" or decision support | Executive Summary | Bottom-line upfront, concise |
+| "I need a thorough analysis" or formal documentation | Full Report | Structured evidence, methodology |
+| "Compare X vs Y" or "Which is better?" | Comparison | Side-by-side criteria analysis |
+| "Find all sources about X" or literature survey | Annotated Bibliography | Source-centric with critical evaluation |
+
+When in doubt, ask the user which format they prefer. Default to **Executive Summary** for short tasks, **Full Report** for deep research.
+
+### Step 2: Populate Template
+
+1. **Map findings to sections**: Each key finding goes into the appropriate template section (Findings, Analysis, Criteria, etc.)
+2. **Fill all placeholders**: Replace every `{placeholder}` with concrete data. Remove any placeholder you cannot fill and note it as a limitation.
+3. **Adapt language**: Produce the report in the user's language (match the conversation language). Template structure stays the same; content language adapts.
+4. **Cite sources**: Every factual claim must reference its source. Use `[N]` notation linking to the Sources section.
+
+### Step 3: Validate Before Delivery
+
+Check the report against this list before sending:
+
+- [ ] All `{placeholder}` fields replaced with actual content
+- [ ] Every claim has a source citation
+- [ ] The report directly answers the original research question
+- [ ] Limitations and caveats are explicitly stated
+- [ ] Language matches user's conversation language
+- [ ] No mock or fabricated data included
+
+### Step 4: Deliver Report
+
+Choose the delivery format based on context:
+
+| Format | When to Use | How |
+|--------|-------------|-----|
+| **Feishu doc** | Long reports (>500 words), user may want to share/edit | Create doc via `lark-cli docs +create`, paste rendered Markdown |
+| **Group message card** | Short summaries, Executive Summary format | Send as structured card via `send_card` |
+| **Markdown file** | Research loop output, archival | Write to `STATE.md` or `RESEARCH.md` in the loop workdir |
+
+For async research (loop execution), deliver via Feishu doc and post a summary card in both the research group and the source chat.
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+- Issue #1339: Agentic Research interactive workflow (parent feature)
