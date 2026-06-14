@@ -80,6 +80,21 @@ export interface ChannelApiHandlers {
   markChatResponded?: (chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) => Promise<{ success: boolean }>;
   /** Push instruction to a chat agent (Issue #631) */
   pushToAgent?: (chatId: string, message: string) => Promise<{ success: boolean }>;
+  /** Loop Runner operations (Issue #4075) */
+  loopStart?: (params: {
+    chatId: string;
+    prompt: string;
+    workDir?: string;
+    maxSteps?: number;
+    maxDurationMs?: number;
+    stepIntervalMs?: number;
+  }) => Promise<{ success: boolean; loopId?: string; error?: string }>;
+  loopStop?: (loopId: string) => Promise<{ success: boolean; error?: string }>;
+  loopStatus?: (loopId: string) => Promise<{
+    success: boolean;
+    status?: { loopId: string; state: string; currentStep: number; totalSteps: number; startedAt: string };
+    error?: string;
+  }>;
 }
 
 /**
@@ -337,6 +352,50 @@ export function createInteractiveMessageHandler(
           try {
             const result = await handlers.pushToAgent(chatId, message);
             return { id: request.id, success: true, payload: { success: result.success } };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+
+        // Issue #4075: Loop Runner operations
+        case 'loopStart': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers?.loopStart) {
+            return { id: request.id, success: false, error: 'loopStart not supported' };
+          }
+          const payload = request.payload as IpcRequestPayloads['loopStart'];
+          try {
+            const result = await handlers.loopStart(payload);
+            return { id: request.id, success: true, payload: result };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+        case 'loopStop': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers?.loopStop) {
+            return { id: request.id, success: false, error: 'loopStop not supported' };
+          }
+          const { loopId } = request.payload as IpcRequestPayloads['loopStop'];
+          try {
+            const result = await handlers.loopStop(loopId);
+            return { id: request.id, success: true, payload: result };
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { id: request.id, success: false, error: errorMessage };
+          }
+        }
+        case 'loopStatus': {
+          const handlers = channelHandlersContainer?.handlers;
+          if (!handlers?.loopStatus) {
+            return { id: request.id, success: false, error: 'loopStatus not supported' };
+          }
+          const { loopId } = request.payload as IpcRequestPayloads['loopStatus'];
+          try {
+            const result = await handlers.loopStatus(loopId);
+            return { id: request.id, success: true, payload: result };
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             return { id: request.id, success: false, error: errorMessage };

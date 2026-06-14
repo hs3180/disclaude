@@ -16,6 +16,9 @@ import {
   send_interactive,
   send_file,
   push_to_agent,
+  loop_start,
+  loop_stop,
+  loop_status,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -33,6 +36,9 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
+export { loop_start } from './tools/loop-start.js';
+export { loop_stop } from './tools/loop-stop.js';
+export { loop_status } from './tools/loop-status.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -164,6 +170,43 @@ For display-only cards, use send_card instead.`,
       required: ['chatId', 'message'],
     },
     handler: push_to_agent,
+  },
+  loop_start: {
+    description: 'Start a loop that repeatedly pushes an instruction to a chat agent at a configured interval. Returns a loopId for stop/status operations.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string', description: 'Target chat ID' },
+        prompt: { type: 'string', description: 'The instruction pushed to the agent each step' },
+        maxSteps: { type: 'number', description: 'Maximum loop iterations (default: 10)' },
+        maxDurationMs: { type: 'number', description: 'Maximum total duration in ms (default: 3600000)' },
+        stepIntervalMs: { type: 'number', description: 'Interval between steps in ms (default: 30000)' },
+      },
+      required: ['chatId', 'prompt'],
+    },
+    handler: loop_start,
+  },
+  loop_stop: {
+    description: 'Stop a running loop by its loopId.',
+    parameters: {
+      type: 'object',
+      properties: {
+        loopId: { type: 'string', description: 'The loop ID returned by loop_start' },
+      },
+      required: ['loopId'],
+    },
+    handler: loop_stop,
+  },
+  loop_status: {
+    description: 'Get the current status of a loop by its loopId.',
+    parameters: {
+      type: 'object',
+      properties: {
+        loopId: { type: 'string', description: 'The loop ID returned by loop_start' },
+      },
+      required: ['loopId'],
+    },
+    handler: loop_status,
   },
 };
 
@@ -517,6 +560,97 @@ will be processed as a system command.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Push to agent failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  // Issue #4075: Loop Runner tools
+  {
+    name: 'loop_start',
+    description: `Start a loop that repeatedly pushes an instruction to a chat agent.
+
+The loop runs for a configurable number of steps with a configurable interval.
+Returns a loopId that can be used with loop_stop and loop_status.
+
+## Parameters
+- **chatId**: Target chat ID (string)
+- **prompt**: The instruction pushed to the agent each step (string)
+- **maxSteps**: Maximum iterations (number, default: 10)
+- **maxDurationMs**: Maximum total duration in ms (number, default: 3600000 = 1 hour)
+- **stepIntervalMs**: Interval between steps in ms (number, default: 30000 = 30s)
+
+## Example
+\`\`\`json
+{"chatId": "oc_xxx", "prompt": "Continue the research task", "maxSteps": 5, "stepIntervalMs": 60000}
+\`\`\``,
+    parameters: z.object({
+      chatId: z.string().describe('Target chat ID'),
+      prompt: z.string().describe('The instruction pushed to the agent each step'),
+      maxSteps: z.number().optional().describe('Maximum loop iterations (default: 10)'),
+      maxDurationMs: z.number().optional().describe('Maximum total duration in ms (default: 3600000)'),
+      stepIntervalMs: z.number().optional().describe('Interval between steps in ms (default: 30000)'),
+    }),
+    handler: async ({ chatId, prompt, maxSteps, maxDurationMs, stepIntervalMs }: {
+      chatId: string;
+      prompt: string;
+      maxSteps?: number;
+      maxDurationMs?: number;
+      stepIntervalMs?: number;
+    }) => await withTiming(timingLogger, 'mcp:loop_start', chatId, async () => {
+      const chatIdError = getChatIdValidationError(chatId);
+      if (chatIdError) {
+        return toolError(`Invalid chatId: ${chatIdError}`);
+      }
+      try {
+        const result = await loop_start({ chatId, prompt, maxSteps, maxDurationMs, stepIntervalMs });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Loop start failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  {
+    name: 'loop_stop',
+    description: `Stop a running loop by its loopId.
+
+## Parameters
+- **loopId**: The loop ID returned by loop_start (string)
+
+## Example
+\`\`\`json
+{"loopId": "loop-1-1700000000000"}
+\`\`\``,
+    parameters: z.object({
+      loopId: z.string().describe('The loop ID returned by loop_start'),
+    }),
+    handler: async ({ loopId }: { loopId: string }) => await withTiming(timingLogger, 'mcp:loop_stop', loopId, async () => {
+      try {
+        const result = await loop_stop({ loopId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Loop stop failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  {
+    name: 'loop_status',
+    description: `Get the current status of a loop by its loopId.
+
+## Parameters
+- **loopId**: The loop ID returned by loop_start (string)
+
+## Example
+\`\`\`json
+{"loopId": "loop-1-1700000000000"}
+\`\`\``,
+    parameters: z.object({
+      loopId: z.string().describe('The loop ID returned by loop_start'),
+    }),
+    handler: async ({ loopId }: { loopId: string }) => await withTiming(timingLogger, 'mcp:loop_status', loopId, async () => {
+      try {
+        const result = await loop_status({ loopId });
+        return result.success ? toolSuccess(result.message) : toolError(result.message);
+      } catch (error) {
+        return toolError(`Loop status failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },

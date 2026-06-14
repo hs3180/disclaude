@@ -723,6 +723,77 @@ export class UnixSocketIpcClient {
     }
   }
 
+  // Issue #4075: Loop Runner operations
+
+  /**
+   * Start a loop execution via IPC.
+   */
+  async loopStart(params: {
+    chatId: string;
+    prompt: string;
+    workDir?: string;
+    maxSteps?: number;
+    maxDurationMs?: number;
+    stepIntervalMs?: number;
+  }): Promise<{ success: boolean; loopId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('loopStart', params);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, chatId: params.chatId }, 'loopStart failed');
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * Stop a running loop via IPC.
+   */
+  async loopStop(loopId: string): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
+    try {
+      return await this.request('loopStop', { loopId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, loopId }, 'loopStop failed');
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
+  /**
+   * Get loop status via IPC.
+   */
+  async loopStatus(loopId: string): Promise<{
+    success: boolean;
+    status?: { loopId: string; state: string; currentStep: number; totalSteps: number; startedAt: string };
+    error?: string;
+    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
+  }> {
+    try {
+      return await this.request('loopStatus', { loopId });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error({ err: error, loopId }, 'loopStatus failed');
+      let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
+      if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
+        errorType = 'ipc_unavailable';
+      } else if (err.message.startsWith('IPC_TIMEOUT')) {
+        errorType = 'ipc_timeout';
+      }
+      return { success: false, error: err.message, errorType };
+    }
+  }
+
   /**
    * Handle incoming data.
    */
