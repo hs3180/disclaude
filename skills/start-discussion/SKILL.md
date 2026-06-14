@@ -154,3 +154,4 @@ Report to the **source chat** that the discussion has been initiated:
 | `pr-scanner` | Separate system for PR review groups (purpose: `pr-review`) |
 | `daily-chat-review` | May trigger `start-discussion` when repetitive issues detected |
 | `daily-soul-question` | May trigger `start-discussion` for deep reflection topics |
+| `agentic-research` | When research runs in a discussion group, user feedback from the initial conversation propagates via `RESEARCH.md` (see agentic-research skill's "User Feedback Propagation" section) |
