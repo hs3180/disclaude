@@ -191,10 +191,6 @@ export abstract class BaseAgent implements Disposable {
       ...this.getGlobalEnv(),
       ...loadRuntimeEnv(workspaceDir),
     };
-    if (this.isAgentTeamsEnabled()) {
-      globalEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
-    }
-
     // Issue #3770: Inject model tier env vars so SDK sub-agents (Task tool,
     // Team workers) resolve opus/sonnet/haiku aliases to the correct model
     // names for the active provider. Without this, the SDK resolves "haiku"
@@ -236,6 +232,12 @@ export abstract class BaseAgent implements Disposable {
     // Set model
     if (this.model) {
       options.model = this.model;
+    }
+
+    // SDK 0.3.177+: Agent Teams is enabled via teammateMode Settings field,
+    // replacing the deprecated CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var.
+    if (this.isAgentTeamsEnabled()) {
+      options.teammateMode = 'in-process';
     }
 
     return options;
