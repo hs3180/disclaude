@@ -460,9 +460,17 @@ async function main(): Promise<void> {
       // When a topic group message arrives in Feishu, the event bus carries the
       // TopicGroupMessageEvent. Here we bridge it to the SSE stream so local
       // apps connected to GET /api/topic-stream receive real-time notifications.
-      eventBus.on('feishu.topic.message', (evt) => {
+      const unsubTopic = eventBus.on('feishu.topic.message', (evt) => {
         httpApiServer?.broadcastTopicEvent(evt);
       });
+
+      // Clean up subscription on process shutdown to avoid dangling handlers
+      const shutdownHttpApi = async (): Promise<void> => {
+        unsubTopic();
+        await httpApiServer?.stop();
+      };
+      process.on('SIGTERM', () => void shutdownHttpApi());
+      process.on('SIGINT', () => void shutdownHttpApi());
     }
   } catch (error) {
     logger.error({ err: error }, 'Failed to start Primary Node');
