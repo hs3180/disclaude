@@ -129,6 +129,37 @@ describe('adaptSDKMessage', () => {
       expect(result.content).toContain('Finding files: **/*.ts');
     });
 
+    it('should handle TaskCreate tool', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', name: 'TaskCreate', input: { content: 'Fix bug #123' } },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.content).toContain('Creating task: Fix bug #123');
+    });
+
+    it('should handle TaskUpdate tool', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', name: 'TaskUpdate', input: { taskId: '5', status: 'completed' } },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.content).toContain('Updating task 5');
+      expect(result.content).toContain('completed');
+    });
+
     it('should handle unknown tool with input', () => {
       const message = {
         type: 'assistant' as const,
@@ -353,6 +384,33 @@ describe('adaptSDKMessage', () => {
       const result = adaptSDKMessage(asMsg(message));
       expect(result.type).toBe('text');
       expect(result.content).toBe('');
+    });
+
+    it('should format requesting status (SDK 0.3.x)', () => {
+      const message = {
+        type: 'system' as const,
+        subtype: 'status',
+        status: 'requesting',
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('status');
+      expect(result.content).toContain('Thinking');
+      expect(result.role).toBe('system');
+    });
+
+    it('should format model_refusal_fallback system message (SDK 0.3.174+)', () => {
+      const message = {
+        type: 'system' as const,
+        subtype: 'model_refusal_fallback',
+        fallback_model: 'claude-sonnet-4-6',
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('status');
+      expect(result.content).toContain('fallback');
+      expect(result.content).toContain('claude-sonnet-4-6');
+      expect(result.role).toBe('system');
     });
   });
 

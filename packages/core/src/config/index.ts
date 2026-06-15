@@ -29,7 +29,7 @@ import { type AgentRuntimeContext, setRuntimeContext } from '../agents/types.js'
 // Re-export sub-modules
 export * from './types.js';
 export * from './loader.js';
-export * from './tool-configuration.js';
+
 export { loadRuntimeEnv, setRuntimeEnv, deleteRuntimeEnv } from './runtime-env.js';
 
 const logger = createLogger('Config');
@@ -583,7 +583,7 @@ export class Config {
 
   /**
    * Check if Agent Teams mode is enabled.
-   * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
+   * When enabled, passes teammateMode to SDK via Settings (SDK 0.3.177+).
    *
    * @returns true if Agent Teams mode is enabled
    */

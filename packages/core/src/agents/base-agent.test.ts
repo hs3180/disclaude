@@ -201,7 +201,7 @@ describe('BaseAgent', () => {
       expect(options.mcpServers).toEqual(mcpServers);
     });
 
-    it('should include CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS when enabled', () => {
+    it('should set teammateMode when Agent Teams is enabled', () => {
       setRuntimeContext({
         getWorkspaceDir: () => '/workspace',
         getAgentConfig: () => ({ apiKey: 'key', model: 'model', provider: 'anthropic' }),
@@ -211,7 +211,7 @@ describe('BaseAgent', () => {
       });
 
       const options = agent.testCreateSdkOptions();
-      expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
+      expect(options.teammateMode).toBe('in-process');
     });
   });
 
@@ -616,7 +616,7 @@ describe('BaseAgent', () => {
       expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
       expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5v-turbo');
       // Agent Teams should NOT be enabled
-      expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBeUndefined();
+      expect(options.teammateMode).toBeUndefined();
     });
 
     it('should inject model tier env vars when Agent Teams is also enabled', () => {
@@ -641,7 +641,8 @@ describe('BaseAgent', () => {
       expect(options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.1');
       expect(options.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
       expect(options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5v-turbo');
-      expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
+      expect(options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBeUndefined();
+      expect(options.teammateMode).toBe('in-process');
     });
 
     it('should respect user overrides in globalEnv for model tier env vars', () => {

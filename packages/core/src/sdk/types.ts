@@ -228,6 +228,14 @@ export interface AgentQueryOptions {
    * Provider 层将其传递给 SDK 的 stderr 选项。
    */
   stderr?: (data: string) => void;
+  /**
+   * Agent Teams mode (SDK 0.3.177+).
+   * When set, enables teammate spawning via the SDK's teammateMode Settings field.
+   * - `'in-process'` — Teammates run in the same process
+   * - `'tmux'` — Teammates run in separate tmux sessions
+   * - `'auto'` — SDK decides automatically
+   */
+  teammateMode?: 'auto' | 'tmux' | 'in-process';
 }
 
 // ============================================================================

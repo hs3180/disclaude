@@ -75,6 +75,11 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
     sdkOptions.stderr = options.stderr;
   }
 
+  // Agent Teams mode (SDK 0.3.177+): pass teammateMode via SDK settings
+  if (options.teammateMode) {
+    sdkOptions.settings = { ...(sdkOptions.settings as object | undefined), teammateMode: options.teammateMode };
+  }
+
   return sdkOptions;
 }
 

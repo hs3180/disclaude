@@ -250,7 +250,7 @@ export function isStartupFailure(messageCount: number, elapsedMs: number): boole
  */
 export class ClaudeSDKProvider implements IAgentSDKProvider {
   readonly name = 'claude';
-  readonly version = '0.2.19';
+  readonly version = '0.3.177';
 
   private disposed = false;
 
@@ -372,7 +372,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
                   consecutiveTextOnlyCount,
                   model,
                   apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
-                  hasAgentTeams: options.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1',
+                  hasAgentTeams: options.teammateMode !== undefined,
                 },
                 `Idle loop detected: ${IDLE_LOOP_THRESHOLD}+ consecutive text-only responses `
                 + 'without tool_use. The model may not support tool execution. '
