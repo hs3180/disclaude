@@ -62,7 +62,7 @@ export interface AgentConfig {
   multimodalModel?: string;
   /**
    * Enable Claude Code Agent Teams mode.
-   * When enabled, sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 for SDK subprocess.
+   * When enabled, passes teammateMode='in-process' to the SDK via Settings.
    * This allows the agent to spawn and coordinate multiple teammate sessions.
    * @see https://code.claude.com/docs/en/agent-teams
    */
