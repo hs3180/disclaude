@@ -184,7 +184,61 @@ When producing research output, use the structured templates in the [report temp
 
 Select the template that best matches the user's needs. Adapt sections as needed — templates are guidelines, not rigid requirements.
 
+## Data Completeness Validation
+
+When processing data files (CSV, PDF, Excel, etc.), apply this validation protocol to ensure no data is lost or missed. This addresses common failures where parsed results silently drop records.
+
+### Pre-Processing Checklist
+
+Before parsing, enumerate all data sources and establish baselines:
+
+1. **Inventory all input files** — list every file in the working directory matching the data pattern (CSV, PDF, XLSX, etc.)
+2. **Ask the user to confirm completeness** — "I found N files. Are there any others I should include?"
+3. **Record expected record counts** — for each file, note the approximate row/page count as a validation baseline
+
+```
+Good: "I found 3 CSV files and 2 PDF statements. Total ~500 rows expected. Should I include anything else?"
+Bad: (silently processes only the first file found)
+```
+
+### Post-Processing Validation
+
+After parsing/transforming data, verify completeness:
+
+1. **Row count check** — compare parsed record count against expected count from source
+2. **Null/empty field audit** — flag records with unexpectedly empty fields (not all empty fields are errors, but unusual patterns should be reported)
+3. **Sum/cross-foot validation** — for financial data, verify totals match source document totals
+4. **Duplicate detection** — check for exact and near-duplicate records (same date + amount within tolerance)
+5. **Date range coverage** — verify the output spans the full date range of the input
+
+### Validation Report Template
+
+After processing, include a brief validation summary:
+
+```
+## Data Validation Summary
+
+| Check | Result |
+|-------|--------|
+| Input files processed | 5/5 |
+| Records parsed | 487 / ~500 expected (97.4%) |
+| Records with empty fields | 3 (flagged: missing counterparty) |
+| Total amount match | ✅ ¥12,345.67 matches source |
+| Date range | 2025-01-01 to 2025-06-30 ✅ |
+| Duplicates detected | 12 (cross-platform, flagged for review) |
+```
+
+### User Feedback Response Protocol
+
+When the user says results are wrong or incomplete:
+
+1. **Do not guess** — ask "具体哪部分有问题？" (which part specifically?)
+2. **Re-examine the source** — go back to the original file and compare with the parsed output
+3. **Fix broadly, not narrowly** — if one record was missed, check for the same pattern across all records (not just the one the user pointed out)
+4. **Show the diff** — present what changed so the user can verify the fix
+
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
+- Issue #933: Financial data parsing post-mortem (origin of this validation protocol)
