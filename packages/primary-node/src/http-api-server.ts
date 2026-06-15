@@ -108,6 +108,8 @@ export class HttpApiServer {
   private pushHandler?: PushHandler;
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
+  /** Heartbeat interval timer for SSE keepalive */
+  private sseHeartbeat: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: HttpApiServerConfig) {
     this.config = { host: 'localhost', ...config };
@@ -165,6 +167,47 @@ export class HttpApiServer {
   }
 
   /**
+   * Start periodic heartbeat to keep SSE connections alive through proxies.
+   *
+   * Sends a comment frame every 15s. Idempotent — only starts once.
+   */
+  private startSseHeartbeat(): void {
+    if (this.sseHeartbeat) {
+      return;
+    }
+    this.sseHeartbeat = setInterval(() => {
+      if (this.sseClients.size === 0) {
+        return;
+      }
+      const deadClients: ServerResponse[] = [];
+      for (const client of this.sseClients) {
+        if (client.writableEnded) {
+          deadClients.push(client);
+          continue;
+        }
+        try {
+          client.write(': ping\n\n');
+        } catch {
+          deadClients.push(client);
+        }
+      }
+      for (const client of deadClients) {
+        this.sseClients.delete(client);
+      }
+    }, 15_000);
+  }
+
+  /**
+   * Stop the SSE heartbeat timer.
+   */
+  private stopSseHeartbeat(): void {
+    if (this.sseHeartbeat) {
+      clearInterval(this.sseHeartbeat);
+      this.sseHeartbeat = null;
+    }
+  }
+
+  /**
    * Start the HTTP server.
    */
   async start(): Promise<void> {
@@ -211,6 +254,7 @@ export class HttpApiServer {
     }
 
     // Close all SSE connections (Issue #4031)
+    this.stopSseHeartbeat();
     for (const client of this.sseClients) {
       try { client.end(); } catch { /* best effort */ }
     }
@@ -412,7 +456,8 @@ export class HttpApiServer {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
     });
 
     // Send initial comment to establish connection
@@ -420,6 +465,7 @@ export class HttpApiServer {
 
     // Track this client for broadcasting
     this.sseClients.add(res);
+    this.startSseHeartbeat();
     logger.info({ clients: this.sseClients.size }, 'SSE client connected for topic notifications');
 
     // Remove client on disconnect

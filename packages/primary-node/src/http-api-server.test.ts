@@ -439,6 +439,7 @@ describe('HttpApiServer', () => {
       expect(statusCode).toBe(200);
       expect(headers['content-type']).toBe('text/event-stream');
       expect(headers['cache-control']).toBe('no-cache');
+      expect(headers['x-accel-buffering']).toBe('no');
     });
 
     it('should send initial comment on connect', async () => {
@@ -470,33 +471,57 @@ describe('HttpApiServer', () => {
         timestamp: new Date().toISOString(),
       };
 
-      // Connect SSE client and collect events
+      // Connect SSE client and collect events with retry-based broadcast
       const events = await new Promise<string[]>((resolve, reject) => {
         const received: string[] = [];
+        let broadcastDone = false;
+
         const req = http.get(`http://localhost:${ssePort}/api/topic-stream`, (res) => {
           let buffer = '';
           res.on('data', (chunk: Buffer) => {
             buffer += chunk.toString();
-            // Check for data events
             const lines = buffer.split('\n');
             for (const line of lines) {
               if (line.startsWith('data: ')) {
                 received.push(line.slice(6));
               }
             }
+            // Resolve as soon as we receive the broadcast event
+            if (received.length > 0 && broadcastDone) {
+              req.destroy();
+              resolve(received);
+            }
           });
+
+          // Broadcast after client connects, with retry
+          const tryBroadcast = (attempts: number): void => {
+            if (broadcastDone) { return; }
+            sseServer.broadcastTopicEvent(event);
+            broadcastDone = true;
+            // Check if already received (synchronous delivery possible)
+            if (received.length > 0) {
+              req.destroy();
+              resolve(received);
+              return;
+            }
+            // Fallback timeout in case data event is delayed
+            setTimeout(() => {
+              if (received.length > 0) {
+                req.destroy();
+                resolve(received);
+              } else if (attempts > 0) {
+                // Retry broadcast in case client wasn't ready
+                broadcastDone = false;
+                tryBroadcast(attempts - 1);
+              } else {
+                req.destroy();
+                resolve(received);
+              }
+            }, 150);
+          };
+          setTimeout(() => tryBroadcast(3), 50);
         });
         req.on('error', reject);
-
-        // Broadcast after short delay (client should be connected)
-        setTimeout(() => {
-          sseServer.broadcastTopicEvent(event);
-          // Wait for delivery
-          setTimeout(() => {
-            req.destroy();
-            resolve(received);
-          }, 100);
-        }, 100);
       });
 
       expect(events.length).toBeGreaterThan(0);
