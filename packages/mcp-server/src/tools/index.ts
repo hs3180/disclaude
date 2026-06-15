@@ -11,6 +11,8 @@ export type {
   MessageSentCallback,
   ActionPromptMap,
   SendInteractiveResult,
+  ChatHistoryMatch,
+  SearchChatHistoryResult,
 } from './types.js';
 
 // Shared utilities
@@ -45,3 +47,6 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Search Chat History (Issue #4107)
+export { search_chat_history } from './search-chat-history.js';

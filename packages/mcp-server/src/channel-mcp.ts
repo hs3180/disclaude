@@ -16,13 +16,14 @@ import {
   send_interactive,
   send_file,
   push_to_agent,
+  search_chat_history,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
 import { transformCardTables } from './utils/table-converter.js';
 import { resolveCardImages } from './utils/card-image-resolver.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
-import type { InteractiveOption, ActionPromptMap } from './tools/types.js';
+import type { InteractiveOption, ActionPromptMap, ChatHistoryMatch } from './tools/types.js';
 
 const timingLogger = createLogger('Timing');
 
@@ -33,6 +34,7 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
+export { search_chat_history } from './tools/search-chat-history.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -164,6 +166,19 @@ For display-only cards, use send_card instead.`,
       required: ['chatId', 'message'],
     },
     handler: push_to_agent,
+  },
+  search_chat_history: {
+    description: 'Search chat history for messages matching a keyword query.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keyword(s) to search for (case-insensitive)' },
+        limit: { type: 'number', description: 'Maximum number of results (default 10)' },
+        chatId: { type: 'string', description: 'Optional chat ID to restrict search to a specific chat' },
+      },
+      required: ['query'],
+    },
+    handler: search_chat_history,
   },
 };
 
@@ -517,6 +532,68 @@ will be processed as a system command.
         return result.success ? toolSuccess(result.message) : toolError(result.message);
       } catch (error) {
         return toolError(`Push to agent failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+  },
+  {
+    name: 'search_chat_history',
+    description: `Search chat history for messages matching a keyword query.
+
+Returns matching conversation fragments with timestamp, sender, and context.
+Case-insensitive keyword search over all logged chat messages.
+
+## Parameters
+- **query**: Keyword(s) to search for (string, case-insensitive)
+- **limit**: Maximum number of results (number, default 10)
+- **chatId**: Optional, restrict search to a specific chat
+
+## Use Cases
+- Find past discussions about a topic
+- Recall decisions made in previous conversations
+- Look up error messages or commands used before
+- Search across all chats or within a specific chat
+
+## Returns
+- Array of matches, each containing:
+  - date, chatId, sender (user/bot), timestamp, messageId, snippet
+- Snippet shows ~300 chars around the match
+
+## Example
+\`\`\`json
+{"query": "deploy", "limit": 5}
+\`\`\``,
+    parameters: z.object({
+      query: z.string().describe('Keyword(s) to search for (case-insensitive)'),
+      limit: z.number().optional().describe('Maximum number of results (default 10)'),
+      chatId: z.string().optional().describe('Optional chat ID to restrict search to a specific chat'),
+    }),
+    handler: async ({ query, limit, chatId }: {
+      query: string;
+      limit?: number;
+      chatId?: string;
+    }) => await withTiming(timingLogger, 'mcp:search_chat_history', chatId ?? 'all', async () => {
+      if (!query || !query.trim()) {
+        return toolError('Query is required');
+      }
+
+      try {
+        const result = await search_chat_history({ query, limit, chatId });
+        if (!result.success) {
+          return toolError(result.message);
+        }
+
+        if (result.matches.length === 0) {
+          return toolSuccess(`No matches found for "${query}".`);
+        }
+
+        // Format results for the LLM
+        const formatted = result.matches.map((m: ChatHistoryMatch, i: number) => {
+          return `${i + 1}. [${m.date} ${m.timestamp}] ${m.sender} in ${m.chatId}:\n   ${m.snippet}`;
+        }).join('\n\n');
+
+        return toolSuccess(`Found ${result.totalFound} match${result.totalFound === 1 ? '' : 'es'} for "${query}":\n\n${formatted}`);
+      } catch (error) {
+        return toolError(`Search failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }),
   },

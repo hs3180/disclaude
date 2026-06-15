@@ -69,5 +69,34 @@ export interface SendInteractiveResult {
   error?: string;
 }
 
+/**
+ * A single match from chat history search.
+ */
+export interface ChatHistoryMatch {
+  /** Date of the log file (YYYY-MM-DD) */
+  date: string;
+  /** Chat ID where the message was sent */
+  chatId: string;
+  /** Message sender: 'user' or 'bot' */
+  sender: string;
+  /** ISO timestamp of the message */
+  timestamp: string;
+  /** Platform message ID */
+  messageId: string;
+  /** Text snippet around the match */
+  snippet: string;
+}
+
+/**
+ * Result type for search_chat_history tool.
+ */
+export interface SearchChatHistoryResult {
+  success: boolean;
+  message: string;
+  matches: ChatHistoryMatch[];
+  totalFound: number;
+  error?: string;
+}
+
 
 
