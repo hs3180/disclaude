@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'node:http';
 import { HttpApiServer, type StatusResponse, type PushResponse } from './http-api-server.js';
+import type { TopicGroupMessageEvent } from '@disclaude/core';
 
 /** Find an available port by binding to port 0. */
 function getFreePort(): Promise<number> {
@@ -405,6 +406,145 @@ describe('HttpApiServer', () => {
       expect(statusCode).toBe(200);
       const data = JSON.parse(body) as PushResponse;
       expect(data.ok).toBe(true);
+    });
+  });
+
+  describe('GET /api/topic-stream (SSE) — Issue #4031', () => {
+    let ssePort: number;
+    let sseServer: HttpApiServer;
+
+    beforeAll(async () => {
+      ssePort = await getFreePort();
+      sseServer = new HttpApiServer({ port: ssePort, host: 'localhost' });
+      await sseServer.start();
+    });
+
+    afterAll(async () => {
+      await sseServer.stop();
+    });
+
+    it('should return SSE headers on connect', async () => {
+      const { statusCode, headers } = await new Promise<{ statusCode: number; headers: http.IncomingHttpHeaders }>(
+        (resolve, reject) => {
+          const req = http.get(`http://localhost:${ssePort}/api/topic-stream`, (res) => {
+            resolve({ statusCode: res.statusCode ?? 0, headers: res.headers });
+            // Drain and close
+            res.on('data', () => {});
+            res.destroy();
+          });
+          req.on('error', reject);
+        },
+      );
+
+      expect(statusCode).toBe(200);
+      expect(headers['content-type']).toBe('text/event-stream');
+      expect(headers['cache-control']).toBe('no-cache');
+      expect(headers['x-accel-buffering']).toBe('no');
+    });
+
+    it('should send initial comment on connect', async () => {
+      const { body } = await new Promise<{ body: string }>((resolve, reject) => {
+        const req = http.get(`http://localhost:${ssePort}/api/topic-stream`, (res) => {
+          let data = '';
+          res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+          // Wait for initial comment then close
+          setTimeout(() => {
+            res.destroy();
+            resolve({ body: data });
+          }, 100);
+        });
+        req.on('error', reject);
+      });
+
+      expect(body).toContain(': connected');
+    });
+
+    it('should broadcast TopicGroupMessageEvent to connected SSE client', async () => {
+      const event: TopicGroupMessageEvent = {
+        type: 'topic_group_message',
+        chatId: 'oc_test_chat',
+        rootId: 'om_root',
+        threadId: 'om_thread',
+        sender: { name: 'TestUser' },
+        content: 'Hello from topic',
+        isReply: false,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Connect SSE client and collect events with retry-based broadcast
+      const events = await new Promise<string[]>((resolve, reject) => {
+        const received: string[] = [];
+        let broadcastDone = false;
+
+        const req = http.get(`http://localhost:${ssePort}/api/topic-stream`, (res) => {
+          let buffer = '';
+          res.on('data', (chunk: Buffer) => {
+            buffer += chunk.toString();
+            const lines = buffer.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                received.push(line.slice(6));
+              }
+            }
+            // Resolve as soon as we receive the broadcast event
+            if (received.length > 0 && broadcastDone) {
+              req.destroy();
+              resolve(received);
+            }
+          });
+
+          // Broadcast after client connects, with retry
+          const tryBroadcast = (attempts: number): void => {
+            if (broadcastDone) { return; }
+            sseServer.broadcastTopicEvent(event);
+            broadcastDone = true;
+            // Check if already received (synchronous delivery possible)
+            if (received.length > 0) {
+              req.destroy();
+              resolve(received);
+              return;
+            }
+            // Fallback timeout in case data event is delayed
+            setTimeout(() => {
+              if (received.length > 0) {
+                req.destroy();
+                resolve(received);
+              } else if (attempts > 0) {
+                // Retry broadcast in case client wasn't ready
+                broadcastDone = false;
+                tryBroadcast(attempts - 1);
+              } else {
+                req.destroy();
+                resolve(received);
+              }
+            }, 150);
+          };
+          setTimeout(() => tryBroadcast(3), 50);
+        });
+        req.on('error', reject);
+      });
+
+      expect(events.length).toBeGreaterThan(0);
+      const parsed = JSON.parse(events[events.length - 1]) as TopicGroupMessageEvent;
+      expect(parsed.type).toBe('topic_group_message');
+      expect(parsed.chatId).toBe('oc_test_chat');
+      expect(parsed.content).toBe('Hello from topic');
+    });
+
+    it('should handle no connected clients gracefully', () => {
+      // Should not throw
+      expect(() => {
+        sseServer.broadcastTopicEvent({
+          type: 'topic_group_message',
+          chatId: 'oc_test',
+          rootId: 'om_root',
+          threadId: 'om_thread',
+          sender: {},
+          content: 'test',
+          isReply: false,
+          timestamp: new Date().toISOString(),
+        });
+      }).not.toThrow();
     });
   });
 });

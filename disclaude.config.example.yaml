@@ -78,6 +78,14 @@ feishu:
     # Default: 60000 (1 minute)
     maxAgeMs: 60000
 
+  # Topic group message push notification (Issue #4031)
+  # When enabled, topic group messages trigger real-time notifications
+  # to connected clients via SSE (GET /api/topic-stream on the HTTP API server).
+  # Requires --api-port to be configured for SSE endpoint to be available.
+  # Default: disabled
+  # topicNotify:
+  #   enabled: true
+
 # -----------------------------------------------------------------------------
 # Ruliu (如流) Platform Configuration
 # -----------------------------------------------------------------------------
