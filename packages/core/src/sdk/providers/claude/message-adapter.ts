@@ -213,6 +213,31 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
             raw: message,
           };
         }
+        // SDK 0.3.x: 'requesting' status indicates the model is processing
+        if ('status' in message && message.status === 'requesting') {
+          return {
+            type: 'status',
+            content: '🤔 Thinking...',
+            role: 'system',
+            metadata,
+            raw: message,
+          };
+        }
+      }
+
+      // SDK 0.3.174+: model_refusal_fallback system message when primary model
+      // refuses and the turn is retried on a fallback model
+      if (message.subtype === 'model_refusal_fallback') {
+        const fallbackModel = 'fallback_model' in message
+          ? String(message.fallback_model)
+          : 'alternative';
+        return {
+          type: 'status',
+          content: `⚠️ Model fallback: retrying with ${fallbackModel}`,
+          role: 'system',
+          metadata,
+          raw: message,
+        };
       }
 
       // 忽略其他系统消息
@@ -300,6 +325,15 @@ function formatToolInput(toolName: string, input: Record<string, unknown> | unde
     case 'Glob': {
       const globPattern = input.pattern as string | undefined;
       return `🔧 Finding files: ${globPattern || '<no pattern>'}`;
+    }
+    case 'TaskCreate': {
+      const taskContent = input.content as string | undefined;
+      return `🔧 Creating task: ${taskContent || '<no description>'}`;
+    }
+    case 'TaskUpdate': {
+      const taskId = input.taskId as string | undefined;
+      const status = input.status as string | undefined;
+      return `🔧 Updating task ${taskId || '?'} → ${status || '?'}`;
     }
     default: {
       const str = safeStringify(input, 60);

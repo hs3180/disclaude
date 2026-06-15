@@ -41,7 +41,8 @@ describe('Tool Configuration', () => {
       'NotebookEdit',
 
       // User Interaction
-      'TodoWrite',
+      'TaskCreate',
+      'TaskUpdate',
     ];
 
     expectedTools.forEach((tool) => {

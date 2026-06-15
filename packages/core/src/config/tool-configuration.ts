@@ -11,6 +11,9 @@
  * All default SDK tools enabled for agents except browser/OCR MCP tools
  * which are configured separately by agents that need them.
  * (e.g., Playwright, Feishu context).
+ *
+ * NOTE: TodoWrite was replaced by TaskCreate/TaskUpdate/TaskGet/TaskList
+ * in claude-agent-sdk 0.3.142.
  */
 export const ALLOWED_TOOLS = [
   // Skills & Agents
@@ -38,8 +41,9 @@ export const ALLOWED_TOOLS = [
   // Jupyter Notebooks
   'NotebookEdit',
 
-  // User Interaction
-  'TodoWrite',
+  // Task Management (replaces TodoWrite since SDK 0.3.142)
+  'TaskCreate',
+  'TaskUpdate',
 ] as const;
 
 /**
