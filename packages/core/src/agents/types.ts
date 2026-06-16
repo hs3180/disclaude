@@ -153,6 +153,20 @@ export interface ChatAgent extends Disposable {
   readonly taskComplete?: Promise<void>;
 
   /**
+   * Promise that resolves when the current turn (single message → result) completes.
+   *
+   * Unlike `taskComplete` (which only resolves in once-mode), `turnComplete` works
+   * in both persistent and once-mode. It is set each time `processMessage()` pushes
+   * a message and resolves when the SDK returns a `result` for that turn.
+   *
+   * Consumers (e.g., AgentPoolMessageHandler with waitForCompletion) can use this to
+   * await a single agent turn in persistent pool agents (Issue #4063).
+   *
+   * Undefined if no message has been processed yet or the turn already completed.
+   */
+  readonly turnComplete?: Promise<void>;
+
+  /**
    * Execute a one-shot query that completes after a single SDK turn.
    *
    * Unlike processMessage() which is non-blocking, runOnce() enables once-mode

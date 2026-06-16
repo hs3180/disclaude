@@ -421,7 +421,8 @@ export class UnixSocketIpcClient {
    */
   async request<T extends IpcRequestType>(
     type: T,
-    payload: IpcRequestPayloads[T]
+    payload: IpcRequestPayloads[T],
+    options?: { timeoutMs?: number }
   ): Promise<IpcResponsePayloads[T]> {
     if (!this.connected) {
       try {
@@ -443,7 +444,7 @@ export class UnixSocketIpcClient {
         this.pendingRequests.delete(id);
         const error = new Error(`IPC_TIMEOUT: Request timed out: ${type}`);
         reject(error);
-      }, this.timeout);
+      }, options?.timeoutMs ?? this.timeout);
 
       this.pendingRequests.set(id, {
         resolve: (response) => {
@@ -707,10 +708,13 @@ export class UnixSocketIpcClient {
   async pushToAgent(
     chatId: string,
     message: string,
-    options?: { waitForCompletion?: boolean }
+    options?: { waitForCompletion?: boolean; timeoutMs?: number }
   ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('pushToAgent', { chatId, message, waitForCompletion: options?.waitForCompletion });
+      // Issue #4063: Use longer timeout when waiting for agent turn completion.
+      // Agent turns routinely take 30s-5min; default IPC timeout is 5s.
+      const effectiveTimeout = options?.timeoutMs ?? (options?.waitForCompletion ? 300_000 : undefined);
+      return await this.request('pushToAgent', { chatId, message, waitForCompletion: options?.waitForCompletion }, { timeoutMs: effectiveTimeout });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'pushToAgent failed');
