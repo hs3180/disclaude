@@ -1042,17 +1042,5 @@ describe('Scheduler', () => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
       }, { timeout: 2000 });
     });
-
-    it('should execute task when isAgentBusy callback is not configured', async () => {
-      const task = createTask({ id: 'no-callback-1', blocking: true });
-      scheduler.addTask(task);
-
-      const jobs = scheduler.getActiveJobs();
-      void jobs[0].job.fireOnTick();
-
-      await vi.waitFor(() => {
-        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
-      }, { timeout: 2000 });
-    });
   });
 });

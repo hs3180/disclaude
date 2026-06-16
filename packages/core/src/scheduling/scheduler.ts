@@ -86,7 +86,6 @@ export interface SchedulerCallbacks {
  *
  * Issue #3582: Uses InputMessageRouter for task execution.
  * Issue #869: Added cooldownManager for cooldown period support.
- * Issue #3931: Added isAgentBusy callback for blocking task agent-idle check.
  */
 export interface SchedulerOptions {
   /** ScheduleManager instance for task CRUD */
@@ -100,15 +99,6 @@ export interface SchedulerOptions {
    * Issue #3582: Routes through existing agents via AgentPool.
    */
   inputMessageRouter?: InputMessageRouter;
-  /**
-   * Check if the agent for a chatId is currently busy processing.
-   * Issue #3931: Blocking tasks skip execution when the agent is busy,
-   * preventing context interference with ongoing user conversations.
-   *
-   * @param chatId - Chat ID to check
-   * @returns true if the agent is busy processing a message
-   */
-  isAgentBusy?: (chatId: string) => boolean;
 }
 
 /**
@@ -136,10 +126,6 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private cooldownManager?: CooldownManager;
   private inputMessageRouter?: InputMessageRouter;
-  /** Issue #3931: Callback to check if agent is busy for a chatId */
-  private isAgentBusy?: (chatId: string) => boolean;
-  /** Issue #3931: Track consecutive agent-busy skips per task for notification throttling */
-  private agentBusySkipCount = new Map<string, number>();
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -166,7 +152,6 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.cooldownManager = options.cooldownManager;
     this.inputMessageRouter = options.inputMessageRouter;
-    this.isAgentBusy = options.isAgentBusy;
     logger.info('Scheduler created');
   }
 
@@ -405,11 +390,6 @@ ${task.prompt}`;
       return;
     }
 
-    // Task executed successfully (or was not agent-busy) — reset skip counter
-    if (this.agentBusySkipCount.has(task.id)) {
-      this.agentBusySkipCount.delete(task.id);
-    }
-
     logger.info({ taskId: task.id, name: task.name }, 'Executing scheduled task');
 
     // Mark task as running
@@ -611,11 +591,4 @@ ${task.prompt}`;
     return await this.cooldownManager.clearCooldown(taskId);
   }
 
-  /**
-   * Check if the agent busy callback is configured.
-   * Issue #3931: Used for testing and status reporting.
-   */
-  hasAgentBusyCheck(): boolean {
-    return !!this.isAgentBusy;
-  }
 }
