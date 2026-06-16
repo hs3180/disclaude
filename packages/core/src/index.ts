@@ -345,3 +345,24 @@ export {
   STATE_FILE_NAME,
   STATE_VERSION,
 } from './project/index.js';
+
+// Loop module (Issue #4063 — Loop Runner)
+export {
+  LoopState,
+  DEFAULT_MAX_STEPS,
+  DEFAULT_MAX_DURATION_MS,
+  DEFAULT_STEP_DELAY_MS,
+  LOOP_STATE_FILE,
+  getLoopStatePath,
+  readLoopState,
+  writeLoopState,
+  createLoopState,
+  toLoopStatus,
+} from './loop/index.js';
+
+export type {
+  LoopStartParams,
+  LoopPersistedState,
+  LoopStatus,
+  LoopStateReadResult,
+} from './loop/index.js';
