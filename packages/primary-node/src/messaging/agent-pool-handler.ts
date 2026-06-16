@@ -90,16 +90,21 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
     if (!agent) {return Promise.resolve();}
 
     if (options?.waitForCompletion) {
-      // Issue #4063: Wait for agent turn to complete (for Loop Runner)
+      // Issue #4063: Wait for agent turn to complete (for Loop Runner).
+      // Uses turnComplete (per-turn) instead of taskComplete (session-level),
+      // because pool agents run in persistent mode where taskComplete never resolves.
       return agent.processMessage({ chatId, payload, messageId })
         .then(async () => {
-          const {taskComplete} = agent;
-          if (taskComplete) {
-            await taskComplete;
+          const turnDone = agent.turnComplete;
+          if (turnDone) {
+            await turnDone;
+          } else {
+            this.log.warn({ chatId, messageId }, 'turnComplete not available after processMessage — agent may not support turn detection');
           }
         })
         .catch((err) => {
-          this.log.error({ err, chatId, messageId }, 'Agent processMessage failed for system message (waitForCompletion)');
+          this.log.error({ err, chatId, messageId }, 'Agent processMessage or turnComplete failed for system message (waitForCompletion)');
+          throw err; // Propagate error so IPC caller knows the agent failed
         });
     }
 
