@@ -121,6 +121,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private taskCompletionResolve?: () => void;
   private taskCompletionReject?: (error: Error) => void;
 
+  // Issue #4063: Per-turn completion promise (works in persistent mode, unlike taskComplete)
+  private turnCompletionPromise?: Promise<void>;
+  private turnCompletionResolve?: () => void;
+  private turnCompletionReject?: (error: Error) => void;
+
   constructor(config: ChatAgentConfig) {
     super(config);
 
@@ -227,6 +232,49 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   get taskComplete(): Promise<void> | undefined {
     return this.taskCompletionPromise;
+  }
+
+  /**
+   * Per-turn completion promise (Issue #4063).
+   * Unlike taskComplete, resolves after each turn in persistent mode.
+   */
+  get turnComplete(): Promise<void> | undefined {
+    return this.turnCompletionPromise;
+  }
+
+  /**
+   * Set up a new turn completion promise (Issue #4063).
+   * Call this when pushing a message to the channel.
+   */
+  private setTurnPending(): void {
+    this.turnCompletionReject?.(new Error('Turn superseded by new message'));
+    this.turnCompletionPromise = new Promise<void>((resolve, reject) => {
+      this.turnCompletionResolve = resolve;
+      this.turnCompletionReject = reject;
+    });
+    // Prevent unhandled rejection when nobody awaits
+    this.turnCompletionPromise.catch(() => {});
+  }
+
+  /**
+   * Resolve the current turn completion promise (Issue #4063).
+   * Call this when a result message is received from the SDK.
+   */
+  private resolveTurn(): void {
+    this.turnCompletionResolve?.();
+    this.turnCompletionPromise = undefined;
+    this.turnCompletionResolve = undefined;
+    this.turnCompletionReject = undefined;
+  }
+
+  /**
+   * Reject the current turn completion promise on error (Issue #4063).
+   */
+  private rejectTurn(error: Error): void {
+    this.turnCompletionReject?.(error);
+    this.turnCompletionPromise = undefined;
+    this.turnCompletionResolve = undefined;
+    this.turnCompletionReject = undefined;
   }
 
   /**
@@ -744,12 +792,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (this.channel) {
       // Issue #3985: Mark as processing when a user message is pushed to the channel.
       this.isProcessingMessage = true;
+      // Issue #4063: Set up per-turn completion promise
+      this.setTurnPending();
       const accepted = this.channel.push(userMessage);
       if (!accepted) {
         // Issue #2007: Channel is closed — message would be silently dropped.
         // Notify the user so they know the action was not processed.
         // Issue #3985: Reset isProcessingMessage since the message was not actually processed.
+        // Issue #4063: Reject turn completion since message was not processed.
         this.isProcessingMessage = false;
+        this.rejectTurn(new Error('Channel closed — message not processed'));
         this.logger.warn({ chatId, messageId }, 'Message rejected: channel is closed');
         this.callbacks.sendMessage(chatId, '⚠️ 消息未能送达，会话可能已结束。请发送 /reset 重置会话后重试。').catch((notifyErr) => {
           this.logger.error({ err: notifyErr, chatId }, 'Failed to send channel-closed notification');
@@ -1078,6 +1130,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // The agent is now idle between turns — blocking tasks can execute.
           this.isProcessingMessage = false;
 
+          // Issue #4063: Resolve per-turn completion promise (works in persistent mode)
+          this.resolveTurn();
+
           if (this.callbacks.onDone) {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.onDone(chatId, threadRoot);
@@ -1153,6 +1208,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
 
+        // Issue #4063: Reject per-turn completion on startup failure
+        this.rejectTurn(iteratorError);
+
         // Issue #3124: Reject completion promise on startup failure
         this.taskCompletionReject?.(iteratorError);
         this.clearTaskCompletion();
@@ -1168,6 +1226,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
         await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
       }
+
+      // Issue #4063: Reject per-turn completion on runtime error
+      this.rejectTurn(iteratorError);
 
       // Issue #3124: Reject completion promise on runtime error
       this.taskCompletionReject?.(iteratorError);
@@ -1321,6 +1382,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.onceMode = false;
     this.clearTaskCompletion();
 
+    // Issue #4063: Clear per-turn completion state
+    this.rejectTurn(new Error('Agent reset'));
+
     // Issue #1213: Reload history only if explicitly requested via keepContext
     if (keepContext) {
       this.logger.info({ chatId: this.boundChatId }, 'Reloading history context after reset');
@@ -1426,6 +1490,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.channel.close();
       this.channel = undefined;
     }
+
+    // Issue #4063: Reject per-turn completion on dispose (agent eviction during turn)
+    this.rejectTurn(new Error('Agent disposed'));
 
     // Fire-and-forget the rest of shutdown (abort, clear state, etc.)
     this.shutdown().catch((err) => {
