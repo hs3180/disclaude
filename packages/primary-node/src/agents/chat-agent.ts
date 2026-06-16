@@ -1491,6 +1491,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.channel = undefined;
     }
 
+    // Issue #4063: Reject per-turn completion on dispose (agent eviction during turn)
+    this.rejectTurn(new Error('Agent disposed'));
+
     // Fire-and-forget the rest of shutdown (abort, clear state, etc.)
     this.shutdown().catch((err) => {
       this.logger.error({ err }, 'Error during dispose shutdown');
