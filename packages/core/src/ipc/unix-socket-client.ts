@@ -711,10 +711,7 @@ export class UnixSocketIpcClient {
     options?: { waitForCompletion?: boolean; timeoutMs?: number }
   ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      // Issue #4063: Use longer timeout when waiting for agent turn completion.
-      // Agent turns routinely take 30s-5min; default IPC timeout is 5s.
-      const effectiveTimeout = options?.timeoutMs ?? (options?.waitForCompletion ? 300_000 : undefined);
-      return await this.request('pushToAgent', { chatId, message, waitForCompletion: options?.waitForCompletion }, { timeoutMs: effectiveTimeout });
+      return await this.request('pushToAgent', { chatId, message, waitForCompletion: options?.waitForCompletion }, { timeoutMs: options?.timeoutMs });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'pushToAgent failed');
