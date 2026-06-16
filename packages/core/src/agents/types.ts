@@ -136,7 +136,7 @@ export interface ChatAgent extends Disposable {
    *
    * Issue #3779: Converted to options object for type safety.
    */
-  processMessage(params: UserMessageParams): void;
+  processMessage(params: UserMessageParams): Promise<void>;
 
   /**
    * Promise that resolves when the current task completes.
