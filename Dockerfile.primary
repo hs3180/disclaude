@@ -88,12 +88,17 @@ RUN apk add --no-cache \
     bash \
     python3 \
     py3-pip \
+    sudo \
     tini
 
 # Install build tools (cleanable via: apk del .build-deps)
-# Used by agents for compiling C/C++ code and node-gyp native addons at runtime.
-# Tagged with --virtual for on-demand cleanup to reclaim ~400MB when no longer needed.
-RUN apk add --no-cache --virtual .build-deps g++ gcc make
+# Used by agents for compiling C/C++ code, node-gyp native addons, and Python
+# extension modules at runtime. Tagged with --virtual for on-demand cleanup to
+# reclaim space when no longer needed.
+# cmake + python3-dev are pre-baked here so common native builds work without a
+# runtime apk fetch. Larger / version-pinned toolchains (e.g. llvm19-dev) can
+# still be installed on demand by the agent via `sudo apk add`.
+RUN apk add --no-cache --virtual .build-deps g++ gcc make cmake python3-dev
 
 # Install common Python data analysis packages
 # PIP_INDEX_URL: override PyPI mirror (default: official https://pypi.org/simple)
@@ -110,6 +115,15 @@ RUN npm config set registry ${NPM_REGISTRY} && \
 # Create non-root user for running the application
 RUN addgroup -g 1001 disclaude && \
     adduser -D -u 1001 -G disclaude -h /app -s /sbin/nologin disclaude
+
+# Grant the non-root user passwordless sudo so the agent can install system
+# packages on demand (e.g. `sudo apk add python3-dev llvm-dev cmake`) without
+# running the whole process as root. Staying uid 1001 preserves /data/workspace
+# ownership so the host can still read/write the mounted volume. visudo validates
+# the file at build time (fails the build on a syntax error).
+RUN echo "disclaude ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/disclaude && \
+    chmod 0440 /etc/sudoers.d/disclaude && \
+    visudo -cf /etc/sudoers.d/disclaude
 
 # Create directories for runtime with proper permissions
 RUN mkdir -p /data/workspace /data/logs /app/.claude /app/.claude/backups /app/.claude/debug && \
