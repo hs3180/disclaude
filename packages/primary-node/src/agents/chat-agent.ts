@@ -35,7 +35,8 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, forceCleanupLeakedListeners, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type UserMessageParams } from '@disclaude/core';
+import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, forceCleanupLeakedListeners, getProvider, type SdkInlineToolDefinition, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type UserMessageParams } from '@disclaude/core';
+import { z } from 'zod';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
@@ -273,6 +274,64 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.logger.info({
           ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
         }, 'Configured channel MCP server (inline transport)');
+      }
+
+      // Issue #4107 Phase 1: Add SearchChatHistory inline MCP server
+      if (this.callbacks.searchChatHistory) {
+        const searchTool: SdkInlineToolDefinition = {
+          name: 'search_chat_history',
+          description: `Search chat history by keyword. Returns matching message snippets with timestamp and sender info.
+
+Use this to find past conversations, recall decisions, or look up information discussed previously.
+
+## Parameters
+- **query**: Search keyword (case-insensitive, matches message content)
+- **limit**: Maximum results to return (default: 20)
+
+## Example
+\`\`\`json
+{"query": "deploy", "limit": 10}
+\`\`\`
+
+## Returns
+Array of matching entries, each containing:
+- date: Log date (YYYY-MM-DD)
+- timestamp: ISO timestamp
+- direction: "incoming" (user) or "outgoing" (bot)
+- messageId: Original message ID
+- content: Matching message content`,
+          parameters: z.object({
+            query: z.string().describe('Search keyword (case-insensitive)'),
+            limit: z.number().optional().default(20).describe('Maximum results to return (default: 20)'),
+          }),
+          handler: async ({ query, limit }: { query: string; limit?: number }) => {
+            try {
+              const searchFn = this.callbacks.searchChatHistory;
+              if (!searchFn) {
+                return { content: [{ type: 'text', text: 'Chat history search is not available.' }], isError: true };
+              }
+              const results = await searchFn(this.boundChatId, query, limit);
+              if (results.length === 0) {
+                return { content: [{ type: 'text', text: `No results found for "${query}".` }] };
+              }
+              const formatted = results.map((r, i) =>
+                `${i + 1}. [${r.date} ${r.timestamp}] ${r.direction === 'incoming' ? '👤' : '🤖'} (${r.messageId})\n   ${r.content.slice(0, 500)}${r.content.length > 500 ? '...' : ''}`
+              ).join('\n\n');
+              return { content: [{ type: 'text', text: `Found ${results.length} result(s) for "${query}":\n\n${formatted}` }] };
+            } catch (error) {
+              return { content: [{ type: 'text', text: `Search failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+            }
+          },
+        };
+
+        mcpServers['chat-search'] = getProvider().createMcpServer({
+          type: 'inline',
+          name: 'chat-search',
+          version: '1.0.0',
+          tools: [searchTool],
+        });
+
+        this.logger.info('Configured chat-search MCP server (SearchChatHistory tool)');
       }
     }
 

@@ -485,3 +485,126 @@ describe('MessageLogger.migrateLegacyFiles', () => {
     expect(stat.isDirectory()).toBe(true);
   });
 });
+
+describe('MessageLogger.searchChatHistory', () => {
+  let tmpDir: string;
+  let logger: MessageLogger;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    logger = new MessageLogger();
+    await logger.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should return empty array when no logs exist', async () => {
+    const results = await logger.searchChatHistory('nonexistent-chat', 'test');
+    expect(results).toEqual([]);
+  });
+
+  it('should find matching messages by keyword', async () => {
+    // Create a log file with the proper format
+    const dateDir = path.join(tmpDir, 'chat-logs', '2026-04-04');
+    await fs.mkdir(dateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(dateDir, 'chat-search.md'),
+      '👤 [2026-04-04T10:00:00.000Z] (msg_1)\nWe discussed deploying to production\n\n---\n\n' +
+      '🤖 [2026-04-04T10:01:00.000Z] (msg_2)\nThe weather is nice today\n\n---\n\n'
+    );
+
+    const results = await logger.searchChatHistory('chat-search', 'deploying');
+    expect(results).toHaveLength(1);
+    expect(results[0].content).toContain('deploying to production');
+    expect(results[0].direction).toBe('incoming');
+    expect(results[0].messageId).toBe('msg_1');
+    expect(results[0].date).toBe('2026-04-04');
+  });
+
+  it('should perform case-insensitive search', async () => {
+    const dateDir = path.join(tmpDir, 'chat-logs', '2026-04-04');
+    await fs.mkdir(dateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(dateDir, 'chat-case.md'),
+      '🤖 [2026-04-04T10:00:00.000Z] (msg_1)\nDeploying to PRODUCTION environment\n\n---\n\n'
+    );
+
+    const results = await logger.searchChatHistory('chat-case', 'deploying');
+    expect(results).toHaveLength(1);
+    expect(results[0].content).toContain('PRODUCTION');
+  });
+
+  it('should respect limit parameter', async () => {
+    const dateDir = path.join(tmpDir, 'chat-logs', '2026-04-04');
+    await fs.mkdir(dateDir, { recursive: true });
+    let content = '';
+    for (let i = 0; i < 10; i++) {
+      content += `👤 [2026-04-04T10:0${i}:00.000Z] (msg_${i})\nDeploying step ${i}\n\n---\n\n`;
+    }
+    await fs.writeFile(path.join(dateDir, 'chat-limit.md'), content);
+
+    const results = await logger.searchChatHistory('chat-limit', 'Deploying', 3);
+    expect(results).toHaveLength(3);
+  });
+
+  it('should search across multiple days', async () => {
+    for (const day of ['2026-04-04', '2026-04-03']) {
+      const dateDir = path.join(tmpDir, 'chat-logs', day);
+      await fs.mkdir(dateDir, { recursive: true });
+      await fs.writeFile(
+        path.join(dateDir, 'chat-multi.md'),
+        `👤 [${day}T10:00:00.000Z] (msg_${day})\nDeploying on ${day}\n\n---\n\n`
+      );
+    }
+
+    const results = await logger.searchChatHistory('chat-multi', 'Deploying');
+    expect(results).toHaveLength(2);
+    // Newest first
+    expect(results[0].date).toBe('2026-04-04');
+    expect(results[1].date).toBe('2026-04-03');
+  });
+
+  it('should parse direction correctly (incoming vs outgoing)', async () => {
+    const dateDir = path.join(tmpDir, 'chat-logs', '2026-04-04');
+    await fs.mkdir(dateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(dateDir, 'chat-dir.md'),
+      '👤 [2026-04-04T10:00:00.000Z] (msg_in)\nUser says hello deploy\n\n---\n\n' +
+      '🤖 [2026-04-04T10:01:00.000Z] (msg_out)\nBot replies about deploy\n\n---\n\n'
+    );
+
+    const results = await logger.searchChatHistory('chat-dir', 'deploy');
+    expect(results).toHaveLength(2);
+    expect(results[0].direction).toBe('incoming');
+    expect(results[1].direction).toBe('outgoing');
+  });
+
+  it('should return empty when query does not match any entry', async () => {
+    const dateDir = path.join(tmpDir, 'chat-logs', '2026-04-04');
+    await fs.mkdir(dateDir, { recursive: true });
+    await fs.writeFile(
+      path.join(dateDir, 'chat-nomatch.md'),
+      '👤 [2026-04-04T10:00:00.000Z] (msg_1)\nHello world\n\n---\n\n'
+    );
+
+    const results = await logger.searchChatHistory('chat-nomatch', 'nonexistent_keyword');
+    expect(results).toEqual([]);
+  });
+
+  it('should use default limit of 20 when not specified', async () => {
+    const dateDir = path.join(tmpDir, 'chat-logs', '2026-04-04');
+    await fs.mkdir(dateDir, { recursive: true });
+    let content = '';
+    for (let i = 0; i < 25; i++) {
+      content += `👤 [2026-04-04T10:${String(i).padStart(2, '0')}:00.000Z] (msg_${i})\nSearch test ${i}\n\n---\n\n`;
+    }
+    await fs.writeFile(path.join(dateDir, 'chat-default-limit.md'), content);
+
+    const results = await logger.searchChatHistory('chat-default-limit', 'Search test');
+    expect(results).toHaveLength(20); // default limit
+  });
+});

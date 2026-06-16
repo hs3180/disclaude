@@ -71,6 +71,8 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
       sendDoneSignal: true,
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
+      // Issue #4107: Wire searchChatHistory for LLM keyword search
+      searchChatHistory: (chatId: string, query: string, limit?: number) => messageLogger.searchChatHistory(chatId, query, limit),
     }),
 
   createMessageHandler: (channel, context) =>
@@ -128,6 +130,8 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       // Issue #3996: Wire getChatLogFilePaths so agent knows where log files are
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
+      // Issue #4107: Wire searchChatHistory for LLM keyword search
+      searchChatHistory: (chatId: string, query: string, limit?: number) => messageLogger.searchChatHistory(chatId, query, limit),
     }),
 
   createMessageHandler: (channel, context) =>
@@ -309,6 +313,8 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
       sendDoneSignal: false,
       getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
       getChatLogFilePaths: (chatId: string) => messageLogger.getChatLogFilePaths(chatId),
+      // Issue #4107: Wire searchChatHistory for LLM keyword search
+      searchChatHistory: (chatId: string, query: string, limit?: number) => messageLogger.searchChatHistory(chatId, query, limit),
     }),
 
   createMessageHandler: (channel, context) =>

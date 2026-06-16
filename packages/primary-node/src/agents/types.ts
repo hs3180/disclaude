@@ -10,6 +10,7 @@
  */
 
 import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, CwdProvider } from '@disclaude/core';
+import type { ChatHistorySearchResult } from '../utils/message-logger.js';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -80,6 +81,19 @@ export interface ChatAgentCallbacks {
    * @returns Array of absolute file paths to chat log files
    */
   getChatLogFilePaths?: (chatId: string) => Promise<string[]>;
+
+  /**
+   * Search chat history by keyword.
+   *
+   * Issue #4107 Phase 1: Lets the LLM search through chat log files for
+   * specific keywords, returning matching entries with context.
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @param query - Search keyword (case-insensitive)
+   * @param limit - Maximum number of results (default: 20)
+   * @returns Array of matching chat history entries
+   */
+  searchChatHistory?: (chatId: string, query: string, limit?: number) => Promise<ChatHistorySearchResult[]>;
 }
 
 // ============================================================================

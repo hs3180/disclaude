@@ -25,6 +25,22 @@ interface LogEntry {
 }
 
 /**
+ * Result of a chat history search (Issue #4107).
+ */
+export interface ChatHistorySearchResult {
+  /** Date of the log file (YYYY-MM-DD) */
+  date: string;
+  /** ISO timestamp from the log entry */
+  timestamp: string;
+  /** Message direction */
+  direction: 'incoming' | 'outgoing';
+  /** Message ID from the log entry */
+  messageId: string;
+  /** Matching content snippet */
+  content: string;
+}
+
+/**
  * Get today's date string in YYYY-MM-DD format
  */
 function getDateString(date: Date = new Date()): string {
@@ -322,6 +338,113 @@ export class MessageLogger {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Search chat history for a given keyword query.
+   *
+   * Issue #4107 Phase 1: Basic keyword search across chat log files.
+   * Reads all available chat log files for the given chatId, splits into
+   * individual message entries, and returns entries matching the query
+   * (case-insensitive substring match).
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @param query - Search keyword (case-insensitive)
+   * @param limit - Maximum number of results to return (default: 20)
+   * @returns Array of matching chat history entries
+   */
+  async searchChatHistory(
+    chatId: string,
+    query: string,
+    limit: number = 20
+  ): Promise<ChatHistorySearchResult[]> {
+    const lowerQuery = query.toLowerCase();
+    const results: ChatHistorySearchResult[] = [];
+
+    try {
+      const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
+
+      const dateDirs = entries
+        .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
+        .sort((a, b) => b.name.localeCompare(a.name)); // newest first
+
+      const maxDays = Config.getSessionRestoreConfig().historyDays;
+
+      for (let i = 0; i < Math.min(dateDirs.length, maxDays); i++) {
+        const dir = dateDirs[i];
+        const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
+        try {
+          const content = await fs.readFile(logPath, 'utf-8');
+          const messageBlocks = this.parseMessageBlocks(content);
+
+          for (const block of messageBlocks) {
+            if (block.content.toLowerCase().includes(lowerQuery)) {
+              results.push({
+                date: dir.name,
+                timestamp: block.timestamp,
+                direction: block.direction,
+                messageId: block.messageId,
+                content: block.content,
+              });
+
+              if (results.length >= limit) {
+                return results;
+              }
+            }
+          }
+        } catch {
+          // File doesn't exist for this day, continue
+        }
+      }
+
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Parse chat log content into individual message blocks.
+   *
+   * Log format per entry:
+   * ```
+   * 👤 [timestamp] (messageId)
+   * content
+   *
+   * ---
+   * ```
+   */
+  private parseMessageBlocks(content: string): Array<{
+    direction: 'incoming' | 'outgoing';
+    timestamp: string;
+    messageId: string;
+    content: string;
+  }> {
+    const blocks: Array<{
+      direction: 'incoming' | 'outgoing';
+      timestamp: string;
+      messageId: string;
+      content: string;
+    }> = [];
+
+    // Split by the separator (--- on its own line, surrounded by blank lines)
+    const parts = content.split(/\n\s*---\s*\n/);
+
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) {continue;}
+
+      // Parse header line: 👤 [timestamp] (messageId) or 🤖 [timestamp] (messageId)
+      const headerMatch = trimmed.match(/^([👤🤖])\s*\[([^\]]+)\]\s*\(([^)]+)\)\n([\s\S]*)$/u);
+      if (!headerMatch) {continue;}
+
+      const [, emoji, timestamp, messageId, bodyText] = headerMatch;
+      const direction: 'incoming' | 'outgoing' = emoji === '👤' ? 'incoming' : 'outgoing';
+
+      blocks.push({ direction, timestamp, messageId, content: bodyText.trim() });
+    }
+
+    return blocks;
   }
 
   /**

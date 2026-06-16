@@ -24,6 +24,7 @@ import {
   createLogger as coreCreateLogger,
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from '../agents/types.js';
+import type { ChatHistorySearchResult } from './message-logger.js';
 import type { Logger } from 'pino';
 import type { WiredContext } from '../channel-lifecycle-manager.js';
 
@@ -68,6 +69,18 @@ export interface ChannelCallbacksOptions {
    * @see Issue #3996 - Agent needs to know log file paths to read beyond context window
    */
   getChatLogFilePaths?: (chatId: string) => Promise<string[]>;
+
+  /**
+   * Optional callback to search chat history by keyword.
+   * Wired to MessageLogger.searchChatHistory() for channels that support message logging.
+   * @param chatId - Platform-specific chat identifier
+   * @param query - Search keyword (case-insensitive)
+   * @param limit - Maximum number of results (default: 20)
+   * @returns Array of matching chat history entries
+   *
+   * @see Issue #4107 - SearchChatHistory tool for LLM to search chat logs
+   */
+  searchChatHistory?: (chatId: string, query: string, limit?: number) => Promise<ChatHistorySearchResult[]>;
 }
 
 /**
@@ -158,6 +171,8 @@ export function createChannelCallbacksFactory(
     getChatHistory: options?.getChatHistory,
     // Issue #3996: Wire getChatLogFilePaths so agent knows where log files are
     getChatLogFilePaths: options?.getChatLogFilePaths,
+    // Issue #4107: Wire searchChatHistory for LLM keyword search of chat logs
+    searchChatHistory: options?.searchChatHistory,
     // Issue #3530: Wire getCapabilities so buildMcpServers can correctly
     // include/exclude channel MCP tools based on actual channel support.
     // Without this, supportedMcpTools is always undefined and channel-mcp
