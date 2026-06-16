@@ -81,9 +81,12 @@ export interface IpcRequestPayloads {
     };
   };
   // Push instruction to a chat agent (Issue #631)
+  // waitForCompletion: await agent turn completion before responding (Issue #4063)
   pushToAgent: {
     chatId: string;
     message: string;
+    /** If true, IPC response waits for agent turn to complete before returning. */
+    waitForCompletion?: boolean;
   };
 }
 

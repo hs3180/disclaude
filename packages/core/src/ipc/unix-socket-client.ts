@@ -421,7 +421,8 @@ export class UnixSocketIpcClient {
    */
   async request<T extends IpcRequestType>(
     type: T,
-    payload: IpcRequestPayloads[T]
+    payload: IpcRequestPayloads[T],
+    options?: { timeoutMs?: number }
   ): Promise<IpcResponsePayloads[T]> {
     if (!this.connected) {
       try {
@@ -443,7 +444,7 @@ export class UnixSocketIpcClient {
         this.pendingRequests.delete(id);
         const error = new Error(`IPC_TIMEOUT: Request timed out: ${type}`);
         reject(error);
-      }, this.timeout);
+      }, options?.timeoutMs ?? this.timeout);
 
       this.pendingRequests.set(id, {
         resolve: (response) => {
@@ -701,13 +702,16 @@ export class UnixSocketIpcClient {
    *
    * @param chatId - Target chat ID
    * @param message - The instruction text to push
+   * @param options - Optional flags (Issue #4063)
+   * @param options.waitForCompletion - If true, wait for agent turn to complete
    */
   async pushToAgent(
     chatId: string,
-    message: string
+    message: string,
+    options?: { waitForCompletion?: boolean; timeoutMs?: number }
   ): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
     try {
-      return await this.request('pushToAgent', { chatId, message });
+      return await this.request('pushToAgent', { chatId, message, waitForCompletion: options?.waitForCompletion }, { timeoutMs: options?.timeoutMs });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       logger.error({ err: error, chatId }, 'pushToAgent failed');
