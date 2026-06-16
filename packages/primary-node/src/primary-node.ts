@@ -157,8 +157,6 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
-  /** Issue #3931: Callback to check if agent is busy for a chatId */
-  protected isAgentBusy?: (chatId: string) => boolean;
 
   // Input MessageRouter for unified routing (Issue #3582 Phase 3)
   protected inputMessageRouter?: InputMessageRouter;
@@ -582,8 +580,6 @@ export class PrimaryNode extends EventEmitter {
       callbacks: schedulerCallbacks,
       // Issue #3582: Route through InputMessageRouter to existing agents
       inputMessageRouter: this.inputMessageRouter,
-      // Issue #3931: Skip blocking tasks when agent is busy
-      isAgentBusy: this.isAgentBusy,
     });
 
     // Issue #3860 P1: Start file watcher BEFORE scheduler.start() to close the
@@ -649,21 +645,6 @@ export class PrimaryNode extends EventEmitter {
    */
   getScheduler(): Scheduler | undefined {
     return this.scheduler;
-  }
-
-  /**
-   * Set the callback to check if an agent is busy processing.
-   * Issue #3931: Must be called before initScheduler() to take effect.
-   *
-   * @param callback - Function that returns true if the agent for the given chatId is busy
-   */
-  setIsAgentBusy(callback: (chatId: string) => boolean): void {
-    if (this.scheduler) {
-      logger.warn(
-        'setIsAgentBusy called after scheduler is already initialized - callback will not take effect until scheduler is recreated'
-      );
-    }
-    this.isAgentBusy = callback;
   }
 
   /**
