@@ -13,7 +13,7 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
-import { createLogger } from '@disclaude/core';
+import { createLogger, isGroupChat as _isGroupChat, isPrivateChat as _isPrivateChat } from '@disclaude/core';
 
 const logger = createLogger('WelcomeService');
 
@@ -50,18 +50,18 @@ export class WelcomeService {
 
   /**
    * Check if a chat ID is a private chat.
-   * In Feishu, private chat IDs start with 'ou_' (user open_id).
+   * Delegates to shared utility from @disclaude/core (Issue #4136).
    */
   isPrivateChat(chatId: string): boolean {
-    return chatId.startsWith('ou_');
+    return _isPrivateChat(chatId);
   }
 
   /**
    * Check if a chat ID is a group chat.
-   * In Feishu, group chat IDs start with 'oc_'.
+   * Delegates to shared utility from @disclaude/core (Issue #4136).
    */
   isGroupChat(chatId: string): boolean {
-    return chatId.startsWith('oc_');
+    return _isGroupChat(chatId);
   }
 
   /**

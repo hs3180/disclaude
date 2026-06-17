@@ -9,7 +9,7 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
-import { createLogger, type FeishuChatMemberAddedEventData, type FeishuP2PChatEnteredEventData } from '@disclaude/core';
+import { createLogger, isGroupChat, type FeishuChatMemberAddedEventData, type FeishuP2PChatEnteredEventData } from '@disclaude/core';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
 
 const logger = createLogger('WelcomeHandler');
@@ -44,13 +44,10 @@ export class WelcomeHandler {
 
   /**
    * Check if a chat ID is a group chat based on ID prefix.
-   * In Feishu, group chat IDs start with 'oc_' and private chat IDs start with 'ou_'.
-   *
-   * @param chatId - Chat ID to check
-   * @returns true if it's a group chat ID
+   * Delegates to shared utility from @disclaude/core (Issue #4136).
    */
   private isGroupChatId(chatId: string): boolean {
-    return chatId.startsWith('oc_');
+    return isGroupChat(chatId);
   }
 
   /**
