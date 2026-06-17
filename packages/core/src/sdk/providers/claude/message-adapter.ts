@@ -14,6 +14,13 @@ import type {
 } from '../../types.js';
 
 /**
+ * Pattern matching raw XML tool_call tags emitted by non-Anthropic models
+ * (e.g., glm-5.2 via litellm) that don't produce structured tool_use blocks.
+ * Matches: <tool_call_tool_name>, <tool_call_tool_input>, <tool_result>, <antthinking>, etc.
+ */
+const TOOL_CALL_XML_PATTERN = /<(?:tool_call[_\w]*|tool_result|antfunctioncalls|antthinking)[\s>]/;
+
+/**
  * 适配 Claude SDK 消息为统一的 AgentMessage
  *
  * @param message - Claude SDK 消息
@@ -59,6 +66,14 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
           block.type === 'text' && 'text' in block
       );
 
+      // Issue #4123: Non-Anthropic models (e.g., glm-5.2 via litellm) may emit tool
+      // calls as raw XML text instead of structured tool_use blocks. Filter out text
+      // blocks that contain raw tool_call XML tags to prevent leaking internal
+      // reasoning and tool parameters to users.
+      const cleanTextBlocks = toolBlocks.length > 0
+        ? textBlocks
+        : textBlocks.filter((block) => !TOOL_CALL_XML_PATTERN.test(block.text));
+
       // 构建内容
       const contentParts: string[] = [];
 
@@ -71,7 +86,7 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
       }
 
       // 处理文本
-      const textParts = textBlocks.map((block) => block.text);
+      const textParts = cleanTextBlocks.map((block) => block.text);
 
       if (textParts.length > 0) {
         contentParts.push(textParts.join(''));
