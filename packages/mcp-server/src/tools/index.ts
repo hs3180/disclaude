@@ -45,3 +45,7 @@ export {
   registerFeishuHandlers,
   unregisterFeishuHandlers,
 } from './interactive-message.js';
+
+// Tool definitions and dispatch (Issue #4128)
+export { toolDefinitions, type McpToolDefinition } from './tool-definitions.js';
+export { dispatchToolCall } from './tool-dispatch.js';
