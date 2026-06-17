@@ -24,6 +24,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { createLogger, withTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, type SystemMessage, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
+import { RestSessionManager } from './rest/session-manager.js';
 
 const logger = createLogger('RestChannel');
 
@@ -147,30 +148,7 @@ interface PendingResponse {
   /** Timestamp when the request was first received (Issue #3003) */
   requestStartMs: number;
 }
-/**
- * Session status for async mode.
- */
-type SessionStatus = 'pending' | 'processing' | 'completed' | 'error';
-/**
- * Stored message in session.
- */
-interface SessionMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: number;
-}
-/**
- * Session state for async mode.
- */
-interface SessionState {
-  chatId: string;
-  status: SessionStatus;
-  messages: SessionMessage[];
-  lastMessageId?: string;
-  createdAt: number;
-  updatedAt: number;
-}
+
 /**
  * REST Channel - Provides RESTful API for agent interaction.
  *
@@ -190,14 +168,11 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private maxFileSize: number;
   private fileStorageServiceProvider?: RestChannelConfig['fileStorageServiceProvider'];
 
-  // Hardcoded session management defaults
-  private static readonly SESSION_TTL = 3600000; // 1 hour
-  private static readonly MAX_SESSIONS = 10000;
-  private static readonly CLEANUP_INTERVAL_MS = 60000; // 1 minute
+  // Session manager for async mode (Issue #4127: extracted from rest-channel.ts)
+  private sessionManager = new RestSessionManager();
 
   private server?: http.Server;
   private fileStorage?: IFileStorageService;
-  private cleanupTimer?: NodeJS.Timeout;
 
   // Pending responses for sync mode (chatId -> PendingResponse)
   private pendingResponses = new Map<string, PendingResponse>();
@@ -207,8 +182,6 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private chatToMessage = new Map<string, string>();
   // File ID to Chat ID mapping (for file uploads)
   private fileToChat = new Map<string, string>();
-  // Session states for async mode (chatId -> SessionState)
-  private sessionStates = new Map<string, SessionState>();
   // Issue #3808: InputMessageRouter for /api/push endpoint
   private inputMessageRouter?: InputMessageRouter;
 
@@ -244,7 +217,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     this.server = server;
 
     // Start session cleanup timer
-    this.startSessionCleanup();
+    this.sessionManager.start();
 
     return new Promise((resolve, reject) => {
       server.listen(this.port, this.host, () => {
@@ -260,8 +233,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   protected doStop(): Promise<void> {
-    // Stop session cleanup timer
-    this.stopSessionCleanup();
+    // Stop session manager (cleanup timer + clear sessions)
+    this.sessionManager.stop();
 
     // Clear all pending responses
     for (const [_chatId, pending] of this.pendingResponses) {
@@ -272,7 +245,6 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     this.responseBuffers.clear();
     this.chatToMessage.clear();
     this.fileToChat.clear();
-    this.sessionStates.clear();
 
     // Shutdown file storage
     if (this.fileStorage) {
@@ -329,7 +301,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       }
 
       // Async mode: update session status
-      const session = this.sessionStates.get(message.chatId);
+      const session = this.sessionManager.get(message.chatId);
       if (session) {
         session.status = 'completed';
         session.updatedAt = Date.now();
@@ -370,7 +342,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       }
 
       // Async mode: add to session messages
-      const session = this.sessionStates.get(message.chatId);
+      const session = this.sessionManager.get(message.chatId);
       if (session) {
         const now = Date.now();
         const assistantMessageId = `resp_${now}_${Math.random().toString(36).slice(2, 8)}`;
@@ -662,7 +634,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     }
 
     // Get or create session state
-    let session = this.sessionStates.get(chatId);
+    let session = this.sessionManager.get(chatId);
 
     // Poll mode: no message in request
     if (!chatRequest?.message) {
@@ -711,14 +683,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     // Create new session or update existing
     if (!session) {
-      session = {
-        chatId,
-        status: 'pending',
-        messages: [],
-        createdAt: now,
-        updatedAt: now,
-      };
-      this.sessionStates.set(chatId, session);
+      session = this.sessionManager.create(chatId);
     }
 
     // Add user message
@@ -1088,79 +1053,11 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   /**
-   * Start the periodic session cleanup timer.
-   * @see Issue #1263 - Session state memory leak fix
-   */
-  private startSessionCleanup(): void {
-    this.cleanupTimer = setInterval(() => {
-      this.cleanupSessions();
-    }, RestChannel.CLEANUP_INTERVAL_MS);
-
-    // Prevent the timer from keeping the process alive
-    this.cleanupTimer.unref();
-
-    logger.info(
-      { cleanupInterval: RestChannel.CLEANUP_INTERVAL_MS, sessionTtl: RestChannel.SESSION_TTL, maxSessions: RestChannel.MAX_SESSIONS },
-      'Session cleanup timer started'
-    );
-  }
-
-  /**
-   * Stop the session cleanup timer.
-   * @see Issue #1263 - Session state memory leak fix
-   */
-  private stopSessionCleanup(): void {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = undefined;
-      logger.info('Session cleanup timer stopped');
-    }
-  }
-
-  /**
-   * Clean up expired sessions and enforce max session limit.
-   * This method is called periodically to prevent memory leaks.
-   * @see Issue #1263 - Session state memory leak fix
-   */
-  private cleanupSessions(): void {
-    const now = Date.now();
-    let expiredCount = 0;
-    let evictedCount = 0;
-
-    // Remove expired sessions (TTL-based cleanup)
-    for (const [chatId, session] of this.sessionStates) {
-      if (now - session.updatedAt > RestChannel.SESSION_TTL) {
-        this.sessionStates.delete(chatId);
-        expiredCount++;
-      }
-    }
-
-    // Enforce max sessions limit (LRU eviction)
-    if (this.sessionStates.size > RestChannel.MAX_SESSIONS) {
-      // Sort sessions by updatedAt (oldest first)
-      const sortedSessions = Array.from(this.sessionStates.entries())
-        .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
-
-      const toEvict = sortedSessions.slice(0, this.sessionStates.size - RestChannel.MAX_SESSIONS);
-      for (const [chatId] of toEvict) {
-        this.sessionStates.delete(chatId);
-        evictedCount++;
-      }
-    }
-
-    if (expiredCount > 0 || evictedCount > 0) {
-      logger.info(
-        { expiredCount, evictedCount, remainingSessions: this.sessionStates.size },
-        'Session cleanup completed'
-      );
-    }
-  }
-
-  /**
    * Get current session count (for monitoring/debugging).
+   * Delegates to RestSessionManager (Issue #4127).
    * @see Issue #1263 - Session state memory leak fix
    */
   getSessionCount(): number {
-    return this.sessionStates.size;
+    return this.sessionManager.count();
   }
 }
