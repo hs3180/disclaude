@@ -34,6 +34,11 @@ export { send_file } from './send-file.js';
 // Push to Agent (Issue #631)
 export { push_to_agent } from './push-to-agent.js';
 
+// Loop Runner operations (Issue #4075)
+export { loop_start } from './loop-start.js';
+export { loop_stop } from './loop-stop.js';
+export { loop_status } from './loop-status.js';
+
 // Interactive Message
 export {
   send_interactive_message,
