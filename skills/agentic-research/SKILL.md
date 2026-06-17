@@ -133,6 +133,43 @@ Bad: "I'll use some sample data to demonstrate..."
 2. **Verify accuracy**: Are sources cited correctly?
 3. **Get feedback**: Does the output meet user needs?
 
+## Async vs Sync Research Modes
+
+Research tasks can run in two modes. Identify which mode you are in at the start.
+
+| Aspect | Sync (interactive) | Async (scheduled task) |
+|--------|-------------------|----------------------|
+| **User presence** | User is in the conversation | User is away; execution is driven by scheduled tasks |
+| **Feedback loop** | Immediate — ask and receive answers in real time | Delayed — feedback flows through `STATE.md` / `RESEARCH.md` files |
+| **Decision style** | Confirm uncertain choices with user | Be decisive; flag uncertainties in output for next iteration |
+
+**How to detect:** If the task was triggered by a scheduled task (not a direct user message), you are in **async mode**. Check for `STATE.md` or `RESEARCH.md` files — their presence indicates an ongoing async research project.
+
+## Key Decision Points
+
+These decisions can significantly affect research direction. Handle them carefully in both modes:
+
+| Decision Point | Sync Approach | Async Approach |
+|---------------|--------------|----------------|
+| **Goal ambiguity** | Ask user to clarify | Make a reasonable interpretation; note assumptions in `STATE.md` |
+| **Data source selection** | Confirm with user if switching sources | Document the switch and rationale in `STATE.md` |
+| **Analysis direction shift** | Discuss with user before pivoting | Proceed with the most promising direction; log the pivot |
+| **Conclusion vs user expectation** | Verify alignment with user | Ensure conclusions directly address the original question stated in `RESEARCH.md` |
+
+## Async Research Behavior Guidelines
+
+When executing in async mode:
+
+1. **Read state at each step start**: Always read `STATE.md` and `RESEARCH.md` at the beginning of each execution to get the latest state, including any user feedback written by the conversation agent.
+
+2. **Detect user feedback**: Check for updates to `STATE.md` since your last execution. User feedback may have been written by the conversation agent on behalf of the user. Evaluate whether the feedback requires adjusting the research direction.
+
+3. **Be decisive**: You cannot ask the user a question and wait. Make the best decision with available information and proceed. Clearly flag uncertainties in the output so they can be addressed in the next iteration or when the user reviews.
+
+4. **Communicate via files**: Use `STATE.md` for progress tracking and `RESEARCH.md` for findings. The conversation agent and user read these files to understand what happened during async execution.
+
+5. **Avoid stalling**: If you encounter a blocker (e.g., source unavailable, ambiguous data), document the issue in `STATE.md`, make a best-effort attempt, and continue rather than halting the entire research.
+
 ## Quality Checklist
 
 Before completing a research task:
