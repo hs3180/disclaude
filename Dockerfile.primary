@@ -88,10 +88,9 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     fi && \
     apt-get update
 
-# Install runtime + build dependencies and GitHub CLI
+# Install runtime + build dependencies, GitHub CLI, and gosu
 # Consolidated into a single RUN to minimize apt-get update calls (Issue #4115 review).
-# First apt-get install uses cache from the mirror-config step above.
-# Second apt-get update is required after adding gh's third-party apt source.
+# gosu replaces su-exec (Alpine) for privilege dropping on Debian (Issue #4114).
 RUN apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
@@ -101,6 +100,7 @@ RUN apt-get install -y --no-install-recommends \
         python3-pip \
         tini \
         sudo \
+        gosu \
         g++ gcc make cmake python3-dev && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
@@ -148,25 +148,33 @@ COPY --from=builder --chown=disclaude:disclaude /app/package-lock.json ./
 COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 
 # Copy entrypoint script (Issue #3987: auto-configure lark-cli auth)
+# Issue #4114: also sets oom_score_adj to protect primary process
 COPY --chown=disclaude:disclaude docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Use entrypoint script that runs as root for OOM protection + lark-cli auth,
+# then drops to non-root user via gosu before starting tini + application.
+# Issue #3987: auto-configure lark-cli auth from disclaude.config.yaml
+# Issue #4114: set oom_score_adj to protect primary process from OOM killer
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Set environment variables
 ENV NODE_ENV=production
 ENV DISCLAUDE_MODE=primary
+
+# Issue #4114: Cap agent-spawned compile parallelism to prevent OOM from massive cc1plus forks.
+# MAKEFLAGS limits make-based builds; CMAKE_BUILD_PARALLEL_LEVEL limits CMake builds.
+# Override at runtime via docker-compose environment section if needed.
+ENV MAKEFLAGS="-j2"
+ENV CMAKE_BUILD_PARALLEL_LEVEL=2
 
 # Health check - verify Node.js process is running
 # Uses pgrep with exact binary path to avoid false positives
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD pgrep -f "packages/primary-node/dist/cli.js" > /dev/null 2>&1 || exit 1
 
-# Switch to non-root user
-USER disclaude
-
-# Use entrypoint script that configures lark-cli auth before starting tini
-# Issue #3987: auto-configure lark-cli auth from disclaude.config.yaml
-ENTRYPOINT ["docker-entrypoint.sh"]
-
+# Note: no USER directive — the entrypoint runs as root for oom_score_adj setup,
+# then drops to the non-root user (disclaude) via gosu before exec'ing CMD.
 
 # Default command: run Primary Node directly
 CMD ["node", "packages/primary-node/dist/cli.js", "start"]
