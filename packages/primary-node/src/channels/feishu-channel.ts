@@ -39,6 +39,14 @@ import {
   WsConnectionManager,
 } from './feishu/index.js';
 import { VIDEO_EXTENSIONS, extractVideoCover } from '../utils/video-cover-extractor.js';
+import {
+  IMAGE_EXTENSIONS,
+  EXT_TO_FEISHU_FILE_TYPE,
+  MAX_IMAGE_SIZE,
+  MAX_FILE_SIZE,
+  uploadImage,
+  uploadFile,
+} from '../utils/feishu-upload.js';
 import { extractCardTextContent } from '../platforms/feishu/card-builders/card-text-extractor.js';
 
 const logger = createLogger('FeishuChannel');
@@ -477,23 +485,16 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         logger.info({ chatId: message.chatId, filePath, fileName, fileSize }, 'Uploading file');
 
         // Determine message type based on file extension
-        const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico'];
-        const isImage = imageExtensions.includes(ext);
+        const isImage = IMAGE_EXTENSIONS.has(ext);
 
         let fileMessageId: string | undefined;
 
         if (isImage) {
-          // Upload image using im.image.create
-          if (fileSize > 10 * 1024 * 1024) {
-            throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+          // Upload image using shared utility
+          if (fileSize > MAX_IMAGE_SIZE) {
+            throw new Error(`Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)`);
           }
-          const uploadResp = await this.client.im.image.create({
-            data: {
-              image_type: 'message',
-              image: fs.createReadStream(filePath),
-            },
-          });
-          const imageKey = uploadResp?.image_key;
+          const imageKey = await uploadImage(this.client, filePath);
           if (!imageKey) {
             logger.error({ chatId: message.chatId, fileName }, 'Failed to upload image, no image_key returned');
             throw new Error(`Failed to upload image: ${fileName}`);
@@ -510,19 +511,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         } else if (VIDEO_EXTENSIONS.has(ext)) {
           // Upload video file — use msg_type:'media' with auto-generated cover image
           // Issue #2265: Proper video support via Feishu media message type.
-          if (fileSize > 30 * 1024 * 1024) {
-            throw new Error(`File too large: ${fileSize} bytes (max 30MB)`);
+          if (fileSize > MAX_FILE_SIZE) {
+            throw new Error(`File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`);
           }
 
-          // Upload video with file_type:'mp4' → get file_key
-          const uploadResp = await this.client.im.file.create({
-            data: {
-              file_type: 'mp4',
-              file_name: fileName,
-              file: fs.createReadStream(filePath),
-            },
-          });
-          const fileKey = uploadResp?.file_key;
+          const fileKey = await uploadFile(this.client, filePath, fileName, 'mp4');
           if (!fileKey) {
             logger.error({ chatId: message.chatId, fileName }, 'Failed to upload video, no file_key returned');
             throw new Error(`Failed to upload video: ${fileName}`);
@@ -534,14 +527,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           let imageKey: string | undefined;
 
           if (coverResult.success && coverResult.coverPath) {
-            // Upload cover image → get image_key
-            const coverUploadResp = await this.client.im.image.create({
-              data: {
-                image_type: 'message',
-                image: fs.createReadStream(coverResult.coverPath),
-              },
-            });
-            imageKey = coverUploadResp?.image_key;
+            imageKey = await uploadImage(this.client, coverResult.coverPath);
             // Clean up temp cover file
             try { fs.unlinkSync(coverResult.coverPath); } catch { /* ignore */ }
           }
@@ -563,29 +549,13 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply, hasCover: !!imageKey }, 'Video message sent');
           logOutgoing(fileMessageId, `[video: ${fileName}]`, 'media');
         } else {
-          // Upload file using im.file.create
-          if (fileSize > 30 * 1024 * 1024) {
-            throw new Error(`File too large: ${fileSize} bytes (max 30MB)`);
+          // Upload file using shared utility
+          if (fileSize > MAX_FILE_SIZE) {
+            throw new Error(`File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`);
           }
 
-          // Map file extension to Feishu file_type
-          const extToType: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
-            '.opus': 'opus',
-            '.pdf': 'pdf',
-            '.doc': 'doc', '.docx': 'doc',
-            '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
-            '.ppt': 'ppt', '.pptx': 'ppt',
-          };
-          const fileType = extToType[ext] || 'stream';
-
-          const uploadResp = await this.client.im.file.create({
-            data: {
-              file_type: fileType,
-              file_name: fileName,
-              file: fs.createReadStream(filePath),
-            },
-          });
-          const fileKey = uploadResp?.file_key;
+          const fileType = EXT_TO_FEISHU_FILE_TYPE[ext] || 'stream';
+          const fileKey = await uploadFile(this.client, filePath, fileName, fileType);
           if (!fileKey) {
             logger.error({ chatId: message.chatId, fileName }, 'Failed to upload file, no file_key returned');
             throw new Error(`Failed to upload file: ${fileName}`);
