@@ -20,6 +20,8 @@ ARG DOCKER_IMAGE_PREFIX=
 ARG APK_MIRROR=dl-cdn.alpinelinux.org
 ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG PIP_INDEX_URL
+ARG GH_INSTALL_MODE=auto
+ARG GH_BINARY_URL=
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder (uses bun for faster installs)
@@ -100,7 +102,18 @@ RUN apk add --no-cache --virtual .build-deps g++ gcc make
 RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} matplotlib numpy
 
 # Install GitHub CLI (gh)
-RUN apk add --no-cache github-cli
+# GH_INSTALL_MODE=auto (default): install via package manager (apk on Alpine, apt on Debian)
+# GH_INSTALL_MODE=manual + GH_BINARY_URL: download binary directly (mirror-friendly)
+RUN if [ "$GH_INSTALL_MODE" = "manual" ] && [ -n "$GH_BINARY_URL" ]; then \
+        curl -fsSL "$GH_BINARY_URL" -o /tmp/gh.tar.gz && \
+        mkdir -p /tmp/gh-install && \
+        tar xzf /tmp/gh.tar.gz -C /tmp/gh-install && \
+        mv /tmp/gh-install/gh /usr/local/bin/gh && \
+        chmod +x /usr/local/bin/gh && \
+        rm -rf /tmp/gh.tar.gz /tmp/gh-install; \
+    else \
+        apk add --no-cache github-cli; \
+    fi
 
 # Install @larksuite/cli globally
 # Issue #3888: @larksuite/cli needed by dissolve-group, lark-docs, pr-scanner skills

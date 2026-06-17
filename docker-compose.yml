@@ -38,6 +38,8 @@ services:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
         DOCKER_IMAGE_PREFIX: ${DOCKER_IMAGE_PREFIX:-}
+        GH_INSTALL_MODE: ${GH_INSTALL_MODE:-auto}
+        GH_BINARY_URL: ${GH_BINARY_URL:-}
     image: disclaude:primary
     container_name: disclaude-primary
     restart: unless-stopped
