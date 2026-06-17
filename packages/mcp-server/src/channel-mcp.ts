@@ -16,6 +16,9 @@ import {
   send_interactive,
   send_file,
   push_to_agent,
+  loop_start,
+  loop_stop,
+  loop_status,
   setMessageSentCallback
 } from './tools/index.js';
 import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
@@ -33,6 +36,10 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
+// Loop Runner operations (Issue #4075)
+export { loop_start } from './tools/loop-start.js';
+export { loop_stop } from './tools/loop-stop.js';
+export { loop_status } from './tools/loop-status.js';
 export {
   send_interactive,
   send_interactive_message,
@@ -164,6 +171,43 @@ For display-only cards, use send_card instead.`,
       required: ['chatId', 'message'],
     },
     handler: push_to_agent,
+  },
+  loop_start: {
+    description: 'Start a loop that repeatedly pushes an instruction to a chat agent at a configured interval. Returns a loopId for stop/status operations.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string', description: 'Target chat ID' },
+        prompt: { type: 'string', description: 'The instruction pushed to the agent each step' },
+        maxSteps: { type: 'number', description: 'Maximum loop iterations (default: 10)' },
+        maxDurationMs: { type: 'number', description: 'Maximum total duration in ms (default: 3600000)' },
+        stepIntervalMs: { type: 'number', description: 'Interval between steps in ms (default: 30000)' },
+      },
+      required: ['chatId', 'prompt'],
+    },
+    handler: loop_start,
+  },
+  loop_stop: {
+    description: 'Stop a running loop by its loopId.',
+    parameters: {
+      type: 'object',
+      properties: {
+        loopId: { type: 'string', description: 'The loop ID returned by loop_start' },
+      },
+      required: ['loopId'],
+    },
+    handler: loop_stop,
+  },
+  loop_status: {
+    description: 'Get the current status of a loop by its loopId.',
+    parameters: {
+      type: 'object',
+      properties: {
+        loopId: { type: 'string', description: 'The loop ID returned by loop_start' },
+      },
+      required: ['loopId'],
+    },
+    handler: loop_status,
   },
 };
 
