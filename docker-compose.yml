@@ -67,7 +67,7 @@ services:
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
-      - ./workspace:/data/workspace
+      - ${WORKSPACE_DIR:-./workspace}:/data/workspace
       - log_data:/data/logs
 
     deploy:
@@ -159,8 +159,11 @@ services:
         max-size: "10m"
         max-file: "3"
 
+    # CMD-SHELL so the container shell expands ${CDP_PORT} at runtime (matching
+    # the --remote-debugging-port flag above). The exec-form "CMD" does not run a
+    # shell, so $${CDP_PORT:-9222} would be passed to curl literally and never expand.
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:$${CDP_PORT:-9222}/json/version"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:$${CDP_PORT:-9222}/json/version"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -195,10 +198,11 @@ services:
     environment:
       - ELASTICSEARCH_HOST=${ES_HOST:-localhost}
       - ELASTICSEARCH_PORT=${ES_PORT:-9200}
-      # Uncomment the following lines only if your ES requires authentication.
-      # Passing empty strings will cause HTTP 401 on unsecured ES instances.
-      # - ELASTICSEARCH_USERNAME=${ES_USERNAME}
-      # - ELASTICSEARCH_PASSWORD=${ES_PASSWORD}
+      # ES auth credentials (from .env: ES_USERNAME, ES_PASSWORD).
+      # Enabled by default for secured ES. Remove these lines if your ES has
+      # no auth — passing empty values causes HTTP 401 on unsecured instances.
+      - ELASTICSEARCH_USERNAME=${ES_USERNAME}
+      - ELASTICSEARCH_PASSWORD=${ES_PASSWORD}
 
     logging:
       driver: "json-file"
