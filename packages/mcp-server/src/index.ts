@@ -11,6 +11,9 @@
  * - MCP servers
  */
 
+import { createRequire } from 'module';
+const _require = createRequire(import.meta.url);
+
 // Tool Types
 export type {
   SendMessageResult,
@@ -86,5 +89,5 @@ export { feishuSdkTools } from './channel-mcp.js';
 /** @deprecated Use createChannelMcpServer instead */
 export { createFeishuSdkMcpServer } from './channel-mcp.js';
 
-// Version
-export const MCP_SERVER_VERSION = '0.0.1';
+// Version — read from package.json to avoid drift
+export const MCP_SERVER_VERSION = _require('../package.json').version as string;
