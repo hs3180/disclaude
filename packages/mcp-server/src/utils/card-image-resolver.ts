@@ -15,7 +15,7 @@
 
 import { promises as fsp } from 'fs';
 import { resolve, extname } from 'path';
-import { createLogger, getIpcClient } from '@disclaude/core';
+import { createLogger, getIpcClient, uploadImage } from '@disclaude/core';
 
 const logger = createLogger('CardImageResolver');
 
@@ -95,7 +95,7 @@ async function uploadAndGetImageKey(filePath: string): Promise<string | undefine
     }
 
     const ipcClient = getIpcClient();
-    const result = await ipcClient.uploadImage(absolutePath);
+    const result = await uploadImage(ipcClient, absolutePath);
 
     if (result.success && result.imageKey) {
       logger.debug({ filePath: absolutePath, imageKey: result.imageKey }, 'Image uploaded successfully');

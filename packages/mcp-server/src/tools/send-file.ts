@@ -8,7 +8,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createLogger, getIpcClient } from '@disclaude/core';
+import { createLogger, getIpcClient, uploadFile } from '@disclaude/core';
 import { isIpcAvailable } from './ipc-utils.js';
 import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import type { SendFileResult } from './types.js';
@@ -27,7 +27,7 @@ async function uploadFileViaIpc(
   threadId?: string
 ): Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }> {
   const ipcClient = getIpcClient();
-  const result = await ipcClient.uploadFile(chatId, filePath, threadId);
+  const result = await uploadFile(ipcClient, chatId, filePath, threadId);
   if (!result.success) {
     const errorDetail = result.error ? `: ${result.error}` : '';
     throw new Error(`Failed to upload file via IPC${errorDetail}`);

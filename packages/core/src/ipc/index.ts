@@ -36,13 +36,32 @@ export {
   type FeishuHandlersContainer,
 } from './unix-socket-server.js';
 
-// Client implementation
+// Client implementation (connection lifecycle only)
 export {
   UnixSocketIpcClient,
+  type IpcAvailabilityStatus,
+  type IpcUnavailableReason,
+} from './unix-socket-client.js';
+
+// Client facade (protocol convenience methods)
+export {
+  sendMessage,
+  sendCard,
+  uploadFile,
+  uploadImage,
+  sendInteractive,
+  listTempChats,
+  markChatResponded,
+  pushToAgent,
+  type IpcMethodErrorType,
+  type IpcMethodResult,
+  type IpcClientLike,
+} from './ipc-client-facade.js';
+
+// IPC utilities (singleton, socket path, etc.)
+export {
   getIpcClient,
   getIpcSocketPath,
   resetIpcClient,
-  type IpcAvailabilityStatus,
-  type IpcUnavailableReason,
   type GetIpcSocketPathOptions,
-} from './unix-socket-client.js';
+} from './ipc-utils.js';

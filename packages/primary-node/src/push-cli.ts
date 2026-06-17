@@ -17,7 +17,7 @@
  * @module primary-node/push-cli
  */
 
-import { UnixSocketIpcClient, getIpcSocketPath } from '@disclaude/core';
+import { UnixSocketIpcClient, getIpcSocketPath, pushToAgent } from '@disclaude/core';
 import { existsSync } from 'node:fs';
 
 interface PushCliOptions {
@@ -147,7 +147,7 @@ export async function main(): Promise<void> {
   const client = new UnixSocketIpcClient({ socketPath });
 
   try {
-    const result = await client.pushToAgent(options.chatId, message);
+    const result = await pushToAgent(client, options.chatId, message);
     if (result.success) {
       console.log('Message pushed successfully.');
     } else {

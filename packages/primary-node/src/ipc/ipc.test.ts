@@ -23,6 +23,7 @@ import {
   getIpcClient,
   resetIpcClient,
   createInteractiveMessageHandler,
+  sendInteractive,
   type IpcConnectionLike,
   type IIpcServerTransport,
   type IIpcClientTransport,
@@ -263,7 +264,7 @@ describe('UnixSocketIpcClient (InMemory Transport)', () => {
   });
 
   it('should send interactive card via sendInteractive IPC', async () => {
-    const result = await client.sendInteractive('chat-1', {
+    const result = await sendInteractive(client, 'chat-1', {
       question: 'Choose an option:',
       options: [
         { text: 'Confirm', value: 'confirm', type: 'primary' },
