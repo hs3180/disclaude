@@ -803,15 +803,30 @@ describe('MessageHandler', () => {
       expect(mockState.emitMessage).not.toHaveBeenCalled();
     });
 
-    it('should handle image messages without client (no download)', async () => {
-      const { handler } = createHandler();
-      // No client initialized — cannot download
+    it('should handle image messages without tenantAccessToken (no download)', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      // No tenant access token — cannot download
       await handler.handleMessageReceive(fileEvent('image', { image_key: 'img_001' }));
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.messageType).toBe('file');
       expect(msg.content).toContain('下载失败');
+    });
+
+    it('should include manual download instructions in failure prompt', async () => {
+      const { handler } = createHandler({ tenantAccessToken: '' });
+      await handler.handleMessageReceive(fileEvent('file', { file_key: 'file_abc', file_name: 'report.pdf' }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('下载失败');
+      expect(msg.content).toContain('message_id: `msg_file`');
+      expect(msg.content).toContain('file_key: `file_abc`');
+      expect(msg.content).toContain('npx @larksuite/cli im +messages-resources-download');
+      expect(msg.content).toContain('--message-id msg_file');
+      expect(msg.content).toContain('--file-key file_abc');
+      expect(msg.content).toContain('report.pdf');
     });
 
     it('should emit correct message type for audio messages', async () => {
@@ -1460,16 +1475,319 @@ describe('MessageHandler', () => {
       expect(msg.content).toContain('img_fail');
       expect(msg.content).toContain('+messages-resources-download');
       expect(msg.content).toContain('msg_dl_fail');
-      expect(msg.content).toContain('原始 message_id');
+      expect(msg.content).toContain('message_id');
       expect(msg.content).toContain('file_key');
+      expect(msg.attachments).toBeUndefined();
+    });
+
+    it('should handle audio message with correct type label', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_audio',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'audio_001', file_name: 'voice.mp3' }),
+            message_type: 'audio',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('语音消息');
+      expect(msg.content).toContain('发送了一段');
+      expect(msg.content).toContain('voice.mp3');
+      expect(msg.content).toContain('音频文件');
+      expect(msg.attachments).toBeDefined();
+    });
+
+    it('should handle media message with correct type label', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_media',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'media_001', file_name: 'video.mp4' }),
+            message_type: 'media',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('媒体文件');
+      expect(msg.content).toContain('video.mp4');
+      expect(msg.attachments).toBeDefined();
+    });
+
+    it('should show original message_type in failed download prompt', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null) => void;
+        callback(new Error('download failed'));
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_audio_fail',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'audio_fail', file_name: 'voice_fail.mp3' }),
+            message_type: 'audio',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('消息类型: audio');
+      expect(msg.content).toContain('API type 参数: file');
+      expect(msg.content).not.toContain('文件类型: file');
+    });
+  });
+  // -----------------------------------------------------------------------
+  describe('handleMessageReceive — quoted file message (handleQuotedFileMessage)', () => {
+    it('should download quoted image and include it as attachment', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'image',
+                  content: JSON.stringify({ image_key: 'img_q_001' }),
+                  message_id: 'msg_q_parent',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_img',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('图片');
+      expect(msg.attachments).toBeDefined();
+      expect(msg.attachments[0].fileName).toContain('image_img_q_001');
+    });
+
+    it('should handle quoted audio message with correct type label', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'audio',
+                  content: JSON.stringify({ file_key: 'audio_q_001', file_name: 'voice.mp3' }),
+                  message_id: 'msg_q_audio',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_audio',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_audio',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('语音消息');
+      expect(msg.metadata.quotedMessage).toContain('voice.mp3');
+      expect(msg.attachments).toBeDefined();
+    });
+
+    it('should handle quoted media message with correct type label', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'media',
+                  content: JSON.stringify({ file_key: 'media_q_001', file_name: 'video.mp4' }),
+                  message_id: 'msg_q_media',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_media',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_media',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('媒体文件');
+      expect(msg.metadata.quotedMessage).toContain('video.mp4');
+      expect(msg.attachments).toBeDefined();
+    });
+
+    it('should return download failure message when quoted file download fails', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null) => void;
+        callback(new Error('download failed'));
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'file',
+                  content: JSON.stringify({ file_key: 'file_q_fail', file_name: 'doc.pdf' }),
+                  message_id: 'msg_q_fail',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_fail',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_fail',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('文件');
+      expect(msg.metadata.quotedMessage).toContain('下载失败');
       expect(msg.attachments).toBeUndefined();
     });
   });
 
-  // -----------------------------------------------------------------------
-  // getQuotedMessageContext with client
-  // -----------------------------------------------------------------------
-  describe('handleMessageReceive — quoted message with client', () => {
+  describe('handleMessageReceive — quoted text/post message with client', () => {
     it('should include quoted message context when client is available', async () => {
       const mockClient = {
         im: {
