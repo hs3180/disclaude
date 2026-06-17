@@ -62,6 +62,7 @@ import { DebugGroupService, getDebugGroupService } from './services/debug-group-
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
+import { LoopRunner } from './loop/loop-runner.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -163,6 +164,9 @@ export class PrimaryNode extends EventEmitter {
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
+
+  // Loop Runner (Issue #4075: lazy-initialized on first loopStart)
+  protected loopRunner?: LoopRunner;
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -449,6 +453,43 @@ export class PrimaryNode extends EventEmitter {
           throw new Error('markChatResponded not supported by this channel');
         }
         return h.markChatResponded(chatId, response);
+      },
+
+      // Issue #4075: Loop Runner IPC handlers
+      loopStart: (params) => {
+        if (!this.loopRunner) {
+          this.loopRunner = new LoopRunner(async (chatId, message) => {
+            const h = resolveHandlers(chatId);
+            if (!h?.pushToAgent) {
+              throw new Error('pushToAgent not supported by this channel');
+            }
+            await h.pushToAgent(chatId, message);
+          });
+        }
+        try {
+          const result = this.loopRunner.start(params);
+          return Promise.resolve({ success: true, loopId: result.loopId });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          return Promise.resolve({ success: false, error: errorMessage });
+        }
+      },
+      loopStop: (loopId) => {
+        if (!this.loopRunner) {
+          return Promise.resolve({ success: false, error: 'No loops have been started' });
+        }
+        this.loopRunner.stop(loopId);
+        return Promise.resolve({ success: true });
+      },
+      loopStatus: (loopId) => {
+        if (!this.loopRunner) {
+          return Promise.resolve({ success: false, error: 'No loops have been started' });
+        }
+        const status = this.loopRunner.status(loopId);
+        if (!status) {
+          return Promise.resolve({ success: false, error: 'Loop not found' });
+        }
+        return Promise.resolve({ success: true, status });
       },
     };
 
