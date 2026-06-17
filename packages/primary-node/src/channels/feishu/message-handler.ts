@@ -657,8 +657,15 @@ export class MessageHandler {
         return parsed.text || '';
       } else if (messageType === 'post' && parsed.content && Array.isArray(parsed.content)) {
         return this.parsePostContent(parsed.content);
+      } else if (messageType === 'interactive') {
+        // Issue #4083: Extract text from interactive card messages
+        return extractFullCardContent(parsed);
       }
     } catch {
+      // Issue #4083: Handle non-JSON interactive card content
+      if (messageType === 'interactive') {
+        return extractFullCardContent(content);
+      }
       return '';
     }
     return '';
@@ -1050,8 +1057,13 @@ export class MessageHandler {
         text = extractFullCardContent(parsed);
       }
     } catch {
-      logger.error('Failed to parse content');
-      return;
+      // Issue #4083: Handle non-JSON interactive card content (<card> format)
+      if (message_type === 'interactive' && content) {
+        text = extractFullCardContent(content);
+      } else {
+        logger.error('Failed to parse content');
+        return;
+      }
     }
 
     if (!text) {
