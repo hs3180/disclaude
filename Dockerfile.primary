@@ -116,14 +116,16 @@ RUN npm config set registry ${NPM_REGISTRY} && \
 RUN addgroup -g 1001 disclaude && \
     adduser -D -u 1001 -G disclaude -h /app -s /sbin/nologin disclaude
 
-# Grant the non-root user passwordless sudo so the agent can install system
-# packages on demand (e.g. `sudo apk add python3-dev llvm-dev cmake`) without
-# running the whole process as root. Staying uid 1001 preserves /data/workspace
-# ownership so the host can still read/write the mounted volume. visudo validates
-# the file at build time (fails the build on a syntax error).
-RUN echo "disclaude ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/disclaude && \
-    chmod 0440 /etc/sudoers.d/disclaude && \
-    visudo -cf /etc/sudoers.d/disclaude
+# Grant the non-root user passwordless sudo for apk only, so the agent can
+# install system packages on demand (e.g. `sudo apk add llvm19-dev`) without
+# running the whole process as root. Restricted to /sbin/apk to prevent
+# accidental destructive operations. Staying uid 1001 preserves
+# /data/workspace ownership so the host can still read/write the mounted
+# volume. visudo validates the file at build time (fails on syntax error).
+RUN echo "Defaults:disclaude logfile=/data/logs/sudo.log" > /etc/sudoers.d/disclaude-audit && \
+    echo "disclaude ALL=(ALL) NOPASSWD: /sbin/apk" > /etc/sudoers.d/disclaude && \
+    chmod 0440 /etc/sudoers.d/disclaude-audit /etc/sudoers.d/disclaude && \
+    visudo -cf /etc/sudoers.d/disclaude-audit && visudo -cf /etc/sudoers.d/disclaude
 
 # Create directories for runtime with proper permissions
 RUN mkdir -p /data/workspace /data/logs /app/.claude /app/.claude/backups /app/.claude/debug && \

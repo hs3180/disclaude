@@ -401,15 +401,15 @@ To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.startA
 
 ### 6. Installing System Packages (Container)
 
-Inside Docker the agent runs as the non-root `disclaude` user (uid 1001). It has **passwordless sudo**, so install Alpine packages on demand:
+Inside Docker the agent runs as the non-root `disclaude` user (uid 1001). It has **passwordless sudo** (restricted to `apk` only), so install Alpine packages on demand:
 
 ```bash
-sudo apk add llvm-dev          # or any apk package the build needs
-sudo apk search llvm           # find exact names (-dev pkgs may be version-pinned, e.g. llvm19-dev)
+sudo apk add llvm19-dev        # -dev pkgs are version-pinned in Alpine, use `apk search` to find exact names
+sudo apk search llvm           # find available llvm packages
 ```
 
-- `cmake` and `python3-dev` are already baked into the image, so common native builds work without a network fetch.
-- The process deliberately stays uid 1001 (not root) to keep `/data/workspace` files owned by the host user; elevate via `sudo` only for system installs.
+- `cmake` and `python3-dev` are pre-baked into the image as part of the `.build-deps` virtual group, so common native builds work without a network fetch. If space is reclaimed via `apk del .build-deps`, these tools will be removed and must be reinstalled with `sudo apk add`.
+- The process deliberately stays uid 1001 (not root) to keep `/data/workspace` files owned by the host user; elevate via `sudo apk` only for system package installs.
 
 ## Logging Guidelines
 
