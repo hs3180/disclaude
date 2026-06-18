@@ -33,7 +33,7 @@ import {
   createControlCommand,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
-import { extractCardTextContent, extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
+import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from '../../utils/message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
@@ -721,9 +721,9 @@ export class MessageHandler {
             }
           }
         } else if (msgType === 'interactive') {
-          // Issue #1711: Extract text from interactive card messages
+          // Issue #1711: Extract full text from interactive card messages
           const parsed = JSON.parse(msgContent);
-          quotedText = extractCardTextContent(parsed);
+          quotedText = extractFullCardContent(parsed);
         } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio') {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
