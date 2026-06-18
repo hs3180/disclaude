@@ -5,6 +5,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
+// Issue #4129: sendMessage is now a standalone function exported from @disclaude/core.
+// Production calls sendMessage(client, ...). Mock it to drop the client arg and delegate
+// to the same spy as the legacy client.sendMessage(...) instance method so existing
+// test assertions (mockIpcClient.sendMessage) keep working unchanged.
+const { mockIpcClient, mockSendMessage } = vi.hoisted(() => {
+  const mockSendMessage = vi.fn();
+  const mockIpcClient = { sendMessage: mockSendMessage };
+  return { mockIpcClient, mockSendMessage };
+});
+
 vi.mock('@disclaude/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -13,6 +23,7 @@ vi.mock('@disclaude/core', () => ({
     debug: vi.fn(),
   }),
   getIpcClient: vi.fn(),
+  sendMessage: (...args: unknown[]) => mockSendMessage(...args.slice(1)),
 }));
 
 vi.mock('./credentials.js', () => ({
@@ -38,10 +49,6 @@ import { getIpcClient } from '@disclaude/core';
 import { getFeishuCredentials } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
-
-const mockIpcClient = {
-  sendMessage: vi.fn(),
-};
 
 describe('send_text', () => {
   beforeEach(() => {

@@ -27,6 +27,10 @@ vi.mock('@disclaude/core', () => ({
     isConnected: mockIsConnected,
     disconnect: mockDisconnect,
   }),
+  // Issue #4129: pushToAgent is now also a standalone function exported from @disclaude/core.
+  // Production calls pushToAgent(client, chatId, message). Drop the client arg so the
+  // existing assertions (mockPushToAgent called with chatId, message) keep working.
+  pushToAgent: (_client: unknown, ...rest: unknown[]) => mockPushToAgent(...rest),
 }));
 
 // Mock ipc-utils

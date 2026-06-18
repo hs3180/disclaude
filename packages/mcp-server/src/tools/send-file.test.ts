@@ -8,6 +8,15 @@ import * as fs from 'fs/promises';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
+// Issue #4129: uploadFile is now a standalone function exported from @disclaude/core.
+// Production calls uploadFile(client, ...). Mock it to drop the client arg and delegate
+// to the same spy as the legacy client.uploadFile(...) instance method.
+const { mockIpcClient, mockUploadFile } = vi.hoisted(() => {
+  const mockUploadFile = vi.fn();
+  const mockIpcClient = { uploadFile: mockUploadFile };
+  return { mockIpcClient, mockUploadFile };
+});
+
 vi.mock('@disclaude/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -16,6 +25,7 @@ vi.mock('@disclaude/core', () => ({
     debug: vi.fn(),
   }),
   getIpcClient: vi.fn(),
+  uploadFile: (...args: unknown[]) => mockUploadFile(...args.slice(1)),
 }));
 
 vi.mock('./credentials.js', () => ({
@@ -35,10 +45,6 @@ import { send_file } from './send-file.js';
 import { getIpcClient } from '@disclaude/core';
 import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
-
-const mockIpcClient = {
-  uploadFile: vi.fn(),
-};
 
 describe('send_file', () => {
   beforeEach(() => {
