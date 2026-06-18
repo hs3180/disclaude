@@ -87,7 +87,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "node.*cli.js"]
+      test: ["CMD", "pgrep", "-f", "packages/primary-node/dist/cli.js"]
       interval: 30s
       timeout: 10s
       retries: 3
