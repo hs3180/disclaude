@@ -15,6 +15,12 @@ vi.mock('./tools/index.js', () => ({
   send_file: vi.fn(),
   push_to_agent: vi.fn(),
   setMessageSentCallback: vi.fn(),
+  // Loop Runner operations (Issue #4075, landed on main after this branch).
+  // channel-mcp.ts imports these named exports; the partial mock must provide
+  // them or vitest throws "No export is defined" when the merged code runs in CI.
+  loop_start: vi.fn(),
+  loop_stop: vi.fn(),
+  loop_status: vi.fn(),
 }));
 
 vi.mock('./utils/card-validator.js', () => ({
