@@ -34,7 +34,7 @@ services:
       context: .
       dockerfile: Dockerfile.primary
       args:
-        APK_MIRROR: ${APK_MIRROR:-dl-cdn.alpinelinux.org}
+        APT_MIRROR: ${APT_MIRROR:-}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
         DOCKER_IMAGE_PREFIX: ${DOCKER_IMAGE_PREFIX:-}
@@ -87,7 +87,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "node.*cli.js"]
+      test: ["CMD", "pgrep", "-f", "packages/primary-node/dist/cli.js"]
       interval: 30s
       timeout: 10s
       retries: 3

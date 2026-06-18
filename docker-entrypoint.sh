@@ -60,7 +60,7 @@ CONFIG_DIR="${LARK_CLI_CONFIG_DIR:-$HOME/.lark-cli}"
 CONFIG_JSON="$CONFIG_DIR/config.json"
 
 if [ -f "$CONFIG_JSON" ]; then
-  # Note: grep-based JSON parsing is intentionally simple — Alpine lacks jq,
+  # Note: grep-based JSON parsing is intentionally simple — jq is not preinstalled,
   # and config.json structure is flat with a single appId field.
   EXISTING_ID=$(grep -o '"appId"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_JSON" 2>/dev/null | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
   if [ "$EXISTING_ID" = "$APP_ID" ]; then
