@@ -576,13 +576,3 @@ export function createChannelMcpServer() {
     tools: channelToolDefinitions,
   });
 }
-
-// Deprecated aliases (backward compatibility)
-/** @deprecated Use channelTools instead */
-export const feishuContextTools = channelTools;
-/** @deprecated Use channelToolDefinitions instead */
-export const feishuToolDefinitions = channelToolDefinitions;
-/** @deprecated Use channelSdkTools instead */
-export const feishuSdkTools = channelSdkTools;
-/** @deprecated Use createChannelMcpServer instead */
-export const createFeishuSdkMcpServer = createChannelMcpServer;
