@@ -310,6 +310,26 @@ export {
   type DebugGroup,
 } from './control/index.js';
 
+// Intent module — universal intent convergence protocol (Issue #4152)
+export {
+  categorizeExtension,
+  inferData,
+  scanWorkspace,
+  analyzeIntent,
+} from './intent/index.js';
+
+export type {
+  FileCategory,
+  WorkspaceFile,
+  InferredData,
+  WorkspaceScanResult,
+  IntentAnalysis,
+  ConvergencePrompt,
+  ValidationResult,
+  ValidationCheck,
+  FeedbackResponse,
+} from './intent/index.js';
+
 // Internal Event Bus (Issue #4031: decoupled event propagation)
 export { InternalEventBus, eventBus, type InternalEventMap } from './event-bus.js';
 
