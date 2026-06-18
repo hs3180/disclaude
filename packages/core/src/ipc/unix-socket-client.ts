@@ -26,6 +26,17 @@ import {
 import type {
   IIpcClientTransport,
 } from './transport.js';
+import type { FeishuCard } from '../types/platform.js';
+import {
+  sendMessage as facadeSendMessage,
+  sendCard as facadeSendCard,
+  uploadFile as facadeUploadFile,
+  uploadImage as facadeUploadImage,
+  sendInteractive as facadeSendInteractive,
+  listTempChats as facadeListTempChats,
+  markChatResponded as facadeMarkChatResponded,
+  pushToAgent as facadePushToAgent,
+} from './ipc-client-facade.js';
 
 const logger = createLogger('IpcClient');
 
@@ -492,6 +503,49 @@ export class UnixSocketIpcClient {
     } catch {
       return false;
     }
+  }
+
+  // ─── Backward-compatible instance methods (delegate to facade) ───
+  // Issue #4129: Thin wrappers so existing callers using client.method()
+  // continue to work unchanged alongside the new standalone functions.
+
+  async sendMessage(chatId: string, text: string, threadId?: string, mentions?: Array<{ openId: string; name?: string }>) {
+    return await facadeSendMessage(this, chatId, text, threadId, mentions);
+  }
+
+  async sendCard(chatId: string, card: FeishuCard, threadId?: string, description?: string) {
+    return await facadeSendCard(this, chatId, card, threadId, description);
+  }
+
+  async uploadFile(chatId: string, filePath: string, threadId?: string) {
+    return await facadeUploadFile(this, chatId, filePath, threadId);
+  }
+
+  async uploadImage(filePath: string) {
+    return await facadeUploadImage(this, filePath);
+  }
+
+  async sendInteractive(chatId: string, params: {
+    question: string;
+    options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+    title?: string;
+    context?: string;
+    threadId?: string;
+    actionPrompts?: Record<string, string>;
+  }) {
+    return await facadeSendInteractive(this, chatId, params);
+  }
+
+  async listTempChats() {
+    return await facadeListTempChats(this);
+  }
+
+  async markChatResponded(chatId: string, response: { selectedValue: string; responder: string; repliedAt: string }) {
+    return await facadeMarkChatResponded(this, chatId, response);
+  }
+
+  async pushToAgent(chatId: string, message: string, options?: { waitForCompletion?: boolean; timeoutMs?: number }) {
+    return await facadePushToAgent(this, chatId, message, options);
   }
 
   /**
