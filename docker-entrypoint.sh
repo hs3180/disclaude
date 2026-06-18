@@ -1,41 +1,20 @@
 #!/bin/sh
 # docker-entrypoint.sh
 # Infrastructure-layer entrypoint for Primary Node.
-# 1. Protect primary process from OOM killer (Issue #4114)
-# 2. Auto-configure lark-cli auth from disclaude.config.yaml (Issue #3987)
+# Auto-configure lark-cli auth from disclaude.config.yaml (Issue #3987)
 #
-# Issue #4114: A runaway agent subprocess (e.g., pip source build) exhausted the
-# container's memory limit, pushing the primary node into uninterruptible-sleep and
-# dragging the host into swap thrash. We protect the primary process by lowering its
-# oom_score_adj so the kernel prefers killing agent-spawned hogs instead.
+# This entrypoint runs AS the disclaude user (USER directive in the Dockerfile).
+# OOM protection (oom_score_adj) is applied host-side via docker-compose.yml's
+# `oom_score_adj` field — cgroup v2 forbids writing a negative oom_score_adj from
+# inside the container, so the earlier root+gosu design (Issue #4114) could not
+# achieve it and only printed a warning. With no privileged steps needed here,
+# the entrypoint no longer runs as root or drops privileges, which also fixes the
+# lark-cli auth regression (config now lands in the disclaude user's /app/.lark-cli
+# where the app can read it, instead of /root/.lark-cli).
 set -e
 
 # ---------------------------------------------------------------------------
-# Step 1: Protect the primary node process from OOM killer (Issue #4114)
-# ---------------------------------------------------------------------------
-# Set oom_score_adj to -500 for the current process (the entrypoint/tini).
-# This lowers the OOM kill priority so the kernel prefers agent-spawned
-# subprocesses (compiler jobs, pip builds) as OOM victims.
-#
-# Range: -1000 (never kill) to +1000 (always kill first). -500 is a strong
-# preference without making the process completely unkillable.
-#
-# Requires: the entrypoint must run as root (before USER directive in Dockerfile).
-# oom_score_adj is inherited by child processes; agent subprocesses that consume
-# large RSS will naturally become OOM candidates via the kernel's heuristics.
-OOM_SCORE_ADJ="${OOM_SCORE_ADJ:--500}"
-
-if [ -w /proc/self/oom_score_adj ] 2>/dev/null; then
-  printf "%s" "$OOM_SCORE_ADJ" > /proc/self/oom_score_adj 2>/dev/null && \
-    echo "[entrypoint] OOM score adj set to $OOM_SCORE_ADJ" || \
-    echo "[entrypoint] WARNING: failed to set oom_score_adj (OOM protection disabled)"
-else
-  echo "[entrypoint] WARNING: /proc/self/oom_score_adj not writable — OOM protection skipped"
-  echo "[entrypoint]   Hint: ensure ENTRYPOINT is set before USER in Dockerfile"
-fi
-
-# ---------------------------------------------------------------------------
-# Step 2: Auto-configure lark-cli auth (Issue #3987)
+# Auto-configure lark-cli auth (Issue #3987)
 # ---------------------------------------------------------------------------
 
 CONFIG_FILE="${DISCLAUDE_CONFIG_PATH:-/app/disclaude.config.yaml}"
@@ -109,24 +88,8 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3: Launch the application
+# Launch the application
 # ---------------------------------------------------------------------------
-# If running as root, drop to the non-root user (disclaude) before exec.
-# This allows the entrypoint to run privileged steps (oom_score_adj) while
-# the application itself runs as a non-root user.
-# Uses gosu (Debian) or su-exec (Alpine) for clean privilege dropping.
-RUN_USER="${DISCLAUDE_USER:-disclaude}"
-
-if [ "$(id -u)" = "0" ] && [ -n "$RUN_USER" ]; then
-  # Prefer gosu (Debian); fall back to su-exec (Alpine) for compatibility.
-  if command -v gosu >/dev/null 2>&1; then
-    exec gosu "$RUN_USER" tini -- "$@"
-  elif command -v su-exec >/dev/null 2>&1; then
-    exec su-exec "$RUN_USER" tini -- "$@"
-  else
-    echo "[entrypoint] WARNING: neither gosu nor su-exec found — running as root"
-    exec tini -- "$@"
-  fi
-else
-  exec tini -- "$@"
-fi
+# Run under tini as PID 1 for proper signal handling / zombie reaping.
+# No privilege dropping needed — the whole container already runs as disclaude.
+exec tini -- "$@"
