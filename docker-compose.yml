@@ -99,14 +99,31 @@ services:
   # Headless Chromium with CDP for browser automation.
   # Start with: docker compose --profile playwright up -d
   #
-  # The CDP endpoint is available at http://disclaude-playwright:9222
+  # The CDP endpoint is available at http://disclaude-playwright:${CDP_PORT:-9222}
   # within the Docker network (internal only, not exposed to host).
+  #
+  # IMPORTANT — why an nginx reverse proxy fronts Chrome's CDP listener:
+  # Two quirks of the official Playwright image's Chromium (Chrome 148+, `--headless=new`)
+  # prevent other containers from reaching CDP over the bridge network:
+  #   1. `--remote-debugging-address=0.0.0.0` is IGNORED — CDP binds to 127.0.0.1 only.
+  #   2. Its HTTP/WS endpoints enforce a DNS-rebinding check and reject any request whose
+  #      `Host` header is neither an IP nor `localhost` (HTTP 500: "Host header is
+  #      specified and is not an IP address or localhost"). A plain TCP forwarder (socat)
+  #      passes the container hostname through as Host and is rejected.
+  # An nginx reverse proxy solves both: it listens on 0.0.0.0:$CDP_PORT, forwards to
+  # Chrome's loopback listener ($CDP_INTERNAL_PORT), rewrites `Host` to this container's
+  # bridge-network IP (so Chrome embeds a reachable IP into the webSocketDebuggerUrl),
+  # and upgrades HTTP->WebSocket for the CDP socket. The two ports MUST differ (otherwise
+  # nginx cannot bind 0.0.0.0:$CDP_PORT — it would collide with Chrome's 127.0.0.1
+  # listener on the same port). See docker/playwright-cdp-nginx.conf for the full rationale.
+  #
   # Configure in disclaude.config.yaml:
   #   tools:
   #     mcpServers:
   #       playwright:
   #         command: npx
-  #         args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
+  #         args: ["-y", "@playwright/mcp@latest",
+  #                "--cdp-endpoint", "http://disclaude-playwright:9222"]
   playwright:
     image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.60.0-noble}
     container_name: disclaude-playwright
@@ -115,6 +132,31 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        set -e
+        CDP_PORT=$${CDP_PORT:-9222}
+        CDP_INTERNAL_PORT=$${CDP_INTERNAL_PORT:-9221}
+        if [ "$$CDP_PORT" = "$$CDP_INTERNAL_PORT" ]; then
+          echo "FATAL: CDP_PORT ($$CDP_PORT) must differ from CDP_INTERNAL_PORT" >&2
+          exit 1
+        fi
+        # nginx is not bundled in the Playwright image; install on first boot.
+        command -v nginx >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq --no-install-recommends nginx)
+        # Resolve this container's IPv4 on the Docker bridge network. Chrome embeds the
+        # Host header into the webSocketDebuggerUrl it returns, so the IP must be one
+        # other containers can reach (NOT 127.0.0.1, NOT an IPv6 — the latter would
+        # produce a ws URL like ws://[::1]:... that the MCP client cannot route to).
+        # `hostname -i` may list loopback/IPv6 first; grep for the first dotted-quad.
+        CDP_HOST=$$(hostname -i | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$$' | grep -v '^127\.' | head -n1)
+        if [ -z "$$CDP_HOST" ]; then
+          echo "FATAL: could not determine a bridge-network IPv4 for CDP_HOST" >&2
+          exit 1
+        fi
+        # Substitute the placeholders in the mounted nginx config (see
+        # docker/playwright-cdp-nginx.conf), then start nginx. nginx cannot read env
+        # vars for `listen`/`proxy_pass`/headers at runtime, so we template them here.
+        sed "s/__CDP_HOST__/$$CDP_HOST/g; s/__CDP_PORT__/$$CDP_PORT/g; s/__CDP_INTERNAL_PORT__/$$CDP_INTERNAL_PORT/g" \
+            /etc/nginx/cdp-proxy.conf.template > /tmp/cdp-nginx.conf
+        nginx -c /tmp/cdp-nginx.conf
         exec /ms-playwright/chromium-*/chrome-linux64/chrome \
           --headless=new \
           --no-sandbox \
@@ -133,16 +175,23 @@ services:
           --no-first-run \
           --safebrowsing-disable-auto-update \
           --disable-features=site-per-process \
-          --remote-debugging-port=$${CDP_PORT:-9222} \
-          --remote-debugging-address=0.0.0.0 \
+          --remote-debugging-port=$$CDP_INTERNAL_PORT \
           --user-data-dir=/tmp/chrome-cdp \
           about:blank
 
     networks:
       - disclaude-net
 
+    volumes:
+      # nginx reverse-proxy config (templated with port placeholders). See the
+      # header comment above and docker/playwright-cdp-nginx.conf for why it's needed.
+      - ./docker/playwright-cdp-nginx.conf:/etc/nginx/cdp-proxy.conf.template:ro
+
     environment:
+      # External port other containers connect to (nginx listens here).
       - CDP_PORT=${CDP_PORT:-9222}
+      # Chrome's internal loopback-only CDP port. Must differ from CDP_PORT.
+      - CDP_INTERNAL_PORT=${CDP_INTERNAL_PORT:-9221}
 
     deploy:
       resources:
@@ -159,9 +208,12 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # CMD-SHELL so the container shell expands ${CDP_PORT} at runtime (matching
-    # the --remote-debugging-port flag above). The exec-form "CMD" does not run a
-    # shell, so $${CDP_PORT:-9222} would be passed to curl literally and never expand.
+    # Probe the endpoint through nginx (not Chrome directly), so the healthcheck
+    # catches Chrome dying AND the nginx proxy failing. The previous localhost-only
+    # probe hit Chrome's loopback listener directly and stayed green even when CDP was
+    # unreachable from other containers. CMD-SHELL so the shell expands $CDP_PORT at
+    # runtime (the exec-form "CMD" does not run a shell, so $${CDP_PORT:-9222} would
+    # be passed to curl literally and never expand).
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:$${CDP_PORT:-9222}/json/version"]
       interval: 30s
