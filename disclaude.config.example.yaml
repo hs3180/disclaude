@@ -239,6 +239,8 @@ tools:
     # Playwright browser automation via CDP (Chrome DevTools Protocol)
     # Option 1 (Docker): Run `docker compose --profile playwright up -d` to start CDP container
     #   Uses Docker bridge network — CDP endpoint is http://disclaude-playwright:9222
+    #   The container fronts Chrome with an nginx proxy that rewrites Host -> localhost,
+    #   so no `--allowed-hosts` flag is needed on the MCP client.
     # Option 2 (Host):   Run `./scripts/start-playwright-cdp.sh` to start Chrome CDP on host
     #   Uses host network — CDP endpoint is http://localhost:9222
     playwright:
