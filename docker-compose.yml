@@ -74,7 +74,11 @@ services:
 
     volumes:
       - ./disclaude.config.yaml:/app/disclaude.config.yaml:ro
-      - ./workspace:/data/workspace
+      # Workspace host path. Defaults to ./workspace; set WORKSPACE_DIR in .env to
+      # relocate it (e.g. to a larger/SSD volume). The container runs as uid 1001
+      # (disclaude), so the host directory must be owned by 1001:1001 — otherwise
+      # message handling fails with EACCES when it tries to write chat logs here.
+      - ${WORKSPACE_DIR:-./workspace}:/data/workspace
       - log_data:/data/logs
 
     deploy:
