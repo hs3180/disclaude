@@ -88,9 +88,12 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     fi && \
     apt-get update
 
-# Install runtime + build dependencies, GitHub CLI, and gosu
+# Install runtime + build dependencies, GitHub CLI
 # Consolidated into a single RUN to minimize apt-get update calls (Issue #4115 review).
-# gosu replaces su-exec (Alpine) for privilege dropping on Debian (Issue #4114).
+# Note: gosu/su-exec were removed — OOM protection is now applied host-side via
+# `oom_score_adj` in docker-compose.yml (cgroup v2 forbids writing a negative
+# /proc/self/oom_score_adj from inside the container), so the entrypoint no longer
+# needs to run as root or drop privileges. See Issue #4114 follow-up.
 RUN apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
@@ -100,7 +103,6 @@ RUN apt-get install -y --no-install-recommends \
         python3-pip \
         tini \
         sudo \
-        gosu \
         g++ gcc make cmake python3-dev && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
@@ -148,14 +150,14 @@ COPY --from=builder --chown=disclaude:disclaude /app/package-lock.json ./
 COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 
 # Copy entrypoint script (Issue #3987: auto-configure lark-cli auth)
-# Issue #4114: also sets oom_score_adj to protect primary process
 COPY --chown=disclaude:disclaude docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Use entrypoint script that runs as root for OOM protection + lark-cli auth,
-# then drops to non-root user via gosu before starting tini + application.
-# Issue #3987: auto-configure lark-cli auth from disclaude.config.yaml
-# Issue #4114: set oom_score_adj to protect primary process from OOM killer
+# Entrypoint auto-configures lark-cli auth into the disclaude user's $HOME (/app),
+# then execs tini + the app. It runs AS the disclaude user (see USER below) — there
+# are no privileged steps left, since OOM protection is now applied host-side via
+# `oom_score_adj` in docker-compose.yml (cgroup v2 forbids setting it from inside
+# the container). Issue #3987, #4114 follow-up.
 ENTRYPOINT ["docker-entrypoint.sh"]
 
 # Set environment variables
@@ -173,8 +175,12 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=2
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD pgrep -f "packages/primary-node/dist/cli.js" > /dev/null 2>&1 || exit 1
 
-# Note: no USER directive — the entrypoint runs as root for oom_score_adj setup,
-# then drops to the non-root user (disclaude) via gosu before exec'ing CMD.
+# Run as the non-root user. The entrypoint has no privileged steps (OOM protection
+# is host-side via docker-compose `oom_score_adj`), so the whole container runs as
+# disclaude (uid 1001). This also means lark-cli auth lands in /app/.lark-cli where
+# the app can read it (it previously went to /root/.lark-cli when the entrypoint ran
+# as root — Issue #3987 regression from #4114).
+USER disclaude
 
 # Default command: run Primary Node directly
 CMD ["node", "packages/primary-node/dist/cli.js", "start"]
