@@ -81,7 +81,6 @@ vi.mock('../../platforms/feishu/interaction-manager.js', () => ({
 }));
 
 vi.mock('../../platforms/feishu/card-builders/card-text-extractor.js', () => ({
-  extractCardTextContent: vi.fn().mockReturnValue('Extracted card text'),
   extractFullCardContent: vi.fn().mockReturnValue('Mocked full card content'),
 }));
 
