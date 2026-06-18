@@ -101,10 +101,13 @@ Add an entry with key `discussion-{short-uuid}`:
   "discussion-{uuid}": {
     "chatId": "oc_xxx",
     "createdAt": "{ISO timestamp}",
-    "purpose": "discussion"
+    "purpose": "discussion",
+    "sourceChatId": "{source chat ID}"
   }
 }
 ```
+
+> **Important**: Always record `sourceChatId` — the chat where this discussion was spawned from. This enables feedback propagation back to the originating conversation (Issue #4017).
 
 Write the updated mapping atomically (write to temp file, then move):
 

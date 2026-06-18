@@ -42,6 +42,8 @@ export interface MappingEntry {
   lastReminderAt?: string;
   /** Optional: Number of inactivity reminders sent for escalation (Issue #3966) */
   reminderCount?: number;
+  /** Optional: Source chatId where this group was spawned from (Issue #4017) */
+  sourceChatId?: string;
 }
 
 /**

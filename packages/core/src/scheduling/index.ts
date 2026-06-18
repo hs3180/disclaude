@@ -35,6 +35,16 @@ export {
   type BotChatMappingStoreOptions,
 } from './bot-chat-mapping.js';
 
+// Feedback propagation (Issue #4017)
+export {
+  appendFeedback,
+  readFeedback,
+  clearFeedback,
+  feedbackFilePath,
+  type FeedbackEntry,
+  type FeedbackFile,
+} from './feedback-store.js';
+
 // File Scanner & Watcher
 export {
   ScheduleFileScanner,

@@ -236,3 +236,51 @@ For async research (loop execution), deliver via Feishu doc and post a summary c
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
 - Issue #1339: Agentic Research interactive workflow (parent feature)
+
+## User Feedback Propagation (Issue #4017)
+
+When research is executed in a separate Feishu group (via `start-discussion` or Loop), user feedback naturally originates in the **initial conversation** — not in the research execution group. This section describes how to propagate feedback between conversations.
+
+### How It Works
+
+1. **Feedback file**: User feedback from the initial conversation is written to `workspace/feedback/{mappingKey}.md` as timestamped markdown entries
+2. **Research agent checks feedback**: At the start of each research iteration, the agent reads the feedback file for its mapping key
+3. **Feedback is applied**: If new feedback entries exist, the agent adjusts its research direction accordingly
+4. **Feedback is cleared**: After processing, the agent can clear consumed feedback entries
+
+### Writing Feedback (from initial conversation)
+
+When a user provides feedback in the initial conversation about an ongoing research task:
+
+```
+# Check if a research discussion is active for this chat
+cat workspace/bot-chat-mapping.json | jq '.[] | select(.sourceChatId == "{currentChatId}")'
+
+# Write feedback to the appropriate mapping key
+echo "- [$(date -Iseconds)] User feedback: {feedback text}" >> workspace/feedback/{mappingKey}.md
+```
+
+### Reading Feedback (from research execution group)
+
+At the start of a research iteration:
+
+```
+# Check for pending feedback
+cat workspace/feedback/{mappingKey}.md 2>/dev/null
+
+# If feedback exists, adjust research direction:
+# - "Need more detail on X" → Deepen analysis on section X
+# - "Focus on Y instead" → Shift research focus to Y
+# - "This is wrong" → Re-examine assumptions and re-analyze
+# - "Good, continue" → No change needed
+
+# After processing, optionally clear consumed feedback
+rm workspace/feedback/{mappingKey}.md
+```
+
+### Design Decisions
+
+- **Skill-level, not Loop-level**: Feedback propagation is a concern of the research skill, not the Loop engine. The Loop only provides `start`/`stop`.
+- **File-based, not API-based**: Uses the same filesystem state-sharing pattern as `bot-chat-mapping.json` and `SCHEDULE.md`.
+- **Asynchronous**: Feedback doesn't block or interrupt execution. It's picked up on the next iteration.
+- **Markdown format**: Human-readable, git-trackable, and follows the project's file-based state convention.
