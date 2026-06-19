@@ -35,10 +35,27 @@
  * The Worker Node concept is being removed — agents now live where they are used.
  */
 
-import { Config, BaseAgent, MessageBuilder, MessageChannel, RestartManager, ConversationOrchestrator, getErrorStderr, isStartupFailure, forceCleanupLeakedListeners, type StreamingUserMessage, type QueryHandle, type ChatAgent as ChatAgentInterface, type AgentUserInput, type AgentMessage, type UserMessageParams } from '@disclaude/core';
+import {
+  Config,
+  BaseAgent,
+  MessageBuilder,
+  MessageChannel,
+  RestartManager,
+  ConversationOrchestrator,
+  getErrorStderr,
+  isStartupFailure,
+  forceCleanupLeakedListeners,
+  type StreamingUserMessage,
+  type QueryHandle,
+  type ChatAgent as ChatAgentInterface,
+  type AgentUserInput,
+  type AgentMessage,
+  type UserMessageParams,
+} from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
+import { HistoryManager } from './history-manager.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -93,24 +110,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // Message builder (Issue #697)
   private readonly messageBuilder: MessageBuilder;
 
-  // Session restoration (Issue #955)
-  private persistedHistoryContext?: string;
-
-  // Issue #3996: Chat log file paths for agent to access beyond context window
-  private chatLogFilePaths?: string[];
+  // History loading (Issue #955, #1230, #3996) — extracted into HistoryManager (Issue #4125 part 2)
+  private readonly historyManager: HistoryManager;
 
   /**
    * Chat type for the current conversation (e.g., 'p2p', 'group', 'topic').
    * Updated on each processMessage() call. Issue #3641.
    */
   private chatType?: string;
-  private historyLoaded = false;
-  private historyLoadPromise?: Promise<void>;
-
-  // First message chat history (Issue #1230)
-  private firstMessageHistoryContext?: string;
-  private firstMessageHistoryLoaded = false;
-  private firstMessageHistoryLoadPromise?: Promise<void>;
 
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
@@ -134,10 +141,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.callbacks = config.callbacks;
     this.cwdProvider = config.cwdProvider;
 
+    // Initialize history manager (Issue #955, #1230, #3996)
+    this.historyManager = new HistoryManager({
+      chatId: this.boundChatId,
+      logger: this.logger,
+      callbacks: this.callbacks,
+    });
     // Issue #3696: skip history loading when --no-context was used
     if (config.skipHistory) {
-      this.historyLoaded = true;
-      this.firstMessageHistoryLoaded = true;
+      this.historyManager.markSkipped();
     }
 
     // Initialize managers
@@ -145,8 +157,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.restartManager = new RestartManager({
       logger: this.logger,
       maxRestarts: 3,
-      initialBackoffMs: 5000,  // Start with 5 seconds
-      maxBackoffMs: 60000,     // Max 1 minute
+      initialBackoffMs: 5000, // Start with 5 seconds
+      maxBackoffMs: 60000, // Max 1 minute
     });
 
     // Initialize message builder with channel-specific options (Issue #697, #1492, #1499)
@@ -154,7 +166,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // otherwise, create a default MessageBuilder with no channel-specific extensions.
     this.messageBuilder = new MessageBuilder(config.messageBuilderOptions);
 
-    this.logger.info({ chatId: this.boundChatId, skipHistory: config.skipHistory }, 'ChatAgent created for chatId');
+    this.logger.info(
+      { chatId: this.boundChatId, skipHistory: config.skipHistory },
+      'ChatAgent created for chatId'
+    );
   }
 
   /**
@@ -188,7 +203,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // the next query uses the new callbacks without disrupting the current one.
     this.logger.info(
       { chatId: this.boundChatId },
-      'Agent is busy, deferring callback update until current query completes',
+      'Agent is busy, deferring callback update until current query completes'
     );
     const pendingCallbacks = callbacks;
     void this.taskCompletionPromise
@@ -199,7 +214,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.callbacks = pendingCallbacks;
           this.logger.info(
             { chatId: this.boundChatId },
-            'Deferred callback update applied after query completion',
+            'Deferred callback update applied after query completion'
           );
         }
       });
@@ -311,16 +326,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Determine if we should include Context MCP server
       const contextTools = ['send_text', 'send_card', 'send_interactive', 'send_file'];
-      const shouldIncludeContextMcp = supportedMcpTools === undefined ||
-        contextTools.some(tool => supportedMcpTools.includes(tool));
+      const shouldIncludeContextMcp =
+        supportedMcpTools === undefined ||
+        contextTools.some((tool) => supportedMcpTools.includes(tool));
 
       // Use inline transport for channel MCP server
       if (shouldIncludeContextMcp) {
         mcpServers['channel-mcp'] = createChannelMcpServer();
 
-        this.logger.info({
-          ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
-        }, 'Configured channel MCP server (inline transport)');
+        this.logger.info(
+          {
+            ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
+          },
+          'Configured channel MCP server (inline transport)'
+        );
       }
     }
 
@@ -341,181 +360,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
-   * Load persisted chat history from MessageLogger (Issue #955).
-   *
-   * This method loads recent chat history from the file-based message logs
-   * to restore context after service restart. The history is loaded once
-   * and cached for the lifetime of this ChatAgent instance.
-   *
-   * @returns Promise that resolves when history is loaded
-   */
-  private async loadPersistedHistory(): Promise<void> {
-    // If already loading, wait for the existing promise
-    if (this.historyLoadPromise) {
-      return this.historyLoadPromise;
-    }
-
-    // If already loaded, return immediately
-    if (this.historyLoaded) {
-      return;
-    }
-
-    // Start loading history
-    this.historyLoadPromise = this.doLoadPersistedHistory();
-    try {
-      await this.historyLoadPromise;
-    } finally {
-      this.historyLoadPromise = undefined;
-    }
-  }
-
-  /**
-   * Internal method to perform the actual history loading.
-   * Uses configurable parameters from Config.getSessionRestoreConfig().
-   *
-   * TODO(Issue #1041): This method should use a callback instead of direct messageLogger access.
-   * For now, it uses the getChatHistory callback if available.
-   */
-  private async doLoadPersistedHistory(): Promise<void> {
-    // Check if callback is available
-    if (!this.callbacks.getChatHistory) {
-      this.logger.debug(
-        { chatId: this.boundChatId },
-        'getChatHistory callback not available, skipping persisted history load'
-      );
-      this.historyLoaded = true;
-      return;
-    }
-
-    try {
-      const sessionConfig = Config.getSessionRestoreConfig();
-
-      this.logger.info(
-        { chatId: this.boundChatId, days: sessionConfig.historyDays },
-        'Loading persisted chat history for session restoration'
-      );
-
-      // Use callback instead of direct messageLogger access
-      const history = await this.callbacks.getChatHistory(this.boundChatId);
-
-      if (history && history.trim()) {
-        // Truncate if too long
-        this.persistedHistoryContext = history.length > sessionConfig.maxContextLength
-          ? history.slice(-sessionConfig.maxContextLength)
-          : history;
-
-        this.logger.info(
-          { chatId: this.boundChatId, historyLength: this.persistedHistoryContext.length },
-          'Persisted chat history loaded successfully'
-        );
-      } else {
-        this.logger.debug(
-          { chatId: this.boundChatId },
-          'No persisted chat history found'
-        );
-      }
-
-      // Issue #3996: Load chat log file paths so the agent knows where to find
-      // full conversation history beyond the context window
-      if (this.callbacks.getChatLogFilePaths) {
-        this.chatLogFilePaths = await this.callbacks.getChatLogFilePaths(this.boundChatId);
-        if (this.chatLogFilePaths.length > 0) {
-          this.logger.info(
-            { chatId: this.boundChatId, pathCount: this.chatLogFilePaths.length },
-            'Chat log file paths loaded'
-          );
-        }
-      }
-
-      this.historyLoaded = true;
-    } catch (error) {
-      this.logger.error(
-        { err: error, chatId: this.boundChatId },
-        'Failed to load persisted chat history'
-      );
-      // Mark as loaded even on error to prevent retry loops
-      this.historyLoaded = true;
-      // Issue #1357: Notify user that history restoration failed
-      this.callbacks.sendMessage(
-        this.boundChatId,
-        '⚠️ 加载历史记录失败，将以全新会话开始。如果需要历史上下文，请发送 /reset 重置会话。',
-      ).catch(() => {});
-    }
-  }
-
-  /**
-   * Load chat history for first message context (Issue #1230).
-   *
-   * This method loads recent chat history to be attached to the first message
-   * in a new agent session, providing context for the agent.
-   *
-   * Issue #1863: Added promise caching to prevent duplicate loads and
-   * enable awaiting from processMessage() to fix race condition.
-   *
-   * @returns Promise that resolves when history is loaded
-   */
-  private async loadFirstMessageHistory(): Promise<void> {
-    // If already loading, wait for the existing promise
-    if (this.firstMessageHistoryLoadPromise) {
-      return this.firstMessageHistoryLoadPromise;
-    }
-
-    // If already loaded, return immediately
-    if (this.firstMessageHistoryLoaded) {
-      return;
-    }
-
-    // Start loading history
-    this.firstMessageHistoryLoadPromise = this.doLoadFirstMessageHistory();
-    try {
-      await this.firstMessageHistoryLoadPromise;
-    } finally {
-      this.firstMessageHistoryLoadPromise = undefined;
-    }
-  }
-
-  /**
-   * Internal method to perform the actual first message history loading.
-   */
-  private async doLoadFirstMessageHistory(): Promise<void> {
-    try {
-      this.logger.info(
-        { chatId: this.boundChatId },
-        'Loading chat history for first message context'
-      );
-
-      const history = await this.callbacks.getChatHistory?.(this.boundChatId);
-
-      if (history && history.trim()) {
-        this.firstMessageHistoryContext = history;
-        this.logger.info(
-          { chatId: this.boundChatId, historyLength: this.firstMessageHistoryContext.length },
-          'Chat history for first message loaded successfully'
-        );
-      } else {
-        this.logger.debug(
-          { chatId: this.boundChatId },
-          'No chat history found for first message'
-        );
-      }
-
-      this.firstMessageHistoryLoaded = true;
-    } catch (error) {
-      this.logger.error(
-        { err: error, chatId: this.boundChatId },
-        'Failed to load chat history for first message'
-      );
-      // Mark as loaded even on error to prevent retry loops
-      this.firstMessageHistoryLoaded = true;
-      // Issue #1357: Notify user about history load failure
-      this.callbacks.sendMessage(
-        this.boundChatId,
-        '⚠️ 加载聊天记录失败，第一条消息可能缺少上下文。',
-      ).catch(() => {});
-    }
-  }
-
-  /**
    * Start the agent session (ChatAgent interface).
    *
    * Called once before processing any messages. For ChatAgent, this is a no-op
@@ -524,7 +368,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * @returns Promise that resolves when started
    */
   start(): Promise<void> {
-    this.logger.debug({ chatId: this.boundChatId }, 'ChatAgent start() called - session is created on-demand');
+    this.logger.debug(
+      { chatId: this.boundChatId },
+      'ChatAgent start() called - session is created on-demand'
+    );
     return Promise.resolve();
   }
 
@@ -564,11 +411,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       const capabilities = this.callbacks.getCapabilities?.(chatId);
 
       // Build the user message using MessageBuilder (Issue #697)
-      const enhancedContent = this.messageBuilder.buildEnhancedContent({
-        text: userInput.content,
-        messageId,
-        senderOpenId,
-      }, chatId, capabilities);
+      const enhancedContent = this.messageBuilder.buildEnhancedContent(
+        {
+          text: userInput.content,
+          messageId,
+          senderOpenId,
+        },
+        chatId,
+        capabilities
+      );
 
       const streamingMessage: StreamingUserMessage = {
         type: 'user',
@@ -587,7 +438,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Don't retry if session was intentionally closed (e.g., /reset).
         // Retrying would re-create the session the user just terminated.
         if (!this.isSessionActive) {
-          this.logger.info({ chatId, messageId }, 'handleInput: session is not active, skipping retry');
+          this.logger.info(
+            { chatId, messageId },
+            'handleInput: session is not active, skipping retry'
+          );
           yield {
             content: '⚠️ 当前会话已重置，请直接发送新消息。',
             role: 'assistant',
@@ -612,14 +466,23 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.channel = undefined;
         }
 
-        this.logger.warn({ chatId, messageId }, 'handleInput: first push failed, attempting session restart');
+        this.logger.warn(
+          { chatId, messageId },
+          'handleInput: first push failed, attempting session restart'
+        );
         try {
           this.startAgentLoop();
         } catch (restartErr) {
-          this.logger.error({ err: restartErr, chatId, messageId }, 'handleInput: session restart failed');
+          this.logger.error(
+            { err: restartErr, chatId, messageId },
+            'handleInput: session restart failed'
+          );
         }
         if (!this.tryPushMessage(streamingMessage, chatId, messageId)) {
-          this.logger.error({ chatId, messageId }, 'handleInput: retry also failed, yielding error');
+          this.logger.error(
+            { chatId, messageId },
+            'handleInput: retry also failed, yielding error'
+          );
           yield {
             content: '⚠️ 消息未能送达，会话已结束。请发送 /reset 重置会话后重试。',
             role: 'assistant',
@@ -672,7 +535,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       throw new Error(`ChatAgent bound to ${this.boundChatId} cannot execute for ${chatId}`);
     }
 
-    this.logger.info({ chatId, messageId, textLength: text.length }, 'One-shot mode: executing via unified streaming path');
+    this.logger.info(
+      { chatId, messageId, textLength: text.length },
+      'One-shot mode: executing via unified streaming path'
+    );
 
     // Enable once-mode: processIterator will close channel after first result
     this.onceMode = true;
@@ -682,7 +548,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // The processIterator running in the background will handle the SDK responses
       // and resolve/reject the taskComplete promise.
       const effectiveMessageId = messageId ?? `once-${Date.now()}`;
-      await this.processMessage({ chatId, payload: text, messageId: effectiveMessageId, senderOpenId });
+      await this.processMessage({
+        chatId,
+        payload: text,
+        messageId: effectiveMessageId,
+        senderOpenId,
+      });
 
       // Wait for the task to complete via the unified streaming path
       if (this.taskCompletionPromise) {
@@ -713,10 +584,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * @param attachments - Optional file attachments
    * Issue #3779: Converted to options object for type safety.
    */
-  async processMessage(
-    params: UserMessageParams,
-  ): Promise<void> {
-    const { chatId, payload: text, messageId, senderOpenId, attachments, chatHistoryContext, chatType, threadContext } = params;
+  async processMessage(params: UserMessageParams): Promise<void> {
+    const {
+      chatId,
+      payload: text,
+      messageId,
+      senderOpenId,
+      attachments,
+      chatHistoryContext,
+      chatType,
+      threadContext,
+    } = params;
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
       this.logger.error(
@@ -727,7 +605,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     this.logger.info(
-      { chatId, messageId, textLength: text.length, hasAttachments: !!attachments, hasChatHistory: !!chatHistoryContext, hasPersistedHistory: !!this.persistedHistoryContext, hasFirstMessageHistory: !!this.firstMessageHistoryContext, chatType },
+      {
+        chatId,
+        messageId,
+        textLength: text.length,
+        hasAttachments: !!attachments,
+        hasChatHistory: !!chatHistoryContext,
+        hasPersistedHistory: !!this.historyManager.persistedHistoryContext,
+        hasFirstMessageHistory: !!this.historyManager.firstMessageHistoryContext,
+        chatType,
+      },
       'processMessage called'
     );
 
@@ -748,21 +635,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #1863: Wait for first message history to load before building content.
     // This fixes the race condition where processMessage() checks firstMessageHistoryContext
     // before the async loadFirstMessageHistory() in startAgentLoop() completes.
-    if (!this.firstMessageHistoryLoaded) {
-      await this.loadFirstMessageHistory();
+    if (!this.historyManager.firstMessageHistoryLoaded) {
+      await this.historyManager.loadFirstMessageHistory();
     }
 
     // Issue #1230: Attach chat history on first message for new sessions
     // Use pre-loaded firstMessageHistoryContext if no context was provided (passive mode)
     let effectiveChatHistoryContext = chatHistoryContext;
-    if (!chatHistoryContext && this.firstMessageHistoryContext) {
-      effectiveChatHistoryContext = this.firstMessageHistoryContext;
+    if (!chatHistoryContext && this.historyManager.firstMessageHistoryContext) {
+      effectiveChatHistoryContext = this.historyManager.firstMessageHistoryContext;
       this.logger.info(
         { chatId, messageId, historyLength: effectiveChatHistoryContext.length },
         'Using pre-loaded chat history for first message'
       );
       // Clear after first use
-      this.firstMessageHistoryContext = undefined;
+      this.historyManager.firstMessageHistoryContext = undefined;
     }
 
     // Get capabilities for message building
@@ -770,13 +657,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Build the user message using MessageBuilder (Issue #697)
     // Issue #955: Include persisted history context for session restoration
-    const enhancedContent = this.messageBuilder.buildEnhancedContent({
-      text, messageId, senderOpenId, attachments, chatHistoryContext: effectiveChatHistoryContext,
-      persistedHistoryContext: this.persistedHistoryContext,
-      chatLogFilePaths: this.chatLogFilePaths,
-      chatType: this.chatType,
-      threadContext,
-    }, chatId, capabilities);
+    const enhancedContent = this.messageBuilder.buildEnhancedContent(
+      {
+        text,
+        messageId,
+        senderOpenId,
+        attachments,
+        chatHistoryContext: effectiveChatHistoryContext,
+        persistedHistoryContext: this.historyManager.persistedHistoryContext,
+        chatLogFilePaths: this.historyManager.chatLogFilePaths,
+        chatType: this.chatType,
+        threadContext,
+      },
+      chatId,
+      capabilities
+    );
 
     const userMessage: StreamingUserMessage = {
       type: 'user',
@@ -803,17 +698,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isProcessingMessage = false;
         this.rejectTurn(new Error('Channel closed — message not processed'));
         this.logger.warn({ chatId, messageId }, 'Message rejected: channel is closed');
-        this.callbacks.sendMessage(chatId, '⚠️ 消息未能送达，会话可能已结束。请发送 /reset 重置会话后重试。').catch((notifyErr) => {
-          this.logger.error({ err: notifyErr, chatId }, 'Failed to send channel-closed notification');
-        });
+        this.callbacks
+          .sendMessage(chatId, '⚠️ 消息未能送达，会话可能已结束。请发送 /reset 重置会话后重试。')
+          .catch((notifyErr) => {
+            this.logger.error(
+              { err: notifyErr, chatId },
+              'Failed to send channel-closed notification'
+            );
+          });
         return;
       }
     } else {
       this.logger.error({ chatId, messageId }, 'No channel found after session creation');
       // Issue #1357: Notify user — message would otherwise be silently lost
-      this.callbacks.sendMessage(chatId, '❌ 会话通道异常，请发送 /reset 重置会话后重试。').catch((notifyErr) => {
-        this.logger.error({ err: notifyErr, chatId }, 'Failed to send no-channel error notification');
-      });
+      this.callbacks
+        .sendMessage(chatId, '❌ 会话通道异常，请发送 /reset 重置会话后重试。')
+        .catch((notifyErr) => {
+          this.logger.error(
+            { err: notifyErr, chatId },
+            'Failed to send no-channel error notification'
+          );
+        });
     }
   }
 
@@ -828,7 +733,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * @param messageId - Message ID for logging
    * @returns true if message was accepted by the channel
    */
-  private tryPushMessage(message: StreamingUserMessage, chatId: string, messageId: string): boolean {
+  private tryPushMessage(
+    message: StreamingUserMessage,
+    chatId: string,
+    messageId: string
+  ): boolean {
     if (!this.channel) {
       this.logger.error({ chatId, messageId }, 'tryPushMessage: no channel available');
       return false;
@@ -872,15 +781,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Issue #955: Trigger background loading of persisted history
-    if (!this.historyLoaded) {
-      this.loadPersistedHistory().catch((err) => {
+    if (!this.historyManager.historyLoaded) {
+      this.historyManager.loadPersistedHistory().catch((err) => {
         this.logger.error({ err, chatId }, 'Failed to load persisted history in background');
       });
     }
 
     // Issue #1230: Load chat history for first message context
-    if (!this.firstMessageHistoryLoaded && this.callbacks.getChatHistory) {
-      this.loadFirstMessageHistory().catch((err) => {
+    if (!this.historyManager.firstMessageHistoryLoaded && this.callbacks.getChatHistory) {
+      this.historyManager.loadFirstMessageHistory().catch((err) => {
         this.logger.error({ err, chatId }, 'Failed to load first message history in background');
       });
     }
@@ -922,10 +831,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.channel = new MessageChannel();
 
     // Create streaming query using channel's generator
-    const { handle, iterator } = this.createQueryStream(
-      this.channel.generator(),
-      sdkOptions
-    );
+    const { handle, iterator } = this.createQueryStream(this.channel.generator(), sdkOptions);
 
     this.queryHandle = handle;
     this.isSessionActive = true;
@@ -939,7 +845,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       const cleaned = forceCleanupLeakedListeners();
       if (cleaned > 0) {
         this.logger.info(
-          { chatId, before: exitListenerCount, after: process.listenerCount('exit'), cleaned, timing: 'agent:startLoop' },
+          {
+            chatId,
+            before: exitListenerCount,
+            after: process.listenerCount('exit'),
+            cleaned,
+            timing: 'agent:startLoop',
+          },
           'Forcefully cleaned up leaked exit listeners'
         );
       } else {
@@ -949,16 +861,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         );
       }
     }
-    this.logger.info({ chatId, timing: 'agent:startLoop', elapsedMs: Date.now() - startMs, exitListenerCount, ok: true });
+    this.logger.info({
+      chatId,
+      timing: 'agent:startLoop',
+      elapsedMs: Date.now() - startMs,
+      exitListenerCount,
+      ok: true,
+    });
 
     // Process SDK messages in background
     this.processIterator(iterator).catch(async (err) => {
-      this.logger.error({
-        err,
-        chatId,
-        errorMessage: err instanceof Error ? err.message : String(err),
-        errorStack: err instanceof Error ? err.stack : undefined,
-      }, 'Agent loop error');
+      this.logger.error(
+        {
+          err,
+          chatId,
+          errorMessage: err instanceof Error ? err.message : String(err),
+          errorStack: err instanceof Error ? err.stack : undefined,
+        },
+        'Agent loop error'
+      );
       this.isSessionActive = false;
       this.isProcessingMessage = false;
 
@@ -973,10 +894,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       try {
         await this.callbacks.sendMessage(
           chatId,
-          '❌ 处理消息时发生严重错误，会话已中断。请发送 /reset 重置会话后重试。',
+          '❌ 处理消息时发生严重错误，会话已中断。请发送 /reset 重置会话后重试。'
         );
       } catch (notifyErr) {
-        this.logger.error({ err: notifyErr, chatId }, 'Failed to send agent loop error notification');
+        this.logger.error(
+          { err: notifyErr, chatId },
+          'Failed to send agent loop error notification'
+        );
       }
     });
   }
@@ -1017,7 +941,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let toolCallCount = 0;
 
     try {
-
       for await (const { parsed } of iterator) {
         // Issue #2926: Check abort signal at the start of each iteration.
         // When /stop or /reset is received, we break immediately instead of
@@ -1053,10 +976,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
         }
 
-        this.logger.debug(
-          { chatId, messageCount, type: parsed.type },
-          'SDK message received'
-        );
+        this.logger.debug({ chatId, messageCount, type: parsed.type }, 'SDK message received');
 
         // Send message content to callback
         // Issue #3641: In topic group threads, filter intermediate messages
@@ -1064,7 +984,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #3809: Forward intermediate messages to debug group.
         if (parsed.content) {
           const isTopicThread = this.chatType === 'topic';
-          const isIntermediateMessage = parsed.type === 'tool_use' || parsed.type === 'tool_result' || parsed.type === 'tool_progress';
+          const isIntermediateMessage =
+            parsed.type === 'tool_use' ||
+            parsed.type === 'tool_result' ||
+            parsed.type === 'tool_progress';
 
           // Issue #3809: Forward intermediate process messages to debug group.
           // This surfaces tool_use/tool_result/tool_progress events that are
@@ -1076,7 +999,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               const prefix = `[${parsed.type}]`;
               const debugContent = `${prefix} ${parsed.content}`;
               this.callbacks.sendMessage(debugGroup.chatId, debugContent).catch((err) => {
-                this.logger.debug({ err, debugChatId: debugGroup.chatId, type: parsed.type }, 'Failed to forward debug message');
+                this.logger.debug(
+                  { err, debugChatId: debugGroup.chatId, type: parsed.type },
+                  'Failed to forward debug message'
+                );
               });
             }
           }
@@ -1096,14 +1022,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         if (parsed.type === 'result') {
           // Issue #3003: Log timing summary on completion
           const completionMs = Date.now() - startTime;
-          this.logger.info({
-            chatId,
-            content: parsed.content,
-            completionMs,
-            ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
-            toolCallCount,
-            messageCount,
-          }, 'Result received, turn complete');
+          this.logger.info(
+            {
+              chatId,
+              content: parsed.content,
+              completionMs,
+              ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
+              toolCallCount,
+              messageCount,
+            },
+            'Result received, turn complete'
+          );
 
           // Issue #3706: Warn when turn completes with zero tool calls and Agent Teams enabled.
           // This pattern indicates the model may not support tool_use blocks properly.
@@ -1116,10 +1045,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 model: this.model,
                 provider: this.provider,
               },
-              'Turn completed with 0 tool calls while Agent Teams is enabled. '
-              + 'If team workers are stuck in idle loops, the model may not support '
-              + 'tool_use blocks (common with non-Anthropic models via '
-              + 'Anthropic-compatible API). See Issue #3706.'
+              'Turn completed with 0 tool calls while Agent Teams is enabled. ' +
+                'If team workers are stuck in idle loops, the model may not support ' +
+                'tool_use blocks (common with non-Anthropic models via ' +
+                'Anthropic-compatible API). See Issue #3706.'
             );
           }
 
@@ -1154,18 +1083,21 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       const elapsedMs = Date.now() - startTime; // Issue #2920: 计算耗时
 
       // Issue #3003: Log detailed timing on iterator error
-      this.logger.error({
-        err: iteratorError,
-        chatId,
-        messageCount,
-        elapsedMs,
-        ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
-        toolCallCount,
-        errorMessage: iteratorError.message,
-        errorStack: iteratorError.stack,
-        errorName: iteratorError.constructor.name,
-        errorCause: iteratorError.cause,
-      }, 'Iterator error');
+      this.logger.error(
+        {
+          err: iteratorError,
+          chatId,
+          messageCount,
+          elapsedMs,
+          ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
+          toolCallCount,
+          errorMessage: iteratorError.message,
+          errorStack: iteratorError.stack,
+          errorName: iteratorError.constructor.name,
+          errorCause: iteratorError.cause,
+        },
+        'Iterator error'
+      );
 
       // Issue #2920: 检测启动阶段失败
       // 启动失败的特征：没有收到任何 SDK 消息且耗时很短。
@@ -1179,11 +1111,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         let diagnosticMessage = iteratorError.message;
         if (stderr) {
           // 取 stderr 最后几行作为诊断信息（去空行，限制长度）
-          const stderrLines = stderr.split('\n').filter(l => l.trim());
+          const stderrLines = stderr.split('\n').filter((l) => l.trim());
           const tailLines = stderrLines.slice(-5).join('\n');
-          diagnosticMessage = tailLines.length > 800
-            ? tailLines.slice(-800)
-            : tailLines;
+          diagnosticMessage = tailLines.length > 800 ? tailLines.slice(-800) : tailLines;
         }
 
         this.logger.error(
@@ -1198,10 +1128,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         await this.callbacks.sendMessage(
           chatId,
-          `❌ Agent 启动失败: ${diagnosticMessage}\n\n`
-          + '这是一次配置或环境错误，重试无法解决。\n'
-          + '请检查上述错误信息，修复后发送 /reset 重置会话。',
-          threadRoot,
+          `❌ Agent 启动失败: ${diagnosticMessage}\n\n` +
+            '这是一次配置或环境错误，重试无法解决。\n' +
+            '请检查上述错误信息，修复后发送 /reset 重置会话。',
+          threadRoot
         );
 
         // 启动失败不触发重试，直接标记会话为非活跃
@@ -1224,7 +1154,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Notify user about the error
       {
         const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-        await this.callbacks.sendMessage(chatId, `❌ Session error: ${iteratorError.message}`, threadRoot);
+        await this.callbacks.sendMessage(
+          chatId,
+          `❌ Session error: ${iteratorError.message}`,
+          threadRoot
+        );
       }
 
       // Issue #4063: Reject per-turn completion on runtime error
@@ -1290,9 +1224,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Notify user that circuit breaker opened
       {
         const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-        const blockMessage = decision.reason === 'max_restarts_exceeded'
-          ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
-          : `🚫 会话已暂停，请发送 /reset 重置。\n\n原因: ${decision.reason}`;
+        const blockMessage =
+          decision.reason === 'max_restarts_exceeded'
+            ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
+            : `🚫 会话已暂停，请发送 /reset 重置。\n\n原因: ${decision.reason}`;
         await this.callbacks.sendMessage(chatId, blockMessage, threadRoot);
       }
       return;
@@ -1306,7 +1241,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Wait for backoff period
     if (decision.waitMs && decision.waitMs > 0) {
-      await new Promise(resolve => setTimeout(resolve, decision.waitMs));
+      await new Promise((resolve) => setTimeout(resolve, decision.waitMs));
     }
 
     // Notify user about the restart
@@ -1370,13 +1305,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Reset restart state
     this.restartManager.reset(this.boundChatId);
 
-    // Clear persisted history context (Issue #955)
-    this.persistedHistoryContext = undefined;
-    this.historyLoaded = false;
-
-    // Clear first message history context (Issue #1230)
-    this.firstMessageHistoryContext = undefined;
-    this.firstMessageHistoryLoaded = false;
+    // Clear persisted & first-message history context (Issue #955, #1230)
+    this.historyManager.reset();
 
     // Issue #3124: Clear once-mode and task completion state
     this.onceMode = false;
@@ -1388,13 +1318,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #1213: Reload history only if explicitly requested via keepContext
     if (keepContext) {
       this.logger.info({ chatId: this.boundChatId }, 'Reloading history context after reset');
-      this.loadPersistedHistory().catch((err) => {
-        this.logger.error({ err, chatId: this.boundChatId }, 'Failed to reload history after reset');
+      this.historyManager.loadPersistedHistory().catch((err) => {
+        this.logger.error(
+          { err, chatId: this.boundChatId },
+          'Failed to reload history after reset'
+        );
         // Issue #1357: Notify user that context preservation failed
-        this.callbacks.sendMessage(
-          this.boundChatId,
-          '⚠️ 重置后加载历史记录失败，当前会话无历史上下文。',
-        ).catch(() => {});
+        this.callbacks
+          .sendMessage(this.boundChatId, '⚠️ 重置后加载历史记录失败，当前会话无历史上下文。')
+          .catch(() => {});
       });
     }
   }
