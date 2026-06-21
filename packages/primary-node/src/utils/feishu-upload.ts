@@ -17,9 +17,14 @@ export const IMAGE_EXTENSIONS = new Set([
 ]);
 
 /**
+ * Feishu file_type values accepted by the im.file.create API.
+ */
+export type FeishuFileType = 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream';
+
+/**
  * File extension to Feishu file_type mapping for document uploads.
  */
-export const EXT_TO_FEISHU_FILE_TYPE: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
+export const EXT_TO_FEISHU_FILE_TYPE: Record<string, FeishuFileType> = {
   '.opus': 'opus',
   '.pdf': 'pdf',
   '.doc': 'doc', '.docx': 'doc',
@@ -66,7 +71,7 @@ export async function uploadFile(
   client: lark.Client,
   filePath: string,
   fileName: string,
-  fileType: 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream',
+  fileType: FeishuFileType,
 ): Promise<string | undefined> {
   const uploadResp = await client.im.file.create({
     data: {
