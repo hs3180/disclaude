@@ -9,7 +9,7 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
-import { createLogger, type FeishuChatMemberAddedEventData, type FeishuP2PChatEnteredEventData } from '@disclaude/core';
+import { createLogger, type ChatType, type FeishuChatMemberAddedEventData, type FeishuP2PChatEnteredEventData } from '@disclaude/core';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
 
 /**
@@ -23,8 +23,8 @@ import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
  * Classifying by event type — not by sniffing the chat ID prefix — keeps the
  * welcome flow decoupled from Feishu's ID scheme. Issue #4136.
  */
-const CHAT_TYPE_FROM_P2P_ENTERED = 'p2p';
-const CHAT_TYPE_FROM_MEMBER_ADDED = 'group';
+const CHAT_TYPE_FROM_P2P_ENTERED: ChatType = 'p2p';
+const CHAT_TYPE_FROM_MEMBER_ADDED: ChatType = 'group';
 
 const logger = createLogger('WelcomeHandler');
 

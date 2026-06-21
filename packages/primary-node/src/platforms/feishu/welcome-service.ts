@@ -13,7 +13,7 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
-import { createLogger, isGroupChat, isPrivateChat } from '@disclaude/core';
+import { createLogger, isGroupChat, isPrivateChat, type ChatType } from '@disclaude/core';
 
 const logger = createLogger('WelcomeService');
 
@@ -55,7 +55,7 @@ export class WelcomeService {
    * @param chatId - The group chat ID (address only; classification is by chatType)
    * @param chatType - The chat type from the triggering event
    */
-  async handleBotAddedToGroup(chatId: string, chatType: string): Promise<void> {
+  async handleBotAddedToGroup(chatId: string, chatType: ChatType): Promise<void> {
     if (!isGroupChat(chatType)) {
       logger.warn({ chatId, chatType }, 'handleBotAddedToGroup called with non-group chat type');
       return;
@@ -81,7 +81,7 @@ export class WelcomeService {
    * @param chatType - The chat type from the triggering event
    * @param userIds - Array of user open_ids who joined (optional, for future use)
    */
-  async handleUserJoinedGroup(chatId: string, chatType: string, userIds?: string[]): Promise<void> {
+  async handleUserJoinedGroup(chatId: string, chatType: ChatType, userIds?: string[]): Promise<void> {
     if (!isGroupChat(chatType)) {
       logger.warn({ chatId, chatType }, 'handleUserJoinedGroup called with non-group chat type');
       return;
@@ -113,7 +113,7 @@ export class WelcomeService {
    */
   async handleFirstPrivateChat(
     chatId: string,
-    chatType: string
+    chatType: ChatType
   ): Promise<'sent' | 'already_sent' | 'failed' | 'skipped'> {
     if (!isPrivateChat(chatType)) {
       logger.debug({ chatId, chatType }, 'handleFirstPrivateChat called with non-private chat type');
@@ -149,7 +149,7 @@ export class WelcomeService {
    */
   handleP2PChatEntered(
     chatId: string,
-    chatType: string
+    chatType: ChatType
   ): Promise<'sent' | 'already_sent' | 'failed' | 'skipped'> {
     return this.handleFirstPrivateChat(chatId, chatType);
   }
