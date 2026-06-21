@@ -17,14 +17,6 @@ export const DEDUPLICATION = {
 } as const;
 
 /**
- * Dialogue/Agent loop configuration
- */
-export const DIALOGUE = {
-  /** Maximum number of iterations in the dialogue loop */
-  MAX_ITERATIONS: 20,
-} as const;
-
-/**
  * Message logging configuration
  */
 export const MESSAGE_LOGGING = {
@@ -72,17 +64,6 @@ export const CHAT_HISTORY = {
 
   /** Maximum number of messages to include in context */
   MAX_MESSAGES: 50,
-} as const;
-
-/**
- * Session restoration configuration (Issue #955)
- */
-export const SESSION_RESTORE = {
-  /** Number of days to look back for chat history */
-  HISTORY_DAYS: 7,
-
-  /** Maximum characters for restored session context */
-  MAX_CONTEXT_LENGTH: 4000,
 } as const;
 
 /**
