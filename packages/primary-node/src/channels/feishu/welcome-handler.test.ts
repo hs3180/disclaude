@@ -65,7 +65,7 @@ describe('WelcomeHandler', () => {
         event: { user: { open_id: 'ou_test_svc' }, timestamp: '123' },
       });
 
-      expect(svc.handleP2PChatEntered).toHaveBeenCalledWith('ou_test_svc');
+      expect(svc.handleP2PChatEntered).toHaveBeenCalledWith('ou_test_svc', 'p2p');
     });
   });
 
@@ -80,7 +80,7 @@ describe('WelcomeHandler', () => {
 
       await handler.handleP2PChatEntered(data);
 
-      expect(mockService.handleP2PChatEntered).toHaveBeenCalledWith('ou_user123');
+      expect(mockService.handleP2PChatEntered).toHaveBeenCalledWith('ou_user123', 'p2p');
     });
 
     it('should skip when not running', async () => {
@@ -156,7 +156,7 @@ describe('WelcomeHandler', () => {
 
       await handler.handleChatMemberAdded(data);
 
-      expect(mockService.handleBotAddedToGroup).toHaveBeenCalledWith('oc_group123');
+      expect(mockService.handleBotAddedToGroup).toHaveBeenCalledWith('oc_group123', 'group');
       expect(mockService.handleUserJoinedGroup).not.toHaveBeenCalled();
     });
 
@@ -177,6 +177,7 @@ describe('WelcomeHandler', () => {
 
       expect(mockService.handleUserJoinedGroup).toHaveBeenCalledWith(
         'oc_group456',
+        'group',
         ['ou_user1', 'ou_user2'],
       );
       expect(mockService.handleBotAddedToGroup).not.toHaveBeenCalled();
@@ -198,7 +199,7 @@ describe('WelcomeHandler', () => {
       await handler.handleChatMemberAdded(data);
 
       // Bot added takes priority
-      expect(mockService.handleBotAddedToGroup).toHaveBeenCalledWith('oc_group789');
+      expect(mockService.handleBotAddedToGroup).toHaveBeenCalledWith('oc_group789', 'group');
       expect(mockService.handleUserJoinedGroup).not.toHaveBeenCalled();
     });
 
@@ -274,7 +275,10 @@ describe('WelcomeHandler', () => {
       expect(mockService.handleUserJoinedGroup).not.toHaveBeenCalled();
     });
 
-    it('should skip when chat_id is for private chat (starts with ou_)', async () => {
+    it('treats member-added as group context regardless of chat_id prefix (Issue #4136)', async () => {
+      // Classification comes from the event type (member-added => group), NOT
+      // from the chat_id prefix. A chat_id that happens to look like an open_id
+      // must not be skipped.
       const data: FeishuChatMemberAddedEventData = {
         event: {
           chat_id: 'ou_private123',
@@ -286,27 +290,7 @@ describe('WelcomeHandler', () => {
 
       await handler.handleChatMemberAdded(data);
 
-      expect(mockService.handleBotAddedToGroup).not.toHaveBeenCalled();
-      expect(mockService.handleUserJoinedGroup).not.toHaveBeenCalled();
-    });
-
-    it('should not call any handler when only the bot is added to a non-group chat', async () => {
-      const data: FeishuChatMemberAddedEventData = {
-        event: {
-          chat_id: 'ou_private456',
-          timestamp: '1234567890',
-          members: [
-            { member_id_type: 'app_id', member_id: 'test_app_id' },
-            { member_id_type: 'open_id', member_id: 'ou_user1' },
-          ],
-          operator: { operator_id_type: 'open_id', operator_id: 'ou_admin' },
-        },
-      };
-
-      await handler.handleChatMemberAdded(data);
-
-      // All member additions to non-group chats are skipped
-      expect(mockService.handleBotAddedToGroup).not.toHaveBeenCalled();
+      expect(mockService.handleBotAddedToGroup).toHaveBeenCalledWith('ou_private123', 'group');
       expect(mockService.handleUserJoinedGroup).not.toHaveBeenCalled();
     });
 
@@ -330,6 +314,7 @@ describe('WelcomeHandler', () => {
       expect(mockService.handleBotAddedToGroup).not.toHaveBeenCalled();
       expect(mockService.handleUserJoinedGroup).toHaveBeenCalledWith(
         'oc_test',
+        'group',
         ['test_app_id', 'different_app', 'ou_user1'],  // All filtered as non-bot users
       );
     });
@@ -352,6 +337,7 @@ describe('WelcomeHandler', () => {
 
       expect(mockService.handleUserJoinedGroup).toHaveBeenCalledWith(
         'oc_group',
+        'group',
         ['ou_user1', 'ou_user2'],
       );
     });

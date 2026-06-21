@@ -90,3 +90,7 @@ export {
 // Process Lock (Issue #3417)
 export type { ProcessLockOptions } from './process-lock.js';
 export { ProcessLock } from './process-lock.js';
+
+// Chat Type Utilities (Issue #4136)
+export type { ChatType } from './chat-type-utils.js';
+export { isGroupChat, isPrivateChat } from './chat-type-utils.js';
