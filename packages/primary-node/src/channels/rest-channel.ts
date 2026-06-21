@@ -303,8 +303,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       // Async mode: update session status
       const session = this.sessionManager.get(message.chatId);
       if (session) {
-        session.status = 'completed';
-        session.updatedAt = Date.now();
+        this.sessionManager.complete(message.chatId);
         logger.info(
           { chatId: message.chatId, messageId },
           'Task completed, async session updated'
@@ -342,18 +341,15 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       }
 
       // Async mode: add to session messages
-      const session = this.sessionManager.get(message.chatId);
-      if (session) {
+      if (this.sessionManager.has(message.chatId)) {
         const now = Date.now();
         const assistantMessageId = `resp_${now}_${Math.random().toString(36).slice(2, 8)}`;
-        session.messages.push({
+        this.sessionManager.addMessage(message.chatId, {
           id: assistantMessageId,
           role: 'assistant',
           content: message.text,
           timestamp: now,
         });
-        session.lastMessageId = assistantMessageId;
-        session.updatedAt = now;
         logger.debug(
           { chatId: message.chatId, messageId: assistantMessageId },
           'Async session: added assistant message'
@@ -634,7 +630,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     }
 
     // Get or create session state
-    let session = this.sessionManager.get(chatId);
+    const session = this.sessionManager.get(chatId);
 
     // Poll mode: no message in request
     if (!chatRequest?.message) {
@@ -683,19 +679,17 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     // Create new session or update existing
     if (!session) {
-      session = this.sessionManager.create(chatId);
+      this.sessionManager.create(chatId);
     }
 
-    // Add user message
-    session.messages.push({
+    // Add user message and mark session as processing
+    this.sessionManager.addMessage(chatId, {
       id: messageId,
       role: 'user',
       content: chatRequest.message,
       timestamp: now,
     });
-    session.lastMessageId = messageId;
-    session.status = 'processing';
-    session.updatedAt = now;
+    this.sessionManager.setStatus(chatId, 'processing');
 
     // Set up response buffer for this message
     this.responseBuffers.set(messageId, []);
@@ -716,8 +710,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         });
       } catch (error) {
         logger.error({ err: error, messageId }, 'Failed to handle async message');
-        session.status = 'error';
-        session.updatedAt = Date.now();
+        this.sessionManager.setStatus(chatId, 'error');
         this.sendError(res, 500, 'Failed to process message');
         return;
       }
