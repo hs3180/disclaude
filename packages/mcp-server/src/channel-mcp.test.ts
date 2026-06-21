@@ -7,7 +7,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock all tool implementations before importing the module
+// Mock all tool implementations before importing the module.
+// Every handler channel-mcp.ts imports from ./tools/index.js must be listed
+// here, or the module fails to load (Issue #4075 added loop_start/loop_stop/
+// loop_status handlers without updating this mock).
 vi.mock('./tools/index.js', () => ({
   send_text: vi.fn(),
   send_card: vi.fn(),
@@ -15,6 +18,9 @@ vi.mock('./tools/index.js', () => ({
   send_file: vi.fn(),
   push_to_agent: vi.fn(),
   setMessageSentCallback: vi.fn(),
+  loop_start: vi.fn(),
+  loop_stop: vi.fn(),
+  loop_status: vi.fn(),
 }));
 
 vi.mock('./utils/card-validator.js', () => ({
