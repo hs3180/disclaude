@@ -13,7 +13,7 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
-import { createLogger, isGroupChat as _isGroupChat, isPrivateChat as _isPrivateChat } from '@disclaude/core';
+import { createLogger, isGroupChat, isPrivateChat } from '@disclaude/core';
 
 const logger = createLogger('WelcomeService');
 
@@ -49,28 +49,15 @@ export class WelcomeService {
   }
 
   /**
-   * Check if a chat ID is a private chat.
-   * Delegates to shared utility from @disclaude/core (Issue #4136).
-   */
-  isPrivateChat(chatId: string): boolean {
-    return _isPrivateChat(chatId);
-  }
-
-  /**
-   * Check if a chat ID is a group chat.
-   * Delegates to shared utility from @disclaude/core (Issue #4136).
-   */
-  isGroupChat(chatId: string): boolean {
-    return _isGroupChat(chatId);
-  }
-
-  /**
    * Handle bot being added to a group chat.
    * Sends welcome message with help.
+   *
+   * @param chatId - The group chat ID (address only; classification is by chatType)
+   * @param chatType - The chat type from the triggering event
    */
-  async handleBotAddedToGroup(chatId: string): Promise<void> {
-    if (!this.isGroupChat(chatId)) {
-      logger.warn({ chatId }, 'handleBotAddedToGroup called with non-group chat ID');
+  async handleBotAddedToGroup(chatId: string, chatType: string): Promise<void> {
+    if (!isGroupChat(chatType)) {
+      logger.warn({ chatId, chatType }, 'handleBotAddedToGroup called with non-group chat type');
       return;
     }
 
@@ -90,12 +77,13 @@ export class WelcomeService {
    *
    * Issue #676: 新用户加入群聊时发送 /help 信息
    *
-   * @param chatId - The group chat ID
+   * @param chatId - The group chat ID (address only; classification is by chatType)
+   * @param chatType - The chat type from the triggering event
    * @param userIds - Array of user open_ids who joined (optional, for future use)
    */
-  async handleUserJoinedGroup(chatId: string, userIds?: string[]): Promise<void> {
-    if (!this.isGroupChat(chatId)) {
-      logger.warn({ chatId }, 'handleUserJoinedGroup called with non-group chat ID');
+  async handleUserJoinedGroup(chatId: string, chatType: string, userIds?: string[]): Promise<void> {
+    if (!isGroupChat(chatType)) {
+      logger.warn({ chatId, chatType }, 'handleUserJoinedGroup called with non-group chat type');
       return;
     }
 
@@ -118,12 +106,17 @@ export class WelcomeService {
    * Handle first private chat with a user.
    * Sends welcome message with help if this is the first time.
    *
+   * @param chatId - The private chat ID / user open_id (address only; classification is by chatType)
+   * @param chatType - The chat type from the triggering event
    * @returns 'sent' if welcome was just sent, 'already_sent' if already sent before,
    *          'failed' if an error occurred, 'skipped' if not a private chat.
    */
-  async handleFirstPrivateChat(chatId: string): Promise<'sent' | 'already_sent' | 'failed' | 'skipped'> {
-    if (!this.isPrivateChat(chatId)) {
-      logger.debug({ chatId }, 'handleFirstPrivateChat called with non-private chat ID');
+  async handleFirstPrivateChat(
+    chatId: string,
+    chatType: string
+  ): Promise<'sent' | 'already_sent' | 'failed' | 'skipped'> {
+    if (!isPrivateChat(chatType)) {
+      logger.debug({ chatId, chatType }, 'handleFirstPrivateChat called with non-private chat type');
       return 'skipped';
     }
 
@@ -154,8 +147,11 @@ export class WelcomeService {
    * Handle P2P chat entered event.
    * This is called when a user starts a private chat with the bot.
    */
-  handleP2PChatEntered(chatId: string): Promise<'sent' | 'already_sent' | 'failed' | 'skipped'> {
-    return this.handleFirstPrivateChat(chatId);
+  handleP2PChatEntered(
+    chatId: string,
+    chatType: string
+  ): Promise<'sent' | 'already_sent' | 'failed' | 'skipped'> {
+    return this.handleFirstPrivateChat(chatId, chatType);
   }
 
   /**

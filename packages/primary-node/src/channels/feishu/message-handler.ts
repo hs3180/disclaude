@@ -18,6 +18,7 @@ import {
   REACTIONS,
   CHAT_HISTORY,
   createLogger,
+  isGroupChat,
   stripLeadingMentions,
   ensureFileExtensionFromPath,
   type FeishuEventData,
@@ -518,13 +519,6 @@ export class MessageHandler {
   }
 
   /**
-   * Check if the chat is a group chat.
-   */
-  private isGroupChat(chatType?: string): boolean {
-    return chatType === 'group' || chatType === 'topic';
-  }
-
-  /**
    * Forward a filtered message (simplified - just logs for now).
    */
   private forwardFilteredMessage(
@@ -995,7 +989,7 @@ export class MessageHandler {
 
       // Issue #3828: Apply @mention/trigger mode check for file/image messages in group/topic chats
       const fileBotMentioned = this.mentionDetector.isBotMentioned(mentions);
-      if (this.isGroupChat(chat_type) && !fileBotMentioned) {
+      if (isGroupChat(chat_type) && !fileBotMentioned) {
         if (this.triggerModeManager.getMode(chat_id) === 'auto'
           && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
           await this.checkAndAutoDisableSmallGroup(chat_id);
@@ -1011,7 +1005,7 @@ export class MessageHandler {
       }
 
       // Get chat history context when bot IS mentioned in group/topic for file messages
-      if (this.isGroupChat(chat_type) && fileBotMentioned) {
+      if (isGroupChat(chat_type) && fileBotMentioned) {
         const chatHistoryContext = await this.getChatHistoryContext(chat_id);
         if (chatHistoryContext) {
           fileMetadata.chatHistoryContext = chatHistoryContext;
@@ -1121,7 +1115,7 @@ export class MessageHandler {
     // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
     // Issue #3592: Re-check small group status even when already marked (allows unmarking when group grows)
     const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
-    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
+    if (isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
       // Issue #3592: Always re-check small group status in 'auto' mode (with throttle)
       // In 'mention' mode, user explicitly wants mention-only regardless of group size
       if (this.triggerModeManager.getMode(chat_id) === 'auto'
@@ -1205,7 +1199,7 @@ export class MessageHandler {
     // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
     // Issue #3989: For topic groups, use thread context only (not flat chat history)
     // to avoid mixing messages from different threads.
-    const isTriggerModeMention = this.isGroupChat(chat_type) && botMentioned;
+    const isTriggerModeMention = isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
     let threadContext: string | undefined;
 

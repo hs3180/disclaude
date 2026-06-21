@@ -9,8 +9,22 @@
  * Migrated to @disclaude/primary-node (Issue #1040)
  */
 
-import { createLogger, isGroupChat, type FeishuChatMemberAddedEventData, type FeishuP2PChatEnteredEventData } from '@disclaude/core';
+import { createLogger, type FeishuChatMemberAddedEventData, type FeishuP2PChatEnteredEventData } from '@disclaude/core';
 import type { WelcomeService } from '../../platforms/feishu/welcome-service.js';
+
+/**
+ * Chat type is implied by the Feishu event type at this boundary (the event
+ * payloads themselves carry no `chat_type` field):
+ * - bot_p2p_chat_entered_v1  → 'p2p'   (a user opened a private chat with the bot)
+ * - im.chat.member.added     → 'group' (members are added to group chats; P2P
+ *                                      chats are established by messaging, not
+ *                                      by member-add events)
+ *
+ * Classifying by event type — not by sniffing the chat ID prefix — keeps the
+ * welcome flow decoupled from Feishu's ID scheme. Issue #4136.
+ */
+const CHAT_TYPE_FROM_P2P_ENTERED = 'p2p';
+const CHAT_TYPE_FROM_MEMBER_ADDED = 'group';
 
 const logger = createLogger('WelcomeHandler');
 
@@ -43,14 +57,6 @@ export class WelcomeHandler {
   }
 
   /**
-   * Check if a chat ID is a group chat based on ID prefix.
-   * Delegates to shared utility from @disclaude/core (Issue #4136).
-   */
-  private isGroupChatId(chatId: string): boolean {
-    return isGroupChat(chatId);
-  }
-
-  /**
    * Handle P2P chat entered event.
    * Triggered when a user starts a private chat with the bot.
    */
@@ -68,7 +74,7 @@ export class WelcomeHandler {
     const userId = event.user.open_id;
     logger.info({ userId }, 'P2P chat entered, sending welcome message');
 
-    await this.welcomeService.handleP2PChatEntered(userId);
+    await this.welcomeService.handleP2PChatEntered(userId, CHAT_TYPE_FROM_P2P_ENTERED);
   }
 
   /**
@@ -83,12 +89,6 @@ export class WelcomeHandler {
     const { event } = data;
     if (!event?.chat_id || !event?.members || event.members.length === 0) {
       logger.debug('Chat member added event missing required fields');
-      return;
-    }
-
-    // Only send messages to group chats
-    if (!this.isGroupChatId(event.chat_id)) {
-      logger.debug({ chatId: event.chat_id }, 'Member added to non-group chat, skipping');
       return;
     }
 
@@ -109,7 +109,7 @@ export class WelcomeHandler {
     if (botMemberAdded) {
       // Bot was added to the group -> send welcome message
       logger.info({ chatId: event.chat_id }, 'Bot added to group, sending welcome message');
-      await this.welcomeService.handleBotAddedToGroup(event.chat_id);
+      await this.welcomeService.handleBotAddedToGroup(event.chat_id, CHAT_TYPE_FROM_MEMBER_ADDED);
     } else if (userMembers.length > 0) {
       // Users joined a group that already has the bot -> send help message
       logger.info(
@@ -117,7 +117,7 @@ export class WelcomeHandler {
         'New users joined group, sending help message'
       );
       const userIds = userMembers.map((m) => m.member_id);
-      await this.welcomeService.handleUserJoinedGroup(event.chat_id, userIds);
+      await this.welcomeService.handleUserJoinedGroup(event.chat_id, CHAT_TYPE_FROM_MEMBER_ADDED, userIds);
     }
   }
 }
