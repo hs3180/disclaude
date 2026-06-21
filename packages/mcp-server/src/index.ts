@@ -11,8 +11,7 @@
  * - MCP servers
  */
 
-import { createRequire } from 'module';
-const _require = createRequire(import.meta.url);
+import pkg from '../package.json' with { type: 'json' };
 
 // Tool Types
 export type {
@@ -90,4 +89,4 @@ export { feishuSdkTools } from './channel-mcp.js';
 export { createFeishuSdkMcpServer } from './channel-mcp.js';
 
 // Version — read from package.json to avoid drift
-export const MCP_SERVER_VERSION = _require('../package.json').version as string;
+export const MCP_SERVER_VERSION = pkg.version;
