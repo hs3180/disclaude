@@ -637,18 +637,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
 
     const { size: fileSize } = await fsp.stat(filePath);
-    if (fileSize > 10 * 1024 * 1024) {
-      throw new Error(`Image file too large: ${fileSize} bytes (max 10MB)`);
+    if (fileSize > MAX_IMAGE_SIZE) {
+      throw new Error(`Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)`);
     }
 
-    const uploadResp = await this.client.im.image.create({
-      data: {
-        image_type: 'message',
-        image: fs.createReadStream(filePath),
-      },
-    });
-
-    const imageKey = uploadResp?.image_key;
+    // Issue #4132: reuse shared upload utility (dedup with the send path).
+    const imageKey = await uploadImage(this.client, filePath);
     if (!imageKey) {
       throw new Error(`Failed to upload image: ${path.basename(filePath)}`);
     }
