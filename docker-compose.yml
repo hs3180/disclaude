@@ -158,10 +158,25 @@ services:
           echo "FATAL: could not determine a bridge-network IPv4 for CDP_HOST" >&2
           exit 1
         fi
+        # Resolve the Docker bridge gateway IP. A request arriving from the host
+        # (via the published loopback port) is SNAT'd through this gateway, so nginx
+        # sees it as $remote_addr == gateway. The nginx map uses this to detect
+        # host-originated requests and embed 127.0.0.1 into their webSocketDebuggerUrl
+        # (instead of CDP_HOST), so the host MCP connects back over loopback. See
+        # docker/playwright-cdp-nginx.conf header comment.
+        GATEWAY=$$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
+        if [ -z "$$GATEWAY" ]; then
+          GATEWAY=$$(route -n 2>/dev/null | awk '$$1=="0.0.0.0"{print $$2; exit}')
+        fi
+        if [ -z "$$GATEWAY" ]; then
+          echo "FATAL: could not determine the bridge gateway IP" >&2
+          exit 1
+        fi
         # Substitute the placeholders in the mounted nginx config (see
         # docker/playwright-cdp-nginx.conf), then start nginx. nginx cannot read env
-        # vars for `listen`/`proxy_pass`/headers at runtime, so we template them here.
-        sed "s/__CDP_HOST__/$$CDP_HOST/g; s/__CDP_PORT__/$$CDP_PORT/g; s/__CDP_INTERNAL_PORT__/$$CDP_INTERNAL_PORT/g" \
+        # vars for `map`/`listen`/`proxy_pass`/headers at runtime, so we template
+        # them here.
+        sed "s/__CDP_HOST__/$$CDP_HOST/g; s/__GATEWAY__/$$GATEWAY/g; s/__CDP_PORT__/$$CDP_PORT/g; s/__CDP_INTERNAL_PORT__/$$CDP_INTERNAL_PORT/g" \
             /etc/nginx/cdp-proxy.conf.template > /tmp/cdp-nginx.conf
         nginx -c /tmp/cdp-nginx.conf
         exec /ms-playwright/chromium-*/chrome-linux64/chrome \
@@ -188,6 +203,19 @@ services:
 
     networks:
       - disclaude-net
+
+    # Publish the nginx-fronted CDP endpoint to the host so MCP clients running
+    # on the host (user-scope ~/.claude.json) can reach it at localhost:${CDP_PORT}.
+    # This is more stable than pinning the container's bridge IP (which can change
+    # when the network is recreated). nginx already listens on 0.0.0.0:${CDP_PORT},
+    # so we publish the same port it fronts.
+    #
+    # Bind to the loopback interface only (127.0.0.1), NOT 0.0.0.0. Chrome's CDP
+    # exposes the live browser session (pages, JS context, network) unauthenticated,
+    # so binding to all interfaces would let any host on the LAN drive the browser.
+    # The MCP client runs on this same host, so loopback is sufficient.
+    ports:
+      - "127.0.0.1:${CDP_PORT:-9222}:9222"
 
     volumes:
       # nginx reverse-proxy config (templated with port placeholders). See the
