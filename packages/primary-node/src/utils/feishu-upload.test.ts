@@ -4,11 +4,11 @@
  * Issue #4132: Deduplicate Feishu file upload logic.
  *
  * Tests cover:
- * - IMAGE_EXTENSIONS membership
+ * - IMAGE_EXTENSIONS membership (incl. explicit .svg exclusion — Feishu image API rejects it)
  * - EXT_TO_FEISHU_FILE_TYPE mapping (and fallback to 'stream' handled by callers)
  * - MAX_IMAGE_SIZE / MAX_FILE_SIZE constants
- * - uploadImage: success path, request shape, missing image_key
- * - uploadFile: success path, request shape, missing file_key
+ * - uploadImage: success path, request shape, missing image_key, error propagation
+ * - uploadFile: success path, request shape, missing file_key, error propagation
  */
 
 import * as fs from 'node:fs';
@@ -77,10 +77,15 @@ describe('feishu-upload constants', () => {
         '.tiff',
         '.bmp',
         '.ico',
-        '.svg',
       ]) {
         expect(IMAGE_EXTENSIONS.has(ext)).toBe(true);
       }
+    });
+
+    it('excludes .svg (Feishu im.image.create rejects it → routed to file upload)', () => {
+      // Feishu's image API accepts only png/jpg/jpeg/webp/gif/tiff/bmp/ico.
+      // SVG must fall through to im.file.create ('stream') to upload successfully.
+      expect(IMAGE_EXTENSIONS.has('.svg')).toBe(false);
     });
 
     it('rejects non-image extensions', () => {
@@ -167,6 +172,16 @@ describe('uploadImage', () => {
 
     expect(imageKey).toBeUndefined();
   });
+
+  it('propagates errors thrown by im.image.create', async () => {
+    const err = new Error('image upload failed');
+    client.im.image.create.mockImplementation(async (opts: any) => {
+      await consumeStream(opts.data.image);
+      throw err;
+    });
+
+    await expect(uploadImage(client as any, tmpFile)).rejects.toBe(err);
+  });
 });
 
 describe('uploadFile', () => {
@@ -228,5 +243,15 @@ describe('uploadFile', () => {
     const fileKey = await uploadFile(client as any, tmpFile, 'report.pdf', 'pdf');
 
     expect(fileKey).toBeUndefined();
+  });
+
+  it('propagates errors thrown by im.file.create', async () => {
+    const err = new Error('file upload failed');
+    client.im.file.create.mockImplementation(async (opts: any) => {
+      await consumeStream(opts.data.file);
+      throw err;
+    });
+
+    await expect(uploadFile(client as any, tmpFile, 'report.pdf', 'pdf')).rejects.toBe(err);
   });
 });

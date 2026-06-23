@@ -10,10 +10,16 @@ import * as fs from 'node:fs';
 import type * as lark from '@larksuiteoapi/node-sdk';
 
 /**
- * Image file extensions recognized by Feishu image upload API.
+ * Image file extensions recognized by the Feishu image upload API
+ * (im.image.create / im-v1/image/create).
+ *
+ * NOTE: `.svg` is intentionally excluded — Feishu rejects SVG on the image
+ * API (400 "unsupported image format"; only png/jpg/jpeg/webp/gif/tiff/bmp/ico
+ * are accepted). SVG therefore falls through to im.file.create as a `stream`
+ * file, which uploads successfully.
  */
 export const IMAGE_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico', '.svg',
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico',
 ]);
 
 /**
