@@ -32,9 +32,11 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (arg: { name: string; version: string }) => mockCreateSdkMcpServer(arg),
 }));
 
-// Mock the logger to prevent noise in test output
-vi.mock('../../../utils/logger.js', () => ({
-  createLogger: () => ({
+// Mock the logger to prevent noise in test output.
+// 共享同一个 mock 实例(createLogger 每次返回同一对象),以便断言 provider 内部对
+// logger.warn / logger.info 的调用 —— 例如 system-flood 检测是否真的触发了 warn。
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: {
     info: vi.fn(),
     debug: vi.fn(),
     warn: vi.fn(),
@@ -45,7 +47,11 @@ vi.mock('../../../utils/logger.js', () => ({
       warn: vi.fn(),
       error: vi.fn(),
     })),
-  }),
+  },
+}));
+
+vi.mock('../../../utils/logger.js', () => ({
+  createLogger: () => loggerMock,
 }));
 
 // ============================================================================
@@ -396,6 +402,102 @@ describe('ClaudeSDKProvider', () => {
       expect(messages.every((m) => m.content === '')).toBe(true);
       // D1:subtype 经 adapter 保留到 metadata,在 provider 层可见(供诊断)
       expect(messages[0].metadata?.systemSubtype).toBe('task_started');
+      // D2:超过阈值时确实发出了 flood warn(且只发一次,防止刷屏)
+      const floodWarnCalls = loggerMock.warn.mock.calls.filter(
+        ([, msg]) => typeof msg === 'string' && /flood/i.test(msg),
+      );
+      expect(floodWarnCalls).toHaveLength(1);
+    });
+
+    // 修正点①:contentful 的 system 消息(如 status:"🤔 Thinking…")不应重置 flood 计数。
+    // 否则「空消息 + 偶发 status」交替的 flood 会被不断清零、永远到不了阈值。
+    // (旧逻辑会把计数清零 → 最终不到 50;新逻辑只由非 system 进展重置 → 命中 50)
+    it('should NOT reset flood counter on contentful system messages (e.g. status)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      // 30 空 system → 1 条带 content 的 status(映射成 role:'system' + "🤔 Thinking…")→ 30 空 system
+      const messageSeq = [
+        ...Array.from({ length: 30 }, () => ({ type: 'system' as const, subtype: 'task_started' })),
+        { type: 'system' as const, subtype: 'status', status: 'requesting' },
+        ...Array.from({ length: 30 }, () => ({ type: 'system' as const, subtype: 'task_started' })),
+      ];
+
+      mockQuery.mockReturnValue((async function* () {
+        for (const msg of messageSeq) {
+          yield msg;
+        }
+      })());
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Hi' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'],
+        cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) {
+        messages.push(msg);
+      }
+
+      // warn-only:全部 yield(共 61 条)
+      expect(messages.length).toBe(61);
+      // 关键断言:尽管中间夹了一条带 content 的 status,flood warn 仍命中(证明未被重置)
+      const floodWarnCalls = loggerMock.warn.mock.calls.filter(
+        ([, msg]) => typeof msg === 'string' && /flood/i.test(msg),
+      );
+      expect(floodWarnCalls).toHaveLength(1);
+    });
+
+    // 修正点③:阈值可经 DISCLAUDE_SYSTEM_FLOOD_THRESHOLD 调节(须为正整数)。
+    it('should honor DISCLAUDE_SYSTEM_FLOOD_THRESHOLD env override', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      const prevThreshold = process.env.DISCLAUDE_SYSTEM_FLOOD_THRESHOLD;
+      process.env.DISCLAUDE_SYSTEM_FLOOD_THRESHOLD = '5';
+
+      try {
+        // 10 条空 system:默认阈值 50 下不会命中;降到 5 后应在累计到 5 时命中
+        const floodMessages = Array.from({ length: 10 }, () => ({
+          type: 'system' as const,
+          subtype: 'task_started',
+        }));
+
+        mockQuery.mockReturnValue((async function* () {
+          for (const msg of floodMessages) {
+            yield msg;
+          }
+        })());
+
+        async function* testInput(): AsyncGenerator<UserInput> {
+          yield { role: 'user', content: 'Hi' };
+        }
+
+        const result = provider.queryStream(testInput(), {
+          settingSources: ['user', 'project', 'local'],
+          cwd: '/workspace',
+          env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+        });
+
+        const messages: AgentMessage[] = [];
+        for await (const msg of result.iterator) {
+          messages.push(msg);
+        }
+
+        expect(messages.length).toBe(10);
+        const floodWarnCalls = loggerMock.warn.mock.calls.filter(
+          ([, msg]) => typeof msg === 'string' && /flood/i.test(msg),
+        );
+        expect(floodWarnCalls).toHaveLength(1);
+      } finally {
+        if (prevThreshold === undefined) {
+          delete process.env.DISCLAUDE_SYSTEM_FLOOD_THRESHOLD;
+        } else {
+          process.env.DISCLAUDE_SYSTEM_FLOOD_THRESHOLD = prevThreshold;
+        }
+      }
     });
 
     it('should pass adapted options to SDK query', () => {

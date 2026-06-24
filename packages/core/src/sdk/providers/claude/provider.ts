@@ -339,7 +339,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // text。现有 assistant-text 检测对它无效,故补充 system-message flood 检测。
         let consecutiveEmptySystemCount = 0;
         let lastSystemSubtype: string | undefined;
-        const SYSTEM_FLOOD_THRESHOLD = 50;
+        // 可经 DISCLAUDE_SYSTEM_FLOOD_THRESHOLD 调节(须为正整数;默认 50,对齐真实
+        // Agent Teams flood 量级)。IDLE_LOOP_THRESHOLD 保持硬编码以维持既有行为。
+        const envFloodThreshold = Number.parseInt(
+          process.env.DISCLAUDE_SYSTEM_FLOOD_THRESHOLD ?? '', 10,
+        );
+        const SYSTEM_FLOOD_THRESHOLD = Number.isFinite(envFloodThreshold) && envFloodThreshold > 0
+          ? envFloodThreshold
+          : 50;
         const model = options.model as string | undefined;
 
         for await (const message of queryResult) {
@@ -361,9 +368,15 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
               'SDK message received'
             );
           } else {
-            // D1:system 消息记录其 subtype,让刷屏的内部协调消息可诊断
+            // D1:system 消息记录其 subtype,让刷屏的内部协调消息可诊断。
+            // 仅对 system 类型附带 systemSubtype,避免在 tool_progress / result 等
+            // 非 system 消息上留下恒为 undefined 的字段。
             logger.info(
-              { messageCount, messageType: message.type, systemSubtype: adapted.metadata?.systemSubtype },
+              {
+                messageCount,
+                messageType: message.type,
+                ...(message.type === 'system' && { systemSubtype: adapted.metadata?.systemSubtype }),
+              },
               'SDK message received'
             );
           }
@@ -417,8 +430,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
                 + 'The SDK stream will not end until the upstream limit recovers. See Issue #3706.'
               );
             }
-          } else if (adapted.content || adapted.type === 'tool_use' || adapted.type === 'result') {
-            // 真实进展(有内容 / tool_use / result)→ 重置 flood 计数
+          } else if (
+            adapted.role !== 'system' &&
+            (adapted.content || adapted.type === 'tool_use' || adapted.type === 'result')
+          ) {
+            // 真实进展(非 system 角色:assistant 内容 / tool_use / result)→ 重置 flood 计数。
+            // 注意:只对「非 system 角色」重置 —— system 角色下带 content 的消息(如 status
+            // "🤔 Thinking…" / "🔄 Compacting…")仍属 system 通道噪声;若让它参与重置,会把
+            // 「空消息 + 偶发 status」交替的 flood 不断清零、永远到不了阈值。
             consecutiveEmptySystemCount = 0;
           }
 
