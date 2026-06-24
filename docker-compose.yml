@@ -78,6 +78,8 @@ services:
       # relocate it (e.g. to a larger/SSD volume). The container runs as uid 1001
       # (disclaude), so the host directory must be owned by 1001:1001 — otherwise
       # message handling fails with EACCES when it tries to write chat logs here.
+      # NOTE: if WORKSPACE_DIR points at a path that doesn't yet exist, docker
+      # creates it as root:root — mkdir + chown 1001:1001 it yourself first.
       - ${WORKSPACE_DIR:-./workspace}:/data/workspace
       - log_data:/data/logs
 
