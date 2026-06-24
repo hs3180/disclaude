@@ -12,6 +12,7 @@
 
 import type pino from 'pino';
 import type { SessionState, QueuedMessage, SessionStats } from './types.js';
+import { isSyntheticMessageId } from '../utils/message-id.js';
 
 /**
  * Configuration for ConversationSessionManager.
@@ -101,8 +102,17 @@ export class ConversationSessionManager {
    */
   setThreadRoot(chatId: string, threadRootId: string): void {
     const session = this.getOrCreate(chatId);
-    session.currentThreadRootId = threadRootId;
     session.lastActivity = Date.now();
+
+    // 合成消息 ID(定时任务 sched-*、push_* 等)非平台真实消息 ID,
+    // 不可作为线程根——否则后续回复会把它当 Feishu open_message_id 触发 400(99992354)。
+    // 跳过写入:既不覆盖已有真实线程根,也不建立无效锚点。
+    if (isSyntheticMessageId(threadRootId)) {
+      this.logger.debug({ chatId, threadRootId }, 'Skipping threadRoot for synthetic message ID');
+      return;
+    }
+
+    session.currentThreadRootId = threadRootId;
     this.logger.debug({ chatId, threadRootId }, 'Thread root set');
   }
 
