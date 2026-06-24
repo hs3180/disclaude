@@ -207,6 +207,30 @@ describe('HistoryManager (Issue #4125 part 2)', () => {
     });
   });
 
+  describe('consumeFirstMessageContext (Issue #1230)', () => {
+    it('returns the loaded context and clears it (consume-once)', async () => {
+      const callbacks = makeCallbacks({
+        getChatHistory: vi.fn().mockResolvedValue('consume-me'),
+      });
+      const mgr = makeManager(callbacks);
+
+      await mgr.loadFirstMessageHistory();
+      expect(mgr.firstMessageHistoryContext).toBe('consume-me');
+
+      // First call consumes the value.
+      expect(mgr.consumeFirstMessageContext()).toBe('consume-me');
+      // The context is cleared for subsequent reads.
+      expect(mgr.firstMessageHistoryContext).toBeUndefined();
+      // A second consume yields nothing.
+      expect(mgr.consumeFirstMessageContext()).toBeUndefined();
+    });
+
+    it('returns undefined when nothing was loaded', () => {
+      const mgr = makeManager();
+      expect(mgr.consumeFirstMessageContext()).toBeUndefined();
+    });
+  });
+
   describe('reset (Issue #955, #1230)', () => {
     it('clears all loaded context and flags so history can be reloaded', async () => {
       const getChatHistory = vi

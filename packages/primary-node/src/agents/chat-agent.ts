@@ -640,16 +640,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Issue #1230: Attach chat history on first message for new sessions
-    // Use pre-loaded firstMessageHistoryContext if no context was provided (passive mode)
+    // Use pre-loaded firstMessageHistoryContext if no context was provided (passive mode).
+    // consumeFirstMessageContext() returns the value and clears it so it attaches to
+    // exactly one message (consume-once).
     let effectiveChatHistoryContext = chatHistoryContext;
-    if (!chatHistoryContext && this.historyManager.firstMessageHistoryContext) {
-      effectiveChatHistoryContext = this.historyManager.firstMessageHistoryContext;
-      this.logger.info(
-        { chatId, messageId, historyLength: effectiveChatHistoryContext.length },
-        'Using pre-loaded chat history for first message'
-      );
-      // Clear after first use
-      this.historyManager.firstMessageHistoryContext = undefined;
+    if (!effectiveChatHistoryContext) {
+      const preloaded = this.historyManager.consumeFirstMessageContext();
+      if (preloaded) {
+        effectiveChatHistoryContext = preloaded;
+        this.logger.info(
+          { chatId, messageId, historyLength: effectiveChatHistoryContext.length },
+          'Using pre-loaded chat history for first message'
+        );
+      }
     }
 
     // Get capabilities for message building
