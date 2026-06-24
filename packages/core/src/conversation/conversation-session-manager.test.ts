@@ -381,10 +381,11 @@ describe('ConversationSessionManager', () => {
 
   describe('setThreadRoot - synthetic message ID filtering', () => {
     // 合成 ID 不可作为线程根,否则 Feishu 线程回复会触发 400(99992354)。
-    // 来源:scheduler(sched-)、push(push_)、cli(cli-)、handleInput(msg-)、微信卡片(wechat_interactive_)
+    // 来源:scheduler(sched-)、push(push_/http-push-)、cli(cli-)、handleInput(msg-)、微信卡片(wechat_interactive_)
     it.each([
       ['sched-', 'sched-schedule-pr-scanner-1780907400594'],
       ['push_', 'push_0638cffc-adeb-47df-a3ac-ebaaaedaee43'],
+      ['http-push-', 'http-push-550e8400-e29b-41d4-a716-446655440000'],
       ['cli-', 'cli-1719123456789'],
       ['msg-', 'msg-1719123456789'],
       ['wechat_interactive_', 'wechat_interactive_abc-123'],

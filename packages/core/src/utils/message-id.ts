@@ -13,14 +13,20 @@
 
 /**
  * 合成消息 ID 前缀——内部生成、非真实平台消息 ID。
- * 来源见各生成点,前缀集合为封闭枚举。
+ *
+ * ⚠️ 这是一个「活注册表」,并非封闭枚举:合成来源分散在 core 与 primary-node
+ * 两个包,新增任何内部合成消息来源(尤其 primary-node 里的新 HTTP 端点/适配器)
+ * 都必须把其前缀补进本列表,否则该 ID 会被当真实消息 ID 存为 threadRoot,
+ * 复现 #4166 的 HTTP 400(99992354: not a valid open_message_id)。
+ * 同步请补 message-id.test.ts / conversation-session-manager.test.ts 的用例。
  */
 const SYNTHETIC_MESSAGE_ID_PREFIXES = [
-  'sched-',              // packages/core/src/scheduling/scheduler.ts — 定时任务
-  'push_',               // rest-channel.ts / wired-descriptors.ts — push 端点
-  'cli-',                // cli-adapter.ts — CLI 适配器
-  'msg-',                // chat-agent.ts handleInput 兜底
-  'wechat_interactive_', // wired-descriptors.ts — 微信卡片
+  'sched-',              // core/src/scheduling/scheduler.ts — 定时任务
+  'push_',               // primary-node/src/channels/rest-channel.ts、wired-descriptors.ts — push 端点
+  'http-push-',          // primary-node/src/cli.ts — HTTP API push handler(Issue #3857)
+  'cli-',                // primary-node/src/messaging/adapters/cli-adapter.ts — CLI 适配器
+  'msg-',                // primary-node/src/agents/chat-agent.ts handleInput 兜底
+  'wechat_interactive_', // primary-node/src/channels/wired-descriptors.ts — 微信卡片
 ] as const;
 
 /**
