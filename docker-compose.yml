@@ -208,14 +208,16 @@ services:
     # on the host (user-scope ~/.claude.json) can reach it at localhost:${CDP_PORT}.
     # This is more stable than pinning the container's bridge IP (which can change
     # when the network is recreated). nginx already listens on 0.0.0.0:${CDP_PORT},
-    # so we publish the same port it fronts.
+    # so we publish that same port on both sides — the container-side port MUST equal
+    # ${CDP_PORT}, which is where nginx listens (NOT a fixed 9222; a fixed value would
+    # break the host-scope MCP whenever CDP_PORT is overridden).
     #
     # Bind to the loopback interface only (127.0.0.1), NOT 0.0.0.0. Chrome's CDP
     # exposes the live browser session (pages, JS context, network) unauthenticated,
     # so binding to all interfaces would let any host on the LAN drive the browser.
     # The MCP client runs on this same host, so loopback is sufficient.
     ports:
-      - "127.0.0.1:${CDP_PORT:-9222}:9222"
+      - "127.0.0.1:${CDP_PORT:-9222}:${CDP_PORT:-9222}"
 
     volumes:
       # nginx reverse-proxy config (templated with port placeholders). See the
