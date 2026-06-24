@@ -400,7 +400,9 @@ describe('FeishuAdapter — Issue #1619', () => {
       expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
     });
 
-    it('should detect SVG as image type', async () => {
+    it('should upload SVG as a file (Feishu image API rejects SVG)', async () => {
+      // Feishu's im.image.create accepts only png/jpg/jpeg/webp/gif/tiff/bmp/ico.
+      // SVG is therefore routed to im.file.create ('stream') to upload successfully.
       const { client, mocks } = createMockClient();
       const adapter = createTestAdapter(client);
 
@@ -414,8 +416,8 @@ describe('FeishuAdapter — Issue #1619', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(mocks.imageCreateMock).toHaveBeenCalledTimes(1);
-      expect(mocks.fileCreateMock).not.toHaveBeenCalled();
+      expect(mocks.fileCreateMock).toHaveBeenCalledTimes(1);
+      expect(mocks.imageCreateMock).not.toHaveBeenCalled();
     });
   });
 
