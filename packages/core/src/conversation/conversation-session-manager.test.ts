@@ -378,4 +378,56 @@ describe('ConversationSessionManager', () => {
       expect(manager.deleteThreadRoot('chat-1')).toBe(false);
     });
   });
+
+  describe('setThreadRoot - synthetic message ID filtering', () => {
+    // 合成 ID 不可作为线程根,否则 Feishu 线程回复会触发 400(99992354)。
+    // 来源:scheduler(sched-)、push(push_)、cli(cli-)、handleInput(msg-)、微信卡片(wechat_interactive_)
+    it.each([
+      ['sched-', 'sched-schedule-pr-scanner-1780907400594'],
+      ['push_', 'push_0638cffc-adeb-47df-a3ac-ebaaaedaee43'],
+      ['cli-', 'cli-1719123456789'],
+      ['msg-', 'msg-1719123456789'],
+      ['wechat_interactive_', 'wechat_interactive_abc-123'],
+    ])('should reject synthetic %s prefix', (_label, syntheticId) => {
+      manager.setThreadRoot('chat-1', syntheticId);
+      expect(manager.getThreadRoot('chat-1')).toBeUndefined();
+    });
+
+    // 派生后缀:真实 message_id 被改写为 -audio/-file 后不再合法
+    it.each([['-audio', 'om_abc123-audio'], ['-file', 'om_abc123-file']])(
+      'should reject derived %s suffix',
+      (_label, syntheticId) => {
+        manager.setThreadRoot('chat-1', syntheticId);
+        expect(manager.getThreadRoot('chat-1')).toBeUndefined();
+      },
+    );
+
+    it('should accept real platform message ID', () => {
+      manager.setThreadRoot('chat-1', 'om_5e8c7b1f2a3d4e5f');
+      expect(manager.getThreadRoot('chat-1')).toBe('om_5e8c7b1f2a3d4e5f');
+    });
+
+    it('should not overwrite a real thread root when a synthetic ID arrives', () => {
+      manager.setThreadRoot('chat-1', 'om_real_msg_1');
+      // 同一会话后续进来一条定时任务的合成消息,不得覆盖已有真实线程根
+      manager.setThreadRoot('chat-1', 'sched-schedule-pr-scanner-123');
+      expect(manager.getThreadRoot('chat-1')).toBe('om_real_msg_1');
+    });
+
+    it('should still update lastActivity when filtering a synthetic ID', () => {
+      const session = manager.getOrCreate('chat-1');
+      const before = session.lastActivity;
+      vi.spyOn(Date, 'now').mockReturnValue(before + 500);
+      manager.setThreadRoot('chat-1', 'push_synthetic-id');
+      // 会话活性追踪不受过滤影响
+      expect(manager.get('chat-1')!.lastActivity).toBe(before + 500);
+      vi.restoreAllMocks();
+    });
+
+    it('should reflect unset thread root in stats for synthetic-only session', () => {
+      manager.setThreadRoot('chat-1', 'sched-schedule-pr-scanner-123');
+      const stats = manager.getStats('chat-1');
+      expect(stats!.threadRootId).toBeUndefined();
+    });
+  });
 });
