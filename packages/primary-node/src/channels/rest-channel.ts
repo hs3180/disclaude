@@ -301,8 +301,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       }
 
       // Async mode: update session status
-      const session = this.sessionManager.get(message.chatId);
-      if (session) {
+      if (this.sessionManager.has(message.chatId)) {
         this.sessionManager.complete(message.chatId);
         logger.info(
           { chatId: message.chatId, messageId },
@@ -316,7 +315,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
         this.chatToMessage.delete(message.chatId);
       }
 
-      if (!pending && !session) {
+      if (!pending && !this.sessionManager.has(message.chatId)) {
         logger.warn(
           { chatId: message.chatId, messageId },
           'Received done but no pending response or session found'
