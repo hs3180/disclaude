@@ -143,10 +143,10 @@ export class RestSessionManager {
    * Mark a session as completed.
    */
   complete(chatId: string): void {
-    if (!this.sessionStates.has(chatId)) {
+    const session = this.sessionStates.get(chatId);
+    if (!session) {
       return;
     }
-    const session = this.sessionStates.get(chatId)!;
     session.status = 'completed';
     session.updatedAt = Date.now();
   }
