@@ -9,7 +9,12 @@
  */
 
 import { z } from 'zod';
-import { getProvider, createLogger, withTiming, type SdkInlineToolDefinition } from '@disclaude/core';
+import {
+  getProvider,
+  createLogger,
+  withTiming,
+  type SdkInlineToolDefinition,
+} from '@disclaude/core';
 import {
   send_text,
   send_card,
@@ -19,9 +24,13 @@ import {
   loop_start,
   loop_stop,
   loop_status,
-  setMessageSentCallback
+  setMessageSentCallback,
 } from './tools/index.js';
-import { isValidFeishuCard, getCardValidationError, detectMarkdownTableWarnings } from './utils/card-validator.js';
+import {
+  isValidFeishuCard,
+  getCardValidationError,
+  detectMarkdownTableWarnings,
+} from './utils/card-validator.js';
 import { transformCardTables } from './utils/table-converter.js';
 import { resolveCardImages } from './utils/card-image-resolver.js';
 import { getChatIdValidationError } from './utils/chat-id-validator.js';
@@ -64,7 +73,10 @@ function toolSuccess(text: string): { content: Array<{ type: 'text'; text: strin
  * caused the Agent to enter diagnostic mode, exceeding test timeouts.
  * Issue #1641: chatId validation errors also use this to signal failure.
  */
-function toolError(text: string): { content: Array<{ type: 'text'; text: string }>; isError: true } {
+function toolError(text: string): {
+  content: Array<{ type: 'text'; text: string }>;
+  isError: true;
+} {
   return { content: [{ type: 'text', text }], isError: true };
 }
 
@@ -76,7 +88,10 @@ export const channelTools = {
       properties: {
         text: { type: 'string', description: 'The text content to send' },
         chatId: { type: 'string', description: 'Target chat ID' },
-        parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
+        parentMessageId: {
+          type: 'string',
+          description: 'Optional parent message ID for thread reply',
+        },
         mentions: {
           type: 'array',
           items: {
@@ -103,7 +118,10 @@ For interactive cards with button click handlers, use send_interactive instead.`
       properties: {
         card: { type: 'object', description: 'Card JSON structure' },
         chatId: { type: 'string', description: 'Target chat ID' },
-        parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
+        parentMessageId: {
+          type: 'string',
+          description: 'Optional parent message ID for thread reply',
+        },
       },
       required: ['card', 'chatId'],
     },
@@ -127,7 +145,11 @@ For display-only cards, use send_card instead.`,
             properties: {
               text: { type: 'string', description: 'Button display text' },
               value: { type: 'string', description: 'Button action value' },
-              type: { type: 'string', enum: ['primary', 'default', 'danger'], description: 'Button style (optional)' },
+              type: {
+                type: 'string',
+                enum: ['primary', 'default', 'danger'],
+                description: 'Button style (optional)',
+              },
             },
             required: ['text', 'value'],
           },
@@ -141,7 +163,10 @@ For display-only cards, use send_card instead.`,
           description: 'Optional custom action prompts that override auto-generated defaults',
         },
         chatId: { type: 'string', description: 'Target chat ID' },
-        parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
+        parentMessageId: {
+          type: 'string',
+          description: 'Optional parent message ID for thread reply',
+        },
       },
       required: ['question', 'options', 'chatId'],
     },
@@ -154,14 +179,18 @@ For display-only cards, use send_card instead.`,
       properties: {
         filePath: { type: 'string' },
         chatId: { type: 'string' },
-        parentMessageId: { type: 'string', description: 'Optional parent message ID for thread reply' },
+        parentMessageId: {
+          type: 'string',
+          description: 'Optional parent message ID for thread reply',
+        },
       },
       required: ['filePath', 'chatId'],
     },
     handler: send_file,
   },
   push_to_agent: {
-    description: 'Push an instruction to a chat agent, triggering agent creation if needed. Use this to send an instruction to the agent handling a specific chat.',
+    description:
+      'Push an instruction to a chat agent, triggering agent creation if needed. Use this to send an instruction to the agent handling a specific chat.',
     parameters: {
       type: 'object',
       properties: {
@@ -173,15 +202,22 @@ For display-only cards, use send_card instead.`,
     handler: push_to_agent,
   },
   loop_start: {
-    description: 'Start a loop that repeatedly pushes an instruction to a chat agent at a configured interval. Returns a loopId for stop/status operations.',
+    description:
+      'Start a loop that repeatedly pushes an instruction to a chat agent at a configured interval. Returns a loopId for stop/status operations.',
     parameters: {
       type: 'object',
       properties: {
         chatId: { type: 'string', description: 'Target chat ID' },
         prompt: { type: 'string', description: 'The instruction pushed to the agent each step' },
         maxSteps: { type: 'number', description: 'Maximum loop iterations (default: 10)' },
-        maxDurationMs: { type: 'number', description: 'Maximum total duration in ms (default: 3600000)' },
-        stepIntervalMs: { type: 'number', description: 'Interval between steps in ms (default: 30000)' },
+        maxDurationMs: {
+          type: 'number',
+          description: 'Maximum total duration in ms (default: 3600000)',
+        },
+        stepIntervalMs: {
+          type: 'number',
+          description: 'Interval between steps in ms (default: 30000)',
+        },
       },
       required: ['chatId', 'prompt'],
     },
@@ -236,31 +272,47 @@ export const channelToolDefinitions: SdkInlineToolDefinition[] = [
     parameters: z.object({
       text: z.string().describe('The text content to send'),
       chatId: z.string().describe('Target chat ID'),
-      parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
-      mentions: z.array(z.object({
-        openId: z.string().describe('Open ID of the user/bot to @mention'),
-        name: z.string().optional().describe('Display name of the mention target'),
-      })).optional().describe('Mention targets for @mentioning users/bots (Issue #1742)'),
+      parentMessageId: z
+        .string()
+        .optional()
+        .describe('Optional parent message ID for thread reply'),
+      mentions: z
+        .array(
+          z.object({
+            openId: z.string().describe('Open ID of the user/bot to @mention'),
+            name: z.string().optional().describe('Display name of the mention target'),
+          })
+        )
+        .optional()
+        .describe('Mention targets for @mentioning users/bots (Issue #1742)'),
     }),
-    handler: async ({ text, chatId, parentMessageId, mentions }: {
+    handler: async ({
+      text,
+      chatId,
+      parentMessageId,
+      mentions,
+    }: {
       text: string;
       chatId: string;
       parentMessageId?: string;
       mentions?: Array<{ openId: string; name?: string }>;
-    }) => await withTiming(timingLogger, 'mcp:send_text', chatId, async () => {
-      // Issue #1641 P1: Validate chatId format before IPC call
-      const chatIdError = getChatIdValidationError(chatId);
-      if (chatIdError) {
-        return toolError(`Invalid chatId: ${chatIdError}`);
-      }
+    }) =>
+      await withTiming(timingLogger, 'mcp:send_text', chatId, async () => {
+        // Issue #1641 P1: Validate chatId format before IPC call
+        const chatIdError = getChatIdValidationError(chatId);
+        if (chatIdError) {
+          return toolError(`Invalid chatId: ${chatIdError}`);
+        }
 
-      try {
-        const result = await send_text({ text, chatId, parentMessageId, mentions });
-        return result.success ? toolSuccess(result.message) : toolError(result.message);
-      } catch (error) {
-        return toolError(`Text send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }),
+        try {
+          const result = await send_text({ text, chatId, parentMessageId, mentions });
+          return result.success ? toolSuccess(result.message) : toolError(result.message);
+        } catch (error) {
+          return toolError(
+            `Text send failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }),
   },
   {
     name: 'send_card',
@@ -352,63 +404,79 @@ When building tables with \`column_set\`, follow these rules:
     parameters: z.object({
       card: z.object({}).passthrough().describe('Card JSON structure'),
       chatId: z.string().describe('Target chat ID'),
-      parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
+      parentMessageId: z
+        .string()
+        .optional()
+        .describe('Optional parent message ID for thread reply'),
     }),
-    handler: async ({ card, chatId, parentMessageId }: {
+    handler: async ({
+      card,
+      chatId,
+      parentMessageId,
+    }: {
       card: Record<string, unknown>;
       chatId: string;
       parentMessageId?: string;
-    }) => await withTiming(timingLogger, 'mcp:send_card', chatId, async () => {
-      // Issue #1355: Pre-validation to prevent message sending on invalid params
-      // Validate card type
-      if (!card || typeof card !== 'object' || Array.isArray(card)) {
-        return toolError(`Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}`);
-      }
+    }) =>
+      await withTiming(timingLogger, 'mcp:send_card', chatId, async () => {
+        // Issue #1355: Pre-validation to prevent message sending on invalid params
+        // Validate card type
+        if (!card || typeof card !== 'object' || Array.isArray(card)) {
+          return toolError(
+            `Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}`
+          );
+        }
 
-      // Validate card structure
-      if (!isValidFeishuCard(card)) {
-        return toolError(`Invalid card structure: ${getCardValidationError(card)}`);
-      }
+        // Validate card structure
+        if (!isValidFeishuCard(card)) {
+          return toolError(`Invalid card structure: ${getCardValidationError(card)}`);
+        }
 
-      // Issue #1641 P1: Validate chatId format before IPC call
-      const chatIdError = getChatIdValidationError(chatId);
-      if (chatIdError) {
-        return toolError(`Invalid chatId: ${chatIdError}`);
-      }
+        // Issue #1641 P1: Validate chatId format before IPC call
+        const chatIdError = getChatIdValidationError(chatId);
+        if (chatIdError) {
+          return toolError(`Invalid chatId: ${chatIdError}`);
+        }
 
-      try {
-        // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
-        let processedCard = transformCardTables(card);
+        try {
+          // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
+          let processedCard = transformCardTables(card);
 
-        // Issue #2951: Auto-upload local image paths and replace with Feishu image_keys
-        const imageResult = await resolveCardImages(processedCard);
-        processedCard = imageResult.card;
+          // Issue #2951: Auto-upload local image paths and replace with Feishu image_keys
+          const imageResult = await resolveCardImages(processedCard);
+          processedCard = imageResult.card;
 
-        const result = await send_card({ card: processedCard, chatId, parentMessageId });
+          const result = await send_card({ card: processedCard, chatId, parentMessageId });
 
-        // Issue #2340: Detect GFM table syntax in markdown elements and append info
-        const tableWarnings = detectMarkdownTableWarnings(card);
-        if (result.success && tableWarnings.length > 0) {
-          let message = `${result.message}\n\nℹ️ Auto-converted ${tableWarnings.length === 1 ? 'a GFM table' : `${tableWarnings.length  } GFM tables`} to column_set layout. The table renders correctly now.`;
-          if (imageResult.uploadedCount > 0) {
-            message += `\n🖼️ Auto-uploaded ${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? 'image' : 'images'}.`;
+          // Issue #2340: Detect GFM table syntax in markdown elements and append info
+          const tableWarnings = detectMarkdownTableWarnings(card);
+          if (result.success && tableWarnings.length > 0) {
+            let message = `${result.message}\n\nℹ️ Auto-converted ${tableWarnings.length === 1 ? 'a GFM table' : `${tableWarnings.length} GFM tables`} to column_set layout. The table renders correctly now.`;
+            if (imageResult.uploadedCount > 0) {
+              message += `\n🖼️ Auto-uploaded ${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? 'image' : 'images'}.`;
+            }
+            return toolSuccess(message);
           }
-          return toolSuccess(message);
-        }
 
-        // Issue #2951: Include image upload info in success message
-        if (result.success && imageResult.uploadedCount > 0) {
-          return toolSuccess(`${result.message} (${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? 'image' : 'images'} auto-uploaded)`);
-        }
-        if (result.success && imageResult.failedCount > 0) {
-          return toolSuccess(`${result.message} (⚠️ ${imageResult.failedCount} ${imageResult.failedCount === 1 ? 'image' : 'images'} failed to upload)`);
-        }
+          // Issue #2951: Include image upload info in success message
+          if (result.success && imageResult.uploadedCount > 0) {
+            return toolSuccess(
+              `${result.message} (${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? 'image' : 'images'} auto-uploaded)`
+            );
+          }
+          if (result.success && imageResult.failedCount > 0) {
+            return toolSuccess(
+              `${result.message} (⚠️ ${imageResult.failedCount} ${imageResult.failedCount === 1 ? 'image' : 'images'} failed to upload)`
+            );
+          }
 
-        return result.success ? toolSuccess(result.message) : toolError(result.message);
-      } catch (error) {
-        return toolError(`Card send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }),
+          return result.success ? toolSuccess(result.message) : toolError(result.message);
+        } catch (error) {
+          return toolError(
+            `Card send failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }),
   },
   {
     name: 'send_interactive',
@@ -448,20 +516,36 @@ For display-only cards, use send_card instead.
 \`\`\``,
     parameters: z.object({
       question: z.string().describe('The question or main content to display'),
-      options: z.array(z.object({
-        text: z.string().describe('Button display text'),
-        value: z.string().describe('Button action value'),
-        type: z.enum(['primary', 'default', 'danger']).optional().describe('Button style'),
-      })).describe('Button options for user interaction'),
+      options: z
+        .array(
+          z.object({
+            text: z.string().describe('Button display text'),
+            value: z.string().describe('Button action value'),
+            type: z.enum(['primary', 'default', 'danger']).optional().describe('Button style'),
+          })
+        )
+        .describe('Button options for user interaction'),
       title: z.string().optional().describe('Card title (defaults to "交互消息")'),
       context: z.string().optional().describe('Optional context shown above the question'),
-      actionPrompts: z.record(z.string(), z.string()).optional().describe(
-        'Optional custom action prompts that override auto-generated defaults'
-      ),
+      actionPrompts: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe('Optional custom action prompts that override auto-generated defaults'),
       chatId: z.string().describe('Target chat ID'),
-      parentMessageId: z.string().optional().describe('Optional parent message ID for thread reply'),
+      parentMessageId: z
+        .string()
+        .optional()
+        .describe('Optional parent message ID for thread reply'),
     }),
-    handler: async ({ question, options, chatId, title, context, actionPrompts, parentMessageId }: {
+    handler: async ({
+      question,
+      options,
+      chatId,
+      title,
+      context,
+      actionPrompts,
+      parentMessageId,
+    }: {
       question: string;
       options: InteractiveOption[];
       chatId: string;
@@ -469,28 +553,39 @@ For display-only cards, use send_card instead.
       context?: string;
       actionPrompts?: ActionPromptMap;
       parentMessageId?: string;
-    }) => await withTiming(timingLogger, 'mcp:send_interactive', chatId, async () => {
-      // Issue #1355: Pre-validation to prevent message sending on invalid params
-      if (!question || typeof question !== 'string') {
-        return toolError('Invalid question: must be a non-empty string');
-      }
-      if (!Array.isArray(options) || options.length === 0) {
-        return toolError('Invalid options: must be a non-empty array');
-      }
+    }) =>
+      await withTiming(timingLogger, 'mcp:send_interactive', chatId, async () => {
+        // Issue #1355: Pre-validation to prevent message sending on invalid params
+        if (!question || typeof question !== 'string') {
+          return toolError('Invalid question: must be a non-empty string');
+        }
+        if (!Array.isArray(options) || options.length === 0) {
+          return toolError('Invalid options: must be a non-empty array');
+        }
 
-      // Issue #1641 P1: Validate chatId format before IPC call
-      const chatIdError = getChatIdValidationError(chatId);
-      if (chatIdError) {
-        return toolError(`Invalid chatId: ${chatIdError}`);
-      }
+        // Issue #1641 P1: Validate chatId format before IPC call
+        const chatIdError = getChatIdValidationError(chatId);
+        if (chatIdError) {
+          return toolError(`Invalid chatId: ${chatIdError}`);
+        }
 
-      try {
-        const result = await send_interactive({ question, options, chatId, title, context, actionPrompts, parentMessageId });
-        return result.success ? toolSuccess(result.message) : toolError(result.message);
-      } catch (error) {
-        return toolError(`Interactive card send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }),
+        try {
+          const result = await send_interactive({
+            question,
+            options,
+            chatId,
+            title,
+            context,
+            actionPrompts,
+            parentMessageId,
+          });
+          return result.success ? toolSuccess(result.message) : toolError(result.message);
+        } catch (error) {
+          return toolError(
+            `Interactive card send failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }),
   },
   {
     name: 'send_file',
@@ -510,20 +605,31 @@ For display-only cards, use send_card instead.
       chatId: z.string(),
       parentMessageId: z.string().optional(),
     }),
-    handler: async ({ filePath, chatId, parentMessageId }: { filePath: string; chatId: string; parentMessageId?: string }) => await withTiming(timingLogger, 'mcp:send_file', chatId, async () => {
-      // Issue #1641 P1: Validate chatId format before IPC call
-      const chatIdError = getChatIdValidationError(chatId);
-      if (chatIdError) {
-        return toolError(`Invalid chatId: ${chatIdError}`);
-      }
+    handler: async ({
+      filePath,
+      chatId,
+      parentMessageId,
+    }: {
+      filePath: string;
+      chatId: string;
+      parentMessageId?: string;
+    }) =>
+      await withTiming(timingLogger, 'mcp:send_file', chatId, async () => {
+        // Issue #1641 P1: Validate chatId format before IPC call
+        const chatIdError = getChatIdValidationError(chatId);
+        if (chatIdError) {
+          return toolError(`Invalid chatId: ${chatIdError}`);
+        }
 
-      try {
-        const result = await send_file({ filePath, chatId, parentMessageId });
-        return result.success ? toolSuccess(result.message) : toolError(result.message);
-      } catch (error) {
-        return toolError(`File send failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }),
+        try {
+          const result = await send_file({ filePath, chatId, parentMessageId });
+          return result.success ? toolSuccess(result.message) : toolError(result.message);
+        } catch (error) {
+          return toolError(
+            `File send failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }),
   },
   {
     name: 'push_to_agent',
@@ -549,24 +655,29 @@ will be processed as a system command.
       chatId: z.string().describe('Target chat ID'),
       message: z.string().describe('The instruction text to push to the chat agent'),
     }),
-    handler: async ({ chatId, message }: { chatId: string; message: string }) => await withTiming(timingLogger, 'mcp:push_to_agent', chatId, async () => {
-      // Validate chatId format before IPC call
-      const chatIdError = getChatIdValidationError(chatId);
-      if (chatIdError) {
-        return toolError(`Invalid chatId: ${chatIdError}`);
-      }
+    handler: async ({ chatId, message }: { chatId: string; message: string }) =>
+      await withTiming(timingLogger, 'mcp:push_to_agent', chatId, async () => {
+        // Validate chatId format before IPC call
+        const chatIdError = getChatIdValidationError(chatId);
+        if (chatIdError) {
+          return toolError(`Invalid chatId: ${chatIdError}`);
+        }
 
-      try {
-        const result = await push_to_agent({ chatId, message });
-        return result.success ? toolSuccess(result.message) : toolError(result.message);
-      } catch (error) {
-        return toolError(`Push to agent failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }),
+        try {
+          const result = await push_to_agent({ chatId, message });
+          return result.success ? toolSuccess(result.message) : toolError(result.message);
+        } catch (error) {
+          return toolError(
+            `Push to agent failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }),
   },
 ];
 
-export const channelSdkTools = channelToolDefinitions.map(def => getProvider().createInlineTool(def));
+export const channelSdkTools = channelToolDefinitions.map((def) =>
+  getProvider().createInlineTool(def)
+);
 
 export function createChannelMcpServer() {
   return getProvider().createMcpServer({
@@ -576,13 +687,3 @@ export function createChannelMcpServer() {
     tools: channelToolDefinitions,
   });
 }
-
-// Deprecated aliases (backward compatibility)
-/** @deprecated Use channelTools instead */
-export const feishuContextTools = channelTools;
-/** @deprecated Use channelToolDefinitions instead */
-export const feishuToolDefinitions = channelToolDefinitions;
-/** @deprecated Use channelSdkTools instead */
-export const feishuSdkTools = channelSdkTools;
-/** @deprecated Use createChannelMcpServer instead */
-export const createFeishuSdkMcpServer = createChannelMcpServer;
