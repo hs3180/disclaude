@@ -334,11 +334,19 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // only text responses. Detect this pattern and warn with diagnostic info.
         let consecutiveTextOnlyCount = 0;
         const IDLE_LOOP_THRESHOLD = 3;
+        // 根因记录(Issue #3706 扩展):GLM + Agent Teams (in-process) 的真实 failure mode 是
+        // 海量未识别的空 system 消息(task_started/task_progress/teammate_* 等),而非 assistant
+        // text。现有 assistant-text 检测对它无效,故补充 system-message flood 检测。
+        let consecutiveEmptySystemCount = 0;
+        let lastSystemSubtype: string | undefined;
+        const SYSTEM_FLOOD_THRESHOLD = 50;
         const model = options.model as string | undefined;
 
         for await (const message of queryResult) {
           const now = Date.now();
           messageCount++;
+          // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
+          const adapted = adaptSDKMessage(message);
           // Issue #3003: log TTFT and per-message elapsed
           if (!firstMessageMs) {
             firstMessageMs = now;
@@ -353,8 +361,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
               'SDK message received'
             );
           } else {
+            // D1:system 消息记录其 subtype,让刷屏的内部协调消息可诊断
             logger.info(
-              { messageCount, messageType: message.type },
+              { messageCount, messageType: message.type, systemSubtype: adapted.metadata?.systemSubtype },
               'SDK message received'
             );
           }
@@ -362,7 +371,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // Issue #3706: Idle loop detection.
           // Count consecutive assistant messages that produce text only (no tool_use).
           // If this exceeds the threshold, the model may not support tool_use properly.
-          const adapted = adaptSDKMessage(message);
           if (adapted.type === 'text' && adapted.role === 'assistant' && adapted.content) {
             consecutiveTextOnlyCount++;
             if (consecutiveTextOnlyCount === IDLE_LOOP_THRESHOLD) {
@@ -382,6 +390,36 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             }
           } else if (adapted.type === 'tool_use') {
             consecutiveTextOnlyCount = 0;
+          }
+
+          // 根因记录:system-message flood 检测(GLM + Agent Teams failure mode)。
+          // 空的 system 消息连续累积超过阈值 → 判定为 teammate 循环空转,发出诊断 warn。
+          // 注意:这是诊断性检测(warn only),不终止流(范围不含 D3 终止防护)。
+          if (adapted.role === 'system' && !adapted.content) {
+            consecutiveEmptySystemCount++;
+            if (adapted.metadata?.systemSubtype) {
+              lastSystemSubtype = adapted.metadata.systemSubtype;
+            }
+            if (consecutiveEmptySystemCount === SYSTEM_FLOOD_THRESHOLD) {
+              logger.warn(
+                {
+                  messageCount,
+                  consecutiveEmptySystemCount,
+                  model,
+                  apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
+                  hasAgentTeams: options.teammateMode !== undefined,
+                  lastSystemSubtype,
+                },
+                `System-message flood detected: ${SYSTEM_FLOOD_THRESHOLD}+ consecutive empty `
+                + 'system messages. This typically indicates a teammate (Agent tool) stuck in a '
+                + 'loop — commonly caused by upstream rate-limiting (e.g. GLM account 1302) when '
+                + 'Agent Teams fans out concurrent requests faster than the model quota allows. '
+                + 'The SDK stream will not end until the upstream limit recovers. See Issue #3706.'
+              );
+            }
+          } else if (adapted.content || adapted.type === 'tool_use' || adapted.type === 'result') {
+            // 真实进展(有内容 / tool_use / result)→ 重置 flood 计数
+            consecutiveEmptySystemCount = 0;
           }
 
           yield adapted;
