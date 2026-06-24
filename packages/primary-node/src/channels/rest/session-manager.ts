@@ -12,7 +12,7 @@
 
 import { createLogger } from '@disclaude/core';
 
-const logger = createLogger('RestSessionManager');
+const logger = createLogger('RestChannel.Session');
 
 /**
  * Session status for async mode.
@@ -62,8 +62,13 @@ export class RestSessionManager {
 
   /**
    * Start the periodic session cleanup timer.
+   * Idempotent: calling start() when already running is a no-op.
    */
   start(): void {
+    if (this.cleanupTimer) {
+      return;
+    }
+
     this.cleanupTimer = setInterval(() => {
       this.cleanupSessions();
     }, CLEANUP_INTERVAL_MS);
@@ -138,11 +143,12 @@ export class RestSessionManager {
    * Mark a session as completed.
    */
   complete(chatId: string): void {
-    const session = this.sessionStates.get(chatId);
-    if (session) {
-      session.status = 'completed';
-      session.updatedAt = Date.now();
+    if (!this.sessionStates.has(chatId)) {
+      return;
     }
+    const session = this.sessionStates.get(chatId)!;
+    session.status = 'completed';
+    session.updatedAt = Date.now();
   }
 
   /**
