@@ -240,11 +240,15 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      // 忽略其他系统消息
+      // 保留 system subtype 到 metadata 供诊断(content 必须保持空 ——
+      // chat-agent.ts:1065 会对任何非空 content 调 sendMessage 发给用户)。
+      // 根因记录:GLM + Agent Teams 会产生海量未识别 system 消息(task_started/
+      // task_progress/teammate_* 等),此前被无差别丢弃成空 text,丢失了诊断信息。
       return {
         type: 'text',
         content: '',
         role: 'system',
+        metadata: message.subtype ? { ...metadata, systemSubtype: message.subtype } : metadata,
         raw: message,
       };
     }
