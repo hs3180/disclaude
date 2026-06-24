@@ -10,6 +10,10 @@
  * and caches loaded history for the lifetime of the agent instance. State can be
  * cleared via reset() to force a reload (e.g. after /reset).
  *
+ * Loaded context is exposed read-only via getters; the consume-once first-message
+ * context is taken atomically via consumeFirstMessageContext(), so ChatAgent never
+ * mutates this manager's internals directly.
+ *
  * Extracted from ChatAgent as part of Issue #4125 (part 2): splitting
  * ChatAgent into focused modules.
  *
@@ -21,9 +25,10 @@ import { Config } from '@disclaude/core';
 import type { ChatAgentCallbacks } from './types.js';
 
 /**
- * Dependencies injected into HistoryManager.
+ * Configuration injected into HistoryManager (mirrors the config-object pattern
+ * used by RestartManager / ConversationOrchestrator).
  */
-export interface HistoryManagerDeps {
+export interface HistoryManagerConfig {
   /** The chatId this manager is bound to. */
   chatId: string;
   /** Logger instance. */
@@ -40,25 +45,51 @@ export interface HistoryManagerDeps {
  * cached until reset().
  */
 export class HistoryManager {
-  // --- Persisted (session-restore) history state (Issue #955, #3996) ---
+  // --- Load-state flags (Issue #955, #1230) ---
   /** Whether persisted (session-restore) history has finished loading. */
   historyLoaded = false;
-  /** Truncated persisted history attached to every message (session restore). */
-  persistedHistoryContext?: string;
-  /** Absolute paths to chat log files for access beyond the context window. */
-  chatLogFilePaths?: string[];
-
-  // --- First-message history state (Issue #1230) ---
   /** Whether first-message history has finished loading. */
   firstMessageHistoryLoaded = false;
+
+  // --- Loaded context (read-only from the outside; see getters) ---
+  /** Truncated persisted history attached to every message (session restore). */
+  private _persistedHistoryContext?: string;
+  /** Absolute paths to chat log files for access beyond the context window. */
+  private _chatLogFilePaths?: string[];
   /** History attached only to the first message of a session (consume-once). */
-  firstMessageHistoryContext?: string;
+  private _firstMessageHistoryContext?: string;
 
   // --- Internal plumbing (not part of the public surface) ---
   private historyLoadPromise?: Promise<void>;
   private firstMessageHistoryLoadPromise?: Promise<void>;
 
-  constructor(private readonly deps: HistoryManagerDeps) {}
+  constructor(private readonly config: HistoryManagerConfig) {}
+
+  /** Truncated persisted history attached to every message (session restore). */
+  get persistedHistoryContext(): string | undefined {
+    return this._persistedHistoryContext;
+  }
+
+  /** Absolute paths to chat log files for access beyond the context window. */
+  get chatLogFilePaths(): string[] | undefined {
+    return this._chatLogFilePaths;
+  }
+
+  /** History attached only to the first message of a session (peek only). */
+  get firstMessageHistoryContext(): string | undefined {
+    return this._firstMessageHistoryContext;
+  }
+
+  /**
+   * Return the first-message history context and clear it, so it is attached to
+   * exactly one message (consume-once, Issue #1230). Subsequent calls return
+   * undefined.
+   */
+  consumeFirstMessageContext(): string | undefined {
+    const ctx = this._firstMessageHistoryContext;
+    this._firstMessageHistoryContext = undefined;
+    return ctx;
+  }
 
   /**
    * Mark both history types as already-loaded without fetching. Used when the
@@ -105,7 +136,7 @@ export class HistoryManager {
    * For now, it uses the getChatHistory callback if available.
    */
   private async doLoadPersistedHistory(): Promise<void> {
-    const { chatId, logger, callbacks } = this.deps;
+    const { chatId, logger, callbacks } = this.config;
     // Check if callback is available
     if (!callbacks.getChatHistory) {
       logger.debug(
@@ -129,13 +160,13 @@ export class HistoryManager {
 
       if (history && history.trim()) {
         // Truncate if too long
-        this.persistedHistoryContext =
+        this._persistedHistoryContext =
           history.length > sessionConfig.maxContextLength
             ? history.slice(-sessionConfig.maxContextLength)
             : history;
 
         logger.info(
-          { chatId, historyLength: this.persistedHistoryContext.length },
+          { chatId, historyLength: this._persistedHistoryContext.length },
           'Persisted chat history loaded successfully'
         );
       } else {
@@ -145,10 +176,10 @@ export class HistoryManager {
       // Issue #3996: Load chat log file paths so the agent knows where to find
       // full conversation history beyond the context window
       if (callbacks.getChatLogFilePaths) {
-        this.chatLogFilePaths = await callbacks.getChatLogFilePaths(chatId);
-        if (this.chatLogFilePaths.length > 0) {
+        this._chatLogFilePaths = await callbacks.getChatLogFilePaths(chatId);
+        if (this._chatLogFilePaths.length > 0) {
           logger.info(
-            { chatId, pathCount: this.chatLogFilePaths.length },
+            { chatId, pathCount: this._chatLogFilePaths.length },
             'Chat log file paths loaded'
           );
         }
@@ -204,16 +235,16 @@ export class HistoryManager {
    * Internal method to perform the actual first message history loading.
    */
   private async doLoadFirstMessageHistory(): Promise<void> {
-    const { chatId, logger, callbacks } = this.deps;
+    const { chatId, logger, callbacks } = this.config;
     try {
       logger.info({ chatId }, 'Loading chat history for first message context');
 
       const history = await callbacks.getChatHistory?.(chatId);
 
       if (history && history.trim()) {
-        this.firstMessageHistoryContext = history;
+        this._firstMessageHistoryContext = history;
         logger.info(
-          { chatId, historyLength: this.firstMessageHistoryContext.length },
+          { chatId, historyLength: this._firstMessageHistoryContext.length },
           'Chat history for first message loaded successfully'
         );
       } else {
@@ -239,11 +270,11 @@ export class HistoryManager {
    */
   reset(): void {
     // Clear persisted history context (Issue #955)
-    this.persistedHistoryContext = undefined;
+    this._persistedHistoryContext = undefined;
     this.historyLoaded = false;
 
     // Clear first message history context (Issue #1230)
-    this.firstMessageHistoryContext = undefined;
+    this._firstMessageHistoryContext = undefined;
     this.firstMessageHistoryLoaded = false;
   }
 }
