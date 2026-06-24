@@ -386,6 +386,56 @@ describe('adaptSDKMessage', () => {
       expect(result.content).toBe('');
     });
 
+    // 根因记录(D1):GLM + Agent Teams 产生海量未识别 system 消息(task_started 等)。
+    // 此前被无差别丢弃成空 text,content 必须保持空(否则 chat-agent.ts:1065 会把
+    // 它当回复发给用户),但 subtype 须保留到 metadata 供诊断。
+    it('should preserve system subtype in metadata with empty content (D1)', () => {
+      const message = {
+        type: 'system' as const,
+        subtype: 'task_started',
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('text');
+      expect(result.content).toBe('');
+      expect(result.role).toBe('system');
+      expect(result.metadata?.systemSubtype).toBe('task_started');
+    });
+
+    it('should preserve teammate_* system subtype in metadata', () => {
+      const message = {
+        type: 'system' as const,
+        subtype: 'teammate_spawned',
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.content).toBe('');
+      expect(result.metadata?.systemSubtype).toBe('teammate_spawned');
+    });
+
+    it('should leave systemSubtype undefined when subtype absent', () => {
+      const message = {
+        type: 'system' as const,
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.content).toBe('');
+      expect(result.metadata?.systemSubtype).toBeUndefined();
+    });
+
+    it('should NOT preserve subtype for handled status messages (regression)', () => {
+      // status / model_refusal_fallback 仍走各自分支,不应携带 systemSubtype
+      const message = {
+        type: 'system' as const,
+        subtype: 'status',
+        status: 'requesting',
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('status');
+      expect(result.metadata?.systemSubtype).toBeUndefined();
+    });
+
     it('should format requesting status (SDK 0.3.x)', () => {
       const message = {
         type: 'system' as const,

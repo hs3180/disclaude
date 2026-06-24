@@ -357,6 +357,47 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalled();
     });
 
+    // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会
+    // 产出海量空 system 消息(实测以 thinking_tokens 为主)。flood 检测必须 warn-only
+    // —— 不终止流(范围不含 D3 终止防护),否则会改变行为。此处用任意未识别 subtype 验证。
+    it('should NOT terminate the stream on system-message flood (warn-only)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      // 55 条空 system 消息(超过 SYSTEM_FLOOD_THRESHOLD=50)
+      const floodMessages = Array.from({ length: 55 }, () => ({
+        type: 'system' as const,
+        subtype: 'task_started',
+      }));
+
+      mockQuery.mockReturnValue((async function* () {
+        for (const msg of floodMessages) {
+          yield msg;
+        }
+      })());
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Hi' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'],
+        cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) {
+        messages.push(msg);
+      }
+
+      // warn-only:超过阈值后流仍不被终止,55 条全部 yield
+      expect(messages.length).toBe(55);
+      // content 必须保持空(否则 chat-agent 会当回复发给用户)
+      expect(messages.every((m) => m.content === '')).toBe(true);
+      // D1:subtype 经 adapter 保留到 metadata,在 provider 层可见(供诊断)
+      expect(messages[0].metadata?.systemSubtype).toBe('task_started');
+    });
+
     it('should pass adapted options to SDK query', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
