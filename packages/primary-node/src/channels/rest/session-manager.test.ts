@@ -12,6 +12,23 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const mockLogger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  trace: vi.fn(),
+}));
+
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    createLogger: vi.fn(() => mockLogger),
+  };
+});
+
 import { RestSessionManager } from './session-manager.js';
 
 describe('RestSessionManager', () => {
