@@ -78,15 +78,5 @@ export {
   createChannelMcpServer,
 } from './channel-mcp.js';
 
-// Deprecated aliases (backward compatibility)
-/** @deprecated Use channelTools instead */
-export { feishuContextTools } from './channel-mcp.js';
-/** @deprecated Use channelToolDefinitions instead */
-export { feishuToolDefinitions } from './channel-mcp.js';
-/** @deprecated Use channelSdkTools instead */
-export { feishuSdkTools } from './channel-mcp.js';
-/** @deprecated Use createChannelMcpServer instead */
-export { createFeishuSdkMcpServer } from './channel-mcp.js';
-
 // Version — read from package.json to avoid drift
 export const MCP_SERVER_VERSION = pkg.version;
