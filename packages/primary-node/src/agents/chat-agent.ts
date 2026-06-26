@@ -937,7 +937,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    *
    */
   private async processIterator(
-    iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
+    iterator: AsyncGenerator<{ parsed: { type: string; content?: string; terminatedReason?: 'system_flood' } }>
   ): Promise<void> {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
