@@ -96,7 +96,8 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
 # Consolidated into a single RUN to minimize apt-get update calls (Issue #4115 review).
 # GitHub CLI install mode is configurable via GH_INSTALL_MODE (Issue #4117):
 #   apt-repo (default): official GitHub apt source (cli.github.com)
-#   deb: direct .deb download from GH_DEB_URL (mirrorable, China-friendly)
+#   deb: direct .deb download from GH_DEB_URL (requires GH_DEB_URL; mirrorable, China-friendly)
+# Any other value, or deb without GH_DEB_URL, fails the build with a clear error.
 # Note: gosu/su-exec were removed — OOM protection is now applied host-side via
 # `oom_score_adj` in docker-compose.yml (cgroup v2 forbids writing a negative
 # /proc/self/oom_score_adj from inside the container), so the entrypoint no longer
@@ -111,11 +112,15 @@ RUN apt-get install -y --no-install-recommends \
         tini \
         sudo \
         g++ gcc make cmake python3-dev && \
-    if [ "${GH_INSTALL_MODE}" = "deb" ] && [ -n "${GH_DEB_URL}" ]; then \
+    if [ "${GH_INSTALL_MODE}" = "deb" ]; then \
+        if [ -z "${GH_DEB_URL}" ]; then \
+            echo "ERROR: GH_INSTALL_MODE=deb requires GH_DEB_URL to be set" >&2; \
+            exit 1; \
+        fi; \
         curl -fsSL "${GH_DEB_URL}" -o /tmp/gh.deb && \
-        dpkg -i /tmp/gh.deb && \
+        apt-get install -y --no-install-recommends /tmp/gh.deb && \
         rm -f /tmp/gh.deb; \
-    else \
+    elif [ "${GH_INSTALL_MODE}" = "apt-repo" ]; then \
         curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
             | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
         chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
@@ -123,6 +128,9 @@ RUN apt-get install -y --no-install-recommends \
             > /etc/apt/sources.list.d/github-cli.list && \
         apt-get update && \
         apt-get install -y --no-install-recommends gh; \
+    else \
+        echo "ERROR: GH_INSTALL_MODE='${GH_INSTALL_MODE}' is invalid (expected 'apt-repo' or 'deb')" >&2; \
+        exit 1; \
     fi && \
     rm -rf /var/lib/apt/lists/*
 
