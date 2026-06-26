@@ -174,6 +174,51 @@ describe('RestartManager', () => {
     });
   });
 
+  describe('recordFailure', () => {
+    it('should increment restartCount without allowing a restart', () => {
+      manager.recordFailure('chat-d3', 'system_flood');
+      const state = manager.getState('chat-d3');
+      expect(state?.restartCount).toBe(1);
+      expect(state?.circuitOpen).toBe(false);
+      expect(manager.isCircuitOpen('chat-d3')).toBe(false);
+    });
+
+    it('should open the circuit after maxRestarts failures', () => {
+      manager.recordFailure('chat-d3', 'system_flood');
+      manager.recordFailure('chat-d3', 'system_flood');
+      manager.recordFailure('chat-d3', 'system_flood');
+      // maxRestarts=3 → 第 3 次 recordFailure 触发跳闸
+      expect(manager.getState('chat-d3')?.restartCount).toBe(3);
+      expect(manager.isCircuitOpen('chat-d3')).toBe(true);
+    });
+
+    it('should be reset by a subsequent recordSuccess (below circuit threshold)', () => {
+      manager.recordFailure('chat-d3', 'system_flood');
+      manager.recordFailure('chat-d3', 'system_flood');
+      expect(manager.getState('chat-d3')?.restartCount).toBe(2);
+      manager.recordSuccess('chat-d3');
+      expect(manager.getState('chat-d3')?.restartCount).toBe(0);
+      expect(manager.isCircuitOpen('chat-d3')).toBe(false);
+    });
+
+    it('should record the failure reason in recentErrors', () => {
+      manager.recordFailure('chat-d3', 'system_flood');
+      const errors = manager.getRecentErrors('chat-d3');
+      expect(errors.some((e) => e.message === 'system_flood')).toBe(true);
+    });
+
+    it('should be a no-op when the circuit is already open', () => {
+      manager.recordFailure('chat-d3', 'system_flood');
+      manager.recordFailure('chat-d3', 'system_flood');
+      manager.recordFailure('chat-d3', 'system_flood');
+      expect(manager.isCircuitOpen('chat-d3')).toBe(true);
+      const countBefore = manager.getState('chat-d3')?.restartCount;
+      // 跳闸后再 recordFailure → 早返回,不再累加
+      manager.recordFailure('chat-d3', 'system_flood');
+      expect(manager.getState('chat-d3')?.restartCount).toBe(countBefore);
+    });
+  });
+
   describe('reset', () => {
     it('should clear restart state for a chatId', () => {
       manager.shouldRestart('chat-1', 'error 1');
