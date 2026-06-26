@@ -21,6 +21,8 @@ ARG DOCKER_IMAGE_PREFIX=
 ARG APT_MIRROR=
 ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG PIP_INDEX_URL
+ARG GH_INSTALL_MODE=apt-repo
+ARG GH_DEB_URL=
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder (uses bun for faster installs)
@@ -79,6 +81,8 @@ FROM ${DOCKER_IMAGE_PREFIX}library/node:22-slim AS production
 ARG APT_MIRROR
 ARG NPM_REGISTRY
 ARG PIP_INDEX_URL
+ARG GH_INSTALL_MODE
+ARG GH_DEB_URL
 
 WORKDIR /app
 
@@ -90,6 +94,10 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
 
 # Install runtime + build dependencies, GitHub CLI
 # Consolidated into a single RUN to minimize apt-get update calls (Issue #4115 review).
+# GitHub CLI install mode is configurable via GH_INSTALL_MODE (Issue #4117):
+#   apt-repo (default): official GitHub apt source (cli.github.com)
+#   deb: direct .deb download from GH_DEB_URL (requires GH_DEB_URL; mirrorable, China-friendly)
+# Any other value, or deb without GH_DEB_URL, fails the build with a clear error.
 # Note: gosu/su-exec were removed — OOM protection is now applied host-side via
 # `oom_score_adj` in docker-compose.yml (cgroup v2 forbids writing a negative
 # /proc/self/oom_score_adj from inside the container), so the entrypoint no longer
@@ -104,13 +112,26 @@ RUN apt-get install -y --no-install-recommends \
         tini \
         sudo \
         g++ gcc make cmake python3-dev && \
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends gh && \
+    if [ "${GH_INSTALL_MODE}" = "deb" ]; then \
+        if [ -z "${GH_DEB_URL}" ]; then \
+            echo "ERROR: GH_INSTALL_MODE=deb requires GH_DEB_URL to be set" >&2; \
+            exit 1; \
+        fi; \
+        curl -fsSL "${GH_DEB_URL}" -o /tmp/gh.deb && \
+        apt-get install -y --no-install-recommends /tmp/gh.deb && \
+        rm -f /tmp/gh.deb; \
+    elif [ "${GH_INSTALL_MODE}" = "apt-repo" ]; then \
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+        chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list && \
+        apt-get update && \
+        apt-get install -y --no-install-recommends gh; \
+    else \
+        echo "ERROR: GH_INSTALL_MODE='${GH_INSTALL_MODE}' is invalid (expected 'apt-repo' or 'deb')" >&2; \
+        exit 1; \
+    fi && \
     rm -rf /var/lib/apt/lists/*
 
 # Install common Python data analysis packages
