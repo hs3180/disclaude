@@ -22,6 +22,20 @@ import { createLogger } from '../../../utils/logger.js';
 const logger = createLogger('ClaudeSDKProvider');
 
 // ============================================================================
+// D3: system-message flood termination (Issue #3706)
+// ============================================================================
+// Under GLM account-level rate-limiting (1302) an agent stream gets stuck
+// emitting empty `thinking_tokens` system messages for hours, saturating the
+// event loop. D3 stops the stream once the consecutive-empty count exceeds the
+// (configurable) warn threshold by this delta. Kept as a delta — not an
+// absolute — so it always tracks DISCLAUDE_SYSTEM_FLOOD_THRESHOLD and never
+// terminates before warning. Healthy tasks peak around ~36 (measured), so the
+// default warn(50)+delta(50)=terminate(100) gives ~2.8× margin.
+const SYSTEM_FLOOD_TERMINATE_DELTA = 50;
+const SYSTEM_FLOOD_TERMINATE_NOTICE =
+  '⚠️ 上游模型限流，已自动取消本次响应以避免卡死，请稍后重试。';
+
+// ============================================================================
 // Process Listener Cleanup (Issue #3378)
 // ============================================================================
 
@@ -347,6 +361,8 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         const SYSTEM_FLOOD_THRESHOLD = Number.isFinite(envFloodThreshold) && envFloodThreshold > 0
           ? envFloodThreshold
           : 50;
+        // D3: 终止阈值 = warn 阈值 + delta(始终 > warn,跟随可配置的 warn)。
+        const SYSTEM_FLOOD_TERMINATE_THRESHOLD = SYSTEM_FLOOD_THRESHOLD + SYSTEM_FLOOD_TERMINATE_DELTA;
         const model = options.model as string | undefined;
 
         for await (const message of queryResult) {
@@ -406,13 +422,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           }
 
           // 根因记录:system-message flood 检测(GLM + Agent Teams failure mode)。
-          // 空的 system 消息连续累积超过阈值 → 判定为 teammate 循环空转,发出诊断 warn。
-          // 注意:这是诊断性检测(warn only),不终止流(范围不含 D3 终止防护)。
+          // 空的 system 消息连续累积 → D2 在 SYSTEM_FLOOD_THRESHOLD 发诊断 warn,
+          // D3 在 SYSTEM_FLOOD_TERMINATE_THRESHOLD 终止流,避免洪流持续数小时拖垮事件循环(Issue #3706)。
           if (adapted.role === 'system' && !adapted.content) {
             consecutiveEmptySystemCount++;
             if (adapted.metadata?.systemSubtype) {
               lastSystemSubtype = adapted.metadata.systemSubtype;
             }
+            // D2: 诊断 warn(只触发一次)。
             if (consecutiveEmptySystemCount === SYSTEM_FLOOD_THRESHOLD) {
               logger.warn(
                 {
@@ -427,8 +444,35 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
                 + 'system messages. This typically indicates a teammate (Agent tool) stuck in a '
                 + 'loop — commonly caused by upstream rate-limiting (e.g. GLM account 1302) when '
                 + 'Agent Teams fans out concurrent requests faster than the model quota allows. '
-                + 'The SDK stream will not end until the upstream limit recovers. See Issue #3706.'
+                + 'D3 will terminate the stream at the higher threshold. See Issue #3706.'
               );
+            }
+            // D3: 到达终止阈值 → 停掉流,把洪流约束在秒级(否则会跑数小时,拖垮事件循环)。
+            if (consecutiveEmptySystemCount >= SYSTEM_FLOOD_TERMINATE_THRESHOLD) {
+              logger.error(
+                { messageCount, consecutiveEmptySystemCount, model, lastSystemSubtype },
+                `System-message flood reached terminate threshold (${SYSTEM_FLOOD_TERMINATE_THRESHOLD}); `
+                + 'stopping stream (D3) to free the event loop and unblock the chat.'
+              );
+              try {
+                // interrupt() = SDK 的「停止当前任务」;不调 close()(会杀子进程,交给
+                // ChatAgent 正常 teardown 的 handle.close() 去做,避免重复清理)。
+                await queryResult.interrupt();
+              } catch (interruptErr) {
+                logger.warn(
+                  { err: interruptErr },
+                  'D3: queryResult.interrupt() rejected; yielding terminal result anyway'
+                );
+              }
+              // 合成一条带 terminatedReason 标记的 result,复用 ChatAgent 完成路径;
+              // content 携带用户可见提示,由通用 content-send 块投递一次。
+              yield {
+                type: 'result',
+                content: SYSTEM_FLOOD_TERMINATE_NOTICE,
+                role: 'system',
+                metadata: { terminatedReason: 'system_flood' },
+              };
+              return;
             }
           } else if (
             adapted.role !== 'system' &&

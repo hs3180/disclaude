@@ -250,6 +250,63 @@ export class RestartManager {
   }
 
   /**
+   * Record a failure WITHOUT attempting a restart (D3: system-message flood).
+   *
+   * Mirrors the failure-recording + circuit-trip logic of {@link shouldRestart}
+   * but does not return a decision or allow a restart. Repeated calls open the
+   * circuit breaker the same way repeated restart-eligible errors would, so a
+   * chronically rate-limited chat pauses after `maxRestarts` floods instead of
+   * looping. A subsequent healthy turn's {@link recordSuccess} resets it.
+   *
+   * @param chatId - The chat identifier
+   * @param reason - Short reason label (e.g. 'system_flood')
+   */
+  recordFailure(chatId: string, reason: string): void {
+    const now = Date.now();
+    let state = this.states.get(chatId);
+    if (!state) {
+      state = {
+        restartCount: 0,
+        lastRestartAt: 0,
+        lastSuccessAt: now,
+        currentBackoffMs: this.initialBackoffMs,
+        circuitOpen: false,
+        recentErrors: [],
+      };
+      this.states.set(chatId, state);
+    }
+
+    if (state.circuitOpen) {
+      this.logger.warn({ chatId, reason }, 'Failure recorded but circuit already open');
+      return;
+    }
+
+    state.recentErrors.push({ message: reason, timestamp: now });
+    if (state.recentErrors.length > this.maxRecentErrors) {
+      state.recentErrors.shift();
+    }
+    state.restartCount++;
+    state.lastRestartAt = now;
+    state.currentBackoffMs = Math.min(
+      state.currentBackoffMs * this.backoffMultiplier,
+      this.maxBackoffMs,
+    );
+
+    if (state.restartCount >= this.maxRestarts) {
+      state.circuitOpen = true;
+      this.logger.error(
+        { chatId, restartCount: state.restartCount, maxRestarts: this.maxRestarts, reason },
+        'Circuit opened by repeated failures (D3/system_flood)',
+      );
+    } else {
+      this.logger.warn(
+        { chatId, restartCount: state.restartCount, maxRestarts: this.maxRestarts, reason },
+        'Failure recorded (no restart attempted)',
+      );
+    }
+  }
+
+  /**
    * Manually reset the restart state for a chatId.
    *
    * Used when user explicitly resets the conversation.

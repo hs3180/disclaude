@@ -56,6 +56,8 @@ export interface IteratorYieldResult {
     content: string;
     metadata?: Record<string, unknown>;
     sessionId?: string;
+    /** D3: 由 provider flood 终止防护合成的 result 携带,ChatAgent 据此分支处理 */
+    terminatedReason?: 'system_flood';
   };
   /** SDK Agent message */
   raw: SdkAgentMessage;
@@ -314,6 +316,7 @@ export abstract class BaseAgent implements Disposable {
         tokens: (message.metadata.inputTokens ?? 0) + (message.metadata.outputTokens ?? 0),
       } : undefined,
       sessionId: message.metadata?.sessionId,
+      terminatedReason: message.metadata?.terminatedReason,
     };
   }
 
