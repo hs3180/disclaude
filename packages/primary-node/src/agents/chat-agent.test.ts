@@ -61,7 +61,6 @@ vi.mock('@disclaude/core', () => {
     })),
     RestartManager: vi.fn().mockImplementation(() => ({
       recordSuccess: vi.fn(),
-      recordFailure: vi.fn(),
       shouldRestart: vi.fn(() => ({
         allowed: false,
         reason: 'max_restarts_exceeded',
@@ -366,58 +365,6 @@ describe('ChatAgent (primary-node)', () => {
         messageId: 'msg_2',
       });
       expect(chatAgent.hasActiveSession()).toBe(true);
-    });
-  });
-
-  describe('D3 (Issue #3706): system-message flood termination', () => {
-    it('should send a notice, record failure, suppress restart, and preserve context', async () => {
-      const localCallbacks = createMockCallbacks();
-      const agent = new ChatAgent({
-        chatId: 'oc_d3',
-        callbacks: localCallbacks,
-        apiKey: 'key',
-        model: 'model',
-        provider: 'anthropic',
-      });
-
-      // 模拟 provider 在 flood 阈值合成的终止 result
-      async function* floodTerminatedIterator() {
-        yield {
-          parsed: {
-            type: 'result',
-            content: '⚠️ 上游模型限流，已自动取消本次响应以避免卡死，请稍后重试。',
-            terminatedReason: 'system_flood',
-          },
-          raw: {},
-        };
-      }
-
-      (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: floodTerminatedIterator(),
-      });
-
-      void agent.processMessage({ chatId: 'oc_d3', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 150));
-
-      // 1) 用户收到了提示(由通用 content-send 块投递一次)
-      const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
-      const noticeCall = sendMessageCalls.find(
-        (call: any[]) => typeof call[1] === 'string' && call[1].includes('自动取消'),
-      );
-      expect(noticeCall).toBeDefined();
-
-      // 2) 记录了 failure(反复 flood 会熔断),且没有触发自动重启(否则会立刻再次 flood)
-      const rm = (agent as any).restartManager;
-      expect(rm.recordFailure).toHaveBeenCalledWith('oc_d3', 'system_flood');
-      expect(rm.shouldRestart).not.toHaveBeenCalled();
-
-      // 3) 会话置为非活跃(下次消息走新流),但会话上下文保留(不像 reset 清空)
-      expect(agent.hasActiveSession()).toBe(false);
-      expect((agent as any).conversationOrchestrator.deleteThreadRoot).not.toHaveBeenCalled();
-
-      // 4) onDone 回调触发
-      expect(localCallbacks.onDone).toHaveBeenCalled();
     });
   });
 

@@ -90,12 +90,6 @@ export interface AgentMessageMetadata {
    * 会产生海量未识别的空 system 消息,此前被无差别丢弃丢失了诊断信息。
    */
   systemSubtype?: string;
-  /**
-   * D3 标记:该 result 消息由 system-message flood 终止防护合成(provider 在
-   * SYSTEM_FLOOD_TERMINATE_THRESHOLD 命中时 yield),ChatAgent 据此抑制自动重启
-   * 并保留会话上下文。见根因记录:GLM 账户级 1302 限流下的 thinking_tokens 洪流。
-   */
-  terminatedReason?: 'system_flood';
 }
 
 /** Agent 消息类型 */

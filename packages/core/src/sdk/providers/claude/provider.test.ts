@@ -366,7 +366,7 @@ describe('ClaudeSDKProvider', () => {
     // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会
     // 产出海量空 system 消息(实测以 thinking_tokens 为主)。flood 检测必须 warn-only
     // —— 不终止流(范围不含 D3 终止防护),否则会改变行为。此处用任意未识别 subtype 验证。
-    it('should warn at the flood threshold but NOT terminate below the terminate threshold (D3)', async () => {
+    it('should NOT terminate the stream on system-message flood (warn-only)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
       // 55 条空 system 消息(超过 SYSTEM_FLOOD_THRESHOLD=50)
@@ -412,136 +412,6 @@ describe('ClaudeSDKProvider', () => {
     // 修正点①:contentful 的 system 消息(如 status:"🤔 Thinking…")不应重置 flood 计数。
     // 否则「空消息 + 偶发 status」交替的 flood 会被不断清零、永远到不了阈值。
     // (旧逻辑会把计数清零 → 最终不到 50;新逻辑只由非 system 进展重置 → 命中 50)
-    // D3:到达 SYSTEM_FLOOD_TERMINATE_THRESHOLD(默认 warn 50 + delta 50 = 100)时,
-    // provider 必须 interrupt() 停流,并合成一条带 terminatedReason:'system_flood' 的
-    // result。把洪流从「数小时」约束到「秒级」、避免事件循环被拖垮的关键(Issue #3706)。
-    it('should terminate the stream at the flood terminate threshold and yield a terminal result (D3)', async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      delete process.env.DISCLAUDE_SYSTEM_FLOOD_THRESHOLD; // 默认 warn=50 → terminate=100
-
-      const floodMessages = Array.from({ length: 105 }, () => ({
-        type: 'system' as const,
-        subtype: 'thinking_tokens',
-      }));
-
-      const interruptSpy = vi.fn().mockResolvedValue(undefined);
-      const gen = (async function* () {
-        for (const msg of floodMessages) {
-          yield msg;
-        }
-      })();
-      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy }));
-
-      async function* testInput(): AsyncGenerator<UserInput> {
-        yield { role: 'user', content: 'Hi' };
-      }
-
-      const result = provider.queryStream(testInput(), {
-        settingSources: ['user', 'project', 'local'],
-        cwd: '/workspace',
-        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
-      });
-
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) {
-        messages.push(msg);
-      }
-
-      // 第 100 条空 system 触发终止并被替换为合成 result:99 空 + 1 终止 = 100
-      expect(messages.length).toBe(100);
-      const terminal = messages.at(-1);
-      expect(terminal).toBeDefined();
-      expect(terminal?.type).toBe('result');
-      expect(terminal?.metadata?.terminatedReason).toBe('system_flood');
-      expect(typeof terminal?.content).toBe('string');
-      expect((terminal?.content ?? '').length).toBeGreaterThan(0);
-      expect(messages.slice(0, 99).every((m) => m.content === '')).toBe(true);
-      // D3:调用了 interrupt() 停止流(恰好一次)
-      expect(interruptSpy).toHaveBeenCalledTimes(1);
-      // D3:terminate 记了 error 日志(只一次)
-      const terminateCalls = loggerMock.error.mock.calls.filter(
-        ([, msg]) => typeof msg === 'string' && /terminate threshold/i.test(msg),
-      );
-      expect(terminateCalls).toHaveLength(1);
-    });
-
-    it('should NOT terminate when real progress resets the flood counter (healthy interleave)', async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      delete process.env.DISCLAUDE_SYSTEM_FLOOD_THRESHOLD;
-
-      // 60 空 → assistant 文本(非 system 角色,重置计数)→ 60 空 → result。streak 峰值 60 < 100。
-      const sdkMessages = [
-        ...Array.from({ length: 60 }, () => ({ type: 'system' as const, subtype: 'thinking_tokens' })),
-        { type: 'assistant' as const, message: { content: [{ type: 'text', text: 'working' }] } },
-        ...Array.from({ length: 60 }, () => ({ type: 'system' as const, subtype: 'thinking_tokens' })),
-        { type: 'result' as const, subtype: 'success' },
-      ];
-
-      const interruptSpy = vi.fn().mockResolvedValue(undefined);
-      const gen = (async function* () {
-        for (const msg of sdkMessages) {
-          yield msg;
-        }
-      })();
-      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy }));
-
-      async function* testInput(): AsyncGenerator<UserInput> {
-        yield { role: 'user', content: 'Hi' };
-      }
-
-      const result = provider.queryStream(testInput(), {
-        settingSources: ['user', 'project', 'local'],
-        cwd: '/workspace',
-        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
-      });
-
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) {
-        messages.push(msg);
-      }
-
-      expect(interruptSpy).not.toHaveBeenCalled();
-      expect(messages.at(-1)?.metadata?.terminatedReason).toBeUndefined();
-    });
-
-    it('should still yield the terminal result if queryResult.interrupt() rejects (D3)', async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      delete process.env.DISCLAUDE_SYSTEM_FLOOD_THRESHOLD;
-
-      const floodMessages = Array.from({ length: 105 }, () => ({
-        type: 'system' as const,
-        subtype: 'thinking_tokens',
-      }));
-
-      const interruptSpy = vi.fn().mockRejectedValue(new Error('interrupt boom'));
-      const gen = (async function* () {
-        for (const msg of floodMessages) {
-          yield msg;
-        }
-      })();
-      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy }));
-
-      async function* testInput(): AsyncGenerator<UserInput> {
-        yield { role: 'user', content: 'Hi' };
-      }
-
-      const result = provider.queryStream(testInput(), {
-        settingSources: ['user', 'project', 'local'],
-        cwd: '/workspace',
-        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
-      });
-
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) {
-        messages.push(msg);
-      }
-
-      // interrupt 失败也不能阻止合成终止 result(99 空 + 1 终止 = 100)
-      expect(messages.length).toBe(100);
-      expect(messages.at(-1)?.metadata?.terminatedReason).toBe('system_flood');
-      expect(interruptSpy).toHaveBeenCalledTimes(1);
-    });
-
     it('should NOT reset flood counter on contentful system messages (e.g. status)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
