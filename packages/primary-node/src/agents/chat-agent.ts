@@ -100,12 +100,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // between "session exists but idle" and "actively processing a message".
   private isProcessingMessage = false;
 
-  // D3 (Issue #3706): set when the provider terminated the stream due to a
-  // system-message flood. Checked at the iterator-end/restart decision point to
-  // suppress the auto-restart (which would immediately re-flood) while keeping
-  // the conversation context intact.
-  private systemFloodTerminated = false;
-
   // Issue #2926: AbortController for immediate stop/reset of running Agent loop
   private abortController: AbortController | null = null;
 
@@ -937,7 +931,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    *
    */
   private async processIterator(
-    iterator: AsyncGenerator<{ parsed: { type: string; content?: string; terminatedReason?: 'system_flood' } }>
+    iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
   ): Promise<void> {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
@@ -1029,31 +1023,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Check for completion
         if (parsed.type === 'result') {
-          // D3 (Issue #3706): provider 合成的 flood 终止 result。通用 content-send 块
-          // 已投递用户提示,这里只做控制流:记录失败(反复 flood 会触发熔断)、收尾本
-          // 回合、跳过 recordSuccess 与重启逻辑。会话上下文保留,下次消息走正常路径。
-          if (parsed.terminatedReason === 'system_flood') {
-            this.systemFloodTerminated = true;
-            this.logger.warn(
-              { chatId, messageCount },
-              'D3: stream terminated by system-message flood; recording failure, resolving turn'
-            );
-            this.restartManager.recordFailure(chatId, 'system_flood');
-            this.isProcessingMessage = false;
-            this.resolveTurn();
-            if (this.callbacks.onDone) {
-              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-              await this.callbacks.onDone(chatId, threadRoot);
-            }
-            if (this.onceMode) {
-              this.isSessionActive = false;
-              this.channel?.close();
-              this.taskCompletionResolve?.();
-              this.clearTaskCompletion();
-            }
-            continue;
-          }
-
           // Issue #3003: Log timing summary on completion
           const completionMs = Date.now() - startTime;
           this.logger.info(
@@ -1211,21 +1180,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Check if this was an explicit close (reset cleared the session)
     const wasExplicitClose = !this.isSessionActive;
 
-    // D3: 流被 system-message flood 终止。此时 isSessionActive 仍为 true(我们没翻),
-    // 所以 wasExplicitClose 为 false —— 必须在此拦截:既跳过下面的「意外结束」warn,
-    // 也跳过随后的 shouldRestart 自动重启(会立刻再次 flood)。翻成 false 让下次用户
-    // 消息走正常 processMessage → startAgentLoop 起新流,同时保留会话上下文(不像 reset 清空)。
-    if (this.systemFloodTerminated) {
-      this.systemFloodTerminated = false;
-      this.isSessionActive = false;
-      this.isProcessingMessage = false;
-      this.logger.info(
-        { chatId, messageCount },
-        'D3: flood-terminated turn ended; suppressing auto-restart, context preserved'
-      );
-      return;
-    }
-
     // Issue #3003: Log timing summary for the entire agent loop
     if (!wasExplicitClose) {
       const loopElapsedMs = Date.now() - startTime;
@@ -1359,7 +1313,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Issue #3124: Clear once-mode and task completion state
     this.onceMode = false;
-    this.systemFloodTerminated = false; // D3: clear flood-termination flag
     this.clearTaskCompletion();
 
     // Issue #4063: Clear per-turn completion state
