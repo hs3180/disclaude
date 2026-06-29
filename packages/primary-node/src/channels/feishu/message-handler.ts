@@ -18,6 +18,7 @@ import {
   REACTIONS,
   CHAT_HISTORY,
   createLogger,
+  isGroupChat,
   stripLeadingMentions,
   ensureFileExtensionFromPath,
   type FeishuEventData,
@@ -33,10 +34,16 @@ import {
   createControlCommand,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
-import { extractCardTextContent, extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
+import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
 import { messageLogger } from '../../utils/message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
+import {
+  extractOpenId,
+  parsePostContent,
+  parseShareChatContent,
+  extractSenderName,
+} from './content-parser.js';
 
 const logger = createLogger('MessageHandler');
 
@@ -244,256 +251,6 @@ export class MessageHandler {
   /**
    * Extract open_id from sender object.
    */
-  private extractOpenId(sender?: { sender_type?: string; sender_id?: unknown }): string | undefined {
-    if (!sender?.sender_id) {
-      return undefined;
-    }
-    if (typeof sender.sender_id === 'object' && sender.sender_id !== null) {
-      const senderId = sender.sender_id as { open_id?: string };
-      return senderId.open_id;
-    }
-    if (typeof sender.sender_id === 'string') {
-      return sender.sender_id;
-    }
-    return undefined;
-  }
-
-  /**
-   * Parse post message content with support for rich text elements.
-   * Issue #846: Add support for code_block, pre, and chat_history tags.
-   *
-   * Supported tags:
-   * - text: Plain text
-   * - a: Links
-   * - at: Mentions
-   * - img: Images (represented as [图片])
-   * - code_block: Code blocks (converted to markdown format)
-   * - pre: Preformatted text (converted to markdown format)
-   * - chat_history: Forwarded chat history
-   */
-  private parsePostContent(content: unknown[]): string {
-    let text = '';
-
-    for (const row of content) {
-      if (!Array.isArray(row)) {
-        continue;
-      }
-      for (const segment of row) {
-        if (!segment?.tag) {
-          continue;
-        }
-
-        switch (segment.tag) {
-          case 'text':
-            text += segment.text || '';
-            break;
-
-          case 'a':
-            text += segment.text || segment.href || '';
-            break;
-
-          case 'at':
-            text += `@${segment.text || segment.user_id || 'user'}`;
-            break;
-
-          case 'img':
-            text += '[图片]';
-            break;
-
-          case 'code_block':
-          case 'pre': {
-            // Extract code content and language
-            const lang = segment.language || '';
-            const code = segment.text || segment.content || '';
-            if (code) {
-              text += `\n\`\`\`${lang}\n${code}\n\`\`\`\n`;
-            }
-            break;
-          }
-
-          case 'chat_history': {
-            // Parse forwarded chat history content
-            const historyContent = this.parseChatHistoryElement(segment);
-            if (historyContent) {
-              text += historyContent;
-            }
-            break;
-          }
-
-          default:
-            // For unknown tags, try to extract text if available
-            if (segment.text) {
-              text += segment.text;
-            }
-        }
-      }
-    }
-
-    return text.trim();
-  }
-
-  /**
-   * Parse chat_history element from post message.
-   * Issue #846: Support for forwarded chat history within post messages.
-   */
-  private parseChatHistoryElement(element: { [key: string]: unknown }): string {
-    const messages = element.messages || element.content;
-    if (!Array.isArray(messages)) {
-      return '';
-    }
-
-    let result = '\n--- 转发的聊天记录 ---\n';
-
-    for (const msg of messages) {
-      const sender = msg.sender || msg.from || '未知发送者';
-      const content = msg.content || msg.text || msg.body || '';
-      const time = msg.create_time || msg.timestamp || '';
-
-      if (time) {
-        result += `[${time}] `;
-      }
-      result += `${sender}: ${content}\n`;
-    }
-
-    result += '--- 转发结束 ---\n';
-    return result;
-  }
-
-  /**
-   * Parse share_chat message content (merged/forwarded messages).
-   * Issue #846: Support for share_chat message type.
-   *
-   * share_chat messages contain forwarded chat history with multiple messages.
-   */
-  private parseShareChatContent(parsed: { [key: string]: unknown }): string {
-    // Check for chat_history in the message content
-    const chatHistory = parsed.chat_history || parsed.messages || [];
-    const title = parsed.title || '转发的聊天记录';
-
-    if (!Array.isArray(chatHistory) || chatHistory.length === 0) {
-      // If no structured history, try to extract from body or text
-      const body = parsed.body || parsed.text || '';
-      if (body) {
-        return `[转发消息] ${body}`;
-      }
-      return '[转发消息] 无法解析内容';
-    }
-
-    let result = `\n### 📋 ${title}\n\n`;
-
-    for (const msg of chatHistory) {
-      const msgData = msg as { [key: string]: unknown };
-      const sender = this.extractSenderName(msgData);
-      const content = this.extractMessageContent(msgData);
-      const time = this.formatMessageTime(msgData);
-
-      if (time) {
-        result += `**[${time}]** `;
-      }
-      result += `**${sender}**: ${content}\n\n`;
-    }
-
-    return result.trim();
-  }
-
-  /**
-   * Extract sender name from message data.
-   */
-  private extractSenderName(msgData: { [key: string]: unknown }): string {
-    // Try various possible sender field names
-    const sender = msgData.sender
-      || msgData.from
-      || msgData.sender_name
-      || msgData.author
-      || msgData.user
-      || '未知发送者';
-
-    if (typeof sender === 'string') {
-      return sender;
-    }
-
-    if (typeof sender === 'object' && sender !== null) {
-      const senderObj = sender as { [key: string]: unknown };
-      return String(senderObj.name || senderObj.nickname || senderObj.open_id || '未知发送者');
-    }
-
-    return '未知发送者';
-  }
-
-  /**
-   * Extract message content from message data.
-   */
-  private extractMessageContent(msgData: { [key: string]: unknown }): string {
-    // Try various possible content field names
-    const content = msgData.content
-      || msgData.body
-      || msgData.text
-      || msgData.message
-      || '';
-
-    if (typeof content === 'string') {
-      return content;
-    }
-
-    if (typeof content === 'object' && content !== null) {
-      // Handle nested content structure
-      const contentObj = content as { [key: string]: unknown };
-      if (contentObj.text) {
-        return String(contentObj.text);
-      }
-      // For post messages, parse the content
-      if (Array.isArray(contentObj.content)) {
-        return this.parsePostContent(contentObj.content);
-      }
-    }
-
-    return String(content);
-  }
-
-  /**
-   * Format message timestamp to readable string.
-   */
-  private formatMessageTime(msgData: { [key: string]: unknown }): string {
-    const timestamp = msgData.create_time
-      || msgData.timestamp
-      || msgData.time
-      || msgData.created_at;
-
-    if (!timestamp) {
-      return '';
-    }
-
-    try {
-      // Handle Unix timestamp (seconds or milliseconds)
-      let ms: number;
-      if (typeof timestamp === 'number') {
-        ms = timestamp > 1e12 ? timestamp : timestamp * 1000;
-      } else if (typeof timestamp === 'string') {
-        ms = parseInt(timestamp, 10);
-        if (ms > 1e12) {
-          // Already in milliseconds
-        } else {
-          ms *= 1000;
-        }
-      } else {
-        return '';
-      }
-
-      const date = new Date(ms);
-      if (isNaN(date.getTime())) {
-        return '';
-      }
-
-      // Format as HH:MM
-      return date.toLocaleTimeString('zh-CN', {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return '';
-    }
-  }
-
   /**
    * Add typing reaction to indicate processing started.
    */
@@ -515,13 +272,6 @@ export class MessageHandler {
     } catch (error) {
       logger.debug({ err: error, messageId }, 'Failed to add typing reaction');
     }
-  }
-
-  /**
-   * Check if the chat is a group chat.
-   */
-  private isGroupChat(chatType?: string): boolean {
-    return chatType === 'group' || chatType === 'topic';
   }
 
   /**
@@ -656,7 +406,7 @@ export class MessageHandler {
       if (messageType === 'text') {
         return parsed.text || '';
       } else if (messageType === 'post' && parsed.content && Array.isArray(parsed.content)) {
-        return this.parsePostContent(parsed.content);
+        return parsePostContent(parsed.content);
       } else if (messageType === 'interactive') {
         // Issue #4083: Extract text from interactive card messages
         return extractFullCardContent(parsed);
@@ -721,9 +471,9 @@ export class MessageHandler {
             }
           }
         } else if (msgType === 'interactive') {
-          // Issue #1711: Extract text from interactive card messages
+          // Issue #1711: Extract full text from interactive card messages
           const parsed = JSON.parse(msgContent);
-          quotedText = extractCardTextContent(parsed);
+          quotedText = extractFullCardContent(parsed);
         } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio') {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
@@ -780,8 +530,9 @@ export class MessageHandler {
     }
 
     // Download file to workspace/downloads directory
+    // Issue #3960: downloadResourceViaLarkCli uses npx lark-cli, which only needs tenantAccessToken (not this.client)
     let localPath: string | undefined;
-    if (this.client) {
+    if (this.tenantAccessToken) {
       try {
         const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
         await fs.mkdir(downloadDir, { recursive: true });
@@ -816,10 +567,20 @@ export class MessageHandler {
         logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
       } catch (downloadError) {
         logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
+        localPath = undefined;
       }
     }
 
-    const typeLabel = messageType === 'image' ? '图片' : messageType === 'file' ? '文件' : messageType === 'audio' ? '语音消息' : '媒体文件';
+    let typeLabel: string;
+    if (messageType === 'image') {
+      typeLabel = '图片';
+    } else if (messageType === 'file') {
+      typeLabel = '文件';
+    } else if (messageType === 'audio') {
+      typeLabel = '语音消息';
+    } else {
+      typeLabel = '媒体文件';
+    }
     const resourceType = mapResourceType(messageType);
     const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType);
     if (!localPath) {
@@ -863,7 +624,7 @@ export class MessageHandler {
     // Deduplication
     if (messageLogger.isMessageProcessed(message_id)) {
       logger.debug({ messageId: message_id }, 'Skipped duplicate message');
-      this.forwardFilteredMessage('duplicate', message_id, chat_id, content, this.extractOpenId(sender));
+      this.forwardFilteredMessage('duplicate', message_id, chat_id, content, extractOpenId(sender));
       return;
     }
 
@@ -884,7 +645,7 @@ export class MessageHandler {
       const messageAge = Date.now() - create_time;
       if (messageAge > this.MAX_MESSAGE_AGE) {
         logger.debug({ messageId: message_id }, 'Skipped old message');
-        this.forwardFilteredMessage('old', message_id, chat_id, content, this.extractOpenId(sender), { age: messageAge });
+        this.forwardFilteredMessage('old', message_id, chat_id, content, extractOpenId(sender), { age: messageAge });
         return;
       }
     }
@@ -919,8 +680,9 @@ export class MessageHandler {
       }
 
       // Download file to workspace/downloads directory
+      // Issue #3960: downloadResourceViaLarkCli uses npx lark-cli, which only needs tenantAccessToken (not this.client)
       let localPath: string | undefined;
-      if (this.client) {
+      if (this.tenantAccessToken) {
         try {
           const downloadDir = path.join(Config.getWorkspaceDir(), 'downloads');
           await fs.mkdir(downloadDir, { recursive: true });
@@ -962,7 +724,7 @@ export class MessageHandler {
       // Log the incoming message
       await messageLogger.logIncomingMessage(
         message_id,
-        this.extractOpenId(sender) || 'unknown',
+        extractOpenId(sender) || 'unknown',
         chat_id,
         `[${message_type} received]${localPath ? ` → ${localPath}` : ''}`,
         message_type,
@@ -972,12 +734,21 @@ export class MessageHandler {
       await this.addTypingReaction(message_id);
 
       // Build content with file path for the agent prompt
-      const typeLabel = message_type === 'image' ? '图片' : message_type === 'file' ? '文件' : message_type === 'audio' ? '语音消息' : '媒体文件';
+      let typeLabel: string;
+      if (message_type === 'image') {
+        typeLabel = '图片';
+      } else if (message_type === 'file') {
+        typeLabel = '文件';
+      } else if (message_type === 'audio') {
+        typeLabel = '语音消息';
+      } else {
+        typeLabel = '媒体文件';
+      }
       const resourceType = mapResourceType(message_type);
       const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
       const filePrompt = localPath
         ? `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}\n\n文件已下载到本地: ${localPath}\n\n请使用 Read 工具读取该文件来查看内容。${message_type === 'image' ? '这是一个图片文件，Read 工具可以直接查看图片内容。' : message_type === 'audio' ? '这是一个音频文件。你可以根据自身能力处理音频（如调用 ASR 工具转录、分析音频特征等）。' : ''}\n\n如果文件读取失败，可以使用以下命令重新下载:\n${downloadCmd}`
-        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n原始 message_id: ${message_id}\nfile_key: ${fileKey}\n\n请使用以下命令手动下载:\n${downloadCmd}`;
+        : `用户${message_type === 'audio' ? '发送了一段' : '上传了一个'}${typeLabel}：${fileName || fileKey}，但自动下载失败。\n\n你可以尝试手动下载该文件：\n- message_id: \`${message_id}\`\n- file_key: \`${fileKey}\`\n- 消息类型: ${message_type}\n- API type 参数: ${resourceType}\n\n下载命令:\n\`\`\`bash\n${downloadCmd}\n\`\`\``;
 
       // Issue #3702: Build metadata for file/image messages to pass chatType and threadContext,
       // ensuring intermediate message filtering works correctly in topic groups.
@@ -995,7 +766,7 @@ export class MessageHandler {
 
       // Issue #3828: Apply @mention/trigger mode check for file/image messages in group/topic chats
       const fileBotMentioned = this.mentionDetector.isBotMentioned(mentions);
-      if (this.isGroupChat(chat_type) && !fileBotMentioned) {
+      if (isGroupChat(chat_type) && !fileBotMentioned) {
         if (this.triggerModeManager.getMode(chat_id) === 'auto'
           && this.triggerModeManager.needsSmallGroupRecheck(chat_id)) {
           await this.checkAndAutoDisableSmallGroup(chat_id);
@@ -1005,13 +776,13 @@ export class MessageHandler {
             { messageId: message_id, chatId: chat_id, chat_type, messageType: message_type },
             'Skipped file/image message in group chat without @mention (trigger mode disabled)'
           );
-          this.forwardFilteredMessage('trigger_mode', message_id, chat_id, filePrompt, this.extractOpenId(sender), { chat_type, messageType: message_type });
+          this.forwardFilteredMessage('trigger_mode', message_id, chat_id, filePrompt, extractOpenId(sender), { chat_type, messageType: message_type });
           return;
         }
       }
 
       // Get chat history context when bot IS mentioned in group/topic for file messages
-      if (this.isGroupChat(chat_type) && fileBotMentioned) {
+      if (isGroupChat(chat_type) && fileBotMentioned) {
         const chatHistoryContext = await this.getChatHistoryContext(chat_id);
         if (chatHistoryContext) {
           fileMetadata.chatHistoryContext = chatHistoryContext;
@@ -1021,7 +792,7 @@ export class MessageHandler {
       await this.callbacks.emitMessage({
         messageId: `${message_id}-${message_type === 'audio' ? 'audio' : 'file'}`,
         chatId: chat_id,
-        userId: this.extractOpenId(sender),
+        userId: extractOpenId(sender),
         content: filePrompt,
         messageType: message_type === 'audio' ? 'audio' : 'file',
         timestamp: create_time,
@@ -1037,7 +808,7 @@ export class MessageHandler {
     // Issue #3657: Add support for interactive (card) messages
     if (message_type !== 'text' && message_type !== 'post' && message_type !== 'share_chat' && message_type !== 'interactive') {
       logger.debug({ messageType: message_type }, 'Skipped unsupported message type');
-      this.forwardFilteredMessage('unsupported', message_id, chat_id, content, this.extractOpenId(sender), { messageType: message_type });
+      this.forwardFilteredMessage('unsupported', message_id, chat_id, content, extractOpenId(sender), { messageType: message_type });
       return;
     }
 
@@ -1048,10 +819,10 @@ export class MessageHandler {
       if (message_type === 'text') {
         text = parsed.text?.trim() || '';
       } else if (message_type === 'post' && parsed.content && Array.isArray(parsed.content)) {
-        text = this.parsePostContent(parsed.content);
+        text = parsePostContent(parsed.content);
       } else if (message_type === 'share_chat') {
         // Issue #846: Parse share_chat (forwarded/merged chat history) messages
-        text = this.parseShareChatContent(parsed);
+        text = parseShareChatContent(parsed);
       } else if (message_type === 'interactive') {
         // Issue #3657: Parse interactive card messages
         text = extractFullCardContent(parsed);
@@ -1068,14 +839,14 @@ export class MessageHandler {
 
     if (!text) {
       logger.debug('Skipped empty text');
-      this.forwardFilteredMessage('empty', message_id, chat_id, content, this.extractOpenId(sender));
+      this.forwardFilteredMessage('empty', message_id, chat_id, content, extractOpenId(sender));
       return;
     }
 
     // Log message
     await messageLogger.logIncomingMessage(
       message_id,
-      this.extractOpenId(sender) || 'unknown',
+      extractOpenId(sender) || 'unknown',
       chat_id,
       text,
       message_type,
@@ -1088,8 +859,8 @@ export class MessageHandler {
     if (chat_type === 'topic' && this.callbacks.onTopicMessage
         && Config.getRawConfig().feishu?.topicNotify?.enabled === true) {
       try {
-        const senderOpenId = this.extractOpenId(sender);
-        const senderName = this.extractSenderName({ sender, sender_name: sender?.sender_id } as unknown as { [key: string]: unknown });
+        const senderOpenId = extractOpenId(sender);
+        const senderName = extractSenderName({ sender, sender_name: sender?.sender_id } as unknown as { [key: string]: unknown });
         this.callbacks.onTopicMessage({
           type: 'topic_group_message',
           chatId: chat_id,
@@ -1121,7 +892,7 @@ export class MessageHandler {
     // Issue #2052: Auto-enable trigger mode for 2-member group chats (bot + 1 user)
     // Issue #3592: Re-check small group status even when already marked (allows unmarking when group grows)
     const isTriggerCommand = textWithoutMentions.startsWith('/trigger');
-    if (this.isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
+    if (isGroupChat(chat_type) && !botMentioned && !isTriggerCommand) {
       // Issue #3592: Always re-check small group status in 'auto' mode (with throttle)
       // In 'mention' mode, user explicitly wants mention-only regardless of group size
       if (this.triggerModeManager.getMode(chat_id) === 'auto'
@@ -1130,7 +901,7 @@ export class MessageHandler {
       }
       if (!this.triggerModeManager.isTriggerEnabled(chat_id)) {
         logger.debug({ messageId: message_id, chatId: chat_id, chat_type }, 'Skipped group chat message without @mention (trigger mode disabled)');
-        this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, this.extractOpenId(sender), { chat_type });
+        this.forwardFilteredMessage('trigger_mode', message_id, chat_id, text, extractOpenId(sender), { chat_type });
         return;
       }
     }
@@ -1145,7 +916,7 @@ export class MessageHandler {
 
       if (this.controlHandler) {
         // Issue #3529: Normalize CLI args into typed command data
-        const rawData = { args, rawText: textWithoutMentions, senderOpenId: this.extractOpenId(sender) };
+        const rawData = { args, rawText: textWithoutMentions, senderOpenId: extractOpenId(sender) };
         const response = await this.callbacks.emitControl(
           createControlCommand(cmd as ControlCommandType, chat_id, rawData),
         );
@@ -1205,7 +976,7 @@ export class MessageHandler {
     // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
     // Issue #3989: For topic groups, use thread context only (not flat chat history)
     // to avoid mixing messages from different threads.
-    const isTriggerModeMention = this.isGroupChat(chat_type) && botMentioned;
+    const isTriggerModeMention = isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
     let threadContext: string | undefined;
 
@@ -1241,7 +1012,7 @@ export class MessageHandler {
     await this.callbacks.emitMessage({
       messageId: message_id,
       chatId: chat_id,
-      userId: this.extractOpenId(sender),
+      userId: extractOpenId(sender),
       content: text,
       messageType: message_type,
       timestamp: create_time,

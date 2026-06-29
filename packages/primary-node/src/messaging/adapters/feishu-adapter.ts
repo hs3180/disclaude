@@ -17,6 +17,14 @@ import type {
   ChannelCapabilities,
 } from '../channel-adapter.js';
 import { VIDEO_EXTENSIONS, extractVideoCover } from '../../utils/video-cover-extractor.js';
+import {
+  IMAGE_EXTENSIONS,
+  EXT_TO_FEISHU_FILE_TYPE,
+  MAX_IMAGE_SIZE,
+  MAX_FILE_SIZE,
+  uploadImage,
+  uploadFile,
+} from '../../utils/feishu-upload.js';
 
 const logger = createLogger('FeishuAdapter');
 
@@ -31,30 +39,6 @@ export interface FeishuClientProvider {
 /**
  * Feishu card theme colors mapping.
  */
-/**
- * Image file extensions recognized by Feishu image upload API.
- */
-const IMAGE_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.bmp', '.ico', '.svg',
-]);
-
-/**
- * File extension to Feishu file_type mapping for document uploads.
- */
-const EXT_TO_FEISHU_FILE_TYPE: Record<string, 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'> = {
-  '.opus': 'opus',
-  '.pdf': 'pdf',
-  '.doc': 'doc', '.docx': 'doc',
-  '.xls': 'xls', '.xlsx': 'xls', '.csv': 'xls',
-  '.ppt': 'ppt', '.pptx': 'ppt',
-};
-
-/** Maximum image file size in bytes (10 MB). */
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
-
-/** Maximum document file size in bytes (30 MB). */
-const MAX_FILE_SIZE = 30 * 1024 * 1024;
-
 const THEME_MAP: Record<string, string> = {
   blue: 'blue',
   wathet: 'wathet',
@@ -480,13 +464,7 @@ export class FeishuAdapter implements IChannelAdapter {
         return { success: false, error: `Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)` };
       }
 
-      const uploadResp = await client.im.image.create({
-        data: {
-          image_type: 'message',
-          image: fs.createReadStream(filePath),
-        },
-      });
-      const imageKey = uploadResp?.image_key;
+      const imageKey = await uploadImage(client, filePath);
       if (!imageKey) {
         return { success: false, error: `Failed to upload image: ${fileName} (no image_key returned)` };
       }
@@ -500,15 +478,7 @@ export class FeishuAdapter implements IChannelAdapter {
         return { success: false, error: `Video file too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)` };
       }
 
-      // Upload video with file_type:'mp4' → get file_key
-      const uploadResp = await client.im.file.create({
-        data: {
-          file_type: 'mp4',
-          file_name: fileName,
-          file: fs.createReadStream(filePath),
-        },
-      });
-      const fileKey = uploadResp?.file_key;
+      const fileKey = await uploadFile(client, filePath, fileName, 'mp4');
       if (!fileKey) {
         return { success: false, error: `Failed to upload video: ${fileName} (no file_key returned)` };
       }
@@ -518,14 +488,7 @@ export class FeishuAdapter implements IChannelAdapter {
       let imageKey: string | undefined;
 
       if (coverResult.success && coverResult.coverPath) {
-        // Upload cover image → get image_key
-        const coverUploadResp = await client.im.image.create({
-          data: {
-            image_type: 'message',
-            image: fs.createReadStream(coverResult.coverPath),
-          },
-        });
-        imageKey = coverUploadResp?.image_key;
+        imageKey = await uploadImage(client, coverResult.coverPath);
         // Clean up temp cover file
         try { fs.unlinkSync(coverResult.coverPath); } catch { /* ignore */ }
       }
@@ -546,17 +509,8 @@ export class FeishuAdapter implements IChannelAdapter {
         return { success: false, error: `File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)` };
       }
 
-      // Map file extension to Feishu file_type
       const fileType = EXT_TO_FEISHU_FILE_TYPE[ext] || 'stream';
-
-      const uploadResp = await client.im.file.create({
-        data: {
-          file_type: fileType,
-          file_name: fileName,
-          file: fs.createReadStream(filePath),
-        },
-      });
-      const fileKey = uploadResp?.file_key;
+      const fileKey = await uploadFile(client, filePath, fileName, fileType);
       if (!fileKey) {
         return { success: false, error: `Failed to upload file: ${fileName} (no file_key returned)` };
       }

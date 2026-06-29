@@ -3,96 +3,139 @@
  *
  * Issue #3857 Phase 2: HTTP API server for Primary Node.
  *
- * NOTE: Uses node:http instead of global fetch to avoid nock/undici
- * incompatibility in CI (Node.js 20). The test setup (tests/setup.ts)
- * uses nock.disableNetConnect() which patches http/https modules but
- * interferes with fetch (backed by undici in Node.js 20), causing
- * fetch() to return undefined.
+ * These are pure unit tests: request handling is exercised by driving the
+ * server's request handler directly with mock request/response objects. No
+ * real TCP socket is bound, so the suite is independent of `localhost`
+ * IPv4/IPv6 resolution order and never contends for ports (see Issue #4142
+ * review: binding a real socket made these tests flaky).
+ *
+ * Only the `lifecycle` group binds a real socket (on 127.0.0.1, port 0) to
+ * verify start()/stop()/isRunning(); it makes no HTTP roundtrips.
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import http from 'node:http';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Readable } from 'node:stream';
+import { EventEmitter } from 'node:events';
 import { HttpApiServer, type StatusResponse, type PushResponse } from './http-api-server.js';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { TopicGroupMessageEvent } from '@disclaude/core';
 
-/** Find an available port by binding to port 0. */
-function getFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer();
-    server.listen(0, 'localhost', () => {
-      const addr = server.address();
-      if (addr && typeof addr === 'object') {
-        server.close(() => resolve(addr.port));
-      } else {
-        server.close(() => reject(new Error('Failed to get port')));
-      }
-    });
-    server.on('error', reject);
-  });
+/** Options for building a mock request. */
+interface MockRequestOptions {
+  method?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  body?: string;
 }
 
 /**
- * Make an HTTP request using node:http (nock-compatible).
- * Returns { statusCode, headers, body }.
+ * Mock IncomingMessage. Extends Readable so the body (if any) is delivered
+ * naturally to any `on('data')` consumer (e.g. readBody), exactly like a real
+ * request stream.
  */
-function httpRequest(
-  options: http.RequestOptions,
-  body?: string,
-): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
-  return new Promise((resolve, reject) => {
-    const req = http.request(options, (res) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
-      res.on('end', () => {
-        resolve({
-          statusCode: res.statusCode ?? 0,
-          headers: res.headers,
-          body: Buffer.concat(chunks).toString('utf-8'),
-        });
-      });
-    });
-    req.on('error', reject);
-    if (body) {
-      req.write(body);
+class MockRequest extends Readable {
+  readonly method: string;
+  readonly url: string;
+  readonly headers: Record<string, string>;
+
+  constructor(opts: MockRequestOptions = {}) {
+    super();
+    this.method = opts.method ?? 'GET';
+    this.url = opts.url ?? '/';
+    this.headers = { host: '127.0.0.1', ...(opts.headers ?? {}) };
+    if (opts.body !== undefined) {
+      this.push(Buffer.from(opts.body));
     }
-    req.end();
-  });
+    this.push(null);
+  }
+
+  _read(): void {
+    // No-op: pushes in the constructor drive the stream.
+  }
 }
 
-function httpGet(url: string): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
-  return new Promise((resolve, reject) => {
-    const req = http.get(url, (res) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
-      res.on('end', () => {
-        resolve({
-          statusCode: res.statusCode ?? 0,
-          headers: res.headers,
-          body: Buffer.concat(chunks).toString('utf-8'),
-        });
-      });
-    });
-    req.on('error', reject);
-  });
+/**
+ * Mock ServerResponse. Captures the status code, headers, and body that the
+ * handler writes, so tests can assert on them without a real socket.
+ */
+class MockResponse extends EventEmitter {
+  statusCode = 200;
+  readonly headers: Record<string, string> = {};
+  private readonly chunks: Buffer[] = [];
+  writableEnded = false;
+
+  writeHead(status: number, headers?: Record<string, unknown>): void {
+    this.statusCode = status;
+    if (headers) {
+      for (const [key, value] of Object.entries(headers)) {
+        this.headers[key.toLowerCase()] = String(value);
+      }
+    }
+  }
+
+  setHeader(key: string, value: unknown): void {
+    this.headers[key.toLowerCase()] = String(value);
+  }
+
+  write(chunk: unknown): boolean {
+    if (this.writableEnded) {
+      return false;
+    }
+    this.chunks.push(Buffer.from(typeof chunk === 'string' ? chunk : String(chunk)));
+    return true;
+  }
+
+  end(chunk?: unknown): void {
+    if (chunk !== undefined) {
+      this.chunks.push(Buffer.from(typeof chunk === 'string' ? chunk : String(chunk)));
+    }
+    this.writableEnded = true;
+    this.emit('finish');
+  }
+
+  get body(): string {
+    return Buffer.concat(this.chunks).toString('utf-8');
+  }
+}
+
+/** Drive the (private) request handler with a mock request and capture the response. */
+async function dispatch(
+  server: HttpApiServer,
+  opts: MockRequestOptions
+): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+  const req = new MockRequest(opts) as unknown as IncomingMessage;
+  const res = new MockResponse() as unknown as ServerResponse;
+  // handleRequest is private; access it for unit testing without a socket.
+  await (
+    server as unknown as {
+      handleRequest: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+    }
+  ).handleRequest(req, res);
+  const mockRes = res as unknown as MockResponse;
+  return { statusCode: mockRes.statusCode, headers: mockRes.headers, body: mockRes.body };
 }
 
 describe('HttpApiServer', () => {
-  const port = 19200; // Use non-standard port for tests
   let server: HttpApiServer;
 
-  beforeAll(async () => {
-    server = new HttpApiServer({ port, host: 'localhost' });
+  beforeEach(() => {
+    server = new HttpApiServer({ port: 0, host: '127.0.0.1' });
     server.setNodeId('test-node-1');
-    await server.start();
+    // start() sets startTime; since we never start() here, seed it so uptime
+    // assertions are meaningful.
+    (server as unknown as { startTime: number }).startTime = Date.now() - 5000;
   });
 
-  afterAll(async () => {
-    await server.stop();
+  afterEach(() => {
+    // If any test opened an SSE stream, its keepalive heartbeat interval is
+    // running; stop it so it cannot keep the process alive (stop() is a no-op
+    // when start() was never called).
+    (server as unknown as { stopSseHeartbeat: () => void }).stopSseHeartbeat();
   });
 
   describe('GET /api/status', () => {
     it('should return status ok', async () => {
-      const { statusCode, body } = await httpGet(`http://localhost:${port}/api/status`);
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/status' });
       expect(statusCode).toBe(200);
 
       const data = JSON.parse(body) as StatusResponse;
@@ -104,17 +147,17 @@ describe('HttpApiServer', () => {
     });
 
     it('should return JSON content type', async () => {
-      const { headers } = await httpGet(`http://localhost:${port}/api/status`);
+      const { headers } = await dispatch(server, { method: 'GET', url: '/api/status' });
       expect(headers['content-type']).toContain('application/json');
     });
 
     it('should increase uptime over time', async () => {
-      const { body: body1 } = await httpGet(`http://localhost:${port}/api/status`);
+      const { body: body1 } = await dispatch(server, { method: 'GET', url: '/api/status' });
       const data1 = JSON.parse(body1) as StatusResponse;
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 1100));
 
-      const { body: body2 } = await httpGet(`http://localhost:${port}/api/status`);
+      const { body: body2 } = await dispatch(server, { method: 'GET', url: '/api/status' });
       const data2 = JSON.parse(body2) as StatusResponse;
 
       expect(data2.uptime).toBeGreaterThanOrEqual(data1.uptime);
@@ -123,7 +166,7 @@ describe('HttpApiServer', () => {
 
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
-      const { statusCode, body } = await httpGet(`http://localhost:${port}/unknown`);
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/unknown' });
       expect(statusCode).toBe(404);
 
       const data = JSON.parse(body) as { error: string };
@@ -131,68 +174,27 @@ describe('HttpApiServer', () => {
     });
 
     it('should return 404 for unknown API paths', async () => {
-      const { statusCode } = await httpGet(`http://localhost:${port}/api/unknown`);
+      const { statusCode } = await dispatch(server, { method: 'GET', url: '/api/unknown' });
       expect(statusCode).toBe(404);
     });
   });
 
   describe('HTTP method matching', () => {
     it('should return 404 for POST to GET-only route', async () => {
-      const { statusCode } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/status',
-        method: 'POST',
-      });
+      const { statusCode } = await dispatch(server, { method: 'POST', url: '/api/status' });
       expect(statusCode).toBe(404);
-    });
-  });
-
-  describe('lifecycle', () => {
-    it('should report running after start', () => {
-      expect(server.isRunning).toBe(true);
-    });
-
-    it('should handle stop when already stopped', async () => {
-      const stoppedServer = new HttpApiServer({ port: 19201, host: 'localhost' });
-      stoppedServer.setNodeId('test-stopped');
-      // Not started — stop should be a no-op
-      await stoppedServer.stop();
-      expect(stoppedServer.isRunning).toBe(false);
-    });
-
-    it('should handle start when already running', async () => {
-      // server is already started in beforeAll — calling start again should be a no-op
-      await server.start();
-      expect(server.isRunning).toBe(true);
-    });
-
-    it('should report not running after stop', async () => {
-      const tempServer = new HttpApiServer({ port: 19202, host: 'localhost' });
-      tempServer.setNodeId('test-temp');
-      await tempServer.start();
-      expect(tempServer.isRunning).toBe(true);
-
-      await tempServer.stop();
-      expect(tempServer.isRunning).toBe(false);
     });
   });
 
   describe('POST /api/push', () => {
     it('should return 503 when push handler is not configured', async () => {
-      // Create a separate server without push handler
-      const noPushServer = new HttpApiServer({ port: 19203, host: 'localhost' });
-      await noPushServer.start();
-
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port: 19203,
-        path: '/api/push',
+      // No pushHandler set on this server.
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
-
-      await noPushServer.stop();
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', message: 'hello' }),
+      });
 
       expect(statusCode).toBe(503);
       const data = JSON.parse(body) as PushResponse;
@@ -204,13 +206,12 @@ describe('HttpApiServer', () => {
       const mockHandler = vi.fn().mockResolvedValue(undefined);
       server.setPushHandler(mockHandler);
 
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, JSON.stringify({ chatId: 'oc_test', message: 'hello world' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', message: 'hello world' }),
+      });
 
       expect(statusCode).toBe(200);
       const data = JSON.parse(body) as PushResponse;
@@ -222,13 +223,12 @@ describe('HttpApiServer', () => {
     it('should return 400 for invalid JSON', async () => {
       server.setPushHandler(vi.fn());
 
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, 'not json');
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: 'not json',
+      });
 
       expect(statusCode).toBe(400);
       const data = JSON.parse(body) as PushResponse;
@@ -239,13 +239,12 @@ describe('HttpApiServer', () => {
     it('should return 400 for missing chatId', async () => {
       server.setPushHandler(vi.fn());
 
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, JSON.stringify({ message: 'hello' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: 'hello' }),
+      });
 
       expect(statusCode).toBe(400);
       const data = JSON.parse(body) as PushResponse;
@@ -256,13 +255,12 @@ describe('HttpApiServer', () => {
     it('should return 400 for missing message', async () => {
       server.setPushHandler(vi.fn());
 
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, JSON.stringify({ chatId: 'oc_test' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test' }),
+      });
 
       expect(statusCode).toBe(400);
       const data = JSON.parse(body) as PushResponse;
@@ -273,13 +271,12 @@ describe('HttpApiServer', () => {
     it('should return 500 when handler throws', async () => {
       server.setPushHandler(() => Promise.reject(new Error('Agent not found')));
 
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', message: 'hello' }),
+      });
 
       expect(statusCode).toBe(500);
       const data = JSON.parse(body) as PushResponse;
@@ -290,13 +287,12 @@ describe('HttpApiServer', () => {
     it('should return 400 for empty chatId', async () => {
       server.setPushHandler(vi.fn());
 
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, JSON.stringify({ chatId: '', message: 'hello' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: '', message: 'hello' }),
+      });
 
       expect(statusCode).toBe(400);
       const data = JSON.parse(body) as PushResponse;
@@ -307,13 +303,12 @@ describe('HttpApiServer', () => {
     it('should return 400 for empty message', async () => {
       server.setPushHandler(vi.fn());
 
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, JSON.stringify({ chatId: 'oc_test', message: '' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', message: '' }),
+      });
 
       expect(statusCode).toBe(400);
       const data = JSON.parse(body) as PushResponse;
@@ -324,15 +319,12 @@ describe('HttpApiServer', () => {
     it('should return 413 for oversized body', async () => {
       server.setPushHandler(vi.fn());
 
-      const largeBody = JSON.stringify({ chatId: 'oc_test', message: 'x'.repeat(1024 * 1024 + 1) });
-
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, largeBody);
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', message: 'x'.repeat(1024 * 1024 + 1) }),
+      });
 
       expect(statusCode).toBe(413);
       const data = JSON.parse(body) as PushResponse;
@@ -342,34 +334,30 @@ describe('HttpApiServer', () => {
   });
 
   describe('API Token authentication (Issue #3857)', () => {
-    let authPort: number;
     const testToken = 'test-secret-token-123';
     let authServer: HttpApiServer;
 
-    beforeAll(async () => {
-      authPort = await getFreePort();
-      authServer = new HttpApiServer({ port: authPort, host: 'localhost', apiToken: testToken });
+    beforeEach(() => {
+      authServer = new HttpApiServer({ port: 0, host: '127.0.0.1', apiToken: testToken });
       authServer.setPushHandler(vi.fn().mockResolvedValue(undefined));
-      await authServer.start();
     });
 
-    afterAll(async () => {
-      await authServer.stop();
+    afterEach(() => {
+      (authServer as unknown as { stopSseHeartbeat: () => void }).stopSseHeartbeat();
     });
 
     it('should allow GET /api/status without token', async () => {
-      const { statusCode } = await httpGet(`http://localhost:${authPort}/api/status`);
+      const { statusCode } = await dispatch(authServer, { method: 'GET', url: '/api/status' });
       expect(statusCode).toBe(200);
     });
 
     it('should reject POST /api/push without token', async () => {
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port: authPort,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(authServer, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', message: 'hello' }),
+      });
 
       expect(statusCode).toBe(401);
       const data = JSON.parse(body) as { error: string };
@@ -377,31 +365,23 @@ describe('HttpApiServer', () => {
     });
 
     it('should reject POST /api/push with wrong token', async () => {
-      const { statusCode } = await httpRequest({
-        hostname: 'localhost',
-        port: authPort,
-        path: '/api/push',
+      const { statusCode } = await dispatch(authServer, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer wrong-token',
-        },
-      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer wrong-token' },
+        body: JSON.stringify({ chatId: 'oc_test', message: 'hello' }),
+      });
 
       expect(statusCode).toBe(401);
     });
 
     it('should accept POST /api/push with correct token', async () => {
-      const { statusCode, body } = await httpRequest({
-        hostname: 'localhost',
-        port: authPort,
-        path: '/api/push',
+      const { statusCode, body } = await dispatch(authServer, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${testToken}`,
-        },
-      }, JSON.stringify({ chatId: 'oc_test', message: 'hello' }));
+        url: '/api/push',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${testToken}` },
+        body: JSON.stringify({ chatId: 'oc_test', message: 'hello' }),
+      });
 
       expect(statusCode).toBe(200);
       const data = JSON.parse(body) as PushResponse;
@@ -410,31 +390,11 @@ describe('HttpApiServer', () => {
   });
 
   describe('GET /api/topic-stream (SSE) — Issue #4031', () => {
-    let ssePort: number;
-    let sseServer: HttpApiServer;
-
-    beforeAll(async () => {
-      ssePort = await getFreePort();
-      sseServer = new HttpApiServer({ port: ssePort, host: 'localhost' });
-      await sseServer.start();
-    });
-
-    afterAll(async () => {
-      await sseServer.stop();
-    });
-
     it('should return SSE headers on connect', async () => {
-      const { statusCode, headers } = await new Promise<{ statusCode: number; headers: http.IncomingHttpHeaders }>(
-        (resolve, reject) => {
-          const req = http.get(`http://localhost:${ssePort}/api/topic-stream`, (res) => {
-            resolve({ statusCode: res.statusCode ?? 0, headers: res.headers });
-            // Drain and close
-            res.on('data', () => {});
-            res.destroy();
-          });
-          req.on('error', reject);
-        },
-      );
+      const { statusCode, headers } = await dispatch(server, {
+        method: 'GET',
+        url: '/api/topic-stream',
+      });
 
       expect(statusCode).toBe(200);
       expect(headers['content-type']).toBe('text/event-stream');
@@ -443,23 +403,23 @@ describe('HttpApiServer', () => {
     });
 
     it('should send initial comment on connect', async () => {
-      const { body } = await new Promise<{ body: string }>((resolve, reject) => {
-        const req = http.get(`http://localhost:${ssePort}/api/topic-stream`, (res) => {
-          let data = '';
-          res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-          // Wait for initial comment then close
-          setTimeout(() => {
-            res.destroy();
-            resolve({ body: data });
-          }, 100);
-        });
-        req.on('error', reject);
-      });
-
+      const { body } = await dispatch(server, { method: 'GET', url: '/api/topic-stream' });
       expect(body).toContain(': connected');
     });
 
     it('should broadcast TopicGroupMessageEvent to connected SSE client', async () => {
+      // Connect a mock SSE client (registers it in the server's sseClients).
+      const res = new MockResponse();
+      const req = new MockRequest({
+        method: 'GET',
+        url: '/api/topic-stream',
+      }) as unknown as IncomingMessage;
+      await (
+        server as unknown as {
+          handleRequest: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+        }
+      ).handleRequest(req, res as unknown as ServerResponse);
+
       const event: TopicGroupMessageEvent = {
         type: 'topic_group_message',
         chatId: 'oc_test_chat',
@@ -471,70 +431,22 @@ describe('HttpApiServer', () => {
         timestamp: new Date().toISOString(),
       };
 
-      // Connect SSE client and collect events with retry-based broadcast
-      const events = await new Promise<string[]>((resolve, reject) => {
-        const received: string[] = [];
-        let broadcastDone = false;
+      server.broadcastTopicEvent(event);
 
-        const req = http.get(`http://localhost:${ssePort}/api/topic-stream`, (res) => {
-          let buffer = '';
-          res.on('data', (chunk: Buffer) => {
-            buffer += chunk.toString();
-            const lines = buffer.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                received.push(line.slice(6));
-              }
-            }
-            // Resolve as soon as we receive the broadcast event
-            if (received.length > 0 && broadcastDone) {
-              req.destroy();
-              resolve(received);
-            }
-          });
-
-          // Broadcast after client connects, with retry
-          const tryBroadcast = (attempts: number): void => {
-            if (broadcastDone) { return; }
-            sseServer.broadcastTopicEvent(event);
-            broadcastDone = true;
-            // Check if already received (synchronous delivery possible)
-            if (received.length > 0) {
-              req.destroy();
-              resolve(received);
-              return;
-            }
-            // Fallback timeout in case data event is delayed
-            setTimeout(() => {
-              if (received.length > 0) {
-                req.destroy();
-                resolve(received);
-              } else if (attempts > 0) {
-                // Retry broadcast in case client wasn't ready
-                broadcastDone = false;
-                tryBroadcast(attempts - 1);
-              } else {
-                req.destroy();
-                resolve(received);
-              }
-            }, 150);
-          };
-          setTimeout(() => tryBroadcast(3), 50);
-        });
-        req.on('error', reject);
-      });
-
-      expect(events.length).toBeGreaterThan(0);
-      const parsed = JSON.parse(events[events.length - 1]) as TopicGroupMessageEvent;
+      const { body } = res;
+      expect(body).toContain('data: ');
+      const dataLine = body.split('\n').find((line) => line.startsWith('data: '));
+      expect(dataLine).toBeDefined();
+      const parsed = JSON.parse((dataLine as string).slice(6)) as TopicGroupMessageEvent;
       expect(parsed.type).toBe('topic_group_message');
       expect(parsed.chatId).toBe('oc_test_chat');
       expect(parsed.content).toBe('Hello from topic');
     });
 
     it('should handle no connected clients gracefully', () => {
-      // Should not throw
+      // No SSE client connected on this fresh server.
       expect(() => {
-        sseServer.broadcastTopicEvent({
+        server.broadcastTopicEvent({
           type: 'topic_group_message',
           chatId: 'oc_test',
           rootId: 'om_root',
@@ -545,6 +457,46 @@ describe('HttpApiServer', () => {
           timestamp: new Date().toISOString(),
         });
       }).not.toThrow();
+    });
+  });
+
+  describe('lifecycle', () => {
+    // These verify start()/stop()/isRunning() and necessarily bind a real
+    // socket — but on 127.0.0.1 with an OS-assigned port (port 0) and without
+    // making any HTTP roundtrip, so they are deterministic and port-conflict
+    // free regardless of localhost IPv4/IPv6 ordering.
+    let lifecycleServer: HttpApiServer;
+
+    beforeEach(async () => {
+      lifecycleServer = new HttpApiServer({ port: 0, host: '127.0.0.1' });
+      lifecycleServer.setNodeId('test-lifecycle');
+      await lifecycleServer.start();
+    });
+
+    afterEach(async () => {
+      await lifecycleServer.stop();
+    });
+
+    it('should report running after start', () => {
+      expect(lifecycleServer.isRunning).toBe(true);
+    });
+
+    it('should handle start when already running', async () => {
+      // Already started in beforeEach — calling start again should be a no-op.
+      await lifecycleServer.start();
+      expect(lifecycleServer.isRunning).toBe(true);
+    });
+
+    it('should report not running after stop', async () => {
+      await lifecycleServer.stop();
+      expect(lifecycleServer.isRunning).toBe(false);
+    });
+
+    it('should handle stop when already stopped', async () => {
+      await lifecycleServer.stop();
+      // Stopping again should be a no-op.
+      await lifecycleServer.stop();
+      expect(lifecycleServer.isRunning).toBe(false);
     });
   });
 });

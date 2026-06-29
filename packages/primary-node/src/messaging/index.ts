@@ -21,7 +21,6 @@
  * import {
  *   MessageRouter,
  *   ChannelMessageRouter,
- *   RoutedOutputAdapter,
  *   MessageLevel,
  *   createDefaultRouteConfig,
  *   // UMF and Adapters (Phase 2)
@@ -89,13 +88,6 @@ export {
   type MessageRouterOptions,
   createDefaultRouteConfig,
 } from './message-router.js';
-
-// Output Adapter
-export {
-  RoutedOutputAdapter,
-  SimpleUserOutputAdapter,
-  type RoutedOutputAdapterOptions,
-} from './routed-output-adapter.js';
 
 // Channel Message Router (Issue #513)
 export {
@@ -179,7 +171,4 @@ export {
 export { createFeishuMessageBuilderOptions } from './adapters/feishu-message-builder.js';
 
 // Agent Pool Handler for InputMessageRouter (Issue #3582 Phase 3)
-export {
-  AgentPoolMessageHandler,
-  type AgentPoolHandlerOptions,
-} from './agent-pool-handler.js';
+export { AgentPoolMessageHandler, type AgentPoolHandlerOptions } from './agent-pool-handler.js';

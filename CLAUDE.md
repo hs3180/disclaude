@@ -399,6 +399,18 @@ Tools are configured via `disallowedTools` in the agent classes:
 
 To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.startAgentLoop()` or `ChatAgent.runOnce()`.
 
+### 6. Installing System Packages (Container)
+
+Inside Docker the agent runs as the non-root `disclaude` user (uid 1001). It has **passwordless sudo** (restricted to `apk` only), so install Alpine packages on demand:
+
+```bash
+sudo apk add llvm19-dev        # -dev pkgs are version-pinned in Alpine, use `apk search` to find exact names
+sudo apk search llvm           # find available llvm packages
+```
+
+- `cmake` and `python3-dev` are pre-baked into the image as part of the `.build-deps` virtual group, so common native builds work without a network fetch. If space is reclaimed via `apk del .build-deps`, these tools will be removed and must be reinstalled with `sudo apk add`.
+- The process deliberately stays uid 1001 (not root) to keep `/data/workspace` files owned by the host user; elevate via `sudo apk` only for system package installs.
+
 ## Logging Guidelines
 
 **IMPORTANT**: The application uses Pino (structured JSON logging) which writes to stdout/stderr and optionally to local files. Since v0.4.0, application-level Elasticsearch transport has been removed in favor of infrastructure-level log forwarding (see `docs/log-forwarding.md`). Log shippers like Fluentd or Filebeat can forward logs to Elasticsearch, Loki, or other backends.

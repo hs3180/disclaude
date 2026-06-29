@@ -14,11 +14,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock all @disclaude/core dependencies
 vi.mock('@disclaude/core', () => {
-  const BaseAgent = vi.fn().mockImplementation(function(this: any) {
+  const BaseAgent = vi.fn().mockImplementation(function (this: any) {
     this.createSdkOptions = vi.fn(() => ({ mcpServers: {} }));
     this.createQueryStream = vi.fn(() => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
-      iterator: (async function* () { /* empty */ })(),
+      iterator: (async function* () {
+        /* empty */
+      })(),
     }));
     this.initialized = true;
     this.dispose = vi.fn();
@@ -30,50 +32,60 @@ vi.mock('@disclaude/core', () => {
     };
   });
   // Add dispose to prototype so super.dispose() works from ChatAgent (Issue #3745)
-  BaseAgent.prototype.dispose = function(this: any) {
-    if (!this.initialized) { return; }
+  BaseAgent.prototype.dispose = function (this: any) {
+    if (!this.initialized) {
+      return;
+    }
     this.initialized = false;
   };
-  return ({
-  Config: {
-    getSessionRestoreConfig: vi.fn(() => ({
-      historyDays: 1,
-      maxContextLength: 50000,
+  return {
+    Config: {
+      getSessionRestoreConfig: vi.fn(() => ({
+        historyDays: 1,
+        maxContextLength: 50000,
+      })),
+      getMcpServersConfig: vi.fn(() => null),
+    },
+    BaseAgent,
+    MessageBuilder: vi.fn().mockImplementation(() => ({
+      buildEnhancedContent: vi.fn((input: any) => input.text),
     })),
-    getMcpServersConfig: vi.fn(() => null),
-  },
-  BaseAgent,
-  MessageBuilder: vi.fn().mockImplementation(() => ({
-    buildEnhancedContent: vi.fn((input: any) => input.text),
-  })),
-  MessageChannel: vi.fn().mockImplementation(() => ({
-    push: vi.fn().mockReturnValue(true),
-    close: vi.fn(),
-    generator: vi.fn(() => (async function* () { /* empty */ })()),
-  })),
-  RestartManager: vi.fn().mockImplementation(() => ({
-    recordSuccess: vi.fn(),
-    shouldRestart: vi.fn(() => ({ allowed: false, reason: 'max_restarts_exceeded', restartCount: 3 })),
-    reset: vi.fn(),
-    clearAll: vi.fn(),
-  })),
-  ConversationOrchestrator: vi.fn().mockImplementation(() => ({
-    setThreadRoot: vi.fn(),
-    getThreadRoot: vi.fn(() => 'thread-root-123'),
-    deleteThreadRoot: vi.fn(),
-    clearAll: vi.fn(),
-  })),
-  // Issue #2920: Real implementations for startup failure detection
-  isStartupFailure: (messageCount: number, elapsedMs: number) => {
-    return messageCount === 0 && elapsedMs < 10_000;
-  },
-  getErrorStderr: (error: unknown) => {
-    if (error instanceof Error) {
-      return (error as any).__stderr__;
-    }
-    return undefined;
-  },
-  });
+    MessageChannel: vi.fn().mockImplementation(() => ({
+      push: vi.fn().mockReturnValue(true),
+      close: vi.fn(),
+      generator: vi.fn(() =>
+        (async function* () {
+          /* empty */
+        })()
+      ),
+    })),
+    RestartManager: vi.fn().mockImplementation(() => ({
+      recordSuccess: vi.fn(),
+      shouldRestart: vi.fn(() => ({
+        allowed: false,
+        reason: 'max_restarts_exceeded',
+        restartCount: 3,
+      })),
+      reset: vi.fn(),
+      clearAll: vi.fn(),
+    })),
+    ConversationOrchestrator: vi.fn().mockImplementation(() => ({
+      setThreadRoot: vi.fn(),
+      getThreadRoot: vi.fn(() => 'thread-root-123'),
+      deleteThreadRoot: vi.fn(),
+      clearAll: vi.fn(),
+    })),
+    // Issue #2920: Real implementations for startup failure detection
+    isStartupFailure: (messageCount: number, elapsedMs: number) => {
+      return messageCount === 0 && elapsedMs < 10_000;
+    },
+    getErrorStderr: (error: unknown) => {
+      if (error instanceof Error) {
+        return (error as any).__stderr__;
+      }
+      return undefined;
+    },
+  };
 });
 
 vi.mock('@disclaude/mcp-server', () => ({
@@ -81,7 +93,9 @@ vi.mock('@disclaude/mcp-server', () => ({
 }));
 
 // Mock debug-group-service (Issue #3809)
-const mockGetDebugGroup = vi.fn<(chatId?: string) => { chatId: string; setAt: number } | null>(() => null);
+const mockGetDebugGroup = vi.fn<(chatId?: string) => { chatId: string; setAt: number } | null>(
+  () => null
+);
 vi.mock('../services/debug-group-service.js', () => ({
   getDebugGroupService: vi.fn(() => ({
     getDebugGroup: mockGetDebugGroup,
@@ -131,7 +145,6 @@ describe('ChatAgent (primary-node)', () => {
     it('should have name "ChatAgent"', () => {
       expect(chatAgent.name).toBe('ChatAgent');
     });
-
   });
 
   describe('getChatId', () => {
@@ -196,22 +209,24 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('should start a session when processing first message', () => {
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       expect(chatAgent.hasActiveSession()).toBe(true);
     });
   });
 
   describe('runOnce', () => {
     it('should throw when chatId does not match bound chatId', async () => {
-      await expect(
-        chatAgent.runOnce('oc_wrong', 'hello', 'msg_1')
-      ).rejects.toThrow('cannot execute for oc_wrong');
+      await expect(chatAgent.runOnce('oc_wrong', 'hello', 'msg_1')).rejects.toThrow(
+        'cannot execute for oc_wrong'
+      );
     });
 
     it('should complete successfully for matching chatId', async () => {
-      await expect(
-        chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1')
-      ).resolves.toBeUndefined();
+      await expect(chatAgent.runOnce('oc_test_chat', 'hello', 'msg_1')).resolves.toBeUndefined();
     });
 
     it('should set onceMode during execution', async () => {
@@ -269,7 +284,9 @@ describe('ChatAgent (primary-node)', () => {
 
       // Simulate a running task by setting taskCompletionPromise
       let resolveTask!: () => void;
-      (chatAgent as any).taskCompletionPromise = new Promise<void>((r) => { resolveTask = r; });
+      (chatAgent as any).taskCompletionPromise = new Promise<void>((r) => {
+        resolveTask = r;
+      });
 
       const result = chatAgent.updateCallbacks(newCallbacks);
       expect(result).toBe(false);
@@ -287,7 +304,9 @@ describe('ChatAgent (primary-node)', () => {
 
       // Simulate a running task
       let resolveTask!: () => void;
-      (chatAgent as any).taskCompletionPromise = new Promise<void>((r) => { resolveTask = r; });
+      (chatAgent as any).taskCompletionPromise = new Promise<void>((r) => {
+        resolveTask = r;
+      });
 
       // Try to update while busy — should defer
       chatAgent.updateCallbacks(busyCallbacks);
@@ -297,7 +316,7 @@ describe('ChatAgent (primary-node)', () => {
       (chatAgent as any).taskCompletionPromise = undefined;
 
       // Wait for deferred update to apply
-      await new Promise<void>(r => setTimeout(r, 50));
+      await new Promise<void>((r) => setTimeout(r, 50));
 
       // Verify callbacks were applied (check via processMessage which uses callbacks)
       // The agent should use busyCallbacks now
@@ -318,7 +337,11 @@ describe('ChatAgent (primary-node)', () => {
 
   describe('session lifecycle', () => {
     it('should allow reset after processMessage', () => {
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       expect(chatAgent.hasActiveSession()).toBe(true);
 
       chatAgent.reset();
@@ -326,13 +349,21 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('should allow new session after reset', () => {
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'first', messageId: 'msg_1' });
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'first',
+        messageId: 'msg_1',
+      });
       expect(chatAgent.hasActiveSession()).toBe(true);
 
       chatAgent.reset();
       expect(chatAgent.hasActiveSession()).toBe(false);
 
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'second', messageId: 'msg_2' });
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'second',
+        messageId: 'msg_2',
+      });
       expect(chatAgent.hasActiveSession()).toBe(true);
     });
   });
@@ -359,15 +390,19 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       // Trigger the agent loop
-      void agent.processMessage({ chatId: 'oc_startup_fail', payload: 'hello', messageId: 'msg_1' });
+      void agent.processMessage({
+        chatId: 'oc_startup_fail',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
 
       // Wait for processIterator to handle the error
-      await new Promise<void>(r => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // Should show startup failure message
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
       const diagnosticCall = sendMessageCalls.find(
-        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败'),
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
       );
       expect(diagnosticCall).toBeDefined();
       expect(diagnosticCall![1]).toContain('Claude Code process exited with code 1');
@@ -394,7 +429,8 @@ describe('ChatAgent (primary-node)', () => {
       // Iterator that throws with stderr attached
       async function* failingIteratorWithStderr() {
         const error = new Error('CLI process exited with code 1');
-        (error as any).__stderr__ = 'MCP server "amap-maps" failed to initialize\nCaused by: command is empty';
+        (error as any).__stderr__ =
+          'MCP server "amap-maps" failed to initialize\nCaused by: command is empty';
         throw error;
       }
 
@@ -403,13 +439,17 @@ describe('ChatAgent (primary-node)', () => {
         iterator: failingIteratorWithStderr(),
       });
 
-      void agent.processMessage({ chatId: 'oc_startup_stderr', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      void agent.processMessage({
+        chatId: 'oc_startup_stderr',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // Should show stderr content in the diagnostic message
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
       const diagnosticCall = sendMessageCalls.find(
-        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败'),
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
       );
       expect(diagnosticCall).toBeDefined();
       expect(diagnosticCall![1]).toContain('MCP server "amap-maps"');
@@ -435,8 +475,12 @@ describe('ChatAgent (primary-node)', () => {
         iterator: failingIterator(),
       });
 
-      void agent.processMessage({ chatId: 'oc_startup_no_retry', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      void agent.processMessage({
+        chatId: 'oc_startup_no_retry',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // Session should be inactive (not restarted)
       expect(agent.hasActiveSession()).toBe(false);
@@ -444,13 +488,13 @@ describe('ChatAgent (primary-node)', () => {
       // Should NOT see the restart/backoff messages
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
       const restartCall = sendMessageCalls.find(
-        (call: any[]) => typeof call[1] === 'string' && call[1].includes('重新连接'),
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('重新连接')
       );
       expect(restartCall).toBeUndefined();
 
       // Should NOT see circuit breaker message
       const circuitBreakerCall = sendMessageCalls.find(
-        (call: any[]) => typeof call[1] === 'string' && call[1].includes('暂停处理'),
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('暂停处理')
       );
       expect(circuitBreakerCall).toBeUndefined();
     });
@@ -468,7 +512,7 @@ describe('ChatAgent (primary-node)', () => {
       // Iterator that yields messages before throwing (runtime error)
       async function* runtimeErrorIterator() {
         yield { parsed: { type: 'text', content: 'Hello from agent' } };
-        await new Promise<void>(r => setTimeout(r, 20));
+        await new Promise<void>((r) => setTimeout(r, 20));
         throw new Error('Runtime crash after messages');
       }
 
@@ -477,20 +521,24 @@ describe('ChatAgent (primary-node)', () => {
         iterator: runtimeErrorIterator(),
       });
 
-      void agent.processMessage({ chatId: 'oc_runtime_error', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 150));
+      void agent.processMessage({
+        chatId: 'oc_runtime_error',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 150));
 
       // Should show Session error (not startup failure)
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
       const sessionErrorCall = sendMessageCalls.find(
-        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Session error'),
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Session error')
       );
       expect(sessionErrorCall).toBeDefined();
       expect(sessionErrorCall![1]).toContain('Runtime crash after messages');
 
       // Should NOT show startup failure message
       const startupFailCall = sendMessageCalls.find(
-        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败'),
+        (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
       );
       expect(startupFailCall).toBeUndefined();
 
@@ -513,7 +561,7 @@ describe('ChatAgent (primary-node)', () => {
       async function* slowIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>(r => setTimeout(r, 10));
+          await new Promise<void>((r) => setTimeout(r, 10));
         }
       }
 
@@ -527,11 +575,11 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({ chatId: 'oc_abort_test', payload: 'hello', messageId: 'msg_1' });
 
       // Wait a bit for some messages to process, then reset
-      await new Promise<void>(r => setTimeout(r, 50));
+      await new Promise<void>((r) => setTimeout(r, 50));
       agent.reset();
 
       // Wait for processIterator to complete
-      await new Promise<void>(r => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // The agent should have stopped - verify session is not active
       expect(agent.hasActiveSession()).toBe(false);
@@ -549,7 +597,7 @@ describe('ChatAgent (primary-node)', () => {
       async function* slowIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>(r => setTimeout(r, 10));
+          await new Promise<void>((r) => setTimeout(r, 10));
         }
       }
 
@@ -561,7 +609,7 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });
 
       // Wait then stop
-      await new Promise<void>(r => setTimeout(r, 50));
+      await new Promise<void>((r) => setTimeout(r, 50));
       const stopped = agent.stop();
 
       expect(stopped).toBe(true);
@@ -577,7 +625,11 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       // Start a session to create AbortController
-      void agent.processMessage({ chatId: 'oc_reset_abort_test', payload: 'hello', messageId: 'msg_1' });
+      void agent.processMessage({
+        chatId: 'oc_reset_abort_test',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       expect(agent.hasActiveSession()).toBe(true);
 
       // The abortController should exist
@@ -600,7 +652,11 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      void agent.processMessage({ chatId: 'oc_stop_abort_test', payload: 'hello', messageId: 'msg_1' });
+      void agent.processMessage({
+        chatId: 'oc_stop_abort_test',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       const ac = (agent as any).abortController as AbortController;
 
       agent.stop();
@@ -616,7 +672,11 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      void agent.processMessage({ chatId: 'oc_shutdown_abort_test', payload: 'hello', messageId: 'msg_1' });
+      void agent.processMessage({
+        chatId: 'oc_shutdown_abort_test',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       const ac = (agent as any).abortController as AbortController;
 
       await agent.shutdown();
@@ -650,12 +710,16 @@ describe('ChatAgent (primary-node)', () => {
         iterator: toolUseIterator(),
       });
 
-      void agent.processMessage({ chatId: 'oc_user_chat', payload: 'read file', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      void agent.processMessage({
+        chatId: 'oc_user_chat',
+        payload: 'read file',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // Should forward to debug group with prefix
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
-        (call: any[]) => call[0] === 'oc_debug_group',
+        (call: any[]) => call[0] === 'oc_debug_group'
       );
       expect(debugCalls.length).toBe(1);
       expect(debugCalls[0][1]).toContain('[tool_use]');
@@ -663,7 +727,7 @@ describe('ChatAgent (primary-node)', () => {
 
       // Should also send to user chat (non-topic)
       const userCalls = localCallbacks.sendMessage.mock.calls.filter(
-        (call: any[]) => call[0] === 'oc_user_chat',
+        (call: any[]) => call[0] === 'oc_user_chat'
       );
       expect(userCalls.length).toBeGreaterThanOrEqual(1);
     });
@@ -690,11 +754,15 @@ describe('ChatAgent (primary-node)', () => {
         iterator: toolResultIterator(),
       });
 
-      void agent.processMessage({ chatId: 'oc_user_chat', payload: 'read file', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      void agent.processMessage({
+        chatId: 'oc_user_chat',
+        payload: 'read file',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
-        (call: any[]) => call[0] === 'oc_debug_group',
+        (call: any[]) => call[0] === 'oc_debug_group'
       );
       expect(debugCalls.length).toBe(1);
       expect(debugCalls[0][1]).toContain('[tool_result]');
@@ -722,11 +790,15 @@ describe('ChatAgent (primary-node)', () => {
         iterator: progressIterator(),
       });
 
-      void agent.processMessage({ chatId: 'oc_user_chat', payload: 'run command', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      void agent.processMessage({
+        chatId: 'oc_user_chat',
+        payload: 'run command',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
-        (call: any[]) => call[0] === 'oc_debug_group',
+        (call: any[]) => call[0] === 'oc_debug_group'
       );
       expect(debugCalls.length).toBe(1);
       expect(debugCalls[0][1]).toContain('[tool_progress]');
@@ -755,11 +827,11 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_user_chat', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // No messages should go to debug group
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
-        (call: any[]) => call[0] === 'oc_debug_group',
+        (call: any[]) => call[0] === 'oc_debug_group'
       );
       expect(debugCalls.length).toBe(0);
     });
@@ -788,11 +860,11 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_user_chat', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // No messages to debug group
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
-        (call: any[]) => call[0] !== 'oc_user_chat',
+        (call: any[]) => call[0] !== 'oc_user_chat'
       );
       expect(debugCalls.length).toBe(0);
     });
@@ -821,7 +893,7 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_debug_group', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // Should only send to user chat (which is the same as debug group)
       // but NOT double-forward
@@ -855,18 +927,21 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_topic_chat', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>(r => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100));
 
       // Debug group should still get the forwarded message
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
-        (call: any[]) => call[0] === 'oc_debug_group',
+        (call: any[]) => call[0] === 'oc_debug_group'
       );
       expect(debugCalls.length).toBe(1);
       expect(debugCalls[0][1]).toContain('Using tool in topic');
 
       // User chat should NOT receive the filtered intermediate message
       const userCalls = localCallbacks.sendMessage.mock.calls.filter(
-        (call: any[]) => call[0] === 'oc_topic_chat' && typeof call[1] === 'string' && call[1].includes('Using tool'),
+        (call: any[]) =>
+          call[0] === 'oc_topic_chat' &&
+          typeof call[1] === 'string' &&
+          call[1].includes('Using tool')
       );
       expect(userCalls.length).toBe(0);
     });
@@ -879,14 +954,22 @@ describe('ChatAgent (primary-node)', () => {
 
     it('should return true for isBusy when processing a message', () => {
       // Skip the async history loading so processMessage reaches the push synchronously
-      (chatAgent as any).firstMessageHistoryLoaded = true;
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      (chatAgent as any).historyManager.firstMessageHistoryLoaded = true;
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       expect(chatAgent.isBusy).toBe(true);
     });
 
     it('should reset isProcessingMessage on reset', () => {
-      (chatAgent as any).firstMessageHistoryLoaded = true;
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      (chatAgent as any).historyManager.firstMessageHistoryLoaded = true;
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       expect(chatAgent.isBusy).toBe(true);
 
       chatAgent.reset();
@@ -894,8 +977,12 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('should reset isProcessingMessage on shutdown', async () => {
-      (chatAgent as any).firstMessageHistoryLoaded = true;
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      (chatAgent as any).historyManager.firstMessageHistoryLoaded = true;
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       expect(chatAgent.isBusy).toBe(true);
 
       await chatAgent.shutdown();
@@ -903,17 +990,25 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('should reset isProcessingMessage when channel push is rejected', () => {
-      (chatAgent as any).firstMessageHistoryLoaded = true;
+      (chatAgent as any).historyManager.firstMessageHistoryLoaded = true;
       // Start a session to create a channel
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       expect(chatAgent.isBusy).toBe(true);
 
       // Simulate channel rejection by making push return false
-      const {channel} = (chatAgent as any);
+      const { channel } = chatAgent as any;
       channel.push = vi.fn().mockReturnValue(false);
 
       // Send another message — should be rejected and isProcessingMessage reset
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'second', messageId: 'msg_2' });
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'second',
+        messageId: 'msg_2',
+      });
       expect(chatAgent.isBusy).toBe(false);
     });
 
@@ -928,12 +1023,16 @@ describe('ChatAgent (primary-node)', () => {
         iterator: resultIterator(),
       });
 
-      (chatAgent as any).firstMessageHistoryLoaded = true;
-      void chatAgent.processMessage({ chatId: 'oc_test_chat', payload: 'hello', messageId: 'msg_1' });
+      (chatAgent as any).historyManager.firstMessageHistoryLoaded = true;
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
       expect(chatAgent.isBusy).toBe(true);
 
       // Wait for the result to be processed
-      await new Promise<void>(r => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100));
       expect(chatAgent.isBusy).toBe(false);
     });
   });
