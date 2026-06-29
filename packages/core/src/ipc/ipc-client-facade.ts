@@ -18,7 +18,11 @@ import type {
   IpcResponsePayloads,
 } from './protocol.js';
 
-const logger = createLogger('IpcClientFacade');
+// Issue #4129 review nit#2: keep the pre-refactor 'IpcClient' context so high-level
+// method error logs (sendMessage failed, etc.) stay on the same source as the
+// connection layer — preserves dashboard/alert continuity and keeps the Loop
+// Runner logs on 'IpcClient' too once those move here.
+const logger = createLogger('IpcClient');
 
 /** Consistent error type returned by all facade methods. */
 export type IpcMethodErrorType = 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
@@ -206,6 +210,69 @@ export async function pushToAgent(
   } catch (error) {
     const { err, errorType } = classifyError(error);
     logger.error({ err: error, chatId }, 'pushToAgent failed');
+    return { success: false, error: err.message, errorType };
+  }
+}
+
+// ============================================================================
+// Loop Runner operations (Issue #4075)
+// ============================================================================
+
+/**
+ * Start a Loop Runner loop via IPC.
+ * Issue #4075: Loop Runner lifecycle management.
+ */
+export async function loopStart(
+  client: IpcClientLike,
+  params: {
+    chatId: string;
+    prompt: string;
+    maxSteps?: number;
+    maxDurationMs?: number;
+    stepIntervalMs?: number;
+  }
+): Promise<IpcMethodResult & { loopId?: string }> {
+  try {
+    return await client.request('loopStart', params);
+  } catch (error) {
+    const { err, errorType } = classifyError(error);
+    logger.error({ err: error, chatId: params.chatId }, 'loopStart failed');
+    return { success: false, error: err.message, errorType };
+  }
+}
+
+/**
+ * Stop a Loop Runner loop via IPC.
+ * Issue #4075: Loop Runner lifecycle management.
+ */
+export async function loopStop(
+  client: IpcClientLike,
+  loopId: string
+): Promise<IpcMethodResult> {
+  try {
+    return await client.request('loopStop', { loopId });
+  } catch (error) {
+    const { err, errorType } = classifyError(error);
+    logger.error({ err: error, loopId }, 'loopStop failed');
+    return { success: false, error: err.message, errorType };
+  }
+}
+
+/**
+ * Query Loop Runner loop status via IPC.
+ * Issue #4075: Loop Runner lifecycle management.
+ */
+export async function loopStatus(
+  client: IpcClientLike,
+  loopId: string
+): Promise<IpcMethodResult & {
+  status?: { loopId: string; state: 'running' | 'completed' | 'stopped' | 'error'; currentStep: number; totalSteps: number; startedAt: string };
+}> {
+  try {
+    return await client.request('loopStatus', { loopId });
+  } catch (error) {
+    const { err, errorType } = classifyError(error);
+    logger.error({ err: error, loopId }, 'loopStatus failed');
     return { success: false, error: err.message, errorType };
   }
 }
