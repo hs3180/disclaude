@@ -458,6 +458,10 @@ export class PrimaryNode extends EventEmitter {
       // Issue #4075: Loop Runner IPC handlers
       loopStart: (params) => {
         if (!this.loopRunner) {
+          // Issue #4075: the loop pushes each step's instruction via pushToAgent
+          // *without* waitForCompletion — by design (fire-and-forget cadence).
+          // stepIntervalMs therefore paces dispatch, not agent-turn completion: if
+          // a turn runs longer than the interval the next push may overlap it.
           this.loopRunner = new LoopRunner(async (chatId, message) => {
             const h = resolveHandlers(chatId);
             if (!h?.pushToAgent) {
@@ -478,7 +482,10 @@ export class PrimaryNode extends EventEmitter {
         if (!this.loopRunner) {
           return Promise.resolve({ success: false, error: 'No loops have been started' });
         }
-        this.loopRunner.stop(loopId);
+        const found = this.loopRunner.stop(loopId);
+        if (!found) {
+          return Promise.resolve({ success: false, error: 'Loop not found' });
+        }
         return Promise.resolve({ success: true });
       },
       loopStatus: (loopId) => {
