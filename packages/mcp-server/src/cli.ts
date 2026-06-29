@@ -8,6 +8,9 @@
  * This starts the MCP Server (stdio mode) for use with Claude Code
  * and other MCP clients.
  *
+ * Issue #4128: Tool schemas and dispatch logic extracted to tools/.
+ * This file handles arg parsing, MCP handshake, and request routing.
+ *
  * @module mcp-server/cli
  */
 
@@ -18,15 +21,9 @@ import {
   getIpcSocketPath,
 } from '@disclaude/core';
 import { existsSync } from 'fs';
-import {
-  setMessageSentCallback,
-  send_file,
-  send_text,
-  send_card,
-  send_interactive_message,
-  push_to_agent,
-} from './index.js';
-import { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
+import { setMessageSentCallback } from './index.js';
+import { toolDefinitions } from './tools/tool-definitions.js';
+import { dispatchToolCall } from './tools/tool-dispatch.js';
 
 const logger = createLogger('McpServerCLI');
 
@@ -92,6 +89,9 @@ Examples:
 
 /**
  * Handle incoming JSON-RPC requests.
+ *
+ * Issue #4128: Delegates to tool-definitions (tools/list) and
+ * tool-dispatch (tools/call) for a thin routing layer.
  */
 export async function handleRequest(request: {
   jsonrpc: string;
@@ -107,470 +107,30 @@ export async function handleRequest(request: {
   const { id, method, params } = request;
 
   try {
-    // Handle different MCP methods
     if (method === 'initialize') {
-      // MCP handshake - return server capabilities
       return {
         jsonrpc: '2.0',
         id,
         result: {
           protocolVersion: '2024-11-05',
-          capabilities: {
-            tools: {},
-          },
-          serverInfo: {
-            name: 'channel-mcp',
-            version: '0.0.1',
-          },
+          capabilities: { tools: {} },
+          serverInfo: { name: 'channel-mcp', version: '0.0.1' },
         },
       };
-    } else if (method === 'tools/list') {
-      return {
-        jsonrpc: '2.0',
-        id,
-        result: {
-          tools: [
-            {
-              name: 'send_text',
-              description: 'Send a plain text message to a chat.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  text: {
-                    type: 'string',
-                    description: 'The text message content.',
-                  },
-                  chatId: {
-                    type: 'string',
-                    description: 'Target chat ID',
-                  },
-                  parentMessageId: {
-                    type: 'string',
-                    description: 'Optional parent message ID for thread replies',
-                  },
-                },
-                required: ['text', 'chatId'],
-              },
-            },
-            {
-              name: 'send_card',
-              description: `Send a display-only card to a chat. No button interactions.
+    }
 
-## Card Structure
-A Feishu card object with config, header, and elements.
+    if (method === 'tools/list') {
+      return { jsonrpc: '2.0', id, result: { tools: toolDefinitions } };
+    }
 
-## Type Constraints (IMPORTANT)
-- **card**: MUST be an object with config/header/elements, NOT an array or string
-- **chatId**: MUST be a non-empty string
-
-Example:
-\`\`\`json
-{
-  "config": {"wide_screen_mode": true},
-  "header": {"title": {"content": "Title", "tag": "plain_text"}},
-  "elements": [{"tag": "markdown", "content": "Content"}]
-}
-\`\`\`
-
-**Reference:** https://open.feishu.cn/document/common-capabilities/message-card`,
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  card: {
-                    type: 'object',
-                    description: 'The card content object. MUST be an object, NOT an array or string.',
-                  },
-                  chatId: {
-                    type: 'string',
-                    description: 'Target chat ID',
-                  },
-                  parentMessageId: {
-                    type: 'string',
-                    description: 'Optional parent message ID for thread replies',
-                  },
-                },
-                required: ['card', 'chatId'],
-              },
-            },
-            {
-              name: 'send_interactive',
-              description: `Send an interactive card with buttons/actions to a chat.
-
-Primary Node builds the card from raw parameters (question, options).
-
-## Parameters
-- **question**: The question or main content to display (string)
-- **options**: Array of button options with text, value, and optional type
-- **chatId**: Target chat ID
-- **title**: Optional card title
-- **context**: Optional context shown above the question
-- **actionPrompts**: Optional custom action prompts
-
-## Type Constraints (IMPORTANT)
-- **question**: MUST be a non-empty string
-- **options**: MUST be a non-empty array of objects with text and value
-- **chatId**: MUST be a non-empty string
-
-Example:
-\`\`\`json
-{
-  "question": "Which option do you prefer?",
-  "options": [
-    { "text": "✅ Approve", "value": "approve", "type": "primary" },
-    { "text": "❌ Reject", "value": "reject", "type": "danger" }
-  ],
-  "chatId": "oc_xxx"
-}
-\`\`\``,
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  question: {
-                    type: 'string',
-                    description: 'The question or main content to display.',
-                  },
-                  options: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        text: { type: 'string', description: 'Button display text' },
-                        value: { type: 'string', description: 'Button action value' },
-                        type: { type: 'string', enum: ['primary', 'default', 'danger'], description: 'Button style' },
-                      },
-                      required: ['text', 'value'],
-                    },
-                    description: 'Button options for user interaction.',
-                  },
-                  title: {
-                    type: 'string',
-                    description: 'Optional card title.',
-                  },
-                  context: {
-                    type: 'string',
-                    description: 'Optional context shown above the question.',
-                  },
-                  actionPrompts: {
-                    type: 'object',
-                    additionalProperties: { type: 'string' },
-                    description: 'Optional custom action prompts that override auto-generated defaults.',
-                  },
-                  chatId: {
-                    type: 'string',
-                    description: 'Target chat ID',
-                  },
-                  parentMessageId: {
-                    type: 'string',
-                    description: 'Optional parent message ID for thread replies',
-                  },
-                },
-                required: ['question', 'options', 'chatId'],
-              },
-            },
-            {
-              name: 'send_file',
-              description: 'Send a file to a chat. Supports images, audio, video, and documents.',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  filePath: {
-                    type: 'string',
-                    description: 'Path to the file to send (absolute or relative to workspace).',
-                  },
-                  chatId: {
-                    type: 'string',
-                    description: 'Target chat ID',
-                  },
-                  parentMessageId: {
-                    type: 'string',
-                    description: 'Optional parent message ID for thread replies.',
-                  },
-                },
-                required: ['filePath', 'chatId'],
-              },
-            },
-            {
-              name: 'push_to_agent',
-              description: `Push an instruction to a chat agent, triggering agent creation if needed.
-
-Use this to send an instruction to the agent handling a specific chat.
-The agent will be lazily created if it doesn't exist yet, and the instruction will be processed as a system message.
-
-## Parameters
-- **chatId**: Target chat ID (string)
-- **message**: The instruction text to push (string)
-
-## Type Constraints (IMPORTANT)
-- **chatId**: MUST be a non-empty string
-- **message**: MUST be a non-empty string`,
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  chatId: {
-                    type: 'string',
-                    description: 'Target chat ID',
-                  },
-                  message: {
-                    type: 'string',
-                    description: 'The instruction text to push to the agent.',
-                  },
-                },
-                required: ['chatId', 'message'],
-              },
-            },
-          ],
-        },
-      };
-    } else if (method === 'tools/call') {
+    if (method === 'tools/call') {
       const toolName = params?.name as string;
       const toolArgs = (params?.arguments || {}) as Record<string, unknown>;
-
-      if (toolName === 'send_text') {
-        // Pre-validation
-        if (typeof toolArgs.text !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid text: must be a string' }],
-              isError: true,
-            },
-          };
-        }
-        if (!toolArgs.chatId || typeof toolArgs.chatId !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
-              isError: true,
-            },
-          };
-        }
-
-        const result = await send_text({
-          text: toolArgs.text,
-          chatId: toolArgs.chatId,
-          parentMessageId: toolArgs.parentMessageId as string | undefined,
-        });
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
-          },
-        };
-      } else if (toolName === 'send_card') {
-        // eslint-disable-next-line prefer-destructuring
-        const card = toolArgs.card;
-        const chatId = (toolArgs.chatId as string | undefined);
-
-        // Pre-validation: card must be an object
-        if (!card || typeof card !== 'object' || Array.isArray(card)) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: `⚠️ Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}` }],
-              isError: true,
-            },
-          };
-        }
-
-        // Pre-validation: card structure
-        if (!isValidFeishuCard(card as Record<string, unknown>)) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: `⚠️ Invalid card structure: ${getCardValidationError(card)}` }],
-              isError: true,
-            },
-          };
-        }
-
-        // Pre-validation: chatId
-        if (!chatId || typeof chatId !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
-              isError: true,
-            },
-          };
-        }
-
-        const result = await send_card({
-          card: card as Record<string, unknown>,
-          chatId,
-          parentMessageId: toolArgs.parentMessageId as string | undefined,
-        });
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
-          },
-        };
-      } else if (toolName === 'send_interactive') {
-        const { question, options } = toolArgs;
-        const chatId = toolArgs.chatId as string | undefined;
-
-        // Pre-validation: question must be a non-empty string
-        if (!question || typeof question !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid question: must be a non-empty string' }],
-              isError: true,
-            },
-          };
-        }
-
-        // Pre-validation: options must be a non-empty array
-        if (!Array.isArray(options) || options.length === 0) {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid options: must be a non-empty array' }],
-              isError: true,
-            },
-          };
-        }
-
-        // Pre-validation: each option must have text and value
-        const opts = options as Array<{ text?: unknown; value?: unknown }>;
-        for (let i = 0; i < opts.length; i++) {
-          const opt = opts[i];
-          if (typeof opt.text !== 'string' || opt.text.trim().length === 0) {
-            return {
-              jsonrpc: '2.0',
-              id,
-              result: {
-                content: [{ type: 'text' as const, text: `⚠️ Invalid options[${i}].text: must be a non-empty string` }],
-                isError: true,
-              },
-            };
-          }
-          if (typeof opt.value !== 'string' || opt.value.trim().length === 0) {
-            return {
-              jsonrpc: '2.0',
-              id,
-              result: {
-                content: [{ type: 'text' as const, text: `⚠️ Invalid options[${i}].value: must be a non-empty string` }],
-                isError: true,
-              },
-            };
-          }
-        }
-
-        // Pre-validation: chatId
-        if (!chatId || typeof chatId !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
-              isError: true,
-            },
-          };
-        }
-
-        const result = await send_interactive_message({
-          question: question as string,
-          options: options as Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>,
-          chatId,
-          title: toolArgs.title as string | undefined,
-          context: toolArgs.context as string | undefined,
-          actionPrompts: toolArgs.actionPrompts as Record<string, string> | undefined,
-          parentMessageId: toolArgs.parentMessageId as string | undefined,
-        });
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
-          },
-        };
-      } else if (toolName === 'send_file') {
-        // Pre-validation
-        if (typeof toolArgs.filePath !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid filePath: must be a string' }],
-              isError: true,
-            },
-          };
-        }
-        if (!toolArgs.chatId || typeof toolArgs.chatId !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
-              isError: true,
-            },
-          };
-        }
-
-        const result = await send_file({
-          filePath: toolArgs.filePath,
-          chatId: toolArgs.chatId,
-          parentMessageId: typeof toolArgs.parentMessageId === 'string' ? toolArgs.parentMessageId : undefined,
-        });
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [{ type: 'text' as const, text: result.success ? `File sent: ${result.message}` : `⚠️ ${result.message}` }],
-          },
-        };
-      } else if (toolName === 'push_to_agent') {
-        // Pre-validation: chatId
-        if (!toolArgs.chatId || typeof toolArgs.chatId !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid chatId: must be a non-empty string' }],
-              isError: true,
-            },
-          };
-        }
-        // Pre-validation: message
-        if (!toolArgs.message || typeof toolArgs.message !== 'string') {
-          return {
-            jsonrpc: '2.0',
-            id,
-            result: {
-              content: [{ type: 'text' as const, text: '⚠️ Invalid message: must be a non-empty string' }],
-              isError: true,
-            },
-          };
-        }
-
-        const result = await push_to_agent({
-          chatId: toolArgs.chatId,
-          message: toolArgs.message,
-        });
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [{ type: 'text' as const, text: result.success ? result.message : `⚠️ ${result.message}` }],
-          },
-        };
-      } else {
-        throw new Error(`Unknown tool: ${toolName}`);
-      }
-    } else {
-      throw new Error(`Unknown method: ${method}`);
+      const toolResult = await dispatchToolCall(toolName, toolArgs);
+      return { jsonrpc: '2.0', id, result: toolResult };
     }
+
+    throw new Error(`Unknown method: ${method}`);
   } catch (error) {
     return {
       jsonrpc: '2.0',
