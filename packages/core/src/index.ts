@@ -117,13 +117,6 @@ export {
   SessionManager,
 } from './agents/session-manager.js';
 
-// Conversation context
-export {
-  type MessageContext,
-  type ConversationContextConfig,
-  ConversationContext,
-} from './agents/conversation-context.js';
-
 // Restart manager
 export {
   type RestartManagerConfig,

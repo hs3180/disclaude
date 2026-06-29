@@ -15,28 +15,35 @@
 # -----------------------------------------------------------------------------
 # Build arguments for configurable source mirrors (Issue #2283)
 # Defaults use official sources; override via docker-source.env for mirrors.
+# Note: APT_MIRROR replaces the former APK_MIRROR after migrating to Debian-slim (#4115).
 # -----------------------------------------------------------------------------
 ARG DOCKER_IMAGE_PREFIX=
-ARG APK_MIRROR=dl-cdn.alpinelinux.org
+ARG APT_MIRROR=
 ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG PIP_INDEX_URL
+ARG GH_INSTALL_MODE=apt-repo
+ARG GH_DEB_URL=
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder (uses bun for faster installs)
 # -----------------------------------------------------------------------------
-FROM ${DOCKER_IMAGE_PREFIX}library/node:22-alpine AS builder
+FROM ${DOCKER_IMAGE_PREFIX}library/node:22-slim AS builder
 
 # Re-declare build args for use in this stage
-ARG APK_MIRROR
+ARG APT_MIRROR
 ARG NPM_REGISTRY
 
 WORKDIR /app
 
-# Configure apk mirror (default: official Alpine CDN)
-RUN sed -i "s|dl-cdn.alpinelinux.org|${APK_MIRROR}|g" /etc/apk/repositories
+# Configure apt mirror if provided (default: official Debian repos)
+RUN if [ -n "${APT_MIRROR}" ]; then \
+      sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update
 
 # Install build dependencies + bun (via npm, since Node.js is already present in this stage)
-RUN apk add --no-cache python3 make g++ && \
+RUN apt-get install -y --no-install-recommends python3 make g++ && \
+    rm -rf /var/lib/apt/lists/* && \
     npm config set registry ${NPM_REGISTRY} && \
     npm install -g bun
 
@@ -53,7 +60,7 @@ RUN bun install
 
 # Build the project
 # Root "build" script uses "tsc -b" which follows project references to build all packages
-# (core → mcp-server → primary-node). Using local tsc binary avoids npx overhead in Alpine.
+# (core → mcp-server → primary-node). Using local tsc binary avoids npx overhead.
 RUN ./node_modules/.bin/tsc -b
 
 # Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)
@@ -68,39 +75,68 @@ RUN bun install --production && \
 # -----------------------------------------------------------------------------
 # Stage 2: Production Image
 # -----------------------------------------------------------------------------
-FROM ${DOCKER_IMAGE_PREFIX}library/node:22-alpine AS production
+FROM ${DOCKER_IMAGE_PREFIX}library/node:22-slim AS production
 
 # Re-declare build args for use in this stage
-ARG APK_MIRROR
+ARG APT_MIRROR
 ARG NPM_REGISTRY
 ARG PIP_INDEX_URL
+ARG GH_INSTALL_MODE
+ARG GH_DEB_URL
 
 WORKDIR /app
 
-# Configure apk mirror (default: official Alpine CDN)
-RUN sed -i "s|dl-cdn.alpinelinux.org|${APK_MIRROR}|g" /etc/apk/repositories
+# Configure apt mirror if provided (default: official Debian repos)
+RUN if [ -n "${APT_MIRROR}" ]; then \
+      sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update
 
-# Install runtime dependencies
-RUN apk add --no-cache \
-    curl \
-    ca-certificates \
-    procps \
-    bash \
-    python3 \
-    py3-pip \
-    tini
-
-# Install build tools (cleanable via: apk del .build-deps)
-# Used by agents for compiling C/C++ code and node-gyp native addons at runtime.
-# Tagged with --virtual for on-demand cleanup to reclaim ~400MB when no longer needed.
-RUN apk add --no-cache --virtual .build-deps g++ gcc make
+# Install runtime + build dependencies, GitHub CLI
+# Consolidated into a single RUN to minimize apt-get update calls (Issue #4115 review).
+# GitHub CLI install mode is configurable via GH_INSTALL_MODE (Issue #4117):
+#   apt-repo (default): official GitHub apt source (cli.github.com)
+#   deb: direct .deb download from GH_DEB_URL (requires GH_DEB_URL; mirrorable, China-friendly)
+# Any other value, or deb without GH_DEB_URL, fails the build with a clear error.
+# Note: gosu/su-exec were removed — OOM protection is now applied host-side via
+# `oom_score_adj` in docker-compose.yml (cgroup v2 forbids writing a negative
+# /proc/self/oom_score_adj from inside the container), so the entrypoint no longer
+# needs to run as root or drop privileges. See Issue #4114 follow-up.
+RUN apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        procps \
+        bash \
+        python3 \
+        python3-pip \
+        tini \
+        sudo \
+        g++ gcc make cmake python3-dev && \
+    if [ "${GH_INSTALL_MODE}" = "deb" ]; then \
+        if [ -z "${GH_DEB_URL}" ]; then \
+            echo "ERROR: GH_INSTALL_MODE=deb requires GH_DEB_URL to be set" >&2; \
+            exit 1; \
+        fi; \
+        curl -fsSL "${GH_DEB_URL}" -o /tmp/gh.deb && \
+        apt-get install -y --no-install-recommends /tmp/gh.deb && \
+        rm -f /tmp/gh.deb; \
+    elif [ "${GH_INSTALL_MODE}" = "apt-repo" ]; then \
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+        chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            > /etc/apt/sources.list.d/github-cli.list && \
+        apt-get update && \
+        apt-get install -y --no-install-recommends gh; \
+    else \
+        echo "ERROR: GH_INSTALL_MODE='${GH_INSTALL_MODE}' is invalid (expected 'apt-repo' or 'deb')" >&2; \
+        exit 1; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install common Python data analysis packages
 # PIP_INDEX_URL: override PyPI mirror (default: official https://pypi.org/simple)
 RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} matplotlib numpy
-
-# Install GitHub CLI (gh)
-RUN apk add --no-cache github-cli
 
 # Install @larksuite/cli globally
 # Issue #3888: @larksuite/cli needed by dissolve-group, lark-docs, pr-scanner skills
@@ -108,8 +144,19 @@ RUN npm config set registry ${NPM_REGISTRY} && \
     npm install -g "@larksuite/cli@>=1.0.0"
 
 # Create non-root user for running the application
-RUN addgroup -g 1001 disclaude && \
-    adduser -D -u 1001 -G disclaude -h /app -s /sbin/nologin disclaude
+RUN groupadd -g 1001 disclaude && \
+    useradd -u 1001 -g disclaude -d /app -s /usr/sbin/nologin -m disclaude
+
+# Grant the non-root user passwordless sudo for apt-get only, so the agent can
+# install system packages on demand (e.g. `sudo apt-get install -y llvm-dev`)
+# without running the whole process as root. Restricted to apt-get to prevent
+# accidental destructive operations. Staying uid 1001 preserves
+# /data/workspace ownership so the host can still read/write the mounted
+# volume. visudo validates the file at build time (fails on syntax error).
+RUN echo "Defaults:disclaude logfile=/data/logs/sudo.log" > /etc/sudoers.d/disclaude-audit && \
+    echo "disclaude ALL=(ALL) NOPASSWD: /usr/bin/apt-get" > /etc/sudoers.d/disclaude && \
+    chmod 0440 /etc/sudoers.d/disclaude-audit /etc/sudoers.d/disclaude && \
+    visudo -cf /etc/sudoers.d/disclaude-audit && visudo -cf /etc/sudoers.d/disclaude
 
 # Create directories for runtime with proper permissions
 RUN mkdir -p /data/workspace /data/logs /app/.claude /app/.claude/backups /app/.claude/debug && \
@@ -127,22 +174,34 @@ COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 COPY --chown=disclaude:disclaude docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Entrypoint auto-configures lark-cli auth into the disclaude user's $HOME (/app),
+# then execs tini + the app. It runs AS the disclaude user (see USER below) — there
+# are no privileged steps left, since OOM protection is now applied host-side via
+# `oom_score_adj` in docker-compose.yml (cgroup v2 forbids setting it from inside
+# the container). Issue #3987, #4114 follow-up.
+ENTRYPOINT ["docker-entrypoint.sh"]
+
 # Set environment variables
 ENV NODE_ENV=production
 ENV DISCLAUDE_MODE=primary
+
+# Issue #4114: Cap agent-spawned compile parallelism to prevent OOM from massive cc1plus forks.
+# MAKEFLAGS limits make-based builds; CMAKE_BUILD_PARALLEL_LEVEL limits CMake builds.
+# Override at runtime via docker-compose environment section if needed.
+ENV MAKEFLAGS="-j2"
+ENV CMAKE_BUILD_PARALLEL_LEVEL=2
 
 # Health check - verify Node.js process is running
 # Uses pgrep with exact binary path to avoid false positives
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD pgrep -f "packages/primary-node/dist/cli.js" > /dev/null 2>&1 || exit 1
 
-# Switch to non-root user
+# Run as the non-root user. The entrypoint has no privileged steps (OOM protection
+# is host-side via docker-compose `oom_score_adj`), so the whole container runs as
+# disclaude (uid 1001). This also means lark-cli auth lands in /app/.lark-cli where
+# the app can read it (it previously went to /root/.lark-cli when the entrypoint ran
+# as root — Issue #3987 regression from #4114).
 USER disclaude
-
-# Use entrypoint script that configures lark-cli auth before starting tini
-# Issue #3987: auto-configure lark-cli auth from disclaude.config.yaml
-ENTRYPOINT ["docker-entrypoint.sh"]
-
 
 # Default command: run Primary Node directly
 CMD ["node", "packages/primary-node/dist/cli.js", "start"]

@@ -11,6 +11,8 @@
  * - MCP servers
  */
 
+import pkg from '../package.json' with { type: 'json' };
+
 // Tool Types
 export type {
   SendMessageResult,
@@ -76,15 +78,5 @@ export {
   createChannelMcpServer,
 } from './channel-mcp.js';
 
-// Deprecated aliases (backward compatibility)
-/** @deprecated Use channelTools instead */
-export { feishuContextTools } from './channel-mcp.js';
-/** @deprecated Use channelToolDefinitions instead */
-export { feishuToolDefinitions } from './channel-mcp.js';
-/** @deprecated Use channelSdkTools instead */
-export { feishuSdkTools } from './channel-mcp.js';
-/** @deprecated Use createChannelMcpServer instead */
-export { createFeishuSdkMcpServer } from './channel-mcp.js';
-
-// Version
-export const MCP_SERVER_VERSION = '0.0.1';
+// Version — read from package.json to avoid drift
+export const MCP_SERVER_VERSION = pkg.version;

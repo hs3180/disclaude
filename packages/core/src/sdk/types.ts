@@ -84,6 +84,12 @@ export interface AgentMessageMetadata {
   stopReason?: string;
   /** 会话 ID */
   sessionId?: string;
+  /**
+   * SDK system 消息的 subtype(如 task_started / task_progress / teammate_* /
+   * informational 等)。保留供诊断 —— 见根因记录:GLM + Agent Teams (in-process)
+   * 会产生海量未识别的空 system 消息,此前被无差别丢弃丢失了诊断信息。
+   */
+  systemSubtype?: string;
 }
 
 /** Agent 消息类型 */

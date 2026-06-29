@@ -127,7 +127,6 @@ export interface SessionStats {
 
 /**
  * Message context for building enhanced content.
- * Renamed to avoid conflict with agents/conversation-context.ts MessageContext.
  */
 export interface ConversationMessageContext {
   /** Platform-specific chat identifier */

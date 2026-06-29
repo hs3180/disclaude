@@ -138,7 +138,6 @@ export class ConversationOrchestrator {
 
   /**
    * Get the number of active sessions (alias for getActiveSessionCount).
-   * Provided for backward compatibility with ConversationContext API.
    */
   size(): number {
     return this.getActiveSessionCount();
@@ -179,7 +178,6 @@ export class ConversationOrchestrator {
 
   /**
    * Clear all sessions (alias for resetAll).
-   * Provided for backward compatibility with ConversationContext API.
    */
   clearAll(): void {
     this.resetAll();
