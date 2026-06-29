@@ -36,7 +36,6 @@
  */
 
 import {
-  Config,
   BaseAgent,
   MessageBuilder,
   MessageChannel,
@@ -52,10 +51,10 @@ import {
   type AgentMessage,
   type UserMessageParams,
 } from '@disclaude/core';
-import { createChannelMcpServer } from '@disclaude/mcp-server';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { HistoryManager } from './history-manager.js';
+import { buildMcpServers } from './mcp-setup.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -304,59 +303,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   get isBusy(): boolean {
     return this.isProcessingMessage;
-  }
-
-  /**
-   * Build MCP servers configuration (Issue #3124).
-   *
-   * Extracted from startAgentLoop and the former executeOnce to eliminate
-   * duplication of MCP server config building.
-   *
-   * @param skipChannelMcp - If true, skips the channel MCP server (for one-shot/CLI mode)
-   * @returns MCP servers configuration object
-   */
-  private buildMcpServers(skipChannelMcp: boolean): Record<string, unknown> {
-    const chatId = this.boundChatId;
-    const mcpServers: Record<string, unknown> = {};
-
-    if (!skipChannelMcp) {
-      // Get channel capabilities for MCP server filtering (Issue #590 Phase 3)
-      const capabilities = this.callbacks.getCapabilities?.(chatId);
-      const supportedMcpTools = capabilities?.supportedMcpTools;
-
-      // Determine if we should include Context MCP server
-      const contextTools = ['send_text', 'send_card', 'send_interactive', 'send_file'];
-      const shouldIncludeContextMcp =
-        supportedMcpTools === undefined ||
-        contextTools.some((tool) => supportedMcpTools.includes(tool));
-
-      // Use inline transport for channel MCP server
-      if (shouldIncludeContextMcp) {
-        mcpServers['channel-mcp'] = createChannelMcpServer();
-
-        this.logger.info(
-          {
-            ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
-          },
-          'Configured channel MCP server (inline transport)'
-        );
-      }
-    }
-
-    // Merge configured external MCP servers from config file
-    const configuredMcpServers = Config.getMcpServersConfig();
-    if (configuredMcpServers) {
-      for (const [name, config] of Object.entries(configuredMcpServers)) {
-        mcpServers[name] = {
-          type: 'stdio',
-          command: config.command,
-          args: config.args || [],
-          ...(config.env && { env: config.env }),
-        };
-      }
-    }
-
-    return mcpServers;
   }
 
   /**
@@ -798,7 +744,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Issue #3124: Use shared buildMcpServers() helper (includes channel MCP + external servers)
-    const mcpServers = this.buildMcpServers(false);
+    // Issue #4146: Pass this.logger so logs keep the 'ChatAgent' source (behavior preserved post-extraction)
+    const mcpServers = buildMcpServers(chatId, this.callbacks, false, this.logger);
 
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
