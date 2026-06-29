@@ -7,7 +7,7 @@
  * @module mcp-server/tools/send-message
  */
 
-import { createLogger, getIpcClient } from '@disclaude/core';
+import { createLogger, getIpcClient, sendMessage, type IpcMethodResult } from '@disclaude/core';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback, setMessageSentCallback, getMessageSentCallback } from './callback-manager.js';
@@ -28,9 +28,9 @@ async function sendMessageViaIpc(
   text: string,
   threadId?: string,
   mentions?: Array<{ openId: string; name?: string }>
-): Promise<{ success: boolean; messageId?: string; error?: string; errorType?: string }> {
+): Promise<IpcMethodResult & { messageId?: string }> {
   const ipcClient = getIpcClient();
-  return await ipcClient.sendMessage(chatId, text, threadId, mentions);
+  return await sendMessage(ipcClient, chatId, text, threadId, mentions);
 }
 
 /**

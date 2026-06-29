@@ -9,7 +9,7 @@
  * @module mcp-server/tools/push-to-agent
  */
 
-import { createLogger, getIpcClient } from '@disclaude/core';
+import { createLogger, getIpcClient, pushToAgent } from '@disclaude/core';
 import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
 import type { SendMessageResult } from './types.js';
 
@@ -53,7 +53,7 @@ export async function push_to_agent(params: {
 
     logger.debug({ chatId }, 'Using IPC for push_to_agent');
     const ipcClient = getIpcClient();
-    const result = await ipcClient.pushToAgent(chatId, message);
+    const result = await pushToAgent(ipcClient, chatId, message);
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);
       logger.error({ chatId, errorType: result.errorType, error: result.error }, 'IPC push_to_agent failed');

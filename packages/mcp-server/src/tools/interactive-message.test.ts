@@ -5,6 +5,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock dependencies
+// Issue #4129: sendInteractive is now a standalone function exported from @disclaude/core.
+// The production code calls sendInteractive(client, ...) — mock it to delegate to the
+// same spy as the legacy client.sendInteractive(...) instance method so existing
+// test assertions (mockIpcClient.sendInteractive) keep working unchanged.
+const { mockIpcClient, mockSendInteractive } = vi.hoisted(() => {
+  const mockSendInteractive = vi.fn();
+  const mockIpcClient = { sendInteractive: mockSendInteractive };
+  return { mockIpcClient, mockSendInteractive };
+});
+
 vi.mock('@disclaude/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -13,6 +23,10 @@ vi.mock('@disclaude/core', () => ({
     debug: vi.fn(),
   }),
   getIpcClient: vi.fn(),
+  // Standalone facade function (Issue #4129). Production calls sendInteractive(client, chatId, params).
+  // Drop the leading client arg so the spy sees (chatId, params), matching the
+  // legacy client.sendInteractive(chatId, params) assertions in this suite.
+  sendInteractive: (_client: unknown, ...rest: unknown[]) => mockSendInteractive(...rest),
   UnixSocketIpcServer: vi.fn().mockImplementation(() => ({
     start: vi.fn(),
     stop: vi.fn(),
@@ -47,10 +61,6 @@ import {
 import { getIpcClient, UnixSocketIpcServer, createInteractiveMessageHandler } from '@disclaude/core';
 import { isIpcAvailable } from './ipc-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
-
-const mockIpcClient = {
-  sendInteractive: vi.fn(),
-};
 
 describe('send_interactive_message', () => {
   beforeEach(() => {

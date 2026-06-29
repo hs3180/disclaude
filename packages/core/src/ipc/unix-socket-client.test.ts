@@ -20,6 +20,10 @@ import {
   getIpcClient,
   resetIpcClient,
   createInteractiveMessageHandler,
+  uploadFile,
+  sendInteractive,
+  sendMessage,
+  sendCard,
 } from './index.js';
 import type { ChannelHandlersContainer } from './unix-socket-server.js';
 import { IPC_SOCKET_PATH_FILE } from './protocol.js';
@@ -267,7 +271,7 @@ describe('UnixSocketIpcClient', () => {
         maxRetries: 1,
       });
 
-      const result = await client.sendMessage('chat-1', 'Hello');
+      const result = await sendMessage(client, 'chat-1', 'Hello');
       expect(result.success).toBe(true);
       expect(mockHandlers.handlers.sendMessage).toHaveBeenCalledWith('chat-1', 'Hello', undefined, undefined);
 
@@ -281,7 +285,7 @@ describe('UnixSocketIpcClient', () => {
         maxRetries: 1,
       });
 
-      const result = await client.sendMessage('chat-1', 'Hello');
+      const result = await sendMessage(client, 'chat-1', 'Hello');
       expect(result.success).toBe(false);
       expect(result.errorType).toBe('ipc_unavailable');
     });
@@ -310,7 +314,7 @@ describe('UnixSocketIpcClient', () => {
         header: { title: { tag: 'plain_text' as const, content: 'Test Card' } },
         elements: [],
       };
-      const result = await client.sendCard('chat-1', card);
+      const result = await sendCard(client, 'chat-1', card);
       expect(result.success).toBe(true);
 
       await client.disconnect();
@@ -323,7 +327,7 @@ describe('UnixSocketIpcClient', () => {
         maxRetries: 1,
       });
 
-      const result = await client.sendCard('chat-1', {
+      const result = await sendCard(client, 'chat-1', {
         config: {},
         header: { title: { tag: 'plain_text', content: '' } },
         elements: [],
@@ -356,7 +360,7 @@ describe('UnixSocketIpcClient', () => {
         maxRetries: 1,
       });
 
-      const result = await client.uploadFile('chat-1', '/path/to/file.pdf');
+      const result = await uploadFile(client, 'chat-1', '/path/to/file.pdf');
       expect(result.success).toBe(true);
       expect(result.fileKey).toBe('fk_123');
       expect(result.fileSize).toBe(2048);
@@ -371,7 +375,7 @@ describe('UnixSocketIpcClient', () => {
         maxRetries: 1,
       });
 
-      const result = await client.uploadFile('chat-1', '/path/to/file.pdf');
+      const result = await uploadFile(client, 'chat-1', '/path/to/file.pdf');
       expect(result.success).toBe(false);
       expect(result.error).toContain('IPC_NOT_AVAILABLE');
       expect(result.errorType).toBe('ipc_unavailable');
@@ -399,7 +403,7 @@ describe('UnixSocketIpcClient', () => {
         maxRetries: 1,
       });
 
-      const result = await client.sendInteractive('chat-1', {
+      const result = await sendInteractive(client, 'chat-1', {
         question: 'Choose:',
         options: [{ text: 'Option 1', value: 'opt1' }],
       });

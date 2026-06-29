@@ -15,6 +15,7 @@
 import {
   createLogger,
   getIpcClient,
+  sendInteractive,
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
@@ -138,7 +139,7 @@ export async function send_interactive_message(params: {
     // Primary Node builds the card, sends it, and registers action prompts.
     logger.debug({ chatId, parentMessageId }, 'Forwarding raw params via sendInteractive IPC');
     const ipcClient = getIpcClient();
-    const result = await ipcClient.sendInteractive(chatId, {
+    const result = await sendInteractive(ipcClient, chatId, {
       question,
       options,
       title: params.title,
