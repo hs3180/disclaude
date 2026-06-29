@@ -36,6 +36,9 @@ import {
   listTempChats as facadeListTempChats,
   markChatResponded as facadeMarkChatResponded,
   pushToAgent as facadePushToAgent,
+  loopStart as facadeLoopStart,
+  loopStop as facadeLoopStop,
+  loopStatus as facadeLoopStatus,
 } from './ipc-client-facade.js';
 
 const logger = createLogger('IpcClient');
@@ -548,18 +551,10 @@ export class UnixSocketIpcClient {
     return await facadePushToAgent(this, chatId, message, options);
   }
 
-  // Issue #4075: Loop Runner operations
-
-  private classifyIpcError(error: unknown): { error: string; errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' } {
-    const err = error instanceof Error ? error : new Error(String(error));
-    let errorType: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' = 'ipc_request_failed';
-    if (err.message.startsWith('IPC_NOT_AVAILABLE')) {
-      errorType = 'ipc_unavailable';
-    } else if (err.message.startsWith('IPC_TIMEOUT')) {
-      errorType = 'ipc_timeout';
-    }
-    return { error: err.message, errorType };
-  }
+  // ─── Loop Runner operations (Issue #4075) — delegate to facade ───
+  // Issue #4129 review nit#1: keep the same facade pattern as the 8 protocol
+  // methods above; the inline impl + private classifyIpcError were folded into
+  // ipc-client-facade's classifyError to remove the duplicated error logic.
 
   async loopStart(params: {
     chatId: string;
@@ -567,39 +562,16 @@ export class UnixSocketIpcClient {
     maxSteps?: number;
     maxDurationMs?: number;
     stepIntervalMs?: number;
-  }): Promise<{ success: boolean; loopId?: string; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
-    try {
-      return await this.request('loopStart', params);
-    } catch (error) {
-      logger.error({ err: error, chatId: params.chatId }, 'loopStart failed');
-      const { error: errorMsg, errorType } = this.classifyIpcError(error);
-      return { success: false, error: errorMsg, errorType };
-    }
+  }) {
+    return await facadeLoopStart(this, params);
   }
 
-  async loopStop(loopId: string): Promise<{ success: boolean; error?: string; errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed' }> {
-    try {
-      return await this.request('loopStop', { loopId });
-    } catch (error) {
-      logger.error({ err: error, loopId }, 'loopStop failed');
-      const { error: errorMsg, errorType } = this.classifyIpcError(error);
-      return { success: false, error: errorMsg, errorType };
-    }
+  async loopStop(loopId: string) {
+    return await facadeLoopStop(this, loopId);
   }
 
-  async loopStatus(loopId: string): Promise<{
-    success: boolean;
-    status?: { loopId: string; state: 'running' | 'completed' | 'stopped' | 'error'; currentStep: number; totalSteps: number; startedAt: string };
-    error?: string;
-    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
-  }> {
-    try {
-      return await this.request('loopStatus', { loopId });
-    } catch (error) {
-      logger.error({ err: error, loopId }, 'loopStatus failed');
-      const { error: errorMsg, errorType } = this.classifyIpcError(error);
-      return { success: false, error: errorMsg, errorType };
-    }
+  async loopStatus(loopId: string) {
+    return await facadeLoopStatus(this, loopId);
   }
 
   /**
