@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { LoopRunner } from './loop-runner.js';
 
 describe('LoopRunner', () => {
@@ -8,6 +8,10 @@ describe('LoopRunner', () => {
   beforeEach(() => {
     mockPush = vi.fn().mockResolvedValue(undefined);
     runner = new LoopRunner(mockPush);
+  });
+
+  afterEach(() => {
+    runner.dispose();
   });
 
   describe('start', () => {
@@ -86,6 +90,19 @@ describe('LoopRunner', () => {
 
     it('should handle stopping an unknown loop gracefully', () => {
       expect(() => runner.stop('unknown')).not.toThrow();
+    });
+
+    it('should return true when stopping a known loop and false for an unknown one', () => {
+      const { loopId } = runner.start({
+        chatId: 'oc_test',
+        prompt: 'Step',
+        maxSteps: 100,
+        stepIntervalMs: 50,
+      });
+      expect(runner.stop(loopId)).toBe(true);
+      // stopping again is still "found" (idempotent), the loop is already stopped
+      expect(runner.stop(loopId)).toBe(true);
+      expect(runner.stop('does-not-exist')).toBe(false);
     });
   });
 
@@ -197,6 +214,46 @@ describe('LoopRunner', () => {
       expect(runner.status(loopId)).not.toBeNull();
 
       runner.stop(loopId);
+    });
+  });
+
+  describe('dispose and periodic cleanup', () => {
+    it('dispose clears the cleanup timer and is idempotent', () => {
+      const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+      runner.dispose();
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      // second call is a no-op (timer already cleared)
+      expect(() => runner.dispose()).not.toThrow();
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      clearSpy.mockRestore();
+    });
+
+    it('periodically prunes finished loops via the cleanup interval', async () => {
+      const sweeper = new LoopRunner(mockPush, { cleanupIntervalMs: 40, cleanupMaxAgeMs: 1 });
+
+      // A finished loop (>1ms old) is evicted by the periodic sweep.
+      const finished = sweeper.start({
+        chatId: 'oc_test',
+        prompt: 'done',
+        maxSteps: 1,
+        stepIntervalMs: 5,
+      });
+      await vi.waitFor(() => {
+        expect(sweeper.status(finished.loopId)).toBeNull();
+      }, { timeout: 2000 });
+
+      // A still-running loop survives the sweep (cleanup only removes non-running loops).
+      const running = sweeper.start({
+        chatId: 'oc_test',
+        prompt: 'run',
+        maxSteps: 100,
+        stepIntervalMs: 50,
+      });
+      await new Promise((r) => setTimeout(r, 120)); // > cleanupInterval, sweep has fired
+      expect(sweeper.status(running.loopId)?.state).toBe('running');
+
+      sweeper.stop(running.loopId);
+      sweeper.dispose();
     });
   });
 

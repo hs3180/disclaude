@@ -56,6 +56,14 @@ export interface LoopStatus {
 /** Callback type for pushing instructions to an agent. */
 export type PushToAgentCallback = (chatId: string, message: string) => Promise<void>;
 
+/** Options for the LoopRunner constructor (Issue #4075). */
+export interface LoopRunnerOptions {
+  /** Interval between automatic cleanup sweeps in ms (default: 3600000 = 1 hour). */
+  cleanupIntervalMs?: number;
+  /** Max age of finished loops before a sweep removes them, in ms (default: 3600000 = 1 hour). */
+  cleanupMaxAgeMs?: number;
+}
+
 /**
  * Simplified Loop Runner.
  *
@@ -66,9 +74,29 @@ export class LoopRunner {
   private loops = new Map<string, LoopExecution>();
   private pushCallback: PushToAgentCallback;
   private idCounter = 0;
+  private cleanupMaxAgeMs: number;
+  private cleanupTimer?: ReturnType<typeof setInterval>;
 
-  constructor(pushCallback: PushToAgentCallback) {
+  constructor(pushCallback: PushToAgentCallback, options: LoopRunnerOptions = {}) {
     this.pushCallback = pushCallback;
+    this.cleanupMaxAgeMs = options.cleanupMaxAgeMs ?? 3600_000;
+
+    // Issue #4075: periodically prune finished loops so the in-memory Map does not
+    // grow without bound over the process lifetime. unref() so the timer never
+    // keeps the process (or the test runner) alive on its own.
+    const intervalMs = options.cleanupIntervalMs ?? 3600_000;
+    this.cleanupTimer = setInterval(() => this.cleanup(this.cleanupMaxAgeMs), intervalMs);
+    this.cleanupTimer.unref?.();
+  }
+
+  /**
+   * Stop the automatic cleanup timer. Safe to call multiple times.
+   */
+  dispose(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
   }
 
   /**
@@ -112,18 +140,21 @@ export class LoopRunner {
 
   /**
    * Stop a running loop.
+   *
+   * @returns true if the loop existed (stopped if it was still running), false if not found.
    */
-  stop(loopId: string): void {
+  stop(loopId: string): boolean {
     const execution = this.loops.get(loopId);
     if (!execution) {
       logger.warn({ loopId }, 'Attempted to stop unknown loop');
-      return;
+      return false;
     }
     if (execution.state === 'running') {
       execution.state = 'stopped';
       execution.abortController.abort();
       logger.info({ loopId, currentStep: execution.currentStep }, 'Loop stopped');
     }
+    return true;
   }
 
   /**
