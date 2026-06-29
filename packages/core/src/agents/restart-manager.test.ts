@@ -174,6 +174,39 @@ describe('RestartManager', () => {
     });
   });
 
+  describe('recordFailure', () => {
+    it('should increment restartCount without allowing a restart', () => {
+      manager.recordFailure('chat-stall', 'stall');
+      const state = manager.getState('chat-stall');
+      expect(state?.restartCount).toBe(1);
+      expect(manager.isCircuitOpen('chat-stall')).toBe(false);
+    });
+
+    it('should open the circuit after maxRestarts failures', () => {
+      manager.recordFailure('chat-stall', 'stall');
+      manager.recordFailure('chat-stall', 'stall');
+      manager.recordFailure('chat-stall', 'stall');
+      expect(manager.getState('chat-stall')?.restartCount).toBe(3);
+      expect(manager.isCircuitOpen('chat-stall')).toBe(true);
+    });
+
+    it('should be reset by a subsequent recordSuccess', () => {
+      manager.recordFailure('chat-stall', 'stall');
+      manager.recordFailure('chat-stall', 'stall');
+      manager.recordSuccess('chat-stall');
+      expect(manager.getState('chat-stall')?.restartCount).toBe(0);
+    });
+
+    it('should be a no-op when circuit already open', () => {
+      manager.recordFailure('chat-stall', 'stall');
+      manager.recordFailure('chat-stall', 'stall');
+      manager.recordFailure('chat-stall', 'stall');
+      const before = manager.getState('chat-stall')?.restartCount;
+      manager.recordFailure('chat-stall', 'stall');
+      expect(manager.getState('chat-stall')?.restartCount).toBe(before);
+    });
+  });
+
   describe('reset', () => {
     it('should clear restart state for a chatId', () => {
       manager.shouldRestart('chat-1', 'error 1');

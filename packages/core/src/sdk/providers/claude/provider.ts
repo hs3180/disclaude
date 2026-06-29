@@ -22,6 +22,26 @@ import { createLogger } from '../../../utils/logger.js';
 const logger = createLogger('ClaudeSDKProvider');
 
 // ============================================================================
+// GLM stall detection (Issue #3706: no-content-progress watchdog)
+// ============================================================================
+// GLM-5.2 (via LiteLLM) intermittently STALLS on agent requests: it keeps the
+// SSE stream open, sends `ping` keepalives, but produces NO `content_block_delta`
+// (no text, no thinking) and NO `message_stop` for many minutes, then bursts.
+// Detection: an in-flight request (message_start → message_stop) that yields NO
+// content_block_delta for STALL_TIMEOUT_MS → stall → interrupt + notify.
+//
+// This is zero-false-fire: legitimate reasoning streams content_block_delta
+// continuously (including thinking deltas), resetting the watchdog; only a true
+// stall (zero content_block_delta) lets it fire. The between-request gap
+// (message_stop → tool execution → next message_start) is excluded because the
+// watchdog is armed only while a request is in-flight.
+//
+// Requires `includePartialMessages: true` (set in base-agent.ts createSdkOptions)
+// so stream_event messages reach adaptIterator.
+const STALL_TERMINATE_NOTICE =
+  '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
+
+// ============================================================================
 // Process Listener Cleanup (Issue #3378)
 // ============================================================================
 
@@ -327,6 +347,39 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     };
 
     async function* adaptIterator(): AsyncGenerator<AgentMessage> {
+      // ── Issue #3706 (GLM stall): no-content-progress watchdog ──
+      // Timeout is read per-call (env DISCLAUDE_STALL_TIMEOUT_MS, default 180s) so
+      // tests can set a short value. Declared BEFORE try so catch/finally can access.
+      const STALL_TIMEOUT_MS = (() => {
+        const env = Number.parseInt(process.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
+        return Number.isFinite(env) && env > 0 ? env : 180_000;
+      })();
+      // Declared BEFORE try so catch/finally can access them. Armed on
+      // message_start, reset on content_block_delta (any content incl. thinking
+      // — so legit reasoning never fires), cleared on message_stop. Fires on the
+      // event loop (independent of the for-await being blocked on a stalled stream).
+      let requestInFlight = false;
+      let stalled = false;
+      let contentWatchdog: ReturnType<typeof setTimeout> | null = null;
+      const clearContentWatchdog = (): void => {
+        if (contentWatchdog) { clearTimeout(contentWatchdog); contentWatchdog = null; }
+      };
+      const armContentWatchdog = (): void => {
+        clearContentWatchdog();
+        contentWatchdog = setTimeout(() => {
+          if (requestInFlight && !stalled) {
+            stalled = true;
+            logger.error(
+              { messageCount, model: options.model, stallTimeoutMs: STALL_TIMEOUT_MS, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
+              `GLM stall: no content_block_delta for ${STALL_TIMEOUT_MS}ms during in-flight request; interrupting (Issue #3706)`,
+            );
+            queryResult.interrupt().catch((e: unknown) => {
+              logger.warn({ err: e }, 'stall watchdog: queryResult.interrupt() rejected');
+            });
+          }
+        }, STALL_TIMEOUT_MS);
+      };
+
       try {
         let firstMessageMs: number | undefined;
         // Issue #3706: Track consecutive text-only assistant responses for idle loop detection.
@@ -350,6 +403,24 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         const model = options.model as string | undefined;
 
         for await (const message of queryResult) {
+          // Issue #3706 (stall): handle stream_event (partial) messages for the
+          // watchdog ONLY — filter them (not adapted/logged/yielded to ChatAgent).
+          // Requires includePartialMessages (set in base-agent createSdkOptions).
+          if (message.type === 'stream_event') {
+            const et = (message as { event?: { type?: string } }).event?.type;
+            if (et === 'message_start') {
+              requestInFlight = true;
+              armContentWatchdog();
+            } else if (et === 'content_block_delta') {
+              // Real progress (text/thinking/tool_use delta) — reset the watchdog.
+              // Thinking deltas reset too, so legit reasoning never fires.
+              if (requestInFlight) { armContentWatchdog(); }
+            } else if (et === 'message_stop') {
+              requestInFlight = false;
+              clearContentWatchdog();
+            }
+            continue; // filter: partials don't reach ChatAgent
+          }
           const now = Date.now();
           messageCount++;
           // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
@@ -443,6 +514,18 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
           yield adapted;
         }
+        // Issue #3706 (stall): watchdog fired → yield a terminal result.
+        // (Covers the case where interrupt() ended the stream cleanly without throwing.)
+        if (stalled) {
+          clearContentWatchdog();
+          yield {
+            type: 'result',
+            content: STALL_TERMINATE_NOTICE,
+            role: 'system',
+            metadata: { terminatedReason: 'stall' },
+          };
+          return;
+        }
         // Issue #3003: log iterator completion timing
         const totalMs = Date.now() - queryStartMs;
         logger.info(
@@ -450,6 +533,18 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           'SDK iterator completed'
         );
       } catch (error) {
+        // Issue #3706 (stall): the watchdog's interrupt() likely threw into the
+        // for-await — convert to a clean terminal result instead of propagating the error.
+        if (stalled) {
+          clearContentWatchdog();
+          yield {
+            type: 'result',
+            content: STALL_TERMINATE_NOTICE,
+            role: 'system',
+            metadata: { terminatedReason: 'stall' },
+          };
+          return;
+        }
         // Issue #2920: 将捕获的 stderr 附加到 error 对象
         if (stderrCapture.hasContent()) {
           attachStderrToError(error, stderrCapture.getCaptured());
@@ -460,6 +555,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         );
         throw error;
       } finally {
+        clearContentWatchdog();
         // Issue #3378: Clean up SDK-registered process listeners after query completes.
         // This prevents listener accumulation across multiple queries in long-running
         // processes (e.g., integration test server).

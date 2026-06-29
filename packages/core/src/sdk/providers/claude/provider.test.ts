@@ -363,6 +363,71 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalled();
     });
 
+    // Issue #3706 (GLM stall): no-content-progress watchdog.
+    it('should terminate on GLM stall (message_start, no content_block_delta for STALL_TIMEOUT_MS)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+      let interrupted = false;
+      const interruptSpy = vi.fn(() => { interrupted = true; return Promise.resolve(); });
+      const gen = (async function* () {
+        yield { type: 'stream_event', event: { type: 'message_start' } };
+        while (!interrupted) { await new Promise<void>(r => setTimeout(r, 5)); }
+      })();
+      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+      expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
+      expect(interruptSpy).toHaveBeenCalledTimes(1);
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+    });
+
+    it('should NOT terminate on healthy stream (content_block_delta resets watchdog)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+      const interruptSpy = vi.fn();
+      const gen = (async function* () {
+        yield { type: 'stream_event', event: { type: 'message_start' } };
+        for (let i = 0; i < 5; i++) {
+          yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
+          await new Promise<void>(r => setTimeout(r, 10));
+        }
+        yield { type: 'stream_event', event: { type: 'message_stop' } };
+        yield { type: 'result', subtype: 'success' };
+      })();
+      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+      expect(interruptSpy).not.toHaveBeenCalled();
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+    });
+
+    it('should NOT terminate during between-request gap (message_stop clears watchdog)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+      const interruptSpy = vi.fn();
+      const gen = (async function* () {
+        yield { type: 'stream_event', event: { type: 'message_start' } };
+        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
+        yield { type: 'stream_event', event: { type: 'message_stop' } };
+        await new Promise<void>(r => setTimeout(r, 200)); // gap >> timeout, but watchdog cleared
+        yield { type: 'stream_event', event: { type: 'message_start' } };
+        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
+        yield { type: 'stream_event', event: { type: 'message_stop' } };
+        yield { type: 'result', subtype: 'success' };
+      })();
+      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+      expect(interruptSpy).not.toHaveBeenCalled();
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+    });
+
     // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会
     // 产出海量空 system 消息(实测以 thinking_tokens 为主)。flood 检测必须 warn-only
     // —— 不终止流(范围不含 D3 终止防护),否则会改变行为。此处用任意未识别 subtype 验证。

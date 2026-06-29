@@ -90,6 +90,12 @@ export interface AgentMessageMetadata {
    * 会产生海量未识别的空 system 消息,此前被无差别丢弃丢失了诊断信息。
    */
   systemSubtype?: string;
+  /**
+   * stall 终止标记:provider 的 no-content-progress 看门狗在「在飞请求内 N 秒无
+   * content_block_delta」时合成此 result。ChatAgent 据此发提示 + recordFailure +
+   * 抑制自动重启并保留上下文。见 Issue #3706(GLM stall)。
+   */
+  terminatedReason?: 'stall';
 }
 
 /** Agent 消息类型 */
@@ -242,6 +248,13 @@ export interface AgentQueryOptions {
    * - `'auto'` — SDK decides automatically
    */
   teammateMode?: 'auto' | 'tmux' | 'in-process';
+  /**
+   * Enable partial (stream_event) messages (Issue #3706 GLM stall).
+   * When true, the SDK yields stream_event messages (content_block_delta,
+   * message_start, message_stop) that the provider uses for a no-content-progress
+   * watchdog. The provider filters these (not yielded to ChatAgent).
+   */
+  includePartialMessages?: boolean;
 }
 
 // ============================================================================
