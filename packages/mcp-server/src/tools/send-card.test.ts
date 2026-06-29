@@ -5,6 +5,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
+// Issue #4129: sendCard is now a standalone function exported from @disclaude/core.
+// Production calls sendCard(client, ...). Mock it to drop the client arg and delegate
+// to the same spy as the legacy client.sendCard(...) instance method.
+const { mockIpcClient, mockSendCard } = vi.hoisted(() => {
+  const mockSendCard = vi.fn();
+  const mockIpcClient = { sendCard: mockSendCard };
+  return { mockIpcClient, mockSendCard };
+});
+
 vi.mock('@disclaude/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -13,6 +22,7 @@ vi.mock('@disclaude/core', () => ({
     debug: vi.fn(),
   }),
   getIpcClient: vi.fn(),
+  sendCard: (...args: unknown[]) => mockSendCard(...args.slice(1)),
 }));
 
 vi.mock('../utils/card-validator.js', () => ({
@@ -42,10 +52,6 @@ import { getFeishuCredentials } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 import { isValidFeishuCard } from '../utils/card-validator.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
-
-const mockIpcClient = {
-  sendCard: vi.fn(),
-};
 
 const validCard = {
   config: { wide_screen_mode: true },

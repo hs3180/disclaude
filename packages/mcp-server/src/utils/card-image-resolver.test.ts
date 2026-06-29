@@ -9,6 +9,9 @@ import { tmpdir } from 'os';
 import { isLocalImagePath, resolveCardImages } from './card-image-resolver.js';
 
 // Mock @disclaude/core
+// Issue #4129: uploadImage is now a standalone function exported from @disclaude/core.
+// Production calls uploadImage(client, ...). Delegate to the current test's mock client.
+const { ipcClientRef } = vi.hoisted(() => ({ ipcClientRef: { current: null as unknown as { uploadImage: (...args: unknown[]) => unknown } } }));
 vi.mock('@disclaude/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -17,6 +20,7 @@ vi.mock('@disclaude/core', () => ({
     debug: vi.fn(),
   }),
   getIpcClient: vi.fn(),
+  uploadImage: (...args: unknown[]) => ipcClientRef.current.uploadImage(...args.slice(1)),
 }));
 
 import { getIpcClient } from '@disclaude/core';
@@ -127,6 +131,8 @@ describe('resolveCardImages', () => {
       uploadImage: vi.fn(),
     };
     vi.mocked(getIpcClient).mockReturnValue(mockIpcClient);
+    // Issue #4129: wire the per-test mock client into the standalone uploadImage mock.
+    ipcClientRef.current = mockIpcClient;
   });
 
   it('should return card unchanged when no local image paths are present', async () => {

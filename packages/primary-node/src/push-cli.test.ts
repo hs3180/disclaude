@@ -8,15 +8,21 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const mockPushToAgent = vi.fn();
-const mockDisconnect = vi.fn().mockResolvedValue(undefined);
+// vi.hoisted runs before vi.mock factories, so mockPushToAgent is available.
+const { mockPushToAgent, mockDisconnect } = vi.hoisted(() => ({
+  mockPushToAgent: vi.fn(),
+  mockDisconnect: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('@disclaude/core', () => ({
   UnixSocketIpcClient: vi.fn().mockImplementation(() => ({
     pushToAgent: mockPushToAgent,
     disconnect: mockDisconnect,
   })),
-  getIpcSocketPath: vi.fn(({ override }) => override ?? '/tmp/test.ipc'),
+  // Issue #4129: pushToAgent is now also a standalone function re-exported from ipc-client-facade.
+  // The production code imports it directly, so the mock must provide it too.
+  pushToAgent: mockPushToAgent,
+  getIpcSocketPath: vi.fn(({ override }: { override?: string }) => override ?? '/tmp/test.ipc'),
 }));
 
 vi.mock('node:fs', () => ({
