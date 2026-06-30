@@ -56,6 +56,8 @@ export interface IteratorYieldResult {
     content: string;
     metadata?: Record<string, unknown>;
     sessionId?: string;
+    /** provider stall 看门狗合成的 result 携带,ChatAgent 据此分支处理(Issue #3706) */
+    terminatedReason?: 'stall';
   };
   /** SDK Agent message */
   raw: SdkAgentMessage;
@@ -240,6 +242,12 @@ export abstract class BaseAgent implements Disposable {
       options.teammateMode = 'in-process';
     }
 
+    // Issue #3706 (GLM stall): enable partial (stream_event) messages so the provider
+    // can observe content_block_delta / message_start / message_stop and run a
+    // no-content-progress watchdog. stream_events are filtered in adaptIterator
+    // (not yielded to ChatAgent), so this only adds watchdog visibility, not downstream volume.
+    options.includePartialMessages = true;
+
     return options;
   }
 
@@ -314,6 +322,7 @@ export abstract class BaseAgent implements Disposable {
         tokens: (message.metadata.inputTokens ?? 0) + (message.metadata.outputTokens ?? 0),
       } : undefined,
       sessionId: message.metadata?.sessionId,
+      terminatedReason: message.metadata?.terminatedReason,
     };
   }
 
