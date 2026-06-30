@@ -138,6 +138,38 @@ describe('MessageLogger.getChatHistory', () => {
     expect(result).toBe('A'.repeat(50));
   });
 
+  it('should keep the newest day when multi-day history exceeds maxContextLength (#4171)', async () => {
+    // Regression guard for #4171: with newest-first concatenation, truncation
+    // must keep the NEWEST day (front) and drop the OLDEST day (tail).
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 60 };
+
+    for (const day of ['2026-04-04', '2026-04-03', '2026-04-02']) {
+      const dateDir = path.join(tmpDir, 'chat-logs', day);
+      await fs.mkdir(dateDir, { recursive: true });
+    }
+    await fs.writeFile(
+      path.join(tmpDir, 'chat-logs', '2026-04-04', 'chat-4171.md'),
+      `NEWEST-${'N'.repeat(100)}`,
+    );
+    await fs.writeFile(
+      path.join(tmpDir, 'chat-logs', '2026-04-03', 'chat-4171.md'),
+      `MID-${'M'.repeat(100)}`,
+    );
+    await fs.writeFile(
+      path.join(tmpDir, 'chat-logs', '2026-04-02', 'chat-4171.md'),
+      `OLDEST-${'O'.repeat(100)}`,
+    );
+
+    const result = await logger.getChatHistory('chat-4171');
+
+    expect(result).toBeDefined();
+    expect(result!.length).toBe(60);
+    // Newest day is preserved (it sits at the front of the newest-first concat)
+    expect(result!.startsWith('NEWEST')).toBe(true);
+    // Oldest day is dropped (previously slice(-maxLength) kept it instead)
+    expect(result).not.toContain('OLDEST');
+  });
+
   it('should skip empty log files', async () => {
     const dateDir1 = path.join(tmpDir, 'chat-logs', '2026-04-04');
     const dateDir2 = path.join(tmpDir, 'chat-logs', '2026-04-03');
