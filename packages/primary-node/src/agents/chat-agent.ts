@@ -99,6 +99,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // between "session exists but idle" and "actively processing a message".
   private isProcessingMessage = false;
 
+  // Issue #3706 (GLM stall): set when the provider's no-content-progress watchdog
+  // terminated the stream. Checked at the iterator-end/restart decision point to
+  // suppress the auto-restart (would immediately re-stall) while keeping context.
+  private stalledTerminated = false;
+
   // Issue #2926: AbortController for immediate stop/reset of running Agent loop
   private abortController: AbortController | null = null;
 
@@ -878,7 +883,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    *
    */
   private async processIterator(
-    iterator: AsyncGenerator<{ parsed: { type: string; content?: string } }>
+    iterator: AsyncGenerator<{ parsed: { type: string; content?: string; terminatedReason?: 'stall' } }>
   ): Promise<void> {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
@@ -970,6 +975,33 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
         // Check for completion
         if (parsed.type === 'result') {
+          // Issue #3706 (GLM stall): provider watchdog terminated the stream.
+          // The generic content-send block above already delivered the notice
+          // (parsed.content carries STALL_TERMINATE_NOTICE). Here we only do
+          // control flow: record failure (repeated stalls trip the circuit),
+          // resolve the turn, and skip the normal recordSuccess / restart path.
+          if (parsed.terminatedReason === 'stall') {
+            this.stalledTerminated = true;
+            this.logger.warn(
+              { chatId, messageCount },
+              'GLM stall: stream terminated by no-content-progress watchdog; recording failure, resolving turn',
+            );
+            this.restartManager.recordFailure(chatId, 'stall');
+            this.isProcessingMessage = false;
+            this.resolveTurn();
+            if (this.callbacks.onDone) {
+              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              await this.callbacks.onDone(chatId, threadRoot);
+            }
+            if (this.onceMode) {
+              this.isSessionActive = false;
+              this.channel?.close();
+              this.taskCompletionResolve?.();
+              this.clearTaskCompletion();
+            }
+            continue;
+          }
+
           // Issue #3003: Log timing summary on completion
           const completionMs = Date.now() - startTime;
           this.logger.info(
@@ -1127,6 +1159,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Check if this was an explicit close (reset cleared the session)
     const wasExplicitClose = !this.isSessionActive;
 
+    // Issue #3706 (GLM stall): the provider watchdog terminated the stream.
+    // isSessionActive is still true here (we didn't flip it), so wasExplicitClose
+    // is false — intercept BEFORE the "unexpected end" warn + auto-restart path
+    // (a restart would immediately re-stall). Flip isSessionActive=false so the
+    // next user message starts a fresh turn, while preserving conversation context.
+    if (this.stalledTerminated) {
+      this.stalledTerminated = false;
+      this.isSessionActive = false;
+      this.isProcessingMessage = false;
+      this.logger.info(
+        { chatId, messageCount },
+        'GLM stall: terminated turn ended; suppressing auto-restart, context preserved',
+      );
+      return;
+    }
+
     // Issue #3003: Log timing summary for the entire agent loop
     if (!wasExplicitClose) {
       const loopElapsedMs = Date.now() - startTime;
@@ -1260,6 +1308,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Issue #3124: Clear once-mode and task completion state
     this.onceMode = false;
+    this.stalledTerminated = false; // Issue #3706: clear stall flag
     this.clearTaskCompletion();
 
     // Issue #4063: Clear per-turn completion state

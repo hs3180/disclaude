@@ -61,6 +61,7 @@ vi.mock('@disclaude/core', () => {
     })),
     RestartManager: vi.fn().mockImplementation(() => ({
       recordSuccess: vi.fn(),
+      recordFailure: vi.fn(),
       shouldRestart: vi.fn(() => ({
         allowed: false,
         reason: 'max_restarts_exceeded',
@@ -365,6 +366,48 @@ describe('ChatAgent (primary-node)', () => {
         messageId: 'msg_2',
       });
       expect(chatAgent.hasActiveSession()).toBe(true);
+    });
+  });
+
+  describe('GLM stall termination (Issue #3706)', () => {
+    it('should send notice, record failure, suppress restart, preserve context', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_stall', callbacks: localCallbacks,
+        apiKey: 'key', model: 'model', provider: 'anthropic',
+      });
+
+      async function* stallResultIterator() {
+        yield {
+          parsed: {
+            type: 'result',
+            content: '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。',
+            terminatedReason: 'stall',
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: stallResultIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_stall', payload: 'hello', messageId: 'msg_1' });
+      await new Promise<void>((r) => setTimeout(r, 150));
+
+      // Notice delivered
+      expect(localCallbacks.sendMessage.mock.calls.some(
+        (c: any[]) => typeof c[1] === 'string' && c[1].includes('stall'),
+      )).toBe(true);
+      // recordFailure called (not recordSuccess)
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_stall', 'stall');
+      expect(rm.shouldRestart).not.toHaveBeenCalled();
+      // Session inactive (restart suppressed)
+      expect(agent.hasActiveSession()).toBe(false);
+      // Context preserved (deleteThreadRoot NOT called)
+      expect((agent as any).conversationOrchestrator.deleteThreadRoot).not.toHaveBeenCalled();
     });
   });
 
