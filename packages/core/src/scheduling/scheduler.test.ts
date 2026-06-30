@@ -368,6 +368,14 @@ describe('Scheduler', () => {
     /** Helper: fire a cron job trigger (sync, use vi.waitFor for assertions) */
     function fireJob(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
       void jobs[0].job.fireOnTick();
+      // Issue #4174: stop the cron job right after the manual tick so its
+      // every-minute auto-tick can't fire a second time during the waitFor
+      // window and flake exact call-count assertions (real timers + '* * * * *'
+      // meant a minute-boundary auto-tick occasionally landed inside the window).
+      // The manual tick above already fired, so the single route call still
+      // happens; stop() does not abort the in-flight execution and is the same
+      // idempotent method the scheduler uses to tear down jobs.
+      jobs[0].job.stop();
     }
 
     /** Helper: extract the first SystemMessage from mock route calls */
@@ -855,6 +863,11 @@ describe('Scheduler', () => {
 
       const jobs = scheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
+      // Stop the cron job so its every-minute auto-tick can't fire a second
+      // time during the waitFor window and flake the toHaveBeenCalledTimes(1)
+      // assertion. Issue #4174: real timers + '* * * * *' meant a minute-boundary
+      // auto-tick occasionally landed inside the 2s window (route called twice).
+      jobs[0].job.stop();
 
       // Should complete normally (route resolves before 5-minute default)
       await vi.waitFor(() => {
