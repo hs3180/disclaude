@@ -855,6 +855,11 @@ describe('Scheduler', () => {
 
       const jobs = scheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
+      // Stop the cron job so its every-minute auto-tick can't fire a second
+      // time during the waitFor window and flake the toHaveBeenCalledTimes(1)
+      // assertion. Issue #4174: real timers + '* * * * *' meant a minute-boundary
+      // auto-tick occasionally landed inside the 2s window (route called twice).
+      jobs[0].job.stop();
 
       // Should complete normally (route resolves before 5-minute default)
       await vi.waitFor(() => {
