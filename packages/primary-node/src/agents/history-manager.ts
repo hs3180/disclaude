@@ -159,11 +159,11 @@ export class HistoryManager {
       const history = await callbacks.getChatHistory(chatId);
 
       if (history && history.trim()) {
-        // Truncate if too long
-        this._persistedHistoryContext =
-          history.length > sessionConfig.maxContextLength
-            ? history.slice(-sessionConfig.maxContextLength)
-            : history;
+        // Truncation (and the maxContextLength budget) is handled inside
+        // getChatHistory(); do NOT re-truncate here — a second slice(-maxLength)
+        // would be a latent footgun that reintroduces the #4171 inverted-
+        // direction bug if getChatHistory ever stops pre-truncating.
+        this._persistedHistoryContext = history;
 
         logger.info(
           { chatId, historyLength: this._persistedHistoryContext.length },
