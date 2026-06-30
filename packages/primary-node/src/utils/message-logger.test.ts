@@ -120,27 +120,33 @@ describe('MessageLogger.getChatHistory', () => {
     expect(result).not.toContain('Day 2026-04-01');
   });
 
-  it('should truncate from beginning when exceeding maxContextLength', async () => {
+  it('should keep the most recent messages when a single day exceeds maxContextLength', async () => {
     mockState.sessionConfig = { historyDays: 7, maxContextLength: 50 };
 
     const dateDir = path.join(tmpDir, 'chat-logs', '2026-04-04');
     await fs.mkdir(dateDir, { recursive: true });
 
-    const longContent = 'A'.repeat(200);
-    await fs.writeFile(path.join(dateDir, 'chat-trunc.md'), longContent);
+    // Files are appended oldest→newest, so the newest messages are at the END.
+    // (Replaces the old all-'A' case which could not tell head from tail.)
+    await fs.writeFile(
+      path.join(dateDir, 'chat-trunc.md'),
+      'OLD'.repeat(50) + 'NEW'.repeat(50),
+    );
 
     const result = await logger.getChatHistory('chat-trunc');
 
-    // Should be truncated to maxContextLength
     expect(result).toBeDefined();
-    expect(result!.length).toBe(50);
-    // Should keep the most recent part (end of string)
-    expect(result).toBe('A'.repeat(50));
+    // The most recent 50 chars survive; the older half is dropped (#4171).
+    expect(result).toContain('NEW');
+    expect(result).not.toContain('OLD');
+    // Truncation is surfaced, never silent.
+    expect(result).toContain('truncated');
   });
 
-  it('should keep the newest day when multi-day history exceeds maxContextLength (#4171)', async () => {
-    // Regression guard for #4171: with newest-first concatenation, truncation
-    // must keep the NEWEST day (front) and drop the OLDEST day (tail).
+  it('should keep the newest day and drop older days when multi-day history exceeds maxContextLength (#4171)', async () => {
+    // Regression guard for #4171: truncation must keep the MOST RECENT history
+    // (newest day, newest messages) and drop older days. Files are appended
+    // oldest→newest, so each day's recency marker sits at the END of its content.
     mockState.sessionConfig = { historyDays: 7, maxContextLength: 60 };
 
     for (const day of ['2026-04-04', '2026-04-03', '2026-04-02']) {
@@ -149,25 +155,48 @@ describe('MessageLogger.getChatHistory', () => {
     }
     await fs.writeFile(
       path.join(tmpDir, 'chat-logs', '2026-04-04', 'chat-4171.md'),
-      `NEWEST-${'N'.repeat(100)}`,
+      `${'X'.repeat(100)}RECENT_NEWEST`,
     );
     await fs.writeFile(
       path.join(tmpDir, 'chat-logs', '2026-04-03', 'chat-4171.md'),
-      `MID-${'M'.repeat(100)}`,
+      `${'Y'.repeat(100)}MID_TAIL`,
     );
     await fs.writeFile(
       path.join(tmpDir, 'chat-logs', '2026-04-02', 'chat-4171.md'),
-      `OLDEST-${'O'.repeat(100)}`,
+      `${'Z'.repeat(100)}OLD_TAIL`,
     );
 
     const result = await logger.getChatHistory('chat-4171');
 
     expect(result).toBeDefined();
-    expect(result!.length).toBe(60);
-    // Newest day is preserved (it sits at the front of the newest-first concat)
-    expect(result!.startsWith('NEWEST')).toBe(true);
-    // Oldest day is dropped (previously slice(-maxLength) kept it instead)
-    expect(result).not.toContain('OLDEST');
+    // Newest day's most recent message survives (it lives at the end of the
+    // newest day's content)...
+    expect(result).toContain('RECENT_NEWEST');
+    // ...older days are dropped entirely (previously slice(-maxLength) kept the
+    // oldest day's tail instead)...
+    expect(result).not.toContain('OLD_TAIL');
+    expect(result).not.toContain('MID_TAIL');
+    // ...and truncation is surfaced.
+    expect(result).toContain('truncated');
+  });
+
+  it('should respect the maxLengthOverride budget (e.g. feishu larger budget)', async () => {
+    // Callers with a larger budget (feishu CHAT_HISTORY.MAX_CONTEXT_LENGTH) opt
+    // in via the override instead of being silently capped at the session default.
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 40 };
+
+    const dateDir = path.join(tmpDir, 'chat-logs', '2026-04-04');
+    await fs.mkdir(dateDir, { recursive: true });
+    const full = `${'HEAD-'.repeat(20)}RECENT`; // 106 chars > default budget (40)
+    await fs.writeFile(path.join(dateDir, 'chat-ovr.md'), full);
+
+    // Default budget (40) truncates...
+    const defaultResult = await logger.getChatHistory('chat-ovr');
+    expect(defaultResult).toContain('truncated');
+
+    // ...but the override keeps the full content.
+    const overrideResult = await logger.getChatHistory('chat-ovr', 10000);
+    expect(overrideResult).toBe(full);
   });
 
   it('should skip empty log files', async () => {

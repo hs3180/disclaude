@@ -1056,7 +1056,9 @@ describe('MessageHandler', () => {
         },
       });
 
-      expect(mockState.getChatHistory).toHaveBeenCalledWith('chat_group');
+      // Feishu passes its own (larger) budget through to getChatHistory instead
+      // of being silently capped at the session default — see #4171 refactor.
+      expect(mockState.getChatHistory).toHaveBeenCalledWith('chat_group', 10000);
     });
 
     it('should not fetch chat history for p2p messages', async () => {

@@ -94,7 +94,10 @@ describe('HistoryManager (Issue #4125 part 2)', () => {
       expect(mgr.historyLoaded).toBe(true);
     });
 
-    it('truncates history to maxContextLength (keeping the tail)', async () => {
+    it('passes history through verbatim (truncation lives in getChatHistory)', async () => {
+      // history-manager must NOT re-truncate: getChatHistory owns the budget and
+      // the recency-correct truncation. A redundant slice(-maxContextLength) here
+      // would be a latent footgun reintroducing the #4171 inverted-direction bug.
       const long = 'x'.repeat(250);
       vi.mocked(Config.getSessionRestoreConfig).mockReturnValue({
         historyDays: 7,
@@ -105,8 +108,8 @@ describe('HistoryManager (Issue #4125 part 2)', () => {
 
       await mgr.loadPersistedHistory();
 
-      expect(mgr.persistedHistoryContext?.length).toBe(100);
-      expect(mgr.persistedHistoryContext).toBe(long.slice(-100));
+      // Whatever getChatHistory returns is stored untouched.
+      expect(mgr.persistedHistoryContext).toBe(long);
     });
 
     it('skips silently when no getChatHistory callback is configured', async () => {
