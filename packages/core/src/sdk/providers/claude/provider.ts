@@ -388,7 +388,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         if (forceCloseTimer) { clearTimeout(forceCloseTimer); forceCloseTimer = null; }
       };
       const fireWatchdog = (): void => {
-        if (!requestInFlight || stalled) return;
+        if (!requestInFlight || stalled) { return; }
         stalled = true;
         logger.error(
           { messageCount, model: options.model, stallTimeoutMs: STALL_TIMEOUT_MS, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
@@ -419,7 +419,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       };
       const tickWatchdog = (): void => {
         contentWatchdog = null;
-        if (!requestInFlight || stalled) return;
+        if (!requestInFlight || stalled) { return; }
         // Woke before the window elapsed (content progressed since we scheduled) —
         // re-arm for the remainder so we still fire at lastProgressMs + timeout.
         const elapsed = Date.now() - lastProgressMs;
