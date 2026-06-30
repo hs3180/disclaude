@@ -226,17 +226,43 @@ export class MessageLogger {
   /**
    * Get chat history as formatted string.
    *
-   * Reads chat log files from multiple days (up to `historyDays` from config),
-   * sorted newest-first, and concatenates them for full context restoration.
+   * Reads chat log files from multiple days (up to `historyDays` from config)
+   * and returns them **newest-day-first** with date separators, for full
+   * context restoration. The newest-first day ordering is a contract covered
+   * by the "#1863 aggregate history" regression test.
    *
-   * Issue #1863 Fix: Previously only read the most recent day's log,
-   * causing cross-day conversation history to be truncated.
+   * Truncation: each day file is appended chronologically (oldest at the top,
+   * newest at the bottom), so the most recent messages sit at the END of the
+   * newest day's content. When the total exceeds `maxLength`, we keep the most
+   * recent days in full and — if budget remains — the NEWEST tail of the
+   * next-older day, never its oldest messages. A marker is appended whenever
+   * any older history is dropped, so truncation is never silent.
+   *
+   * Truncation is centralised here. Downstream consumers (history-manager,
+   * feishu `getChatHistoryContext`) must NOT re-truncate the result — doing so
+   * would reintroduce the inverted-direction bug.
+   *
+   * Issue #1863 Fix: Previously only read the most recent day's log, causing
+   * cross-day conversation history to be truncated.
+   * Issue #4171 Fix: Truncation previously kept the oldest day's tail and
+   * discarded all recent history (inverted direction).
    *
    * @param chatId - Platform-specific chat identifier
+   * @param maxLengthOverride - Optional char budget; defaults to
+   *   `sessionRestoreConfig.maxContextLength`. Lets callers that want a larger
+   *   budget (e.g. feishu's `CHAT_HISTORY.MAX_CONTEXT_LENGTH`) opt in instead of
+   *   being silently capped at the session default.
    * @returns Concatenated chat history or undefined if no history found
    */
-  async getChatHistory(chatId: string): Promise<string | undefined> {
+  async getChatHistory(
+    chatId: string,
+    maxLengthOverride?: number,
+  ): Promise<string | undefined> {
     try {
+      const sessionConfig = Config.getSessionRestoreConfig();
+      const maxDays = sessionConfig.historyDays;
+      const maxLength = maxLengthOverride ?? sessionConfig.maxContextLength;
+
       const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
       // Filter to date directories, sorted descending (newest first)
@@ -244,48 +270,87 @@ export class MessageLogger {
         .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
         .sort((a, b) => b.name.localeCompare(a.name));
 
-      // Read up to historyDays of logs
-      const sessionConfig = Config.getSessionRestoreConfig();
-      const maxDays = sessionConfig.historyDays;
-      const maxLength = sessionConfig.maxContextLength;
-      const historyParts: string[] = [];
-
-      for (let i = 0; i < Math.min(dateDirs.length, maxDays); i++) {
+      // Collect day segments oldest-first (iterate the newest-first list in
+      // reverse). Each file is appended chronologically, so within a segment
+      // the newest messages are at the END of `content`.
+      const segments: { date: string; content: string }[] = [];
+      for (let i = Math.min(dateDirs.length, maxDays) - 1; i >= 0; i--) {
         const dir = dateDirs[i];
         const logPath = path.join(this.chatDir, dir.name, `${chatId}.md`);
         try {
           const content = await fs.readFile(logPath, 'utf-8');
-          if (content.trim()) {
-            // Add date header separator between days for readability
-            if (historyParts.length > 0) {
-              historyParts.push(`\n--- *${dir.name}* ---\n\n`);
-            }
-            historyParts.push(content.trim());
+          const trimmed = content.trim();
+          if (trimmed) {
+            segments.push({ date: dir.name, content: trimmed });
           }
         } catch {
           // File doesn't exist for this day, continue
         }
       }
 
-      if (historyParts.length === 0) {
+      if (segments.length === 0) {
         return undefined;
       }
 
-      const combined = historyParts.join('\n');
-
-      // Keep the most recent history when exceeding maxContextLength.
-      // Days are concatenated newest-first, so the newest content sits at the
-      // START of `combined`; we must truncate the (older) tail, not the front.
-      // Issue #4171: `slice(-maxLength)` previously kept the OLDEST day's tail
-      // and discarded all recent history (inverted truncation direction).
-      if (combined.length > maxLength) {
-        return combined.slice(0, maxLength);
-      }
-
-      return combined;
+      return this.renderHistorySegments(segments, maxLength);
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Render day segments newest-first, keeping only the most recent `maxLength`
+   * characters. See `getChatHistory` for the recency rationale.
+   *
+   * `segments` is oldest-first; each `content` is oldest→newest internally.
+   * Output is newest-first with a `\n--- *<date>* ---\n\n` separator before each
+   * older day — byte-identical to the legacy output when nothing is truncated.
+   */
+  private renderHistorySegments(
+    segments: { date: string; content: string }[],
+    maxLength: number,
+  ): string {
+    const separator = (date: string): string => `\n--- *${date}* ---\n\n`;
+    // Render newest-first. The first (newest) segment has no separator.
+    const render = (segs: { date: string; content: string }[]): string => {
+      const parts: string[] = [];
+      for (const seg of segs) {
+        if (parts.length > 0) {
+          parts.push(separator(seg.date));
+        }
+        parts.push(seg.content);
+      }
+      return parts.join('\n');
+    };
+
+    // Greedily include full days from the newest backward, so the most recent
+    // messages always survive. `kept` stays newest-first.
+    const kept: { date: string; content: string }[] = [];
+    let truncated = false;
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const candidate = [...kept, segments[i]]; // older day renders last
+      if (render(candidate).length <= maxLength) {
+        kept.push(segments[i]);
+        continue;
+      }
+      // This older day does not fit in full. Keep its NEWEST tail (the most
+      // recent messages of that day) if any budget remains, then stop.
+      truncated = true;
+      const remaining = maxLength - render(kept).length;
+      const overhead = kept.length > 0 ? separator(segments[i].date).length + 2 : 0;
+      const contentBudget = remaining - overhead;
+      if (contentBudget > 0) {
+        const c = segments[i].content;
+        kept.push({ date: segments[i].date, content: c.slice(c.length - contentBudget) });
+      }
+      break;
+    }
+
+    let result = render(kept);
+    if (truncated) {
+      result += '\n\n_(…older history truncated; see chat log files for the full conversation)_';
+    }
+    return result;
   }
 
   /**

@@ -293,22 +293,16 @@ export class MessageHandler {
    */
   private async getChatHistoryContext(chatId: string): Promise<string | undefined> {
     try {
-      const rawHistory = await messageLogger.getChatHistory(chatId);
+      // Truncation (recency-correct) is owned by getChatHistory(); pass our
+      // larger budget via the override so it isn't silently capped at the
+      // session default. The previous local truncation was dead code — it ran
+      // `slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH)` on a string getChatHistory had
+      // already capped smaller — and assumed oldest→newest ordering that no
+      // longer holds. Do not re-truncate here.
+      const history = await messageLogger.getChatHistory(chatId, CHAT_HISTORY.MAX_CONTEXT_LENGTH);
 
-      if (!rawHistory || rawHistory.length === 0) {
+      if (!history || history.length === 0) {
         return undefined;
-      }
-
-      // Truncate if too long
-      let history = rawHistory;
-      if (history.length > CHAT_HISTORY.MAX_CONTEXT_LENGTH) {
-        const truncatePoint = history.lastIndexOf('## [', history.length - CHAT_HISTORY.MAX_CONTEXT_LENGTH);
-        if (truncatePoint > 0) {
-          history = `...(earlier messages truncated)...\n\n${history.slice(truncatePoint)}`;
-        } else {
-          history = history.slice(-CHAT_HISTORY.MAX_CONTEXT_LENGTH);
-          history = `...(earlier messages truncated)...\n\n${history.slice(history.indexOf('## ['))}`;
-        }
       }
 
       return history;
