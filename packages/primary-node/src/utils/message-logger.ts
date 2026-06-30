@@ -273,9 +273,13 @@ export class MessageLogger {
 
       const combined = historyParts.join('\n');
 
-      // Truncate from the beginning if exceeding maxContextLength (keep recent history)
+      // Keep the most recent history when exceeding maxContextLength.
+      // Days are concatenated newest-first, so the newest content sits at the
+      // START of `combined`; we must truncate the (older) tail, not the front.
+      // Issue #4171: `slice(-maxLength)` previously kept the OLDEST day's tail
+      // and discarded all recent history (inverted truncation direction).
       if (combined.length > maxLength) {
-        return combined.slice(-maxLength);
+        return combined.slice(0, maxLength);
       }
 
       return combined;
