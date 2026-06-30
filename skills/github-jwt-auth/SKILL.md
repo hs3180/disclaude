@@ -60,7 +60,8 @@ GH_REPO=Mathlab-Crypto/Quantex
 **Always use this as the primary method.** Write the script to a temp file and execute it — this avoids shell escaping issues with `node -e` (especially the `!` character in bash/zsh).
 
 ```bash
-cat > /tmp/gh-jwt-auth.js << 'SCRIPT'
+TMP_SCRIPT="/tmp/gh-jwt-auth.$$.js"
+cat > "$TMP_SCRIPT" << 'SCRIPT'
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -88,7 +89,7 @@ try {
   const remoteUrl = execSync("git remote get-url origin", { encoding: "utf-8" }).trim();
   // SSH: git@github.com:Owner/Repo.git
   // HTTPS: https://github.com/Owner/Repo.git
-  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/);
+  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/);
   if (match) {
     repoOwner = match[1];
     repoFullName = match[1] + "/" + match[2];
@@ -144,12 +145,12 @@ const jwt = sigInput + "." + sign.sign(privateKey, "base64url");
     installId = ENV_INSTALL_ID;
     console.error("WARNING: No installation matched repo owner '" + repoOwner + "'. Using env var installation ID: " + installId);
     console.error("Available installations:");
-    installations.forEach((i) => console.error("  id=" + i.id + " account=" + i.account.login));
+    installations.forEach((i) => console.error("  id=" + i.id + " account=" + (i.account && i.account.login)));
   } else {
     console.error("ERROR: Cannot determine installation ID.");
     console.error("Repo owner '" + repoOwner + "' does not match any installation.");
     console.error("Available installations:");
-    installations.forEach((i) => console.error("  id=" + i.id + " account=" + i.account.login));
+    installations.forEach((i) => console.error("  id=" + i.id + " account=" + (i.account && i.account.login)));
     process.exit(1);
   }
 
@@ -188,15 +189,20 @@ const jwt = sigInput + "." + sign.sign(privateKey, "base64url");
 })();
 SCRIPT
 
-node /tmp/gh-jwt-auth.js
+node "$TMP_SCRIPT"
+rm -f "$TMP_SCRIPT"
 ```
 
 ### Step 2: Verify Token (Optional)
 
 ```bash
-# Source the runtime env and verify
+# Source the runtime env and verify.
+# NOTE: an installation access token is NOT a user token — GET /user returns 403
+# ("Resource not accessible by integration"). Verify against the repositories the
+# installation can actually access instead.
 export $(grep '^GH_TOKEN=' .runtime-env | head -1)
-curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/user | python3 -c "import json,sys; d=json.load(sys.stdin); print('Login:', d.get('login','FAILED'))"
+curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/installation/repositories \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('OK — installation can see', d.get('total_count','?'), 'repo(s)')"
 ```
 
 ## Token Refresh
