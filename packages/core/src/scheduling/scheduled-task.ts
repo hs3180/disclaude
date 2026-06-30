@@ -77,4 +77,16 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
+
+  /**
+   * Whether to load recent chat history context into the task prompt at execution.
+   *
+   * Default `false`: scheduled tasks run context-light by design (lean prompts,
+   * anti-recursion). Set `true` to inject the chat's recent history into the
+   * prompt so the task executes with the same context a normal user message
+   * gets (Issue #4163).
+   *
+   * Defined in schedule markdown frontmatter (e.g., `loadContext: true`).
+   */
+  loadContext?: boolean;
 }

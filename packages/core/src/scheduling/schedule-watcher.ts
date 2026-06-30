@@ -107,6 +107,7 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'enabled':
       case 'blocking':
+      case 'loadContext':
         frontmatter[key] = value === 'true';
         break;
       case 'cooldownPeriod':

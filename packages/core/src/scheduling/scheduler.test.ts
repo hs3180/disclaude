@@ -101,6 +101,49 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('loadContext (Issue #4163)', () => {
+    it('should inject chat history into the prompt when task.loadContext is true', async () => {
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
+      mockCallbacks.getChatHistory = vi.fn().mockResolvedValue('HISTORY-MARKER-XYZ');
+
+      const task = createTask({ id: 'load-ctx-1', loadContext: true });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+      jobs[0].job.stop();
+
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.getChatHistory).toHaveBeenCalledWith('oc_test');
+      const [[routedMsg]] = mockRouterAsMock.route.mock.calls;
+      expect(routedMsg.payload).toContain('HISTORY-MARKER-XYZ');
+      expect(routedMsg.payload).toContain('Recent Chat History Context');
+    });
+
+    it('should NOT load chat history by default (context-light)', async () => {
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
+      mockCallbacks.getChatHistory = vi.fn().mockResolvedValue('HISTORY-MARKER-XYZ');
+
+      const task = createTask({ id: 'load-ctx-2' }); // loadContext undefined → context-light
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      void jobs[0].job.fireOnTick();
+      jobs[0].job.stop();
+
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.getChatHistory).not.toHaveBeenCalled();
+      const [[routedMsg]] = mockRouterAsMock.route.mock.calls;
+      expect(routedMsg.payload).not.toContain('HISTORY-MARKER-XYZ');
+    });
+  });
+
   describe('start / stop', () => {
     it('should start scheduler and load enabled tasks', async () => {
       const task = createTask();

@@ -79,6 +79,12 @@ interface ActiveJob {
 export interface SchedulerCallbacks {
   /** Send a text message to a chat */
   sendMessage: (chatId: string, message: string) => Promise<void>;
+  /**
+   * Load recent chat history for a chat (optional).
+   * Used when a task opts in via `loadContext` (Issue #4163) to inject the
+   * same context a normal user message gets into the scheduled task prompt.
+   */
+  getChatHistory?: (chatId: string) => Promise<string | undefined>;
 }
 
 /**
@@ -434,7 +440,22 @@ ${task.prompt}`;
 
     try {
       // Build wrapped prompt with anti-recursion instructions
-      const wrappedPrompt = this.buildScheduledTaskPrompt(task);
+      let wrappedPrompt = this.buildScheduledTaskPrompt(task);
+
+      // Issue #4163: Optionally load recent chat history into the prompt so the
+      // scheduled task runs with the same context a normal user message gets.
+      // Opt-in via `loadContext` (default false) to preserve the context-light
+      // behavior of tasks like the issue-solver.
+      if (task.loadContext && task.chatId && this.callbacks.getChatHistory) {
+        try {
+          const history = await this.callbacks.getChatHistory(task.chatId);
+          if (history) {
+            wrappedPrompt += `\n\n---\n\n## Recent Chat History Context\n\n${history}`;
+          }
+        } catch (err) {
+          logger.warn({ err, taskId: task.id }, 'Failed to load chat history context for scheduled task');
+        }
+      }
 
       // Issue #3582: Route through InputMessageRouter
       if (!this.inputMessageRouter || !task.chatId) {

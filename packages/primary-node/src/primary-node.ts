@@ -63,6 +63,7 @@ import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
 import { LoopRunner } from './loop/loop-runner.js';
+import { messageLogger } from './utils/message-logger.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -617,6 +618,9 @@ export class PrimaryNode extends EventEmitter {
         };
         await this.channelManager.broadcast(outgoingMessage);
       },
+      // Issue #4163: Let tasks that opt in via `loadContext` load recent chat
+      // history (same source the feishu message-handler uses for user messages).
+      getChatHistory: (chatId: string) => messageLogger.getChatHistory(chatId),
     };
     logger.info('Scheduler init step 3/6: ✓ Schedule callbacks created');
 
