@@ -218,10 +218,16 @@ describe('isStartupFailure', () => {
 describe('ClaudeSDKProvider', () => {
   let provider: ClaudeSDKProvider;
   let originalApiKey: string | undefined;
+  // Issue #3706 (review): snapshot stall-watchdog env knobs so they are restored
+  // even if a test's assertion throws before reaching its manual `delete`.
+  let originalStallTimeout: string | undefined;
+  let originalStallGrace: string | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
     originalApiKey = process.env.ANTHROPIC_API_KEY;
+    originalStallTimeout = process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+    originalStallGrace = process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
     provider = new ClaudeSDKProvider();
   });
 
@@ -230,6 +236,16 @@ describe('ClaudeSDKProvider', () => {
       delete process.env.ANTHROPIC_API_KEY;
     } else {
       process.env.ANTHROPIC_API_KEY = originalApiKey;
+    }
+    if (originalStallTimeout === undefined) {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+    } else {
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = originalStallTimeout;
+    }
+    if (originalStallGrace === undefined) {
+      delete process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
+    } else {
+      process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = originalStallGrace;
     }
   });
 
@@ -364,9 +380,10 @@ describe('ClaudeSDKProvider', () => {
     });
 
     // Issue #3706 (GLM stall): no-content-progress watchdog.
+    // Margins chosen with headroom over the timeout to stay green under CI load.
     it('should terminate on GLM stall (message_start, no content_block_delta for STALL_TIMEOUT_MS)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
       let interrupted = false;
       const interruptSpy = vi.fn(() => { interrupted = true; return Promise.resolve(); });
       const gen = (async function* () {
@@ -380,18 +397,17 @@ describe('ClaudeSDKProvider', () => {
       for await (const msg of result.iterator) { messages.push(msg); }
       expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
       expect(interruptSpy).toHaveBeenCalledTimes(1);
-      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
     });
 
     it('should NOT terminate on healthy stream (content_block_delta resets watchdog)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
       const interruptSpy = vi.fn();
       const gen = (async function* () {
         yield { type: 'stream_event', event: { type: 'message_start' } };
         for (let i = 0; i < 5; i++) {
           yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
-          await new Promise<void>(r => setTimeout(r, 10));
+          await new Promise<void>(r => setTimeout(r, 15));
         }
         yield { type: 'stream_event', event: { type: 'message_stop' } };
         yield { type: 'result', subtype: 'success' };
@@ -402,18 +418,17 @@ describe('ClaudeSDKProvider', () => {
       const messages: AgentMessage[] = [];
       for await (const msg of result.iterator) { messages.push(msg); }
       expect(interruptSpy).not.toHaveBeenCalled();
-      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
     });
 
     it('should NOT terminate during between-request gap (message_stop clears watchdog)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
-      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
       const interruptSpy = vi.fn();
       const gen = (async function* () {
         yield { type: 'stream_event', event: { type: 'message_start' } };
         yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
         yield { type: 'stream_event', event: { type: 'message_stop' } };
-        await new Promise<void>(r => setTimeout(r, 200)); // gap >> timeout, but watchdog cleared
+        await new Promise<void>(r => setTimeout(r, 250)); // gap >> timeout, but watchdog cleared
         yield { type: 'stream_event', event: { type: 'message_start' } };
         yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
         yield { type: 'stream_event', event: { type: 'message_stop' } };
@@ -425,7 +440,50 @@ describe('ClaudeSDKProvider', () => {
       const messages: AgentMessage[] = [];
       for await (const msg of result.iterator) { messages.push(msg); }
       expect(interruptSpy).not.toHaveBeenCalled();
-      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+    });
+
+    it('should force-close the query when interrupt() does not end the stream (Issue #3706)', async () => {
+      // Covers the review caveat: if interrupt() can't tear down a stalled socket,
+      // the watchdog escalates to query.close() after STALL_FORCE_CLOSE_GRACE_MS.
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+      process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '20';
+      let closed = false;
+      const interruptSpy = vi.fn(() => Promise.resolve()); // does NOT unblock the stream
+      const closeSpy = vi.fn(() => { closed = true; });
+      const gen = (async function* () {
+        yield { type: 'stream_event', event: { type: 'message_start' } };
+        while (!closed) { await new Promise<void>(r => setTimeout(r, 5)); } // only close() unblocks
+      })();
+      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: closeSpy }));
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+      expect(interruptSpy).toHaveBeenCalledTimes(1);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+      expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
+    });
+
+    it('should log a blind-watchdog warning when partials never flow (Issue #3706)', async () => {
+      // If includePartialMessages is ineffective for the provider, no stream_event
+      // is ever seen → the watchdog is INACTIVE. Surface it loudly.
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      const interruptSpy = vi.fn();
+      const gen = (async function* () {
+        // A message flows but NO stream_event partials → watchdog never arms.
+        yield { type: 'result', subtype: 'success' };
+      })();
+      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+      expect(interruptSpy).not.toHaveBeenCalled();
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        expect.objectContaining({ messageCount: expect.any(Number) }),
+        expect.stringContaining('watchdog was INACTIVE'),
+      );
     });
 
     // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会

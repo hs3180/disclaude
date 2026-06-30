@@ -354,30 +354,84 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         const env = Number.parseInt(process.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
         return Number.isFinite(env) && env > 0 ? env : 180_000;
       })();
+      // Grace after interrupt() before force-closing the query, in case interrupt()
+      // alone cannot tear down a stalled upstream socket (Issue #3706 review).
+      const STALL_FORCE_CLOSE_GRACE_MS = (() => {
+        const env = Number.parseInt(process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS ?? '', 10);
+        return Number.isFinite(env) && env > 0 ? env : 5_000;
+      })();
       // Declared BEFORE try so catch/finally can access them. Armed on
-      // message_start, reset on content_block_delta (any content incl. thinking
+      // message_start, advanced on content_block_delta (any content incl. thinking
       // — so legit reasoning never fires), cleared on message_stop. Fires on the
       // event loop (independent of the for-await being blocked on a stalled stream).
+      //
+      // Efficiency (review feedback): instead of clearTimeout+setTimeout on every
+      // content_block_delta, we only stamp lastProgressMs per delta and run a single
+      // timer that fires at lastProgressMs + STALL_TIMEOUT_MS (re-arming at most once
+      // per timeout window when it wakes early). The timer is unref'd so a pending
+      // watchdog can never keep the process (e.g. once-mode) from exiting.
       let requestInFlight = false;
       let stalled = false;
+      let partialsObserved = false; // true once any stream_event is seen (else watchdog is blind)
+      let lastProgressMs = 0;
       let contentWatchdog: ReturnType<typeof setTimeout> | null = null;
+      let forceCloseTimer: ReturnType<typeof setTimeout> | null = null;
+      const armTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
+        const t = setTimeout(fn, ms);
+        (t as unknown as { unref?: () => void }).unref?.();
+        return t;
+      };
       const clearContentWatchdog = (): void => {
         if (contentWatchdog) { clearTimeout(contentWatchdog); contentWatchdog = null; }
       };
+      const clearForceClose = (): void => {
+        if (forceCloseTimer) { clearTimeout(forceCloseTimer); forceCloseTimer = null; }
+      };
+      const fireWatchdog = (): void => {
+        if (!requestInFlight || stalled) return;
+        stalled = true;
+        logger.error(
+          { messageCount, model: options.model, stallTimeoutMs: STALL_TIMEOUT_MS, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
+          `GLM stall: no content_block_delta for ${STALL_TIMEOUT_MS}ms during in-flight request; interrupting (Issue #3706)`,
+        );
+        queryResult.interrupt().catch((e: unknown) => {
+          logger.warn({ err: e }, 'stall watchdog: queryResult.interrupt() rejected');
+        });
+        // Belt-and-suspenders (review feedback): if interrupt() cannot tear down the
+        // stalled upstream socket, the for-await would never resume. Force-close the
+        // query after a grace so the stream ends instead of hanging for the socket
+        // timeout. No-op if interrupt() already ended the stream (finally clears this).
+        forceCloseTimer = armTimer(() => {
+          forceCloseTimer = null;
+          const maybeClose = (queryResult as { close?: () => void }).close;
+          if (typeof maybeClose === 'function') {
+            try {
+              maybeClose.call(queryResult);
+              logger.warn(
+                { graceMs: STALL_FORCE_CLOSE_GRACE_MS },
+                'stall watchdog: stream did not end within grace after interrupt(); force-closed query',
+              );
+            } catch (e: unknown) {
+              logger.warn({ err: e }, 'stall watchdog: queryResult.close() threw');
+            }
+          }
+        }, STALL_FORCE_CLOSE_GRACE_MS);
+      };
+      const tickWatchdog = (): void => {
+        contentWatchdog = null;
+        if (!requestInFlight || stalled) return;
+        // Woke before the window elapsed (content progressed since we scheduled) —
+        // re-arm for the remainder so we still fire at lastProgressMs + timeout.
+        const elapsed = Date.now() - lastProgressMs;
+        if (elapsed < STALL_TIMEOUT_MS) {
+          contentWatchdog = armTimer(tickWatchdog, STALL_TIMEOUT_MS - elapsed);
+          return;
+        }
+        fireWatchdog();
+      };
       const armContentWatchdog = (): void => {
         clearContentWatchdog();
-        contentWatchdog = setTimeout(() => {
-          if (requestInFlight && !stalled) {
-            stalled = true;
-            logger.error(
-              { messageCount, model: options.model, stallTimeoutMs: STALL_TIMEOUT_MS, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
-              `GLM stall: no content_block_delta for ${STALL_TIMEOUT_MS}ms during in-flight request; interrupting (Issue #3706)`,
-            );
-            queryResult.interrupt().catch((e: unknown) => {
-              logger.warn({ err: e }, 'stall watchdog: queryResult.interrupt() rejected');
-            });
-          }
-        }, STALL_TIMEOUT_MS);
+        contentWatchdog = armTimer(tickWatchdog, STALL_TIMEOUT_MS);
       };
 
       try {
@@ -407,14 +461,17 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // watchdog ONLY — filter them (not adapted/logged/yielded to ChatAgent).
           // Requires includePartialMessages (set in base-agent createSdkOptions).
           if (message.type === 'stream_event') {
+            partialsObserved = true;
             const et = (message as { event?: { type?: string } }).event?.type;
             if (et === 'message_start') {
               requestInFlight = true;
+              lastProgressMs = Date.now();
               armContentWatchdog();
             } else if (et === 'content_block_delta') {
-              // Real progress (text/thinking/tool_use delta) — reset the watchdog.
-              // Thinking deltas reset too, so legit reasoning never fires.
-              if (requestInFlight) { armContentWatchdog(); }
+              // Real progress (text/thinking/tool_use delta) — advance the deadline.
+              // Only a timestamp write (no timer churn); the armed timer fires at
+              // lastProgressMs + STALL_TIMEOUT_MS. Thinking deltas count too.
+              if (requestInFlight) { lastProgressMs = Date.now(); }
             } else if (et === 'message_stop') {
               requestInFlight = false;
               clearContentWatchdog();
@@ -514,10 +571,22 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
 
           yield adapted;
         }
+        // Issue #3706 (review): if partials never flowed this turn, the watchdog
+        // was INACTIVE — surface it so operators know stalls won't be caught (e.g.
+        // includePartialMessages ineffective for this provider). This is the
+        // self-announcing signal for the live-validation caveat in the PR review.
+        if (!partialsObserved && messageCount > 0) {
+          logger.error(
+            { messageCount, model: options.model, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
+            'Issue #3706: stream_event partials never observed this turn — no-content-progress '
+              + 'watchdog was INACTIVE; GLM stalls will not be caught',
+          );
+        }
         // Issue #3706 (stall): watchdog fired → yield a terminal result.
         // (Covers the case where interrupt() ended the stream cleanly without throwing.)
         if (stalled) {
           clearContentWatchdog();
+          clearForceClose();
           yield {
             type: 'result',
             content: STALL_TERMINATE_NOTICE,
@@ -537,6 +606,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // for-await — convert to a clean terminal result instead of propagating the error.
         if (stalled) {
           clearContentWatchdog();
+          clearForceClose();
           yield {
             type: 'result',
             content: STALL_TERMINATE_NOTICE,
@@ -556,6 +626,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         throw error;
       } finally {
         clearContentWatchdog();
+        clearForceClose();
         // Issue #3378: Clean up SDK-registered process listeners after query completes.
         // This prevents listener accumulation across multiple queries in long-running
         // processes (e.g., integration test server).
