@@ -263,6 +263,9 @@ async function main(): Promise<void> {
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
   });
+  // Issue #4169: Reclaim inactive agents (releasing their query handle, channel,
+  // MCP connections, listeners) so the per-chatId pool doesn't grow unbounded.
+  agentPool.startIdleSweep();
 
   // Create unified control handler context
   // Issue #3807: shutdown function placeholder, set after shutdown is defined below

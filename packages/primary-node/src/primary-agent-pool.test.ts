@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CwdProvider } from '@disclaude/core';
 
 // Track mock agent instances for assertions
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void> }> = new Map();
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -29,6 +29,7 @@ vi.mock('./agents/factory.js', () => ({
         stop: vi.fn().mockReturnValue(true),
         updateCallbacks: vi.fn().mockReturnValue(true),
         taskComplete: undefined as Promise<void> | undefined,
+        isBusy: false,
       };
       mockAgents.set(chatId, agent);
       return agent;
@@ -328,6 +329,70 @@ describe('PrimaryAgentPool', () => {
       const agent = mockAgents.get('chat-1')!;
       // dispose should have been called only once (from first disposeAll)
       expect(agent.dispose).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ==========================================================================
+  // idle eviction (Issue #4169)
+  // ==========================================================================
+
+  describe('idle eviction (Issue #4169)', () => {
+    it('should dispose agents idle longer than idleTimeoutMs', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-idle', callbacks);
+      const agent = mockAgents.get('chat-idle')!;
+
+      const evicted = pool.evictIdleAgents(Date.now() + 2000);
+
+      expect(evicted).toEqual(['chat-idle']);
+      expect(agent.dispose).toHaveBeenCalledOnce();
+      // Evicted agent is gone — next access re-creates it
+      pool.getOrCreateChatAgent('chat-idle', callbacks);
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(2);
+    });
+
+    it('should NOT evict recently-used agents', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-fresh', callbacks);
+      const agent = mockAgents.get('chat-fresh')!;
+
+      const evicted = pool.evictIdleAgents(Date.now());
+
+      expect(evicted).toEqual([]);
+      expect(agent.dispose).not.toHaveBeenCalled();
+    });
+
+    it('should NOT evict busy agents', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-busy', callbacks);
+      const agent = mockAgents.get('chat-busy')!;
+      agent.isBusy = true;
+
+      const evicted = pool.evictIdleAgents(Date.now() + 100000);
+
+      expect(evicted).toEqual([]);
+      expect(agent.dispose).not.toHaveBeenCalled();
+    });
+
+    it('should be disabled when idleTimeoutMs is 0', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 0 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-dis', callbacks);
+
+      const evicted = pool.evictIdleAgents(Date.now() + 999999);
+
+      expect(evicted).toEqual([]);
+    });
+
+    it('startIdleSweep/stopIdleSweep should be idempotent', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000 });
+      expect(() => pool.startIdleSweep()).not.toThrow();
+      expect(() => pool.startIdleSweep()).not.toThrow();
+      expect(() => pool.stopIdleSweep()).not.toThrow();
+      expect(() => pool.stopIdleSweep()).not.toThrow();
     });
   });
 });
