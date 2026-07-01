@@ -21,6 +21,8 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
+// Issue #4063: reuse the canonical loop types instead of re-declaring them inline.
+import type { LoopStartParams, LoopStatus } from './loop/loop-runner.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -106,9 +108,9 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
-  private loopStartHandler?: (params: { chatId: string; prompt: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number }) => { loopId: string };
+  private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
-  private loopStatusHandler?: (loopId: string) => { loopId: string; state: 'running' | 'completed' | 'stopped' | 'error'; currentStep: number; totalSteps: number; startedAt: string } | null;
+  private loopStatusHandler?: (loopId: string) => LoopStatus | null;
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
   /** Heartbeat interval timer for SSE keepalive */
@@ -137,9 +139,9 @@ export class HttpApiServer {
   }
 
   setLoopHandlers(handlers: {
-    start: (params: { chatId: string; prompt: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number }) => { loopId: string };
+    start: (params: LoopStartParams) => { loopId: string };
     stop: (loopId: string) => void;
-    status: (loopId: string) => { loopId: string; state: 'running' | 'completed' | 'stopped' | 'error'; currentStep: number; totalSteps: number; startedAt: string } | null;
+    status: (loopId: string) => LoopStatus | null;
   }): void {
     this.loopStartHandler = handlers.start;
     this.loopStopHandler = handlers.stop;
