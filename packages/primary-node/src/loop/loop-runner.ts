@@ -239,14 +239,26 @@ export class LoopRunner {
 
   /**
    * Wait for the specified interval, or until the signal is aborted.
+   *
+   * Issue #4063: the `abort` listener is removed on BOTH paths — the normal
+   * timeout path (`removeEventListener`) and the abort path (`{ once: true }`).
+   * Without this, a loop that runs many steps and completes normally would
+   * accumulate one dangling listener per step on the same AbortSignal, since
+   * the listener was never detached on the timeout path and `{ once: true }`
+   * only auto-removes when abort actually fires.
    */
   private waitForInterval(ms: number, signal: AbortSignal): Promise<void> {
     return new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      const onAbort = () => {
+      // `onAbort` is a hoisted function declaration so it can be referenced by
+      // the timer below while itself referencing `timer` (assigned next).
+      function onAbort(): void {
         clearTimeout(timer);
         resolve();
-      };
+      }
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
       signal.addEventListener('abort', onAbort, { once: true });
     });
   }
