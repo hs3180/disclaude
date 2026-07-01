@@ -383,18 +383,8 @@ export class PrimaryNode extends EventEmitter {
   protected createCompositeHandlersContainer(): ChannelHandlersContainer {
     const container: ChannelHandlersContainer = { handlers: undefined };
 
-    const resolveHandlers = (chatId?: string): ChannelApiHandlers | undefined => {
-      // Try multi-channel routing first
-      if (chatId) {
-        for (const { handlers, channel } of this.channelHandlersMap.values()) {
-          if (channel.ownsChatId(chatId)) {
-            return handlers;
-          }
-        }
-      }
-      // Fall back to Feishu handlers (backward compat)
-      return this.feishuHandlersContainer.handlers;
-    };
+    const resolveHandlers = (chatId?: string): ChannelApiHandlers | undefined =>
+      this.resolveApiHandlers(chatId);
 
     // Create proxy handlers that delegate to the resolved channel
     container.handlers = {
@@ -455,23 +445,11 @@ export class PrimaryNode extends EventEmitter {
         return h.markChatResponded(chatId, response);
       },
 
-      // Issue #4075: Loop Runner IPC handlers
+      // Issue #4075/#4063: Loop Runner IPC handlers. The runner is shared with
+      // the REST /api/loop/* endpoints (see cli.ts) via getOrCreateLoopRunner().
       loopStart: (params) => {
-        if (!this.loopRunner) {
-          // Issue #4075: the loop pushes each step's instruction via pushToAgent
-          // *without* waitForCompletion — by design (fire-and-forget cadence).
-          // stepIntervalMs therefore paces dispatch, not agent-turn completion: if
-          // a turn runs longer than the interval the next push may overlap it.
-          this.loopRunner = new LoopRunner(async (chatId, message) => {
-            const h = resolveHandlers(chatId);
-            if (!h?.pushToAgent) {
-              throw new Error('pushToAgent not supported by this channel');
-            }
-            await h.pushToAgent(chatId, message);
-          });
-        }
         try {
-          const result = this.loopRunner.start(params);
+          const result = this.getOrCreateLoopRunner().start(params);
           return Promise.resolve({ success: true, loopId: result.loopId });
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -701,6 +679,47 @@ export class PrimaryNode extends EventEmitter {
    */
   getInputMessageRouter(): InputMessageRouter | undefined {
     return this.inputMessageRouter;
+  }
+
+  /**
+   * Resolve the channel API handlers for a chatId.
+   *
+   * Shared by the composite IPC handlers and the LoopRunner push callback.
+   * 1. Check registered channel handlers (channelHandlersMap) for chatId ownership
+   * 2. Fall back to feishuHandlersContainer for backward compatibility
+   */
+  private resolveApiHandlers(chatId?: string): ChannelApiHandlers | undefined {
+    if (chatId) {
+      for (const { handlers, channel } of this.channelHandlersMap.values()) {
+        if (channel.ownsChatId(chatId)) {
+          return handlers;
+        }
+      }
+    }
+    return this.feishuHandlersContainer.handlers;
+  }
+
+  /**
+   * Get the shared LoopRunner, lazily creating it on first use.
+   *
+   * Issue #4063 (part 2): shared between the IPC composite handlers (loopStart)
+   * and the REST API (cli.ts /api/loop/*) so a loop started from either entry
+   * point is visible to both. Each step pushes the instruction to the owning
+   * channel's pushToAgent *without* waitForCompletion — by design
+   * (fire-and-forget cadence), so stepIntervalMs paces dispatch, not
+   * agent-turn completion.
+   */
+  getOrCreateLoopRunner(): LoopRunner {
+    if (!this.loopRunner) {
+      this.loopRunner = new LoopRunner(async (chatId, message) => {
+        const h = this.resolveApiHandlers(chatId);
+        if (!h?.pushToAgent) {
+          throw new Error('pushToAgent not supported by this channel');
+        }
+        await h.pushToAgent(chatId, message);
+      });
+    }
+    return this.loopRunner;
   }
 
   /**

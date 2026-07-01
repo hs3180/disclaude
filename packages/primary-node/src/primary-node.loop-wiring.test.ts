@@ -95,3 +95,46 @@ describe('PrimaryNode composite loop handlers (Issue #4075 wiring)', () => {
     expect(after.status?.state).toBe('stopped');
   });
 });
+
+describe('getOrCreateLoopRunner (Issue #4063 part 2 — REST shares the IPC runner)', () => {
+  let node: TestablePrimaryNode;
+  let pushToAgent: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    node = new TestablePrimaryNode();
+    pushToAgent = vi.fn().mockResolvedValue({ success: true });
+    const channel = { ownsChatId: (id: string) => id === TEST_CHAT } as unknown as IChannel;
+    node.registerChannelHandlers('test', makeHandlers(pushToAgent), channel);
+  });
+
+  afterEach(() => {
+    node.getLoopRunnerInstance()?.dispose();
+  });
+
+  it('returns a singleton and is available before any loopStart', () => {
+    expect(node.getLoopRunnerInstance()).toBeUndefined();
+    const first = node.getOrCreateLoopRunner();
+    const second = node.getOrCreateLoopRunner();
+    expect(first).toBe(second);
+    expect(node.getLoopRunnerInstance()).toBe(first);
+  });
+
+  it('shares one runner across the public accessor and the IPC loopStart path', async () => {
+    const handlers = node.getCompositeHandlers();
+    // Start a loop via the IPC composite handler...
+    await handlers.loopStart!({ chatId: TEST_CHAT, prompt: 'ipc', maxSteps: 1 });
+    const ipcRunner = node.getLoopRunnerInstance();
+    // ...the public accessor (used by cli.ts REST wiring) returns the same instance.
+    expect(node.getOrCreateLoopRunner()).toBe(ipcRunner);
+
+    // And a loop started via the accessor is visible through the IPC handler.
+    const { loopId } = node.getOrCreateLoopRunner().start({ chatId: TEST_CHAT, prompt: 'rest', maxSteps: 1, stepIntervalMs: 10 });
+    const status = await handlers.loopStatus!(loopId);
+    expect(status.success).toBe(true);
+    expect(status.status?.loopId).toBe(loopId);
+
+    await vi.waitFor(() => {
+      expect(pushToAgent).toHaveBeenCalledWith(TEST_CHAT, 'rest');
+    }, { timeout: 2000 });
+  });
+});
