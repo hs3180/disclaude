@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, createLogger } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -43,7 +43,27 @@ export interface PrimaryAgentPoolOptions {
    * @see Issue #1916 (unified ProjectContext system)
    */
   cwdProvider?: CwdProvider;
+
+  /**
+   * Issue #4169: Idle timeout in ms. Agents inactive for longer than this are
+   * evicted (disposed), releasing their resources (query handle, channel, MCP
+   * connections, listeners) to bound memory growth. Default: 30 minutes.
+   * Set to 0 to disable idle eviction.
+   */
+  idleTimeoutMs?: number;
+
+  /**
+   * Issue #4169: How often to sweep for idle agents. Default: 5 minutes.
+   */
+  idleSweepIntervalMs?: number;
 }
+
+const logger = createLogger('PrimaryAgentPool');
+
+/** Issue #4169: Default idle timeout before an inactive agent is evicted. */
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+/** Issue #4169: Default idle-sweep interval. */
+const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * PrimaryAgentPool - Manages ChatAgent instances for Primary Node.
@@ -56,6 +76,10 @@ export class PrimaryAgentPool {
   private readonly options: PrimaryAgentPoolOptions;
   /** Issue #3696: chatIds that should skip history loading on next agent creation */
   private readonly skipHistoryChatIds = new Set<string>();
+  /** Issue #4169: Last-used timestamp per chatId, for idle eviction. */
+  private readonly lastUsedAt = new Map<string, number>();
+  /** Issue #4169: Periodic sweep timer (unref'd) for idle eviction. */
+  private idleSweepTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
@@ -120,6 +144,8 @@ export class PrimaryAgentPool {
       // is deferred until the current query completes.
       agent.updateCallbacks(callbacks);
     }
+    // Issue #4169: Track usage for idle eviction.
+    this.lastUsedAt.set(chatId, Date.now());
     return agent;
   }
 
@@ -145,6 +171,7 @@ export class PrimaryAgentPool {
     const agent = this.agents.get(chatId);
     if (agent) {
       this.agents.delete(chatId);
+      this.lastUsedAt.delete(chatId);
       agent.dispose();
     }
   }
@@ -168,9 +195,69 @@ export class PrimaryAgentPool {
    * Dispose all agents and clear the pool.
    */
   disposeAll(): void {
+    this.stopIdleSweep();
     for (const agent of this.agents.values()) {
       agent.dispose();
     }
     this.agents.clear();
+    this.lastUsedAt.clear();
+  }
+
+  /**
+   * Issue #4169: Start periodic eviction of idle agents.
+   *
+   * The agent pool is unbounded by default — every chatId gets a persistent
+   * ChatAgent that is only released on explicit `/reset` or shutdown. Over long
+   * runs this accumulates memory (each agent holds a query handle, channel, MCP
+   * connections, listeners). The idle sweep disposes agents that haven't been
+   * used for `idleTimeoutMs`, releasing those resources. Busy agents are never
+   * evicted mid-turn. The timer is `unref`'d so it never keeps the process alive.
+   */
+  startIdleSweep(): void {
+    if (this.idleSweepTimer) { return; }
+    const timeout = this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    if (timeout <= 0) { return; } // idle eviction disabled
+    const interval = this.options.idleSweepIntervalMs ?? DEFAULT_IDLE_SWEEP_INTERVAL_MS;
+    this.idleSweepTimer = setInterval(() => {
+      const evicted = this.evictIdleAgents();
+      if (evicted.length) {
+        logger.info({ count: evicted.length }, 'Evicted idle agents (Issue #4169)');
+      }
+    }, interval);
+    this.idleSweepTimer.unref?.();
+  }
+
+  /**
+   * Issue #4169: Evict (dispose) agents idle longer than the idle timeout.
+   *
+   * @param now - Injectable clock for deterministic testing (defaults to Date.now()).
+   * @returns chatIds of the agents that were evicted.
+   */
+  evictIdleAgents(now: number = Date.now()): string[] {
+    const timeout = this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    if (timeout <= 0) { return []; }
+    const evicted: string[] = [];
+    for (const [chatId, agent] of this.agents) {
+      // Never evict an agent mid-turn.
+      if (agent.isBusy) { continue; }
+      const last = this.lastUsedAt.get(chatId) ?? now;
+      if (now - last >= timeout) {
+        this.agents.delete(chatId);
+        this.lastUsedAt.delete(chatId);
+        agent.dispose();
+        evicted.push(chatId);
+      }
+    }
+    return evicted;
+  }
+
+  /**
+   * Issue #4169: Stop the idle-eviction sweep timer.
+   */
+  stopIdleSweep(): void {
+    if (this.idleSweepTimer) {
+      clearInterval(this.idleSweepTimer);
+      this.idleSweepTimer = undefined;
+    }
   }
 }
