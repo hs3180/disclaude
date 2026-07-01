@@ -257,6 +257,37 @@ describe('LoopRunner', () => {
     });
   });
 
+  describe('waitForInterval abort-listener cleanup (Issue #4063)', () => {
+    it('removes the per-step abort listener once the interval times out', async () => {
+      // Each inter-step wait attaches an 'abort' listener to the loop's
+      // AbortSignal. The fixed waitForInterval removes it on the timeout path
+      // so a long-running loop does not accumulate one listener per step.
+      const addSpy = vi.spyOn(EventTarget.prototype, 'addEventListener');
+      const removeSpy = vi.spyOn(EventTarget.prototype, 'removeEventListener');
+
+      runner.start({
+        chatId: 'oc_listeners',
+        prompt: 'step',
+        maxSteps: 5, // -> 4 inter-step waits
+        stepIntervalMs: 5,
+      });
+      await vi.waitFor(() => {
+        expect(mockPush).toHaveBeenCalledTimes(5);
+      }, { timeout: 2000 });
+      // Let the final timer's removeEventListener flush.
+      await new Promise((r) => setTimeout(r, 20));
+
+      const abortAdds = addSpy.mock.calls.filter(([event]) => event === 'abort').length;
+      const abortRemoves = removeSpy.mock.calls.filter(([event]) => event === 'abort').length;
+
+      expect(abortAdds).toBe(4); // one per inter-step wait
+      expect(abortRemoves).toBe(4); // each removed on its timeout path
+
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    });
+  });
+
   describe('concurrent loops', () => {
     it('should run multiple loops with unique IDs independently', async () => {
       const result1 = runner.start({
