@@ -447,6 +447,17 @@ async function main(): Promise<void> {
         });
       }
 
+      // Issue #4063 (part 2): wire REST /api/loop/* to the shared LoopRunner so
+      // loops started via REST are visible to the IPC composite handlers and
+      // vice versa (builds on #4148, which wired the IPC path). The runner is
+      // lazy-initialized on first start from either entry point.
+      const loopRunner = primaryNode.getOrCreateLoopRunner();
+      httpApiServer.setLoopHandlers({
+        start: (params) => loopRunner.start(params),
+        stop: (loopId) => { loopRunner.stop(loopId); },
+        status: (loopId) => loopRunner.status(loopId),
+      });
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 
