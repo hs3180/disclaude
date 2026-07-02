@@ -19,7 +19,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 | `{repo}` | Yes | — | GitHub repo (owner/name) |
 | `{controlChannelChatId}` | Yes | — | 控制频道 chatId（当前对话的 chatId） |
 | `{cron}` | No | `0 */2 * * *` | 扫描频率（默认每2小时） |
-| `{instanceId}` | No | — | 实例标识（建议用目标仓库名，如 `disclaude`）。提供后路径用 `schedules/issue-solver-<id>/`，**支持同一 skill 实例化多个 schedule**（多仓库/多频道监控，互不覆盖，#4180）。留空则用默认单实例路径 `schedules/issue-solver/`。 |
+| `{instanceId}` | No | — | 实例标识（**必须是单个路径段：不含 `/` 或空格**；建议用裸目标仓库名，如 `disclaude`，**勿用 `owner/repo`**——含 `/` 会让 `{scheduleDir}` 嵌套、slug 错位）。提供后路径用 `schedules/issue-solver-<id>/`，**支持同一 skill 实例化多个 schedule**（多仓库/多频道监控，互不覆盖，#4180）。留空则用默认单实例路径 `schedules/issue-solver/`。 |
 
 ### 2. 实例化 Schedule
 
@@ -43,11 +43,14 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 
 **多实例支持（#4180）**：若需为不同仓库/频道各跑一份 Issue Solver，提供 `{instanceId}`（建议用目标仓库名，如 `disclaude`），则 `{scheduleDir}` = `issue-solver-disclaude`，目标路径变为 `schedules/issue-solver-disclaude/SCHEDULE.md`。多份实例互不覆盖（运行时按子目录名区分任务）。留空 `{instanceId}` 则维持默认单实例路径，行为不变。
 
+⚠️ **写入前自检**：用 Glob/Read 确认 `schedules/issue-solver-<instanceId>/` 尚不存在（或其中 `SCHEDULE.md` 不是要保留的实例），否则 Write 会静默覆盖既有实例。
+
 ```
 # 4. 使用 Write 工具写入目标文件
 目标路径: schedules/{scheduleDir}/SCHEDULE.md
 
 # 5. 把 scan.mjs 复制到实例目录（模板第一步引用的就是 schedules/{scheduleDir}/scan.mjs）
+mkdir -p schedules/{scheduleDir}   # 保险：确保目录存在（上一步 Write 通常已创建）
 cp skills/issue-solver/scan.mjs schedules/{scheduleDir}/scan.mjs
 ```
 
@@ -70,5 +73,5 @@ cp skills/issue-solver/scan.mjs schedules/{scheduleDir}/scan.mjs
 ## 关联
 
 - Parent: #2945
-- 参考: PR Scanner (`skills/pr-scanner/`)
+- 参考: PR Scanner (`skills/pr-scanner/`)（同样需套用 `{instanceId}` / `{scheduleDir}` 多实例路径，见 #4180 part 2）
 - Issue: #3891
