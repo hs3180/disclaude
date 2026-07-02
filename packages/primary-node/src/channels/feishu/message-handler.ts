@@ -38,6 +38,7 @@ import { extractFullCardContent } from '../../platforms/feishu/card-builders/car
 import { messageLogger } from '../../utils/message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
+import { evaluateMessageFilters } from './message-filters.js';
 import {
   extractOpenId,
   parsePostContent,
@@ -615,33 +616,32 @@ export class MessageHandler {
       return;
     }
 
-    // Deduplication
-    if (messageLogger.isMessageProcessed(message_id)) {
-      logger.debug({ messageId: message_id }, 'Skipped duplicate message');
-      this.forwardFilteredMessage('duplicate', message_id, chat_id, content, extractOpenId(sender));
+    // Pre-compute whether a bot sender @mentions our bot (bot-to-bot, #1742).
+    const botMentionsUs = sender?.sender_type === 'app' && this.mentionDetector.isBotMentioned(mentions);
+
+    // Dedup / bot / age filters (Issue #4126: logic extracted to message-filters.ts)
+    const filterVerdict = evaluateMessageFilters(
+      { messageId: message_id, createTime: create_time, senderType: sender?.sender_type, botMentionsUs },
+      { isProcessed: (id) => messageLogger.isMessageProcessed(id), maxMessageAge: this.MAX_MESSAGE_AGE },
+    );
+    if (!filterVerdict.passed) {
+      const { reason } = filterVerdict;
+      if (reason === 'duplicate') {
+        logger.debug({ messageId: message_id }, 'Skipped duplicate message');
+        this.forwardFilteredMessage('duplicate', message_id, chat_id, content, extractOpenId(sender));
+      } else if (reason === 'bot') {
+        logger.debug('Skipped bot message (not mentioning our bot)');
+        this.forwardFilteredMessage('bot', message_id, chat_id, content);
+      } else {
+        logger.debug({ messageId: message_id }, 'Skipped old message');
+        this.forwardFilteredMessage('old', message_id, chat_id, content, extractOpenId(sender), { age: filterVerdict.age });
+      }
       return;
     }
 
-    // Ignore bot messages UNLESS the sender bot @mentions our bot (bot-to-bot communication)
-    // Issue #1742: Allow bot-to-bot @mention conversations
+    // Bot-to-bot @mention messages that passed the filter are allowed through (#1742).
     if (sender?.sender_type === 'app') {
-      const botMentionsUs = this.mentionDetector.isBotMentioned(mentions);
-      if (!botMentionsUs) {
-        logger.debug('Skipped bot message (not mentioning our bot)');
-        this.forwardFilteredMessage('bot', message_id, chat_id, content);
-        return;
-      }
       logger.info({ messageId: message_id, chatId: chat_id }, 'Bot message mentions our bot, allowing through');
-    }
-
-    // Check message age
-    if (create_time) {
-      const messageAge = Date.now() - create_time;
-      if (messageAge > this.MAX_MESSAGE_AGE) {
-        logger.debug({ messageId: message_id }, 'Skipped old message');
-        this.forwardFilteredMessage('old', message_id, chat_id, content, extractOpenId(sender), { age: messageAge });
-        return;
-      }
     }
 
     // Handle file/image messages - download to workspace and include path in prompt
