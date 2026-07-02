@@ -9,9 +9,10 @@
 import { describe, it, expect } from 'vitest';
 import { evaluateMessageFilters } from './message-filters.js';
 
-const deps = (opts: { processed?: boolean; maxAge?: number } = {}) => ({
+const deps = (opts: { processed?: boolean; maxAge?: number; now?: () => number } = {}) => ({
   isProcessed: () => opts.processed ?? false,
   maxMessageAge: opts.maxAge ?? 60_000,
+  now: opts.now,
 });
 
 describe('evaluateMessageFilters', () => {
@@ -50,10 +51,12 @@ describe('evaluateMessageFilters', () => {
   });
 
   it('filters a stale message and reports its age', () => {
+    // Fixed clock so the reported age is exact, not off by a 1ms tick.
+    const now = 10_000_000;
     const age = 120_000;
     const verdict = evaluateMessageFilters(
-      { messageId: 'm4', createTime: Date.now() - age, senderType: 'user', botMentionsUs: false },
-      deps({ maxAge: 60_000 }),
+      { messageId: 'm4', createTime: now - age, senderType: 'user', botMentionsUs: false },
+      deps({ maxAge: 60_000, now: () => now }),
     );
     expect(verdict.passed).toBe(false);
     expect(verdict.reason).toBe('old');

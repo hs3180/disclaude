@@ -625,7 +625,7 @@ export class MessageHandler {
       { isProcessed: (id) => messageLogger.isMessageProcessed(id), maxMessageAge: this.MAX_MESSAGE_AGE },
     );
     if (!filterVerdict.passed) {
-      const reason = filterVerdict.reason as 'duplicate' | 'bot' | 'old';
+      const { reason } = filterVerdict;
       if (reason === 'duplicate') {
         logger.debug({ messageId: message_id }, 'Skipped duplicate message');
         this.forwardFilteredMessage('duplicate', message_id, chat_id, content, extractOpenId(sender));

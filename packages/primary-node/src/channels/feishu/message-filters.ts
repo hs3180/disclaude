@@ -19,6 +19,12 @@ export interface MessageFilterDeps {
   isProcessed(messageId: string): boolean;
   /** Max age (ms) before a message is considered stale and dropped. */
   maxMessageAge: number;
+  /**
+   * Wall-clock reader used by the age check. Defaults to `Date.now` when
+   * omitted; injectable so tests can pin the timestamp and assert age
+   * deterministically (avoids a 1ms-tick flake between the two reads).
+   */
+  now?: () => number;
 }
 
 /** Inputs needed to evaluate the filters. */
@@ -49,7 +55,8 @@ export interface FilterVerdict {
  * Evaluate dedup → bot → age filters in order.
  *
  * Returns the first rejection, or `{ passed: true }` if all filters pass.
- * Pure: performs no I/O and mutates nothing.
+ * Pure: performs no I/O and mutates nothing; the only external read is the
+ * wall-clock, accessed via the injectable `deps.now` (defaults to `Date.now`).
  */
 export function evaluateMessageFilters(
   input: MessageFilterInput,
@@ -67,7 +74,7 @@ export function evaluateMessageFilters(
 
   // 3. Message age
   if (input.createTime !== undefined) {
-    const age = Date.now() - input.createTime;
+    const age = (deps.now ?? Date.now)() - input.createTime;
     if (age > deps.maxMessageAge) {
       return { passed: false, reason: 'old', age };
     }
