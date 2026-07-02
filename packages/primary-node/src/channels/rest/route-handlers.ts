@@ -6,9 +6,8 @@
  *   - POST /api/push    → RouteHandlers.handlePush
  *
  * Dependencies (input message router, body reading, error responses, control
- * emission) are injected via RouteHandlerDeps — same constructor-injected
- * callback-interface style as channels/feishu/message-handler.ts
- * (MessageCallbacks).
+ * emission) are injected via RouteHandlerDeps, mirroring the channels/rest/
+ * file-routes.ts and session-manager.ts patterns.
  *
  * @module primary-node/channels/rest/route-handlers
  */

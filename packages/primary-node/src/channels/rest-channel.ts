@@ -21,23 +21,20 @@
  */
 
 import http from 'node:http';
-import { createLogger, withTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ChannelCapabilities, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
+import { createLogger, withTiming, type ChannelConfig, type OutgoingMessage, type ChannelCapabilities, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 import { RestSessionManager } from './rest/session-manager.js';
+import { FileRouteHandlers } from './rest/file-routes.js';
 import { RouteHandlers } from './rest/route-handlers.js';
+// Shared REST types live in ./rest/types.ts so extracted rest/ modules don't
+// back-import this host file (Issue #4127). Imported for internal use and
+// re-exported below for back-compat (channels/index.ts, tests).
+import type { IFileStorageService } from './rest/types.js';
 
 const logger = createLogger('RestChannel');
 
-/**
- * File storage service interface for dependency injection.
- */
-export interface IFileStorageService {
-  initialize(): Promise<void>;
-  shutdown(): void;
-  storeFromBase64(content: string, fileName: string, mimeType?: string, userId?: string, chatId?: string): Promise<FileRef>;
-  get(fileId: string): { ref: FileRef } | undefined;
-  getContent(fileId: string): Promise<string>;
-}
+/** Re-exported for back-compat; defined in ./rest/types.ts (Issue #4127). */
+export type { IFileStorageService };
 
 /**
  * REST channel configuration.
@@ -90,54 +87,6 @@ interface ChatResponse {
 }
 
 /**
- * File upload request structure.
- */
-interface FileUploadRequest {
-  /** File name */
-  fileName: string;
-  /** MIME type (optional) */
-  mimeType?: string;
-  /** File content (base64 encoded) */
-  content: string;
-  /** Associated chat ID (optional) */
-  chatId?: string;
-}
-/**
- * File upload response structure.
- */
-interface FileUploadResponse {
-  /** Success status */
-  success: boolean;
-  /** File reference */
-  file?: FileRef;
-  /** Error message (if failed) */
-  error?: string;
-}
-/**
- * File info response structure.
- */
-interface FileInfoResponse {
-  /** Success status */
-  success: boolean;
-  /** File reference */
-  file?: FileRef;
-  /** Error message (if failed) */
-  error?: string;
-}
-/**
- * File download response structure.
- */
-interface FileDownloadResponse {
-  /** Success status */
-  success: boolean;
-  /** File reference */
-  file?: FileRef;
-  /** File content (base64 encoded) */
-  content?: string;
-  /** Error message (if failed) */
-  error?: string;
-}
-/**
  * Pending response for sync mode.
  */
 interface PendingResponse {
@@ -182,6 +131,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private chatToMessage = new Map<string, string>();
   // File ID to Chat ID mapping (for file uploads)
   private fileToChat = new Map<string, string>();
+  /** File-route handlers (Issue #4127: extracted to channels/rest/file-routes.ts). */
+  private readonly fileRoutes = new FileRouteHandlers({
+    getFileStorage: () => this.fileStorage,
+    fileToChat: this.fileToChat,
+    readBody: (req) => this.readBody(req),
+    sendError: (res, status, message) => this.sendError(res, status, message),
+  });
   // Issue #3808: InputMessageRouter for /api/push endpoint
   private inputMessageRouter?: InputMessageRouter;
   /** Control/push route handlers (Issue #4127 part 2: extracted to channels/rest/route-handlers.ts). */
@@ -465,7 +421,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     // File upload endpoint
     if (url === '/api/files/upload' && req.method === 'POST') {
-      await withTiming(logger, 'http:POST /api/files/upload', undefined, () => this.handleFileUpload(req, res));
+      await withTiming(logger, 'http:POST /api/files/upload', undefined, () => this.fileRoutes.handleUpload(req, res));
       return;
     }
 
@@ -474,9 +430,9 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     if (fileMatch && req.method === 'GET') {
       const [, fileId, downloadSuffix] = fileMatch;
       if (downloadSuffix === '/download') {
-        await withTiming(logger, `http:GET /api/files/${fileId}/download`, undefined, () => this.handleFileDownload(req, res, fileId));
+        await withTiming(logger, `http:GET /api/files/${fileId}/download`, undefined, () => this.fileRoutes.handleDownload(req, res, fileId));
       } else {
-        await withTiming(logger, `http:GET /api/files/${fileId}`, undefined, () => this.handleFileInfo(req, res, fileId));
+        await withTiming(logger, `http:GET /api/files/${fileId}`, undefined, () => this.fileRoutes.handleInfo(req, res, fileId));
       }
       return;
     }
@@ -806,156 +762,6 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       success: false,
       error: message,
     }));
-  }
-
-  /**
-   * Handle file upload request.
-   */
-  private async handleFileUpload(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    if (!this.fileStorage) {
-      this.sendError(res, 500, 'File storage not initialized');
-      return;
-    }
-
-    const body = await this.readBody(req);
-    if (!body) {
-      this.sendError(res, 400, 'Empty request body');
-      return;
-    }
-
-    let uploadRequest: FileUploadRequest;
-    try {
-      uploadRequest = JSON.parse(body) as FileUploadRequest;
-    } catch {
-      this.sendError(res, 400, 'Invalid JSON');
-      return;
-    }
-
-    // Validate request
-    if (!uploadRequest.fileName) {
-      this.sendError(res, 400, 'fileName is required');
-      return;
-    }
-    if (!uploadRequest.content) {
-      this.sendError(res, 400, 'content is required');
-      return;
-    }
-
-    // Validate base64 content
-    const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
-    if (!base64Regex.test(uploadRequest.content.replace(/\s/g, ''))) {
-      this.sendError(res, 400, 'Invalid base64 content');
-      return;
-    }
-
-    try {
-      const fileRef = await this.fileStorage.storeFromBase64(
-        uploadRequest.content,
-        uploadRequest.fileName,
-        uploadRequest.mimeType,
-        'user',
-        uploadRequest.chatId
-      );
-
-      // Track file-to-chat mapping
-      if (uploadRequest.chatId) {
-        this.fileToChat.set(fileRef.id, uploadRequest.chatId);
-      }
-
-      logger.info({ fileId: fileRef.id, fileName: uploadRequest.fileName }, 'File uploaded');
-
-      const response: FileUploadResponse = {
-        success: true,
-        file: fileRef,
-      };
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(response));
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to store file');
-      this.sendError(res, 500, 'Failed to store file');
-    }
-  }
-
-  /**
-   * Handle file info request.
-   */
-  private async handleFileInfo(
-    _req: http.IncomingMessage,
-    res: http.ServerResponse,
-    fileId: string
-  ): Promise<void> {
-    // Satisfy require-await rule
-    await Promise.resolve();
-
-    if (!this.fileStorage) {
-      this.sendError(res, 500, 'File storage not initialized');
-      return;
-    }
-
-    const stored = this.fileStorage.get(fileId);
-    if (!stored) {
-      const response: FileInfoResponse = {
-        success: false,
-        error: 'File not found',
-      };
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(response));
-      return;
-    }
-
-    logger.info({ fileId }, 'File info requested');
-
-    const response: FileInfoResponse = {
-      success: true,
-      file: stored.ref,
-    };
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(response));
-  }
-
-  /**
-   * Handle file download request.
-   */
-  private async handleFileDownload(
-    _req: http.IncomingMessage,
-    res: http.ServerResponse,
-    fileId: string,
-  ): Promise<void> {
-    if (!this.fileStorage) {
-      this.sendError(res, 500, 'File storage not initialized');
-      return;
-    }
-
-    const stored = this.fileStorage.get(fileId);
-    if (!stored) {
-      const response: FileDownloadResponse = {
-        success: false,
-        error: 'File not found',
-      };
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(response));
-      return;
-    }
-
-    try {
-      const content = await this.fileStorage.getContent(fileId);
-
-      logger.info({ fileId, size: content.length }, 'File downloaded');
-
-      const response: FileDownloadResponse = {
-        success: true,
-        file: stored.ref,
-        content,
-      };
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(response));
-    } catch (error) {
-      logger.error({ err: error, fileId }, 'Failed to read file content');
-      this.sendError(res, 500, 'Failed to read file content');
-    }
   }
 
   /**

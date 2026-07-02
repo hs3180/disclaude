@@ -10,6 +10,13 @@ chatId: "{controlChannelChatId}"
 
 你必须完成以下任务：扫描 open issues，剔除有 open PR 的，从中选择一个 issue，在临时目录中实现修复并提交 PR。
 
+## 核心原则：持续推进，不等待 PR 结果
+
+- **每次触发都是一次独立推进**：挑一个候选 issue、实现最小子任务、提 PR。
+- **不要等待上一个 PR 的 review / merge**：PR 的处理是异步的、由人完成的，**绝不阻塞**你继续推进其它 issue。即使已存在未 review 的 PR，下一次触发照样挑**新的** issue 提 PR。
+- **不要进入「卡片待选 / 维持静默」的等待状态**：报告完本轮 PR 即结束本轮，不阻塞后续触发。
+- 若脚本输出「无候选 issue」（通常因候选 issue 均已有 open PR），才结束并说明原因；否则**必须**产出 PR。
+
 ## 你的任务
 
 ### 第一步：运行扫描脚本
@@ -17,7 +24,7 @@ chatId: "{controlChannelChatId}"
 执行以下命令：
 
 ```bash
-node schedules/issue-solver/scan.mjs
+node schedules/{scheduleDir}/scan.mjs
 ```
 
 脚本会输出候选 issue 列表（Markdown 格式，包含标题、描述、评论），已自动剔除有 open PR 的 issue。
@@ -72,6 +79,8 @@ GH_TOKEN=$(grep '^GH_TOKEN=' /data/workspace/.runtime-env | sed 's/^GH_TOKEN=//'
 ### 第七步：报告结果
 
 在控制频道（当前聊天）发送 PR 链接和本次实现的子任务说明。
+
+**报告后本轮即结束。下一轮触发继续推进下一个 issue —— 不要因为「上一个 PR 还没 review / 还没 merge」而暂停或等待。**
 
 ---
 
