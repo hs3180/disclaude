@@ -24,7 +24,11 @@ import { existsSync } from 'fs';
 import { setMessageSentCallback } from './index.js';
 import { toolDefinitions } from './tools/tool-definitions.js';
 import { dispatchToolCall } from './tools/tool-dispatch.js';
-import { startStdioServer } from './stdio-server.js';
+import {
+  startStdioServer,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+} from './stdio-server.js';
 
 const logger = createLogger('McpServerCLI');
 
@@ -94,17 +98,7 @@ Examples:
  * Issue #4128: Delegates to tool-definitions (tools/list) and
  * tool-dispatch (tools/call) for a thin routing layer.
  */
-export async function handleRequest(request: {
-  jsonrpc: string;
-  id: number;
-  method: string;
-  params?: Record<string, unknown>;
-}): Promise<{
-  jsonrpc: string;
-  id: number;
-  result?: unknown;
-  error?: { code: number; message: string };
-}> {
+export async function handleRequest(request: JsonRpcRequest): Promise<JsonRpcResponse> {
   const { id, method, params } = request;
 
   try {
