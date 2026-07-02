@@ -53,6 +53,7 @@ import {
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
+import { buildDisallowedTools } from './disallowed-tools.js';
 import { HistoryManager } from './history-manager.js';
 import { buildMcpServers } from './mcp-setup.js';
 
@@ -757,7 +758,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const projectCwd = this.cwdProvider?.(chatId);
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
-      disallowedTools: ['EnterPlanMode', 'AskUserQuestion'],
+      // Issue #4181: DISCLAUDE_DISABLE_BUILTIN_CRON=1 additionally disallows the
+      // built-in (session-only) cron tools so recurring work uses the persistent
+      // disclaude schedule instead.
+      disallowedTools: buildDisallowedTools(),
       mcpServers,
     });
 
