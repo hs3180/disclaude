@@ -86,7 +86,7 @@ describe('startStdioServer', () => {
   });
 
   it('dispatches multiple newline-delimited messages in one chunk, in order', async () => {
-    handleRequest.mockImplementation(async (request) => ({ jsonrpc: '2.0', id: request.id, result: {} }));
+    handleRequest.mockImplementation((request) => Promise.resolve({ jsonrpc: '2.0', id: request.id, result: {} }));
     await emit('{"jsonrpc":"2.0","id":1,"method":"a"}\n{"jsonrpc":"2.0","id":2,"method":"b"}\n');
     expect(handleRequest).toHaveBeenCalledTimes(2);
     expect(handleRequest.mock.calls[0][0].method).toBe('a');
