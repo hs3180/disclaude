@@ -17,7 +17,7 @@ chatId: "{controlChannelChatId}"
 执行以下命令：
 
 ```bash
-node schedules/issue-solver/scan.mjs
+node schedules/{scheduleDir}/scan.mjs
 ```
 
 脚本会输出候选 issue 列表（Markdown 格式，包含标题、描述、评论），已自动剔除有 open PR 的 issue。
