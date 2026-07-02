@@ -22,23 +22,19 @@
 
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { createLogger, withTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, type SystemMessage, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
+import { createLogger, withTiming, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, type SystemMessage, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 import { RestSessionManager } from './rest/session-manager.js';
 import { FileRouteHandlers } from './rest/file-routes.js';
+// Shared REST types live in ./rest/types.ts so extracted rest/ modules don't
+// back-import this host file (Issue #4127). Imported for internal use and
+// re-exported below for back-compat (channels/index.ts, tests).
+import type { IFileStorageService } from './rest/types.js';
 
 const logger = createLogger('RestChannel');
 
-/**
- * File storage service interface for dependency injection.
- */
-export interface IFileStorageService {
-  initialize(): Promise<void>;
-  shutdown(): void;
-  storeFromBase64(content: string, fileName: string, mimeType?: string, userId?: string, chatId?: string): Promise<FileRef>;
-  get(fileId: string): { ref: FileRef } | undefined;
-  getContent(fileId: string): Promise<string>;
-}
+/** Re-exported for back-compat; defined in ./rest/types.ts (Issue #4127). */
+export type { IFileStorageService };
 
 /**
  * REST channel configuration.

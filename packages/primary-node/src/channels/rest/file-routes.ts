@@ -14,54 +14,15 @@
  */
 
 import type http from 'node:http';
-import { createLogger, type FileRef } from '@disclaude/core';
-import type { IFileStorageService } from '../rest-channel.js';
+import { createLogger, type FileUploadRequest } from '@disclaude/core';
+import type {
+  IFileStorageService,
+  FileUploadResponse,
+  FileInfoResponse,
+  FileDownloadResponse,
+} from './types.js';
 
 const logger = createLogger('RestFileRoutes');
-
-/** File upload request body (POST /api/files/upload). */
-export interface FileUploadRequest {
-  /** File name. */
-  fileName: string;
-  /** MIME type (optional). */
-  mimeType?: string;
-  /** File content (base64 encoded). */
-  content: string;
-  /** Associated chat ID (optional). */
-  chatId?: string;
-}
-
-/** File upload response. */
-export interface FileUploadResponse {
-  /** Success status. */
-  success: boolean;
-  /** File reference. */
-  file?: FileRef;
-  /** Error message (if failed). */
-  error?: string;
-}
-
-/** File info (metadata) response. */
-export interface FileInfoResponse {
-  /** Success status. */
-  success: boolean;
-  /** File reference. */
-  file?: FileRef;
-  /** Error message (if failed). */
-  error?: string;
-}
-
-/** File download response. */
-export interface FileDownloadResponse {
-  /** Success status. */
-  success: boolean;
-  /** File reference. */
-  file?: FileRef;
-  /** File content (base64 encoded). */
-  content?: string;
-  /** Error message (if failed). */
-  error?: string;
-}
 
 /** Dependencies injected from RestChannel. */
 export interface FileRouteDeps {
