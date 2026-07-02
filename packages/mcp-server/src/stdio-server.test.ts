@@ -42,12 +42,12 @@ describe('startStdioServer', () => {
     onSpy = vi.spyOn(process.stdin, 'on').mockImplementation(((event: string, listener: Listener) => {
       listeners[event] = listener;
       return process.stdin;
-    }) as never);
-    setEncodingSpy = vi.spyOn(process.stdin, 'setEncoding').mockImplementation((() => undefined) as never);
+    }) as never) as any;
+    setEncodingSpy = vi.spyOn(process.stdin, 'setEncoding').mockImplementation((() => undefined) as never) as any;
 
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never) as any;
 
     startStdioServer(handleRequest);
   });
