@@ -21,10 +21,10 @@
  */
 
 import http from 'node:http';
-import crypto from 'node:crypto';
-import { createLogger, withTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ControlCommand, type ChannelCapabilities, type SystemMessage, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
+import { createLogger, withTiming, type FileRef, type ChannelConfig, type OutgoingMessage, type ChannelCapabilities, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
 import { RestSessionManager } from './rest/session-manager.js';
+import { RouteHandlers } from './rest/route-handlers.js';
 
 const logger = createLogger('RestChannel');
 
@@ -184,6 +184,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   private fileToChat = new Map<string, string>();
   // Issue #3808: InputMessageRouter for /api/push endpoint
   private inputMessageRouter?: InputMessageRouter;
+  /** Control/push route handlers (Issue #4127 part 2: extracted to channels/rest/route-handlers.ts). */
+  private readonly routeHandlers = new RouteHandlers({
+    getInputMessageRouter: () => this.inputMessageRouter,
+    readBody: (req) => this.readBody(req),
+    sendError: (res, status, message) => this.sendError(res, status, message),
+    emitControl: (command) => this.emitControl(command),
+  });
 
   constructor(config: RestChannelConfig = {}) {
     super(config, 'rest', 'REST');
@@ -446,13 +453,13 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
 
     // Control endpoints
     if (url === '/api/control' && req.method === 'POST') {
-      await withTiming(logger, 'http:POST /api/control', undefined, () => this.handleControl(req, res));
+      await withTiming(logger, 'http:POST /api/control', undefined, () => this.routeHandlers.handleControl(req, res));
       return;
     }
 
     // Issue #3808: Push instruction to agent (system message)
     if (url === '/api/push' && req.method === 'POST') {
-      await withTiming(logger, 'http:POST /api/push', undefined, () => this.handlePush(req, res));
+      await withTiming(logger, 'http:POST /api/push', undefined, () => this.routeHandlers.handlePush(req, res));
       return;
     }
 
@@ -725,99 +732,6 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       chatId,
       status: 'processing',
     }));
-  }
-
-  /**
-   * Handle control command request.
-   */
-  private async handleControl(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const body = await this.readBody(req);
-    if (!body) {
-      this.sendError(res, 400, 'Empty request body');
-      return;
-    }
-
-    let command: ControlCommand;
-    try {
-      command = JSON.parse(body) as ControlCommand;
-    } catch {
-      this.sendError(res, 400, 'Invalid JSON');
-      return;
-    }
-
-    if (!command.type || !command.chatId) {
-      this.sendError(res, 400, 'type and chatId are required');
-      return;
-    }
-
-    logger.info({ type: command.type, chatId: command.chatId }, 'Received control command');
-
-    const response = await this.emitControl(command);
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(response));
-  }
-
-  /**
-   * Handle push request — send a system message to an agent.
-   *
-   * POST /api/push
-   * Body: { chatId: string, message: string }
-   * Response: { success: boolean, chatId: string, error?: string }
-   *
-   * @see Issue #3808 - External push_to_agent access via REST API
-   */
-  private async handlePush(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    if (!this.inputMessageRouter) {
-      this.sendError(res, 503, 'Push API not available — InputMessageRouter not configured');
-      return;
-    }
-
-    const body = await this.readBody(req);
-    if (!body) {
-      this.sendError(res, 400, 'Empty request body');
-      return;
-    }
-
-    let pushRequest: { chatId?: string; message?: string };
-    try {
-      pushRequest = JSON.parse(body) as typeof pushRequest;
-    } catch {
-      this.sendError(res, 400, 'Invalid JSON');
-      return;
-    }
-
-    if (!pushRequest.chatId || typeof pushRequest.chatId !== 'string') {
-      this.sendError(res, 400, 'chatId is required');
-      return;
-    }
-    if (!pushRequest.message || typeof pushRequest.message !== 'string') {
-      this.sendError(res, 400, 'message is required');
-      return;
-    }
-
-    const { chatId, message } = pushRequest;
-    logger.info({ chatId, messageLength: message.length }, 'Received push request');
-
-    try {
-      const systemMessage: SystemMessage = {
-        id: `push_${crypto.randomUUID()}`,
-        source: 'system',
-        trigger: 'command',
-        payload: message,
-        chatId,
-        createdAt: new Date().toISOString(),
-      };
-
-      await this.inputMessageRouter.route(systemMessage);
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, chatId }));
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.error({ err: error, chatId }, 'Push request failed');
-      this.sendError(res, 500, `Failed to push: ${errorMessage}`);
-    }
   }
 
   /**
