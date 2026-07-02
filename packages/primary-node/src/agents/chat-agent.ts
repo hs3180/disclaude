@@ -759,8 +759,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
       // Issue #4181: DISCLAUDE_DISABLE_BUILTIN_CRON=1 additionally disallows the
-      // built-in (session-only) cron tools so recurring work uses the persistent
-      // disclaude schedule instead.
+      // built-in (session-only) cron/loop tools. Disallowing alone blocks the
+      // calls; rerouting recurring work to the persistent `schedule` skill needs
+      // a guidance nudge (tracked as a #4181 follow-up).
       disallowedTools: buildDisallowedTools(),
       mcpServers,
     });

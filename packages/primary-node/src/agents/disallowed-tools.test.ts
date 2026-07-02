@@ -23,9 +23,20 @@ describe('buildDisallowedTools', () => {
   });
 
   it('appends built-in cron tools when DISCLAUDE_DISABLE_BUILTIN_CRON=true', () => {
-    const tools = buildDisallowedTools({ DISCLAUDE_DISABLE_BUILTIN_CRON: 'true' });
-    expect(tools).toContain('CronCreate');
-    expect(tools).toContain('ScheduleWakeup');
+    expect(buildDisallowedTools({ DISCLAUDE_DISABLE_BUILTIN_CRON: 'true' })).toEqual([
+      'EnterPlanMode',
+      'AskUserQuestion',
+      'CronCreate',
+      'CronList',
+      'CronDelete',
+      'ScheduleWakeup',
+    ]);
+  });
+
+  it('treats the flag case-insensitively', () => {
+    for (const value of ['True', 'TRUE', 'tRuE']) {
+      expect(buildDisallowedTools({ DISCLAUDE_DISABLE_BUILTIN_CRON: value })).toContain('CronCreate');
+    }
   });
 
   it('does not append cron tools for falsy/other values', () => {
