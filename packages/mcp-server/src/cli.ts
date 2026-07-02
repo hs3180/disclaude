@@ -24,6 +24,7 @@ import { existsSync } from 'fs';
 import { setMessageSentCallback } from './index.js';
 import { toolDefinitions } from './tools/tool-definitions.js';
 import { dispatchToolCall } from './tools/tool-dispatch.js';
+import { startStdioServer } from './stdio-server.js';
 
 const logger = createLogger('McpServerCLI');
 
@@ -190,44 +191,10 @@ async function main(): Promise<void> {
     logger.debug({ chatId }, 'Message sent callback triggered');
   });
 
-  // Main server loop - read from stdin, write to stdout
-  let buffer = '';
-
-  process.stdin.setEncoding('utf-8');
-  process.stdin.on('data', async (chunk) => {
-    buffer += chunk;
-
-    // Try to parse complete JSON messages
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-    for (const line of lines) {
-      if (!line.trim()) {continue;}
-
-      try {
-        const request = JSON.parse(line);
-        const response = await handleRequest(request);
-        console.log(JSON.stringify(response));
-      } catch (error) {
-        logger.error({ err: error, line }, 'Failed to parse or handle request');
-        console.error(JSON.stringify({
-          jsonrpc: '2.0',
-          id: 0,
-          error: {
-            code: -32700,
-            message: 'Parse error',
-          },
-        }));
-      }
-    }
-  });
-
-  process.stdin.on('end', () => {
-    logger.info('MCP Server shutting down');
-    process.exit(0);
-  });
-
-  logger.info('MCP Server started (stdio mode)');
+  // Start the stdio transport loop (Issue #4128: extracted to stdio-server.ts).
+  // Transport (stdin/stdout framing) is now separated from arg parsing and
+  // request routing, which stay in this file.
+  startStdioServer(handleRequest);
 }
 
 // Run main (skip in test environment)
