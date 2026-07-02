@@ -6,8 +6,9 @@
  *   - POST /api/push    → RouteHandlers.handlePush
  *
  * Dependencies (input message router, body reading, error responses, control
- * emission) are injected via RouteHandlerDeps, mirroring the channels/rest/
- * file-routes.ts and session-manager.ts patterns.
+ * emission) are injected via RouteHandlerDeps — same constructor-injected
+ * callback-interface style as channels/feishu/message-handler.ts
+ * (MessageCallbacks).
  *
  * @module primary-node/channels/rest/route-handlers
  */
@@ -17,6 +18,7 @@ import type http from 'node:http';
 import {
   createLogger,
   type ControlCommand,
+  type ControlResponse,
   type SystemMessage,
   type MessageRouter as InputMessageRouter,
 } from '@disclaude/core';
@@ -31,8 +33,8 @@ export interface RouteHandlerDeps {
   readBody(req: http.IncomingMessage): Promise<string>;
   /** Writes a JSON error response with the given status. */
   sendError(res: http.ServerResponse, status: number, message: string): void;
-  /** Emits a control command and returns the JSON-serializable response. */
-  emitControl(command: ControlCommand): Promise<unknown>;
+  /** Emits a control command and returns the control handler's response. */
+  emitControl(command: ControlCommand): Promise<ControlResponse>;
 }
 
 /** Handles the /api/control and /api/push routes for the REST channel. */
