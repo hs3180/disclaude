@@ -4,7 +4,17 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { tryHandleSlashCommand } from './command-router.js';
-import type { ControlResponse } from '@disclaude/core';
+import { createControlCommand, type ControlResponse } from '@disclaude/core';
+
+// Spy on createControlCommand so we can assert on the rawData the router builds
+// (input.senderOpenId / rawText / args), while delegating to the real impl so
+// the other tests keep their realistic behavior. Note: normalizeCommandData in
+// core drops senderOpenId/rawText before they reach emitControl, so the only
+// observable point for those fields is here, at the construction boundary.
+vi.mock('@disclaude/core', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@disclaude/core')>();
+  return { ...mod, createControlCommand: vi.fn(mod.createControlCommand) };
+});
 
 function makeDeps(opts: { hasControlHandler?: boolean; controlResponse?: ControlResponse } = {}) {
   return {
@@ -72,5 +82,26 @@ describe('tryHandleSlashCommand', () => {
   it('returns false for unrecognized command when control handler does not match', async () => {
     const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: false } });
     expect(await tryHandleSlashCommand(input('/foobar'), deps)).toBe(false);
+  });
+
+  it('returns false for a bare "/" (no command word) without throwing', async () => {
+    const { deps } = makeDeps();
+    expect(await tryHandleSlashCommand(input('/'), deps)).toBe(false);
+    expect(deps.emitControl).not.toHaveBeenCalled();
+    expect(deps.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('threads senderOpenId, rawText and args into createControlCommand rawData', async () => {
+    vi.mocked(createControlCommand).mockClear();
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
+    await tryHandleSlashCommand(
+      { textWithoutMentions: '/trigger batch', chatId: 'oc_x', senderOpenId: 'ou_s' },
+      deps,
+    );
+    expect(createControlCommand).toHaveBeenCalledWith(
+      'trigger',
+      'oc_x',
+      { args: ['batch'], rawText: '/trigger batch', senderOpenId: 'ou_s' },
+    );
   });
 });

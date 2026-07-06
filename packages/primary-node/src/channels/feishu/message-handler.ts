@@ -906,7 +906,7 @@ export class MessageHandler {
     const commandHandled = await tryHandleSlashCommand(
       { textWithoutMentions, chatId: chat_id, senderOpenId: extractOpenId(sender) },
       {
-        hasControlHandler: !!this.controlHandler,
+        hasControlHandler: this.controlHandler,
         emitControl: (command) => this.callbacks.emitControl(command),
         sendMessage: (reply) => this.callbacks.sendMessage(reply),
       },
