@@ -28,10 +28,8 @@ import {
   type IncomingMessage,
   type MessageAttachment,
   type ControlCommand,
-  type ControlCommandType,
   type ControlResponse,
   type TopicGroupMessageEvent,
-  createControlCommand,
 } from '@disclaude/core';
 import { InteractionManager } from '../../platforms/feishu/interaction-manager.js';
 import { extractFullCardContent } from '../../platforms/feishu/card-builders/card-text-extractor.js';
@@ -39,6 +37,7 @@ import { messageLogger } from '../../utils/message-logger.js';
 import type { TriggerModeManager } from './passive-mode.js';
 import type { MentionDetector } from './mention-detector.js';
 import { evaluateMessageFilters } from './message-filters.js';
+import { tryHandleSlashCommand } from './command-router.js';
 import {
   extractOpenId,
   parsePostContent,
@@ -903,62 +902,17 @@ export class MessageHandler {
     // Add typing reaction
     await this.addTypingReaction(message_id);
 
-    // Handle commands
-    if (textWithoutMentions.startsWith('/')) {
-      const [command, ...args] = textWithoutMentions.slice(1).split(/\s+/);
-      const cmd = command.toLowerCase();
-
-      if (this.controlHandler) {
-        // Issue #3529: Normalize CLI args into typed command data
-        const rawData = { args, rawText: textWithoutMentions, senderOpenId: extractOpenId(sender) };
-        const response = await this.callbacks.emitControl(
-          createControlCommand(cmd as ControlCommandType, chat_id, rawData),
-        );
-
-        // Issue #1562: Relay both success messages and error messages from control handler.
-        // Previously, success:false responses with error messages were silently dropped,
-        // causing commands like /trigger to appear unrecognized.
-        if (response.success || response.message) {
-          if (response.message) {
-            await this.callbacks.sendMessage({
-              chatId: chat_id,
-              type: 'text',
-              text: response.message,
-            });
-          }
-          return;
-        }
-      }
-
-      // Default command handling (fallback when controlHandler is not available)
-      if (cmd === 'reset') {
-        await this.callbacks.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: '✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。',
-        });
-        return;
-      }
-
-      if (cmd === 'status') {
-        await this.callbacks.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: '📊 **状态**\n\nChannel: Feishu\nStatus: running',
-        });
-        return;
-      }
-
-      // Issue #1494: Fallback /stop handling when controlHandler is unavailable
-      if (cmd === 'stop') {
-        await this.callbacks.sendMessage({
-          chatId: chat_id,
-          type: 'text',
-          text: '⏹️ **停止命令已发送**\n\n当前会话将尝试停止响应。',
-        });
-        return;
-      }
-
+    // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
+    const commandHandled = await tryHandleSlashCommand(
+      { textWithoutMentions, chatId: chat_id, senderOpenId: extractOpenId(sender) },
+      {
+        hasControlHandler: this.controlHandler,
+        emitControl: (command) => this.callbacks.emitControl(command),
+        sendMessage: (reply) => this.callbacks.sendMessage(reply),
+      },
+    );
+    if (commandHandled) {
+      return;
     }
 
     // Get quoted/replied message context if this is a reply
