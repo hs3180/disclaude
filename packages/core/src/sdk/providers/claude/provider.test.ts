@@ -487,6 +487,61 @@ describe('ClaudeSDKProvider', () => {
       );
     });
 
+    // Issue #4194: a turn that emits only system + result (no assistant text /
+    // tool_use) leaves the bot appearing unresponsive; surface it via a warn.
+    it('should warn on empty turns with no user-visible output (Issue #4194)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      mockQuery.mockReturnValue((async function* () {
+        yield { type: 'system' as const, subtype: 'task_started' };
+        yield { type: 'result' as const, subtype: 'success' };
+      })());
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Hi' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'],
+        cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+
+      const emptyTurnWarns = loggerMock.warn.mock.calls.filter(
+        ([, msg]) => typeof msg === 'string' && /#4194/.test(msg),
+      );
+      expect(emptyTurnWarns).toHaveLength(1);
+    });
+
+    it('should NOT warn on turns that produced assistant text (Issue #4194)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      mockQuery.mockReturnValue((async function* () {
+        yield { type: 'system' as const, subtype: 'task_started' };
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } };
+        yield { type: 'result' as const, subtype: 'success' };
+      })());
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Hi' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'],
+        cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+
+      const emptyTurnWarns = loggerMock.warn.mock.calls.filter(
+        ([, msg]) => typeof msg === 'string' && /#4194/.test(msg),
+      );
+      expect(emptyTurnWarns).toHaveLength(0);
+    });
+
     // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会
     // 产出海量空 system 消息(实测以 thinking_tokens 为主)。flood 检测必须 warn-only
     // —— 不终止流(范围不含 D3 终止防护),否则会改变行为。此处用任意未识别 subtype 验证。
