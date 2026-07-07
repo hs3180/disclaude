@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider } from './provider.js';
+import { ErrorCategory } from '../../../utils/error-handler.js';
 import type { AgentMessage, UserInput } from '../../types.js';
 
 // ============================================================================
@@ -763,6 +764,46 @@ describe('ClaudeSDKProvider', () => {
       const stderr = getErrorStderr(thrownError);
       expect(stderr).toContain('MCP server error');
       expect(stderr).toContain('Failed to start');
+    });
+
+    it('should log classified errorCategory/errorTransient on iterator failure (Issue #4192 L0)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      // A clearly transient NETWORK error so the tag carries a non-default
+      // category + transient=true through the catch path's structured log.
+      mockQuery.mockImplementation(() => {
+        return (async function* () {
+          throw new Error('fetch failed: ECONNRESET');
+        })();
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        // no input
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'],
+      });
+
+      let thrownError: Error | undefined;
+      try {
+        for await (const _ of result.iterator) {
+          // consume
+        }
+      } catch (error) {
+        thrownError = error as Error;
+      }
+
+      expect(thrownError).toBeDefined();
+      // The catch path classifies the error once and emits the tag in the
+      // structured log — locks the L0 contract so L1/L2 can rely on it.
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorCategory: ErrorCategory.NETWORK,
+          errorTransient: true,
+        }),
+        'adaptIterator error',
+      );
     });
 
     it('should handle query result without close/cancel gracefully', () => {

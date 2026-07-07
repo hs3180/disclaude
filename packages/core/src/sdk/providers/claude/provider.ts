@@ -18,6 +18,7 @@ import type {
 import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
+import { tagErrorCategory } from '../../../utils/error-handler.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -619,8 +620,18 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         if (stderrCapture.hasContent()) {
           attachStderrToError(error, stderrCapture.getCaptured());
         }
+        // Issue #4192 (L0): classify the error so the structured log (and any
+        // downstream handler reading the tagged error) knows the category, e.g.
+        // NETWORK/TIMEOUT (transient → retry candidate) vs CONFIG/SDK (not).
+        const { category: errorCategory, transient: errorTransient } = tagErrorCategory(error);
         logger.error(
-          { err: error, messageCount, stderr: stderrCapture.hasContent() ? stderrCapture.getTail() : '(no stderr)' },
+          {
+            err: error,
+            errorCategory,
+            errorTransient,
+            messageCount,
+            stderr: stderrCapture.hasContent() ? stderrCapture.getTail() : '(no stderr)',
+          },
           'adaptIterator error'
         );
         throw error;
