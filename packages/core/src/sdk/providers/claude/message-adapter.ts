@@ -14,6 +14,33 @@ import type {
 } from '../../types.js';
 
 /**
+ * Issue #4165: throttle thinking-progress surfacing.
+ *
+ * `thinking_tokens` system messages fire many times per second during extended
+ * thinking. To avoid flooding the chat (and Feishu rate limits), we surface at
+ * most one progress message per `THINKING_PROGRESS_MIN_INTERVAL_MS`, and only
+ * when the cumulative token count changed since the last surfacing.
+ *
+ * This is module-level (process-wide) state. `thinking_tokens` are emitted per
+ * session; minor cross-session interleaving is acceptable for a *sampled*
+ * progress indicator (the user only needs to perceive "still thinking + rough
+ * scale"). A per-session throttle can follow if warranted.
+ */
+const THINKING_PROGRESS_MIN_INTERVAL_MS = 1000;
+let lastThinkingProgressMs = 0;
+let lastThinkingProgressTokens = -1;
+
+/**
+ * Reset the thinking-progress throttle state. Intended for unit tests; production
+ * code does not need to call this — the time-based throttle self-corrects each
+ * turn, since turns are usually > `THINKING_PROGRESS_MIN_INTERVAL_MS` apart.
+ */
+export function resetThinkingProgressThrottle(): void {
+  lastThinkingProgressMs = 0;
+  lastThinkingProgressTokens = -1;
+}
+
+/**
  * 适配 Claude SDK 消息为统一的 AgentMessage
  *
  * @param message - Claude SDK 消息
@@ -236,6 +263,40 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
           content: `⚠️ Model fallback: retrying with ${fallbackModel}`,
           role: 'system',
           metadata,
+          raw: message,
+        };
+      }
+
+      // Issue #4165: surface thinking progress (cumulative estimated tokens)
+      // instead of silently dropping it. Throttled to ≤1 update/sec — the SDK
+      // emits thinking_tokens many times per second during extended thinking,
+      // and any non-empty content here is forwarded to the user. Reuses the
+      // 'status' type, the same channel used by the 'requesting' "🤔 Thinking..."
+      // indicator. When throttled/unchanged it still drops to empty content
+      // (preserving systemSubtype for diagnostics), so non-thinking system
+      // floods (task_started/teammate_* etc.) are unaffected.
+      if (message.subtype === 'thinking_tokens') {
+        const tokens = message.estimated_tokens;
+        const now = Date.now();
+        if (
+          now - lastThinkingProgressMs >= THINKING_PROGRESS_MIN_INTERVAL_MS &&
+          tokens !== lastThinkingProgressTokens
+        ) {
+          lastThinkingProgressMs = now;
+          lastThinkingProgressTokens = tokens;
+          return {
+            type: 'status',
+            content: `🤔 思考中… ${tokens} tokens`,
+            role: 'system',
+            metadata: { ...metadata, systemSubtype: 'thinking_tokens' },
+            raw: message,
+          };
+        }
+        return {
+          type: 'text',
+          content: '',
+          role: 'system',
+          metadata: { ...metadata, systemSubtype: 'thinking_tokens' },
           raw: message,
         };
       }

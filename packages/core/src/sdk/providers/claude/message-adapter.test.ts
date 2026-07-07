@@ -4,8 +4,8 @@
  * Validates SDK message adaptation, tool input formatting, and user input conversion.
  */
 
-import { describe, it, expect } from 'vitest';
-import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { adaptSDKMessage, adaptUserInput, resetThinkingProgressThrottle } from './message-adapter.js';
 
 // Test helper: SDK message types require fields (parent_tool_use_id, uuid, etc.)
 // that are optional in practice. Cast test fixtures to bypass strict type checking.
@@ -461,6 +461,77 @@ describe('adaptSDKMessage', () => {
       expect(result.content).toContain('fallback');
       expect(result.content).toContain('claude-sonnet-4-6');
       expect(result.role).toBe('system');
+    });
+
+    describe('thinking_tokens (Issue #4165)', () => {
+      beforeEach(() => {
+        resetThinkingProgressThrottle();
+      });
+
+      it('surfaces the first thinking_progress event with the token count', () => {
+        const message = {
+          type: 'system' as const,
+          subtype: 'thinking_tokens',
+          estimated_tokens: 604,
+          estimated_tokens_delta: 604,
+        };
+
+        const result = adaptSDKMessage(asMsg(message));
+        expect(result.type).toBe('status');
+        expect(result.content).toContain('思考');
+        expect(result.content).toContain('604');
+        expect(result.metadata?.systemSubtype).toBe('thinking_tokens');
+      });
+
+      it('throttles subsequent events within the interval (drops to empty content)', () => {
+        const first = adaptSDKMessage(
+          asMsg({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 100 }),
+        );
+        expect(first.content).toContain('100');
+
+        // Immediate second event (different tokens, still within the interval) → throttled.
+        const second = adaptSDKMessage(
+          asMsg({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 200 }),
+        );
+        expect(second.type).toBe('text');
+        expect(second.content).toBe('');
+        expect(second.metadata?.systemSubtype).toBe('thinking_tokens');
+      });
+
+      it('throttles when token count is unchanged', () => {
+        const first = adaptSDKMessage(
+          asMsg({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 500 }),
+        );
+        expect(first.content).toContain('500');
+
+        const same = adaptSDKMessage(
+          asMsg({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 500 }),
+        );
+        expect(same.content).toBe('');
+      });
+
+      it('emits again once the interval elapses AND tokens changed', () => {
+        const nowSpy = vi.spyOn(Date, 'now');
+        nowSpy.mockReturnValue(1_000);
+        const first = adaptSDKMessage(
+          asMsg({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 100 }),
+        );
+        expect(first.content).toContain('100');
+
+        nowSpy.mockReturnValue(1_500); // < 1s → throttled even though tokens differ
+        const mid = adaptSDKMessage(
+          asMsg({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 200 }),
+        );
+        expect(mid.content).toBe('');
+
+        nowSpy.mockReturnValue(2_100); // ≥ 1s since last emit + new tokens → emits
+        const later = adaptSDKMessage(
+          asMsg({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 300 }),
+        );
+        expect(later.content).toContain('300');
+
+        nowSpy.mockRestore();
+      });
     });
   });
 
