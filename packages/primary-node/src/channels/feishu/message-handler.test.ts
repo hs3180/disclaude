@@ -22,6 +22,7 @@ const mockState = vi.hoisted(() => ({
   resolveActionPrompt: vi.fn().mockReturnValue(undefined),
   isMessageProcessed: false,
   logIncomingMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  logCardInteraction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   getChatHistory: vi.fn<() => Promise<string | undefined>>().mockResolvedValue(undefined),
   isBotMentioned: false,
   interactionHandleAction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -99,6 +100,7 @@ vi.mock('../../utils/message-logger.js', () => ({
   messageLogger: {
     isMessageProcessed: () => mockState.isMessageProcessed,
     logIncomingMessage: mockState.logIncomingMessage,
+    logCardInteraction: mockState.logCardInteraction,
     getChatHistory: mockState.getChatHistory,
   },
 }));
@@ -972,16 +974,21 @@ describe('MessageHandler', () => {
       expect(msg.metadata.cardAction.value).toBe('action_value');
     });
 
-    it('should log card click event as incoming message for history', async () => {
+    it('should log card click under the original message id (not a synthetic id)', async () => {
       const { handler } = createHandler();
       await handler.handleCardAction(cardActionEvent());
 
-      expect(mockState.logIncomingMessage).toHaveBeenCalledWith(
-        expect.stringMatching(/^card_action_card_msg_001_\d+$/),
+      // Issue #4197: must use the ORIGINAL Feishu message_id (not a synthetic
+      // `card_action_<id>_<ts>`) so the history/system-prompt builder, which
+      // looks up incoming content by the original id, can see the click.
+      // Routed through logCardInteraction (not logIncomingMessage) so the click
+      // is registered under a namespaced dedup key and cannot pollute the
+      // receive-dedup registry.
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
+        'card_msg_001',
         'user_001',
         'chat_001',
         '用户点击了按钮「Click me」',
-        'card_action',
       );
     });
 
@@ -993,12 +1000,32 @@ describe('MessageHandler', () => {
         action: { tag: 'button', value: 'fallback_val' },
       });
 
-      expect(mockState.logIncomingMessage).toHaveBeenCalledWith(
-        expect.stringMatching(/^card_action_card_msg_\d+$/),
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
+        'card_msg',
         'user_001',
         'chat_001',
         '用户点击了按钮「fallback_val」',
-        'card_action',
+      );
+    });
+
+    it('should log the resolved actionPrompt content (not generic button text) under the original message id', async () => {
+      // Issue #4197 core: the LLM must receive the registered actionPrompt
+      // content, not `[Interactive Card]` / a generic button label.
+      mockState.resolveActionPrompt.mockReturnValueOnce('[用户操作] 用户选择了选项A');
+      const { handler } = createHandler();
+      await handler.handleCardAction(cardActionEvent());
+
+      expect(mockState.resolveActionPrompt).toHaveBeenCalledWith(
+        'card_msg_001',
+        'chat_001',
+        'action_value',
+        'Click me',
+      );
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
+        'card_msg_001',
+        'user_001',
+        'chat_001',
+        '[用户操作] 用户选择了选项A',
       );
     });
   });
