@@ -32,6 +32,20 @@ function getDateString(date: Date = new Date()): string {
 }
 
 /**
+ * Dedup-key prefix for card interactions (button clicks).
+ *
+ * A card interaction shares the card message's id but is a DISTINCT event
+ * kind from `im.message.receive` — a click is not an inbound message arrival.
+ * Registering the click under this namespaced key (rather than the bare
+ * message id) keeps the receive-dedup registry clean: a click can never
+ * suppress a later `im.message.receive` for the same card message, because
+ * real Feishu message ids (`om_...`) never carry this prefix. The log line
+ * itself still shows the original `message_id`, so the click remains visible
+ * under the correct message thread (issue #4197). See `logCardInteraction`.
+ */
+export const CARD_ACTION_DEDUP_PREFIX = 'card_action:';
+
+/**
  * Message logger class for persistent chat history logging.
  * Handles message deduplication and chat history logging.
  */
@@ -191,6 +205,44 @@ export class MessageLogger {
 
     // Add to in-memory cache
     this.processedMessageIds.add(messageId);
+  }
+
+  /**
+   * Log a card interaction (button click) under the ORIGINAL card message id.
+   *
+   * Distinct from `logIncomingMessage` (which handles `im.message.receive`):
+   * the log line is still keyed on the original `message_id` so the click is
+   * visible under the correct message thread (issue #4197), but the dedup
+   * registry entry is namespaced (`card_action:<message_id>`) so the click is
+   * NOT treated as a processed inbound message. This keeps card-message-receive
+   * and card-interaction as separate behaviors in the dedup namespace — a click
+   * can no longer mark the card message as "processed" and cause a later
+   * `im.message.receive` for the same card to be wrongly skipped as a
+   * duplicate. (issue #4197 方案 A refinement)
+   */
+  async logCardInteraction(
+    messageId: string,
+    senderId: string,
+    chatId: string,
+    content: string,
+    timestamp?: string | number,
+  ): Promise<void> {
+    const entry: LogEntry = {
+      messageId,
+      senderId,
+      chatId,
+      content,
+      messageType: 'card_action',
+      timestamp: timestamp || Date.now(),
+      direction: 'incoming',
+    };
+
+    await this.appendToLog(entry);
+
+    // Namespace the dedup key so the click does not pollute the receive-dedup
+    // registry — a bare message_id here would make a later im.message.receive
+    // for the same card message be skipped as a duplicate.
+    this.processedMessageIds.add(`${CARD_ACTION_DEDUP_PREFIX}${messageId}`);
   }
 
   /**

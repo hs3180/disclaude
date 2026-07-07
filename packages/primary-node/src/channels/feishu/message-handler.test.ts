@@ -22,6 +22,7 @@ const mockState = vi.hoisted(() => ({
   resolveActionPrompt: vi.fn().mockReturnValue(undefined),
   isMessageProcessed: false,
   logIncomingMessage: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  logCardInteraction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   getChatHistory: vi.fn<() => Promise<string | undefined>>().mockResolvedValue(undefined),
   isBotMentioned: false,
   interactionHandleAction: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -99,6 +100,7 @@ vi.mock('../../utils/message-logger.js', () => ({
   messageLogger: {
     isMessageProcessed: () => mockState.isMessageProcessed,
     logIncomingMessage: mockState.logIncomingMessage,
+    logCardInteraction: mockState.logCardInteraction,
     getChatHistory: mockState.getChatHistory,
   },
 }));
@@ -979,12 +981,14 @@ describe('MessageHandler', () => {
       // Issue #4197: must use the ORIGINAL Feishu message_id (not a synthetic
       // `card_action_<id>_<ts>`) so the history/system-prompt builder, which
       // looks up incoming content by the original id, can see the click.
-      expect(mockState.logIncomingMessage).toHaveBeenCalledWith(
+      // Routed through logCardInteraction (not logIncomingMessage) so the click
+      // is registered under a namespaced dedup key and cannot pollute the
+      // receive-dedup registry.
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
         'card_msg_001',
         'user_001',
         'chat_001',
         '用户点击了按钮「Click me」',
-        'card_action',
       );
     });
 
@@ -996,12 +1000,11 @@ describe('MessageHandler', () => {
         action: { tag: 'button', value: 'fallback_val' },
       });
 
-      expect(mockState.logIncomingMessage).toHaveBeenCalledWith(
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
         'card_msg',
         'user_001',
         'chat_001',
         '用户点击了按钮「fallback_val」',
-        'card_action',
       );
     });
 
@@ -1018,12 +1021,11 @@ describe('MessageHandler', () => {
         'action_value',
         'Click me',
       );
-      expect(mockState.logIncomingMessage).toHaveBeenCalledWith(
+      expect(mockState.logCardInteraction).toHaveBeenCalledWith(
         'card_msg_001',
         'user_001',
         'chat_001',
         '[用户操作] 用户选择了选项A',
-        'card_action',
       );
     });
   });
