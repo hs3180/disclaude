@@ -39,7 +39,7 @@ vi.mock('@disclaude/core', async () => {
 });
 
 // Import after mocks are set up
-import { MessageLogger } from './message-logger.js';
+import { MessageLogger, CARD_ACTION_DEDUP_PREFIX } from './message-logger.js';
 
 describe('MessageLogger.getChatHistory', () => {
   let tmpDir: string;
@@ -348,6 +348,56 @@ describe('MessageLogger.logIncomingMessage', () => {
     expect(logContent).toContain('Second');
     expect(logContent).toContain('msg_a');
     expect(logContent).toContain('msg_b');
+  });
+});
+
+describe('MessageLogger.logCardInteraction', () => {
+  let tmpDir: string;
+  let logger: MessageLogger;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    logger = new MessageLogger();
+    await logger.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should log the click under the original message id', async () => {
+    // Issue #4197: the log line must be keyed on the ORIGINAL message_id so the
+    // history/system-prompt builder can see the click under the right thread.
+    await logger.logCardInteraction('card_msg_001', 'user_001', 'chat_xyz', '用户点击了按钮「A」');
+
+    const chatDir = path.join(tmpDir, 'chat-logs');
+    const dirs = await fs.readdir(chatDir);
+    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    expect(dateDir).toBeDefined();
+
+    const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat_xyz.md'), 'utf-8');
+    expect(logContent).toContain('👤');
+    expect(logContent).toContain('card_msg_001');
+    expect(logContent).toContain('用户点击了按钮「A」');
+  });
+
+  it('should NOT register the bare message id in the receive-dedup registry', async () => {
+    // Issue #4197 (refinement): a card interaction must NOT be treated as a
+    // processed inbound message — otherwise a later im.message.receive for the
+    // same card would be wrongly skipped as a duplicate by the receive filter.
+    await logger.logCardInteraction('card_msg_002', 'user_001', 'chat1', 'click');
+
+    expect(logger.isMessageProcessed('card_msg_002')).toBe(false);
+  });
+
+  it('should register the click under a namespaced dedup key', async () => {
+    // The namespaced key never collides with a bare Feishu message id, so it
+    // cannot suppress a receive; it only records the interaction itself.
+    await logger.logCardInteraction('card_msg_003', 'user_001', 'chat1', 'click');
+
+    expect(logger.isMessageProcessed(`${CARD_ACTION_DEDUP_PREFIX}card_msg_003`)).toBe(true);
   });
 });
 
