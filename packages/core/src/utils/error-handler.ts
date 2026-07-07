@@ -276,6 +276,28 @@ export function isRetryable(error: Error | unknown): boolean {
 }
 
 /**
+ * Derive the transient flag from an already-computed {@link ErrorCategory} and
+ * lowercased message. Single source of truth shared by {@link isTransient} and
+ * {@link tagErrorCategory}, so an error is classified at most once per tag.
+ *
+ * Only covers plain-`Error` classification; {@link AppError} short-circuits in
+ * the callers via its stored `transient` field.
+ */
+function isTransientFor(category: ErrorCategory, message: string): boolean {
+  // Network and timeout errors are typically transient.
+  if (category === ErrorCategory.NETWORK || category === ErrorCategory.TIMEOUT) {
+    return true;
+  }
+
+  return (
+    message.includes('timeout') ||
+    message.includes('etimedout') ||
+    message.includes('econnreset') ||
+    message.includes('rate limit')
+  );
+}
+
+/**
  * Determine if an error is transient (temporary)
  */
 export function isTransient(error: Error | unknown): boolean {
@@ -287,22 +309,7 @@ export function isTransient(error: Error | unknown): boolean {
     return false;
   }
 
-  const category = classifyError(error);
-
-  // Network and timeout errors are typically transient
-  const transientCategories = [
-    ErrorCategory.NETWORK,
-    ErrorCategory.TIMEOUT
-  ];
-
-  const message = error.message.toLowerCase();
-  const isTransientPattern =
-    message.includes('timeout') ||
-    message.includes('etimedout') ||
-    message.includes('econnreset') ||
-    message.includes('rate limit');
-
-  return transientCategories.includes(category) || isTransientPattern;
+  return isTransientFor(classifyError(error), error.message.toLowerCase());
 }
 
 /**
@@ -332,10 +339,15 @@ export interface ErrorCategoryTag {
  * layers (L1 in-request retry, L2 turn replay).
  */
 export function tagErrorCategory(error: unknown): ErrorCategoryTag {
+  // Classify once and derive `transient` from the same category (Issue #4192
+  // review nit #1) — avoids the previous double `classifyError` via `isTransient`.
   const category = classifyError(error);
-  const transient = isTransient(error);
+  const transient =
+    error instanceof AppError
+      ? error.transient
+      : isTransientFor(category, error instanceof Error ? error.message.toLowerCase() : '');
   if (error instanceof Error) {
-    (error as Error & { [ERROR_CATEGORY_SYMBOL]?: ErrorCategoryTag })[ERROR_CATEGORY_SYMBOL] = { category, transient };
+    (error as Error & { [ERROR_CATEGORY_SYMBOL]: ErrorCategoryTag })[ERROR_CATEGORY_SYMBOL] = { category, transient };
   }
   return { category, transient };
 }
@@ -343,10 +355,15 @@ export function tagErrorCategory(error: unknown): ErrorCategoryTag {
 /**
  * Read a previously-attached {@link ErrorCategoryTag}. Returns `undefined` if
  * the error was never tagged or is not an Error. Issue #4192 (L0).
+ *
+ * Caveat (Issue #4192, L1/L2): the tag lives on one specific `Error` object.
+ * If a downstream layer re-wraps the error (`new Error(...)`, or throws a fresh
+ * error carrying only `.cause`), this returns `undefined` — re-tag the new
+ * error, or read the original via `cause`, instead of relying on the tag here.
  */
 export function getErrorCategoryTag(error: unknown): ErrorCategoryTag | undefined {
   if (error instanceof Error) {
-    return (error as Error & { [ERROR_CATEGORY_SYMBOL]?: ErrorCategoryTag })[ERROR_CATEGORY_SYMBOL];
+    return (error as Error & { [ERROR_CATEGORY_SYMBOL]: ErrorCategoryTag })[ERROR_CATEGORY_SYMBOL];
   }
   return undefined;
 }

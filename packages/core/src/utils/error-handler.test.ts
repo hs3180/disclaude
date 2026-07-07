@@ -437,7 +437,8 @@ describe('tagErrorCategory / getErrorCategoryTag (Issue #4192 L0)', () => {
 
   it('returns a classification even for non-Error inputs without throwing', () => {
     const tag = tagErrorCategory('a plain string');
-    expect(tag.category).toBeDefined();
+    expect(tag.category).toBe(ErrorCategory.UNKNOWN);
+    expect(tag.transient).toBe(false);
     // Non-Error inputs are classified but cannot be tagged.
     expect(getErrorCategoryTag('a plain string')).toBeUndefined();
   });
