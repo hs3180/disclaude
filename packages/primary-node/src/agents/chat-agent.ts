@@ -53,7 +53,7 @@ import {
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
-import { buildDisallowedTools } from './disallowed-tools.js';
+import { buildBuiltinCronGuidance, buildDisallowedTools } from './disallowed-tools.js';
 import { HistoryManager } from './history-manager.js';
 import { buildMcpServers } from './mcp-setup.js';
 
@@ -758,13 +758,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const projectCwd = this.cwdProvider?.(chatId);
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
-      // Issue #4181: DISCLAUDE_DISABLE_BUILTIN_CRON=1 additionally disallows the
-      // built-in (session-only) cron/loop tools. Disallowing alone blocks the
-      // calls; rerouting recurring work to the persistent `schedule` skill needs
-      // a guidance nudge (tracked as a #4181 follow-up).
+      // Issue #4181 (part 1): DISCLAUDE_DISABLE_BUILTIN_CRON=1 additionally
+      // disallows the built-in (session-only) cron/loop tools. Disallowing
+      // blocks the calls but does not, by itself, route recurring work to the
+      // persistent `schedule` skill.
       disallowedTools: buildDisallowedTools(),
       mcpServers,
     });
+
+    // Issue #4181 (part 2): append a system-prompt nudge that routes recurring
+    // work to the persistent `schedule` skill and warns away from the built-in
+    // (session-only) cron tools. Always emitted — the persistence fact holds
+    // whether or not the mechanical block above is enabled — so recurring work
+    // is routed correctly by default. `append` is supported by the Claude Agent
+    // SDK `claude_code` system-prompt preset and passed through as-is.
+    const baseSystemPrompt = sdkOptions.systemPrompt;
+    if (baseSystemPrompt && typeof baseSystemPrompt === 'object') {
+      sdkOptions.systemPrompt = { ...baseSystemPrompt, append: buildBuiltinCronGuidance() };
+    }
 
     this.logger.info(
       { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) },
