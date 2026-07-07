@@ -142,8 +142,43 @@ describe('adaptSDKMessage', () => {
 
       const result = adaptSDKMessage(asMsg(message));
       // Issue #4200: surface subject + description (SDK TaskCreateInput has no `content` field).
-      expect(result.content).toContain('创建任务「Fix login bug」');
+      expect(result.content).toContain('Creating task: Fix login bug');
       expect(result.content).toContain('Fix bug #123 in auth flow');
+    });
+
+    it('should handle TaskCreate with subject only (no description)', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', name: 'TaskCreate', input: { subject: 'Refactor adapter' } },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      // No description → no parenthetical, no "<no description>" placeholder.
+      expect(result.content).toContain('Creating task: Refactor adapter');
+      expect(result.content).not.toContain('<no description>');
+    });
+
+    it('should truncate a long task description to 100 chars with "..."', () => {
+      const longDescription = 'A'.repeat(150);
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', name: 'TaskCreate', input: { subject: 'Long task', description: longDescription } },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      // Full 150-char description must NOT survive; the truncated form (97 chars + "...") does.
+      expect(result.content).not.toContain(longDescription);
+      expect(result.content).toContain(`${'A'.repeat(97)  }...`);
     });
 
     it('should handle TaskUpdate tool (includes subject, not just id+status)', () => {
@@ -159,9 +194,27 @@ describe('adaptSDKMessage', () => {
 
       const result = adaptSDKMessage(asMsg(message));
       // Issue #4200: show the task content so the user knows which task is updated.
-      expect(result.content).toContain('更新任务 #5');
-      expect(result.content).toContain('Fix login bug');
+      expect(result.content).toContain('Updating task #5');
+      expect(result.content).toContain('"Fix login bug"');
       expect(result.content).toContain('completed');
+    });
+
+    it('should handle TaskUpdate with only id + status (no subject/activeForm/description)', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', name: 'TaskUpdate', input: { taskId: '9', status: 'pending' } },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.content).toContain('Updating task #9');
+      expect(result.content).toContain('pending');
+      // No label → no empty quotes.
+      expect(result.content).not.toContain('""');
     });
 
     it('should handle TaskUpdate with activeForm when subject is absent', () => {
@@ -178,6 +231,24 @@ describe('adaptSDKMessage', () => {
       const result = adaptSDKMessage(asMsg(message));
       // Issue #4200: fall back to activeForm as the human-readable label.
       expect(result.content).toContain('Running tests');
+      expect(result.content).toContain('in_progress');
+    });
+
+    it('should fall back to description label in TaskUpdate when subject/activeForm are absent', () => {
+      const message = {
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', name: 'TaskUpdate', input: { taskId: '11', description: 'Investigate flaky login on Safari', status: 'in_progress' } },
+          ],
+        },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      // Issue #4200 (nit): description is a last-resort label so the id alone is not orphaned.
+      expect(result.content).toContain('Updating task #11');
+      expect(result.content).toContain('Investigate flaky login on Safari');
       expect(result.content).toContain('in_progress');
     });
 
