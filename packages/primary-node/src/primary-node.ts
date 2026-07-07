@@ -162,6 +162,13 @@ export class PrimaryNode extends EventEmitter {
   // Input MessageRouter for unified routing (Issue #3582 Phase 3)
   protected inputMessageRouter?: InputMessageRouter;
 
+  // Issue #4206: stashed in initInputMessageRouter() so the scheduler's
+  // clearContext callback can reset a chat's agent before a scheduled task.
+  protected agentPool?: {
+    getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
+    reset: (chatId: string, skipContext?: boolean) => void;
+  };
+
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
 
@@ -586,16 +593,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Step 3: Create callbacks
     logger.info('Scheduler init step 3/6: Creating schedule callbacks');
-    const schedulerCallbacks: SchedulerCallbacks = {
-      sendMessage: async (chatId: string, message: string): Promise<void> => {
-        const outgoingMessage: OutgoingMessage = {
-          type: 'text',
-          chatId,
-          text: message,
-        };
-        await this.channelManager.broadcast(outgoingMessage);
-      },
-    };
+    const schedulerCallbacks = this.createSchedulerCallbacks();
     logger.info('Scheduler init step 3/6: ✓ Schedule callbacks created');
 
     // Step 4: Initialize Scheduler and schedule tasks
@@ -723,18 +721,56 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Build the SchedulerCallbacks that bridge the Scheduler to PrimaryNode's
+   * channel manager (sendMessage) and agent pool (resetAgent for clearContext).
+   *
+   * Extracted from initScheduler() for the Issue #4206 review nit so the
+   * clearContext wiring is unit-testable in isolation — in particular so a test
+   * can lock down that `resetAgent` calls `agentPool.reset(chatId, true)`
+   * (skipContext=true). The boolean is inverted vs `ChatAgent.reset`'s
+   * `keepContext`, so pinning the arg here guards against a future flip.
+   *
+   * Issue #4206: `skipContext` defaults to true (the clearContext intent — fresh
+   * session). The scheduler passes `false` on clearContext-task failure to
+   * clear a stale skip-history flag (see Scheduler.executeTask catch).
+   */
+  protected createSchedulerCallbacks(): SchedulerCallbacks {
+    return {
+      sendMessage: async (chatId: string, message: string): Promise<void> => {
+        const outgoingMessage: OutgoingMessage = {
+          type: 'text',
+          chatId,
+          text: message,
+        };
+        await this.channelManager.broadcast(outgoingMessage);
+      },
+      resetAgent: (chatId: string, skipContext: boolean = true): void => {
+        this.agentPool?.reset(chatId, skipContext);
+      },
+    };
+  }
+
+  /**
    * Initialize the InputMessageRouter with the given agent pool and callbacks.
    * Issue #3582: Creates the unified input routing layer (Phase 3).
    *
    * Should be called after agent pool is set up but before channels are started.
+   * Also stashes the agent pool reference so the scheduler's `clearContext`
+   * callback (Issue #4206) can reset a chat's agent before a scheduled task.
    *
    * @param agentPool - Agent pool for creating/getting persistent agents
    * @param callbacksFactory - Factory for creating ChatAgentCallbacks per chat
    */
   initInputMessageRouter(
-    agentPool: { getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent },
+    agentPool: {
+      getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
+      reset: (chatId: string, skipContext?: boolean) => void;
+    },
     callbacksFactory: (chatId: string) => import('./agents/types.js').ChatAgentCallbacks,
   ): void {
+    // Issue #4206: keep the pool so scheduler callbacks can reset an agent
+    // (clearContext) before a scheduled task runs.
+    this.agentPool = agentPool;
     const handler = new AgentPoolMessageHandler({
       agentPool,
       callbacksFactory,
