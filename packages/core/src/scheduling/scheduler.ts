@@ -79,6 +79,12 @@ interface ActiveJob {
 export interface SchedulerCallbacks {
   /** Send a text message to a chat */
   sendMessage: (chatId: string, message: string) => Promise<void>;
+  /**
+   * Reset (dispose) the persistent agent for a chat so the next message starts
+   * a fresh session. Used by the `clearContext` schedule option (Issue #4206).
+   * Optional: if not wired, `clearContext: true` logs a warning and is ignored.
+   */
+  resetAgent?: (chatId: string) => void;
 }
 
 /**
@@ -447,6 +453,31 @@ ${task.prompt}`;
           `⚠️ 定时任务「${task.name}」无法执行: InputMessageRouter 未配置或任务缺少 chatId`
         );
         return;
+      }
+
+      // Issue #4206: opt-in clearContext — reset the persistent agent so this
+      // task runs in a fresh session (no accumulated context). Done before the
+      // start notification so the reset is visible in logs ahead of the turn.
+      if (task.clearContext && task.chatId) {
+        if (this.callbacks.resetAgent) {
+          try {
+            this.callbacks.resetAgent(task.chatId);
+            logger.info(
+              { taskId: task.id, name: task.name, chatId: task.chatId },
+              'Cleared agent context before scheduled task (clearContext: true)'
+            );
+          } catch (err) {
+            logger.warn(
+              { err, taskId: task.id, chatId: task.chatId },
+              'Failed to clear agent context before scheduled task; continuing with existing context'
+            );
+          }
+        } else {
+          logger.warn(
+            { taskId: task.id, name: task.name, chatId: task.chatId },
+            'Schedule has clearContext: true but no resetAgent callback wired; ignoring (running with existing context)'
+          );
+        }
       }
 
       // Send start notification

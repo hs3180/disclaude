@@ -162,6 +162,13 @@ export class PrimaryNode extends EventEmitter {
   // Input MessageRouter for unified routing (Issue #3582 Phase 3)
   protected inputMessageRouter?: InputMessageRouter;
 
+  // Issue #4206: stashed in initInputMessageRouter() so the scheduler's
+  // clearContext callback can reset a chat's agent before a scheduled task.
+  protected agentPool?: {
+    getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
+    reset: (chatId: string, skipContext?: boolean) => void;
+  };
+
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
 
@@ -595,6 +602,12 @@ export class PrimaryNode extends EventEmitter {
         };
         await this.channelManager.broadcast(outgoingMessage);
       },
+      // Issue #4206: reset the persistent agent so a scheduled task with
+      // `clearContext: true` runs in a fresh session. skipContext=true skips
+      // reloading persisted history for that chat on the next getOrCreate.
+      resetAgent: (chatId: string): void => {
+        this.agentPool?.reset(chatId, true);
+      },
     };
     logger.info('Scheduler init step 3/6: ✓ Schedule callbacks created');
 
@@ -727,14 +740,22 @@ export class PrimaryNode extends EventEmitter {
    * Issue #3582: Creates the unified input routing layer (Phase 3).
    *
    * Should be called after agent pool is set up but before channels are started.
+   * Also stashes the agent pool reference so the scheduler's `clearContext`
+   * callback (Issue #4206) can reset a chat's agent before a scheduled task.
    *
    * @param agentPool - Agent pool for creating/getting persistent agents
    * @param callbacksFactory - Factory for creating ChatAgentCallbacks per chat
    */
   initInputMessageRouter(
-    agentPool: { getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent },
+    agentPool: {
+      getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
+      reset: (chatId: string, skipContext?: boolean) => void;
+    },
     callbacksFactory: (chatId: string) => import('./agents/types.js').ChatAgentCallbacks,
   ): void {
+    // Issue #4206: keep the pool so scheduler callbacks can reset an agent
+    // (clearContext) before a scheduled task runs.
+    this.agentPool = agentPool;
     const handler = new AgentPoolMessageHandler({
       agentPool,
       callbacksFactory,

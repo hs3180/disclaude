@@ -64,6 +64,7 @@ describe('Scheduler', () => {
 
     mockCallbacks = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
+      resetAgent: vi.fn(),
     };
 
     mockRouter = createMockRouter();
@@ -406,6 +407,45 @@ describe('Scheduler', () => {
       expect(routedMessage.payload).toContain('Run tests');
       expect(routedMessage.source).toBe('system');
       expect(routedMessage.trigger).toBe('scheduled');
+    });
+
+    it('should call resetAgent before the start message when task.clearContext is true (#4206)', async () => {
+      const task = createTask({ id: 'clear-ctx-1', clearContext: true });
+      scheduler.addTask(task);
+      const jobs = scheduler.getActiveJobs();
+
+      fireJob(jobs);
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      // resetAgent was called once with the chat's id…
+      expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(1);
+      expect(mockCallbacks.resetAgent).toHaveBeenCalledWith('oc_test');
+      // …and it happened BEFORE the start-notification sendMessage.
+      const resetAgent = mockCallbacks.resetAgent!;
+      const [resetOrder] = vi.mocked(resetAgent).mock.invocationCallOrder;
+      const sendCalls = vi.mocked(mockCallbacks.sendMessage).mock.calls;
+      const sendOrders = vi.mocked(mockCallbacks.sendMessage).mock.invocationCallOrder;
+      const startIdx = sendCalls.findIndex(c => (c[1] as string)?.includes('开始执行'));
+      expect(startIdx).toBeGreaterThanOrEqual(0);
+      const startOrder = sendOrders[startIdx];
+      expect(resetOrder).toBeDefined();
+      expect(startOrder).toBeDefined();
+      expect(resetOrder!).toBeLessThan(startOrder!);
+    });
+
+    it('should NOT call resetAgent when clearContext is unset (#4206)', async () => {
+      const task = createTask({ id: 'no-clear-ctx' });
+      scheduler.addTask(task);
+      const jobs = scheduler.getActiveJobs();
+
+      fireJob(jobs);
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
     });
 
     it('should construct SystemMessage with model and modelTier', async () => {

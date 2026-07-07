@@ -107,6 +107,7 @@ function parseScheduleFrontmatter(content: string): {
         break;
       case 'enabled':
       case 'blocking':
+      case 'clearContext':
         frontmatter[key] = value === 'true';
         break;
       case 'cooldownPeriod':
@@ -232,6 +233,7 @@ export class ScheduleFileScanner {
         prompt,
         enabled: (frontmatter['enabled'] as boolean) ?? true,
         blocking: (frontmatter['blocking'] as boolean) ?? true,
+        clearContext: (frontmatter['clearContext'] as boolean) ?? false,
         cooldownPeriod: frontmatter['cooldownPeriod'] as number | undefined,
         timeoutMs: frontmatter['timeoutMs'] as number | undefined,
         createdBy: frontmatter['createdBy'] as string | undefined,
