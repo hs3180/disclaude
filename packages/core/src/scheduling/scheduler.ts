@@ -83,8 +83,15 @@ export interface SchedulerCallbacks {
    * Reset (dispose) the persistent agent for a chat so the next message starts
    * a fresh session. Used by the `clearContext` schedule option (Issue #4206).
    * Optional: if not wired, `clearContext: true` logs a warning and is ignored.
+   *
+   * @param skipContext - When true (default for clearContext), the next agent
+   *   for this chat skips reloading persisted history (true fresh session).
+   *   When false, the next agent reloads history normally — used by the
+   *   scheduler to CLEAR a stale skip flag if a clearContext task fails before
+   *   its turn consumes it (Issue #4206 review nit), so the leaked flag does
+   *   not drop history from a subsequent, unrelated message.
    */
-  resetAgent?: (chatId: string) => void;
+  resetAgent?: (chatId: string, skipContext?: boolean) => void;
 }
 
 /**
@@ -438,6 +445,11 @@ ${task.prompt}`;
       return;
     }
 
+    // Issue #4206 (review nit): tracks whether we already applied a clearContext
+    // reset, so the catch path can undo the leaked skip-history flag if the
+    // task fails before its turn consumes it.
+    let contextCleared = false;
+
     try {
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
@@ -461,7 +473,8 @@ ${task.prompt}`;
       if (task.clearContext && task.chatId) {
         if (this.callbacks.resetAgent) {
           try {
-            this.callbacks.resetAgent(task.chatId);
+            this.callbacks.resetAgent(task.chatId, true);
+            contextCleared = true;
             logger.info(
               { taskId: task.id, name: task.name, chatId: task.chatId },
               'Cleared agent context before scheduled task (clearContext: true)'
@@ -529,6 +542,27 @@ ${task.prompt}`;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
+
+      // Issue #4206 (review nit): if we cleared context for this task but it
+      // then failed before its turn consumed the skip-history flag, clear that
+      // stale flag so the next real message for this chat reloads history
+      // normally. Otherwise a failed clearContext run would leak skip-history
+      // to a subsequent, unrelated user message. resetAgent(chatId, false)
+      // disposes any partial fresh agent and restores the with-history default.
+      if (contextCleared && task.chatId && this.callbacks.resetAgent) {
+        try {
+          this.callbacks.resetAgent(task.chatId, false);
+          logger.warn(
+            { taskId: task.id, chatId: task.chatId },
+            'Cleared stale skip-history flag after failed clearContext task'
+          );
+        } catch (cleanupErr) {
+          logger.warn(
+            { err: cleanupErr, taskId: task.id, chatId: task.chatId },
+            'Failed to clear stale skip-history flag after failed clearContext task'
+          );
+        }
+      }
 
       // Issue #3894: Send specific timeout notification
       const userMessage = error instanceof TaskTimeoutError

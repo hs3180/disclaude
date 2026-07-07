@@ -419,9 +419,9 @@ describe('Scheduler', () => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
-      // resetAgent was called once with the chat's id…
+      // resetAgent was called once with the chat's id and skipContext=true…
       expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(1);
-      expect(mockCallbacks.resetAgent).toHaveBeenCalledWith('oc_test');
+      expect(mockCallbacks.resetAgent).toHaveBeenCalledWith('oc_test', true);
       // …and it happened BEFORE the start-notification sendMessage.
       const resetAgent = mockCallbacks.resetAgent!;
       const [resetOrder] = vi.mocked(resetAgent).mock.invocationCallOrder;
@@ -445,6 +445,49 @@ describe('Scheduler', () => {
         expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 2000 });
 
+      expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
+    });
+
+    it('should clear the skip-history flag via resetAgent(chatId, false) when a clearContext task fails (#4206 nit)', async () => {
+      const task = createTask({ id: 'clear-ctx-fail', clearContext: true });
+      scheduler.addTask(task);
+      const jobs = scheduler.getActiveJobs();
+
+      // Route rejects → the task fails and lands in the catch path.
+      mockRouterAsMock.route.mockRejectedValueOnce(new Error('route boom'));
+
+      fireJob(jobs);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+
+      // resetAgent called twice: first (chatId, true) before route, then
+      // (chatId, false) in the catch to clear the leaked skip-history flag so
+      // it doesn't drop history from the next unrelated message.
+      expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(2);
+      expect(mockCallbacks.resetAgent).toHaveBeenNthCalledWith(1, 'oc_test', true);
+      expect(mockCallbacks.resetAgent).toHaveBeenNthCalledWith(2, 'oc_test', false);
+    });
+
+    it('should NOT clear context when clearContext task fails but clearContext was unset (#4206 nit)', async () => {
+      const task = createTask({ id: 'no-clear-fail' }); // clearContext unset
+      scheduler.addTask(task);
+      const jobs = scheduler.getActiveJobs();
+
+      mockRouterAsMock.route.mockRejectedValueOnce(new Error('route boom'));
+
+      fireJob(jobs);
+      await vi.waitFor(() => {
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('执行失败'),
+        );
+      }, { timeout: 2000 });
+
+      // No clearContext → no resetAgent at all (neither before route nor in catch).
       expect(mockCallbacks.resetAgent).not.toHaveBeenCalled();
     });
 

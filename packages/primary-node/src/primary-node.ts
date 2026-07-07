@@ -593,22 +593,7 @@ export class PrimaryNode extends EventEmitter {
 
     // Step 3: Create callbacks
     logger.info('Scheduler init step 3/6: Creating schedule callbacks');
-    const schedulerCallbacks: SchedulerCallbacks = {
-      sendMessage: async (chatId: string, message: string): Promise<void> => {
-        const outgoingMessage: OutgoingMessage = {
-          type: 'text',
-          chatId,
-          text: message,
-        };
-        await this.channelManager.broadcast(outgoingMessage);
-      },
-      // Issue #4206: reset the persistent agent so a scheduled task with
-      // `clearContext: true` runs in a fresh session. skipContext=true skips
-      // reloading persisted history for that chat on the next getOrCreate.
-      resetAgent: (chatId: string): void => {
-        this.agentPool?.reset(chatId, true);
-      },
-    };
+    const schedulerCallbacks = this.createSchedulerCallbacks();
     logger.info('Scheduler init step 3/6: ✓ Schedule callbacks created');
 
     // Step 4: Initialize Scheduler and schedule tasks
@@ -733,6 +718,36 @@ export class PrimaryNode extends EventEmitter {
       });
     }
     return this.loopRunner;
+  }
+
+  /**
+   * Build the SchedulerCallbacks that bridge the Scheduler to PrimaryNode's
+   * channel manager (sendMessage) and agent pool (resetAgent for clearContext).
+   *
+   * Extracted from initScheduler() for the Issue #4206 review nit so the
+   * clearContext wiring is unit-testable in isolation — in particular so a test
+   * can lock down that `resetAgent` calls `agentPool.reset(chatId, true)`
+   * (skipContext=true). The boolean is inverted vs `ChatAgent.reset`'s
+   * `keepContext`, so pinning the arg here guards against a future flip.
+   *
+   * Issue #4206: `skipContext` defaults to true (the clearContext intent — fresh
+   * session). The scheduler passes `false` on clearContext-task failure to
+   * clear a stale skip-history flag (see Scheduler.executeTask catch).
+   */
+  protected createSchedulerCallbacks(): SchedulerCallbacks {
+    return {
+      sendMessage: async (chatId: string, message: string): Promise<void> => {
+        const outgoingMessage: OutgoingMessage = {
+          type: 'text',
+          chatId,
+          text: message,
+        };
+        await this.channelManager.broadcast(outgoingMessage);
+      },
+      resetAgent: (chatId: string, skipContext: boolean = true): void => {
+        this.agentPool?.reset(chatId, skipContext);
+      },
+    };
   }
 
   /**
