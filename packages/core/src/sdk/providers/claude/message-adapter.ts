@@ -331,19 +331,54 @@ function formatToolInput(toolName: string, input: Record<string, unknown> | unde
       return `🔧 Finding files: ${globPattern || '<no pattern>'}`;
     }
     case 'TaskCreate': {
-      const taskContent = input.content as string | undefined;
-      return `🔧 Creating task: ${taskContent || '<no description>'}`;
+      // Issue #4200: SDK TaskCreateInput has `subject` + `description` (the old
+      // code read a non-existent `content` field, so it always showed
+      // "<no description>"). Surface both so the user can see what was created.
+      // Wording stays English to match the sibling branches above (Bash/Edit/
+      // Read/Write/Grep/Glob); localize the whole function together if needed.
+      const subject = input.subject as string | undefined;
+      const description = input.description as string | undefined;
+      if (subject) {
+        return description
+          ? `🔧 Creating task: ${subject} (${truncateText(description)})`
+          : `🔧 Creating task: ${subject}`;
+      }
+      return `🔧 Creating task: ${description ? truncateText(description) : '<no description>'}`;
     }
     case 'TaskUpdate': {
+      // Issue #4200: include the task content (subject/activeForm/description),
+      // not just the task id + status. SDK TaskUpdateInput carries optional
+      // subject/description/activeForm; use whichever is present so the user
+      // knows which task is being updated. `description` is a last-resort label
+      // (it can be long, so it is truncated like TaskCreate's description).
       const taskId = input.taskId as string | undefined;
       const status = input.status as string | undefined;
-      return `🔧 Updating task ${taskId || '?'} → ${status || '?'}`;
+      const description = input.description as string | undefined;
+      const label =
+        (input.subject as string | undefined) ||
+        (input.activeForm as string | undefined) ||
+        (description ? truncateText(description) : undefined);
+      const tail = status ? ` → ${status}` : '';
+      return label
+        ? `🔧 Updating task #${taskId || '?'} "${label}"${tail}`
+        : `🔧 Updating task #${taskId || '?'}${tail}`;
     }
     default: {
       const str = safeStringify(input, 60);
       return `🔧 ${toolName}: ${str}`;
     }
   }
+}
+
+/**
+ * Truncate a string for display, appending "..." if it exceeds maxLength.
+ * Used for tool-input fields (e.g. task description) that may be long.
+ */
+function truncateText(text: string, maxLength: number = 100): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength - 3)}...`;
 }
 
 /**
