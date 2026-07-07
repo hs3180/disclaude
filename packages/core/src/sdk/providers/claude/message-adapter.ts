@@ -331,19 +331,47 @@ function formatToolInput(toolName: string, input: Record<string, unknown> | unde
       return `🔧 Finding files: ${globPattern || '<no pattern>'}`;
     }
     case 'TaskCreate': {
-      const taskContent = input.content as string | undefined;
-      return `🔧 Creating task: ${taskContent || '<no description>'}`;
+      // Issue #4200: SDK TaskCreateInput has `subject` + `description` (the old
+      // code read a non-existent `content` field, so it always showed
+      // "<no description>"). Surface both so the user can see what was created.
+      const subject = input.subject as string | undefined;
+      const description = input.description as string | undefined;
+      if (subject) {
+        return description
+          ? `🔧 创建任务「${subject}」: ${truncateText(description)}`
+          : `🔧 创建任务「${subject}」`;
+      }
+      return `🔧 创建任务: ${description ? truncateText(description) : '<no description>'}`;
     }
     case 'TaskUpdate': {
+      // Issue #4200: include the task content (subject/activeForm), not just the
+      // task id + status. SDK TaskUpdateInput carries optional subject/
+      // description/activeForm; use whichever is present so the user knows which
+      // task is being updated.
       const taskId = input.taskId as string | undefined;
       const status = input.status as string | undefined;
-      return `🔧 Updating task ${taskId || '?'} → ${status || '?'}`;
+      const label = (input.subject as string | undefined) || (input.activeForm as string | undefined);
+      const tail = status ? ` → ${status}` : '';
+      return label
+        ? `🔧 更新任务 #${taskId || '?'}「${label}」${tail}`
+        : `🔧 更新任务 #${taskId || '?'}${tail}`;
     }
     default: {
       const str = safeStringify(input, 60);
       return `🔧 ${toolName}: ${str}`;
     }
   }
+}
+
+/**
+ * Truncate a string for display, appending "..." if it exceeds maxLength.
+ * Used for tool-input fields (e.g. task description) that may be long.
+ */
+function truncateText(text: string, maxLength: number = 100): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength - 3)}...`;
 }
 
 /**
