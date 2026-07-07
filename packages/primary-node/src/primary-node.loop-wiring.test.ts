@@ -9,6 +9,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PrimaryNode } from './primary-node.js';
 import type { ChannelApiHandlers, IChannel } from '@disclaude/core';
+import type { ChatAgent } from './agents/chat-agent.js';
+import type { ChatAgentCallbacks } from './agents/types.js';
 
 const TEST_CHAT = 'oc_loop_test';
 
@@ -19,6 +21,17 @@ class TestablePrimaryNode extends PrimaryNode {
   }
   getLoopRunnerInstance() {
     return this.loopRunner;
+  }
+  /** Issue #4206: expose the scheduler-callbacks factory for wiring tests. */
+  getSchedulerCallbacks() {
+    return this.createSchedulerCallbacks();
+  }
+  /** Issue #4206: stash a mock agent pool so resetAgent wiring can be tested. */
+  setAgentPool(pool: {
+    getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
+    reset: (chatId: string, skipContext?: boolean) => void;
+  }): void {
+    this.agentPool = pool;
   }
 }
 
@@ -136,5 +149,38 @@ describe('getOrCreateLoopRunner (Issue #4063 part 2 — REST shares the IPC runn
     await vi.waitFor(() => {
       expect(pushToAgent).toHaveBeenCalledWith(TEST_CHAT, 'rest');
     }, { timeout: 2000 });
+  });
+});
+
+describe('Scheduler callbacks wiring (Issue #4206 clearContext)', () => {
+  it('resetAgent wires to agentPool.reset(chatId, true) — locks skipContext polarity', () => {
+    // The boolean is inverted vs ChatAgent.reset(keepContext): here `true` must
+    // mean SKIP history (fresh session). This test pins that polarity so a
+    // future refactor can't silently flip it to keepContext semantics.
+    const node = new TestablePrimaryNode();
+    const reset = vi.fn();
+    node.setAgentPool({
+      getOrCreateChatAgent: vi.fn(),
+      reset,
+    });
+
+    const callbacks = node.getSchedulerCallbacks();
+    expect(typeof callbacks.resetAgent).toBe('function');
+
+    // Default (clearContext intent): skipContext=true → next agent skips history.
+    callbacks.resetAgent!('oc_a');
+    expect(reset).toHaveBeenCalledWith('oc_a', true);
+
+    // Explicit false (scheduler failure-cleanup path): passed through unchanged.
+    callbacks.resetAgent!('oc_b', false);
+    expect(reset).toHaveBeenCalledWith('oc_b', false);
+    expect(reset).toHaveBeenCalledTimes(2);
+  });
+
+  it('resetAgent is a safe no-op when no agent pool is stashed', () => {
+    const node = new TestablePrimaryNode();
+    const callbacks = node.getSchedulerCallbacks();
+    // No initInputMessageRouter() call → agentPool undefined; must not throw.
+    expect(() => callbacks.resetAgent!('oc_c')).not.toThrow();
   });
 });

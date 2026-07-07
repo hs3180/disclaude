@@ -242,6 +242,41 @@ describe('PrimaryAgentPool', () => {
       pool.getOrCreateChatAgent('chat-b', callbacks);
       expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(2); // only 2 creates
     });
+
+    it('should make the next getOrCreate skip history after reset(chatId, true) (#4206)', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      pool.reset('chat-skip', true);
+
+      pool.getOrCreateChatAgent('chat-skip', callbacks);
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
+        'pilot',
+        'chat-skip',
+        callbacks,
+        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: true },
+      );
+    });
+
+    it('should clear a stale skip-history flag on reset(chatId, false) so the next agent reloads history (#4206 nit)', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      // reset(chatId, true) sets the skip-history flag (no agent exists yet, so
+      // nothing to dispose — this mirrors a clearContext task whose flag was
+      // set but whose consuming getOrCreate never ran because the task failed).
+      pool.reset('chat-stale', true);
+      // reset(chatId, false) must clear that stale flag.
+      pool.reset('chat-stale', false);
+
+      pool.getOrCreateChatAgent('chat-stale', callbacks);
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
+        'pilot',
+        'chat-stale',
+        callbacks,
+        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: false },
+      );
+    });
   });
 
   // ==========================================================================

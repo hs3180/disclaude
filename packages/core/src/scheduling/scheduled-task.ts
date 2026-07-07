@@ -45,6 +45,17 @@ export interface ScheduledTask {
   /** Whether to block concurrent executions (skip if previous still running) */
   blocking?: boolean;
   /**
+   * Whether to clear the chat's agent context (start a fresh session) before
+   * executing this task. When true, the scheduler resets the persistent agent
+   * for `chatId` (skipping history reload) right before sending the start
+   * notification, so the task runs with a clean context.
+   *
+   * Opt-in (default false): most recurring tasks want to keep prior context;
+   * this is for tasks that must start fresh each run (e.g. to avoid unbounded
+   * context growth on high-frequency schedules). Issue #4206.
+   */
+  clearContext?: boolean;
+  /**
    * Timeout in milliseconds for task execution.
    * When set, the task will be forcefully terminated after this duration,
    * preventing indefinitely hung tasks from blocking subsequent executions.

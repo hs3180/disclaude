@@ -193,6 +193,43 @@ describe('ScheduleFileScanner', () => {
       expect(task!.createdAt).toBe('2026-01-15T10:00:00Z');
     });
 
+    it('should parse clearContext when true (Issue #4206)', async () => {
+      const content = [
+        '---',
+        'name: "Fresh Task"',
+        'cron: "*/5 * * * *"',
+        'chatId: "oc_fresh"',
+        'clearContext: true',
+        '---',
+        '',
+        'Fresh task prompt.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/fresh-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.clearContext).toBe(true);
+    });
+
+    it('should default clearContext to false when unspecified (Issue #4206)', async () => {
+      const content = [
+        '---',
+        'name: "Default Task"',
+        'cron: "0 * * * *"',
+        'chatId: "oc_default"',
+        '---',
+        '',
+        'Default task prompt.',
+      ].join('\n');
+
+      mockReadFile.mockResolvedValue(content);
+
+      const task = await scanner.parseFile(`${MOCK_DIR}/default-task/SCHEDULE.md`);
+      expect(task).not.toBeNull();
+      expect(task!.clearContext).toBe(false);
+    });
+
     it('should parse model field when specified (Issue #1338)', async () => {
       const content = [
         '---',

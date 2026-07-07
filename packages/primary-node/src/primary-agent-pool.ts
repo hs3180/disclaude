@@ -161,12 +161,26 @@ export class PrimaryAgentPool {
    * multiple /reset operations.
    *
    * @param chatId - Chat ID to reset
-   * @param _keepContext - Ignored (kept for API compatibility). Context is not
-   *   preserved since the old agent is fully disposed.
+   * @param skipContext - If true, the next `getOrCreateChatAgent()` for this
+   *   chat creates a fresh agent that SKIPS reloading persisted history (a true
+   *   fresh session — used by the schedule `clearContext` option, Issue #4206).
+   *   The flag is consumed (deleted) by that next getOrCreate. If false/omitted,
+   *   the next agent reloads history normally.
+   *
+   *   Note the inverted polarity vs `ChatAgent.reset(chatId, keepContext)`:
+   *   there `true` means keep context, here `true` means skip it.
    */
   reset(chatId: string, skipContext?: boolean): void {
     if (skipContext) {
       this.skipHistoryChatIds.add(chatId);
+    } else {
+      // Issue #4206 (review nit): a non-skip reset means "start fresh WITH
+      // history next time". Clear any stale skip-history flag left by a prior
+      // reset(chatId, true) whose consuming getOrCreate never ran — e.g. a
+      // clearContext scheduled task that failed before routing. Without this,
+      // that stale flag would leak to the next unrelated message and silently
+      // drop its history.
+      this.skipHistoryChatIds.delete(chatId);
     }
     const agent = this.agents.get(chatId);
     if (agent) {
