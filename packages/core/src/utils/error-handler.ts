@@ -306,6 +306,52 @@ export function isTransient(error: Error | unknown): boolean {
 }
 
 /**
+ * Symbol under which {@link tagErrorCategory} attaches its classification so
+ * downstream handlers can branch on it without re-classifying. Issue #4192 (L0).
+ */
+const ERROR_CATEGORY_SYMBOL = Symbol('errorCategory');
+
+/**
+ * Classified error category + transient flag, attachable to an Error.
+ * Issue #4192 (L0): lets the agent loop / restart manager branch on the
+ * classified category (e.g. retry transient NETWORK/TIMEOUT, surface CONFIG)
+ * without re-running classification.
+ */
+export interface ErrorCategoryTag {
+  category: ErrorCategory;
+  transient: boolean;
+}
+
+/**
+ * Classify an error and attach the result to it (mirrors the `STDERR_SYMBOL`
+ * pattern in the Claude provider). Returns the classification so the caller
+ * can also log it inline. Idempotent — safe to call on an already-tagged error.
+ *
+ * Issue #4192 (L0): wires `classifyError`/`isTransient` into the error path so
+ * the category is available both in structured logs and to later recovery
+ * layers (L1 in-request retry, L2 turn replay).
+ */
+export function tagErrorCategory(error: unknown): ErrorCategoryTag {
+  const category = classifyError(error);
+  const transient = isTransient(error);
+  if (error instanceof Error) {
+    (error as Error & { [ERROR_CATEGORY_SYMBOL]?: ErrorCategoryTag })[ERROR_CATEGORY_SYMBOL] = { category, transient };
+  }
+  return { category, transient };
+}
+
+/**
+ * Read a previously-attached {@link ErrorCategoryTag}. Returns `undefined` if
+ * the error was never tagged or is not an Error. Issue #4192 (L0).
+ */
+export function getErrorCategoryTag(error: unknown): ErrorCategoryTag | undefined {
+  if (error instanceof Error) {
+    return (error as Error & { [ERROR_CATEGORY_SYMBOL]?: ErrorCategoryTag })[ERROR_CATEGORY_SYMBOL];
+  }
+  return undefined;
+}
+
+/**
  * Determine the severity level for an error
  */
 export function getSeverity(error: Error | unknown): ErrorSeverity {

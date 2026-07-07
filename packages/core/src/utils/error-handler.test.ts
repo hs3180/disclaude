@@ -15,6 +15,8 @@ import {
   enrichError,
   handleError,
   formatError,
+  tagErrorCategory,
+  getErrorCategoryTag,
 } from './error-handler.js';
 
 describe('AppError', () => {
@@ -404,5 +406,44 @@ describe('formatError', () => {
       name: 'UnknownError',
       message: '123',
     });
+  });
+});
+
+describe('tagErrorCategory / getErrorCategoryTag (Issue #4192 L0)', () => {
+  it('classifies and tags a transient network error', () => {
+    const err = new Error('connect ETIMEDOUT 1.2.3.4:443');
+    const tag = tagErrorCategory(err);
+
+    expect(tag.category).toBe(ErrorCategory.NETWORK);
+    expect(tag.transient).toBe(true);
+    // The tag is readable back from the error.
+    expect(getErrorCategoryTag(err)).toEqual(tag);
+  });
+
+  it('tags a non-transient (configuration) error', () => {
+    const err = new Error('Invalid API key: permission denied');
+    const tag = tagErrorCategory(err);
+    expect(tag.transient).toBe(false);
+    expect(getErrorCategoryTag(err)).toEqual(tag);
+  });
+
+  it('is idempotent (re-tagging is safe)', () => {
+    const err = new Error('fetch failed: ECONNRESET');
+    const first = tagErrorCategory(err);
+    const second = tagErrorCategory(err);
+    expect(second).toEqual(first);
+    expect(getErrorCategoryTag(err)).toEqual(first);
+  });
+
+  it('returns a classification even for non-Error inputs without throwing', () => {
+    const tag = tagErrorCategory('a plain string');
+    expect(tag.category).toBeDefined();
+    // Non-Error inputs are classified but cannot be tagged.
+    expect(getErrorCategoryTag('a plain string')).toBeUndefined();
+  });
+
+  it('getErrorCategoryTag returns undefined for an untagged Error', () => {
+    const err = new Error('never tagged');
+    expect(getErrorCategoryTag(err)).toBeUndefined();
   });
 });

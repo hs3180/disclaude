@@ -32,7 +32,10 @@ export {
   logError,
   handleError,
   formatError,
+  tagErrorCategory,
+  getErrorCategoryTag,
 } from './error-handler.js';
+export type { ErrorCategoryTag } from './error-handler.js';
 
 // Retry
 export type { RetryOptions } from './retry.js';
