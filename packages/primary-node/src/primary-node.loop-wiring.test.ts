@@ -8,9 +8,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PrimaryNode } from './primary-node.js';
+import { PrimaryAgentPool } from './primary-agent-pool.js';
+import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChannelApiHandlers, IChannel } from '@disclaude/core';
 import type { ChatAgent } from './agents/chat-agent.js';
-import type { ChatAgentCallbacks } from './agents/types.js';
 
 const TEST_CHAT = 'oc_loop_test';
 
@@ -32,6 +33,10 @@ class TestablePrimaryNode extends PrimaryNode {
     reset: (chatId: string, skipContext?: boolean) => void;
   }): void {
     this.agentPool = pool;
+  }
+  /** Issue #4199: expose the captured busy-state provider for wiring tests. */
+  getSchedulerChatBusyProvider() {
+    return this.schedulerChatBusyProvider;
   }
 }
 
@@ -182,5 +187,32 @@ describe('Scheduler callbacks wiring (Issue #4206 clearContext)', () => {
     const callbacks = node.getSchedulerCallbacks();
     // No initInputMessageRouter() call → agentPool undefined; must not throw.
     expect(() => callbacks.resetAgent!('oc_c')).not.toThrow();
+  });
+});
+
+describe('initInputMessageRouter busy-state wiring (Issue #4199)', () => {
+  /** Dummy callbacks factory — never invoked in these wiring-only tests. */
+  const noopCallbacksFactory = (): ChatAgentCallbacks => ({}) as unknown as ChatAgentCallbacks;
+
+  it('binds PrimaryAgentPool.isAgentBusy so the provider does not throw on `this`', () => {
+    const node = new TestablePrimaryNode();
+    node.initInputMessageRouter(new PrimaryAgentPool(), noopCallbacksFactory);
+
+    const provider = node.getSchedulerChatBusyProvider();
+    expect(provider).toBeDefined();
+    // Regression guard: PrimaryAgentPool.isAgentBusy reads `this.agents`. If the
+    // wiring destructured it off the pool and invoked unbound, this would throw
+    // "Cannot read properties of undefined (reading 'agents')" — breaking every
+    // blocking scheduled task. No agent exists for oc_none => false, no throw.
+    expect(provider!('oc_none')).toBe(false);
+  });
+
+  it('leaves schedulerChatBusyProvider undefined when the pool has no isAgentBusy', () => {
+    const node = new TestablePrimaryNode();
+    const poolWithoutBusy = { getOrCreateChatAgent: vi.fn(), reset: vi.fn() };
+    node.initInputMessageRouter(poolWithoutBusy, noopCallbacksFactory);
+    // undefined provider => the scheduler's isChatBusy gate is a no-op
+    // (unchanged behavior), which is the contract for pools lacking isAgentBusy.
+    expect(node.getSchedulerChatBusyProvider()).toBeUndefined();
   });
 });

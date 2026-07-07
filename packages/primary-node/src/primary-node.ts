@@ -780,10 +780,10 @@ export class PrimaryNode extends EventEmitter {
     this.agentPool = agentPool;
     // Issue #4199: capture the pool's busy-state provider so the scheduler can
     // skip blocking tasks whose target chat is currently processing a message.
-    const { isAgentBusy } = agentPool;
-    this.schedulerChatBusyProvider = isAgentBusy
-      ? (chatId: string) => isAgentBusy(chatId)
-      : undefined;
+    // Bind to agentPool — isAgentBusy is a prototype method that reads
+    // `this.agents`, so destructuring it (`const { isAgentBusy } = pool`) and
+    // invoking unbound would throw. undefined (pool has no isAgentBusy) => no gating.
+    this.schedulerChatBusyProvider = agentPool.isAgentBusy?.bind(agentPool);
     const handler = new AgentPoolMessageHandler({
       agentPool,
       callbacksFactory,
