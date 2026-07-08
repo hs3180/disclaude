@@ -385,17 +385,27 @@ describe('ClaudeSDKProvider', () => {
     it('Issue #4192 (L1): retries the query on a transient error before the first SDK message', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
+      const consumedPerAttempt: unknown[][] = [];
       let callCount = 0;
-      mockQuery.mockImplementation(() => {
+      mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown> }) => {
         callCount++;
+        const consumed: unknown[] = [];
+        consumedPerAttempt.push(consumed);
         if (callCount === 1) {
+          // First attempt: consume the full prompt, then throw a transient error
+          // (simulates: prompt streamed to ready subprocess → network reset → 0 messages).
           return Object.assign(
-            (async function* () { throw new Error('ECONNRESET: connection reset'); })(),
+            (async function* () {
+              for await (const msg of arg.prompt ?? []) { consumed.push(msg); }
+              throw new Error('ECONNRESET: connection reset');
+            })(),
             { interrupt: vi.fn(), close: vi.fn() },
           );
         }
+        // Retry: consume the (replayed) prompt, yield a success message.
         return Object.assign(
           (async function* () {
+            for await (const msg of arg.prompt ?? []) { consumed.push(msg); }
             yield { type: 'assistant', message: { content: [{ type: 'text', text: 'recovered' }] } };
           })(),
           { interrupt: vi.fn(), close: vi.fn() },
@@ -412,8 +422,13 @@ describe('ClaudeSDKProvider', () => {
       const messages: AgentMessage[] = [];
       for await (const msg of result.iterator) { messages.push(msg); }
 
+      // Query was retried (called twice) and the recovered message came through.
       expect(mockQuery).toHaveBeenCalledTimes(2);
       expect(messages.some((m) => m.role === 'assistant')).toBe(true);
+      // Review 🔴 must-fix: input replay — both attempts consumed the SAME prompt
+      // (proves the buffering + replay path works, not just the retry count).
+      expect(consumedPerAttempt[0]).toHaveLength(1);
+      expect(consumedPerAttempt[1]).toEqual(consumedPerAttempt[0]);
     });
 
     it('Issue #4192 (L1): does NOT retry a non-transient error', async () => {

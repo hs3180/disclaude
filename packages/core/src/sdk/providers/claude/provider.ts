@@ -697,7 +697,17 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // first SDK message was yielded. messageCount === 0 ⇒ nothing was emitted
         // to the consumer, so replaying the buffered input can't duplicate output
         // or re-run tool side effects. `continue` → finally cleans this attempt.
+        //
+        // Note (review 🟠): messageCount===0 may still have partialsObserved===true
+        // (the SDK yielded a message_start but no content/full message before the
+        // network reset). Safe for our consumer (nothing emitted); upstream is
+        // at-least-once (the request was accepted). For idempotent chat turns this
+        // is fine. Tighten to !partialsObserved if at-most-once-upstream is needed.
         if (errorTransient && messageCount === 0 && queryAttempt < MAX_QUERY_RETRIES) {
+          // Review 🟡: best-effort cleanup of the failed attempt's handle before
+          // reassigning queryResult on retry (SDK iterator throw doesn't guarantee
+          // subprocess/transport teardown — especially on network reset).
+          try { queryResult.close?.(); } catch { /* best-effort */ }
           logger.warn(
             { queryAttempt: queryAttempt + 1, err: error, errorCategory },
             'Transient error before first SDK message — retrying query (Issue #4192 L1)',
