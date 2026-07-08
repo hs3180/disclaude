@@ -167,6 +167,29 @@ describe('BaseAgent', () => {
       });
     });
 
+    it('should append systemPromptAppend to the claude_code preset (Issue #4181 part 2)', () => {
+      const options = agent.testCreateSdkOptions({
+        systemPromptAppend: 'Always prefer the schedule skill for recurring work.',
+      });
+
+      expect(options.systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'Always prefer the schedule skill for recurring work.',
+      });
+    });
+
+    it('should not append when systemPromptAppend is empty/undefined (Issue #4181 part 2)', () => {
+      expect(agent.testCreateSdkOptions().systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+      });
+      expect(agent.testCreateSdkOptions({ systemPromptAppend: '' }).systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+      });
+    });
+
     it('should set tools to claude_code preset (Issue #2890)', () => {
       const options = agent.testCreateSdkOptions();
 

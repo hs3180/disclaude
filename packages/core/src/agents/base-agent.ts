@@ -44,6 +44,12 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /**
+   * Extra instructions appended to the `claude_code` system-prompt preset
+   * (Issue #4181 part 2). When set to a non-empty string, the preset is
+   * emitted as `{ preset: 'claude_code', append }` instead of the bare preset.
+   */
+  systemPromptAppend?: string;
 }
 
 /**
@@ -173,6 +179,16 @@ export abstract class BaseAgent implements Disposable {
       tools: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
     };
+
+    // Issue #4181 part 2: append agent-scoped guidance (e.g. routing recurring
+    // work to the persistent `schedule` skill) to the claude_code preset.
+    if (extra.systemPromptAppend) {
+      options.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: extra.systemPromptAppend,
+      };
+    }
 
     // Add allowed/disallowed tools
     if (extra.allowedTools) {

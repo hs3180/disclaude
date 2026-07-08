@@ -53,7 +53,7 @@ import {
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
-import { buildDisallowedTools } from './disallowed-tools.js';
+import { buildDisallowedTools, buildBuiltinCronGuidance } from './disallowed-tools.js';
 import { HistoryManager } from './history-manager.js';
 import { buildMcpServers } from './mcp-setup.js';
 
@@ -760,10 +760,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       cwd: projectCwd,
       // Issue #4181: the built-in (session-only) cron/loop tools are disallowed
       // by default; set DISCLAUDE_ALLOW_BUILTIN_CRON=1 to restore them.
-      // Disallowing alone blocks the calls; rerouting recurring work to the
-      // persistent `schedule` skill needs a guidance nudge (tracked as a #4181
-      // follow-up).
+      // Part 2: also append a guidance nudge that routes recurring/scheduled
+      // work to the persistent `schedule` skill (no-op when the built-in tools
+      // are re-enabled).
       disallowedTools: buildDisallowedTools(),
+      systemPromptAppend: buildBuiltinCronGuidance(),
       mcpServers,
     });
 

@@ -54,3 +54,37 @@ export function buildDisallowedTools(env: NodeJS.ProcessEnv = process.env): stri
   }
   return tools;
 }
+
+/**
+ * System-prompt guidance that routes recurring / scheduled work to the
+ * persistent `schedule` skill (Issue #4181 part 2 — the "guidance half").
+ *
+ * Part 1 (`buildDisallowedTools`) stops the model from *calling* the built-in
+ * cron/loop tools, but on its own gives no signal to reach for the persistent
+ * `schedule` skill instead. This guidance is appended to the chat agent's
+ * system prompt to fill that gap.
+ *
+ * Returned **only when the built-in cron tools are disallowed** (the default).
+ * When an operator re-enables them via `DISCLAUDE_ALLOW_BUILTIN_CRON=1` it
+ * returns `undefined`, so the agent is free to use the built-in tools and is
+ * not nudged toward the `schedule` skill.
+ */
+const BUILTIN_CRON_GUIDANCE = [
+  'Recurring & scheduled work — use the `schedule` skill.',
+  'For recurring, scheduled, or periodic tasks (cron jobs, timers, reminders, "every N", daily/weekly/monthly runs), use the `schedule` skill, which writes a persistent, file-backed schedule under `workspace/schedules/<slug>/SCHEDULE.md` that survives across sessions and restarts.',
+  'The built-in `CronCreate`, `CronList`, `CronDelete`, and `ScheduleWakeup` tools are session-only — they die when the agent exits and auto-expire after 7 days — and are disabled here, so do not attempt to call them. Always prefer the `schedule` skill for any recurring or scheduled work.',
+].join('\n');
+
+/**
+ * Build the system-prompt guidance that steers the chat agent toward the
+ * persistent `schedule` skill for recurring/scheduled work (Issue #4181 part 2).
+ *
+ * Returns the guidance string when the built-in cron tools are disallowed
+ * (the default), or `undefined` when they are re-enabled via
+ * `DISCLAUDE_ALLOW_BUILTIN_CRON` (so no nudge competes with the operator's
+ * explicit choice to use the built-in tools). `env` defaults to `process.env`
+ * but is injectable for tests.
+ */
+export function buildBuiltinCronGuidance(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return isTruthyFlag(env.DISCLAUDE_ALLOW_BUILTIN_CRON) ? undefined : BUILTIN_CRON_GUIDANCE;
+}
