@@ -124,11 +124,12 @@ export {
   RestartManager,
 } from './agents/restart-manager.js';
 
-// MCP health tracker (Issue #4179 part 1)
+// MCP health tracker (Issue #4179 part 1 + part 3)
 export {
   type McpHealthTrackerOptions,
   type ToolHealth,
   McpHealthTracker,
+  formatDegradedToolsNotice,
 } from './agents/mcp-health-tracker.js';
 
 // Agent pool

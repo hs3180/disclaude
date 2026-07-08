@@ -185,3 +185,24 @@ export class McpHealthTracker {
     this.tools.clear();
   }
 }
+
+/**
+ * Format a user-facing notice for degraded MCP tools (Issue #4179 Part 3).
+ *
+ * Returns `undefined` when there are no degraded tools (no notice needed).
+ * Otherwise returns a concise message the agent can surface to the user:
+ * > "⚠️ 以下 MCP 工具当前不可用: SearXNG, web_reader。请使用替代方案继续推进任务。"
+ *
+ * The notice is intentionally bilingual-aware (the notice itself is Chinese
+ * to match the project's user-facing language; the tool names are verbatim).
+ *
+ * @param tools - The degraded tool names (typically from `getDegradedTools()`).
+ * @returns The notice string, or `undefined` if the list is empty.
+ */
+export function formatDegradedToolsNotice(tools: string[]): string | undefined {
+  if (tools.length === 0) {
+    return undefined;
+  }
+  const list = tools.join(', ');
+  return `⚠️ 以下 MCP 工具当前不可用: ${list}。请使用替代方案继续推进任务。`;
+}
