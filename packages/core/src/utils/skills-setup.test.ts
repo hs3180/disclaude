@@ -1,8 +1,9 @@
 /**
- * Tests for skills-setup utility (Issue #1617 Phase 2)
+ * Tests for skills-setup utility (Issue #1617 Phase 2; #4224 symlink migration)
  *
- * Tests the setupSkillsInWorkspace function which copies skills
- * from the package directory to the workspace's .claude/skills/.
+ * Tests the setupSkillsInWorkspace function which symlinks each skill
+ * from the package directory into the workspace's .claude/skills/ for in-place
+ * SDK discovery (replacing the old copy-on-start).
  *
  * Uses real temp directories for integration testing, following
  * the pattern established in agents-setup.test.ts.
@@ -171,35 +172,42 @@ describe('setupSkillsInWorkspace', () => {
       expect(content).toBe('Version 2');
     });
 
-    it('should not remove extra files in existing target skill directory', async () => {
+    it('exposes the skill as a symlink to the source and is idempotent (Issue #4224)', async () => {
       // Create source skill
       const skillDir = path.join(sourceDir, 'my-skill');
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Skill');
 
-      // First copy
-      await setupSkillsInWorkspace();
+      const result1 = await setupSkillsInWorkspace();
+      expect(result1.success).toBe(true);
 
-      // Add an extra file to the target (simulating a file added by the user)
-      await fs.writeFile(
-        path.join(targetDir, 'my-skill', 'user-custom.md'), 'Custom',
-      );
+      const linkPath = path.join(targetDir, 'my-skill');
+      // In-place discovery: the skill is a symlink into the package dir, not a copy.
+      expect((await fs.lstat(linkPath)).isSymbolicLink()).toBe(true);
+      expect(await fs.readFile(path.join(linkPath, 'SKILL.md'), 'utf-8')).toBe('# Skill');
 
-      // Re-run
+      // Re-running is idempotent (same symlink, no error, no stale materialization).
+      const result2 = await setupSkillsInWorkspace();
+      expect(result2.success).toBe(true);
+      expect((await fs.lstat(linkPath)).isSymbolicLink()).toBe(true);
+    });
+
+    it('migrates a stale materialized copy (old copy-on-start) into a symlink (Issue #4224)', async () => {
+      const skillDir = path.join(sourceDir, 'my-skill');
+      await fs.mkdir(skillDir, { recursive: true });
+      await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Real');
+
+      // Pre-existing stale real directory left by the old copy-on-start.
+      const linkPath = path.join(targetDir, 'my-skill');
+      await fs.mkdir(linkPath, { recursive: true });
+      await fs.writeFile(path.join(linkPath, 'SKILL.md'), '# Stale');
+
       const result = await setupSkillsInWorkspace();
       expect(result.success).toBe(true);
 
-      // Source file should still be there
-      const content = await fs.readFile(
-        path.join(targetDir, 'my-skill', 'SKILL.md'), 'utf-8',
-      );
-      expect(content).toBe('# Skill');
-
-      // User-added file should also still be there (copyFile overwrites, doesn't delete)
-      const customContent = await fs.readFile(
-        path.join(targetDir, 'my-skill', 'user-custom.md'), 'utf-8',
-      );
-      expect(customContent).toBe('Custom');
+      // The stale copy is replaced by a symlink reflecting the source.
+      expect((await fs.lstat(linkPath)).isSymbolicLink()).toBe(true);
+      expect(await fs.readFile(path.join(linkPath, 'SKILL.md'), 'utf-8')).toBe('# Real');
     });
   });
 

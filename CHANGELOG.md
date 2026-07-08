@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Architecture Refactoring** - Per-process code separation completed (#1037)
 - **Expert Declaration System** - Human expert skills declaration and credit system (#534)
 
+### Changed
+
+- **Builtin skills/agents in-place discovery (symlinks)** - Builtin skills/agents are now symlinked into `$WORKSPACE/.claude/{skills,agents}/` instead of copied on start (#4224 part 1, #4225). Eliminates stale-on-upgrade copies and per-restart overwrite IO. **Upgrade note**: on the first run after upgrade, any old copy-on-start materialized copies (real dirs/files) under `$WORKSPACE/.claude/skills|agents/` are removed and replaced with symlinks, so local edits made to those copies are lost. Customize builtin skills/agents via project-level `<cwd>/.claude/{skills,agents}/` instead, which has higher priority.
+
 ## [0.3.3] - 2026-03-08
 
 ### Highlights
