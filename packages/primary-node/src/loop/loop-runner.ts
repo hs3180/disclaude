@@ -7,7 +7,7 @@
  * @module primary-node/loop/loop-runner
  */
 
-import { createLogger } from '@disclaude/core';
+import { createLogger, readLoopMd } from '@disclaude/core';
 
 const logger = createLogger('LoopRunner');
 
@@ -33,6 +33,13 @@ interface LoopExecution {
   loopId: string;
   chatId: string;
   prompt: string;
+  /**
+   * When set, the loop was started from a LOOP.md definition file (Issue #4193)
+   * and the prompt is re-read from this path each iteration (read-only at
+   * runtime → no write conflict with an editor). Undefined for inline-prompt
+   * loops, which keep using the static {@link LoopExecution.prompt}.
+   */
+  loopMdPath?: string;
   maxSteps: number;
   maxDurationMs: number;
   stepIntervalMs: number;
@@ -105,18 +112,16 @@ export class LoopRunner {
    * @returns The loop ID for subsequent stop/status calls.
    */
   start(params: LoopStartParams): { loopId: string } {
-    const loopId = `loop-${++this.idCounter}-${Date.now()}`;
+    const loopId = this.nextLoopId();
     const maxSteps = Math.max(1, Math.floor(params.maxSteps ?? 10));
-    const maxDurationMs = Math.max(1000, params.maxDurationMs ?? 3600_000);
-    const stepIntervalMs = Math.max(100, params.stepIntervalMs ?? 30_000);
 
     const execution: LoopExecution = {
       loopId,
       chatId: params.chatId,
       prompt: params.prompt,
       maxSteps,
-      maxDurationMs,
-      stepIntervalMs,
+      maxDurationMs: Math.max(1000, params.maxDurationMs ?? 3600_000),
+      stepIntervalMs: Math.max(100, params.stepIntervalMs ?? 30_000),
       state: 'running',
       currentStep: 0,
       totalSteps: maxSteps,
@@ -124,18 +129,71 @@ export class LoopRunner {
       abortController: new AbortController(),
     };
 
-    this.loops.set(loopId, execution);
+    this.launchLoop(execution);
+    logger.info({ loopId, chatId: params.chatId, maxSteps }, 'Loop started');
+    return { loopId };
+  }
 
-    // Fire-and-forget the loop execution
+  /**
+   * Start a loop driven by a LOOP.md definition file (Issue #4193).
+   *
+   * Reads the structural params (`chatId` / `maxSteps` / `maxDuration` /
+   * `stepInterval`) and the initial prompt from the LOOP.md at `loopMdPath`,
+   * then runs the loop. The prompt is **re-read from the file each iteration**
+   * (see {@link LoopRunner.runLoop}), so the definition file is the source of
+   * truth and stays read-only at runtime — no write conflict with a user or
+   * editor who adjusts the prompt mid-run. This is the LOOP.md-driven mode the
+   * issue prescribes; the existing inline-prompt {@link LoopRunner.start} path
+   * is unchanged, and migrating the MCP/IPC/REST `loop_start` contract onto
+   * LOOP.md is a later part.
+   *
+   * @returns The loop ID for subsequent stop/status calls.
+   * @throws when the LOOP.md cannot be read/parsed, or lacks a `chatId`.
+   */
+  startFromLoopMd(loopMdPath: string): { loopId: string } {
+    const def = readLoopMd(loopMdPath);
+    if (!def.params.chatId) {
+      throw new Error(`LOOP.md at ${loopMdPath} is missing required field "chatId"`);
+    }
+    const loopId = this.nextLoopId();
+    // The parser already applied defaults for absent fields, so clamp the raw
+    // values directly (mirrors `start()` — e.g. maxSteps 0 → 1, not 0 → 10).
+    const maxSteps = Math.max(1, Math.floor(def.params.maxSteps));
+
+    const execution: LoopExecution = {
+      loopId,
+      chatId: def.params.chatId,
+      prompt: def.prompt,
+      loopMdPath,
+      maxSteps,
+      maxDurationMs: Math.max(1000, def.params.maxDurationMs),
+      stepIntervalMs: Math.max(100, def.params.stepIntervalMs),
+      state: 'running',
+      currentStep: 0,
+      totalSteps: maxSteps,
+      startedAt: Date.now(),
+      abortController: new AbortController(),
+    };
+
+    this.launchLoop(execution);
+    logger.info({ loopId, chatId: def.params.chatId, loopMdPath, maxSteps }, 'Loop started from LOOP.md');
+    return { loopId };
+  }
+
+  /** Mint the next monotonically-numbered loop ID. */
+  private nextLoopId(): string {
+    return `loop-${++this.idCounter}-${Date.now()}`;
+  }
+
+  /** Register an execution and fire-and-forget its runLoop. */
+  private launchLoop(execution: LoopExecution): void {
+    this.loops.set(execution.loopId, execution);
     void this.runLoop(execution).catch((error) => {
-      logger.error({ err: error, loopId }, 'Loop execution failed');
+      logger.error({ err: error, loopId: execution.loopId }, 'Loop execution failed');
       if (execution.state === 'running') {
         execution.state = 'error';
       }
     });
-
-    logger.info({ loopId, chatId: params.chatId, maxSteps }, 'Loop started');
-    return { loopId };
   }
 
   /**
@@ -216,8 +274,29 @@ export class LoopRunner {
 
       // Push instruction to agent
       execution.currentStep = i + 1;
+      // Issue #4193: when started from a LOOP.md, re-read the prompt each
+      // iteration so edits to the definition file take effect on the next step
+      // (the file is read-only at runtime → no write conflict). A transient
+      // re-read failure falls back to the last known prompt rather than killing
+      // the loop — losing one prompt refresh is preferable to aborting a
+      // long-running loop over a momentary fs hiccup.
+      let { prompt } = execution;
+      if (execution.loopMdPath) {
+        try {
+          const refreshed = readLoopMd(execution.loopMdPath).prompt;
+          if (refreshed) {
+            prompt = refreshed;
+            execution.prompt = refreshed; // remember as the new fallback
+          }
+        } catch (error) {
+          logger.warn(
+            { err: error, loopId: execution.loopId, step: i + 1, loopMdPath: execution.loopMdPath },
+            'Failed to re-read LOOP.md; using last known prompt',
+          );
+        }
+      }
       try {
-        await this.pushCallback(execution.chatId, execution.prompt);
+        await this.pushCallback(execution.chatId, prompt);
       } catch (error) {
         logger.error({ err: error, loopId: execution.loopId, step: i + 1 }, 'Push to agent failed in loop');
         execution.state = 'error';
