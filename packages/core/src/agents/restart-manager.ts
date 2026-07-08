@@ -22,6 +22,7 @@
  */
 
 import type { Logger } from '../utils/logger.js';
+import { isTransient } from '../utils/error-handler.js';
 
 /**
  * Configuration for RestartManager.
@@ -66,7 +67,7 @@ export interface RestartDecision {
   /** Whether restart is allowed */
   allowed: boolean;
   /** Reason if not allowed */
-  reason?: 'max_restarts_exceeded' | 'circuit_open' | 'backoff_pending';
+  reason?: 'max_restarts_exceeded' | 'circuit_open' | 'backoff_pending' | 'non_transient';
   /** Time to wait before restart in ms (if allowed) */
   waitMs?: number;
   /** Current restart count */
@@ -177,6 +178,22 @@ export class RestartManager {
         reason: 'max_restarts_exceeded',
         restartCount: state.restartCount,
         circuitOpen: true,
+      };
+    }
+
+    // Issue #4192 (L2): skip restart for non-transient errors — restarting
+    // won't fix a CONFIGURATION/PERMISSION/VALIDATION issue and wastes a
+    // restart slot + IO. The error is still recorded (above) for diagnostics.
+    if (!isTransient(new Error(errorMessage))) {
+      this.logger.warn(
+        { chatId, errorMessage },
+        'Non-transient error — restart skipped (Issue #4192 L2)',
+      );
+      return {
+        allowed: false,
+        reason: 'non_transient',
+        restartCount: state.restartCount,
+        circuitOpen: state.circuitOpen,
       };
     }
 
