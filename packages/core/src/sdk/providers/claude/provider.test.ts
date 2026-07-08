@@ -386,11 +386,16 @@ describe('ClaudeSDKProvider', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
       const consumedPerAttempt: unknown[][] = [];
+      const closeSpies: ReturnType<typeof vi.fn>[] = [];
       let callCount = 0;
       mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown> }) => {
         callCount++;
         const consumed: unknown[] = [];
         consumedPerAttempt.push(consumed);
+        // Capture each attempt's handle.close so we can assert the failed attempt's
+        // subprocess/transport is torn down before retry (Review 🟡).
+        const close = vi.fn();
+        closeSpies.push(close);
         if (callCount === 1) {
           // First attempt: consume the full prompt, then throw a transient error
           // (simulates: prompt streamed to ready subprocess → network reset → 0 messages).
@@ -399,7 +404,7 @@ describe('ClaudeSDKProvider', () => {
               for await (const msg of arg.prompt ?? []) { consumed.push(msg); }
               throw new Error('ECONNRESET: connection reset');
             })(),
-            { interrupt: vi.fn(), close: vi.fn() },
+            { interrupt: vi.fn(), close },
           );
         }
         // Retry: consume the (replayed) prompt, yield a success message.
@@ -408,7 +413,7 @@ describe('ClaudeSDKProvider', () => {
             for await (const msg of arg.prompt ?? []) { consumed.push(msg); }
             yield { type: 'assistant', message: { content: [{ type: 'text', text: 'recovered' }] } };
           })(),
-          { interrupt: vi.fn(), close: vi.fn() },
+          { interrupt: vi.fn(), close },
         );
       });
 
@@ -429,6 +434,11 @@ describe('ClaudeSDKProvider', () => {
       // (proves the buffering + replay path works, not just the retry count).
       expect(consumedPerAttempt[0]).toHaveLength(1);
       expect(consumedPerAttempt[1]).toEqual(consumedPerAttempt[0]);
+      // Review 🟡: the failed attempt's handle was closed before the retry
+      // (prevents subprocess/transport leak when reassigning queryResult on a
+      // transient-error replay). The successful attempt is NOT closed mid-stream.
+      expect(closeSpies[0]).toHaveBeenCalledTimes(1);
+      expect(closeSpies[1]).not.toHaveBeenCalled();
     });
 
     it('Issue #4192 (L1): does NOT retry a non-transient error', async () => {

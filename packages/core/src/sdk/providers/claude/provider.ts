@@ -704,9 +704,14 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // at-least-once (the request was accepted). For idempotent chat turns this
         // is fine. Tighten to !partialsObserved if at-most-once-upstream is needed.
         if (errorTransient && messageCount === 0 && queryAttempt < MAX_QUERY_RETRIES) {
-          // Review 🟡: best-effort cleanup of the failed attempt's handle before
-          // reassigning queryResult on retry (SDK iterator throw doesn't guarantee
-          // subprocess/transport teardown — especially on network reset).
+          // Review 🟡 + 🟠(note 2): best-effort cleanup of the failed attempt's handle
+          // before reassigning queryResult on retry (SDK iterator throw doesn't guarantee
+          // subprocess/transport teardown — especially on network reset). This also
+          // underpins the note-2 single-consumer guarantee: by the time we re-enter the
+          // loop and call adaptInputStream() again, the prior attempt's prompt generator
+          // is done (its for-await threw → return() ran), so the shared outer `input`
+          // iterator has exactly one active consumer and the replayed/buffered pull can't
+          // race the abandoned one.
           try { queryResult.close?.(); } catch { /* best-effort */ }
           logger.warn(
             { queryAttempt: queryAttempt + 1, err: error, errorCategory },
