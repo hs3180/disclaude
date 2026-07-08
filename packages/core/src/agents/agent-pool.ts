@@ -147,6 +147,13 @@ export class AgentPool {
     this.log.info({ chatId, skipContext }, 'Resetting ChatAgent: disposing old instance for chatId');
     if (skipContext) {
       this.skipHistoryChatIds.add(chatId);
+    } else {
+      // Issue #4210: a with-history reset must restore the default (load
+      // history on next creation). Without this, a prior reset(chatId, true)
+      // leaves a stale skip-history flag. `Set.delete` is a no-op when the
+      // key is absent, so this is safe unconditionally — mirrors the
+      // PrimaryAgentPool.reset() fix in #4207.
+      this.skipHistoryChatIds.delete(chatId);
     }
     this.dispose(chatId);
   }

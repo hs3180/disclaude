@@ -162,6 +162,19 @@ describe('AgentPool', () => {
       pool.reset('chat-2');
       pool.getOrCreateChatAgent('chat-2');
     });
+
+    it('should clear a stale skip-history flag on a with-history reset (Issue #4210)', () => {
+      // The core pool never reads skipHistoryChatIds (the factory doesn't take
+      // options), so the flag is dead state with no behavioral surface — assert
+      // the private set directly to lock in the #4210 fix.
+      const skipSet = (pool as unknown as { skipHistoryChatIds: Set<string> }).skipHistoryChatIds;
+
+      pool.reset('chat-1', true); // skip-history reset sets the flag
+      expect(skipSet.has('chat-1')).toBe(true);
+
+      pool.reset('chat-1');       // with-history reset must restore the default
+      expect(skipSet.has('chat-1')).toBe(false);
+    });
   });
 
   describe('stop', () => {
