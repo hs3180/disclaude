@@ -70,7 +70,7 @@ export async function tryHandleSlashCommand(
 
   // Control-handler path (Issue #3529: typed command data).
   if (deps.hasControlHandler) {
-    const rawData = { args, rawText: input.textWithoutMentions, senderOpenId: input.senderOpenId };
+    const rawData = { args };
     const response = await deps.emitControl(
       createControlCommand(cmd as ControlCommandType, input.chatId, rawData),
     );

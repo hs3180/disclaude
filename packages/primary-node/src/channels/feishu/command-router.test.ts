@@ -7,10 +7,9 @@ import { tryHandleSlashCommand } from './command-router.js';
 import { createControlCommand, type ControlResponse } from '@disclaude/core';
 
 // Spy on createControlCommand so we can assert on the rawData the router builds
-// (input.senderOpenId / rawText / args), while delegating to the real impl so
-// the other tests keep their realistic behavior. Note: normalizeCommandData in
-// core drops senderOpenId/rawText before they reach emitControl, so the only
-// observable point for those fields is here, at the construction boundary.
+// (input.args), while delegating to the real impl so the other tests keep their
+// realistic behavior. Issue #4196: senderOpenId/rawText were dead fields (dropped
+// by normalizeCommandData before any handler saw them) and have been removed.
 vi.mock('@disclaude/core', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@disclaude/core')>();
   return { ...mod, createControlCommand: vi.fn(mod.createControlCommand) };
@@ -91,7 +90,7 @@ describe('tryHandleSlashCommand', () => {
     expect(deps.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('threads senderOpenId, rawText and args into createControlCommand rawData', async () => {
+  it('threads args into createControlCommand rawData (Issue #4196)', async () => {
     vi.mocked(createControlCommand).mockClear();
     const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
     await tryHandleSlashCommand(
@@ -101,7 +100,7 @@ describe('tryHandleSlashCommand', () => {
     expect(createControlCommand).toHaveBeenCalledWith(
       'trigger',
       'oc_x',
-      { args: ['batch'], rawText: '/trigger batch', senderOpenId: 'ou_s' },
+      { args: ['batch'] },
     );
   });
 });
