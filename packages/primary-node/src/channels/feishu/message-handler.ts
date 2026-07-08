@@ -904,7 +904,7 @@ export class MessageHandler {
 
     // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
     const commandHandled = await tryHandleSlashCommand(
-      { textWithoutMentions, chatId: chat_id, senderOpenId: extractOpenId(sender) },
+      { textWithoutMentions, chatId: chat_id },
       {
         hasControlHandler: this.controlHandler,
         emitControl: (command) => this.callbacks.emitControl(command),
