@@ -19,6 +19,7 @@ import { adaptSDKMessage, adaptUserInput, TaskSubjectRegistry } from './message-
 import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
+import { computeBackoffDelay } from '../../../utils/retry.js';
 
 const logger = createLogger('ClaudeSDKProvider');
 
@@ -313,21 +314,39 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
     // 创建输入适配器生成器
     // IMPORTANT: Use manual iteration instead of `for await...of` to avoid blocking on input
     let inputCount = 0;
+    // Issue #4192 (L1): buffer the adapted input so a retried query can replay
+    // the full prompt. Populated lazily as the SDK pulls; adaptInputStream()
+    // yields the buffer first, then resumes the outer `input` generator.
+    const inputBuffer: SDKUserMessage[] = [];
+    let inputExhausted = false;
     async function* adaptInputStream(): AsyncGenerator<SDKUserMessage> {
+      // Replay buffered input first (retries), then resume the outer generator.
+      for (const buffered of inputBuffer) {
+        yield buffered;
+      }
+      if (inputExhausted) {
+        return;
+      }
       // Manual iteration - only pull one value at a time
       const iterator = input[Symbol.asyncIterator]();
       while (true) {
         const { value, done } = await iterator.next();
         if (done) {
+          inputExhausted = true;
           return;
         }
         inputCount++;
+        const adapted = adaptUserInput(value);
+        inputBuffer.push(adapted); // tee for replay on retry
         logger.info({ inputCount, contentLength: value.content?.length }, 'Input received');
-        yield adaptUserInput(value);
+        yield adapted;
       }
     }
 
-    const queryResult = query({
+    // `let` (not const): Issue #4192 (L1) reassigns this on a transient-error
+    // retry before the first SDK message. Created eagerly here so handle.close
+    // works even before iteration starts.
+    let queryResult = query({
       prompt: adaptInputStream(),
       options: sdkOptions as Parameters<typeof query>[0]['options'],
     });
@@ -435,6 +454,31 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         contentWatchdog = armTimer(tickWatchdog, STALL_TIMEOUT_MS);
       };
 
+      // Issue #4192 (L1): retry the query on a transient error that occurs
+      // BEFORE any SDK message is yielded (messageCount === 0) — nothing has
+      // been emitted to the consumer, so a retry can safely replay the buffered
+      // input without duplicating output or re-running tool side effects. Backoff
+      // uses the centralized computeBackoffDelay (#4227). At most MAX_QUERY_RETRIES.
+      const MAX_QUERY_RETRIES = 2;
+      const QUERY_RETRY_TIMING = {
+        initialDelayMs: 500, backoffMultiplier: 2, maxDelayMs: 8000, jitter: true,
+      };
+      const delayMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+      for (let queryAttempt = 0; ; queryAttempt++) {
+        // Per-attempt reset: finally cleared the watchdog timers; counters/flags
+        // reset here so each attempt starts clean.
+        messageCount = 0;
+        partialsObserved = false;
+        requestInFlight = false;
+        stalled = false;
+        lastProgressMs = 0;
+        listenersCleanedUp = false;
+        if (queryAttempt > 0) {
+          queryResult = query({
+            prompt: adaptInputStream(),
+            options: sdkOptions as Parameters<typeof query>[0]['options'],
+          });
+        }
       try {
         // Issue #4200 part 2: per-query registry of taskId → label, so status-only
         // TaskUpdate calls can recall a subject/activeForm seen on an earlier
@@ -626,6 +670,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           { totalMs, messageCount, ttftMs: firstMessageMs ? firstMessageMs - queryStartMs : undefined },
           'SDK iterator completed'
         );
+        return; // success — exit the retry loop + generator (Issue #4192 L1)
       } catch (error) {
         // Issue #3706 (stall): the watchdog's interrupt() likely threw into the
         // for-await — convert to a clean terminal result instead of propagating the error.
@@ -648,6 +693,33 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // downstream handler reading the tagged error) knows the category, e.g.
         // NETWORK/TIMEOUT (transient → retry candidate) vs CONFIG/SDK (not).
         const { category: errorCategory, transient: errorTransient } = tagErrorCategory(error);
+        // Issue #4192 (L1): retry on a transient error that occurred before the
+        // first SDK message was yielded. messageCount === 0 ⇒ nothing was emitted
+        // to the consumer, so replaying the buffered input can't duplicate output
+        // or re-run tool side effects. `continue` → finally cleans this attempt.
+        //
+        // Note (review 🟠): messageCount===0 may still have partialsObserved===true
+        // (the SDK yielded a message_start but no content/full message before the
+        // network reset). Safe for our consumer (nothing emitted); upstream is
+        // at-least-once (the request was accepted). For idempotent chat turns this
+        // is fine. Tighten to !partialsObserved if at-most-once-upstream is needed.
+        if (errorTransient && messageCount === 0 && queryAttempt < MAX_QUERY_RETRIES) {
+          // Review 🟡 + 🟠(note 2): best-effort cleanup of the failed attempt's handle
+          // before reassigning queryResult on retry (SDK iterator throw doesn't guarantee
+          // subprocess/transport teardown — especially on network reset). This also
+          // underpins the note-2 single-consumer guarantee: by the time we re-enter the
+          // loop and call adaptInputStream() again, the prior attempt's prompt generator
+          // is done (its for-await threw → return() ran), so the shared outer `input`
+          // iterator has exactly one active consumer and the replayed/buffered pull can't
+          // race the abandoned one.
+          try { queryResult.close?.(); } catch { /* best-effort */ }
+          logger.warn(
+            { queryAttempt: queryAttempt + 1, err: error, errorCategory },
+            'Transient error before first SDK message — retrying query (Issue #4192 L1)',
+          );
+          await delayMs(computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
+          continue;
+        }
         logger.error(
           {
             err: error,
@@ -667,6 +739,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // processes (e.g., integration test server).
         cleanupListeners();
       }
+      } // end Issue #4192 (L1) retry loop
     }
 
     return {

@@ -380,6 +380,91 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalled();
     });
 
+    // Issue #4192 (L1): provider in-request retry on transient error before the
+    // first SDK message. The query is re-created with replayed (buffered) input.
+    it('Issue #4192 (L1): retries the query on a transient error before the first SDK message', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      const consumedPerAttempt: unknown[][] = [];
+      const closeSpies: ReturnType<typeof vi.fn>[] = [];
+      let callCount = 0;
+      mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown> }) => {
+        callCount++;
+        const consumed: unknown[] = [];
+        consumedPerAttempt.push(consumed);
+        // Capture each attempt's handle.close so we can assert the failed attempt's
+        // subprocess/transport is torn down before retry (Review 🟡).
+        const close = vi.fn();
+        closeSpies.push(close);
+        if (callCount === 1) {
+          // First attempt: consume the full prompt, then throw a transient error
+          // (simulates: prompt streamed to ready subprocess → network reset → 0 messages).
+          return Object.assign(
+            (async function* () {
+              for await (const msg of arg.prompt ?? []) { consumed.push(msg); }
+              throw new Error('ECONNRESET: connection reset');
+            })(),
+            { interrupt: vi.fn(), close },
+          );
+        }
+        // Retry: consume the (replayed) prompt, yield a success message.
+        return Object.assign(
+          (async function* () {
+            for await (const msg of arg.prompt ?? []) { consumed.push(msg); }
+            yield { type: 'assistant', message: { content: [{ type: 'text', text: 'recovered' }] } };
+          })(),
+          { interrupt: vi.fn(), close },
+        );
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+
+      // Query was retried (called twice) and the recovered message came through.
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(messages.some((m) => m.role === 'assistant')).toBe(true);
+      // Review 🔴 must-fix: input replay — both attempts consumed the SAME prompt
+      // (proves the buffering + replay path works, not just the retry count).
+      expect(consumedPerAttempt[0]).toHaveLength(1);
+      expect(consumedPerAttempt[1]).toEqual(consumedPerAttempt[0]);
+      // Review 🟡: the failed attempt's handle was closed before the retry
+      // (prevents subprocess/transport leak when reassigning queryResult on a
+      // transient-error replay). The successful attempt is NOT closed mid-stream.
+      expect(closeSpies[0]).toHaveBeenCalledTimes(1);
+      expect(closeSpies[1]).not.toHaveBeenCalled();
+    });
+
+    it('Issue #4192 (L1): does NOT retry a non-transient error', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      mockQuery.mockImplementation(() =>
+        Object.assign(
+          (async function* () { throw new Error('validation failed: invalid input'); })(),
+          { interrupt: vi.fn(), close: vi.fn() },
+        ),
+      );
+
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      await expect(async () => {
+        for await (const _msg of result.iterator) { void _msg; }
+      }).rejects.toThrow('validation failed');
+
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
     // Issue #3706 (GLM stall): no-content-progress watchdog.
     // Margins chosen with headroom over the timeout to stay green under CI load.
     it('should terminate on GLM stall (message_start, no content_block_delta for STALL_TIMEOUT_MS)', async () => {
