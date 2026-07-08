@@ -25,7 +25,7 @@ function makeDeps(opts: { hasControlHandler?: boolean; controlResponse?: Control
   };
 }
 
-const input = (text: string) => ({ textWithoutMentions: text, chatId: 'oc_x', senderOpenId: 'ou_s' });
+const input = (text: string) => ({ textWithoutMentions: text, chatId: 'oc_x' });
 
 describe('tryHandleSlashCommand', () => {
   it('returns false for non-command text', async () => {
@@ -94,7 +94,7 @@ describe('tryHandleSlashCommand', () => {
     vi.mocked(createControlCommand).mockClear();
     const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
     await tryHandleSlashCommand(
-      { textWithoutMentions: '/trigger batch', chatId: 'oc_x', senderOpenId: 'ou_s' },
+      { textWithoutMentions: '/trigger batch', chatId: 'oc_x' },
       deps,
     );
     expect(createControlCommand).toHaveBeenCalledWith(

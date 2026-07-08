@@ -38,8 +38,6 @@ export interface CommandRouterInput {
   /** Message text with leading @mentions stripped. */
   textWithoutMentions: string;
   chatId: string;
-  /** Sender open id (may be undefined for some events). */
-  senderOpenId?: string;
 }
 
 /**
