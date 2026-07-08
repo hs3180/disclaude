@@ -487,6 +487,46 @@ describe('ClaudeSDKProvider', () => {
       );
     });
 
+    // Issue #4194: a turn that emits only system + result (no assistant text /
+    // tool_use) leaves the bot appearing unresponsive; surface it via a warn.
+    // Shared driver: mock the SDK stream, run one turn to completion, return the
+    // count of #4194 empty-turn warns logged this turn.
+    async function runTurnAndCountEmptyWarns<T>(
+      sdkStream: () => AsyncGenerator<T>
+    ): Promise<number> {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockQuery.mockReturnValue(sdkStream());
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Hi' };
+      }
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'],
+        cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+      for await (const _msg of result.iterator) { /* drain to completion */ }
+      return loggerMock.warn.mock.calls.filter(
+        ([, msg]) => typeof msg === 'string' && /#4194/.test(msg),
+      ).length;
+    }
+
+    it('should warn on empty turns with no user-visible output (Issue #4194)', async () => {
+      const warns = await runTurnAndCountEmptyWarns(async function* () {
+        yield { type: 'system' as const, subtype: 'task_started' };
+        yield { type: 'result' as const, subtype: 'success' };
+      });
+      expect(warns).toBe(1);
+    });
+
+    it('should NOT warn on turns that produced assistant text (Issue #4194)', async () => {
+      const warns = await runTurnAndCountEmptyWarns(async function* () {
+        yield { type: 'system' as const, subtype: 'task_started' };
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } };
+        yield { type: 'result' as const, subtype: 'success' };
+      });
+      expect(warns).toBe(0);
+    });
+
     // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会
     // 产出海量空 system 消息(实测以 thinking_tokens 为主)。flood 检测必须 warn-only
     // —— 不终止流(范围不含 D3 终止防护),否则会改变行为。此处用任意未识别 subtype 验证。
