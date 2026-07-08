@@ -1,7 +1,7 @@
 /**
  * Command data normalization (Issue #3529).
  *
- * Converts raw CLI-style data `{ args, rawText, senderOpenId }` (from Feishu message-handler)
+ * Converts raw CLI-style data `{ args }` (from Feishu message-handler)
  * into the typed data format expected by each command's handler.
  *
  * @module control/normalize
