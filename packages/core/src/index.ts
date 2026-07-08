@@ -132,6 +132,18 @@ export {
   formatDegradedToolsNotice,
 } from './agents/mcp-health-tracker.js';
 
+// LOOP.md loop definition file: spec + parser (Issue #4193 part A)
+export {
+  type LoopMdParams,
+  type LoopMdDefinition,
+  LOOP_MD_DIR,
+  LOOP_MD_FILENAME,
+  parseLoopMd,
+  parseDuration,
+  readLoopMd,
+  loopMdPath,
+} from './loop/loop-md.js';
+
 // Agent pool
 export {
   type ChatAgentFactory,
