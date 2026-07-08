@@ -461,7 +461,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // turn that emits only system + result leaves the bot appearing
         // unresponsive while logs mark it complete.
         let sawVisibleOutput = false;
-        let toolCallCount = 0;
 
         for await (const message of queryResult) {
           // Issue #3706 (stall): handle stream_event (partial) messages for the
@@ -539,7 +538,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             }
           } else if (adapted.type === 'tool_use') {
             sawVisibleOutput = true;
-            toolCallCount++;
             consecutiveTextOnlyCount = 0;
           }
 
@@ -584,7 +582,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // follow-up can add auto session-reset / retry.
           if (adapted.type === 'result' && !sawVisibleOutput) {
             logger.warn(
-              { messageCount, toolCallCount, model, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
+              { messageCount, model, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
               'Issue #4194: turn completed with no user-visible output (system/result only) '
                 + '— agent may appear unresponsive to the user',
             );
