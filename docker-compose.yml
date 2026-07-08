@@ -60,6 +60,12 @@ services:
       - DISCLAUDE_MODE=primary
       - HOST=0.0.0.0
       - DISCLAUDE_WORKSPACE_DIR=/data/workspace
+      # Issue #4181: re-enable Claude Code's built-in (session-only) cron/loop
+      # tools (CronCreate/CronList/CronDelete/ScheduleWakeup), disallowed for
+      # chat agents by default. Set DISCLAUDE_ALLOW_BUILTIN_CRON=1 in .env to
+      # use the built-in /loop dynamic mode; leave unset to keep the persistent
+      # `schedule` skill as the only scheduling mechanism.
+      - DISCLAUDE_ALLOW_BUILTIN_CRON=${DISCLAUDE_ALLOW_BUILTIN_CRON:-}
       # Docker restart policy handles singleton enforcement; disable PID lockfile
       # to prevent stale lockfile from blocking startup after container restart.
       - LOCKFILE_PATH=

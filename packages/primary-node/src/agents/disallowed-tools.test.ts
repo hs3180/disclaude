@@ -6,13 +6,8 @@ import { describe, it, expect } from 'vitest';
 import { buildDisallowedTools } from './disallowed-tools.js';
 
 describe('buildDisallowedTools', () => {
-  it('returns the base disallowed tools when the flag is unset', () => {
-    expect(buildDisallowedTools({})).toEqual(['EnterPlanMode', 'AskUserQuestion']);
-  });
-
-  it('appends built-in cron tools when DISCLAUDE_DISABLE_BUILTIN_CRON=1', () => {
-    const tools = buildDisallowedTools({ DISCLAUDE_DISABLE_BUILTIN_CRON: '1' });
-    expect(tools).toEqual([
+  it('disallows the built-in cron tools by default (issue #4181)', () => {
+    expect(buildDisallowedTools({})).toEqual([
       'EnterPlanMode',
       'AskUserQuestion',
       'CronCreate',
@@ -22,28 +17,35 @@ describe('buildDisallowedTools', () => {
     ]);
   });
 
-  it('appends built-in cron tools when DISCLAUDE_DISABLE_BUILTIN_CRON=true', () => {
-    expect(buildDisallowedTools({ DISCLAUDE_DISABLE_BUILTIN_CRON: 'true' })).toEqual([
+  it('restores the built-in cron tools when DISCLAUDE_ALLOW_BUILTIN_CRON=1', () => {
+    expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: '1' })).toEqual([
       'EnterPlanMode',
       'AskUserQuestion',
-      'CronCreate',
-      'CronList',
-      'CronDelete',
-      'ScheduleWakeup',
+    ]);
+  });
+
+  it('restores the built-in cron tools when DISCLAUDE_ALLOW_BUILTIN_CRON=true', () => {
+    expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: 'true' })).toEqual([
+      'EnterPlanMode',
+      'AskUserQuestion',
     ]);
   });
 
   it('treats the flag case-insensitively', () => {
     for (const value of ['True', 'TRUE', 'tRuE']) {
-      expect(buildDisallowedTools({ DISCLAUDE_DISABLE_BUILTIN_CRON: value })).toContain('CronCreate');
+      expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: value })).not.toContain('CronCreate');
     }
   });
 
-  it('does not append cron tools for falsy/other values', () => {
-    for (const value of ['0', 'false', '', 'yes', 'disabled']) {
-      expect(buildDisallowedTools({ DISCLAUDE_DISABLE_BUILTIN_CRON: value })).toEqual([
+  it('keeps disallowing the cron tools for falsy/other values', () => {
+    for (const value of ['0', 'false', '', 'yes', 'allow']) {
+      expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: value })).toEqual([
         'EnterPlanMode',
         'AskUserQuestion',
+        'CronCreate',
+        'CronList',
+        'CronDelete',
+        'ScheduleWakeup',
       ]);
     }
   });
