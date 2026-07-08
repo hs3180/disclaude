@@ -8,18 +8,23 @@
  * Claude Code discovers the agent in-place through the link. See
  * `utils/symlink.ts` for the link helper.
  *
+ * Issue #4224 part 2: `setupAgentsInWorkspace` is **synchronous** so it
+ * completes inside `getProvider()` before the provider is returned, eliminating
+ * the first-message race.
+ *
  * @see Issue #1410
  */
-import * as fs from 'fs/promises';
+import { accessSync, mkdirSync, readdirSync } from 'node:fs';
 import * as path from 'path';
 import { createLogger } from './logger.js';
-import { ensureSymlink } from './symlink.js';
+import { ensureSymlinkSync } from './symlink.js';
 import { Config } from '../config/index.js';
 
 const logger = createLogger('AgentsSetup');
 
 /**
  * Symlink preset agent definitions from the package directory into workspace .claude/agents/.
+ * Synchronous — completes before `getProvider()` returns (no first-message race).
  *
  * This enables Claude Code to load agent definitions via `.claude/agents/` in the
  * working directory. Only `.md` files are linked (agent definitions are Markdown).
@@ -29,10 +34,10 @@ const logger = createLogger('AgentsSetup');
  *
  * @returns Success status and error message if failed
  */
-export async function setupAgentsInWorkspace(): Promise<{
+export function setupAgentsInWorkspace(): {
   success: boolean;
   error?: string;
-}> {
+} {
   try {
     const workspaceDir = Config.getWorkspaceDir();
     const targetDir = path.join(workspaceDir, '.claude', 'agents');
@@ -46,7 +51,7 @@ export async function setupAgentsInWorkspace(): Promise<{
 
     // Check if source agents directory exists
     try {
-      await fs.access(sourceDir);
+      accessSync(sourceDir);
     } catch {
       // Agents directory is optional — no error if missing
       logger.debug({ sourceDir }, 'Source agents directory does not exist, skipping');
@@ -55,7 +60,7 @@ export async function setupAgentsInWorkspace(): Promise<{
 
     // Create target directory if it doesn't exist
     try {
-      await fs.mkdir(targetDir, { recursive: true });
+      mkdirSync(targetDir, { recursive: true });
       logger.debug({ targetDir }, 'Created target agents directory');
     } catch (error) {
       const err = error as Error;
@@ -64,7 +69,7 @@ export async function setupAgentsInWorkspace(): Promise<{
     }
 
     // Symlink only .md agent definition files (idempotent; migrates any stale copy).
-    const entries = await fs.readdir(sourceDir, { withFileTypes: true });
+    const entries = readdirSync(sourceDir, { withFileTypes: true });
     let linkedCount = 0;
 
     for (const entry of entries) {
@@ -74,7 +79,7 @@ export async function setupAgentsInWorkspace(): Promise<{
         const targetPath = path.join(targetDir, agentName);
 
         try {
-          await ensureSymlink(sourcePath, targetPath, 'file');
+          ensureSymlinkSync(sourcePath, targetPath, 'file');
           linkedCount++;
           logger.debug({ agentName, sourcePath, targetPath }, 'Linked agent definition');
         } catch (error) {
