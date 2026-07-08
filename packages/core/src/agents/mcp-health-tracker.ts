@@ -22,7 +22,7 @@ import { createLogger } from '../utils/logger.js';
 const logger = createLogger('McpHealthTracker');
 
 /** Per-tool health record. */
-interface ToolHealth {
+export interface ToolHealth {
   /** Consecutive failures since the last success. Resets to 0 on success. */
   consecutiveFailures: number;
   /** Lifetime failure count for this tool (observability; never reset on success). */
@@ -70,8 +70,13 @@ export class McpHealthTracker {
   private readonly now: () => Date;
 
   constructor(options: McpHealthTrackerOptions = {}) {
-    this.degradationThreshold =
-      options.degradationThreshold ?? DEFAULT_DEGRADATION_THRESHOLD;
+    // Floor at 1: a threshold ≤ 0 is a caller bug (would degrade before any
+    // failure is even recorded). `Math.max(1, …)` keeps "first failure
+    // degrades" semantics for a 0 input without going nonsensical on negatives.
+    this.degradationThreshold = Math.max(
+      1,
+      options.degradationThreshold ?? DEFAULT_DEGRADATION_THRESHOLD,
+    );
     this.isFastTripFailure = options.isFastTripFailure;
     this.now = options.now ?? (() => new Date());
   }
@@ -137,7 +142,10 @@ export class McpHealthTracker {
     return this.tools.get(toolName)?.degraded ?? false;
   }
 
-  /** Names of all currently-degraded tools. */
+  /**
+   * Names of all currently-degraded tools, sorted for stable display (e.g. the
+   * "以下 MCP 工具不可用: [...]" system reminder in a later part).
+   */
   getDegradedTools(): string[] {
     const result: string[] = [];
     for (const [name, rec] of this.tools) {
@@ -145,7 +153,7 @@ export class McpHealthTracker {
         result.push(name);
       }
     }
-    return result;
+    return result.sort();
   }
 
   /** Read-only health snapshot for a tool (observability), or `undefined` if unseen. */
@@ -160,6 +168,10 @@ export class McpHealthTracker {
     if (!rec.degraded) {
       rec.degraded = true;
       rec.degradedAt = this.now().toISOString();
+      logger.warn(
+        { toolName, reason: 'manual', totalFailures: rec.totalFailures },
+        'MCP tool marked degraded (manual trip)',
+      );
     }
   }
 

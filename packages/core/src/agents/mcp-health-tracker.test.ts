@@ -34,6 +34,28 @@ describe('McpHealthTracker', () => {
       tracker.recordFailure('web_reader');
       expect(tracker.isDegraded('web_reader')).toBe(true);
     });
+
+    it('floors a non-positive degradationThreshold at 1 (caller bug guard)', () => {
+      // 0 / negative would otherwise be nonsensical; floor keeps "first failure
+      // degrades" semantics without degrading before any failure.
+      for (const bad of [0, -1, -5]) {
+        const tracker = new McpHealthTracker({ degradationThreshold: bad });
+        expect(tracker.isDegraded('x')).toBe(false); // not degraded before any failure
+        tracker.recordFailure('x');
+        expect(tracker.isDegraded('x')).toBe(true); // first failure degrades
+      }
+    });
+  });
+
+  describe('getDegradedTools ordering', () => {
+    it('returns degraded tool names sorted for stable display', () => {
+      const tracker = new McpHealthTracker();
+      // Trip in non-sorted insertion order.
+      tracker.trip('web_reader');
+      tracker.trip('SearXNG');
+      tracker.trip('playwright');
+      expect(tracker.getDegradedTools()).toEqual(['SearXNG', 'playwright', 'web_reader']);
+    });
   });
 
   describe('consecutive vs total failures', () => {
