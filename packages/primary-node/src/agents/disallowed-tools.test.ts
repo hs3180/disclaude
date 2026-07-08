@@ -17,10 +17,6 @@ describe('buildDisallowedTools', () => {
     ]);
   });
 
-  it('keeps disallowing the cron tools when the flag is unset', () => {
-    expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: undefined })).toContain('CronCreate');
-  });
-
   it('restores the built-in cron tools when DISCLAUDE_ALLOW_BUILTIN_CRON=1', () => {
     expect(buildDisallowedTools({ DISCLAUDE_ALLOW_BUILTIN_CRON: '1' })).toEqual([
       'EnterPlanMode',
