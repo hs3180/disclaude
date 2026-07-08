@@ -815,6 +815,12 @@ describe('Scheduler', () => {
       const jobs = scheduler.getActiveJobs();
 
       void jobs[0].job.fireOnTick();
+      // Stop the cron job's real-timer auto-tick so a wall-clock minute boundary
+      // can't fire during the waitFor/100ms windows below and invoke route a 3rd
+      // time (CI flake: expected 2, got 3). Same class as Issue #4174 (fixed in
+      // #4176); that fix missed this test. Manual fireOnTick() below still works
+      // on a stopped job.
+      jobs[0].job.stop();
       await vi.waitFor(() => {
         expect(scheduler.isTaskRunning('non-blocking')).toBe(true);
       }, { timeout: 2000 });
