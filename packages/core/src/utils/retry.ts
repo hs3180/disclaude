@@ -38,6 +38,36 @@ const DEFAULT_RETRY_OPTIONS: Required<RetryOptions> = {
 };
 
 /**
+ * Compute the (jittered) exponential-backoff delay for a retry attempt.
+ *
+ * Issue #4192: the backoff curve is defined once here (previously duplicated
+ * inline in `retry` and `retryAsyncIterable`) so the provider/loop retry layers
+ * can reuse it instead of reinventing it. Behavior is identical to the previous
+ * inline calculation: `min(initialDelayMs * multiplier ** attempt, maxDelayMs)`,
+ * scaled by `(0.5 + random*0.5)` when `jitter` is on (i.e. into
+ * `[0.5*delay, delay]`, "half-jitter" to avoid thundering herd).
+ *
+ * @param attempt - 0-based retry attempt index.
+ * @param opts - Timing options (only these four fields are read).
+ * @param random - Injectable RNG in `[0, 1]` for deterministic tests. Defaults to `Math.random`.
+ * @returns Delay in milliseconds.
+ */
+export function computeBackoffDelay(
+  attempt: number,
+  opts: {
+    initialDelayMs: number;
+    backoffMultiplier: number;
+    maxDelayMs: number;
+    jitter: boolean;
+  },
+  random: () => number = Math.random,
+): number {
+  const baseDelay = opts.initialDelayMs * Math.pow(opts.backoffMultiplier, attempt);
+  const delay = Math.min(baseDelay, opts.maxDelayMs);
+  return opts.jitter ? delay * (0.5 + random() * 0.5) : delay;
+}
+
+/**
  * Retry an operation with exponential backoff.
  *
  * @param operation - Operation to retry (should return a Promise)
@@ -70,14 +100,9 @@ export async function retry<T>(
         break;
       }
 
-      // Calculate delay with exponential backoff
-      const baseDelay = opts.initialDelayMs * Math.pow(opts.backoffMultiplier, attempt);
-      const delay = Math.min(baseDelay, opts.maxDelayMs);
-
-      // Add jitter to avoid thundering herd
-      const jitteredDelay = opts.jitter
-        ? delay * (0.5 + Math.random() * 0.5)
-        : delay;
+      // Calculate delay with exponential backoff (+ jitter). Issue #4192: the
+      // curve lives in computeBackoffDelay so it's defined once and reusable.
+      const jitteredDelay = computeBackoffDelay(attempt, opts);
 
       // Call retry callback
       opts.onRetry(attempt + 1, lastError);
@@ -127,14 +152,9 @@ export async function* retryAsyncIterable<T>(
         throw lastError;
       }
 
-      // Calculate delay with exponential backoff
-      const baseDelay = opts.initialDelayMs * Math.pow(opts.backoffMultiplier, attempt);
-      const delay = Math.min(baseDelay, opts.maxDelayMs);
-
-      // Add jitter
-      const jitteredDelay = opts.jitter
-        ? delay * (0.5 + Math.random() * 0.5)
-        : delay;
+      // Calculate delay with exponential backoff (+ jitter). Issue #4192: reuse
+      // the shared computeBackoffDelay curve (same as retry() above).
+      const jitteredDelay = computeBackoffDelay(attempt, opts);
 
       // Call retry callback
       opts.onRetry(attempt + 1, lastError);
