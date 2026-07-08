@@ -39,41 +39,53 @@ describe('RestartManager', () => {
   });
 
   describe('shouldRestart', () => {
+    it('Issue #4192 (L2): blocks restart for non-transient errors', () => {
+      const decision = manager.shouldRestart('chat-1', 'validation failed: invalid input');
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toBe('non_transient');
+      expect(decision.restartCount).toBe(0); // doesn't consume a restart slot
+    });
+
+    it('Issue #4192 (L2): allows restart for transient (network) errors', () => {
+      const decision = manager.shouldRestart('chat-1', 'Network Error: timeout');
+      expect(decision.allowed).toBe(true);
+    });
+
     it('should allow first restart with no backoff', () => {
-      const decision = manager.shouldRestart('chat-1', 'test error');
+      const decision = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(decision.allowed).toBe(true);
       expect(decision.restartCount).toBe(1);
       expect(decision.circuitOpen).toBe(false);
     });
 
     it('should allow restarts up to maxRestarts', () => {
-      const d1 = manager.shouldRestart('chat-1', 'error 1');
+      const d1 = manager.shouldRestart('chat-1', 'Network Error: timeout 1');
       expect(d1.allowed).toBe(true);
       expect(d1.restartCount).toBe(1);
 
-      const d2 = manager.shouldRestart('chat-1', 'error 2');
+      const d2 = manager.shouldRestart('chat-1', 'Network Error: timeout 2');
       expect(d2.allowed).toBe(true);
       expect(d2.restartCount).toBe(2);
 
-      const d3 = manager.shouldRestart('chat-1', 'error 3');
+      const d3 = manager.shouldRestart('chat-1', 'Network Error: timeout 3');
       expect(d3.allowed).toBe(true);
       expect(d3.restartCount).toBe(3);
     });
 
     it('should block restart when maxRestarts is exceeded', () => {
-      manager.shouldRestart('chat-1', 'error 1');
-      manager.shouldRestart('chat-1', 'error 2');
-      manager.shouldRestart('chat-1', 'error 3');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 2');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 3');
 
-      const decision = manager.shouldRestart('chat-1', 'error 4');
+      const decision = manager.shouldRestart('chat-1', 'Network Error: timeout 4');
       expect(decision.allowed).toBe(false);
       expect(decision.reason).toBe('max_restarts_exceeded');
       expect(decision.circuitOpen).toBe(true);
     });
 
     it('should track different chatIds independently', () => {
-      const d1 = manager.shouldRestart('chat-1', 'error');
-      const d2 = manager.shouldRestart('chat-2', 'error');
+      const d1 = manager.shouldRestart('chat-1', 'Network Error: timeout');
+      const d2 = manager.shouldRestart('chat-2', 'Network Error: timeout');
 
       expect(d1.allowed).toBe(true);
       expect(d1.restartCount).toBe(1);
@@ -83,48 +95,48 @@ describe('RestartManager', () => {
 
     it('should block restart when circuit is already open', () => {
       // Exhaust restarts
-      manager.shouldRestart('chat-1', 'error 1');
-      manager.shouldRestart('chat-1', 'error 2');
-      manager.shouldRestart('chat-1', 'error 3');
-      manager.shouldRestart('chat-1', 'error 4'); // Opens circuit
+      manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 2');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 3');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 4'); // Opens circuit
 
-      const decision = manager.shouldRestart('chat-1', 'error 5');
+      const decision = manager.shouldRestart('chat-1', 'Network Error: timeout 5');
       expect(decision.allowed).toBe(false);
       expect(decision.reason).toBe('circuit_open');
       expect(decision.circuitOpen).toBe(true);
     });
 
     it('should include waitMs in decision', () => {
-      const decision = manager.shouldRestart('chat-1', 'error');
+      const decision = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(decision.waitMs).toBeDefined();
       expect(typeof decision.waitMs).toBe('number');
       expect(decision.waitMs! >= 0).toBe(true);
     });
 
     it('should calculate backoff with exponential increase', () => {
-      const d1 = manager.shouldRestart('chat-1', 'error');
+      const d1 = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(d1.waitMs).toBeLessThanOrEqual(1000); // initialBackoffMs
 
       // Second restart should have higher backoff
-      const d2 = manager.shouldRestart('chat-1', 'error');
+      const d2 = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(d2.waitMs).toBeLessThanOrEqual(2000); // initialBackoffMs * 2
 
       // Third restart
-      const d3 = manager.shouldRestart('chat-1', 'error');
+      const d3 = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(d3.waitMs).toBeLessThanOrEqual(4000); // initialBackoffMs * 4
     });
   });
 
   describe('recordSuccess', () => {
     it('should reset restart count after success', () => {
-      manager.shouldRestart('chat-1', 'error');
-      manager.shouldRestart('chat-1', 'error');
+      manager.shouldRestart('chat-1', 'Network Error: timeout');
+      manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(manager.isCircuitOpen('chat-1')).toBe(false);
 
       manager.recordSuccess('chat-1');
 
       // Should be able to restart again
-      const decision = manager.shouldRestart('chat-1', 'error');
+      const decision = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(decision.allowed).toBe(true);
       expect(decision.restartCount).toBe(1);
     });
@@ -134,8 +146,8 @@ describe('RestartManager', () => {
     });
 
     it('should clear recent errors on success', () => {
-      manager.shouldRestart('chat-1', 'error 1');
-      manager.shouldRestart('chat-1', 'error 2');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 2');
       manager.recordSuccess('chat-1');
       expect(manager.getRecentErrors('chat-1')).toEqual([]);
     });
@@ -144,10 +156,10 @@ describe('RestartManager', () => {
   describe('recordSuccess with circuit breaker', () => {
     it('should close circuit when recordSuccess is called after errors are cleared', () => {
       // Exhaust restarts to open circuit
-      manager.shouldRestart('chat-1', 'error 1');
-      manager.shouldRestart('chat-1', 'error 2');
-      manager.shouldRestart('chat-1', 'error 3');
-      manager.shouldRestart('chat-1', 'error 4');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 2');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 3');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 4');
       expect(manager.isCircuitOpen('chat-1')).toBe(true);
 
       // Record success - this clears recentErrors and restartCount,
@@ -159,7 +171,7 @@ describe('RestartManager', () => {
     it('should reset restart count when circuit is closed after success', () => {
       // Exhaust restarts to open circuit
       for (let i = 0; i < 4; i++) {
-        manager.shouldRestart('chat-1', `error ${i}`);
+        manager.shouldRestart('chat-1', `Network Error: timeout ${i}`);
       }
       expect(manager.isCircuitOpen('chat-1')).toBe(true);
 
@@ -168,7 +180,7 @@ describe('RestartManager', () => {
       expect(manager.isCircuitOpen('chat-1')).toBe(false);
 
       // Should be able to restart again from scratch
-      const decision = manager.shouldRestart('chat-1', 'new error');
+      const decision = manager.shouldRestart('chat-1', 'Network Error: new timeout');
       expect(decision.allowed).toBe(true);
       expect(decision.restartCount).toBe(1);
     });
@@ -209,13 +221,13 @@ describe('RestartManager', () => {
 
   describe('reset', () => {
     it('should clear restart state for a chatId', () => {
-      manager.shouldRestart('chat-1', 'error 1');
-      manager.shouldRestart('chat-1', 'error 2');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 2');
 
       manager.reset('chat-1');
 
       // Should start fresh
-      const decision = manager.shouldRestart('chat-1', 'error');
+      const decision = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(decision.allowed).toBe(true);
       expect(decision.restartCount).toBe(1);
     });
@@ -231,7 +243,7 @@ describe('RestartManager', () => {
     });
 
     it('should return state for existing chatId', () => {
-      manager.shouldRestart('chat-1', 'error');
+      manager.shouldRestart('chat-1', 'Network Error: timeout');
       const state = manager.getState('chat-1');
       expect(state).toBeDefined();
       expect(state!.restartCount).toBe(1);
@@ -245,18 +257,18 @@ describe('RestartManager', () => {
     });
 
     it('should track recent errors', () => {
-      manager.shouldRestart('chat-1', 'error 1');
-      manager.shouldRestart('chat-1', 'error 2');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      manager.shouldRestart('chat-1', 'Network Error: timeout 2');
 
       const errors = manager.getRecentErrors('chat-1');
       expect(errors).toHaveLength(2);
-      expect(errors[0].message).toBe('error 1');
-      expect(errors[1].message).toBe('error 2');
+      expect(errors[0].message).toBe('Network Error: timeout 1');
+      expect(errors[1].message).toBe('Network Error: timeout 2');
     });
 
     it('should keep only maxRecentErrors entries', () => {
       for (let i = 0; i < 7; i++) {
-        manager.shouldRestart('chat-1', `error ${i}`);
+        manager.shouldRestart('chat-1', `Network Error: timeout ${i}`);
       }
       const errors = manager.getRecentErrors('chat-1');
       expect(errors.length).toBeLessThanOrEqual(5);
@@ -274,7 +286,7 @@ describe('RestartManager', () => {
 
     it('should return true after max restarts', () => {
       for (let i = 0; i < 4; i++) {
-        manager.shouldRestart('chat-1', `error ${i}`);
+        manager.shouldRestart('chat-1', `Network Error: timeout ${i}`);
       }
       expect(manager.isCircuitOpen('chat-1')).toBe(true);
     });
@@ -282,8 +294,8 @@ describe('RestartManager', () => {
 
   describe('clearAll', () => {
     it('should clear all states', () => {
-      manager.shouldRestart('chat-1', 'error');
-      manager.shouldRestart('chat-2', 'error');
+      manager.shouldRestart('chat-1', 'Network Error: timeout');
+      manager.shouldRestart('chat-2', 'Network Error: timeout');
       expect(manager.isCircuitOpen('chat-1')).toBe(false);
       expect(manager.getState('chat-1')).toBeDefined();
 
@@ -302,10 +314,10 @@ describe('RestartManager', () => {
         maxRestarts: 1,
       });
 
-      const d1 = strictManager.shouldRestart('chat-1', 'error');
+      const d1 = strictManager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(d1.allowed).toBe(true);
 
-      const d2 = strictManager.shouldRestart('chat-1', 'error');
+      const d2 = strictManager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(d2.allowed).toBe(false);
       expect(d2.reason).toBe('max_restarts_exceeded');
     });
@@ -318,7 +330,7 @@ describe('RestartManager', () => {
         backoffMultiplier: 1.5,
       });
 
-      const d1 = quickManager.shouldRestart('chat-1', 'error');
+      const d1 = quickManager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(d1.allowed).toBe(true);
       expect(d1.waitMs).toBeLessThanOrEqual(10);
     });
