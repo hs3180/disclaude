@@ -852,6 +852,65 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('executeTask busy-chat gate (Issue #4199)', () => {
+    it('should skip a blocking task when its chat is busy', async () => {
+      mockRouterAsMock.route.mockResolvedValue(undefined);
+      const busyScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
+        inputMessageRouter: mockRouter,
+      });
+      busyScheduler.addTask(createTask({ id: 'blocking-busy', blocking: true, chatId: 'oc_busy' }));
+
+      void busyScheduler.getActiveJobs()[0].job.fireOnTick();
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Skipped this tick because the chat is busy
+      expect(mockRouterAsMock.route).not.toHaveBeenCalled();
+    });
+
+    it('should execute a blocking task when its chat is not busy', async () => {
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
+      const busyScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
+        inputMessageRouter: mockRouter,
+      });
+      busyScheduler.addTask(createTask({ id: 'blocking-idle', blocking: true, chatId: 'oc_other' }));
+
+      void busyScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should execute a non-blocking task even when its chat is busy', async () => {
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
+      const busyScheduler = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: { ...mockCallbacks, isChatBusy: () => true },
+        inputMessageRouter: mockRouter,
+      });
+      busyScheduler.addTask(createTask({ id: 'nonblocking-busy', blocking: false, chatId: 'oc_busy' }));
+
+      void busyScheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+
+    it('should not gate when no isChatBusy callback is wired (unchanged behavior)', async () => {
+      mockRouterAsMock.route.mockResolvedValueOnce(undefined);
+      // beforeEach `scheduler` uses mockCallbacks (no isChatBusy)
+      scheduler.addTask(createTask({ id: 'blocking-no-cb', blocking: true, chatId: 'oc_test' }));
+
+      void scheduler.getActiveJobs()[0].job.fireOnTick();
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+    });
+  });
+
   describe('executeTask stale job detection (Issue #3929)', () => {
     it('should remove cron job and skip execution when schedule file is deleted', async () => {
       // scheduleManager.get() returns undefined = file no longer exists

@@ -168,6 +168,9 @@ export class PrimaryNode extends EventEmitter {
     getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
     reset: (chatId: string, skipContext?: boolean) => void;
   };
+  // Issue #4199: optional busy-state provider used to gate blocking scheduled
+  // tasks whose target chat is mid-conversation. Set by initInputMessageRouter.
+  protected schedulerChatBusyProvider?: (chatId: string) => boolean;
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
@@ -747,6 +750,9 @@ export class PrimaryNode extends EventEmitter {
       resetAgent: (chatId: string, skipContext: boolean = true): void => {
         this.agentPool?.reset(chatId, skipContext);
       },
+      // Issue #4199: read lazily so it works regardless of init order between
+      // initScheduler() and initInputMessageRouter(); undefined => no gating.
+      isChatBusy: (chatId: string) => this.schedulerChatBusyProvider?.(chatId) ?? false,
     };
   }
 
@@ -765,12 +771,19 @@ export class PrimaryNode extends EventEmitter {
     agentPool: {
       getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
       reset: (chatId: string, skipContext?: boolean) => void;
+      isAgentBusy?: (chatId: string) => boolean;
     },
     callbacksFactory: (chatId: string) => import('./agents/types.js').ChatAgentCallbacks,
   ): void {
     // Issue #4206: keep the pool so scheduler callbacks can reset an agent
     // (clearContext) before a scheduled task runs.
     this.agentPool = agentPool;
+    // Issue #4199: capture the pool's busy-state provider so the scheduler can
+    // skip blocking tasks whose target chat is currently processing a message.
+    // Bind to agentPool — isAgentBusy is a prototype method that reads
+    // `this.agents`, so destructuring it (`const { isAgentBusy } = pool`) and
+    // invoking unbound would throw. undefined (pool has no isAgentBusy) => no gating.
+    this.schedulerChatBusyProvider = agentPool.isAgentBusy?.bind(agentPool);
     const handler = new AgentPoolMessageHandler({
       agentPool,
       callbacksFactory,
