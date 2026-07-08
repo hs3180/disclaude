@@ -56,8 +56,6 @@ export class AgentPool {
   private readonly chatAgentFactory: ChatAgentFactory;
   private readonly chatAgents = new Map<string, ChatAgent>();
   private readonly log: Logger;
-  /** Issue #3696: chatIds that should skip history loading on next agent creation */
-  private readonly skipHistoryChatIds = new Set<string>();
 
   constructor(config: AgentPoolConfig) {
     this.chatAgentFactory = config.chatAgentFactory;
@@ -79,8 +77,6 @@ export class AgentPool {
       this.log.info({ chatId }, 'Creating new ChatAgent instance for chatId');
       agent = this.chatAgentFactory(chatId);
       this.chatAgents.set(chatId, agent);
-      // Issue #3696: clear skip-history flag after agent creation
-      this.skipHistoryChatIds.delete(chatId);
     }
     return agent;
   }
@@ -136,25 +132,18 @@ export class AgentPool {
    * AbortControllers) are properly released rather than accumulated across
    * multiple /reset operations.
    *
-   * Issue #3696: skipContext flag is stored so the next getOrCreateChatAgent()
-   * can pass it to the factory. Note: the core AgentPool uses a simple factory
-   * that doesn't support options, so PrimaryAgentPool handles the actual logic.
+   * Issue #4217: The `skipContext` param is accepted for LSP compatibility with
+   * the shared reset contract (used polymorphically by /reset and the scheduler),
+   * but the core AgentPool does NOT honor it — its simple factory
+   * (`ChatAgentFactory = (chatId) => ChatAgent`) has no options channel.
+   * `PrimaryAgentPool` implements its own reset() that honors skipContext via
+   * its own `skipHistoryChatIds` set + options-aware factory.
    *
    * @param chatId - The chat identifier
-   * @param skipContext - If true, the next agent creation should skip history loading
+   * @param skipContext - Accepted for contract compatibility; not honored by the core pool
    */
   reset(chatId: string, skipContext?: boolean): void {
     this.log.info({ chatId, skipContext }, 'Resetting ChatAgent: disposing old instance for chatId');
-    if (skipContext) {
-      this.skipHistoryChatIds.add(chatId);
-    } else {
-      // Issue #4210: a with-history reset must restore the default (load
-      // history on next creation). Without this, a prior reset(chatId, true)
-      // leaves a stale skip-history flag. `Set.delete` is a no-op when the
-      // key is absent, so this is safe unconditionally — mirrors the
-      // PrimaryAgentPool.reset() fix in #4207.
-      this.skipHistoryChatIds.delete(chatId);
-    }
     this.dispose(chatId);
   }
 
