@@ -59,7 +59,7 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 const createdSchedulers = new Set<Scheduler>();
 
 /** Construct a Scheduler and register it for afterEach teardown (#4218). */
-function makeScheduler(options: SchedulerOptions): Scheduler {
+function createScheduler(options: SchedulerOptions): Scheduler {
   const instance = new Scheduler(options);
   createdSchedulers.add(instance);
   return instance;
@@ -92,7 +92,7 @@ describe('Scheduler', () => {
     mockRouter = createMockRouter();
     mockRouterAsMock = mockRouter as unknown as MockRouter;
 
-    scheduler = makeScheduler({
+    scheduler = createScheduler({
       scheduleManager: mockScheduleManager,
       callbacks: mockCallbacks,
       inputMessageRouter: mockRouter,
@@ -128,7 +128,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const s = makeScheduler({
+      const s = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -367,7 +367,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const s = makeScheduler({
+      const s = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -646,7 +646,7 @@ describe('Scheduler', () => {
     });
 
     it('should send explicit notification when no inputMessageRouter configured', async () => {
-      const noRouterScheduler = makeScheduler({
+      const noRouterScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
       });
@@ -685,7 +685,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const cooldownScheduler = makeScheduler({
+      const cooldownScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -716,7 +716,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const cooldownScheduler = makeScheduler({
+      const cooldownScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -743,7 +743,7 @@ describe('Scheduler', () => {
 
       mockRouterAsMock.route.mockRejectedValueOnce(new Error('task failed'));
 
-      const cooldownScheduler = makeScheduler({
+      const cooldownScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -768,7 +768,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const cooldownScheduler = makeScheduler({
+      const cooldownScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -898,7 +898,7 @@ describe('Scheduler', () => {
   describe('executeTask busy-chat gate (Issue #4199)', () => {
     it('should skip a blocking task when its chat is busy', async () => {
       mockRouterAsMock.route.mockResolvedValue(undefined);
-      const busyScheduler = makeScheduler({
+      const busyScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
         inputMessageRouter: mockRouter,
@@ -914,7 +914,7 @@ describe('Scheduler', () => {
 
     it('should execute a blocking task when its chat is not busy', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
-      const busyScheduler = makeScheduler({
+      const busyScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
         inputMessageRouter: mockRouter,
@@ -929,7 +929,7 @@ describe('Scheduler', () => {
 
     it('should execute a non-blocking task even when its chat is busy', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
-      const busyScheduler = makeScheduler({
+      const busyScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: () => true },
         inputMessageRouter: mockRouter,
@@ -1130,7 +1130,7 @@ describe('Scheduler', () => {
 
       mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
-      const cooldownScheduler = makeScheduler({
+      const cooldownScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -1163,7 +1163,7 @@ describe('Scheduler', () => {
 
   describe('executeTask agent busy check (Issue #3931, #4102)', () => {
     it('should skip blocking task when another blocking task is running for same chatId', async () => {
-      const blockScheduler = makeScheduler({
+      const blockScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
@@ -1210,7 +1210,7 @@ describe('Scheduler', () => {
     });
 
     it('should not skip non-blocking tasks even when blocking task is running', async () => {
-      const blockScheduler = makeScheduler({
+      const blockScheduler = createScheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
