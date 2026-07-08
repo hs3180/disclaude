@@ -50,10 +50,10 @@ describe('setupSkillsInWorkspace', () => {
   });
 
   describe('when source skills directory does not exist', () => {
-    it('should return failure with error message', async () => {
+    it('should return failure with error message', () => {
       mockGetSkillsDir.mockReturnValue('/nonexistent/skills');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Source skills directory does not exist');
@@ -71,7 +71,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.mkdir(skillB, { recursive: true });
       await fs.writeFile(path.join(skillB, 'SKILL.md'), '# Skill B');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
 
       expect(result.success).toBe(true);
 
@@ -96,7 +96,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Complex');
       await fs.writeFile(path.join(subDir, 'helper.ts'), 'export const x = 1;');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
 
       expect(result.success).toBe(true);
 
@@ -117,7 +117,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Valid');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
 
       expect(result.success).toBe(true);
 
@@ -139,7 +139,7 @@ describe('setupSkillsInWorkspace', () => {
     it('should succeed with empty source directory', async () => {
       await fs.mkdir(sourceDir, { recursive: true });
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
 
       expect(result.success).toBe(true);
 
@@ -157,13 +157,13 @@ describe('setupSkillsInWorkspace', () => {
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), 'Version 1');
       await fs.mkdir(targetDir, { recursive: true });
 
-      const result1 = await setupSkillsInWorkspace();
+      const result1 = setupSkillsInWorkspace();
       expect(result1.success).toBe(true);
 
       // Now update source and re-run
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), 'Version 2');
 
-      const result2 = await setupSkillsInWorkspace();
+      const result2 = setupSkillsInWorkspace();
       expect(result2.success).toBe(true);
 
       const content = await fs.readFile(
@@ -178,7 +178,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Skill');
 
-      const result1 = await setupSkillsInWorkspace();
+      const result1 = setupSkillsInWorkspace();
       expect(result1.success).toBe(true);
 
       const linkPath = path.join(targetDir, 'my-skill');
@@ -187,7 +187,7 @@ describe('setupSkillsInWorkspace', () => {
       expect(await fs.readFile(path.join(linkPath, 'SKILL.md'), 'utf-8')).toBe('# Skill');
 
       // Re-running is idempotent (same symlink, no error, no stale materialization).
-      const result2 = await setupSkillsInWorkspace();
+      const result2 = setupSkillsInWorkspace();
       expect(result2.success).toBe(true);
       expect((await fs.lstat(linkPath)).isSymbolicLink()).toBe(true);
     });
@@ -202,7 +202,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.mkdir(linkPath, { recursive: true });
       await fs.writeFile(path.join(linkPath, 'SKILL.md'), '# Stale');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
       expect(result.success).toBe(true);
 
       // The stale copy is replaced by a symlink reflecting the source.
@@ -220,7 +220,7 @@ describe('setupSkillsInWorkspace', () => {
       const specialContent = '日本語テスト 🎉 \n\ttabs & "quotes"';
       await fs.writeFile(path.join(skillDir, 'data.txt'), specialContent, 'utf-8');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
       expect(result.success).toBe(true);
 
       const content = await fs.readFile(
@@ -238,7 +238,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.writeFile(path.join(skillDir, 'config.json'), '{"key": "value"}');
       await fs.writeFile(path.join(skillDir, 'data.yaml'), 'key: value\nlist:\n  - item1');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
       expect(result.success).toBe(true);
 
       // Verify all files were copied
@@ -260,7 +260,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# Empty File Skill');
       await fs.writeFile(path.join(skillDir, 'empty.txt'), '');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
       expect(result.success).toBe(true);
 
       const content = await fs.readFile(
@@ -275,7 +275,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.mkdir(deepDir, { recursive: true });
       await fs.writeFile(path.join(deepDir, 'deep.txt'), 'Deep content');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
       expect(result.success).toBe(true);
 
       const content = await fs.readFile(
@@ -302,7 +302,7 @@ describe('setupSkillsInWorkspace', () => {
       await fs.mkdir(anotherGood, { recursive: true });
       await fs.writeFile(path.join(anotherGood, 'SKILL.md'), '# Another');
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
 
       // Should still succeed overall (individual failures are logged as warnings)
       expect(result.success).toBe(true);
@@ -319,13 +319,13 @@ describe('setupSkillsInWorkspace', () => {
       expect(anotherContent).toBe('# Another');
     });
 
-    it('should handle unexpected errors gracefully', async () => {
+    it('should handle unexpected errors gracefully', () => {
       // Make getWorkspaceDir throw
       mockGetWorkspaceDir.mockImplementation(() => {
         throw new Error('Config error');
       });
 
-      const result = await setupSkillsInWorkspace();
+      const result = setupSkillsInWorkspace();
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Config error');

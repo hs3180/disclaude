@@ -51,10 +51,10 @@ describe('setupAgentsInWorkspace', () => {
   });
 
   describe('when source agents directory does not exist', () => {
-    it('should return success without error (agents dir is optional)', async () => {
+    it('should return success without error (agents dir is optional)', () => {
       mockGetAgentsDir.mockReturnValue('/nonexistent/agents');
 
-      const result = await setupAgentsInWorkspace();
+      const result = setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
       expect(result.error).toBeUndefined();
@@ -69,7 +69,7 @@ describe('setupAgentsInWorkspace', () => {
       await fs.writeFile(path.join(sourceDir, 'custom-agent.md'), '# Custom Agent');
       await fs.writeFile(path.join(sourceDir, 'README.txt'), 'Not an agent');
 
-      const result = await setupAgentsInWorkspace();
+      const result = setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
 
@@ -100,7 +100,7 @@ describe('setupAgentsInWorkspace', () => {
       await fs.mkdir(targetDir, { recursive: true });
       await fs.writeFile(path.join(targetDir, 'site-miner.md'), '# Old Content');
 
-      const result = await setupAgentsInWorkspace();
+      const result = setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
 
@@ -114,7 +114,7 @@ describe('setupAgentsInWorkspace', () => {
     it('should succeed with empty agents directory', async () => {
       await fs.mkdir(sourceDir, { recursive: true });
 
-      const result = await setupAgentsInWorkspace();
+      const result = setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
 
