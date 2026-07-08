@@ -3,8 +3,51 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { retry, retryAsyncIterable, withRetry } from './retry.js';
+import { retry, retryAsyncIterable, withRetry, computeBackoffDelay } from './retry.js';
 import { AppError, ErrorCategory } from './error-handler.js';
+
+describe('computeBackoffDelay (Issue #4192 — centralized backoff curve)', () => {
+  const opts = { initialDelayMs: 1000, backoffMultiplier: 2, maxDelayMs: 30000, jitter: false };
+
+  it('grows exponentially and clamps at maxDelayMs (no jitter)', () => {
+    expect(computeBackoffDelay(0, opts, () => 0)).toBe(1000);
+    expect(computeBackoffDelay(1, opts, () => 0)).toBe(2000);
+    expect(computeBackoffDelay(2, opts, () => 0)).toBe(4000);
+    expect(computeBackoffDelay(4, opts, () => 0)).toBe(16000);
+    expect(computeBackoffDelay(5, opts, () => 0)).toBe(30000); // 32000 → clamped
+    expect(computeBackoffDelay(50, opts, () => 0)).toBe(30000); // deep clamp
+  });
+
+  it('with jitter scales the capped delay into [0.5*delay, delay] (half-jitter)', () => {
+    const jopts = { ...opts, jitter: true };
+    // attempt 0 → base 1000; jitter random 0 → 500, random 1 → 1000
+    expect(computeBackoffDelay(0, jopts, () => 0)).toBe(500);
+    expect(computeBackoffDelay(0, jopts, () => 1)).toBe(1000);
+    // attempt 1 → base 2000; random 0 → 1000, random 1 → 2000
+    expect(computeBackoffDelay(1, jopts, () => 0)).toBe(1000);
+    expect(computeBackoffDelay(1, jopts, () => 1)).toBe(2000);
+  });
+
+  it('jitter never exceeds the no-jitter delay', () => {
+    const jopts = { ...opts, jitter: true };
+    for (let a = 0; a < 8; a++) {
+      for (const r of [0, 0.5, 1]) {
+        const jittered = computeBackoffDelay(a, jopts, () => r);
+        const plain = computeBackoffDelay(a, opts, () => r);
+        expect(jittered).toBeLessThanOrEqual(plain);
+        expect(jittered).toBeGreaterThanOrEqual(plain * 0.5);
+      }
+    }
+  });
+
+  it('honors custom timing options', () => {
+    const custom = { initialDelayMs: 100, backoffMultiplier: 3, maxDelayMs: 1000, jitter: false };
+    expect(computeBackoffDelay(0, custom, () => 0)).toBe(100);
+    expect(computeBackoffDelay(1, custom, () => 0)).toBe(300);
+    expect(computeBackoffDelay(2, custom, () => 0)).toBe(900);
+    expect(computeBackoffDelay(3, custom, () => 0)).toBe(1000); // 2700 → clamped
+  });
+});
 
 describe('retry', () => {
   describe('successful operations', () => {
