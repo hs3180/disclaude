@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { LoopRunner } from './loop-runner.js';
 
 describe('LoopRunner', () => {
@@ -371,6 +374,102 @@ describe('LoopRunner', () => {
         expect(runner.status(loopId)?.state).toBe('completed');
       }, { timeout: 1000 });
       expect(mockPush).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('startFromLoopMd (Issue #4193)', () => {
+    let tmpDir: string;
+    let loopMdPath: string;
+    let mdRunner: LoopRunner;
+    let mdPush: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'loopmd-'));
+      loopMdPath = join(tmpDir, 'LOOP.md');
+      mdPush = vi.fn();
+      mdRunner = new LoopRunner(mdPush);
+    });
+
+    afterEach(() => {
+      mdRunner.dispose();
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    /** Write a LOOP.md with the given prompt body and frontmatter overrides. */
+    const writeLoopMd = (body: string, extra: Record<string, string | number> = {}): void => {
+      const fields: Record<string, string | number> = { name: 'test', chatId: 'oc_md', ...extra };
+      const frontmatter = Object.entries(fields)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('\n');
+      writeFileSync(loopMdPath, `---\n${frontmatter}\n---\n\n${body}\n`, 'utf-8');
+    };
+
+    it('reads chatId + prompt from LOOP.md and pushes them', async () => {
+      writeLoopMd('do the thing', { maxSteps: 2, stepInterval: '5ms' });
+
+      const { loopId } = mdRunner.startFromLoopMd(loopMdPath);
+      expect(loopId).toMatch(/^loop-\d+-\d+$/);
+
+      await vi.waitFor(() => expect(mdPush).toHaveBeenCalledTimes(2), { timeout: 2000 });
+      // chatId came from the frontmatter; prompt came from the body.
+      expect(mdPush).toHaveBeenCalledWith('oc_md', 'do the thing');
+    });
+
+    it('re-reads the prompt each iteration (mid-loop edits are picked up)', async () => {
+      writeLoopMd('first prompt', { maxSteps: 2, stepInterval: '5ms' });
+
+      let calls = 0;
+      mdPush.mockImplementation((_chatId: string, _message: string) => {
+        calls += 1;
+        if (calls === 1) {
+          // An editor changes the prompt between step 1 and step 2.
+          writeLoopMd('second prompt', { maxSteps: 2, stepInterval: '5ms' });
+        }
+      });
+
+      mdRunner.startFromLoopMd(loopMdPath);
+
+      await vi.waitFor(() => expect(mdPush).toHaveBeenCalledTimes(2), { timeout: 2000 });
+      const messages = mdPush.mock.calls.map(([, message]) => message);
+      expect(messages).toEqual(['first prompt', 'second prompt']);
+    });
+
+    it('falls back to the last known prompt when LOOP.md briefly becomes unreadable', async () => {
+      writeLoopMd('stable', { maxSteps: 3, stepInterval: '5ms' });
+
+      let calls = 0;
+      mdPush.mockImplementation((_chatId: string, _message: string) => {
+        calls += 1;
+        if (calls === 2) {
+          // Remove the file so the next iteration's re-read fails.
+          rmSync(loopMdPath, { force: true });
+        }
+      });
+
+      const { loopId } = mdRunner.startFromLoopMd(loopMdPath);
+
+      await vi.waitFor(() => expect(mdRunner.status(loopId)?.state).toBe('completed'), { timeout: 2000 });
+      // All three steps pushed; the third used the fallback (no crash, no error state).
+      expect(mdPush).toHaveBeenCalledTimes(3);
+      expect(mdPush.mock.calls.every(([, message]) => message === 'stable')).toBe(true);
+    });
+
+    it('throws when the LOOP.md path does not exist', () => {
+      expect(() => mdRunner.startFromLoopMd(join(tmpDir, 'nope.md'))).toThrow();
+    });
+
+    it('throws when the frontmatter lacks chatId', () => {
+      writeFileSync(loopMdPath, '---\nname: nochat\n---\n\nprompt\n', 'utf-8');
+      expect(() => mdRunner.startFromLoopMd(loopMdPath)).toThrow(/chatId/);
+    });
+
+    it('clamps maxSteps from the frontmatter (floor at 1)', async () => {
+      writeLoopMd('one shot', { maxSteps: 0, stepInterval: '5ms' });
+
+      const { loopId } = mdRunner.startFromLoopMd(loopMdPath);
+
+      await vi.waitFor(() => expect(mdRunner.status(loopId)?.state).toBe('completed'), { timeout: 2000 });
+      expect(mdPush).toHaveBeenCalledTimes(1);
     });
   });
 });
