@@ -19,7 +19,7 @@ import type {
  * @param message - Claude SDK 消息
  * @returns 统一的 AgentMessage
  */
-export function adaptSDKMessage(message: SDKMessage): AgentMessage {
+export function adaptSDKMessage(message: SDKMessage, taskRegistry?: TaskSubjectRegistry): AgentMessage {
   const metadata: AgentMessageMetadata = {};
 
   // 提取 session_id
@@ -67,7 +67,7 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         const [block] = toolBlocks; // 取第一个工具使用
         metadata.toolName = block.name;
         metadata.toolInput = block.input;
-        contentParts.push(formatToolInput(block.name, block.input as Record<string, unknown>));
+        contentParts.push(formatToolInput(block.name, block.input as Record<string, unknown>, taskRegistry));
       }
 
       // 处理文本
@@ -328,9 +328,45 @@ export function adaptUserInput(input: UserInput): SDKUserMessage {
 }
 
 /**
+ * Issue #4200 part 2: best-effort, per-query registry mapping taskId →
+ * human-readable label, so status-only `TaskUpdate` calls (input carries only
+ * taskId + status) can still display which task is being updated.
+ *
+ * The SDK's `TaskCreate` input has no taskId (the id is assigned server-side
+ * and returned in the tool result, which this display path does not parse), so
+ * the map is populated from `TaskUpdate` inputs that carry a `subject` or
+ * `activeForm`. This covers the common in_progress → completed flow, where an
+ * agent sets `activeForm` when starting a task and then issues status-only
+ * updates as it progresses/completes.
+ *
+ * Intentionally stateful but owned by the provider's per-query `adaptIterator`,
+ * so it is garbage-collected when the query stream ends — no cross-query leak,
+ * and no manual reset is needed.
+ */
+export class TaskSubjectRegistry {
+  private readonly labels = new Map<string, string>();
+
+  /** Record the latest known label for a task (no-op if taskId or label is absent). */
+  recordLabel(taskId: string | undefined, label: string | undefined): void {
+    if (taskId && label) {
+      this.labels.set(taskId, label);
+    }
+  }
+
+  /** Look up a previously-recorded label for a task. */
+  getLabel(taskId: string | undefined): string | undefined {
+    return taskId ? this.labels.get(taskId) : undefined;
+  }
+}
+
+/**
  * 格式化工具输入用于显示
  */
-function formatToolInput(toolName: string, input: Record<string, unknown> | undefined): string {
+function formatToolInput(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+  taskRegistry?: TaskSubjectRegistry,
+): string {
   if (!input) {
     return `🔧 ${toolName}`;
   }
@@ -388,9 +424,20 @@ function formatToolInput(toolName: string, input: Record<string, unknown> | unde
         (input.subject as string | undefined) ||
         (input.activeForm as string | undefined) ||
         (description ? truncateText(description) : undefined);
+
+      // Issue #4200 part 2: status-only updates (input carries only taskId +
+      // status) still can't show content from this input alone. Recall the
+      // last label we saw for this task (from an earlier subject/activeForm-
+      // bearing update); and when we DO have a label, record it so a later
+      // status-only update can recall it. Covers the common in_progress →
+      // completed flow where the agent sets activeForm on start then issues
+      // status-only updates as it progresses.
+      const effectiveLabel = label ?? taskRegistry?.getLabel(taskId);
+      taskRegistry?.recordLabel(taskId, label);
+
       const tail = status ? ` → ${status}` : '';
-      return label
-        ? `🔧 Updating task #${taskId || '?'} "${label}"${tail}`
+      return effectiveLabel
+        ? `🔧 Updating task #${taskId || '?'} "${effectiveLabel}"${tail}`
         : `🔧 Updating task #${taskId || '?'}${tail}`;
     }
     default: {
