@@ -40,6 +40,7 @@ export type { ErrorCategoryTag } from './error-handler.js';
 // Retry
 export type { RetryOptions } from './retry.js';
 export {
+  computeBackoffDelay,
   retry,
   retryAsyncIterable,
   withRetry,
