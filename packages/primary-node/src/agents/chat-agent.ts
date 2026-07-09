@@ -900,6 +900,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     let firstMessageMs: number | undefined;
     let lastToolCallMs: number | undefined;
     let toolCallCount = 0;
+    // Issue #4194: count substantive user-visible output sent this turn
+    // (excludes the ✅ Complete result marker) so empty turns are detectable.
+    let userVisibleOutputCount = 0;
 
     try {
       for await (const { parsed } of iterator) {
@@ -976,6 +979,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           } else {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
             await this.callbacks.sendMessage(chatId, parsed.content, threadRoot);
+            // Issue #4194: the ✅ Complete result marker is sent as the result
+            // message itself — exclude it so empty turns (no real reply) are
+            // detectable at completion.
+            if (parsed.type !== 'result') {
+              userVisibleOutputCount++;
+            }
           }
         }
 
@@ -1037,6 +1046,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'If team workers are stuck in idle loops, the model may not support ' +
                 'tool_use blocks (common with non-Anthropic models via ' +
                 'Anthropic-compatible API). See Issue #3706.'
+            );
+          }
+
+          // Issue #4194: detect empty turns — SDK returned a result with no
+          // user-visible output and no tool calls, so the bot appears to ignore
+          // the user while the turn is marked successful. Detection only (log);
+          // automatic session reset/retry is a larger follow-up. See issue #4194.
+          if (userVisibleOutputCount === 0 && toolCallCount === 0) {
+            this.logger.warn(
+              {
+                chatId,
+                messageCount,
+                toolCallCount,
+                userVisibleOutputCount,
+                model: this.model,
+                provider: this.provider,
+              },
+              'Empty turn completed with no user-visible output and no tool calls (Issue #4194). ' +
+                'Turn was marked successful but the user saw no reply; consider session reset.',
             );
           }
 
