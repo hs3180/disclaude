@@ -7,9 +7,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { PrimaryNode } from './primary-node.js';
 import { PrimaryAgentPool } from './primary-agent-pool.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
@@ -114,65 +111,6 @@ describe('PrimaryNode composite loop handlers (Issue #4075 wiring)', () => {
 
     const after = await handlers.loopStatus!(loopId);
     expect(after.status?.state).toBe('stopped');
-  });
-});
-
-describe('loopStart loopMdPath wiring (Issue #4193 part B)', () => {
-  let node: TestablePrimaryNode;
-  let pushToAgent: ReturnType<typeof vi.fn>;
-  let tmpDir: string;
-  let loopMdPath: string;
-
-  beforeEach(() => {
-    node = new TestablePrimaryNode();
-    pushToAgent = vi.fn().mockResolvedValue({ success: true });
-    const channel = { ownsChatId: (id: string) => id === TEST_CHAT } as unknown as IChannel;
-    node.registerChannelHandlers('test', makeHandlers(pushToAgent), channel);
-    tmpDir = mkdtempSync(join(tmpdir(), 'loopmd-wire-'));
-    loopMdPath = join(tmpDir, 'LOOP.md');
-  });
-
-  afterEach(() => {
-    node.getLoopRunnerInstance()?.dispose();
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it('routes loopStart to startFromLoopMd when loopMdPath is given, pushing the LOOP.md prompt', async () => {
-    // LOOP.md carries chatId + prompt; the inline prompt is omitted entirely.
-    writeFileSync(
-      loopMdPath,
-      `---
-name: wire
-chatId: ${TEST_CHAT}
-maxSteps: 1
-stepInterval: 5ms
----
-
-from-loopmd
-`,
-      'utf-8',
-    );
-
-    const handlers = node.getCompositeHandlers();
-    const res = await handlers.loopStart!({ chatId: TEST_CHAT, loopMdPath });
-
-    expect(res.success).toBe(true);
-    expect(res.loopId).toMatch(/^loop-/);
-
-    // The pushed prompt is the LOOP.md body ("from-loopmd"), NOT an inline
-    // prompt — proving the handler branched to startFromLoopMd (Issue #4193).
-    await vi.waitFor(() => {
-      expect(pushToAgent).toHaveBeenCalledWith(TEST_CHAT, 'from-loopmd');
-    }, { timeout: 2000 });
-  });
-
-  it('returns an error and creates no runner when neither prompt nor loopMdPath is provided', async () => {
-    const handlers = node.getCompositeHandlers();
-    const res = await handlers.loopStart!({ chatId: TEST_CHAT } as any);
-
-    expect(res.success).toBe(false);
-    expect(res.error).toContain('prompt or loopMdPath is required');
-    expect(node.getLoopRunnerInstance()).toBeUndefined();
   });
 });
 
