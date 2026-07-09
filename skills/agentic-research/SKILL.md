@@ -266,19 +266,6 @@ When executing research as a scheduled task (async):
 4. **Pass state forward**: After completing a step, update `STATE.md` (current step, next step, blockers, decisions) and `RESEARCH.md` (findings, analysis, sources) so the next scheduled execution can resume seamlessly.
 5. **Decide decisively**: In async mode, **do not stall** waiting for user input. Make the best reasonable decision, execute it, and mark uncertainties in `STATE.md` for the user to review later. It is better to produce a complete result with caveats than to produce nothing.
 
-### User Feedback Originates in the Initial Conversation (Issue #4017)
-
-Async research spans **two conversations**, with `RESEARCH.md` (and `STATE.md`) as the shared bridge between them:
-
-- **Initial conversation** — where the user makes the original request, asks follow-up questions, and gives ongoing guidance (corrections, intent changes, new constraints).
-- **Execution group** — the temporary chat where the async research agent pushes progress updates.
-
-User feedback **naturally originates in the initial conversation**, not in the execution group. When the user gives feedback there, fold it into `RESEARCH.md` at your own discretion so the execution agent picks it up on its next iteration — the execution-side "Detect user feedback" step above already reads from these files. This is agent-driven: use judgment about what is worth persisting rather than echoing every message.
-
-**Optional light convention**: to make feedback easy to spot, reserve a `## User Feedback` section in `RESEARCH.md` for it. This is a convenience, not a fixed schema — the execution agent should treat any user-originated correction or intent change anywhere in `RESEARCH.md` as feedback.
-
-> The Loop engine stays feedback-agnostic (per #1339): there is no feedback module in `packages/core`. Propagation is a skill/convention concern, handled entirely through `RESEARCH.md`.
-
 ### IPC: Pushing Results to the Agent
 
 When a scheduled research step completes and needs to notify the conversation agent (e.g., to deliver a report or flag a decision), use the IPC `pushToAgent` mechanism rather than waiting for the next scheduled tick. This ensures timely delivery of results.
@@ -288,4 +275,3 @@ When a scheduled research step completes and needs to notify the conversation ag
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
 - Issue #1339: Agentic Research interactive workflow (parent feature)
-- Issue #4017: User feedback should originate from the initial conversation, not the research execution chat
