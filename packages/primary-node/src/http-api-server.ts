@@ -101,7 +101,7 @@ interface Route {
  * // GET http://localhost:9200/api/status → { status: "ok", ... }
  * ```
  */
-/** Params for REST loop_start: an inline `prompt` OR a `loopMdPath` to a LOOP.md file (Issue #4193 part C). */
+/** Params for REST loop_start: exactly one of an inline `prompt` or a `loopMdPath` to a LOOP.md file (Issue #4193 part C). */
 type LoopStartHandlerParams = {
   chatId: string;
   prompt?: string;
@@ -514,17 +514,25 @@ export class HttpApiServer {
     try { body = await readBody(req); } catch { this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' }); return; }
     let parsed: unknown;
     try { parsed = JSON.parse(body); } catch { this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' }); return; }
-    if (typeof parsed !== 'object' || parsed === null || typeof (parsed as Record<string, unknown>).chatId !== 'string' || !(typeof (parsed as Record<string, unknown>).prompt === 'string' || typeof (parsed as Record<string, unknown>).loopMdPath === 'string')) {
-      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string) and either prompt (string) or loopMdPath (string)' }); return;
-    }
-    const p = parsed as { chatId: string; prompt?: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number; loopMdPath?: string };
-    if (!p.chatId || (!p.prompt && !p.loopMdPath)) { this.sendJson(res, 400, { ok: false, message: 'chatId and (prompt or loopMdPath) must be non-empty' }); return; }
+    if (typeof parsed !== 'object' || parsed === null) { this.sendJson(res, 400, { ok: false, message: 'Request body must be a JSON object' }); return; }
+    const p = parsed as { chatId?: unknown; prompt?: string; loopMdPath?: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number };
+    // chatId is always required to keep the REST contract uniform with the
+    // MCP/IPC loop_start path (part B). When loopMdPath is set, startFromLoopMd
+    // re-reads chatId from the LOOP.md, so this value is ignored on that branch.
+    const { chatId } = p;
+    if (typeof chatId !== 'string' || chatId === '') { this.sendJson(res, 400, { ok: false, message: 'Required field: chatId (non-empty string)' }); return; }
+    // Exactly one of prompt / loopMdPath must drive the loop (Issue #4193 part C):
+    // supplying both, or neither, is a 400.
+    const promptDefined = p.prompt !== undefined;
+    const loopMdDefined = p.loopMdPath !== undefined;
+    if (promptDefined === loopMdDefined) { this.sendJson(res, 400, { ok: false, message: 'Provide exactly one of prompt (string) or loopMdPath (string)' }); return; }
+    if (promptDefined && (typeof p.prompt !== 'string' || p.prompt === '')) { this.sendJson(res, 400, { ok: false, message: 'prompt must be a non-empty string' }); return; }
+    if (loopMdDefined && (typeof p.loopMdPath !== 'string' || p.loopMdPath === '')) { this.sendJson(res, 400, { ok: false, message: 'loopMdPath must be a non-empty string' }); return; }
     if (p.maxSteps !== undefined && typeof p.maxSteps !== 'number') { this.sendJson(res, 400, { ok: false, message: 'maxSteps must be a number' }); return; }
     if (p.maxDurationMs !== undefined && typeof p.maxDurationMs !== 'number') { this.sendJson(res, 400, { ok: false, message: 'maxDurationMs must be a number' }); return; }
     if (p.stepIntervalMs !== undefined && typeof p.stepIntervalMs !== 'number') { this.sendJson(res, 400, { ok: false, message: 'stepIntervalMs must be a number' }); return; }
-    if (p.loopMdPath !== undefined && typeof p.loopMdPath !== 'string') { this.sendJson(res, 400, { ok: false, message: 'loopMdPath must be a string' }); return; }
     try {
-      const result = this.loopStartHandler({ chatId: p.chatId, ...(p.prompt !== undefined && { prompt: p.prompt }), ...(p.maxSteps !== undefined && { maxSteps: p.maxSteps }), ...(p.maxDurationMs !== undefined && { maxDurationMs: p.maxDurationMs }), ...(p.stepIntervalMs !== undefined && { stepIntervalMs: p.stepIntervalMs }), ...(p.loopMdPath !== undefined && { loopMdPath: p.loopMdPath }) });
+      const result = this.loopStartHandler({ chatId, ...(p.prompt !== undefined && { prompt: p.prompt }), ...(p.maxSteps !== undefined && { maxSteps: p.maxSteps }), ...(p.maxDurationMs !== undefined && { maxDurationMs: p.maxDurationMs }), ...(p.stepIntervalMs !== undefined && { stepIntervalMs: p.stepIntervalMs }), ...(p.loopMdPath !== undefined && { loopMdPath: p.loopMdPath }) });
       this.sendJson(res, 200, { ok: true, loopId: result.loopId });
     } catch (err) { this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'Loop start failed' }); }
   }
