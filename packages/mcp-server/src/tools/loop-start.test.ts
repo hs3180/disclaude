@@ -52,11 +52,11 @@ describe('loop_start', () => {
       expect(mockIpcClient.loopStart).not.toHaveBeenCalled();
     });
 
-    it('returns an error when neither prompt nor loopMdPath is provided', async () => {
+    it('returns an error when prompt is missing', async () => {
       const result = await loop_start({ chatId: 'oc_123', prompt: '' });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('prompt or loopMdPath is required');
+      expect(result.error).toContain('prompt is required');
       expect(mockIpcClient.loopStart).not.toHaveBeenCalled();
     });
   });
@@ -83,18 +83,6 @@ describe('loop_start', () => {
       expect(result.success).toBe(true);
       expect(result.loopId).toBe('loop_abc');
       expect(result.message).toContain('loop_abc');
-      expect(mockIpcClient.loopStart).toHaveBeenCalledWith(params);
-    });
-
-    it('forwards loopMdPath to IPC when prompt is omitted (Issue #4193 part B)', async () => {
-      mockIpcClient.loopStart.mockResolvedValue({ success: true, loopId: 'loop_md' });
-
-      const params = { chatId: 'oc_123', loopMdPath: '/ws/.disclaude/loop/x/LOOP.md' };
-      const result = await loop_start(params);
-
-      expect(result.success).toBe(true);
-      expect(result.loopId).toBe('loop_md');
-      expect(result.message).toContain('loop_md');
       expect(mockIpcClient.loopStart).toHaveBeenCalledWith(params);
     });
   });

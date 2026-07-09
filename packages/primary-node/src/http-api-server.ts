@@ -22,7 +22,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
 // Issue #4063: reuse the canonical loop types instead of re-declaring them inline.
-import type { LoopStatus } from './loop/loop-runner.js';
+import type { LoopStartParams, LoopStatus } from './loop/loop-runner.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -101,16 +101,6 @@ interface Route {
  * // GET http://localhost:9200/api/status → { status: "ok", ... }
  * ```
  */
-/** Params for REST loop_start: exactly one of an inline `prompt` or a `loopMdPath` to a LOOP.md file (Issue #4193 part C). */
-type LoopStartHandlerParams = {
-  chatId: string;
-  prompt?: string;
-  maxSteps?: number;
-  maxDurationMs?: number;
-  stepIntervalMs?: number;
-  loopMdPath?: string;
-};
-
 export class HttpApiServer {
   private readonly config: HttpApiServerConfig;
   private readonly routes: Route[] = [];
@@ -118,7 +108,7 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
-  private loopStartHandler?: (params: LoopStartHandlerParams) => { loopId: string };
+  private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
   /** Connected SSE clients for topic notifications (Issue #4031) */
@@ -149,7 +139,7 @@ export class HttpApiServer {
   }
 
   setLoopHandlers(handlers: {
-    start: (params: LoopStartHandlerParams) => { loopId: string };
+    start: (params: LoopStartParams) => { loopId: string };
     stop: (loopId: string) => void;
     status: (loopId: string) => LoopStatus | null;
   }): void {
@@ -514,25 +504,16 @@ export class HttpApiServer {
     try { body = await readBody(req); } catch { this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' }); return; }
     let parsed: unknown;
     try { parsed = JSON.parse(body); } catch { this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' }); return; }
-    if (typeof parsed !== 'object' || parsed === null) { this.sendJson(res, 400, { ok: false, message: 'Request body must be a JSON object' }); return; }
-    const p = parsed as { chatId?: unknown; prompt?: string; loopMdPath?: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number };
-    // chatId is always required to keep the REST contract uniform with the
-    // MCP/IPC loop_start path (part B). When loopMdPath is set, startFromLoopMd
-    // re-reads chatId from the LOOP.md, so this value is ignored on that branch.
-    const { chatId } = p;
-    if (typeof chatId !== 'string' || chatId === '') { this.sendJson(res, 400, { ok: false, message: 'Required field: chatId (non-empty string)' }); return; }
-    // Exactly one of prompt / loopMdPath must drive the loop (Issue #4193 part C):
-    // supplying both, or neither, is a 400.
-    const promptDefined = p.prompt !== undefined;
-    const loopMdDefined = p.loopMdPath !== undefined;
-    if (promptDefined === loopMdDefined) { this.sendJson(res, 400, { ok: false, message: 'Provide exactly one of prompt (string) or loopMdPath (string)' }); return; }
-    if (promptDefined && (typeof p.prompt !== 'string' || p.prompt === '')) { this.sendJson(res, 400, { ok: false, message: 'prompt must be a non-empty string' }); return; }
-    if (loopMdDefined && (typeof p.loopMdPath !== 'string' || p.loopMdPath === '')) { this.sendJson(res, 400, { ok: false, message: 'loopMdPath must be a non-empty string' }); return; }
+    if (typeof parsed !== 'object' || parsed === null || typeof (parsed as Record<string, unknown>).chatId !== 'string' || typeof (parsed as Record<string, unknown>).prompt !== 'string') {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), prompt (string)' }); return;
+    }
+    const p = parsed as { chatId: string; prompt: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number };
+    if (!p.chatId || !p.prompt) { this.sendJson(res, 400, { ok: false, message: 'chatId and prompt must be non-empty' }); return; }
     if (p.maxSteps !== undefined && typeof p.maxSteps !== 'number') { this.sendJson(res, 400, { ok: false, message: 'maxSteps must be a number' }); return; }
     if (p.maxDurationMs !== undefined && typeof p.maxDurationMs !== 'number') { this.sendJson(res, 400, { ok: false, message: 'maxDurationMs must be a number' }); return; }
     if (p.stepIntervalMs !== undefined && typeof p.stepIntervalMs !== 'number') { this.sendJson(res, 400, { ok: false, message: 'stepIntervalMs must be a number' }); return; }
     try {
-      const result = this.loopStartHandler({ chatId, ...(p.prompt !== undefined && { prompt: p.prompt }), ...(p.maxSteps !== undefined && { maxSteps: p.maxSteps }), ...(p.maxDurationMs !== undefined && { maxDurationMs: p.maxDurationMs }), ...(p.stepIntervalMs !== undefined && { stepIntervalMs: p.stepIntervalMs }), ...(p.loopMdPath !== undefined && { loopMdPath: p.loopMdPath }) });
+      const result = this.loopStartHandler({ chatId: p.chatId, prompt: p.prompt, ...(p.maxSteps !== undefined && { maxSteps: p.maxSteps }), ...(p.maxDurationMs !== undefined && { maxDurationMs: p.maxDurationMs }), ...(p.stepIntervalMs !== undefined && { stepIntervalMs: p.stepIntervalMs }) });
       this.sendJson(res, 200, { ok: true, loopId: result.loopId });
     } catch (err) { this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'Loop start failed' }); }
   }

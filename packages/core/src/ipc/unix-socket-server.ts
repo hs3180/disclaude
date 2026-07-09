@@ -83,13 +83,10 @@ export interface ChannelApiHandlers {
   /** Loop Runner operations (Issue #4075) */
   loopStart?: (params: {
     chatId: string;
-    /** Inline prompt. Optional when loopMdPath is given (Issue #4193 part B). */
-    prompt?: string;
+    prompt: string;
     maxSteps?: number;
     maxDurationMs?: number;
     stepIntervalMs?: number;
-    /** LOOP.md definition file path; when set, the runner uses startFromLoopMd (Issue #4193 part B). */
-    loopMdPath?: string;
   }) => Promise<{ success: boolean; loopId?: string; error?: string }>;
   loopStop?: (loopId: string) => Promise<{ success: boolean; error?: string }>;
   loopStatus?: (loopId: string) => Promise<{
