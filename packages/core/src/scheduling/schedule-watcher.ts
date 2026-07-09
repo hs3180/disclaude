@@ -242,6 +242,7 @@ export class ScheduleFileScanner {
         timezone: frontmatter['timezone'] as string | undefined,
         model: frontmatter['model'] as string | undefined,
         modelTier: frontmatter['modelTier'] as 'high' | 'low' | 'multimodal' | undefined,
+        allowChildSchedules: (frontmatter['allowChildSchedules'] as boolean) ?? false,
         sourceFile: filePath,
         fileMtime: stats.mtime,
       };
@@ -329,6 +330,9 @@ export class ScheduleFileScanner {
     }
     if (task.modelTier) {
       frontmatter.push(`modelTier: "${task.modelTier}"`);
+    }
+    if (task.allowChildSchedules) {
+      frontmatter.push('allowChildSchedules: true');
     }
 
     frontmatter.push('---', '');

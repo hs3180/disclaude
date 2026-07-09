@@ -336,6 +336,31 @@ export class Scheduler {
    * @returns Wrapped prompt with explicit anti-recursion instructions
    */
   private buildScheduledTaskPrompt(task: ScheduledTask): string {
+    // Opt-in allowChildSchedules: permit a bounded ONE-SHOT child schedule
+    // (e.g. a holiday Monday postponing a reminder to the next working day)
+    // while keeping the anti-recursion guard for every other task and still
+    // forbidding recurring spawns / chains.
+    if (task.allowChildSchedules) {
+      return `⚠️ **Scheduled Task Execution Context (allowChildSchedules=true)**
+
+You are executing a scheduled task named "${task.name}".
+
+This task is explicitly permitted to create a **one-shot child schedule** for a bounded postpone/reschedule (e.g., a holiday Monday pushing a reminder to the next working day).
+
+**ALLOWED (bounded):**
+- Create at most ONE child schedule by writing \`/data/workspace/schedules/<slug>/SCHEDULE.md\` with a cron pinned to a specific future datetime.
+- The child MUST self-disable (set \`enabled: false\`) immediately after it fires, so it runs exactly once.
+
+**STILL FORBIDDEN (anti-recursion):**
+- Do NOT create recurring child schedules.
+- Do NOT create chains (a child that itself creates schedules).
+- Do NOT create more than one child schedule per execution.
+
+---
+
+**Task Prompt:**
+${task.prompt}`;
+    }
     return `⚠️ **Scheduled Task Execution Context**
 
 You are executing a scheduled task named "${task.name}".

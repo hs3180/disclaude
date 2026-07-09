@@ -583,6 +583,28 @@ describe('Scheduler', () => {
       expect(routedMessage.payload).toContain('Do something');
     });
 
+    it('should relax anti-recursion wrapper when allowChildSchedules=true', async () => {
+      const task = createTask({
+        id: 'exec-child',
+        name: 'Spawn Task',
+        prompt: 'Maybe spawn a child',
+        allowChildSchedules: true,
+      });
+      scheduler.addTask(task);
+
+      const jobs = scheduler.getActiveJobs();
+      fireJob(jobs);
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+      }, { timeout: 2000 });
+
+      const routedMessage = getRoutedMessage();
+      expect(routedMessage.payload).toContain('allowChildSchedules=true');
+      expect(routedMessage.payload).toContain('one-shot child schedule');
+      expect(routedMessage.payload).not.toContain('Do NOT create new scheduled tasks');
+      expect(routedMessage.payload).toContain('Maybe spawn a child');
+    });
+
     it('should handle non-Error exceptions from router', async () => {
       mockRouterAsMock.route.mockRejectedValueOnce('string error');
 

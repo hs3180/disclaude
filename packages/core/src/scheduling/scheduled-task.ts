@@ -88,4 +88,13 @@ export interface ScheduledTask {
    * Issue #3059: Three-level model configuration.
    */
   modelTier?: ModelTier;
+  /**
+   * Opt-in: allow this scheduled task to create a ONE-SHOT child schedule
+   * (e.g., for a bounded holiday postpone). When true, the anti-recursion
+   * prompt wrapper is relaxed to permit creating a single self-disabling
+   * child schedule; recurring spawns and chains remain forbidden.
+   *
+   * Defined in schedule markdown frontmatter (e.g., `allowChildSchedules: true`).
+   */
+  allowChildSchedules?: boolean;
 }
