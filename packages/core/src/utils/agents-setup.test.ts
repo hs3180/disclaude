@@ -1,9 +1,8 @@
 /**
- * Tests for agents-setup utility (Issue #1410; #4224 symlink migration)
+ * Tests for agents-setup utility (Issue #1410)
  *
- * Tests the setupAgentsInWorkspace function which symlinks preset agent
- * definitions from the package directory into the workspace's .claude/agents/
- * for in-place discovery (replacing the old copy-on-start).
+ * Tests the setupAgentsInWorkspace function which copies preset agent
+ * definitions from the package directory to the workspace's .claude/agents/.
  *
  * Uses real temp directories for integration testing to avoid ESM spying issues.
  */
@@ -73,8 +72,7 @@ describe('setupAgentsInWorkspace', () => {
 
       expect(result.success).toBe(true);
 
-      // Verify .md files were linked in-place (symlinks, readable through the link)
-      expect((await fs.lstat(path.join(targetDir, 'site-miner.md'))).isSymbolicLink()).toBe(true);
+      // Verify .md files were copied
       const siteMinerContent = await fs.readFile(
         path.join(targetDir, 'site-miner.md'), 'utf-8',
       );
@@ -85,7 +83,7 @@ describe('setupAgentsInWorkspace', () => {
       );
       expect(customAgentContent).toBe('# Custom Agent');
 
-      // Verify non-.md files were NOT linked
+      // Verify non-.md files were NOT copied
       await expect(
         fs.access(path.join(targetDir, 'README.txt')),
       ).rejects.toThrow();

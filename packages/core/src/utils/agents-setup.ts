@@ -1,31 +1,27 @@
 /**
- * Agents setup utility for exposing preset agent definitions in-place.
+ * Agents setup utility for copying preset agent definitions to workspace.
  *
- * Issue #4224: instead of copying agent definitions from the package
- * installation directory into the workspace (the old copy-on-start), symlink
- * each `.md` into `$WORKSPACE/.claude/agents/`. A symlink is always current
- * (no stale copy after an upgrade), costs no per-restart overwrite IO, and
- * Claude Code discovers the agent in-place through the link. See
- * `utils/symlink.ts` for the link helper.
+ * This module handles copying agent definitions from the package installation
+ * directory to the workspace's .claude/agents directory, enabling Claude Code
+ * to discover and use them as project-level agents.
  *
  * @see Issue #1410
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from './logger.js';
-import { ensureSymlink } from './symlink.js';
 import { Config } from '../config/index.js';
 
 const logger = createLogger('AgentsSetup');
 
 /**
- * Symlink preset agent definitions from the package directory into workspace .claude/agents/.
+ * Copy preset agent definitions from package directory to workspace .claude/agents/.
  *
  * This enables Claude Code to load agent definitions via `.claude/agents/` in the
- * working directory. Only `.md` files are linked (agent definitions are Markdown).
- * The link always reflects the latest built-in definition (Issue #4224). For
- * customizations, users should place their versions in `<cwd>/.claude/agents/`
- * (project-level) which has higher priority.
+ * working directory. Only `.md` files are copied (agent definitions are Markdown).
+ * Existing files are always overwritten to ensure users get the latest built-in
+ * definitions. For customizations, users should place their versions in
+ * `<cwd>/.claude/agents/` (project-level) which has higher priority.
  *
  * @returns Success status and error message if failed
  */
@@ -63,9 +59,9 @@ export async function setupAgentsInWorkspace(): Promise<{
       return { success: false, error: err.message };
     }
 
-    // Symlink only .md agent definition files (idempotent; migrates any stale copy).
+    // Copy only .md agent definition files
     const entries = await fs.readdir(sourceDir, { withFileTypes: true });
-    let linkedCount = 0;
+    let copiedCount = 0;
 
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith('.md')) {
@@ -74,21 +70,22 @@ export async function setupAgentsInWorkspace(): Promise<{
         const targetPath = path.join(targetDir, agentName);
 
         try {
-          await ensureSymlink(sourcePath, targetPath, 'file');
-          linkedCount++;
-          logger.debug({ agentName, sourcePath, targetPath }, 'Linked agent definition');
+          // Always copy (overwrite) to ensure latest built-in definitions
+          await fs.copyFile(sourcePath, targetPath);
+          copiedCount++;
+          logger.debug({ agentName, sourcePath, targetPath }, 'Copied agent definition');
         } catch (error) {
           const err = error as Error;
-          logger.warn({ err, agentName }, 'Failed to link agent definition');
+          logger.warn({ err, agentName }, 'Failed to copy agent definition');
         }
       }
     }
 
     logger.info({
       targetDir,
-      linkedCount,
+      copiedCount,
       totalEntries: entries.length,
-    }, 'Agent definitions linked into workspace');
+    }, 'Agent definitions copied to workspace');
 
     return { success: true };
 

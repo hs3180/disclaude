@@ -52,8 +52,7 @@ const providerCache = new Map<ProviderType, IAgentSDKProvider>();
 export function getProvider(type?: ProviderType): IAgentSDKProvider {
   const providerType = type ?? defaultProviderType;
 
-  // Symlink built-in skills into workspace .claude/skills/ for SDK discovery
-  // (Issue #4224: in-place discovery, replacing the old copy-on-start).
+  // Copy built-in skills to workspace .claude/skills/ for SDK discovery
   // Fire-and-forget: failure only logs warning, doesn't block agent creation
   if (!skillsSetupDone) {
     skillsSetupDone = true;
@@ -64,8 +63,8 @@ export function getProvider(type?: ProviderType): IAgentSDKProvider {
     }).catch(() => {});
   }
 
-  // Symlink preset agent definitions into workspace .claude/agents/ for Claude Code discovery
-  // (Issue #4224). Fire-and-forget: failure only logs warning, doesn't block agent creation
+  // Copy preset agent definitions to workspace .claude/agents/ for Claude Code discovery
+  // Fire-and-forget: failure only logs warning, doesn't block agent creation
   if (!agentsSetupDone) {
     agentsSetupDone = true;
     setupAgentsInWorkspace().then((result) => {
