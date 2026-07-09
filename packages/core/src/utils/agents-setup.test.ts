@@ -1,9 +1,8 @@
 /**
- * Tests for agents-setup utility (Issue #1410; #4224 symlink migration)
+ * Tests for agents-setup utility (Issue #1410)
  *
- * Tests the setupAgentsInWorkspace function which symlinks preset agent
- * definitions from the package directory into the workspace's .claude/agents/
- * for in-place discovery (replacing the old copy-on-start).
+ * Tests the setupAgentsInWorkspace function which copies preset agent
+ * definitions from the package directory to the workspace's .claude/agents/.
  *
  * Uses real temp directories for integration testing to avoid ESM spying issues.
  */
@@ -51,10 +50,10 @@ describe('setupAgentsInWorkspace', () => {
   });
 
   describe('when source agents directory does not exist', () => {
-    it('should return success without error (agents dir is optional)', () => {
+    it('should return success without error (agents dir is optional)', async () => {
       mockGetAgentsDir.mockReturnValue('/nonexistent/agents');
 
-      const result = setupAgentsInWorkspace();
+      const result = await setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
       expect(result.error).toBeUndefined();
@@ -69,12 +68,11 @@ describe('setupAgentsInWorkspace', () => {
       await fs.writeFile(path.join(sourceDir, 'custom-agent.md'), '# Custom Agent');
       await fs.writeFile(path.join(sourceDir, 'README.txt'), 'Not an agent');
 
-      const result = setupAgentsInWorkspace();
+      const result = await setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
 
-      // Verify .md files were linked in-place (symlinks, readable through the link)
-      expect((await fs.lstat(path.join(targetDir, 'site-miner.md'))).isSymbolicLink()).toBe(true);
+      // Verify .md files were copied
       const siteMinerContent = await fs.readFile(
         path.join(targetDir, 'site-miner.md'), 'utf-8',
       );
@@ -85,7 +83,7 @@ describe('setupAgentsInWorkspace', () => {
       );
       expect(customAgentContent).toBe('# Custom Agent');
 
-      // Verify non-.md files were NOT linked
+      // Verify non-.md files were NOT copied
       await expect(
         fs.access(path.join(targetDir, 'README.txt')),
       ).rejects.toThrow();
@@ -100,7 +98,7 @@ describe('setupAgentsInWorkspace', () => {
       await fs.mkdir(targetDir, { recursive: true });
       await fs.writeFile(path.join(targetDir, 'site-miner.md'), '# Old Content');
 
-      const result = setupAgentsInWorkspace();
+      const result = await setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
 
@@ -114,7 +112,7 @@ describe('setupAgentsInWorkspace', () => {
     it('should succeed with empty agents directory', async () => {
       await fs.mkdir(sourceDir, { recursive: true });
 
-      const result = setupAgentsInWorkspace();
+      const result = await setupAgentsInWorkspace();
 
       expect(result.success).toBe(true);
 

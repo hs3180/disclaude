@@ -15,7 +15,7 @@ import type {
   StreamQueryResult,
   UserInput,
 } from '../../types.js';
-import { adaptSDKMessage, adaptUserInput, TaskSubjectRegistry } from './message-adapter.js';
+import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
@@ -480,10 +480,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           });
         }
       try {
-        // Issue #4200 part 2: per-query registry of taskId → label, so status-only
-        // TaskUpdate calls can recall a subject/activeForm seen on an earlier
-        // update. Local to this generator → GC'd when the query stream ends.
-        const taskSubjectRegistry = new TaskSubjectRegistry();
         let firstMessageMs: number | undefined;
         // Issue #3706: Track consecutive text-only assistant responses for idle loop detection.
         // When a model fails to emit tool_use blocks, it enters an idle loop producing
@@ -504,11 +500,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           ? envFloodThreshold
           : 50;
         const model = options.model as string | undefined;
-        // Issue #4194: track whether this turn produced any user-visible output
-        // (assistant text or tool_use). The terminal `result` does NOT count — a
-        // turn that emits only system + result leaves the bot appearing
-        // unresponsive while logs mark it complete.
-        let sawVisibleOutput = false;
 
         for await (const message of queryResult) {
           // Issue #3706 (stall): handle stream_event (partial) messages for the
@@ -535,9 +526,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           const now = Date.now();
           messageCount++;
           // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
-          // Issue #4200 part 2: thread the per-query task registry so status-only
-          // TaskUpdate calls can recall a label seen on an earlier update.
-          const adapted = adaptSDKMessage(message, taskSubjectRegistry);
+          const adapted = adaptSDKMessage(message);
           // Issue #3003: log TTFT and per-message elapsed
           if (!firstMessageMs) {
             firstMessageMs = now;
@@ -569,7 +558,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           // Count consecutive assistant messages that produce text only (no tool_use).
           // If this exceeds the threshold, the model may not support tool_use properly.
           if (adapted.type === 'text' && adapted.role === 'assistant' && adapted.content) {
-            sawVisibleOutput = true;
             consecutiveTextOnlyCount++;
             if (consecutiveTextOnlyCount === IDLE_LOOP_THRESHOLD) {
               logger.warn(
@@ -587,7 +575,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
               );
             }
           } else if (adapted.type === 'tool_use') {
-            sawVisibleOutput = true;
             consecutiveTextOnlyCount = 0;
           }
 
@@ -625,17 +612,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             // "🤔 Thinking…" / "🔄 Compacting…")仍属 system 通道噪声;若让它参与重置,会把
             // 「空消息 + 偶发 status」交替的 flood 不断清零、永远到不了阈值。
             consecutiveEmptySystemCount = 0;
-          }
-
-          // Issue #4194: warn on empty turns — only system/result flowed, with no
-          // assistant text or tool_use. Diagnostic only (no behavior change); a
-          // follow-up can add auto session-reset / retry.
-          if (adapted.type === 'result' && !sawVisibleOutput) {
-            logger.warn(
-              { messageCount, model, apiBaseUrl: options.env?.ANTHROPIC_BASE_URL },
-              'Issue #4194: turn completed with no user-visible output (system/result only) '
-                + '— agent may appear unresponsive to the user',
-            );
           }
 
           yield adapted;

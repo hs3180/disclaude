@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { adaptSDKMessage, adaptUserInput, TaskSubjectRegistry } from './message-adapter.js';
+import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 
 // Test helper: SDK message types require fields (parent_tool_use_id, uuid, etc.)
 // that are optional in practice. Cast test fixtures to bypass strict type checking.
@@ -250,110 +250,6 @@ describe('adaptSDKMessage', () => {
       expect(result.content).toContain('Updating task #11');
       expect(result.content).toContain('Investigate flaky login on Safari');
       expect(result.content).toContain('in_progress');
-    });
-
-    it('Issue #4200 part 2: recalls a recorded label for status-only TaskUpdate', () => {
-      const registry = new TaskSubjectRegistry();
-      // First update carries activeForm (common when starting a task) → recorded.
-      const start = adaptSDKMessage(
-        asMsg({
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', name: 'TaskUpdate', input: { taskId: '5', activeForm: 'Running tests', status: 'in_progress' } }],
-          },
-        }),
-        registry,
-      );
-      expect(start.content).toContain('Running tests');
-
-      // Later status-only update (no subject/activeForm/description) recalls it.
-      const done = adaptSDKMessage(
-        asMsg({
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', name: 'TaskUpdate', input: { taskId: '5', status: 'completed' } }],
-          },
-        }),
-        registry,
-      );
-      expect(done.content).toContain('Updating task #5');
-      expect(done.content).toContain('"Running tests"');
-      expect(done.content).toContain('completed');
-    });
-
-    it('Issue #4200 part 2: status-only TaskUpdate with no prior record still falls back', () => {
-      const registry = new TaskSubjectRegistry();
-      const result = adaptSDKMessage(
-        asMsg({
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', name: 'TaskUpdate', input: { taskId: '9', status: 'pending' } }],
-          },
-        }),
-        registry,
-      );
-      expect(result.content).toContain('Updating task #9');
-      expect(result.content).toContain('pending');
-      // No recorded label → no empty quotes.
-      expect(result.content).not.toContain('""');
-    });
-
-    it('Issue #4200 part 2: a later subject-bearing update overrides the recorded label', () => {
-      const registry = new TaskSubjectRegistry();
-      adaptSDKMessage(
-        asMsg({
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', name: 'TaskUpdate', input: { taskId: '3', activeForm: 'Old label', status: 'in_progress' } }],
-          },
-        }),
-        registry,
-      );
-      const result = adaptSDKMessage(
-        asMsg({
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', name: 'TaskUpdate', input: { taskId: '3', subject: 'New label', status: 'completed' } }],
-          },
-        }),
-        registry,
-      );
-      expect(result.content).toContain('"New label"');
-      expect(result.content).not.toContain('Old label');
-    });
-
-    it('Issue #4200 part 2: recall is registry-scoped (different queries stay isolated)', () => {
-      // Query A records taskId '1'.
-      const registryA = new TaskSubjectRegistry();
-      adaptSDKMessage(
-        asMsg({
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', name: 'TaskUpdate', input: { taskId: '1', activeForm: 'Query A task', status: 'in_progress' } }],
-          },
-        }),
-        registryA,
-      );
-      // Query B (fresh registry) does NOT see Query A's label for the same taskId.
-      const registryB = new TaskSubjectRegistry();
-      const result = adaptSDKMessage(
-        asMsg({
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', name: 'TaskUpdate', input: { taskId: '1', status: 'completed' } }],
-          },
-        }),
-        registryB,
-      );
-      expect(result.content).not.toContain('Query A task');
-      expect(result.content).not.toContain('""');
     });
 
     it('should handle unknown tool with input', () => {
