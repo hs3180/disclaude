@@ -8,8 +8,8 @@
  * Issue #3901: All tests use InputMessageRouter.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
-import { Scheduler, TaskTimeoutError, type SchedulerCallbacks, type SchedulerOptions } from './scheduler.js';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -43,28 +43,6 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   };
 }
 
-/**
- * Issue #4218 (Option C — "do regardless"): registry of every Scheduler
- * created during a test, so the global afterEach below can stop them all.
- *
- * Production `addTask()` (and `start()` when `listEnabled()` is non-empty)
- * creates a real `new CronJob(..., start=true)` — i.e. a live, wall-clock OS
- * timer. This suite builds ~14 Scheduler instances (the describe-scoped
- * `scheduler` plus local `cooldownScheduler` / `busyScheduler` /
- * `blockScheduler` / `noRouterScheduler` consts), and most tests never call
- * `.stop()` on them, so real timers leak across tests and race the wall clock
- * (the CI flake behind #4215). Stopping at construction granularity guarantees
- * no real timer survives a test regardless of which instance created it.
- */
-const createdSchedulers = new Set<Scheduler>();
-
-/** Construct a Scheduler and register it for afterEach teardown (#4218). */
-function createScheduler(options: SchedulerOptions): Scheduler {
-  const instance = new Scheduler(options);
-  createdSchedulers.add(instance);
-  return instance;
-}
-
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
@@ -92,26 +70,11 @@ describe('Scheduler', () => {
     mockRouter = createMockRouter();
     mockRouterAsMock = mockRouter as unknown as MockRouter;
 
-    scheduler = createScheduler({
+    scheduler = new Scheduler({
       scheduleManager: mockScheduleManager,
       callbacks: mockCallbacks,
       inputMessageRouter: mockRouter,
     });
-  });
-
-  // Issue #4218 (Option C — "do regardless"): stop every Scheduler created
-  // during this test so no real OS cron timer leaks into subsequent tests.
-  // Real timers come from addTask()/start() on whichever instance a test
-  // built, so we must stop ALL instances — not just the describe-scoped
-  // `scheduler` (which a literal `afterEach(() => scheduler.stop())` would
-  // miss the ~13 local consts). `stop(0)` skips the graceful-shutdown wait
-  // (fine for unit tests, whose mocked routers resolve instantly) while still
-  // clearing every active cron job. A no-op for instances that never started.
-  afterEach(async () => {
-    for (const instance of createdSchedulers) {
-      await instance.stop(0);
-    }
-    createdSchedulers.clear();
   });
 
   describe('constructor', () => {
@@ -128,7 +91,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const s = createScheduler({
+      const s = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -367,7 +330,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const s = createScheduler({
+      const s = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -646,7 +609,7 @@ describe('Scheduler', () => {
     });
 
     it('should send explicit notification when no inputMessageRouter configured', async () => {
-      const noRouterScheduler = createScheduler({
+      const noRouterScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
       });
@@ -685,7 +648,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const cooldownScheduler = createScheduler({
+      const cooldownScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -716,7 +679,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const cooldownScheduler = createScheduler({
+      const cooldownScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -743,7 +706,7 @@ describe('Scheduler', () => {
 
       mockRouterAsMock.route.mockRejectedValueOnce(new Error('task failed'));
 
-      const cooldownScheduler = createScheduler({
+      const cooldownScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -768,7 +731,7 @@ describe('Scheduler', () => {
         clearCooldown: vi.fn().mockResolvedValue(true),
       } as unknown as CooldownManager;
 
-      const cooldownScheduler = createScheduler({
+      const cooldownScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -898,7 +861,7 @@ describe('Scheduler', () => {
   describe('executeTask busy-chat gate (Issue #4199)', () => {
     it('should skip a blocking task when its chat is busy', async () => {
       mockRouterAsMock.route.mockResolvedValue(undefined);
-      const busyScheduler = createScheduler({
+      const busyScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
         inputMessageRouter: mockRouter,
@@ -914,7 +877,7 @@ describe('Scheduler', () => {
 
     it('should execute a blocking task when its chat is not busy', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
-      const busyScheduler = createScheduler({
+      const busyScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
         inputMessageRouter: mockRouter,
@@ -929,7 +892,7 @@ describe('Scheduler', () => {
 
     it('should execute a non-blocking task even when its chat is busy', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
-      const busyScheduler = createScheduler({
+      const busyScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: () => true },
         inputMessageRouter: mockRouter,
@@ -1130,7 +1093,7 @@ describe('Scheduler', () => {
 
       mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
 
-      const cooldownScheduler = createScheduler({
+      const cooldownScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
@@ -1163,7 +1126,7 @@ describe('Scheduler', () => {
 
   describe('executeTask agent busy check (Issue #3931, #4102)', () => {
     it('should skip blocking task when another blocking task is running for same chatId', async () => {
-      const blockScheduler = createScheduler({
+      const blockScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
@@ -1210,7 +1173,7 @@ describe('Scheduler', () => {
     });
 
     it('should not skip non-blocking tasks even when blocking task is running', async () => {
-      const blockScheduler = createScheduler({
+      const blockScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,

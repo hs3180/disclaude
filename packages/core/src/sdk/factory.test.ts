@@ -9,8 +9,8 @@ import type { IAgentSDKProvider } from './interface.js';
 import type { ProviderInfo } from './types.js';
 
 // Mock functions defined at module scope (available for vi.doMock closures)
-const mockSetupSkills = vi.fn().mockReturnValue({ success: true });
-const mockSetupAgents = vi.fn().mockReturnValue({ success: true });
+const mockSetupSkills = vi.fn().mockResolvedValue({ success: true });
+const mockSetupAgents = vi.fn().mockResolvedValue({ success: true });
 const mockCreateLogger = vi.fn().mockReturnValue({
   warn: vi.fn(),
   info: vi.fn(),

@@ -1,34 +1,28 @@
 /**
- * Skills setup utility for exposing package skills to the SDK in-place.
+ * Skills setup utility for copying skills to workspace.
  *
- * Issue #4224: instead of copying skills from the package installation directory
- * into the workspace (the old copy-on-start), symlink each skill directory into
- * `$WORKSPACE/.claude/skills/`. A symlink is always current (no stale copy after
- * an upgrade), costs no per-restart overwrite IO, and the SDK discovers the skill
- * in-place through the link. See `utils/symlink.ts` for the link helper.
- *
- * Issue #4224 part 2: `setupSkillsInWorkspace` is **synchronous** so it completes
- * inside `getProvider()` before the provider is returned, eliminating the
- * first-message race (a query can no longer fire before the skills are linked).
+ * This module handles copying skills from the package installation directory
+ * to the workspace's .claude directory, enabling SDK to load them via settingSources.
  */
-import { accessSync, mkdirSync, readdirSync } from 'node:fs';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from './logger.js';
 import { Config } from '../config/index.js';
-import { ensureSymlinkSync } from './symlink.js';
 
 const logger = createLogger('SkillsSetup');
 
 /**
- * Symlink each package skill into workspace `.claude/skills/` for SDK discovery.
- * Synchronous — completes before `getProvider()` returns (no first-message race).
+ * Copy skills from package directory to workspace .claude/skills.
+ *
+ * This enables the SDK to load skills via settingSources: ['user', 'project', 'local'],
+ * which looks for .claude/skills/ in user, project, and local configuration scopes.
  *
  * @returns Success status and error message if failed
  */
-export function setupSkillsInWorkspace(): {
+export async function setupSkillsInWorkspace(): Promise<{
   success: boolean;
   error?: string;
-} {
+}> {
   try {
     const workspaceDir = Config.getWorkspaceDir();
     const targetDir = path.join(workspaceDir, '.claude', 'skills');
@@ -42,7 +36,7 @@ export function setupSkillsInWorkspace(): {
 
     // Check if source skills directory exists
     try {
-      accessSync(sourceDir);
+      await fs.access(sourceDir);
     } catch {
       const error = `Source skills directory does not exist: ${sourceDir}`;
       logger.error({ sourceDir }, 'Skills directory not found');
@@ -51,7 +45,7 @@ export function setupSkillsInWorkspace(): {
 
     // Create target directory if it doesn't exist
     try {
-      mkdirSync(targetDir, { recursive: true });
+      await fs.mkdir(targetDir, { recursive: true });
       logger.debug({ targetDir }, 'Created target skills directory');
     } catch (error) {
       const err = error as Error;
@@ -59,9 +53,9 @@ export function setupSkillsInWorkspace(): {
       return { success: false, error: err.message };
     }
 
-    // Symlink each skill directory into place (idempotent; migrates any stale copy).
-    const entries = readdirSync(sourceDir, { withFileTypes: true });
-    let linkedCount = 0;
+    // Copy all skill directories
+    const entries = await fs.readdir(sourceDir, { withFileTypes: true });
+    let copiedCount = 0;
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
@@ -70,12 +64,13 @@ export function setupSkillsInWorkspace(): {
         const targetPath = path.join(targetDir, skillName);
 
         try {
-          ensureSymlinkSync(sourcePath, targetPath, 'dir');
-          linkedCount++;
-          logger.debug({ skillName, sourcePath, targetPath }, 'Linked skill directory');
+          // Copy directory recursively
+          await copyDirectory(sourcePath, targetPath);
+          copiedCount++;
+          logger.debug({ skillName, sourcePath, targetPath }, 'Copied skill directory');
         } catch (error) {
           const err = error as Error;
-          logger.warn({ err, skillName }, 'Failed to link skill directory');
+          logger.warn({ err, skillName }, 'Failed to copy skill directory');
           // Continue with other skills even if one fails
         }
       }
@@ -83,9 +78,9 @@ export function setupSkillsInWorkspace(): {
 
     logger.info({
       targetDir,
-      linkedCount,
+      copiedCount,
       totalEntries: entries.length,
-    }, 'Skills linked into workspace');
+    }, 'Skills copied to workspace');
 
     return { success: true };
 
@@ -93,5 +88,30 @@ export function setupSkillsInWorkspace(): {
     const err = error as Error;
     logger.error({ err }, 'Failed to setup skills in workspace');
     return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Copy a directory recursively.
+ */
+async function copyDirectory(source: string, target: string): Promise<void> {
+  // Create target directory
+  await fs.mkdir(target, { recursive: true });
+
+  // Read source directory
+  const entries = await fs.readdir(source, { withFileTypes: true });
+
+  // Copy each entry
+  for (const entry of entries) {
+    const sourcePath = path.join(source, entry.name);
+    const targetPath = path.join(target, entry.name);
+
+    if (entry.isDirectory()) {
+      // Recursively copy subdirectory
+      await copyDirectory(sourcePath, targetPath);
+    } else {
+      // Copy file
+      await fs.copyFile(sourcePath, targetPath);
+    }
   }
 }
