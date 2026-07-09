@@ -7,15 +7,10 @@
  * costs nothing to keep fresh (no per-restart overwrite IO), and doesn't
  * clobber anything — the link simply points at the read-only package resource.
  *
- * `ensureSymlinkSync` is **synchronous** (Issue #4224 part 2): it is invoked
- * from `getProvider()` (called in the `BaseAgent` constructor, which is sync),
- * so completing the link synchronously inside `getProvider` eliminates the
- * first-message race — the symlink exists before the provider is returned.
- *
- * It is idempotent and migrates an existing stale copy (a real dir/file left by
- * the previous copy-on-start) into a symlink.
+ * `ensureSymlink` is idempotent and migrates an existing stale copy (a real
+ * dir/file left by the previous copy-on-start) into a symlink.
  */
-import { symlinkSync, lstatSync, readlinkSync, rmSync } from 'node:fs';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from './logger.js';
 
@@ -24,7 +19,7 @@ const logger = createLogger('SymlinkSetup');
 export type SymlinkType = 'dir' | 'file';
 
 /**
- * Ensure `linkPath` is a symlink pointing to `realSource` — **synchronous**.
+ * Ensure `linkPath` is a symlink pointing to `realSource`.
  *
  * - If `linkPath` does not exist: create the symlink.
  * - If it is already a symlink to `realSource`: no-op (idempotent).
@@ -38,13 +33,17 @@ export type SymlinkType = 'dir' | 'file';
  * @param linkPath - Absolute (or resolvable) path where the link should live.
  * @param type - `'dir'` for a directory symlink, `'file'` for a file symlink.
  */
-export function ensureSymlinkSync(realSource: string, linkPath: string, type: SymlinkType): void {
+export async function ensureSymlink(
+  realSource: string,
+  linkPath: string,
+  type: SymlinkType,
+): Promise<void> {
   const source = path.resolve(realSource);
   const link = path.resolve(linkPath);
 
   // Fast path: create the symlink.
   try {
-    symlinkSync(source, link, type);
+    await fs.symlink(source, link, type);
     return;
   } catch (err) {
     const { code } = err as NodeJS.ErrnoException;
@@ -56,20 +55,20 @@ export function ensureSymlinkSync(realSource: string, linkPath: string, type: Sy
   // `link` already exists — reconcile to the desired symlink.
   let stat;
   try {
-    stat = lstatSync(link);
+    stat = await fs.lstat(link);
   } catch {
     // Entry raced away between the failed symlink and the lstat — retry once.
-    symlinkSync(source, link, type);
+    await fs.symlink(source, link, type);
     return;
   }
 
   if (stat.isSymbolicLink()) {
-    const currentTarget = path.resolve(path.dirname(link), readlinkSync(link));
+    const currentTarget = path.resolve(path.dirname(link), await fs.readlink(link));
     if (currentTarget === source) {
       return; // Already the right symlink — idempotent no-op.
     }
-    rmSync(link, { force: true });
-    symlinkSync(source, link, type);
+    await fs.rm(link, { force: true });
+    await fs.symlink(source, link, type);
     return;
   }
 
@@ -79,11 +78,11 @@ export function ensureSymlinkSync(realSource: string, linkPath: string, type: Sy
       { linkPath: link, source, wasDirectory: stat.isDirectory() },
       'Replacing stale copy-on-start entry with symlink (Issue #4224)',
     );
-    rmSync(link, { recursive: stat.isDirectory(), force: true });
-    symlinkSync(source, link, type);
+    await fs.rm(link, { recursive: stat.isDirectory(), force: true });
+    await fs.symlink(source, link, type);
     return;
   }
 
   // Unexpected entry type (socket, device, FIFO, ...) — don't clobber it.
-  logger.warn({ linkPath: link }, 'ensureSymlinkSync: unexpected existing entry type, leaving untouched');
+  logger.warn({ linkPath: link }, 'ensureSymlink: unexpected existing entry type, leaving untouched');
 }

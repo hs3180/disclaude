@@ -54,25 +54,25 @@ export function getProvider(type?: ProviderType): IAgentSDKProvider {
 
   // Symlink built-in skills into workspace .claude/skills/ for SDK discovery
   // (Issue #4224: in-place discovery, replacing the old copy-on-start).
-  // Issue #4224 part 2: synchronous — completes before the provider is returned,
-  // so the symlinks exist before any first query (no first-message race). Setup
-  // is idempotent and fast (a handful of symlinks, once per process).
+  // Fire-and-forget: failure only logs warning, doesn't block agent creation
   if (!skillsSetupDone) {
     skillsSetupDone = true;
-    const result = setupSkillsInWorkspace();
-    if (!result.success) {
-      createLogger('SkillsSetup').warn({ error: result.error }, 'Failed to setup skills');
-    }
+    setupSkillsInWorkspace().then((result) => {
+      if (!result.success) {
+        createLogger('SkillsSetup').warn({ error: result.error }, 'Failed to setup skills');
+      }
+    }).catch(() => {});
   }
 
   // Symlink preset agent definitions into workspace .claude/agents/ for Claude Code discovery
-  // (Issue #4224 part 2: synchronous — same race elimination as skills above).
+  // (Issue #4224). Fire-and-forget: failure only logs warning, doesn't block agent creation
   if (!agentsSetupDone) {
     agentsSetupDone = true;
-    const result = setupAgentsInWorkspace();
-    if (!result.success) {
-      createLogger('AgentsSetup').warn({ error: result.error }, 'Failed to setup agents');
-    }
+    setupAgentsInWorkspace().then((result) => {
+      if (!result.success) {
+        createLogger('AgentsSetup').warn({ error: result.error }, 'Failed to setup agents');
+      }
+    }).catch(() => {});
   }
 
   // 检查缓存

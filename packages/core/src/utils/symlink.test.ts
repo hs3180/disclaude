@@ -1,5 +1,5 @@
 /**
- * Tests for ensureSymlinkSync (Issue #4224 part 1 + part 2 sync).
+ * Tests for ensureSymlink (Issue #4224 part 1).
  *
  * Verifies symlink creation, idempotency, replacement, migration of a stale
  * copy-on-start entry, and the skip-on-unexpected-type guard. Uses real temp
@@ -9,9 +9,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { ensureSymlinkSync } from './symlink.js';
+import { ensureSymlink } from './symlink.js';
 
-describe('ensureSymlinkSync', () => {
+describe('ensureSymlink', () => {
   let tempDir: string;
   let sourceDir: string;
   let linkDir: string;
@@ -34,7 +34,7 @@ describe('ensureSymlinkSync', () => {
     await fs.writeFile(path.join(src, 'SKILL.md'), '# A');
 
     const link = path.join(linkDir, 'skill-a');
-    ensureSymlinkSync(src, link, 'dir');
+    await ensureSymlink(src, link, 'dir');
 
     expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
     expect(await fs.readFile(path.join(link, 'SKILL.md'), 'utf-8')).toBe('# A');
@@ -45,7 +45,7 @@ describe('ensureSymlinkSync', () => {
     await fs.writeFile(src, '# Agent');
     const link = path.join(linkDir, 'agent.md');
 
-    ensureSymlinkSync(src, link, 'file');
+    await ensureSymlink(src, link, 'file');
 
     expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
     expect(await fs.readFile(link, 'utf-8')).toBe('# Agent');
@@ -56,8 +56,8 @@ describe('ensureSymlinkSync', () => {
     await fs.mkdir(src, { recursive: true });
     const link = path.join(linkDir, 'skill');
 
-    ensureSymlinkSync(src, link, 'dir');
-    ensureSymlinkSync(src, link, 'dir'); // no throw
+    await ensureSymlink(src, link, 'dir');
+    await ensureSymlink(src, link, 'dir'); // no throw
 
     expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
   });
@@ -68,7 +68,7 @@ describe('ensureSymlinkSync', () => {
     await fs.writeFile(path.join(src, 'SKILL.md'), 'v1');
     const link = path.join(linkDir, 'skill');
 
-    ensureSymlinkSync(src, link, 'dir');
+    await ensureSymlink(src, link, 'dir');
     await fs.writeFile(path.join(src, 'SKILL.md'), 'v2');
 
     expect(await fs.readFile(path.join(link, 'SKILL.md'), 'utf-8')).toBe('v2');
@@ -83,8 +83,8 @@ describe('ensureSymlinkSync', () => {
     await fs.writeFile(path.join(src2, 'SKILL.md'), 'two');
     const link = path.join(linkDir, 'skill');
 
-    ensureSymlinkSync(src1, link, 'dir');
-    ensureSymlinkSync(src2, link, 'dir');
+    await ensureSymlink(src1, link, 'dir');
+    await ensureSymlink(src2, link, 'dir');
 
     expect(await fs.readFile(path.join(link, 'SKILL.md'), 'utf-8')).toBe('two');
   });
@@ -101,7 +101,7 @@ describe('ensureSymlinkSync', () => {
     await fs.writeFile(path.join(link, 'SKILL.md'), '# Stale');
     await fs.writeFile(path.join(link, 'user-custom.md'), 'custom');
 
-    ensureSymlinkSync(src, link, 'dir');
+    await ensureSymlink(src, link, 'dir');
 
     // The skill is now a symlink reflecting the source — stale copy + its
     // extra file are gone (this is the intended #4224 cutover).
@@ -117,7 +117,7 @@ describe('ensureSymlinkSync', () => {
 
     await fs.writeFile(link, '# Stale'); // old copyFile artifact
 
-    ensureSymlinkSync(src, link, 'file');
+    await ensureSymlink(src, link, 'file');
 
     expect((await fs.lstat(link)).isSymbolicLink()).toBe(true);
     expect(await fs.readFile(link, 'utf-8')).toBe('# Real');

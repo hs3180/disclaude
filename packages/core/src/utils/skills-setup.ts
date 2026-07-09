@@ -6,29 +6,27 @@
  * `$WORKSPACE/.claude/skills/`. A symlink is always current (no stale copy after
  * an upgrade), costs no per-restart overwrite IO, and the SDK discovers the skill
  * in-place through the link. See `utils/symlink.ts` for the link helper.
- *
- * Issue #4224 part 2: `setupSkillsInWorkspace` is **synchronous** so it completes
- * inside `getProvider()` before the provider is returned, eliminating the
- * first-message race (a query can no longer fire before the skills are linked).
  */
-import { accessSync, mkdirSync, readdirSync } from 'node:fs';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger } from './logger.js';
 import { Config } from '../config/index.js';
-import { ensureSymlinkSync } from './symlink.js';
+import { ensureSymlink } from './symlink.js';
 
 const logger = createLogger('SkillsSetup');
 
 /**
  * Symlink each package skill into workspace `.claude/skills/` for SDK discovery.
- * Synchronous — completes before `getProvider()` returns (no first-message race).
+ *
+ * This enables the SDK to load skills via settingSources: ['user', 'project', 'local'],
+ * which looks for .claude/skills/ in user, project, and local configuration scopes.
  *
  * @returns Success status and error message if failed
  */
-export function setupSkillsInWorkspace(): {
+export async function setupSkillsInWorkspace(): Promise<{
   success: boolean;
   error?: string;
-} {
+}> {
   try {
     const workspaceDir = Config.getWorkspaceDir();
     const targetDir = path.join(workspaceDir, '.claude', 'skills');
@@ -42,7 +40,7 @@ export function setupSkillsInWorkspace(): {
 
     // Check if source skills directory exists
     try {
-      accessSync(sourceDir);
+      await fs.access(sourceDir);
     } catch {
       const error = `Source skills directory does not exist: ${sourceDir}`;
       logger.error({ sourceDir }, 'Skills directory not found');
@@ -51,7 +49,7 @@ export function setupSkillsInWorkspace(): {
 
     // Create target directory if it doesn't exist
     try {
-      mkdirSync(targetDir, { recursive: true });
+      await fs.mkdir(targetDir, { recursive: true });
       logger.debug({ targetDir }, 'Created target skills directory');
     } catch (error) {
       const err = error as Error;
@@ -60,7 +58,7 @@ export function setupSkillsInWorkspace(): {
     }
 
     // Symlink each skill directory into place (idempotent; migrates any stale copy).
-    const entries = readdirSync(sourceDir, { withFileTypes: true });
+    const entries = await fs.readdir(sourceDir, { withFileTypes: true });
     let linkedCount = 0;
 
     for (const entry of entries) {
@@ -70,7 +68,7 @@ export function setupSkillsInWorkspace(): {
         const targetPath = path.join(targetDir, skillName);
 
         try {
-          ensureSymlinkSync(sourcePath, targetPath, 'dir');
+          await ensureSymlink(sourcePath, targetPath, 'dir');
           linkedCount++;
           logger.debug({ skillName, sourcePath, targetPath }, 'Linked skill directory');
         } catch (error) {
