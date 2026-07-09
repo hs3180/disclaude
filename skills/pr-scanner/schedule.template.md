@@ -25,6 +25,23 @@ chatId: "{controlChannelChatId}"
 
 ## 执行步骤
 
+### 0. 确保 GitHub token 有效（Issue #4237）
+
+PR Scanner 在长寿命会话中执行，会话环境变量 `GH_TOKEN` 在 spawn 时冻结、不会自动刷新，而 GitHub Installation Access Token **每小时过期一次**。token 失效时 `gh` 返回 **401 Bad credentials** 且输出为空，scanner 会把空结果当成「0 open PR」从而**静默漏掉新 PR、不建审查群**。因此每轮扫描前先确认 token 有效：
+
+```bash
+# GH_TOKEN 每小时过期；过期后 gh 返回 401、输出为空，scanner 会误判「0 open PR」
+EXP=$(grep '^GH_TOKEN_EXPIRES_AT=' /data/workspace/.runtime-env 2>/dev/null | head -1 | sed 's/^GH_TOKEN_EXPIRES_AT=//' | tr -d '"')
+NOW=$(date -u +%s)
+EXP_TS=$(date -u -d "$EXP" +%s 2>/dev/null || echo 0)
+if [ -z "$EXP" ] || [ "$NOW" -ge "$EXP_TS" ]; then
+  echo "GH_TOKEN missing or expired — refresh via github-jwt-auth skill"
+fi
+```
+
+- 若上述判定为「需刷新」：调用 **`github-jwt-auth`** skill（用 GitHub App JWT 签名换取新的 Installation Access Token，写入 `/data/workspace/.runtime-env` 的 `GH_TOKEN` / `GH_TOKEN_EXPIRES_AT`），随后 `source /data/workspace/.runtime-env` 再继续。
+- 即便 preflight 通过，后续任一 `gh` 命令若返回 **401 Bad credentials**，同样先调用 `github-jwt-auth` 刷新并重试该命令；仍失败才按「错误处理」记录并跳过。
+
 ### 1. 读取映射表
 
 ```bash
@@ -158,7 +175,7 @@ rm -rf "{workdir}"
 
 ## 错误处理
 
-- `gh` 命令失败 → 记录错误，跳过/退出
+- `gh` 命令失败 → 若返回 401 Bad credentials（token 过期），先调用 `github-jwt-auth` skill 刷新 `GH_TOKEN` 并 `source /data/workspace/.runtime-env` 后重试；仍失败才记录错误，跳过/退出
 - 映射文件读取失败 → 视为空表
 - 映射文件写入失败 → 记录错误（可通过群名重建）
 - 群创建失败 → 跳过该 PR，清理临时目录
@@ -174,4 +191,4 @@ rm -rf "{workdir}"
 
 ## 依赖
 
-`gh` CLI · `lark-cli` · `workspace/bot-chat-mapping.json`（BotChatMappingStore）
+`gh` CLI · `lark-cli` · `workspace/bot-chat-mapping.json`（BotChatMappingStore）· `github-jwt-auth` skill（按需刷新 `GH_TOKEN`，每小时过期；见步骤 0）
