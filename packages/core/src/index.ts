@@ -124,12 +124,11 @@ export {
   RestartManager,
 } from './agents/restart-manager.js';
 
-// MCP health tracker (Issue #4179 part 1 + part 3)
+// MCP health tracker (Issue #4179 part 1)
 export {
   type McpHealthTrackerOptions,
   type ToolHealth,
   McpHealthTracker,
-  formatDegradedToolsNotice,
 } from './agents/mcp-health-tracker.js';
 
 // LOOP.md loop definition file: spec + parser (Issue #4193 part A)

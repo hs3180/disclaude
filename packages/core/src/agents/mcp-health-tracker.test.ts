@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { McpHealthTracker, formatDegradedToolsNotice } from './mcp-health-tracker.js';
+import { McpHealthTracker } from './mcp-health-tracker.js';
 
 describe('McpHealthTracker', () => {
   describe('threshold-based degradation (default N=2, per #4179)', () => {
@@ -168,36 +168,5 @@ describe('McpHealthTracker', () => {
       snap!.consecutiveFailures = 999;
       expect(tracker.getHealth('SearXNG')?.consecutiveFailures).toBe(1);
     });
-  });
-});
-
-describe('formatDegradedToolsNotice (Issue #4179 part 3)', () => {
-  it('returns undefined for an empty list (no notice needed)', () => {
-    expect(formatDegradedToolsNotice([])).toBeUndefined();
-  });
-
-  it('formats a single degraded tool', () => {
-    const notice = formatDegradedToolsNotice(['SearXNG']);
-    expect(notice).toContain('SearXNG');
-    expect(notice).toContain('不可用');
-    expect(notice).toContain('替代方案');
-  });
-
-  it('formats multiple degraded tools (comma-separated)', () => {
-    const notice = formatDegradedToolsNotice(['SearXNG', 'web_reader', 'playwright']);
-    expect(notice).toContain('SearXNG');
-    expect(notice).toContain('web_reader');
-    expect(notice).toContain('playwright');
-    expect(notice).toContain(',');
-  });
-
-  it('integrates with McpHealthTracker.getDegradedTools()', () => {
-    const tracker = new McpHealthTracker();
-    tracker.recordFailure('SearXNG');
-    tracker.recordFailure('SearXNG'); // degraded after 2
-    const degraded = tracker.getDegradedTools();
-    const notice = formatDegradedToolsNotice(degraded);
-    expect(notice).toBeDefined();
-    expect(notice).toContain('SearXNG');
   });
 });
