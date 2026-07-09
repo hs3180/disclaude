@@ -208,7 +208,11 @@ For display-only cards, use send_card instead.`,
       type: 'object',
       properties: {
         chatId: { type: 'string', description: 'Target chat ID' },
-        prompt: { type: 'string', description: 'The instruction pushed to the agent each step' },
+        prompt: {
+          type: 'string',
+          description:
+            'The instruction pushed to the agent each step. Required unless loopMdPath is given.',
+        },
         maxSteps: { type: 'number', description: 'Maximum loop iterations (default: 10)' },
         maxDurationMs: {
           type: 'number',
@@ -218,8 +222,13 @@ For display-only cards, use send_card instead.`,
           type: 'number',
           description: 'Interval between steps in ms (default: 30000)',
         },
+        loopMdPath: {
+          type: 'string',
+          description:
+            'Path to a LOOP.md definition file (Issue #4193). When set, the runner reads prompt+params from it each step via startFromLoopMd; prompt is then optional.',
+        },
       },
-      required: ['chatId', 'prompt'],
+      required: ['chatId'],
     },
     handler: loop_start,
   },

@@ -15,18 +15,26 @@ const logger = createLogger('LoopStart');
 
 export async function loop_start(params: {
   chatId: string;
-  prompt: string;
+  /** Inline prompt. Required unless loopMdPath is given (Issue #4193 part B). */
+  prompt?: string;
   maxSteps?: number;
   maxDurationMs?: number;
   stepIntervalMs?: number;
+  /** Path to a LOOP.md definition file; when set, the runner reads prompt+params from it each step via startFromLoopMd (Issue #4193 part B). */
+  loopMdPath?: string;
 }): Promise<SendMessageResult & { loopId?: string }> {
-  const { chatId, prompt } = params;
+  const { chatId, prompt, loopMdPath } = params;
 
-  logger.info({ chatId, promptPreview: prompt.substring(0, 100) }, 'loop_start called');
+  logger.info(
+    { chatId, promptPreview: prompt?.substring(0, 100), loopMdPath },
+    'loop_start called',
+  );
 
   try {
     if (!chatId) { throw new Error('chatId is required'); }
-    if (!prompt) { throw new Error('prompt is required'); }
+    if (!prompt && !loopMdPath) {
+      throw new Error('Either prompt or loopMdPath is required');
+    }
 
     if (!(await isIpcAvailable())) {
       const errorMsg = 'IPC service unavailable. Please ensure Primary Node is running.';

@@ -226,10 +226,13 @@ export async function loopStart(
   client: IpcClientLike,
   params: {
     chatId: string;
-    prompt: string;
+    /** Inline prompt. Optional when loopMdPath is given (Issue #4193 part B). */
+    prompt?: string;
     maxSteps?: number;
     maxDurationMs?: number;
     stepIntervalMs?: number;
+    /** LOOP.md definition file path; when set, the runner uses startFromLoopMd (Issue #4193 part B). */
+    loopMdPath?: string;
   }
 ): Promise<IpcMethodResult & { loopId?: string }> {
   try {

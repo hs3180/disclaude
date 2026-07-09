@@ -95,10 +95,13 @@ export interface IpcRequestPayloads {
   // Loop Runner operations (Issue #4075)
   loopStart: {
     chatId: string;
-    prompt: string;
+    /** Inline prompt pushed each step. Optional when loopMdPath is given (Issue #4193 part B). */
+    prompt?: string;
     maxSteps?: number;
     maxDurationMs?: number;
     stepIntervalMs?: number;
+    /** Path to a LOOP.md definition file; when set, the runner reads prompt+params from it via startFromLoopMd (Issue #4193 part B). */
+    loopMdPath?: string;
   };
   loopStop: {
     loopId: string;
