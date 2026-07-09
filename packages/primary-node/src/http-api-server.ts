@@ -22,7 +22,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
 // Issue #4063: reuse the canonical loop types instead of re-declaring them inline.
-import type { LoopStartParams, LoopStatus } from './loop/loop-runner.js';
+import type { LoopStatus } from './loop/loop-runner.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -101,6 +101,16 @@ interface Route {
  * // GET http://localhost:9200/api/status → { status: "ok", ... }
  * ```
  */
+/** Params for REST loop_start: an inline `prompt` OR a `loopMdPath` to a LOOP.md file (Issue #4193 part C). */
+type LoopStartHandlerParams = {
+  chatId: string;
+  prompt?: string;
+  maxSteps?: number;
+  maxDurationMs?: number;
+  stepIntervalMs?: number;
+  loopMdPath?: string;
+};
+
 export class HttpApiServer {
   private readonly config: HttpApiServerConfig;
   private readonly routes: Route[] = [];
@@ -108,7 +118,7 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
-  private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
+  private loopStartHandler?: (params: LoopStartHandlerParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
   /** Connected SSE clients for topic notifications (Issue #4031) */
@@ -139,7 +149,7 @@ export class HttpApiServer {
   }
 
   setLoopHandlers(handlers: {
-    start: (params: LoopStartParams) => { loopId: string };
+    start: (params: LoopStartHandlerParams) => { loopId: string };
     stop: (loopId: string) => void;
     status: (loopId: string) => LoopStatus | null;
   }): void {
@@ -504,16 +514,17 @@ export class HttpApiServer {
     try { body = await readBody(req); } catch { this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' }); return; }
     let parsed: unknown;
     try { parsed = JSON.parse(body); } catch { this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' }); return; }
-    if (typeof parsed !== 'object' || parsed === null || typeof (parsed as Record<string, unknown>).chatId !== 'string' || typeof (parsed as Record<string, unknown>).prompt !== 'string') {
-      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), prompt (string)' }); return;
+    if (typeof parsed !== 'object' || parsed === null || typeof (parsed as Record<string, unknown>).chatId !== 'string' || !(typeof (parsed as Record<string, unknown>).prompt === 'string' || typeof (parsed as Record<string, unknown>).loopMdPath === 'string')) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string) and either prompt (string) or loopMdPath (string)' }); return;
     }
-    const p = parsed as { chatId: string; prompt: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number };
-    if (!p.chatId || !p.prompt) { this.sendJson(res, 400, { ok: false, message: 'chatId and prompt must be non-empty' }); return; }
+    const p = parsed as { chatId: string; prompt?: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number; loopMdPath?: string };
+    if (!p.chatId || (!p.prompt && !p.loopMdPath)) { this.sendJson(res, 400, { ok: false, message: 'chatId and (prompt or loopMdPath) must be non-empty' }); return; }
     if (p.maxSteps !== undefined && typeof p.maxSteps !== 'number') { this.sendJson(res, 400, { ok: false, message: 'maxSteps must be a number' }); return; }
     if (p.maxDurationMs !== undefined && typeof p.maxDurationMs !== 'number') { this.sendJson(res, 400, { ok: false, message: 'maxDurationMs must be a number' }); return; }
     if (p.stepIntervalMs !== undefined && typeof p.stepIntervalMs !== 'number') { this.sendJson(res, 400, { ok: false, message: 'stepIntervalMs must be a number' }); return; }
+    if (p.loopMdPath !== undefined && typeof p.loopMdPath !== 'string') { this.sendJson(res, 400, { ok: false, message: 'loopMdPath must be a string' }); return; }
     try {
-      const result = this.loopStartHandler({ chatId: p.chatId, prompt: p.prompt, ...(p.maxSteps !== undefined && { maxSteps: p.maxSteps }), ...(p.maxDurationMs !== undefined && { maxDurationMs: p.maxDurationMs }), ...(p.stepIntervalMs !== undefined && { stepIntervalMs: p.stepIntervalMs }) });
+      const result = this.loopStartHandler({ chatId: p.chatId, ...(p.prompt !== undefined && { prompt: p.prompt }), ...(p.maxSteps !== undefined && { maxSteps: p.maxSteps }), ...(p.maxDurationMs !== undefined && { maxDurationMs: p.maxDurationMs }), ...(p.stepIntervalMs !== undefined && { stepIntervalMs: p.stepIntervalMs }), ...(p.loopMdPath !== undefined && { loopMdPath: p.loopMdPath }) });
       this.sendJson(res, 200, { ok: true, loopId: result.loopId });
     } catch (err) { this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'Loop start failed' }); }
   }
