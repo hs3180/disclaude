@@ -19,7 +19,8 @@
  * @module @disclaude/core/loop
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
 import * as yaml from 'js-yaml';
 import { createLogger } from '../utils/logger.js';
 
@@ -239,6 +240,40 @@ export function readLoopMd(path: string): LoopMdDefinition {
   const def = parseLoopMd(content);
   def.sourcePath = path;
   return def;
+}
+
+/**
+ * Serialize a {@link LoopMdDefinition} back to LOOP.md file contents — the
+ * inverse of {@link parseLoopMd}. Durations are written as millisecond counts
+ * (`maxDuration` / `stepInterval`), which {@link parseDuration} reads back
+ * losslessly as bare numbers, so `parseLoopMd(serializeLoopMd(def))` round-trips.
+ *
+ * Issue #4040 part 1: the loop skill creates a LOOP.md via this writer rather
+ * than hand-formatting the frontmatter.
+ */
+export function serializeLoopMd(def: LoopMdDefinition): string {
+  const p = def.params;
+  const frontmatter: Record<string, unknown> = {
+    name: p.name,
+    chatId: p.chatId,
+    maxSteps: p.maxSteps,
+    maxDuration: p.maxDurationMs,
+    stepInterval: p.stepIntervalMs,
+  };
+  if (p.workDir !== undefined) { frontmatter.workDir = p.workDir; }
+  if (p.status !== undefined) { frontmatter.status = p.status; }
+  if (p.startedAt !== undefined) { frontmatter.startedAt = p.startedAt; }
+  const yamlFrontmatter = yaml.dump(frontmatter, { lineWidth: -1 });
+  return `---\n${yamlFrontmatter}---\n\n${def.prompt.trim()}\n`;
+}
+
+/**
+ * Write a {@link LoopMdDefinition} to a LOOP.md file at `path`, creating parent
+ * directories as needed. The inverse of {@link readLoopMd}. Issue #4040 part 1.
+ */
+export function writeLoopMd(path: string, def: LoopMdDefinition): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, serializeLoopMd(def), 'utf-8');
 }
 
 /**

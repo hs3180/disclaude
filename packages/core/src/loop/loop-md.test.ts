@@ -6,8 +6,11 @@
  * realistic LOOP.md document.
  */
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { parseLoopMd, parseDuration, loopMdPath, LOOP_MD_DIR, LOOP_MD_FILENAME } from './loop-md.js';
+import { parseLoopMd, parseDuration, loopMdPath, readLoopMd, serializeLoopMd, writeLoopMd, LOOP_MD_DIR, LOOP_MD_FILENAME } from './loop-md.js';
 
 describe('parseDuration', () => {
   it('returns the default for null / undefined', () => {
@@ -231,5 +234,60 @@ describe('loopMdPath', () => {
 
   it('strips a trailing slash from baseDir', () => {
     expect(loopMdPath('loop', '/w/')).toBe(`/w/${LOOP_MD_DIR}/loop/${LOOP_MD_FILENAME}`);
+  });
+});
+
+describe('serializeLoopMd / writeLoopMd (Issue #4040 part 1)', () => {
+  it('serializeLoopMd round-trips through parseLoopMd (params + prompt preserved)', () => {
+    const def = {
+      params: { name: 'my-loop', chatId: 'oc_123', maxSteps: 5, maxDurationMs: 7_200_000, stepIntervalMs: 15_000 },
+      prompt: 'do the thing each iteration',
+    };
+    const reparsed = parseLoopMd(serializeLoopMd(def));
+    expect(reparsed.params.name).toBe('my-loop');
+    expect(reparsed.params.chatId).toBe('oc_123');
+    expect(reparsed.params.maxSteps).toBe(5);
+    expect(reparsed.params.maxDurationMs).toBe(7_200_000);
+    expect(reparsed.params.stepIntervalMs).toBe(15_000);
+    expect(reparsed.prompt).toBe('do the thing each iteration');
+  });
+
+  it('serializeLoopMd includes optional fields when present, omits them when absent', () => {
+    const withOpts = serializeLoopMd({
+      params: { name: 'x', chatId: 'oc', maxSteps: 1, maxDurationMs: 1000, stepIntervalMs: 100, workDir: '/wd', status: 'running', startedAt: '2026-07-09T00:00:00Z' },
+      prompt: 'p',
+    });
+    expect(withOpts).toContain('workDir');
+    expect(withOpts).toContain('status');
+    expect(withOpts).toContain('startedAt');
+
+    const withoutOpts = serializeLoopMd({
+      params: { name: 'x', chatId: 'oc', maxSteps: 1, maxDurationMs: 1000, stepIntervalMs: 100 },
+      prompt: 'p',
+    });
+    expect(withoutOpts).not.toContain('workDir');
+    expect(withoutOpts).not.toContain('status');
+    expect(withoutOpts).not.toContain('startedAt');
+  });
+
+  it('writeLoopMd writes a file that readLoopMd reads back (full fs round-trip, creating parent dirs)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'loopmd-write-'));
+    const path = join(dir, LOOP_MD_DIR, 'my-loop', LOOP_MD_FILENAME);
+    try {
+      writeLoopMd(path, {
+        params: { name: 'my-loop', chatId: 'oc_abc', maxSteps: 3, maxDurationMs: 3_600_000, stepIntervalMs: 30_000 },
+        prompt: 'run me',
+      });
+      const read = readLoopMd(path);
+      expect(read.params.name).toBe('my-loop');
+      expect(read.params.chatId).toBe('oc_abc');
+      expect(read.params.maxSteps).toBe(3);
+      expect(read.params.maxDurationMs).toBe(3_600_000);
+      expect(read.params.stepIntervalMs).toBe(30_000);
+      expect(read.prompt).toBe('run me');
+      expect(read.sourcePath).toBe(path);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

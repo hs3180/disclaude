@@ -141,6 +141,8 @@ export {
   parseLoopMd,
   parseDuration,
   readLoopMd,
+  serializeLoopMd,
+  writeLoopMd,
   loopMdPath,
 } from './loop/loop-md.js';
 
