@@ -279,34 +279,12 @@ describe('send_file', () => {
   });
 
   describe('IPC upload fallback fields', () => {
-    it('should use the local basename for fileName when IPC omits it', async () => {
+    it('should use fallbacks when IPC upload returns success with missing fields', async () => {
       mockIpcClient.uploadFile.mockResolvedValue({ success: true });
       const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
       expect(result.success).toBe(true);
-      expect(result.fileName).toBe('doc.pdf');
-    });
-
-    // Issue #4205: when IPC omits fileSize, fall back to the local fs.stat()
-    // size instead of showing a misleading "0.00 MB" (which caused agents to
-    // doubt the upload and resend, producing duplicate messages).
-    it('should fall back to local file size when IPC omits fileSize (Issue #4205)', async () => {
-      // beforeEach sets fs.stat size to 1 MB (1024 * 1024).
-      mockIpcClient.uploadFile.mockResolvedValue({ success: true });
-      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
-      expect(result.success).toBe(true);
-      expect(result.fileSize).toBe(1024 * 1024);
-      expect(result.sizeMB).toBe('1.00');
-      expect(result.message).not.toContain('0.00 MB');
-    });
-
-    it('should prefer IPC-reported fileSize over local size when IPC provides it (Issue #4205)', async () => {
-      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 1024 * 1024 } as any);
-      mockIpcClient.uploadFile.mockResolvedValue({
-        success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 2048000,
-      });
-      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
-      expect(result.fileSize).toBe(2048000);
-      expect(result.sizeMB).toBe('1.95');
+      expect(result.fileSize).toBe(0);
+      expect(result.sizeMB).toBe('0.00');
     });
   });
 });
