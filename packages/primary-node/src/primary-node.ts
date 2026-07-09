@@ -459,26 +459,7 @@ export class PrimaryNode extends EventEmitter {
       // the REST /api/loop/* endpoints (see cli.ts) via getOrCreateLoopRunner().
       loopStart: (params) => {
         try {
-          // Issue #4193 part B: when loopMdPath is provided, drive the loop
-          // from a LOOP.md definition file (startFromLoopMd) instead of an
-          // inline prompt. The inline-prompt path below is unchanged.
-          if (params.loopMdPath) {
-            const result = this.getOrCreateLoopRunner().startFromLoopMd(params.loopMdPath);
-            return Promise.resolve({ success: true, loopId: result.loopId });
-          }
-          if (!params.prompt) {
-            return Promise.resolve({
-              success: false,
-              error: 'Either prompt or loopMdPath is required',
-            });
-          }
-          const result = this.getOrCreateLoopRunner().start({
-            chatId: params.chatId,
-            prompt: params.prompt,
-            maxSteps: params.maxSteps,
-            maxDurationMs: params.maxDurationMs,
-            stepIntervalMs: params.stepIntervalMs,
-          });
+          const result = this.getOrCreateLoopRunner().start(params);
           return Promise.resolve({ success: true, loopId: result.loopId });
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';

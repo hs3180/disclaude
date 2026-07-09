@@ -456,13 +456,7 @@ async function main(): Promise<void> {
       // lazy-initialized on first start from either entry point.
       const loopRunner = primaryNode.getOrCreateLoopRunner();
       httpApiServer.setLoopHandlers({
-        start: (params) => {
-          // Issue #4193 part C: branch to startFromLoopMd when loopMdPath is set
-          // (REST /api/loop/start); inline-prompt path unchanged.
-          if (params.loopMdPath) { return loopRunner.startFromLoopMd(params.loopMdPath); }
-          if (!params.prompt) { throw new Error('Either prompt or loopMdPath is required'); }
-          return loopRunner.start({ chatId: params.chatId, prompt: params.prompt, maxSteps: params.maxSteps, maxDurationMs: params.maxDurationMs, stepIntervalMs: params.stepIntervalMs });
-        },
+        start: (params) => loopRunner.start(params),
         stop: (loopId) => { loopRunner.stop(loopId); },
         status: (loopId) => loopRunner.status(loopId),
       });
