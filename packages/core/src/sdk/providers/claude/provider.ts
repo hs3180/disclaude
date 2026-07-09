@@ -15,7 +15,7 @@ import type {
   StreamQueryResult,
   UserInput,
 } from '../../types.js';
-import { adaptSDKMessage, adaptUserInput, TaskSubjectRegistry } from './message-adapter.js';
+import { adaptSDKMessage, adaptUserInput } from './message-adapter.js';
 import { adaptOptions } from './options-adapter.js';
 import { createLogger } from '../../../utils/logger.js';
 import { tagErrorCategory } from '../../../utils/error-handler.js';
@@ -480,10 +480,6 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           });
         }
       try {
-        // Issue #4200 part 2: per-query registry of taskId → label, so status-only
-        // TaskUpdate calls can recall a subject/activeForm seen on an earlier
-        // update. Local to this generator → GC'd when the query stream ends.
-        const taskSubjectRegistry = new TaskSubjectRegistry();
         let firstMessageMs: number | undefined;
         // Issue #3706: Track consecutive text-only assistant responses for idle loop detection.
         // When a model fails to emit tool_use blocks, it enters an idle loop producing
@@ -535,9 +531,7 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           const now = Date.now();
           messageCount++;
           // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
-          // Issue #4200 part 2: thread the per-query task registry so status-only
-          // TaskUpdate calls can recall a label seen on an earlier update.
-          const adapted = adaptSDKMessage(message, taskSubjectRegistry);
+          const adapted = adaptSDKMessage(message);
           // Issue #3003: log TTFT and per-message elapsed
           if (!firstMessageMs) {
             firstMessageMs = now;
