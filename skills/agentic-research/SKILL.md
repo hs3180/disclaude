@@ -231,45 +231,6 @@ Choose the delivery format based on context:
 
 For async research (loop execution), deliver via Feishu doc and post a summary card in both the research group and the source chat.
 
-## Async / Scheduled-Task Research (Issue #4006)
-
-When research is driven by **scheduled tasks** (async) rather than interactive conversation (sync), the agent cannot ask the user clarifying questions in real time. This section provides behavior guidance for async research scenarios.
-
-### Scenario Identification
-
-Determine whether the current execution is **sync** (user present, interactive) or **async** (scheduled-task-driven):
-
-- **Sync**: The user is actively chatting — you can ask clarifying questions, confirm direction changes, and get real-time feedback.
-- **Async**: Triggered by a scheduled task — you **cannot** directly ask the user. User feedback (if any) arrives asynchronously via `STATE.md` / `RESEARCH.md` file updates.
-
-In async mode, pay extra attention to capturing and preserving user intent, since you cannot course-correct interactively.
-
-### Key Decision Points
-
-Throughout the research (but especially in async mode), actively monitor these decision points that can influence the research direction:
-
-1. **Research objective clarity**: Is the original question fully understood? If the prompt is ambiguous, note the ambiguity in `STATE.md` and proceed with the most reasonable interpretation — don't stall.
-2. **Data source appropriateness**: Are the chosen sources aligned with what the user would expect? If you switch sources, document why in `RESEARCH.md`.
-3. **Analysis alignment**: Is the analysis drifting from the user's core question? Periodically re-read the original prompt and check alignment.
-4. **Conclusion relevance**: Do the findings actually answer the user's question? If not, either broaden the scope or flag the gap.
-
-### Async Behavior Protocol
-
-When executing research as a scheduled task (async):
-
-1. **Start of each step**: Read `STATE.md` and `RESEARCH.md` for the latest state. These files are the primary communication channel between steps and between the user/conversation agent and the research execution.
-2. **Detect user feedback**: Check `STATE.md` / `RESEARCH.md` for feedback written by the user or the conversation agent since the last step. Feedback may include corrections, new constraints, or direction changes.
-3. **Evaluate feedback impact**: If feedback is present, assess whether it requires adjusting the research direction:
-   - Minor clarification → note it and continue.
-   - Direction change → update the research plan in `STATE.md`, pivot the next step accordingly.
-   - Scope expansion → note the new scope but don't abandon existing findings.
-4. **Pass state forward**: After completing a step, update `STATE.md` (current step, next step, blockers, decisions) and `RESEARCH.md` (findings, analysis, sources) so the next scheduled execution can resume seamlessly.
-5. **Decide decisively**: In async mode, **do not stall** waiting for user input. Make the best reasonable decision, execute it, and mark uncertainties in `STATE.md` for the user to review later. It is better to produce a complete result with caveats than to produce nothing.
-
-### IPC: Pushing Results to the Agent
-
-When a scheduled research step completes and needs to notify the conversation agent (e.g., to deliver a report or flag a decision), use the IPC `pushToAgent` mechanism rather than waiting for the next scheduled tick. This ensures timely delivery of results.
-
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
