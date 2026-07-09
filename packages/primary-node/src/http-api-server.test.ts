@@ -491,7 +491,35 @@ describe('HttpApiServer', () => {
         body: JSON.stringify({ chatId: 'oc_test' }),
       });
       expect(statusCode).toBe(400);
-      expect((JSON.parse(body) as { message: string }).message).toContain('either prompt');
+      expect((JSON.parse(body) as { message: string }).message).toContain('exactly one');
+    });
+
+    it('returns 400 when both prompt and loopMdPath are provided', async () => {
+      const mockStart = vi.fn();
+      server.setLoopHandlers({ start: mockStart, stop: vi.fn(), status: vi.fn() });
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/loop/start',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', prompt: 'run', loopMdPath: '/ws/.disclaude/loop/x/LOOP.md' }),
+      });
+      expect(statusCode).toBe(400);
+      expect((JSON.parse(body) as { message: string }).message).toContain('exactly one');
+      expect(mockStart).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 when chatId is missing', async () => {
+      const mockStart = vi.fn();
+      server.setLoopHandlers({ start: mockStart, stop: vi.fn(), status: vi.fn() });
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/loop/start',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'run' }),
+      });
+      expect(statusCode).toBe(400);
+      expect((JSON.parse(body) as { message: string }).message).toContain('chatId');
+      expect(mockStart).not.toHaveBeenCalled();
     });
 
     it('still accepts an inline prompt (backward-compatible)', async () => {
