@@ -365,6 +365,50 @@ describe('Scheduler', () => {
     });
   });
 
+  describe('jobFactory (Issue #4218: DI for deterministic tests)', () => {
+    it('uses the injected factory instead of a real CronJob (no OS timer)', async () => {
+      const created: Array<{ cron: string; onTick: () => void; timezone: string }> = [];
+      const stop = vi.fn();
+      const fireOnTick = vi.fn();
+      const jobFactory = (
+        cron: string,
+        onTick: () => void,
+        timezone: string,
+      ) => {
+        created.push({ cron, onTick, timezone });
+        return { fireOnTick, stop };
+      };
+
+      const s = new Scheduler({
+        scheduleManager: mockScheduleManager,
+        callbacks: mockCallbacks,
+        inputMessageRouter: mockRouter,
+        jobFactory,
+      });
+
+      const task = createTask({ id: 'di-1', cron: '*/5 * * * *', timezone: 'Asia/Shanghai' });
+      s.addTask(task);
+
+      // Factory invoked once with the task's cron + timezone; the fake job is stored.
+      expect(created).toHaveLength(1);
+      expect(created[0].cron).toBe('*/5 * * * *');
+      expect(created[0].timezone).toBe('Asia/Shanghai');
+      const jobs = s.getActiveJobs();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].job.fireOnTick).toBe(fireOnTick);
+
+      // Driving onTick manually executes the task (routes via InputMessageRouter)
+      // without any real wall-clock timer needing to advance.
+      created[0].onTick();
+      await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1));
+
+      // removeTask tears the fake job down via stop().
+      s.removeTask('di-1');
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(s.getActiveJobs()).toHaveLength(0);
+    });
+  });
+
   describe('executeTask (via cron job trigger)', () => {
     /** Helper: fire a cron job trigger (sync, use vi.waitFor for assertions) */
     function fireJob(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
