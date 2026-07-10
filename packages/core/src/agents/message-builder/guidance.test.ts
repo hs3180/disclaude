@@ -173,7 +173,15 @@ describe('buildTaskRecordGuidance', () => {
 
   it('should instruct rolling monthly storage (Issue #4261)', () => {
     const result = buildTaskRecordGuidance();
-    expect(result).toContain('task-records/2026-07.md');
+    // The concrete example month must track the live current month, not a
+    // hardcoded literal — otherwise it goes stale and misleads the agent once
+    // the calendar rolls over.
+    const now = new Date();
+    const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prev = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+    expect(result).toContain(`task-records/${cur}.md`);
+    expect(result).toContain(`task-records/${prev}.md`);
     expect(result).not.toMatch(/Append entries to `\.claude\/task-records\.md`/);
   });
 
