@@ -1079,4 +1079,63 @@ describe('ChatAgent (primary-node)', () => {
       expect(chatAgent.isBusy).toBe(false);
     });
   });
+
+  describe('Issue #4194: empty-turn detection across persistent turns', () => {
+    it('should fire the empty-turn warn on a follow-up turn with no output', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_empty_turn2',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Two turns within one persistent processIterator run. startAgentLoop is
+      // only called when !isSessionActive, so processIterator stays alive across
+      // turns and the iterator stays open between them:
+      //   turn 1: a real user-visible reply, then the ✅ Complete marker
+      //   turn 2: ONLY the ✅ Complete marker (no reply, no tools) — empty turn
+      async function* twoTurnIterator() {
+        yield { parsed: { type: 'text', content: 'Hello! Real reply.' }, raw: {} };
+        yield {
+          parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 1.0k' },
+          raw: {},
+        };
+        yield {
+          parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: twoTurnIterator(),
+      });
+      // The BaseAgent mock above does not define isAgentTeamsEnabled() (inherited
+      // from the real BaseAgent in production). Stub it so the #3706 zero-tool
+      // check at the result marker doesn't throw and short-circuit the loop
+      // before the #4194 empty-turn check runs.
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_empty_turn2',
+        payload: 'hi',
+        messageId: 'msg_1',
+      });
+
+      // The #4194 warn must fire on turn 2. Without the per-turn counter reset
+      // in the result branch, userVisibleOutputCount would stay at 1 from turn 1
+      // and the empty-turn check could never be true again on follow-up turns —
+      // exactly the scenario #4194 reports. (Turn 1 has real output, so it does
+      // not fire the warn; only turn 2 does.)
+      const warnSpy = (agent as any).logger.warn;
+      await vi.waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('Issue #4194')
+        );
+      }, { timeout: 1000, interval: 20 });
+    });
+  });
 });
