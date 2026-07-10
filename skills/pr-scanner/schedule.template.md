@@ -25,6 +25,25 @@ chatId: "{controlChannelChatId}"
 
 ## 执行步骤
 
+### 0. 确保 GitHub token 有效（Issue #4237）
+
+PR Scanner 在长寿命会话中执行，会话环境变量 `GH_TOKEN` 在 spawn 时冻结、不会自动刷新，而 GitHub Installation Access Token **每小时过期一次**。token 失效时 `gh` 返回 **401 Bad credentials** 且输出为空，scanner 会把空结果当成「0 open PR」从而**静默漏掉新 PR、不建审查群**。因此每轮扫描前先确认 token 有效：
+
+```bash
+# GH_TOKEN 每小时过期；过期后 gh 返回 401、输出为空，scanner 会误判「0 open PR」
+# 注意：EXP 取自 .runtime-env，可能与会话内冻结的 GH_TOKEN 不同步——.runtime-env 陈旧时
+# 触发一次冗余刷新即自愈（无害）；会话 token 比 .runtime-env 更旧的情形由下方 401 重试兜底。
+EXP=$(grep '^GH_TOKEN_EXPIRES_AT=' {workspace_root}/.runtime-env 2>/dev/null | head -1 | sed 's/^GH_TOKEN_EXPIRES_AT=//' | tr -d '"')
+NOW=$(date -u +%s)
+EXP_TS=$(date -u -d "$EXP" +%s 2>/dev/null || echo 0)
+if [ -z "$EXP" ] || [ "$NOW" -ge "$EXP_TS" ]; then
+  echo "GH_TOKEN missing or expired — refresh via github-jwt-auth skill"
+fi
+```
+
+- 若上述判定为「需刷新」：调用 **`github-jwt-auth`** skill（用 GitHub App JWT 签名换取新的 Installation Access Token，写入 `{workspace_root}/.runtime-env` 的 `GH_TOKEN` / `GH_TOKEN_EXPIRES_AT`），随后 `set -a; source {workspace_root}/.runtime-env; set +a` 再继续（`set -a` 确保写入的 KEY=VALUE 被 export 给后续 `gh` 子进程）。
+- 即便 preflight 通过，后续任一 `gh` 命令若返回 **401 Bad credentials**，同样先调用 `github-jwt-auth` 刷新并重试该命令；仍失败才按「错误处理」记录并跳过。
+
 ### 1. 读取映射表
 
 ```bash
@@ -53,27 +72,6 @@ gh pr list --repo {repo} --state closed --json number,state
 ```
 
 merged/closed → 记录日志。如该群的 agent 会话已结束（映射表中有条目但群内无 agent 活动），scanner 主动调用 dissolve-group 清理，防止孤儿群。open → 跳过。
-
-### 4b. 已有群的 PR — 不活跃提醒（Issue #3965）
-
-对映射表中所有 `purpose: 'pr-review'` 且未在步骤 4 中被标记为 closed/merged 的群，检查活跃度：
-
-```bash
-lark-cli api GET "/open-apis/im/v1/messages" --as bot --query "container_id_type=chat" "container_id={chatId}" "page_size=1" "sort_type=ByCreateTimeDesc"
-```
-
-从返回的最后一条消息的 `create_time` 计算时间差。如果：
-
-- **超过 2 小时无消息** 且 `lastReminderAt` 为空或距今超过 2 小时 → 发送提醒卡片到该群：
-
-```
-使用 push_to_agent 向该群发送提醒：
-"这条 review 群已经超过 2 小时没有新消息。如果 review 已完成，可以回复 /dissolve 解散群释放名额。如果需要继续，请忽略此提醒。"
-```
-
-同时更新映射表中该条目的 `lastReminderAt` 为当前 ISO 时间戳。
-
-- **不超过 2 小时** 或 **已提醒不到 2 小时** → 跳过。
 
 ### 4b. 已有群的 PR — 不活跃提醒与递进升级（Issue #3966）
 
@@ -172,7 +170,7 @@ rm -rf "{workdir}"
 
 ## 错误处理
 
-- `gh` 命令失败 → 记录错误，跳过/退出
+- `gh` 命令失败 → 若返回 401 Bad credentials（token 过期），先调用 `github-jwt-auth` skill 刷新 `GH_TOKEN` 并 `set -a; source {workspace_root}/.runtime-env; set +a` 后重试；仍失败才记录错误，跳过/退出
 - 映射文件读取失败 → 视为空表
 - 映射文件写入失败 → 记录错误（可通过群名重建）
 - 群创建失败 → 跳过该 PR，清理临时目录
@@ -188,4 +186,4 @@ rm -rf "{workdir}"
 
 ## 依赖
 
-`gh` CLI · `lark-cli` · `workspace/bot-chat-mapping.json`（BotChatMappingStore）
+`gh` CLI · `lark-cli` · `workspace/bot-chat-mapping.json`（BotChatMappingStore）· `github-jwt-auth` skill（按需刷新 `GH_TOKEN`，每小时过期；见步骤 0）
