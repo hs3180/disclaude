@@ -31,7 +31,9 @@ PR Scanner 在长寿命会话中执行，会话环境变量 `GH_TOKEN` 在 spawn
 
 ```bash
 # GH_TOKEN 每小时过期；过期后 gh 返回 401、输出为空，scanner 会误判「0 open PR」
-EXP=$(grep '^GH_TOKEN_EXPIRES_AT=' /data/workspace/.runtime-env 2>/dev/null | head -1 | sed 's/^GH_TOKEN_EXPIRES_AT=//' | tr -d '"')
+# 注意：EXP 取自 .runtime-env，可能与会话内冻结的 GH_TOKEN 不同步——.runtime-env 陈旧时
+# 触发一次冗余刷新即自愈（无害）；会话 token 比 .runtime-env 更旧的情形由下方 401 重试兜底。
+EXP=$(grep '^GH_TOKEN_EXPIRES_AT=' {workspace_root}/.runtime-env 2>/dev/null | head -1 | sed 's/^GH_TOKEN_EXPIRES_AT=//' | tr -d '"')
 NOW=$(date -u +%s)
 EXP_TS=$(date -u -d "$EXP" +%s 2>/dev/null || echo 0)
 if [ -z "$EXP" ] || [ "$NOW" -ge "$EXP_TS" ]; then
@@ -39,7 +41,7 @@ if [ -z "$EXP" ] || [ "$NOW" -ge "$EXP_TS" ]; then
 fi
 ```
 
-- 若上述判定为「需刷新」：调用 **`github-jwt-auth`** skill（用 GitHub App JWT 签名换取新的 Installation Access Token，写入 `/data/workspace/.runtime-env` 的 `GH_TOKEN` / `GH_TOKEN_EXPIRES_AT`），随后 `source /data/workspace/.runtime-env` 再继续。
+- 若上述判定为「需刷新」：调用 **`github-jwt-auth`** skill（用 GitHub App JWT 签名换取新的 Installation Access Token，写入 `{workspace_root}/.runtime-env` 的 `GH_TOKEN` / `GH_TOKEN_EXPIRES_AT`），随后 `set -a; source {workspace_root}/.runtime-env; set +a` 再继续（`set -a` 确保写入的 KEY=VALUE 被 export 给后续 `gh` 子进程）。
 - 即便 preflight 通过，后续任一 `gh` 命令若返回 **401 Bad credentials**，同样先调用 `github-jwt-auth` 刷新并重试该命令；仍失败才按「错误处理」记录并跳过。
 
 ### 1. 读取映射表
@@ -175,7 +177,7 @@ rm -rf "{workdir}"
 
 ## 错误处理
 
-- `gh` 命令失败 → 若返回 401 Bad credentials（token 过期），先调用 `github-jwt-auth` skill 刷新 `GH_TOKEN` 并 `source /data/workspace/.runtime-env` 后重试；仍失败才记录错误，跳过/退出
+- `gh` 命令失败 → 若返回 401 Bad credentials（token 过期），先调用 `github-jwt-auth` skill 刷新 `GH_TOKEN` 并 `set -a; source {workspace_root}/.runtime-env; set +a` 后重试；仍失败才记录错误，跳过/退出
 - 映射文件读取失败 → 视为空表
 - 映射文件写入失败 → 记录错误（可通过群名重建）
 - 群创建失败 → 跳过该 PR，清理临时目录
