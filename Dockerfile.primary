@@ -68,6 +68,9 @@ RUN ./node_modules/.bin/tsc -b
 COPY skills ./skills
 # Issue #4224: local-plugin manifest so the SDK loads builtins in place from /app
 COPY .claude-plugin .claude-plugin
+# Issue #4224: builtin agents (mac-screen-control, site-miner) — peer of skills/,
+# shipped so the local plugin discovers them in place from /app/agents
+COPY agents ./agents
 
 # Prune devDependencies for production
 # Note: cache cleanup reduces builder layer size (no impact on final multi-stage image)
@@ -173,6 +176,8 @@ COPY --from=builder --chown=disclaude:disclaude /app/package-lock.json ./
 COPY --from=builder --chown=disclaude:disclaude /app/skills ./skills
 # Issue #4224: local-plugin manifest (builtins root = /app)
 COPY --from=builder --chown=disclaude:disclaude /app/.claude-plugin .claude-plugin
+# Issue #4224: builtin agents (builtins root = /app, peer of skills/ and .claude-plugin/)
+COPY --from=builder --chown=disclaude:disclaude /app/agents ./agents
 
 # Copy entrypoint script (Issue #3987: auto-configure lark-cli auth)
 COPY --chown=disclaude:disclaude docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

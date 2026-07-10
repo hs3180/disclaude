@@ -16,6 +16,12 @@ const mockCreateLogger = vi.fn().mockReturnValue({
   error: vi.fn(),
 });
 
+// Issue #4224: spies for the fs copy primitives the old copy-on-start setup used
+// (fs.mkdir / fs.copyFile from node:fs/promises). Asserted in the "no
+// copy-on-start" test to guard against regressing #4224.
+const mockFsMkdir = vi.fn().mockResolvedValue(undefined);
+const mockFsCopyFile = vi.fn().mockResolvedValue(undefined);
+
 // Create a mock provider for testing
 function createMockProvider(overrides: Partial<IAgentSDKProvider> = {}): IAgentSDKProvider {
   return {
@@ -52,6 +58,18 @@ describe('Provider Factory', () => {
     vi.doMock('../utils/logger.js', () => ({
       createLogger: (...args: unknown[]) => mockCreateLogger(...args),
     }));
+
+    // Issue #4224: stub the fs copy primitives the old copy-on-start setup used,
+    // so the "no copy-on-start" test can assert getProvider() does not materialize
+    // builtins. Real implementations are preserved for any other caller.
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      return {
+        ...actual,
+        mkdir: mockFsMkdir,
+        copyFile: mockFsCopyFile,
+      };
+    });
 
     vi.resetModules();
 
@@ -94,11 +112,14 @@ describe('Provider Factory', () => {
     it('should not perform copy-on-start setup (Issue #4224: builtins load via local plugin)', () => {
       // Issue #4224 removed setupSkillsInWorkspace/setupAgentsInWorkspace from
       // getProvider() — builtin skills/agents are now discovered in place via
-      // the local-plugin option in adaptOptions(). getProvider() should just
-      // return the cached/created provider with no file IO side effects.
+      // the local-plugin option in adaptOptions(). getProvider() must not touch
+      // the filesystem to materialize builtins, so the fs primitives the old
+      // setup used (fs.mkdir / fs.copyFile) must not be invoked.
       const provider = getProvider('claude');
       expect(provider).toBeDefined();
       expect(provider.name).toBe('claude');
+      expect(mockFsMkdir).not.toHaveBeenCalled();
+      expect(mockFsCopyFile).not.toHaveBeenCalled();
     });
 
     it('should return provider for a custom registered type', () => {
