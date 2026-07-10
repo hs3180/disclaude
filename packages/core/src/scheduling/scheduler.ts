@@ -74,8 +74,12 @@ export class TaskTimeoutError extends Error {
  * injected.
  */
 export interface SchedulerJob {
-  /** Manually fire the job's onTick (used by tests to drive execution). */
-  fireOnTick(): void;
+  /**
+   * Manually fire the job's onTick (used by tests to drive execution).
+   * `void | Promise<void>` because `CronJob.fireOnTick()` resolves a
+   * `Promise<void>` while test fakes return `void`; callers never await it.
+   */
+  fireOnTick(): void | Promise<void>;
   /** Stop the job and cancel any scheduled execution. */
   stop(): void;
 }
@@ -87,10 +91,17 @@ export interface SchedulerJob {
  * the Scheduler uses this instead of constructing a real `CronJob`, letting
  * tests inject a fake job with no wall-clock side effects. Production code
  * leaves this unset and gets a real, auto-started `CronJob`.
+ *
+ * The signature intentionally mirrors only what the Scheduler supplies — it
+ * omits `CronJob`'s `onComplete`/`start` args because a test factory must NOT
+ * auto-start a real timer (the whole point of the DI). Production never sets
+ * `jobFactory`, so the real `CronJob(task.cron, onTick, null, true, timezone)`
+ * path is unaffected.
  */
 export type SchedulerJobFactory = (
   cron: string,
-  onTick: () => void,
+  /** Real onTick is `() => this.executeTask(task)` (async → Promise<void>); fakes may return void. */
+  onTick: () => void | Promise<void>,
   timezone: string,
 ) => SchedulerJob;
 

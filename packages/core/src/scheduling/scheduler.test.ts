@@ -367,12 +367,12 @@ describe('Scheduler', () => {
 
   describe('jobFactory (Issue #4218: DI for deterministic tests)', () => {
     it('uses the injected factory instead of a real CronJob (no OS timer)', async () => {
-      const created: Array<{ cron: string; onTick: () => void; timezone: string }> = [];
+      const created: Array<{ cron: string; onTick: () => void | Promise<void>; timezone: string }> = [];
       const stop = vi.fn();
       const fireOnTick = vi.fn();
       const jobFactory = (
         cron: string,
-        onTick: () => void,
+        onTick: () => void | Promise<void>,
         timezone: string,
       ) => {
         created.push({ cron, onTick, timezone });
@@ -398,8 +398,9 @@ describe('Scheduler', () => {
       expect(jobs[0].job.fireOnTick).toBe(fireOnTick);
 
       // Driving onTick manually executes the task (routes via InputMessageRouter)
-      // without any real wall-clock timer needing to advance.
-      created[0].onTick();
+      // without any real wall-clock timer needing to advance. Awaited because the
+      // real onTick is async (`() => this.executeTask(task)` → Promise<void>).
+      await created[0].onTick();
       await vi.waitFor(() => expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1));
 
       // removeTask tears the fake job down via stop().
