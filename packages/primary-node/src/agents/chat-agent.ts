@@ -1080,15 +1080,25 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
             // Issue #4258 (part 1): send a diagnostic notice so the user knows
             // the turn produced nothing, rather than appearing to be ignored.
-            // Fire-and-forget with a guard: a notification failure must not
-            // disrupt the turn-completion path (recordSuccess / onDone below).
+            // Fire-and-forget: the sendMessage promise is intentionally NOT
+            // awaited so neither a rejection nor a promise that never settles
+            // can block the turn-completion path (recordSuccess / onDone
+            // below). The surrounding try/catch only guards the synchronous
+            // setup (getThreadRoot) for the same reason.
             try {
               const emptyTurnThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-              await this.callbacks.sendMessage(
-                chatId,
-                '⚠️ 本轮未产生任何可见输出，会话可能已失效。请重新发送消息触发重试；若持续无响应，请尝试重置会话。',
-                emptyTurnThreadRoot,
-              );
+              void this.callbacks
+                .sendMessage(
+                  chatId,
+                  '⚠️ 本轮未产生任何可见输出，会话可能已失效。请重新发送消息触发重试；若持续无响应，请尝试重置会话。',
+                  emptyTurnThreadRoot,
+                )
+                .catch((notifyErr) => {
+                  this.logger.warn(
+                    { err: notifyErr, chatId },
+                    'Failed to send empty-turn diagnostic notice (Issue #4258)',
+                  );
+                });
             } catch (notifyErr) {
               this.logger.warn(
                 { err: notifyErr, chatId },

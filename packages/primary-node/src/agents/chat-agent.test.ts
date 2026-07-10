@@ -1178,6 +1178,9 @@ describe('ChatAgent (primary-node)', () => {
         );
         expect(diagnosticCall).toBeDefined();
         expect(diagnosticCall![0]).toBe('oc_empty_turn_notify');
+        // The notice must be threaded to the turn's thread root (passed as
+        // sendMessage's parentMessageId, i.e. the 3rd argument).
+        expect(diagnosticCall![2]).toBe('thread-root-123');
       }, { timeout: 1000, interval: 20 });
     });
   });
