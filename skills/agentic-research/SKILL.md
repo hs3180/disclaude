@@ -133,6 +133,31 @@ Bad: "I'll use some sample data to demonstrate..."
 2. **Verify accuracy**: Are sources cited correctly?
 3. **Get feedback**: Does the output meet user needs?
 
+## Async Research Behavior
+
+Research can run **synchronously** (user present, interactive) or **asynchronously** (driven by scheduled tasks + IPC `pushToAgent`, user not实时在线). Async is the harder case — you often can't ask a clarifying question and wait, so behavior must adapt. Issue #4006.
+
+### Identify the scenario
+
+- **Sync**: the user is actively chatting; you can ask clarifying questions and expect a near-term reply.
+- **Async**: the turn was triggered by a scheduled task or `pushToAgent`; the user may be away. Read `STATE.md` / `RESEARCH.md` in the workdir for the latest intent, progress, and any feedback the user folded in between turns.
+
+### Key decision points — where user intent can shift direction
+
+At each of these in async mode, decide and proceed rather than block:
+
+1. **Goal clarification** — restate the research question in your own words; if ambiguous, pick the most reasonable interpretation, record the assumption, and continue. Don't stall.
+2. **Data source selection** — choose credible sources matching the question; note alternatives you deliberately skipped.
+3. **Analysis direction** — stay anchored to the user's original question; if a tangent looks important, summarize it briefly rather than rerouting the whole study.
+4. **Conclusion validity** — confirm the conclusion actually answers the original question; if it doesn't, say so explicitly.
+
+### Async behavior guidance
+
+- **Be decisive, flag uncertainties.** You can't always round-trip to the user. Make the best-supported call, record the uncertainty and the alternative considered in `RESEARCH.md`, and continue.
+- **Carry state in files, not memory.** Each turn starts by reading `STATE.md` / `RESEARCH.md` for the latest intent and progress, and writes its own progress back so the next turn (or a reviewer) can pick up.
+- **Don't stall on a missing input.** If a needed source/file is unavailable, note it, proceed with what you have, and list the gap in the final report.
+- **Deliver incrementally.** Post a Feishu doc + summary card to the research group and the source chat (see Report Rendering Workflow) so the user sees progress without waiting for a single final dump.
+
 ## Quality Checklist
 
 Before completing a research task:
