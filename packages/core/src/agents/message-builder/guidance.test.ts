@@ -167,7 +167,22 @@ describe('buildTaskRecordGuidance', () => {
 
   it('should specify storage location', () => {
     const result = buildTaskRecordGuidance();
-    expect(result).toContain('.claude/task-records.md');
+    // Issue #4261: rolling monthly files, not a single ever-growing file.
+    expect(result).toContain('.claude/task-records/YYYY-MM.md');
+  });
+
+  it('should instruct rolling monthly storage (Issue #4261)', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('task-records/2026-07.md');
+    expect(result).not.toMatch(/Append entries to `\.claude\/task-records\.md`/);
+  });
+
+  it('should bound the read-before-estimating window (Issue #4261)', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('Read existing records before estimating');
+    expect(result).toContain('bounded recent window');
+    expect(result).toContain('previous month');
+    expect(result).toContain('never load it fully');
   });
 
   it('should include record format with required fields', () => {
