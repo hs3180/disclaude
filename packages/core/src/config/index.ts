@@ -321,6 +321,21 @@ export class Config {
   }
 
   /**
+   * Get the builtins root directory — the common parent of the builtin
+   * `skills/` and `agents/` directories.
+   *
+   * Used as the local-plugin path so the SDK loads builtin skills + agents
+   * in place (Issue #4224), replacing the copy-on-start materialization.
+   *
+   * @returns Absolute path to the builtins root directory
+   */
+  static getBuiltinsDir(): string {
+    // getBuiltinDir('skills') = <builtins-root>/skills, so its dirname is the
+    // builtins root. Reuses getBuiltinDir's bundling/cwd-fallback logic.
+    return path.dirname(this.getBuiltinDir('skills'));
+  }
+
+  /**
    * Validate required configuration fields.
    * Ensures all required fields are present before returning config.
    *

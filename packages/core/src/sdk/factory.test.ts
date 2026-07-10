@@ -9,8 +9,6 @@ import type { IAgentSDKProvider } from './interface.js';
 import type { ProviderInfo } from './types.js';
 
 // Mock functions defined at module scope (available for vi.doMock closures)
-const mockSetupSkills = vi.fn().mockResolvedValue({ success: true });
-const mockSetupAgents = vi.fn().mockResolvedValue({ success: true });
 const mockCreateLogger = vi.fn().mockReturnValue({
   warn: vi.fn(),
   info: vi.fn(),
@@ -51,12 +49,6 @@ describe('Provider Factory', () => {
     vi.clearAllMocks();
 
     // Use vi.doMock for dynamic mocking that works with vi.resetModules
-    vi.doMock('../utils/skills-setup.js', () => ({
-      setupSkillsInWorkspace: (...args: unknown[]) => mockSetupSkills(...args),
-    }));
-    vi.doMock('../utils/agents-setup.js', () => ({
-      setupAgentsInWorkspace: (...args: unknown[]) => mockSetupAgents(...args),
-    }));
     vi.doMock('../utils/logger.js', () => ({
       createLogger: (...args: unknown[]) => mockCreateLogger(...args),
     }));
@@ -99,21 +91,14 @@ describe('Provider Factory', () => {
       expect(() => getProvider('nonexistent')).toThrow(/Available: claude/);
     });
 
-    it('should trigger one-time skills setup on first call', () => {
-      getProvider('claude');
-      expect(mockSetupSkills).toHaveBeenCalledTimes(1);
-    });
-
-    it('should trigger one-time agents setup on first call', () => {
-      getProvider('claude');
-      expect(mockSetupAgents).toHaveBeenCalledTimes(1);
-    });
-
-    it('should not trigger setup again on subsequent calls', () => {
-      getProvider('claude');
-      getProvider('claude');
-      expect(mockSetupSkills).toHaveBeenCalledTimes(1);
-      expect(mockSetupAgents).toHaveBeenCalledTimes(1);
+    it('should not perform copy-on-start setup (Issue #4224: builtins load via local plugin)', () => {
+      // Issue #4224 removed setupSkillsInWorkspace/setupAgentsInWorkspace from
+      // getProvider() — builtin skills/agents are now discovered in place via
+      // the local-plugin option in adaptOptions(). getProvider() should just
+      // return the cached/created provider with no file IO side effects.
+      const provider = getProvider('claude');
+      expect(provider).toBeDefined();
+      expect(provider.name).toBe('claude');
     });
 
     it('should return provider for a custom registered type', () => {

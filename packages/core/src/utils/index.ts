@@ -70,16 +70,6 @@ export {
   stripLeadingMentions,
 } from './mention-parser.js';
 
-// Skills Setup
-export {
-  setupSkillsInWorkspace,
-} from './skills-setup.js';
-
-// Agents Setup (Issue #1410)
-export {
-  setupAgentsInWorkspace,
-} from './agents-setup.js';
-
 // Timing (Issue #3292)
 export { withTiming } from './timing.js';
 
