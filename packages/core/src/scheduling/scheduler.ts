@@ -64,11 +64,53 @@ export class TaskTimeoutError extends Error {
 }
 
 /**
+ * Minimal job interface the Scheduler relies on.
+ *
+ * Issue #4218 (fix A): dependency-inject the job so unit tests can use a
+ * deterministic driver that never schedules a real OS timer (the root cause
+ * of the scheduler-test flakes — `addTask` created a CronJob with
+ * `start: true`, leaking real `setTimeout`s across tests). `CronJob` satisfies
+ * this interface, so production behavior is unchanged when no factory is
+ * injected.
+ */
+export interface SchedulerJob {
+  /**
+   * Manually fire the job's onTick (used by tests to drive execution).
+   * `void | Promise<void>` because `CronJob.fireOnTick()` resolves a
+   * `Promise<void>` while test fakes return `void`; callers never await it.
+   */
+  fireOnTick(): void | Promise<void>;
+  /** Stop the job and cancel any scheduled execution. */
+  stop(): void;
+}
+
+/**
+ * Factory that creates a {@link SchedulerJob} for a task.
+ *
+ * Issue #4218 (fix A): when provided via {@link SchedulerOptions.jobFactory},
+ * the Scheduler uses this instead of constructing a real `CronJob`, letting
+ * tests inject a fake job with no wall-clock side effects. Production code
+ * leaves this unset and gets a real, auto-started `CronJob`.
+ *
+ * The signature intentionally mirrors only what the Scheduler supplies — it
+ * omits `CronJob`'s `onComplete`/`start` args because a test factory must NOT
+ * auto-start a real timer (the whole point of the DI). Production never sets
+ * `jobFactory`, so the real `CronJob(task.cron, onTick, null, true, timezone)`
+ * path is unaffected.
+ */
+export type SchedulerJobFactory = (
+  cron: string,
+  /** Real onTick is `() => this.executeTask(task)` (async → Promise<void>); fakes may return void. */
+  onTick: () => void | Promise<void>,
+  timezone: string,
+) => SchedulerJob;
+
+/**
  * Active cron job entry.
  */
 interface ActiveJob {
   taskId: string;
-  job: CronJob;
+  job: SchedulerJob;
   task: ScheduledTask;
 }
 
@@ -119,6 +161,13 @@ export interface SchedulerOptions {
    * Issue #3582: Routes through existing agents via AgentPool.
    */
   inputMessageRouter?: InputMessageRouter;
+  /**
+   * Optional job factory for dependency injection (Issue #4218, fix A).
+   * When set, the Scheduler uses it to create each task's job instead of a
+   * real `CronJob`, so tests can drive execution deterministically without
+   * scheduling real OS timers. Production leaves this unset.
+   */
+  jobFactory?: SchedulerJobFactory;
 }
 
 /**
@@ -146,6 +195,8 @@ export class Scheduler {
   private callbacks: SchedulerCallbacks;
   private cooldownManager?: CooldownManager;
   private inputMessageRouter?: InputMessageRouter;
+  /** Issue #4218 (fix A): injectable job factory; undefined → real CronJob. */
+  private jobFactory?: SchedulerJobFactory;
   private activeJobs: Map<string, ActiveJob> = new Map();
   private running = false;
   /** Tracks tasks currently being executed (for blocking mechanism) */
@@ -172,6 +223,7 @@ export class Scheduler {
     this.callbacks = options.callbacks;
     this.cooldownManager = options.cooldownManager;
     this.inputMessageRouter = options.inputMessageRouter;
+    this.jobFactory = options.jobFactory;
     logger.info('Scheduler created');
   }
 
@@ -271,13 +323,13 @@ export class Scheduler {
 
     try {
       const timezone = task.timezone || DEFAULT_TIMEZONE;
-      const job = new CronJob(
-        task.cron,
-        () => this.executeTask(task),
-        null,
-        true, // start
-        timezone
-      );
+      const onTick = () => this.executeTask(task);
+      // Issue #4218 (fix A): use the injected job factory when provided so tests
+      // can run deterministically (no real OS timer). Default = real CronJob,
+      // auto-started (production behavior unchanged).
+      const job: SchedulerJob = this.jobFactory
+        ? this.jobFactory(task.cron, onTick, timezone)
+        : new CronJob(task.cron, onTick, null, true, timezone);
 
       this.activeJobs.set(task.id, { taskId: task.id, job, task });
       logger.info({ taskId: task.id, cron: task.cron, name: task.name, timezone }, 'Scheduled task');
