@@ -75,11 +75,9 @@ export class MessageLogger {
 
   private async initialize(): Promise<void> {
     try {
-      // Ensure workspace directory exists first
-      const workspaceDir = Config.getWorkspaceDir();
-      await fs.mkdir(workspaceDir, { recursive: true });
-
-      // Then create chat subdirectory
+      // Issue #4254: the workspace dir is validated at startup (see cli.ts
+      // validateWorkspaceDir) and must NOT be auto-created here. Only ensure
+      // the chat-log subdirectory exists under the already-validated workspace.
       await fs.mkdir(this.chatDir, { recursive: true });
 
       // Migrate legacy files to date-based structure
