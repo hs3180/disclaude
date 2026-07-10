@@ -80,6 +80,11 @@ export {
   setupAgentsInWorkspace,
 } from './agents-setup.js';
 
+// Workspace Setup (Issue #4254)
+export {
+  ensureWorkspaceDir,
+} from './workspace-setup.js';
+
 // Timing (Issue #3292)
 export { withTiming } from './timing.js';
 

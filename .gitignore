@@ -53,9 +53,10 @@ Thumbs.db
 # Task records
 tasks/
 
-# Workspace directory (keep directory structure, ignore contents)
+# Workspace directory (runtime data — auto-created at startup, ignore contents)
+# Issue #4254: workspace dir is created by ensureWorkspaceDir() (and mkdir -p
+# in Dockerfile.primary), so no tracked .gitkeep placeholder is needed.
 workspace/*
-!workspace/.gitkeep
 
 # Integration test environment (contains secrets)
 tests/integration/test-env.yaml

@@ -10,6 +10,7 @@ import type { ProviderInfo } from './types.js';
 import { ClaudeSDKProvider } from './providers/index.js';
 import { setupSkillsInWorkspace } from '../utils/skills-setup.js';
 import { setupAgentsInWorkspace } from '../utils/agents-setup.js';
+import { ensureWorkspaceDir } from '../utils/workspace-setup.js';
 import { createLogger } from '../utils/logger.js';
 
 /**
@@ -17,6 +18,7 @@ import { createLogger } from '../utils/logger.js';
  */
 let skillsSetupDone = false;
 let agentsSetupDone = false;
+let workspaceDirEnsured = false;
 
 /**
  * 已注册的 Provider 类型
@@ -51,6 +53,14 @@ const providerCache = new Map<ProviderType, IAgentSDKProvider>();
  */
 export function getProvider(type?: ProviderType): IAgentSDKProvider {
   const providerType = type ?? defaultProviderType;
+
+  // Ensure the configured workspace directory exists before any subdir setup
+  // (Issue #4254: replaces the tracked workspace/.gitkeep placeholder).
+  // Fire-and-forget: failure only logs a warning, doesn't block agent creation.
+  if (!workspaceDirEnsured) {
+    workspaceDirEnsured = true;
+    ensureWorkspaceDir().catch(() => {});
+  }
 
   // Copy built-in skills to workspace .claude/skills/ for SDK discovery
   // Fire-and-forget: failure only logs warning, doesn't block agent creation
