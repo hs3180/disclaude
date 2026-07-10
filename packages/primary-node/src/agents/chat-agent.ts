@@ -1058,8 +1058,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
           // Issue #4194: detect empty turns — SDK returned a result with no
           // user-visible output and no tool calls, so the bot appears to ignore
-          // the user while the turn is marked successful. Detection only (log);
-          // automatic session reset/retry is a larger follow-up. See issue #4194.
+          // the user while the turn is marked successful.
+          // Issue #4258 (part 1): notify the user instead of silently reporting
+          // only ✅ Complete — the smallest safe corrective action endorsed by
+          // #4258. Automatic session reset/retry (②) and mark-failed (③) are
+          // larger follow-ups that need session-lifecycle design; this PR only
+          // adds the user-facing diagnostic notice. See issues #4194 / #4258.
           if (userVisibleOutputCount === 0 && toolCallCount === 0) {
             this.logger.warn(
               {
@@ -1073,6 +1077,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               'Empty turn completed with no user-visible output and no tool calls (Issue #4194). ' +
                 'Turn was marked successful but the user saw no reply; consider session reset.',
             );
+
+            // Issue #4258 (part 1): send a diagnostic notice so the user knows
+            // the turn produced nothing, rather than appearing to be ignored.
+            // Fire-and-forget with a guard: a notification failure must not
+            // disrupt the turn-completion path (recordSuccess / onDone below).
+            try {
+              const emptyTurnThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              await this.callbacks.sendMessage(
+                chatId,
+                '⚠️ 本轮未产生任何可见输出，会话可能已失效。请重新发送消息触发重试；若持续无响应，请尝试重置会话。',
+                emptyTurnThreadRoot,
+              );
+            } catch (notifyErr) {
+              this.logger.warn(
+                { err: notifyErr, chatId },
+                'Failed to send empty-turn diagnostic notice (Issue #4258)',
+              );
+            }
           }
 
           // Issue #4194: reset per-turn detection counters now that this turn's

@@ -1137,5 +1137,48 @@ describe('ChatAgent (primary-node)', () => {
         );
       }, { timeout: 1000, interval: 20 });
     });
+
+    it('Issue #4258 (part 1): should send a diagnostic notice on an empty turn', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_empty_turn_notify',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Single empty turn: only the ✅ Complete result marker, no real reply,
+      // no tool calls → userVisibleOutputCount stays 0 and the empty-turn
+      // branch fires the diagnostic notice.
+      async function* emptyTurnIterator() {
+        yield {
+          parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: emptyTurnIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_empty_turn_notify',
+        payload: 'hi',
+        messageId: 'msg_1',
+      });
+
+      // The diagnostic notice must be sent via sendMessage so the user is told
+      // the turn produced nothing, rather than the bot appearing to ignore them.
+      await vi.waitFor(() => {
+        const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
+          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出'),
+        );
+        expect(diagnosticCall).toBeDefined();
+        expect(diagnosticCall![0]).toBe('oc_empty_turn_notify');
+      }, { timeout: 1000, interval: 20 });
+    });
   });
 });
