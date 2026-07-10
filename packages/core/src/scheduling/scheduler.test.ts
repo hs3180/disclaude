@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { CronJob } from 'cron';
 import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
@@ -43,6 +44,20 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   };
 }
 
+/**
+ * Issue #4218 part 2: job factory for deterministic tests. Creates a real
+ * CronJob with `start: false` — cron expressions are still validated (the
+ * constructor throws on invalid), but NO real OS timer is scheduled, so no
+ * `setTimeout` leaks across tests. Tests drive execution manually via
+ * `job.fireOnTick()` (as they already do). Production is unaffected (no
+ * factory = real, auto-started CronJob).
+ */
+const testJobFactory = (
+  cron: string,
+  onTick: () => void,
+  timezone: string,
+) => new CronJob(cron, onTick, null, false, timezone);
+
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
@@ -74,6 +89,7 @@ describe('Scheduler', () => {
       scheduleManager: mockScheduleManager,
       callbacks: mockCallbacks,
       inputMessageRouter: mockRouter,
+      jobFactory: testJobFactory,
     });
   });
 
@@ -96,6 +112,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       expect(s).toBeInstanceOf(Scheduler);
@@ -335,6 +352,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const status = await s.getCooldownStatus('task-1', 60000);
@@ -657,6 +675,7 @@ describe('Scheduler', () => {
       const noRouterScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'no-router' });
@@ -698,6 +717,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'cooldown-1', cooldownPeriod: 3600000 });
@@ -729,6 +749,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'cooldown-2', cooldownPeriod: 60000 });
@@ -756,6 +777,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'cooldown-3', cooldownPeriod: 30000 });
@@ -781,6 +803,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       // Task without cooldownPeriod
@@ -910,6 +933,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
       busyScheduler.addTask(createTask({ id: 'blocking-busy', blocking: true, chatId: 'oc_busy' }));
 
@@ -926,6 +950,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
       busyScheduler.addTask(createTask({ id: 'blocking-idle', blocking: true, chatId: 'oc_other' }));
 
@@ -941,6 +966,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: () => true },
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
       busyScheduler.addTask(createTask({ id: 'nonblocking-busy', blocking: false, chatId: 'oc_busy' }));
 
@@ -1143,6 +1169,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'timeout-cd', timeoutMs: 50, cooldownPeriod: 60000 });
@@ -1175,6 +1202,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       // Use a task that hangs on route to keep it "running"
@@ -1222,6 +1250,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       // Make route hang for the first call (blocking task)
