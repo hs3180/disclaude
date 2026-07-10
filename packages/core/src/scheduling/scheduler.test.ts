@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { CronJob } from 'cron';
 import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
@@ -43,6 +44,20 @@ function createTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   };
 }
 
+/**
+ * Issue #4218 part 2: job factory for deterministic tests. Creates a real
+ * CronJob with `start: false` — cron expressions are still validated (the
+ * constructor throws on invalid), but NO real OS timer is scheduled, so no
+ * `setTimeout` leaks across tests. Tests drive execution manually via
+ * `job.fireOnTick()` (as they already do). Production is unaffected (no
+ * factory = real, auto-started CronJob).
+ */
+const testJobFactory = (
+  cron: string,
+  onTick: () => void,
+  timezone: string,
+) => new CronJob(cron, onTick, null, false, timezone);
+
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
@@ -74,6 +89,7 @@ describe('Scheduler', () => {
       scheduleManager: mockScheduleManager,
       callbacks: mockCallbacks,
       inputMessageRouter: mockRouter,
+      jobFactory: testJobFactory,
     });
   });
 
@@ -96,6 +112,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       expect(s).toBeInstanceOf(Scheduler);
@@ -335,6 +352,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const status = await s.getCooldownStatus('task-1', 60000);
@@ -414,14 +432,6 @@ describe('Scheduler', () => {
     /** Helper: fire a cron job trigger (sync, use vi.waitFor for assertions) */
     function fireJob(jobs: ReturnType<typeof scheduler.getActiveJobs>) {
       void jobs[0].job.fireOnTick();
-      // Issue #4174: stop the cron job right after the manual tick so its
-      // every-minute auto-tick can't fire a second time during the waitFor
-      // window and flake exact call-count assertions (real timers + '* * * * *'
-      // meant a minute-boundary auto-tick occasionally landed inside the window).
-      // The manual tick above already fired, so the single route call still
-      // happens; stop() does not abort the in-flight execution and is the same
-      // idempotent method the scheduler uses to tear down jobs.
-      jobs[0].job.stop();
     }
 
     /** Helper: extract the first SystemMessage from mock route calls */
@@ -657,6 +667,7 @@ describe('Scheduler', () => {
       const noRouterScheduler = new Scheduler({
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'no-router' });
@@ -698,6 +709,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'cooldown-1', cooldownPeriod: 3600000 });
@@ -729,6 +741,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'cooldown-2', cooldownPeriod: 60000 });
@@ -756,6 +769,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'cooldown-3', cooldownPeriod: 30000 });
@@ -781,6 +795,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       // Task without cooldownPeriod
@@ -860,12 +875,6 @@ describe('Scheduler', () => {
       const jobs = scheduler.getActiveJobs();
 
       void jobs[0].job.fireOnTick();
-      // Stop the cron job's real-timer auto-tick so a wall-clock minute boundary
-      // can't fire during the waitFor/100ms windows below and invoke route a 3rd
-      // time (CI flake: expected 2, got 3). Same class as Issue #4174 (fixed in
-      // #4176); that fix missed this test. Manual fireOnTick() below still works
-      // on a stopped job.
-      jobs[0].job.stop();
       await vi.waitFor(() => {
         expect(scheduler.isTaskRunning('non-blocking')).toBe(true);
       }, { timeout: 2000 });
@@ -910,6 +919,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
       busyScheduler.addTask(createTask({ id: 'blocking-busy', blocking: true, chatId: 'oc_busy' }));
 
@@ -926,6 +936,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: (chatId: string) => chatId === 'oc_busy' },
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
       busyScheduler.addTask(createTask({ id: 'blocking-idle', blocking: true, chatId: 'oc_other' }));
 
@@ -941,6 +952,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: { ...mockCallbacks, isChatBusy: () => true },
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
       busyScheduler.addTask(createTask({ id: 'nonblocking-busy', blocking: false, chatId: 'oc_busy' }));
 
@@ -1056,11 +1068,6 @@ describe('Scheduler', () => {
 
       const jobs = scheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
-      // Stop the cron job so its every-minute auto-tick can't fire a second
-      // time during the waitFor window and flake the toHaveBeenCalledTimes(1)
-      // assertion. Issue #4174: real timers + '* * * * *' meant a minute-boundary
-      // auto-tick occasionally landed inside the 2s window (route called twice).
-      jobs[0].job.stop();
 
       // Should complete normally (route resolves before 5-minute default)
       await vi.waitFor(() => {
@@ -1143,6 +1150,7 @@ describe('Scheduler', () => {
         callbacks: mockCallbacks,
         cooldownManager: mockCooldownManager,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       const task = createTask({ id: 'timeout-cd', timeoutMs: 50, cooldownPeriod: 60000 });
@@ -1175,6 +1183,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       // Use a task that hangs on route to keep it "running"
@@ -1222,6 +1231,7 @@ describe('Scheduler', () => {
         scheduleManager: mockScheduleManager,
         callbacks: mockCallbacks,
         inputMessageRouter: mockRouter,
+        jobFactory: testJobFactory,
       });
 
       // Make route hang for the first call (blocking task)
