@@ -978,11 +978,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
           } else {
             const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
-            await this.callbacks.sendMessage(chatId, parsed.content, threadRoot);
+            // Capture as a local so the marker check stays type-safe after the
+            // awaited sendMessage (which defeats parsed.content narrowing).
+            const visibleContent = parsed.content;
+            await this.callbacks.sendMessage(chatId, visibleContent, threadRoot);
             // Issue #4194: the ✅ Complete result marker is sent as the result
             // message itself — exclude it so empty turns (no real reply) are
-            // detectable at completion.
-            if (parsed.type !== 'result') {
+            // detectable at completion. Match by content (the codebase-wide
+            // idiom — output-adapter.ts / messaging.ts treat
+            // content.startsWith('✅ Complete') as the internal completion
+            // marker) rather than by parsed.type, so error-result content
+            // (which IS user-visible) is still counted.
+            if (!visibleContent.startsWith('✅ Complete')) {
               userVisibleOutputCount++;
             }
           }
@@ -1067,6 +1074,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'Turn was marked successful but the user saw no reply; consider session reset.',
             );
           }
+
+          // Issue #4194: reset per-turn detection counters now that this turn's
+          // checks are done, so the empty-turn warn above can fire on turn 2+.
+          // processIterator runs once per persistent session (startAgentLoop is
+          // only invoked when !isSessionActive); without this reset, toolCallCount
+          // and userVisibleOutputCount accumulate across turns — after turn 1
+          // produces any output/tools the empty-turn check can never be true
+          // again, which is exactly the follow-up-turn scenario #4194 reports.
+          // messageCount / startTime / firstMessageMs stay session-scoped: they
+          // feed isStartupFailure() (packages/core/.../provider.ts) and the
+          // "entire agent loop" timing summary below, both documented as
+          // loop-level metrics — resetting them would misclassify mid-session
+          // transient errors as startup/config failures.
+          toolCallCount = 0;
+          lastToolCallMs = undefined;
+          userVisibleOutputCount = 0;
 
           // Record success to reset restart state
           this.restartManager.recordSuccess(chatId);
