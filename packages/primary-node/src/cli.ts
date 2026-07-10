@@ -43,6 +43,7 @@ import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -253,6 +254,17 @@ async function main(): Promise<void> {
   // Issue #1499: Channel-specific options are injected here, not in worker-node
   // Issue #3519: Simplified ProjectManager — chatId → workingDir binding
   const workspaceDir = Config.getWorkspaceDir();
+
+  // Issue #4254: fail-fast if the configured workspace dir doesn't exist.
+  // The workspace is a pre-configured, mounted, data-bearing path (schedules/
+  // .claude/logs/downloads). The service must NOT auto-create it — that would
+  // mask config typos, Docker volume mount failures, and wrong paths. Refuse
+  // to start so ops fix the config/mount before running.
+  if (!existsSync(workspaceDir)) {
+    console.error(`✘ Workspace directory does not exist: ${workspaceDir}`);
+    console.error('  The service does not auto-create the workspace dir. Create it (or fix the config/mount) and restart.');
+    process.exit(1);
+  }
 
   const projectManager = new ProjectManager({
     workspaceDir,
