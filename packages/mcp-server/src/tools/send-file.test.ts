@@ -121,6 +121,7 @@ describe('send_file', () => {
       mockIpcClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'file_key_123', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048000,
       });
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 2048000 } as any);
       const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
       expect(result.success).toBe(true);
       expect(result.fileName).toBe('doc.pdf');
@@ -133,8 +134,23 @@ describe('send_file', () => {
       mockIpcClient.uploadFile.mockResolvedValue({
         success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 512000,
       });
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 512000 } as any);
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.sizeMB).toBe('0.49');
+    });
+
+    it('should echo the real file size when IPC omits fileSize (Issue #4205)', async () => {
+      // IPC often returns fileSize: 0 (or undefined), which previously made the
+      // success echo read "0.00 MB" — agents couldn't confirm the upload and
+      // resent, producing duplicate messages. The stat'd local size is used now.
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'key', fileType: 'txt', fileName: 'file.txt', fileSize: 0,
+      });
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 2048000 } as any);
+      const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
+      expect(result.success).toBe(true);
+      expect(result.fileSize).toBe(2048000);
+      expect(result.sizeMB).toBe('1.95');
     });
   });
 
@@ -281,10 +297,13 @@ describe('send_file', () => {
   describe('IPC upload fallback fields', () => {
     it('should use fallbacks when IPC upload returns success with missing fields', async () => {
       mockIpcClient.uploadFile.mockResolvedValue({ success: true });
+      // Issue #4205: fileSize comes from the stat'd local file, not IPC (which
+      // omits it here) — so the echo is the real size, not "0.00 MB".
+      vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, size: 2048000 } as any);
       const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
       expect(result.success).toBe(true);
-      expect(result.fileSize).toBe(0);
-      expect(result.sizeMB).toBe('0.00');
+      expect(result.fileSize).toBe(2048000);
+      expect(result.sizeMB).toBe('1.95');
     });
   });
 });

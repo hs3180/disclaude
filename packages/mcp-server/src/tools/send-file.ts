@@ -84,7 +84,14 @@ export async function send_file(params: {
     }
 
     logger.debug({ chatId, filePath, parentMessageId }, 'Using IPC for file upload');
-    const { fileSize } = await uploadFileViaIpc(chatId, resolvedPath, parentMessageId);
+    await uploadFileViaIpc(chatId, resolvedPath, parentMessageId);
+
+    // Issue #4205: the IPC upload doesn't reliably return fileSize (often 0 /
+    // undefined), which made the success echo read "0.00 MB" — agents couldn't
+    // tell whether the upload actually succeeded and resent, producing duplicate
+    // messages. Use the local file size we already stat'd above; it is
+    // authoritative for the file being sent.
+    const fileSize = stats.size;
 
     const sizeMB = (fileSize / 1024 / 1024).toFixed(2);
     const fileName = path.basename(resolvedPath);
