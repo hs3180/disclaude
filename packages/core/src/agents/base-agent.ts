@@ -33,6 +33,23 @@ import path from 'node:path';
 export type { BaseAgentConfig } from './types.js';
 
 /**
+ * WebSearch tool-use discipline appended to the claude_code system prompt.
+ *
+ * Issue #4265: GLM (and other non-Anthropic models via the Anthropic-compatible
+ * API) occasionally emit a conclusive narrative line (e.g. "让我再查一下…")
+ * instead of a `tool_use(WebSearch)` block, then `stop_reason=end_turn` → the
+ * SDK treats the turn as complete and the agent stops early. The SDK-injected
+ * WebSearch tool prompt only describes the tool + mandates "带 Sources:"; it has
+ * no "must call the tool, don't just narrate intent" instruction. This append
+ * is Approach A (prompt strengthening) — a low-risk mitigation that reduces the
+ * frequency of the narrative-instead-of-tool_use regression. It is harmless
+ * when no web info is needed ("when you need information from the web…"). The
+ * deterministic fix (Approach B: tool_choice forced retry) is a larger follow-up.
+ */
+const WEBSEARCH_TOOL_DISCIPLINE_PROMPT =
+  'WebSearch discipline: when you need information from the web, you MUST call the WebSearch tool directly — do NOT merely describe a search intent (e.g. "let me look into…", "让我再查一下…") and then stop. Either call WebSearch, or answer from existing knowledge. Never end the turn with narrative-only output when a search was the stated next step.';
+
+/**
  * Extra SDK options configuration.
  */
 export interface SdkOptionsExtra {
@@ -169,7 +186,7 @@ export abstract class BaseAgent implements Disposable {
     const options: AgentQueryOptions = {
       cwd: effectiveCwd,
       permissionMode: this.permissionMode,
-      systemPrompt: { type: 'preset', preset: 'claude_code' },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: WEBSEARCH_TOOL_DISCIPLINE_PROMPT },
       tools: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
     };

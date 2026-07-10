@@ -164,7 +164,21 @@ describe('BaseAgent', () => {
       expect(options.systemPrompt).toEqual({
         type: 'preset',
         preset: 'claude_code',
+        append: expect.any(String),
       });
+    });
+
+    it('should append WebSearch tool-use discipline to the system prompt (Issue #4265)', () => {
+      const options = agent.testCreateSdkOptions();
+
+      // Approach A: prompt strengthening to reduce the frequency of GLM emitting
+      // narrative text instead of a tool_use(WebSearch) block (which ends the
+      // turn early). The append is a String on the claude_code preset.
+      const { append } = options.systemPrompt as { append?: string };
+      expect(append).toBeDefined();
+      expect(append).toContain('WebSearch');
+      expect(append).toContain('MUST call the WebSearch tool');
+      expect(append).toContain('do NOT merely describe a search intent');
     });
 
     it('should set tools to claude_code preset (Issue #2890)', () => {
