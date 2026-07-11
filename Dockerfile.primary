@@ -16,6 +16,9 @@
 # Build arguments for configurable source mirrors (Issue #2283)
 # Defaults use official sources; override via docker-source.env for mirrors.
 # Note: APT_MIRROR replaces the former APK_MIRROR after migrating to Debian-slim (#4115).
+# Base image: node:22-trixie-slim (Debian 13, ships system Python 3.13.5) — Issue #4268.
+# ⚠️ Replaces bookworm/3.11: venvs in the mounted /data/workspace whose pyvenv.cfg
+#    points at /usr/bin/python3.11 must be rebuilt (the 3.11 interpreter is removed).
 # -----------------------------------------------------------------------------
 ARG DOCKER_IMAGE_PREFIX=
 ARG APT_MIRROR=
@@ -27,7 +30,7 @@ ARG GH_DEB_URL=
 # -----------------------------------------------------------------------------
 # Stage 1: Builder (uses bun for faster installs)
 # -----------------------------------------------------------------------------
-FROM ${DOCKER_IMAGE_PREFIX}library/node:22-slim AS builder
+FROM ${DOCKER_IMAGE_PREFIX}library/node:22-trixie-slim AS builder
 
 # Re-declare build args for use in this stage
 ARG APT_MIRROR
@@ -80,7 +83,7 @@ RUN bun install --production && \
 # -----------------------------------------------------------------------------
 # Stage 2: Production Image
 # -----------------------------------------------------------------------------
-FROM ${DOCKER_IMAGE_PREFIX}library/node:22-slim AS production
+FROM ${DOCKER_IMAGE_PREFIX}library/node:22-trixie-slim AS production
 
 # Re-declare build args for use in this stage
 ARG APT_MIRROR
