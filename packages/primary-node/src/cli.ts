@@ -43,6 +43,7 @@ import { createChannelCallbacksFactory } from './utils/channel-handlers.js';
 import net from 'node:net';
 import path from 'node:path';
 import { homedir } from 'node:os';
+import { statSync } from 'node:fs';
 
 const logger = createLogger('PrimaryNodeCLI');
 
@@ -119,6 +120,38 @@ Examples:
   disclaude-primary start
   disclaude-primary start --config /path/to/disclaude.config.yaml
 `);
+}
+
+/**
+ * Validate that the configured workspace dir exists and is a directory.
+ *
+ * Issue #4254: the workspace is a pre-configured, mounted, data-bearing path
+ * (schedules/, .claude/logs/downloads). The service must NOT auto-create it —
+ * auto-creation would mask config typos, Docker volume mount failures, and
+ * wrong paths. Refusing to start forces ops to fix the config/mount first.
+ *
+ * A path that exists but is a file is also rejected: existsSync() alone would
+ * let a file slip through and surface later as an opaque ENOTDIR downstream.
+ *
+ * Extracted as a pure function so the fail-fast branch is unit-testable
+ * without driving main()/process.exit.
+ */
+export interface WorkspaceValidationResult {
+  ok: boolean;
+  /** Human-readable reason when ok is false. */
+  reason?: string;
+}
+
+export function validateWorkspaceDir(workspaceDir: string): WorkspaceValidationResult {
+  try {
+    const stat = statSync(workspaceDir);
+    if (!stat.isDirectory()) {
+      return { ok: false, reason: `exists but is not a directory: ${workspaceDir}` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: `does not exist: ${workspaceDir}` };
+  }
 }
 
 /**
@@ -253,6 +286,20 @@ async function main(): Promise<void> {
   // Issue #1499: Channel-specific options are injected here, not in worker-node
   // Issue #3519: Simplified ProjectManager — chatId → workingDir binding
   const workspaceDir = Config.getWorkspaceDir();
+
+  // Issue #4254: fail-fast if the configured workspace dir doesn't exist or
+  // isn't a directory. The workspace is a pre-configured, mounted, data-bearing
+  // path (schedules/ .claude/logs/downloads). The service must NOT auto-create
+  // it — that would mask config typos, Docker volume mount failures, and wrong
+  // paths. Refuse to start so ops fix the config/mount before running.
+  // processLock is released before exit, matching the other error exits below.
+  const workspaceCheck = validateWorkspaceDir(workspaceDir);
+  if (!workspaceCheck.ok) {
+    console.error(`✘ Workspace directory ${workspaceCheck.reason}`);
+    console.error('  The service does not auto-create the workspace dir. Create it (or fix the config/mount) and restart.');
+    processLock?.release();
+    process.exit(1);
+  }
 
   const projectManager = new ProjectManager({
     workspaceDir,

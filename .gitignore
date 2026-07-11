@@ -53,9 +53,10 @@ Thumbs.db
 # Task records
 tasks/
 
-# Workspace directory (keep directory structure, ignore contents)
+# Workspace directory (runtime data — created/mounted by ops, not tracked)
+# Issue #4254: no .gitkeep placeholder; the service fail-fast validates the
+# configured workspace dir exists at startup rather than auto-creating it.
 workspace/*
-!workspace/.gitkeep
 
 # Integration test environment (contains secrets)
 tests/integration/test-env.yaml
