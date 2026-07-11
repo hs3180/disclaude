@@ -199,12 +199,6 @@ export class Config {
           static readonly LOG_ROTATE = fileConfigOnly.logging?.rotate ?? false;
           static readonly SDK_DEBUG = fileConfigOnly.logging?.sdkDebug ?? true;
 
-          // Skills configuration - loaded from package installation directory
-          static readonly SKILLS_DIR = Config.getBuiltinDir('skills');
-
-          // Agents configuration - loaded from package installation directory
-          static readonly AGENTS_DIR = Config.getBuiltinDir('agents');
-
   /**
    * Get a built-in resource directory from package installation.
    * Shared resolution logic for skills, agents, and other bundled resources.
@@ -303,21 +297,18 @@ export class Config {
   }
 
   /**
-   * Get the skills directory.
+   * Get the builtins root directory — the common parent of the builtin
+   * `skills/` and `agents/` directories.
    *
-   * @returns Absolute path to the skills directory
-   */
-  static getSkillsDir(): string {
-    return this.SKILLS_DIR;
-  }
-
-  /**
-   * Get the agents directory.
+   * Used as the local-plugin path so the SDK loads builtin skills + agents
+   * in place (Issue #4224), replacing the copy-on-start materialization.
    *
-   * @returns Absolute path to the agents directory
+   * @returns Absolute path to the builtins root directory
    */
-  static getAgentsDir(): string {
-    return this.AGENTS_DIR;
+  static getBuiltinsDir(): string {
+    // getBuiltinDir('skills') = <builtins-root>/skills, so its dirname is the
+    // builtins root. Reuses getBuiltinDir's bundling/cwd-fallback logic.
+    return path.dirname(this.getBuiltinDir('skills'));
   }
 
   /**

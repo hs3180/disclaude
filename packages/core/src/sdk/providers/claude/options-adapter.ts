@@ -6,6 +6,8 @@
 
 import type { AgentQueryOptions, InlineMcpServerConfig, McpServerConfig, UserInput } from '../../types.js';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import * as path from 'node:path';
+import { Config } from '../../../config/index.js';
 
 /**
  * 适配统一选项为 Claude SDK 选项
@@ -34,6 +36,12 @@ export function adaptOptions(options: AgentQueryOptions): Record<string, unknown
   if (options.systemPrompt) {
     sdkOptions.systemPrompt = options.systemPrompt;
   }
+
+  // Issue #4224: load builtin skills + agents in place as a local plugin,
+  // replacing the copy-on-start materialization. The plugin loads at
+  // subprocess init (before any query()), so the first-message race is gone.
+  // Path MUST be absolute (relative resolves against SDK cwd = workspace).
+  sdkOptions.plugins = [{ type: 'local', path: path.resolve(Config.getBuiltinsDir()) }];
 
   // 设置来源（必填）
   sdkOptions.settingSources = options.settingSources;
