@@ -95,10 +95,25 @@ services:
       - ${WORKSPACE_DIR:-./workspace}:/data/workspace
       - log_data:/data/logs
 
+    # Issue #4285 (part 1): opt-in GPU runtime via env (approach b — Alpine base
+    # unchanged, GPU exposed through `runtime: nvidia`; torch/conda bundle their
+    # own CUDA runtime, so no Dockerfile change is needed). All defaults below
+    # preserve CPU-only behavior exactly:
+    #   DOCKER_RUNTIME unset → "default" (the no-op default runtime);
+    #   SHM_SIZE unset       → 64m (the container's default /dev/shm);
+    #   WORKER_MEMORY unset  → 16G (the current limit).
+    # To enable GPU on a host with nvidia-container-toolkit installed, e.g.:
+    #   DOCKER_RUNTIME=nvidia SHM_SIZE=4G WORKER_MEMORY=40G \
+    #     NVIDIA_VISIBLE_DEVICES=all docker compose up -d
+    # See docs/gpu-setup.md for prerequisites and the #4285 open questions
+    # deferred from this PR (Dockerfile base-image decision, primary-vs-worker
+    # scope, shm_size default sizing).
+    runtime: ${DOCKER_RUNTIME:-default}
+    shm_size: ${SHM_SIZE:-64m}
     deploy:
       resources:
         limits:
-          memory: 16G
+          memory: ${WORKER_MEMORY:-16G}
         reservations:
           memory: 512M
 
