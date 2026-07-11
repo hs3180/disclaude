@@ -1,7 +1,7 @@
 ---
 name: loop
 description: Loop — initializes a Ralph Loop autonomous task by creating a LOOP.md definition file (prompt + YAML params) and a dedicated Feishu execution group. The LOOP.md file watcher (Issue #4283, merged) auto-starts the loop when the file is written. Use when user wants to set up a recurring/autonomous loop task. Keywords: "loop", "Ralph Loop", "循环任务", "autonomous loop", "loop 初始化".
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, mcp__channel-mcp__send_text
 ---
 
 # Loop — 初始化器（Ralph Loop）
@@ -24,7 +24,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 | `{stepInterval}` | No | `30s` | 轮间隔 |
 | `{senderOpenId}` | Yes | — | 发起人 open_id（加入执行群） |
 
-> **Defaults 与 runner floors**：`parseLoopMd` 的默认值为 `maxSteps=10 / maxDurationMs=3600000(1h) / stepIntervalMs=30000(30s)`。runner 会 floor：`maxDuration >= 1000ms`，`stepInterval >= 100ms`，`maxSteps >= 1`。本 skill 的默认值（2h / 30s / 10）与 `parseLoopMd` 一致。
+> **Defaults 与 runner floors**：`parseLoopMd` 的默认值为 `maxSteps=10 / maxDurationMs=3600000(1h) / stepIntervalMs=30000(30s)`。runner 会 floor：`maxDuration >= 1000ms`，`stepInterval >= 100ms`，`maxSteps >= 1`。本 skill 默认 `maxSteps=10 / maxDuration=2h / stepInterval=30s`：`maxSteps`/`stepInterval` 与 `parseLoopMd` 一致；`maxDuration` 取 2h（比 parseLoopMd 的 1h 缺省更宽松）。因本 skill 总在 frontmatter 显式写入 `maxDuration`（见 Step 4），parseLoopMd 的 1h 缺省对本 skill 创建的 loop 不生效。
 
 从 `{task}` 生成文件系统安全的 slug（`[^A-Za-z0-9._-]+` → `-`，去首尾 `-`；slug 非空否则报错）。
 
@@ -72,7 +72,7 @@ startedAt: {当前 ISO 时间，如 2026-07-11T14:30:00Z}
 
 LOOP.md 写入后，**文件 watcher（#4283）自动检测到文件创建**，调用 `getOrCreateLoopRunner().startFromLoopMd(path)` 启动循环。watcher 将返回的 `loopId` 通过 `pushToAgent` 推送到执行群。
 
-**无需手动调 `loop_start`**。LOOP.md 已写入，待 watcher 接通后自动启动。
+**无需手动调 `loop_start`**。LOOP.md 已写入，watcher 将自动启动循环（见 Step 5）。
 
 ### 6. 推送首条指令到新群
 
