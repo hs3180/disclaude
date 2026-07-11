@@ -56,6 +56,9 @@ import {
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
+  // Issue #4283: LOOP.md file watcher consumer bridge
+  LOOP_MD_DIR,
+  readLoopMd,
 } from '@disclaude/core';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -63,6 +66,7 @@ import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
 import { LoopRunner } from './loop/loop-runner.js';
+import { LoopFileWatcher } from './loop/loop-file-watcher.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -177,6 +181,8 @@ export class PrimaryNode extends EventEmitter {
 
   // Loop Runner (Issue #4075: lazy-initialized on first loopStart)
   protected loopRunner?: LoopRunner;
+  /** Issue #4283: LOOP.md file watcher — starts loops from skill-written LOOP.md files. */
+  protected loopFileWatcher?: LoopFileWatcher;
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -655,6 +661,29 @@ export class PrimaryNode extends EventEmitter {
       { schedulesDir, activeJobCount },
       'Scheduler fully initialized'
     );
+
+    // Issue #4283: Start LOOP.md file watcher — the consumer bridge that
+    // starts loops from skill-written LOOP.md files (mirrors SCHEDULE.md →
+    // ScheduleFileWatcher → SchedulerService). On LOOP.md create/change, read
+    // it, call startFromLoopMd, and surface the loopId to the chat.
+    const loopDir = path.join(workspaceDir, LOOP_MD_DIR);
+    this.loopFileWatcher = new LoopFileWatcher({
+      loopDir,
+      onLoopMd: (filePath: string) => {
+        try {
+          const { params } = readLoopMd(filePath);
+          const { loopId } = this.getOrCreateLoopRunner().startFromLoopMd(filePath);
+          const { chatId } = params;
+          const h = this.resolveApiHandlers(chatId);
+          void h?.pushToAgent?.(chatId, `🔧 Loop started: ${loopId} (from LOOP.md). Use loop_stop/loop_status with this ID.`);
+          logger.info({ loopId, chatId, filePath }, 'LoopFileWatcher: started loop from LOOP.md');
+        } catch (err) {
+          logger.error({ err, filePath }, 'LoopFileWatcher: failed to start loop from LOOP.md');
+        }
+      },
+    });
+    await this.loopFileWatcher.start();
+    logger.info({ loopDir }, 'LoopFileWatcher started');
   }
 
   /**
@@ -663,6 +692,7 @@ export class PrimaryNode extends EventEmitter {
    */
   protected async stopScheduler(): Promise<void> {
     this.scheduleFileWatcher?.stop();
+    this.loopFileWatcher?.stop();
     await this.scheduler?.stop();
     logger.info('Scheduler stopped');
   }
