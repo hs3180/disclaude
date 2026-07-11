@@ -124,15 +124,17 @@ export {
   RestartManager,
 } from './agents/restart-manager.js';
 
-// MCP tool health tracker (Issue #4179 part 1): per-session circuit breaker
-// for MCP tools — records consecutive failures and marks a tool degraded once
-// it crosses a threshold, so the agent can pivot to alternatives instead of
-// silently retrying a failing tool. Primitive only; call-path wiring is a
-// subsequent part.
+// MCP tool health tracker (Issue #4179 part 1 + part 3): per-session circuit
+// breaker for MCP tools — records consecutive failures and marks a tool
+// degraded once it crosses a threshold, so the agent can pivot to alternatives
+// instead of silently retrying a failing tool. Part 1 = primitive; part 3 =
+// formatDegradedToolsNotice (degraded-tool notice text for the agent reminder).
+// Call-path wiring (failure detection + tool exclusion) is a subsequent part.
 export {
   type ToolHealth,
   type McpHealthTrackerOptions,
   McpHealthTracker,
+  formatDegradedToolsNotice,
 } from './agents/mcp-health-tracker.js';
 
 // LOOP.md loop definition file: spec + parser (Issue #4193 part A)
