@@ -147,10 +147,27 @@ export class LoopRunner {
    * is unchanged, and migrating the MCP/IPC/REST `loop_start` contract onto
    * LOOP.md is a later part.
    *
-   * @returns The loop ID for subsequent stop/status calls.
+   * @returns The loop ID (plus `chatId` and a `started` flag) for subsequent
+   * stop/status calls.
    * @throws when the LOOP.md cannot be read/parsed, or lacks a `chatId`.
    */
-  startFromLoopMd(loopMdPath: string): { loopId: string } {
+  startFromLoopMd(loopMdPath: string): { loopId: string; chatId: string; started: boolean } {
+    // Issue #4286: one loop per LOOP.md path. If a loop is already running for
+    // this file, return it as a no-op — the running loop already re-reads the
+    // prompt each iteration (see runLoop), so an in-place edit of a running
+    // LOOP.md (or a duplicated file-watch event) must NOT spawn a second
+    // concurrent loop pushing to the same chatId. A different LOOP.md file
+    // (different name/path) is unaffected and starts its own loop.
+    for (const execution of this.loops.values()) {
+      if (execution.loopMdPath === loopMdPath && execution.state === 'running') {
+        logger.info(
+          { loopId: execution.loopId, loopMdPath },
+          'Loop already running for this LOOP.md; reusing (no duplicate)',
+        );
+        return { loopId: execution.loopId, chatId: execution.chatId, started: false };
+      }
+    }
+
     const def = readLoopMd(loopMdPath);
     if (!def.params.chatId) {
       throw new Error(`LOOP.md at ${loopMdPath} is missing required field "chatId"`);
@@ -177,7 +194,7 @@ export class LoopRunner {
 
     this.launchLoop(execution);
     logger.info({ loopId, chatId: def.params.chatId, loopMdPath, maxSteps }, 'Loop started from LOOP.md');
-    return { loopId };
+    return { loopId, chatId: def.params.chatId, started: true };
   }
 
   /** Mint the next monotonically-numbered loop ID. */

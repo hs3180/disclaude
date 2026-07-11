@@ -471,5 +471,42 @@ describe('LoopRunner', () => {
       await vi.waitFor(() => expect(mdRunner.status(loopId)?.state).toBe('completed'), { timeout: 2000 });
       expect(mdPush).toHaveBeenCalledTimes(1);
     });
+
+    it('dedups a second start for the same LOOP.md path (Issue #4286)', () => {
+      // Long interval + several steps so the first loop is still running when
+      // the second start arrives (dedup keys on a *running* execution for the
+      // same loopMdPath, so an in-place edit / duplicate watch event must not
+      // spawn a second concurrent loop on the same chatId).
+      writeLoopMd('only one of me', { maxSteps: 5, stepInterval: '500ms' });
+
+      const first = mdRunner.startFromLoopMd(loopMdPath);
+      const second = mdRunner.startFromLoopMd(loopMdPath);
+
+      // First call starts; second call is a no-op reusing the same loop.
+      expect(first.started).toBe(true);
+      expect(second.started).toBe(false);
+      expect(second.loopId).toBe(first.loopId);
+      expect(second.chatId).toBe(first.chatId);
+
+      // Stop the survivor so it does not keep pushing past test teardown.
+      mdRunner.stop(first.loopId);
+    });
+
+    it('starts a fresh loop for a different LOOP.md path (no cross-path dedup)', () => {
+      writeLoopMd('loop A', { maxSteps: 5, stepInterval: '500ms' });
+      const otherPath = join(tmpDir, 'other-LOOP.md');
+      writeFileSync(otherPath, '---\nname: b\nchatId: oc_b\nmaxSteps: 5\nstepInterval: 500ms\n---\n\nloop B\n', 'utf-8');
+
+      const first = mdRunner.startFromLoopMd(loopMdPath);
+      const second = mdRunner.startFromLoopMd(otherPath);
+
+      // Different path → independent loop, not deduped.
+      expect(first.started).toBe(true);
+      expect(second.started).toBe(true);
+      expect(second.loopId).not.toBe(first.loopId);
+
+      mdRunner.stop(first.loopId);
+      mdRunner.stop(second.loopId);
+    });
   });
 });
