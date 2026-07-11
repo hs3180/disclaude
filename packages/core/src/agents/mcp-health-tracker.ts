@@ -82,7 +82,7 @@ export class McpHealthTracker {
   }
 
   /** Fetch-or-create the health record for a tool. */
-  private record(toolName: string): ToolHealth {
+  private getOrCreate(toolName: string): ToolHealth {
     let rec = this.tools.get(toolName);
     if (!rec) {
       rec = { consecutiveFailures: 0, totalFailures: 0, degraded: false };
@@ -97,7 +97,7 @@ export class McpHealthTracker {
    * the tool is marked degraded.
    */
   recordFailure(toolName: string, error?: unknown): void {
-    const rec = this.record(toolName);
+    const rec = this.getOrCreate(toolName);
     rec.consecutiveFailures += 1;
     rec.totalFailures += 1;
 
@@ -129,6 +129,10 @@ export class McpHealthTracker {
    * should "Stop retrying ... in the same session", so once degraded a tool
    * stays excluded for the session. Use {@link McpHealthTracker.clear} (single
    * tool) or {@link McpHealthTracker.reset} (all tools) for a fresh slate.
+   *
+   * No-op for a tool that has never failed: an unseen tool has no record to
+   * reset, and `isDegraded` already returns `false` for it, so creating one
+   * would serve no purpose.
    */
   recordSuccess(toolName: string): void {
     const rec = this.tools.get(toolName);
@@ -164,7 +168,7 @@ export class McpHealthTracker {
 
   /** Manually trip a tool (e.g. operator override / known outage). */
   trip(toolName: string): void {
-    const rec = this.record(toolName);
+    const rec = this.getOrCreate(toolName);
     if (!rec.degraded) {
       rec.degraded = true;
       rec.degradedAt = this.now().toISOString();
