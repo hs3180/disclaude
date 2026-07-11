@@ -20,6 +20,21 @@ describe('adaptOptions', () => {
     expect(result.model).toBeUndefined();
   });
 
+  it('should wire builtin skills/agents as a local plugin (Issue #4224)', () => {
+    const result = adaptOptions({
+      settingSources: ['user', 'project', 'local'],
+    });
+
+    // Builtins load in place via the SDK local-plugin option — replaces the
+    // copy-on-start materialization and removes the first-message race.
+    const plugins = result.plugins as Array<{ type: string; path: string }> | undefined;
+    expect(plugins).toBeDefined();
+    expect(plugins).toHaveLength(1);
+    expect(plugins![0].type).toBe('local');
+    // Path must be absolute (relative would resolve against SDK cwd = workspace).
+    expect(plugins![0].path).toMatch(/^\//);
+  });
+
   it('should pass through cwd and model', () => {
     const result = adaptOptions({
       settingSources: ['user', 'project', 'local'],

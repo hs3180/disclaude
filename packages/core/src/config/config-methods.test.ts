@@ -236,18 +236,6 @@ describe('Config', () => {
     });
   });
 
-  describe('getSkillsDir', () => {
-    it('should return a path string', () => {
-      expect(typeof Config.getSkillsDir()).toBe('string');
-    });
-  });
-
-  describe('getAgentsDir', () => {
-    it('should return a path string', () => {
-      expect(typeof Config.getAgentsDir()).toBe('string');
-    });
-  });
-
   describe('static properties', () => {
     it('should have GLM configuration from config file', () => {
       expect(Config.GLM_API_KEY).toBe('test-glm-key');
