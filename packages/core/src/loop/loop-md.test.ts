@@ -7,7 +7,18 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseLoopMd, parseDuration, loopMdPath, LOOP_MD_DIR, LOOP_MD_FILENAME } from './loop-md.js';
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  parseLoopMd,
+  parseDuration,
+  loopMdPath,
+  serializeLoopMd,
+  writeLoopMd,
+  LOOP_MD_DIR,
+  LOOP_MD_FILENAME,
+} from './loop-md.js';
 
 describe('parseDuration', () => {
   it('returns the default for null / undefined', () => {
@@ -231,5 +242,77 @@ describe('loopMdPath', () => {
 
   it('strips a trailing slash from baseDir', () => {
     expect(loopMdPath('loop', '/w/')).toBe(`/w/${LOOP_MD_DIR}/loop/${LOOP_MD_FILENAME}`);
+  });
+});
+
+describe('serializeLoopMd / writeLoopMd (Issue #4040 part 1)', () => {
+  /** A representative definition covering required + optional fields. */
+  const def = {
+    params: {
+      name: 'etf-rotation',
+      chatId: 'oc_abc',
+      workDir: '/data/ws/loop-etf',
+      maxSteps: 12,
+      maxDurationMs: 7200_000,
+      stepIntervalMs: 45_000,
+      status: 'running',
+      startedAt: '2026-07-11T02:00:00Z',
+    },
+    prompt: 'Rebalance the ETF rotation portfolio and post the daily trades.',
+  };
+
+  it('serializeLoopMd round-trips through parseLoopMd (required + optional fields)', () => {
+    const text = serializeLoopMd(def);
+    const reparsed = parseLoopMd(text);
+    expect(reparsed.params).toEqual(def.params);
+    expect(reparsed.prompt).toBe(def.prompt);
+  });
+
+  it('serializeLoopMd emits a `---`-fenced frontmatter the parser accepts', () => {
+    const text = serializeLoopMd(def);
+    expect(text.startsWith('---\n')).toBe(true);
+    // Closing fence on its own line after the YAML.
+    expect(text.indexOf('\n---\n', 4)).toBeGreaterThan(0);
+  });
+
+  it('omits optional fields (workDir/status/startedAt) when absent, not `null`', () => {
+    const minimal = {
+      params: { name: 'm', chatId: 'oc_1', maxSteps: 5, maxDurationMs: 3600_000, stepIntervalMs: 30_000 },
+      prompt: 'do the thing',
+    };
+    const text = serializeLoopMd(minimal);
+    expect(text).not.toContain('workDir');
+    expect(text).not.toContain('status');
+    expect(text).not.toContain('startedAt');
+    expect(text).not.toContain('null');
+    // Still round-trips.
+    const reparsed = parseLoopMd(text);
+    expect(reparsed.params.name).toBe('m');
+    expect(reparsed.params.maxSteps).toBe(5);
+    expect(reparsed.prompt).toBe('do the thing');
+  });
+
+  it('round-trips a multi-line prompt body verbatim (trimmed)', () => {
+    const multi = {
+      params: { name: 'multi', chatId: 'oc_2', maxSteps: 3, maxDurationMs: 1800_000, stepIntervalMs: 10_000 },
+      prompt: 'Line one.\n\nLine two.\n- bullet',
+    };
+    const reparsed = parseLoopMd(serializeLoopMd(multi));
+    expect(reparsed.prompt).toBe('Line one.\n\nLine two.\n- bullet');
+  });
+
+  it('writeLoopMd writes the serialized document to disk and creates the parent dir', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'loopmd-write-'));
+    try {
+      const path = join(dir, LOOP_MD_DIR, 'my-loop', LOOP_MD_FILENAME);
+      writeLoopMd(def, path);
+      expect(existsSync(path)).toBe(true);
+      // The file content parses back to the original definition.
+      const reparsed = parseLoopMd(readFileSync(path, 'utf-8'));
+      expect(reparsed.params).toEqual(def.params);
+      expect(reparsed.prompt).toBe(def.prompt);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

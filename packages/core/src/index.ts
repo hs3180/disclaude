@@ -135,7 +135,8 @@ export {
   McpHealthTracker,
 } from './agents/mcp-health-tracker.js';
 
-// LOOP.md loop definition file: spec + parser (Issue #4193 part A)
+// LOOP.md loop definition file: spec + parser + writer (Issue #4193 part A,
+// #4040 part 1: serializeLoopMd/writeLoopMd for the loop skill to create LOOP.md)
 export {
   type LoopMdParams,
   type LoopMdDefinition,
@@ -145,6 +146,8 @@ export {
   parseDuration,
   readLoopMd,
   loopMdPath,
+  serializeLoopMd,
+  writeLoopMd,
 } from './loop/loop-md.js';
 // Agent pool
 export {

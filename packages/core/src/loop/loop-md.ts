@@ -19,7 +19,8 @@
  * @module @disclaude/core/loop
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { dirname } from 'node:path';
 import * as yaml from 'js-yaml';
 import { createLogger } from '../utils/logger.js';
 
@@ -253,4 +254,58 @@ export function loopMdPath(name: string, baseDir: string = process.cwd()): strin
   // Use posix join semantics for a stable cross-platform path string.
   const base = baseDir.replace(/\/+$/, '');
   return `${base}/${LOOP_MD_DIR}/${safe}/${LOOP_MD_FILENAME}`;
+}
+
+/**
+ * Serialize a {@link LoopMdDefinition} back into the LOOP.md document format
+ * (YAML frontmatter + prompt body) — the inverse of {@link parseLoopMd}.
+ *
+ * The frontmatter uses the same keys the parser reads (`name` / `chatId` /
+ * `workDir` / `maxSteps` / `maxDuration` / `stepInterval` / `status` /
+ * `startedAt`); durations are written as millisecond numbers, which
+ * {@link parseDuration} accepts, so `parseLoopMd(serializeLoopMd(def))`
+ * round-trips. Optional fields (`workDir` / `status` / `startedAt`) are omitted
+ * when absent rather than emitted as `null`.
+ *
+ * Issue #4040 (part 1): the loop skill creates a LOOP.md definition file; this
+ * writer is the primitive for that step (mirroring {@link readLoopMd}). It does
+ * not start a loop — that is the runner's job.
+ */
+export function serializeLoopMd(def: LoopMdDefinition): string {
+  const { params } = def;
+  // Build the frontmatter mapping, omitting optional absent fields.
+  const frontmatter: Record<string, unknown> = {
+    name: params.name,
+    chatId: params.chatId,
+    maxSteps: params.maxSteps,
+    maxDuration: params.maxDurationMs,
+    stepInterval: params.stepIntervalMs,
+  };
+  if (params.workDir !== undefined) {
+    frontmatter.workDir = params.workDir;
+  }
+  if (params.status !== undefined) {
+    frontmatter.status = params.status;
+  }
+  if (params.startedAt !== undefined) {
+    frontmatter.startedAt = params.startedAt;
+  }
+
+  // yaml.dump emits each key on its own line with a trailing newline; wrap with
+  // the `---` fences the parser expects (splitFrontmatter requires the doc to
+  // start with a `---` line).
+  const yamlStr = yaml.dump(frontmatter, { lineWidth: -1 });
+  return `---\n${yamlStr}---\n${def.prompt.trim()}\n`;
+}
+
+/**
+ * Serialize {@link def} and write it to `path` as a LOOP.md file (synchronous).
+ *
+ * Creates the parent directory if it does not exist (the conventional path
+ * `.disclaude/loop/<name>/LOOP.md` usually does not exist yet when the skill
+ * first writes it). Mirrors {@link readLoopMd}. Does not start a loop.
+ */
+export function writeLoopMd(def: LoopMdDefinition, path: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, serializeLoopMd(def), 'utf-8');
 }
