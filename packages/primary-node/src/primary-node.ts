@@ -58,7 +58,6 @@ import {
   MessageRouter as InputMessageRouter,
   // Issue #4283: LOOP.md file watcher consumer bridge
   LOOP_MD_DIR,
-  readLoopMd,
 } from '@disclaude/core';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -671,9 +670,16 @@ export class PrimaryNode extends EventEmitter {
       loopDir,
       onLoopMd: (filePath: string) => {
         try {
-          const { params } = readLoopMd(filePath);
-          const { loopId } = this.getOrCreateLoopRunner().startFromLoopMd(filePath);
-          const { chatId } = params;
+          // startFromLoopMd dedups by loopMdPath (one loop per LOOP.md) and
+          // reads the file once internally, returning chatId + a `started`
+          // flag so we only announce genuinely new loops — not duplicate
+          // events for an already-running LOOP.md, whose prompt is re-read
+          // each iteration by the runner itself.
+          const { loopId, chatId, started } = this.getOrCreateLoopRunner().startFromLoopMd(filePath);
+          if (!started) {
+            logger.debug({ loopId, filePath }, 'LoopFileWatcher: LOOP.md already running, skipped');
+            return;
+          }
           const h = this.resolveApiHandlers(chatId);
           void h?.pushToAgent?.(chatId, `🔧 Loop started: ${loopId} (from LOOP.md). Use loop_stop/loop_status with this ID.`);
           logger.info({ loopId, chatId, filePath }, 'LoopFileWatcher: started loop from LOOP.md');

@@ -90,4 +90,34 @@ describe('LoopFileWatcher (Issue #4283)', () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(onLoopMd).not.toHaveBeenCalled();
   });
+
+  it('startup scan fires onLoopMd for a LOOP.md that pre-existed (Issue #4286)', async () => {
+    const onLoopMd = vi.fn();
+    // Write the LOOP.md BEFORE the watcher starts — its create event is missed
+    // by fs.watch, so the startup scan (safety net for missed events) must
+    // pick it up.
+    writeFileSync(join(dir, 'LOOP.md'), '---\nname: pre\nchatId: oc_pre\n---\nbody');
+
+    watcher = new LoopFileWatcher({ loopDir: dir, onLoopMd, debounceMs: 50 });
+    await watcher.start();
+
+    await vi.waitFor(() => {
+      expect(onLoopMd).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+    expect(onLoopMd.mock.calls[0][0]).toContain('LOOP.md');
+  });
+
+  it('startup scan discovers a LOOP.md nested deep in a subdirectory', async () => {
+    const onLoopMd = vi.fn();
+    mkdirSync(join(dir, 'nested', 'deep'), { recursive: true });
+    writeFileSync(join(dir, 'nested', 'deep', 'LOOP.md'), '---\nname: deep\nchatId: oc_d\n---\nbody');
+
+    watcher = new LoopFileWatcher({ loopDir: dir, onLoopMd, debounceMs: 50 });
+    await watcher.start();
+
+    await vi.waitFor(() => {
+      expect(onLoopMd).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+    expect(onLoopMd.mock.calls[0][0]).toContain('deep');
+  });
 });
