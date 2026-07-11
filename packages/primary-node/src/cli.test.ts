@@ -9,6 +9,9 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 // Mock core dependencies used at module level by cli.ts (createLogger, etc.)
 vi.mock('@disclaude/core', () => ({
@@ -50,7 +53,7 @@ vi.mock('./channels/wired-descriptors.js', () => ({
   BUILTIN_WIRED_DESCRIPTORS: [],
 }));
 
-import { parseArgs, resolveChannelConfigs, isPortAvailable, waitForPortAvailable } from './cli.js';
+import { parseArgs, resolveChannelConfigs, isPortAvailable, waitForPortAvailable, validateWorkspaceDir } from './cli.js';
 import type { DisclaudeConfigWithChannels } from '@disclaude/core';
 
 // ============================================================================
@@ -419,5 +422,43 @@ describe('lockfile path resolution', () => {
     delete process.env.LOCKFILE_PATH;
     const lockfilePath = process.env.LOCKFILE_PATH ?? '/default/disclaude.pid';
     expect(lockfilePath).toBe('/default/disclaude.pid');
+  });
+});
+
+// ============================================================================
+// validateWorkspaceDir (Issue #4254: fail-fast on missing/non-dir workspace)
+// ============================================================================
+describe('validateWorkspaceDir', () => {
+  it('should return ok when the path is an existing directory', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-valid-'));
+    try {
+      expect(validateWorkspaceDir(tmp)).toEqual({ ok: true });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('should return not-ok with "does not exist" when the path is missing', () => {
+    const missing = path.join(os.tmpdir(), 'ws-missing-4254-no-such-dir');
+    fs.rmSync(missing, { recursive: true, force: true }); // ensure absent
+    const result = validateWorkspaceDir(missing);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('does not exist');
+    expect(result.reason).toContain(missing);
+  });
+
+  it('should return not-ok with "not a directory" when the path is a file', () => {
+    // existsSync() alone would let a file slip through and surface later as an
+    // opaque ENOTDIR; statSync().isDirectory() rejects it up front.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-file-'));
+    const filePath = path.join(tmpDir, 'not-a-dir');
+    fs.writeFileSync(filePath, 'contents');
+    try {
+      const result = validateWorkspaceDir(filePath);
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain('not a directory');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
