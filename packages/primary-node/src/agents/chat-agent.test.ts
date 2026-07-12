@@ -1185,19 +1185,24 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('Issue #4260 (test 2): a system→result-only stream is still detected as an empty turn', async () => {
-      // #4194's reported scenario is a stream that emits `system` then `result`
-      // with no assistant content / no tool calls. The adapter's default
+      // #4194's reported scenario is a stream that emits a `system` SDK message
+      // then `result` with no assistant content / no tool calls. The adapter's
       // `case 'system'` (message-adapter.ts) renders unhandled system subtypes
-      // with content '' ("content 必须保持空" — GLM + Agent Teams flood guard),
-      // and processIterator only counts events with truthy `parsed.content`
-      // (excluding the ✅ Complete marker). So a `system` event must NOT
-      // increment userVisibleOutputCount — otherwise the empty-turn check
-      // (`userVisibleOutputCount === 0 && toolCallCount === 0`) would never fire
-      // for this stream shape and the bot would silently report only ✅ Complete.
-      // No existing test emits a `system` event; this fills that gap (Issue
-      // #4260 test 2 — the slice the issue marks "independent and can land
-      // first"). True regression: fails if a `system` event starts being
-      // counted as user-visible output (count → 1 → empty-turn branch skipped).
+      // (task_started / teammate_* — the GLM + Agent Teams flood) as
+      // `{ type: 'text', content: '', role: 'system' }`: content stays empty so
+      // chat-agent.ts never forwards it to the user (that contract is locked by
+      // message-adapter.test.ts "D1"). processIterator only counts events with
+      // truthy `parsed.content` (excluding the ✅ Complete marker), so this
+      // empty-content `text` event must NOT increment userVisibleOutputCount —
+      // otherwise the empty-turn check (`userVisibleOutputCount === 0 &&
+      // toolCallCount === 0`) would never fire for this stream shape and the bot
+      // would silently report only ✅ Complete. No existing test feeds an
+      // adapter-rendered system flood event; this fills that gap (Issue #4260
+      // test 2 — the slice the issue marks "independent and can land first").
+      // True regression: fails if an empty-content `text` event starts being
+      // counted as user-visible output — e.g. if the `if (parsed.content)` gate
+      // were replaced by a type-based check (`if (parsed.type === 'text')`),
+      // count → 1 → empty-turn branch skipped → no diagnostic (regressing #4194).
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
         chatId: 'oc_empty_turn_system',
@@ -1208,8 +1213,9 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       async function* systemResultIterator() {
-        // system event: empty content (adapter default for unhandled subtypes).
-        yield { parsed: { type: 'system', content: '' }, raw: {} };
+        // Adapter output for an unhandled system subtype (e.g. task_started):
+        // type 'text' with empty content (see message-adapter.ts `case 'system'`).
+        yield { parsed: { type: 'text', content: '' }, raw: {} };
         // result marker only — no assistant text, no tool_use → empty turn.
         yield {
           parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
@@ -1229,16 +1235,21 @@ describe('ChatAgent (primary-node)', () => {
         messageId: 'msg_1',
       });
 
-      // The empty-turn diagnostic notice must fire despite the `system` event
-      // — proving the system event did not count as user-visible output. If it
-      // had (count=1), the empty-turn branch would be skipped and no notice
-      // would be sent, regressing #4194's system→result-only scenario.
+      // The empty-turn diagnostic notice must fire despite the empty-content
+      // `text` event (the adapter's rendering of a system flood msg) — proving
+      // it did not count as user-visible output. If it had (count=1), the
+      // empty-turn branch would be skipped and no notice would be sent,
+      // regressing #4194's system→result-only scenario.
       await vi.waitFor(() => {
         const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
           (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出'),
         );
         expect(diagnosticCall).toBeDefined();
         expect(diagnosticCall![0]).toBe('oc_empty_turn_system');
+        // The notice must be threaded to the turn's thread root (passed as
+        // sendMessage's parentMessageId, i.e. the 3rd argument) — same contract
+        // as the sibling #4258 diagnostic-notice test.
+        expect(diagnosticCall![2]).toBe('thread-root-123');
       }, { timeout: 1000, interval: 20 });
     });
   });
