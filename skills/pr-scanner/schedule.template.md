@@ -41,7 +41,7 @@ if [ -z "$EXP" ] || [ "$NOW" -ge "$EXP_TS" ]; then
 fi
 ```
 
-- 若上述判定为「需刷新」：调用 **`github-jwt-auth`** skill（用 GitHub App JWT 签名换取新的 Installation Access Token，写入 `{workspace_root}/.runtime-env` 的 `GH_TOKEN` / `GH_TOKEN_EXPIRES_AT`），随后 `set -a; source {workspace_root}/.runtime-env; set +a` 再继续（`set -a` 确保写入的 KEY=VALUE 被 export 给后续 `gh` 子进程）。
+- 若上述判定为「需刷新」：调用 **`github-jwt-auth`** skill（用 GitHub App JWT 签名换取新的 Installation Access Token，写入 `{workspace_root}/.runtime-env` 的 `GH_TOKEN` / `GH_TOKEN_EXPIRES_AT`），随后 `set -a; source {workspace_root}/.runtime-env; set +a` 再继续（`set -a` 确保写入的 KEY=VALUE 被 export 给后续 `gh` 子进程）。刷新、`source` 与后续 `gh` 必须在**同一次 Bash 调用内**完成——harness 每次 Bash 调用是全新 shell，sourced 的环境变量不跨调用持久化；分两次调用会让 `gh` 仍读到 spawn 时冻结的旧 token（Nit A，#4266 review）。
 - 即便 preflight 通过，后续任一 `gh` 命令若返回 **401 Bad credentials**，同样先调用 `github-jwt-auth` 刷新并重试该命令；仍失败才按「错误处理」记录并跳过。
 
 ### 1. 读取映射表
@@ -57,6 +57,8 @@ cat workspace/bot-chat-mapping.json 2>/dev/null || echo "{}"
 ```bash
 gh pr list --repo {repo} --state open --json number,title,author,headRefName
 ```
+
+> ⚠️ **务必检查 `gh` 退出码**：退出码非 0、或输出异常为空时，**不得**当作「0 open PR」继续到步骤 3 —— 应按「步骤 0」刷新 token 后在**同一次 Bash 调用内**重试；仍失败则记为错误并退出本轮扫描。空结果只有伴随退出码 0 才算真空 PR（Issue #4237：token 过期的空结果曾被误当「0 open PR」而漏建群）。
 
 ### 3. 过滤与分类
 
