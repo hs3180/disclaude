@@ -46,10 +46,11 @@ DOCKER_RUNTIME=nvidia SHM_SIZE=4G WORKER_MEMORY=40G \
 
 | Variable | Default (CPU-only) | GPU example | Purpose |
 |---|---|---|---|
-| `DOCKER_RUNTIME` | `default` | `nvidia` | Docker runtime for the `primary` container. `default` is a no-op; `nvidia` mounts host GPUs. |
+| `DOCKER_RUNTIME` | `runc` | `nvidia` | Docker runtime for the `primary` container. `runc` is Docker's standard CPU-only runtime (a no-op); `nvidia` mounts host GPUs. |
 | `SHM_SIZE` | `64m` | `4G` | `/dev/shm` size. GPU ML workloads (PyTorch DataLoader `num_workers>0`, torch multiprocessing) crash with `Bus error` on the 64MB default. |
 | `WORKER_MEMORY` | `16G` | `40G` | Memory limit for `primary`. GPU ML workloads need far more than the 16G CPU default. |
-| `NVIDIA_VISIBLE_DEVICES` | _(unset)_ | `all` / `0` / `0,1` | Which GPUs to expose. Read by the nvidia runtime directly, **not** interpolated by compose — export it in your shell. |
+| `NVIDIA_VISIBLE_DEVICES` | `all` | `all` / `0` / `0,1` | Which GPUs to expose. Interpolated by compose into the container env (set in `.env` or shell); read by the nvidia runtime at container start. |
+| `NVIDIA_DRIVER_CAPABILITIES` | `compute,utility` | `compute,utility,graphics` | Driver capabilities exposed by the nvidia runtime. `compute,utility` is the minimum for CUDA/PyTorch. |
 
 ## How it works (approach b)
 
@@ -58,19 +59,24 @@ interpolation with safe defaults:
 
 ```yaml
 primary:
-  runtime: ${DOCKER_RUNTIME:-default}   # → "default" (no-op) unless overridden
+  runtime: ${DOCKER_RUNTIME:-runc}      # → "runc" (Docker's default runtime, no-op) unless overridden
   shm_size: ${SHM_SIZE:-64m}            # → 64m (container default) unless overridden
   deploy:
     resources:
       limits:
         memory: ${WORKER_MEMORY:-16G}   # → 16G (current limit) unless overridden
+  environment:
+    # read by the nvidia runtime from the container env (not the host shell)
+    - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+    - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
 ```
 
-This is **approach (b)** from #4285: the Alpine `Dockerfile.primary` is kept
-unchanged, and the GPU is exposed purely through `runtime: nvidia`. The CUDA /
-cuDNN runtime is bundled inside the `torch` (and other ML) wheels that the
-agent installs at runtime, so no base-image switch to `nvidia/cuda:...` is
-required. This mirrors the validated `/home/mathlab/dockers/jupyter` GPU setup.
+This is **approach (b)** from #4285: the Debian (`node:22-trixie-slim`)
+`Dockerfile.primary` is kept unchanged, and the GPU is exposed purely through
+`runtime: nvidia`. The CUDA / cuDNN runtime is bundled inside the `torch` (and
+other ML) wheels that the agent installs at runtime, so no base-image switch to
+`nvidia/cuda:...` is required. This mirrors the validated
+`/home/mathlab/dockers/jupyter` GPU setup.
 
 ## Verifying GPU is available inside the container
 
@@ -86,7 +92,7 @@ by part 1. They need a maintainer decision:
 
 - **Dockerfile base-image decision** (#4285 refined requirement #3, the flagged
   blocker): whether a future `Dockerfile.primary.gpu` based on
-  `nvidia/cuda:...-ubuntu` is needed, or whether approach (b) — Alpine +
+  `nvidia/cuda:...-ubuntu` is needed, or whether approach (b) — Debian +
   `runtime: nvidia` + bundled CUDA — is sufficient. Part 1 assumes (b); if ML
   workloads later need system-level CUDA/cuDNN, a separate GPU Dockerfile can be
   added without changing the env interface here.
@@ -105,15 +111,21 @@ by part 1. They need a maintainer decision:
 
 ## CPU-only path is unchanged
 
-With none of the variables set, compose interpolates the defaults, so the
-effective service config is identical to before:
+With none of the variables set, compose interpolates the defaults. The two
+`NVIDIA_*` env vars are present but ignored by `runc` (there is no nvidia
+runtime to consume them on a CPU host), so the effective behavior is identical
+to before:
 
 ```yaml
 primary:
-  runtime: default      # = the default runtime, a no-op
+  runtime: runc         # = Docker's default runtime, a no-op
   shm_size: 64m         # = the container's default /dev/shm
   deploy:
     resources:
       limits:
         memory: 16G     # = the previous hard-coded limit
+  environment:
+    # present but ignored by runc (no nvidia runtime to consume them)
+    - NVIDIA_VISIBLE_DEVICES=all
+    - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ```

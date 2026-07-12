@@ -76,6 +76,15 @@ services:
       # Override to increase/decrease based on available memory.
       - MAKEFLAGS=${MAKEFLAGS:--j2}
       - CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL:-2}
+      # Issue #4285 (part 1): GPU env vars consumed by the nvidia runtime. The
+      # nvidia runtime reads these from the CONTAINER environment (not the host
+      # shell), so they must be interpolated here — exporting them in the shell
+      # alone has no effect. Defaults are no-ops on the CPU path (runtime: runc
+      # ignores them); on the GPU path they expose all GPUs with compute+utility
+      # capabilities out of the box. Override via .env or shell, e.g.
+      # NVIDIA_VISIBLE_DEVICES=0.
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
 
     # Issue #4114: OOM protection — set host-side via the `oom_score_adj` field.
     # cgroup v2 forbids writing a negative /proc/self/oom_score_adj from inside the
@@ -95,11 +104,11 @@ services:
       - ${WORKSPACE_DIR:-./workspace}:/data/workspace
       - log_data:/data/logs
 
-    # Issue #4285 (part 1): opt-in GPU runtime via env (approach b — Alpine base
-    # unchanged, GPU exposed through `runtime: nvidia`; torch/conda bundle their
-    # own CUDA runtime, so no Dockerfile change is needed). All defaults below
-    # preserve CPU-only behavior exactly:
-    #   DOCKER_RUNTIME unset → "default" (the no-op default runtime);
+    # Issue #4285 (part 1): opt-in GPU runtime via env (approach b — Debian
+    # `node:22-trixie-slim` base unchanged, GPU exposed through `runtime: nvidia`;
+    # torch/conda bundle their own CUDA runtime, so no Dockerfile change is
+    # needed). All defaults below preserve CPU-only behavior exactly:
+    #   DOCKER_RUNTIME unset → "runc" (Docker's default runtime, a no-op);
     #   SHM_SIZE unset       → 64m (the container's default /dev/shm);
     #   WORKER_MEMORY unset  → 16G (the current limit).
     # To enable GPU on a host with nvidia-container-toolkit installed, e.g.:
@@ -108,7 +117,7 @@ services:
     # See docs/gpu-setup.md for prerequisites and the #4285 open questions
     # deferred from this PR (Dockerfile base-image decision, primary-vs-worker
     # scope, shm_size default sizing).
-    runtime: ${DOCKER_RUNTIME:-default}
+    runtime: ${DOCKER_RUNTIME:-runc}
     shm_size: ${SHM_SIZE:-64m}
     deploy:
       resources:
