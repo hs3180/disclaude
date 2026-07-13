@@ -1213,9 +1213,13 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       async function* systemResultIterator() {
-        // Adapter output for an unhandled system subtype (e.g. task_started):
-        // type 'text' with empty content (see message-adapter.ts `case 'system'`).
-        yield { parsed: { type: 'text', content: '' }, raw: {} };
+        // Exact adapter output for an unhandled system subtype (e.g. task_started):
+        // `{ type: 'text', content: '', role: 'system', metadata: { systemSubtype } }`
+        // (see message-adapter.ts `case 'system'`, locked by message-adapter.test.ts "D1").
+        yield {
+          parsed: { type: 'text', content: '', role: 'system', metadata: { systemSubtype: 'task_started' } },
+          raw: {},
+        };
         // result marker only — no assistant text, no tool_use → empty turn.
         yield {
           parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
