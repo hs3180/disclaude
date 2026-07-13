@@ -265,6 +265,30 @@ describe('ChatAgent (primary-node)', () => {
       (chatAgent as any).channel = undefined;
       expect(() => chatAgent.dispose()).not.toThrow();
     });
+
+    it('Issue #4302: closes retained inline MCP instances on dispose', () => {
+      const closeA = vi.fn().mockResolvedValue(undefined);
+      const closeB = vi.fn().mockResolvedValue(undefined);
+      (chatAgent as any).mcpInlineInstances = [{ close: closeA }, { close: closeB }];
+
+      // The BaseAgent mock sets an instance `this.dispose = vi.fn()` that
+      // shadows ChatAgent.prototype.dispose, so invoke the real method.
+      (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(chatAgent);
+
+      expect(closeA).toHaveBeenCalledTimes(1);
+      expect(closeB).toHaveBeenCalledTimes(1);
+      // Field cleared after dispose.
+      expect((chatAgent as any).mcpInlineInstances).toEqual([]);
+    });
+
+    it('Issue #4302: a rejecting inline MCP close() does not break dispose', () => {
+      (chatAgent as any).mcpInlineInstances = [
+        { close: vi.fn().mockRejectedValue(new Error('boom')) },
+      ];
+      expect(() =>
+        (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(chatAgent)
+      ).not.toThrow();
+    });
   });
 
   describe('shutdown', () => {

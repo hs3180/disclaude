@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Config } from '@disclaude/core';
 import type { Logger } from 'pino';
-import { buildMcpServers } from './mcp-setup.js';
+import { buildMcpServers, collectInlineMcpInstances } from './mcp-setup.js';
 
 vi.mock('@disclaude/core', () => ({
   Config: {
@@ -151,5 +151,37 @@ describe('buildMcpServers', () => {
     expect(result).toHaveProperty('channel-mcp');
     expect(result).toHaveProperty('ext-server');
     expect(Object.keys(result)).toEqual(['channel-mcp', 'ext-server']);
+  });
+});
+
+describe('collectInlineMcpInstances (Issue #4302)', () => {
+  it('extracts the .instance from inline (in-process) MCP server configs', () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const instance = { close };
+    const mcpServers = {
+      'channel-mcp': { type: 'inline', instance },
+    };
+    const instances = collectInlineMcpInstances(mcpServers);
+    expect(instances).toHaveLength(1);
+    expect(instances[0]).toBe(instance);
+  });
+
+  it('skips stdio external-server configs (no .instance — SDK-spawned subprocess)', () => {
+    const mcpServers = {
+      'channel-mcp': { type: 'inline', instance: { close: vi.fn() } },
+      'ext-server': { type: 'stdio', command: 'node', args: ['ext.js'] },
+    };
+    const instances = collectInlineMcpInstances(mcpServers);
+    expect(instances).toHaveLength(1);
+  });
+
+  it('returns empty for a value whose .instance has no close()', () => {
+    const mcpServers = { broken: { instance: {} } };
+    expect(collectInlineMcpInstances(mcpServers)).toEqual([]);
+  });
+
+  it('returns empty when there are no inline instances', () => {
+    expect(collectInlineMcpInstances({})).toEqual([]);
+    expect(collectInlineMcpInstances({ ext: { type: 'stdio', command: 'x' } })).toEqual([]);
   });
 });

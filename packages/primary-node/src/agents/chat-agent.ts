@@ -55,7 +55,7 @@ import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { buildDisallowedTools } from './disallowed-tools.js';
 import { HistoryManager } from './history-manager.js';
-import { buildMcpServers } from './mcp-setup.js';
+import { buildMcpServers, collectInlineMcpInstances } from './mcp-setup.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -104,6 +104,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // terminated the stream. Checked at the iterator-end/restart decision point to
   // suppress the auto-restart (would immediately re-stall) while keeping context.
   private stalledTerminated = false;
+
+  // Issue #4302: inline (in-process) MCP server instances created for this
+  // agent (e.g. channel-mcp), retained so dispose() can close them explicitly
+  // rather than relying solely on the SDK's queryHandle.close() cascade.
+  private mcpInlineInstances: ReadonlyArray<{ close(): Promise<void> | void }> = [];
 
   // Issue #2926: AbortController for immediate stop/reset of running Agent loop
   private abortController: AbortController | null = null;
@@ -752,6 +757,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #3124: Use shared buildMcpServers() helper (includes channel MCP + external servers)
     // Issue #4146: Pass this.logger so logs keep the 'ChatAgent' source (behavior preserved post-extraction)
     const mcpServers = buildMcpServers(chatId, this.callbacks, false, this.logger);
+
+    // Issue #4302: retain closeable inline (in-process) MCP instances so
+    // dispose() can tear them down explicitly (the SDK's queryHandle.close()
+    // cascade is not verified for these McpServer instances).
+    this.mcpInlineInstances = collectInlineMcpInstances(mcpServers);
 
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
@@ -1529,6 +1539,24 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.channel.close();
       this.channel = undefined;
     }
+
+    // Issue #4302: explicitly close inline (in-process) MCP server instances.
+    // Defense-in-depth: the queryHandle.close() above verifies the query
+    // transport teardown, not these McpServer instances disclaude created. The
+    // query is already done (queryHandle closed above), so closing here is
+    // safe; each close is fire-and-forget so a rejection can't break dispose.
+    // (Stdio external MCP subprocesses have no disclaude-side handle; their
+    // teardown remains SDK-dependent — #4302 criterion 1.)
+    for (const inst of this.mcpInlineInstances) {
+      try {
+        void Promise.resolve(inst.close()).catch((err) => {
+          this.logger.warn({ err }, 'Failed to close inline MCP instance on dispose (Issue #4302)');
+        });
+      } catch (err) {
+        this.logger.warn({ err }, 'Inline MCP instance close() threw on dispose (Issue #4302)');
+      }
+    }
+    this.mcpInlineInstances = [];
 
     // Issue #4063: Reject per-turn completion on dispose (agent eviction during turn)
     this.rejectTurn(new Error('Agent disposed'));
