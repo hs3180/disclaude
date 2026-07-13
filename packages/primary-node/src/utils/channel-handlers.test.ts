@@ -56,6 +56,7 @@ function createMockWiredContext(overrides?: Partial<WiredContext>): WiredContext
       getOrCreateChatAgent: vi.fn().mockReturnValue({
         processMessage: vi.fn(),
       }),
+      getPoolStats: vi.fn(() => ({ active: 0, busy: 0, idle: 0, peakActive: 0, totalEvictions: 0 })),
     },
     controlHandler: vi.fn(),
     controlHandlerContext: {},

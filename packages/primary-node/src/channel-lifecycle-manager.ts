@@ -30,6 +30,7 @@ import type {
 } from '@disclaude/core';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
+import type { AgentPoolStats } from './primary-agent-pool.js';
 import type { Logger } from 'pino';
 import { ChannelManager } from './channel-manager.js';
 
@@ -71,6 +72,8 @@ export interface ChannelSetupContext {
   /** Agent pool for creating chat agents */
   agentPool: {
     getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
+    /** Issue #4256 (part 2): pool stats for /api/health leak diagnostics. */
+    getPoolStats(): AgentPoolStats;
   };
   /** Unified control handler for all channels */
   controlHandler: ControlHandler;
