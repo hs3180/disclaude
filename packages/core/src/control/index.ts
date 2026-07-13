@@ -1,7 +1,7 @@
 /**
  * Control module.
  *
- * Provides unified control command handling for Primary and Worker nodes.
+ * Provides unified control command handling for the Primary node.
  *
  * @module control
  */
