@@ -23,6 +23,7 @@
 import http from 'node:http';
 import { createLogger, withTiming, type ChannelConfig, type OutgoingMessage, type ChannelCapabilities, BaseChannel, MessageRouter as InputMessageRouter } from '@disclaude/core';
 import { v4 as uuidv4 } from 'uuid';
+import type { AgentPoolStats } from '../primary-agent-pool.js';
 import { RestSessionManager } from './rest/session-manager.js';
 import { FileRouteHandlers } from './rest/file-routes.js';
 import { RouteHandlers } from './rest/route-handlers.js';
@@ -140,6 +141,8 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   });
   // Issue #3808: InputMessageRouter for /api/push endpoint
   private inputMessageRouter?: InputMessageRouter;
+  /** Issue #4256 (part 2): pool-stats provider for /api/health diagnostics. */
+  private agentPoolStatsProvider?: { getPoolStats(): AgentPoolStats };
   /** Control/push route handlers (Issue #4127 part 2: extracted to channels/rest/route-handlers.ts). */
   private readonly routeHandlers = new RouteHandlers({
     getInputMessageRouter: () => this.inputMessageRouter,
@@ -378,6 +381,17 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
   }
 
   /**
+   * Issue #4256 (part 2): inject a pool-stats provider so /api/health can
+   * report live agent-pool state (active/busy/idle/peak/evictions) for leak
+   * diagnostics. Called during channel wiring via REST_WIRED_DESCRIPTOR.setup().
+   * Optional — when unset, /api/health omits the `agentPool` field (the legacy
+   * behavior), so existing deployments/tests are unaffected.
+   */
+  setAgentPoolStatsProvider(provider: { getPoolStats(): AgentPoolStats }): void {
+    this.agentPoolStatsProvider = provider;
+  }
+
+  /**
    * Handle incoming HTTP request.
    */
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -448,15 +462,21 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
     // Issue #3378: Include process exit listener count in health check for
     // monitoring process.on("exit") leaks from Claude Agent SDK's ProcessTransport.
     const exitListenerCount = process.listenerCount('exit');
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
+    const body: Record<string, unknown> = {
       status: 'ok',
       channel: this.name,
       id: this.id,
       listeners: {
         exit: exitListenerCount,
       },
-    }));
+    };
+    // Issue #4256 (part 2): surface live agent-pool state for leak diagnostics.
+    // Optional — omitted when no provider is wired, preserving the legacy shape.
+    if (this.agentPoolStatsProvider) {
+      body.agentPool = this.agentPoolStatsProvider.getPoolStats();
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
   }
 
   /**

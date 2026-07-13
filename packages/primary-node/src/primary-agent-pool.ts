@@ -66,6 +66,26 @@ const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
+ * Issue #4256 (part 2): structured pool-state snapshot for leak diagnostics.
+ *
+ * Returned by `PrimaryAgentPool.getPoolStats()` and surfaced on the REST
+ * `/api/health` endpoint. `totalEvictions` counts only `evictIdleAgents()`
+ * evictions — explicit `reset()` / `disposeAll()` disposals are NOT included.
+ */
+export interface AgentPoolStats {
+  /** Current live agents in the pool. */
+  active: number;
+  /** Live agents currently processing a turn (`isBusy`). */
+  busy: number;
+  /** Live agents not currently processing (`active - busy`). */
+  idle: number;
+  /** High-water mark of concurrent agents since pool start. */
+  peakActive: number;
+  /** Cumulative idle-evictions since pool start (excludes reset/disposeAll). */
+  totalEvictions: number;
+}
+
+/**
  * PrimaryAgentPool - Manages ChatAgent instances for Primary Node.
  *
  * Each chatId gets its own ChatAgent instance with full MessageBuilder
@@ -80,6 +100,14 @@ export class PrimaryAgentPool {
   private readonly lastUsedAt = new Map<string, number>();
   /** Issue #4169: Periodic sweep timer (unref'd) for idle eviction. */
   private idleSweepTimer?: ReturnType<typeof setInterval>;
+  /** Issue #4256: Peak concurrent agent count since pool start (leak diagnostics). */
+  private peakActive = 0;
+  /**
+   * Issue #4256: Cumulative idle-evictions since pool start (leak diagnostics).
+   * Counts ONLY evictions from `evictIdleAgents()`; explicit `reset()` and
+   * `disposeAll()` disposals are NOT included.
+   */
+  private totalEvictions = 0;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
@@ -146,6 +174,18 @@ export class PrimaryAgentPool {
     }
     // Issue #4169: Track usage for idle eviction.
     this.lastUsedAt.set(chatId, Date.now());
+    // Issue #4256: Track peak concurrent agents for leak diagnostics. Each
+    // agent holds a query handle + inline MCP connections (incl. stdio child
+    // processes for configured external MCP servers), so the active count is
+    // the observable proxy for the per-process resource/subprocess ceiling.
+    if (this.agents.size > this.peakActive) {
+      this.peakActive = this.agents.size;
+      // Issue #4256 (part 2): emit an immediate snapshot on a new high-water
+      // mark so a sudden spike is visible without waiting for the next sweep
+      // tick (default 5 min). Monotonic (peak only rises), so bounded by the
+      // eventual ceiling — not noisy.
+      this.logPoolSnapshot('peak');
+    }
     return agent;
   }
 
@@ -226,17 +266,26 @@ export class PrimaryAgentPool {
    * connections, listeners). The idle sweep disposes agents that haven't been
    * used for `idleTimeoutMs`, releasing those resources. Busy agents are never
    * evicted mid-turn. The timer is `unref`'d so it never keeps the process alive.
+   *
+   * Issue #4256 (part 2): the periodic pool-snapshot runs even when idle
+   * eviction is disabled (`idleTimeoutMs <= 0`) — `evictIdleAgents()` is a
+   * no-op in that case, but the leak-diagnostics snapshot still fires, so
+   * monitoring stays live precisely when an unbounded pool is most likely to
+   * leak.
    */
   startIdleSweep(): void {
     if (this.idleSweepTimer) { return; }
-    const timeout = this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-    if (timeout <= 0) { return; } // idle eviction disabled
     const interval = this.options.idleSweepIntervalMs ?? DEFAULT_IDLE_SWEEP_INTERVAL_MS;
     this.idleSweepTimer = setInterval(() => {
       const evicted = this.evictIdleAgents();
       if (evicted.length) {
         logger.info({ count: evicted.length }, 'Evicted idle agents (Issue #4169)');
       }
+      // Issue #4256 (part 2): periodic pool-state snapshot for leak
+      // diagnostics. A monotonic active/peak growth despite eviction, or a
+      // busy count that never returns to zero, signals agents (and their
+      // inline MCP subprocesses) are not being released — see #4169/#4256.
+      this.logPoolSnapshot('idle-sweep');
     }, interval);
     this.idleSweepTimer.unref?.();
   }
@@ -262,7 +311,50 @@ export class PrimaryAgentPool {
         evicted.push(chatId);
       }
     }
+    // Issue #4256: tally evictions for the leak-diagnostics snapshot.
+    this.totalEvictions += evicted.length;
     return evicted;
+  }
+
+  /**
+   * Issue #4256 (part 2): snapshot of pool state for leak diagnostics.
+   *
+   * Each active agent holds a query handle, channel, and inline MCP
+   * connections (including stdio child processes for configured external MCP
+   * servers). The active/peak/eviction counts are the observable per-process
+   * proxy for that resource footprint, letting operators spot a leak (e.g.
+   * active grows monotonically, or busy never returns to zero) without
+   * enumerating live subprocesses.
+   *
+   * Surfaced on the REST `/api/health` endpoint so operators can query live
+   * pool state without scraping logs.
+   *
+   * @returns A structured snapshot of current and cumulative pool state.
+   */
+  getPoolStats(): AgentPoolStats {
+    let busy = 0;
+    for (const agent of this.agents.values()) {
+      if (agent.isBusy) { busy++; }
+    }
+    return {
+      active: this.agents.size,
+      busy,
+      idle: this.agents.size - busy,
+      peakActive: this.peakActive,
+      totalEvictions: this.totalEvictions,
+    };
+  }
+
+  /**
+   * Issue #4256 (part 2): emit a structured pool-state snapshot log. Called on
+   * each idle sweep (and available for ad-hoc diagnostics). Pure observability
+   * — no behavior change.
+   *
+   * @param reason - What triggered the snapshot (e.g. 'idle-sweep').
+   */
+  private logPoolSnapshot(reason: string): void {
+    const stats = this.getPoolStats();
+    logger.info({ reason, ...stats }, 'Agent pool snapshot (Issue #4256)');
   }
 
   /**
