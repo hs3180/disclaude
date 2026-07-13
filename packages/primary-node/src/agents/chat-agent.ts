@@ -44,6 +44,8 @@ import {
   getErrorStderr,
   isStartupFailure,
   forceCleanupLeakedListeners,
+  classifyError,
+  isTransient,
   type StreamingUserMessage,
   type QueryHandle,
   type ChatAgent as ChatAgentInterface,
@@ -1299,6 +1301,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Iterator ended without explicit close - determine error message for restart logic
     const errorMessage = iteratorError?.message ?? 'Unknown error';
+    // Issue #4192 (L0): classify the restart-triggering error so operators can
+    // see whether it is transient (restart likely helps: network/timeout/api)
+    // or persistent (restart won't fix it: validation/permission). Pure
+    // observability — the restart decision itself is unchanged here;
+    // transient-aware shouldRestart (L4) is a separate, larger change.
+    if (iteratorError) {
+      this.logger.info(
+        {
+          chatId,
+          errorCategory: classifyError(iteratorError),
+          transient: isTransient(iteratorError),
+          errorMessage,
+        },
+        'Agent loop ended unexpectedly; classified error for restart decision (Issue #4192 L0)',
+      );
+    }
     const decision = this.restartManager.shouldRestart(chatId, errorMessage);
 
     if (!decision.allowed) {

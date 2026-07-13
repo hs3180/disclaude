@@ -86,6 +86,25 @@ vi.mock('@disclaude/core', () => {
       }
       return undefined;
     },
+    // Issue #4192 L0: real-ish classifyError/isTransient (mirror error-handler.ts
+    // keyword logic) so the restart-decision classification log is exercised.
+    classifyError: (error: unknown) => {
+      const msg = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+      if (
+        msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('enotfound') ||
+        msg.includes('econnrefused') || msg.includes('network') || msg.includes('connection')
+      ) {
+        return 'NETWORK';
+      }
+      if (msg.includes('timeout')) { return 'TIMEOUT'; }
+      return 'UNKNOWN';
+    },
+    isTransient: (error: unknown) => {
+      const msg = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+      return msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('enotfound') ||
+        msg.includes('econnrefused') || msg.includes('network') || msg.includes('connection') ||
+        msg.includes('timeout');
+    },
   };
 });
 
@@ -1181,6 +1200,52 @@ describe('ChatAgent (primary-node)', () => {
         // The notice must be threaded to the turn's thread root (passed as
         // sendMessage's parentMessageId, i.e. the 3rd argument).
         expect(diagnosticCall![2]).toBe('thread-root-123');
+      }, { timeout: 1000, interval: 20 });
+    });
+  });
+
+  describe('Issue #4192 (L0): classify restart-triggering error', () => {
+    it('should log the classified error category + transient flag when the loop ends on an error', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_classify_err',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Yield one message first (so messageCount > 0 ⇒ not a startup failure),
+      // then throw a transient network error → reaches the restart-decision
+      // path where the classification log fires.
+      async function* yieldThenThrowIterator() {
+        yield { parsed: { type: 'text', content: 'partial reply' }, raw: {} };
+        const err = new Error('write ECONNRESET');
+        (err as any).code = 'ECONNRESET';
+        throw err;
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: yieldThenThrowIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_classify_err',
+        payload: 'hi',
+        messageId: 'msg_1',
+      });
+
+      const infoSpy = (agent as any).logger.info;
+      await vi.waitFor(() => {
+        const classifyCall = infoSpy.mock.calls.find(
+          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('classified error'),
+        );
+        expect(classifyCall).toBeDefined();
+        // Context object (1st arg) carries the classification verdict.
+        expect((classifyCall![0] as Record<string, unknown>).errorCategory).toBe('NETWORK');
+        expect((classifyCall![0] as Record<string, unknown>).transient).toBe(true);
       }, { timeout: 1000, interval: 20 });
     });
   });
