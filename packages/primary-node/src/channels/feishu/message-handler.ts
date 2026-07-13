@@ -775,7 +775,10 @@ export class MessageHandler {
       }
 
       // Get chat history context when bot IS mentioned in group/topic for file messages
-      if (isGroupChat(chat_type) && fileBotMentioned) {
+      // Issue #4304: Skip group-level chat history for topic groups — it mixes
+      // messages from different threads. Topic groups already have thread-isolated
+      // context set above (fileThreadContext at line ~753).
+      if (isGroupChat(chat_type) && chat_type !== 'topic' && fileBotMentioned) {
         const chatHistoryContext = await this.getChatHistoryContext(chat_id);
         if (chatHistoryContext) {
           fileMetadata.chatHistoryContext = chatHistoryContext;
