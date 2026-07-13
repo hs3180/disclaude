@@ -108,7 +108,7 @@ vi.mock('../../utils/message-logger.js', () => ({
 // ---------------------------------------------------------------------------
 // Import SUT after mocks
 // ---------------------------------------------------------------------------
-import { MessageHandler } from './message-handler.js';
+import { MessageHandler, appendThreadAccessGuidance } from './message-handler.js';
 import { TriggerModeManager } from './passive-mode.js';
 import { MentionDetector } from './mention-detector.js';
 
@@ -2508,6 +2508,22 @@ describe('MessageHandler', () => {
 
       // Main message flow should still proceed
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('appendThreadAccessGuidance (Issue #4306)', () => {
+    it('appends lark-cli guidance with the parent message ID to existing thread context', () => {
+      const result = appendThreadAccessGuidance('👤 Hello from thread', 'om_parent123');
+      expect(result).toContain('👤 Hello from thread');
+      expect(result).toContain('--thread om_parent123');
+      expect(result).toContain('+threads-messages-list');
+      expect(result).toContain('--download-resources');
+    });
+
+    it('returns just the guidance when threadContext is undefined', () => {
+      const result = appendThreadAccessGuidance(undefined, 'om_parent456');
+      expect(result).toContain('--thread om_parent456');
+      expect(result).not.toContain('undefined');
     });
   });
 });

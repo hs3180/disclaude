@@ -48,6 +48,34 @@ import {
 const logger = createLogger('MessageHandler');
 
 /**
+ * Issue #4306: Append lark-cli guidance for accessing a thread's full context
+ * and attachments. Thread ancestor attachments (research PDFs, images, etc.)
+ * are NOT auto-downloaded; this guidance tells the agent how to fetch them on
+ * demand via lark-cli. Temporary mitigation until the structural
+ * thread-isolation fix (#4304/#4305) lands.
+ *
+ * @param threadContext - The existing thread context text (may be undefined).
+ * @param parentMessageId - The parent message ID (used as the `--thread` anchor).
+ * @returns The thread context with guidance appended (or just the guidance
+ *   if threadContext was empty/undefined).
+ */
+export function appendThreadAccessGuidance(
+  threadContext: string | undefined,
+  parentMessageId: string,
+): string {
+  const guidance = [
+    '',
+    '---',
+    '💡 话题群 thread 上下文提示 (#4306)：以上为本 thread 祖先消息的文字摘要。',
+    '祖先消息的附件（研报 PDF / 图片等）不会自动下载。若需访问：',
+    `- 列出本 thread 全部消息并下载附件：\`npx @larksuite/cli im +threads-messages-list --thread ${parentMessageId} --as bot --download-resources\``,
+    '- 批量取特定消息：`npx @larksuite/cli im +messages-mget --message-ids om_xxx,om_yyy --as bot`',
+    '当用户提到「这个 thread / 这篇研报」但以上上下文没有对应内容时，先用上述命令拉取，再用 Read 读取后回答。',
+  ].join('\n');
+  return threadContext ? `${threadContext}\n${guidance}` : guidance.trimStart();
+}
+
+/**
  * Map Feishu message type to resource download API `type` parameter.
  *
  * Feishu API only accepts "image" or "file":
@@ -931,6 +959,11 @@ export class MessageHandler {
     if (chat_type === 'topic' && parent_id) {
       // Topic groups: build thread context from parent chain only
       threadContext = await this.getThreadContext(parent_id);
+      // Issue #4306: Append lark-cli guidance so the agent can access this
+      // thread's full context/attachments (ancestor attachments are not
+      // auto-downloaded). Temporary mitigation until the structural
+      // thread-isolation fix (#4304/#4305) lands.
+      threadContext = appendThreadAccessGuidance(threadContext, parent_id);
     } else if (isTriggerModeMention) {
       // Regular groups: use flat chat history
       chatHistoryContext = await this.getChatHistoryContext(chat_id);
