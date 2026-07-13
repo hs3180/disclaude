@@ -1183,5 +1183,48 @@ describe('ChatAgent (primary-node)', () => {
         expect(diagnosticCall![2]).toBe('thread-root-123');
       }, { timeout: 1000, interval: 20 });
     });
+
+    it('Issue #4258 (part 2 / ③): should record failure (not success) on an empty turn', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_empty_turn_failed',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Single empty turn: only the ✅ Complete result marker, no real reply,
+      // no tool calls → userVisibleOutputCount stays 0 and the empty-turn
+      // branch must mark the turn as failed.
+      async function* emptyTurnIterator() {
+        yield {
+          parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: emptyTurnIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_empty_turn_failed',
+        payload: 'hi',
+        messageId: 'msg_1',
+      });
+
+      const rm = (agent as any).restartManager;
+      // Acceptance criterion (③): recordSuccess is NOT called for a turn
+      // classified as failed; recordFailure is called instead so a chronically
+      // broken session can still trip the restart circuit (#4194).
+      await vi.waitFor(() => {
+        expect(rm.recordFailure).toHaveBeenCalledWith('oc_empty_turn_failed', 'empty-turn');
+      }, { timeout: 1000, interval: 20 });
+      expect(rm.recordSuccess).not.toHaveBeenCalled();
+    });
+
   });
 });

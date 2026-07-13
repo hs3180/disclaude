@@ -1061,10 +1061,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // the user while the turn is marked successful.
           // Issue #4258 (part 1): notify the user instead of silently reporting
           // only ✅ Complete — the smallest safe corrective action endorsed by
-          // #4258. Automatic session reset/retry (②) and mark-failed (③) are
-          // larger follow-ups that need session-lifecycle design; this PR only
-          // adds the user-facing diagnostic notice. See issues #4194 / #4258.
-          if (userVisibleOutputCount === 0 && toolCallCount === 0) {
+          // #4258.
+          // Issue #4258 (part 2 / ③): mark the empty turn as failed rather than
+          // successful (see the recordSuccess/recordFailure branch below).
+          // Reset/retry (②) is still a larger follow-up that needs session-
+          // lifecycle design. See issues #4194 / #4258.
+          // Capture the verdict before the per-turn counters are reset further
+          // down, so the success-vs-failure decision can branch on it.
+          const isEmptyTurn = userVisibleOutputCount === 0 && toolCallCount === 0;
+          if (isEmptyTurn) {
             this.logger.warn(
               {
                 chatId,
@@ -1123,8 +1128,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           lastToolCallMs = undefined;
           userVisibleOutputCount = 0;
 
-          // Record success to reset restart state
-          this.restartManager.recordSuccess(chatId);
+          // Issue #4258 (part 2 / ③): an empty turn is a failure symptom, not
+          // a success. recordSuccess would reset the restart failure counter,
+          // so a chronically-broken session (only empty turns) could never
+          // accumulate toward the circuit threshold and would appear
+          // permanently unresponsive (#4194). recordFailure records the
+          // failure and trips the circuit after maxRestarts, but — per its
+          // contract (packages/core/.../restart-manager.ts) — does NOT trigger
+          // an actual restart, so this is bounded and safe. Mirrors the GLM
+          // stall handling above (recordFailure('stall')). Reset/retry (②)
+          // remains a larger follow-up needing session-lifecycle design.
+          if (isEmptyTurn) {
+            this.restartManager.recordFailure(chatId, 'empty-turn');
+          } else {
+            // Record success to reset restart state
+            this.restartManager.recordSuccess(chatId);
+          }
 
           // Issue #3985: Mark as not processing after receiving result.
           // The agent is now idle between turns — blocking tasks can execute.
