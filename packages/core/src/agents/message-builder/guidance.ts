@@ -284,8 +284,10 @@ Record a task entry when you have completed a meaningful unit of work, such as:
 Append entries to the current month's file: \`.claude/task-records/YYYY-MM.md\`
 (e.g., \`.claude/task-records/${cur}.md\`) in the current working
 directory. Create the file if it does not exist (and create the \`task-records/\`
-directory if needed). Monthly files keep the active file small — **do not** write
-to a single ever-growing \`task-records.md\`.
+directory if needed); when creating it for the first time, write a single
+top-level \`# Task Records\` heading on the first line so every monthly file has
+a consistent title (the example below shows this). Monthly files keep the active
+file small — **do not** write to a single ever-growing \`task-records.md\`.
 
 Legacy: a pre-existing \`.claude/task-records.md\` (from before rolling) holds
 older history; leave it in place as an archive and write new records only to the
@@ -333,7 +335,7 @@ Append each task as a new \`##\` section with today's date and task description:
 - **Include estimation basis**: Reference similar past tasks or specific complexity factors
 - **Keep reviews concise**: One or two sentences about what was learned
 - **Do NOT skip recording**: Consistent records are essential for improving future estimates
-- **Read existing records before estimating**: Read a **bounded recent window** — the current and previous month's files (e.g., \`task-records/${cur}.md\` and \`task-records/${prev}.md\`) — for similar past tasks to improve your estimate. Do NOT load the entire history; you may tail-read the legacy \`task-records.md\` for older context but never load it fully`;
+- **Read existing records before estimating**: Read a **bounded recent window** — the current and previous month's files (e.g., \`task-records/${cur}.md\` and \`task-records/${prev}.md\`) — for similar past tasks to improve your estimate. Do NOT load the entire history; if you need older context you may tail-read **only the last ~50 lines** of the legacy \`task-records.md\` (it can hold thousands of lines), but never load it fully`;
 }
 
 /**

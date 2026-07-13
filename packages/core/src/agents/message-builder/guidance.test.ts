@@ -193,6 +193,24 @@ describe('buildTaskRecordGuidance', () => {
     expect(result).toContain('never load it fully');
   });
 
+  it('should instruct writing a top-level heading when creating a new file', () => {
+    const result = buildTaskRecordGuidance();
+    // The Example block shows a `# Task Records` H1, so Storage Location must
+    // tell the agent to write that heading on first creation — otherwise new
+    // monthly files lack the top-level title the example implies.
+    expect(result).toContain('# Task Records');
+    expect(result).toMatch(/when creating it for the first time/i);
+  });
+
+  it('should bound the legacy tail-read to a concrete line limit', () => {
+    const result = buildTaskRecordGuidance();
+    // "tail-read" alone is too soft a bound for a multi-thousand-line legacy
+    // file — pin it to a concrete ~N lines so the agent never full-loads it.
+    expect(result).toMatch(/~\d+ lines/);
+    expect(result).toContain('legacy');
+    expect(result).toContain('never load it fully');
+  });
+
   it('should include record format with required fields', () => {
     const result = buildTaskRecordGuidance();
     expect(result).toContain('**Type**');
