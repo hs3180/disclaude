@@ -124,8 +124,6 @@ export type {
   PrimaryNodeConfig,
 } from './primary-node.js';
 
-export { getNodeCapabilities } from './primary-node.js';
-
 // Adapter types (Issue #1040)
 export type {
   FileAttachment,

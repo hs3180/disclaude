@@ -117,17 +117,3 @@ export interface PrimaryNodeConfig extends BaseNodeConfig {
   /** Admin chat ID for debug/progress messages */
   adminChatId?: string;
 }
-
-/**
- * Get capabilities for a node type.
- *
- * Only `'primary'` exists since the Worker Node removal (#2964); the `type`
- * parameter is retained to preserve this exported function's signature. The
- * dead `'worker'` branch was dropped in the residual cleanup (#4291).
- */
-export function getNodeCapabilities(type: NodeType): NodeCapabilities {
-  switch (type) {
-    case 'primary':
-      return { communication: true, execution: true };
-  }
-}
