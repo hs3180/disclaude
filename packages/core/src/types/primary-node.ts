@@ -8,10 +8,12 @@
 
 /**
  * Node type identifier.
- * - primary: Main node with both communication and execution capabilities
- * - worker: Worker node with execution-only capability
+ *
+ * Only `'primary'` remains: the Worker Node package was removed in #2964
+ * (design #2717), so this union was narrowed from `'primary' | 'worker'` as
+ * part of the residual cleanup (#4291).
  */
-export type NodeType = 'primary' | 'worker';
+export type NodeType = 'primary';
 
 /**
  * Node capability flags.
@@ -114,16 +116,4 @@ export interface PrimaryNodeConfig extends BaseNodeConfig {
   // Message routing (Issue #659)
   /** Admin chat ID for debug/progress messages */
   adminChatId?: string;
-}
-
-/**
- * Get capabilities for a node type.
- */
-export function getNodeCapabilities(type: NodeType): NodeCapabilities {
-  switch (type) {
-    case 'primary':
-      return { communication: true, execution: true };
-    case 'worker':
-      return { communication: false, execution: true };
-  }
 }
