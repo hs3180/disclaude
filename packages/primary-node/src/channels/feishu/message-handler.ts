@@ -408,11 +408,17 @@ export class MessageHandler {
       // Issue #4251: surface shared chat / user cards instead of silently
       // dropping them from the thread history. A dropped topic-anchor message
       // leaves the bot with an incomplete view of what the thread is about.
-      if (messageType === 'share_chat' && parsed.share_chat_id) {
-        return `[分享的群名片: ${parsed.share_chat_id}]`;
+      // Issue #4316 nit ②: match by type (not id), so a card missing its id
+      // still reads as a card rather than the generic placeholder.
+      if (messageType === 'share_chat') {
+        return parsed.share_chat_id
+          ? `[分享的群名片: ${parsed.share_chat_id}]`
+          : '[分享的群名片]';
       }
-      if (messageType === 'share_user' && parsed.share_user_id) {
-        return `[分享的联系人名片: ${parsed.share_user_id}]`;
+      if (messageType === 'share_user') {
+        return parsed.share_user_id
+          ? `[分享的联系人名片: ${parsed.share_user_id}]`
+          : '[分享的联系人名片]';
       }
     } catch {
       // Issue #4083: Handle non-JSON interactive card content
@@ -425,6 +431,9 @@ export class MessageHandler {
     // type so the bot knows a message existed (and that its content is not
     // captured), rather than seeing a contiguous-but-incomplete history that
     // hides the gap — which can cause it to misread the thread's topic.
+    // Issue #4316 nit ①: this covers both unrecognized types AND recognized
+    // types with malformed content (e.g. post missing content array), so the
+    // behavior is intentional and traceable.
     return `[未解析的 ${messageType} 消息]`;
   }
 

@@ -2531,6 +2531,9 @@ describe('MessageHandler', () => {
         .toBe('[分享的群名片: oc_share123]');
       expect(ext('share_user', JSON.stringify({ share_user_id: 'on_user456' })))
         .toBe('[分享的联系人名片: on_user456]');
+      // Issue #4316 nit ②: a card missing its id still reads as a card
+      expect(ext('share_chat', JSON.stringify({}))).toBe('[分享的群名片]');
+      expect(ext('share_user', JSON.stringify({}))).toBe('[分享的联系人名片]');
     });
 
     it('emits a transparent placeholder for any other unrecognized type (not empty)', () => {
