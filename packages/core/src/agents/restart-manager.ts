@@ -313,7 +313,7 @@ export class RestartManager {
       state.circuitOpen = true;
       this.logger.error(
         { chatId, restartCount: state.restartCount, maxRestarts: this.maxRestarts, reason },
-        'Circuit opened by repeated failures (GLM stall)',
+        'Circuit opened by repeated failures',
       );
     } else {
       this.logger.warn(
