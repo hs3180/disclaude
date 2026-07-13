@@ -1,7 +1,7 @@
 /**
  * Task Module
  *
- * Provides task management utilities for the Primary node.
+ * Provides task management utilities.
  *
  * @module task
  */
