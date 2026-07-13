@@ -147,6 +147,12 @@ Report to the **source chat** that the discussion has been initiated:
 4. **Cache is rebuildable**: `bot-chat-mapping.json` can be reconstructed from Feishu API
 5. **No IPC for group ops**: Direct `lark-cli` calls via Bash — no MCP/IPC indirection
 
+## Feedback from the Source Chat
+
+User feedback, intent changes, and corrections about an ongoing discussion naturally originate in the **source chat** (the initial conversation where the topic was identified) — not in the discussion group this skill creates. The discussion group is where the agent executes and pushes progress; the source chat is where the user steers. Keep that direction of flow in mind: guidance travels source-chat → discussion group, not the reverse.
+
+When a discussion is backed by a shared state file (e.g. `RESEARCH.md` for research-style tasks), fold any new source-chat feedback into that file at your own discretion so the discussion group's agent picks it up on its next iteration. A reserved `## User Feedback` section in the shared file is a light, **optional** convention — there is no fixed schema and no mandatory write→read→clear pipeline. The goal is simply that feedback authored in the source chat reaches the execution agent without a second mailbox or a structured store. (See #4017.)
+
 ## Integration with Other Skills
 
 | Skill | Relationship |
