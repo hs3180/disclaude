@@ -82,7 +82,11 @@ export class PrimaryAgentPool {
   private idleSweepTimer?: ReturnType<typeof setInterval>;
   /** Issue #4256: Peak concurrent agent count since pool start (leak diagnostics). */
   private peakActive = 0;
-  /** Issue #4256: Cumulative idle-evictions since pool start (leak diagnostics). */
+  /**
+   * Issue #4256: Cumulative idle-evictions since pool start (leak diagnostics).
+   * Counts ONLY evictions from `evictIdleAgents()`; explicit `reset()` and
+   * `disposeAll()` disposals are NOT included.
+   */
   private totalEvictions = 0;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
@@ -156,6 +160,11 @@ export class PrimaryAgentPool {
     // the observable proxy for the per-process resource/subprocess ceiling.
     if (this.agents.size > this.peakActive) {
       this.peakActive = this.agents.size;
+      // Issue #4256 (part 2): emit an immediate snapshot on a new high-water
+      // mark so a sudden spike is visible without waiting for the next sweep
+      // tick (default 5 min). Monotonic (peak only rises), so bounded by the
+      // eventual ceiling — not noisy.
+      this.logPoolSnapshot('peak');
     }
     return agent;
   }
@@ -237,11 +246,15 @@ export class PrimaryAgentPool {
    * connections, listeners). The idle sweep disposes agents that haven't been
    * used for `idleTimeoutMs`, releasing those resources. Busy agents are never
    * evicted mid-turn. The timer is `unref`'d so it never keeps the process alive.
+   *
+   * Issue #4256 (part 2): the periodic pool-snapshot runs even when idle
+   * eviction is disabled (`idleTimeoutMs <= 0`) — `evictIdleAgents()` is a
+   * no-op in that case, but the leak-diagnostics snapshot still fires, so
+   * monitoring stays live precisely when an unbounded pool is most likely to
+   * leak.
    */
   startIdleSweep(): void {
     if (this.idleSweepTimer) { return; }
-    const timeout = this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
-    if (timeout <= 0) { return; } // idle eviction disabled
     const interval = this.options.idleSweepIntervalMs ?? DEFAULT_IDLE_SWEEP_INTERVAL_MS;
     this.idleSweepTimer = setInterval(() => {
       const evicted = this.evictIdleAgents();

@@ -17,6 +17,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { CwdProvider } from '@disclaude/core';
 
+// Issue #4256: mock createLogger so logPoolSnapshot() output is observable in
+// tests without a real pino instance. vi.hoisted() makes mockLogger available
+// to the (hoisted) module mock factory before evaluation.
+const { mockLogger } = vi.hoisted(() => ({
+  mockLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+    fatal: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  },
+}));
+vi.mock('@disclaude/core', () => ({
+  createLogger: () => mockLogger,
+}));
+
 // Track mock agent instances for assertions
 const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean }> = new Map();
 
@@ -476,6 +494,46 @@ describe('PrimaryAgentPool', () => {
       pool.getOrCreateChatAgent('e3', callbacks);
       pool.evictIdleAgents(Date.now() + 10000);
       expect(pool.getPoolStats().totalEvictions).toBe(3);
+    });
+
+    it('emits an idle-sweep snapshot even when idle eviction is disabled (idleTimeoutMs=0)', () => {
+      // Issue #4256 (part 2): the snapshot timer must run regardless of the
+      // eviction toggle, so leak diagnostics stay live when the pool is
+      // unbounded. evictIdleAgents() is a no-op when idleTimeoutMs<=0.
+      vi.useFakeTimers();
+      try {
+        const pool = new PrimaryAgentPool({ idleTimeoutMs: 0, idleSweepIntervalMs: 1000 });
+        pool.startIdleSweep();
+        mockLogger.info.mockClear();
+        vi.advanceTimersByTime(1000);
+        expect(mockLogger.info).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: 'idle-sweep' }),
+          'Agent pool snapshot (Issue #4256)',
+        );
+        pool.stopIdleSweep();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('emits an immediate snapshot whenever peakActive hits a new high-water mark', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+      mockLogger.info.mockClear();
+      pool.getOrCreateChatAgent('p1', callbacks); // new peak (active 1)
+      pool.getOrCreateChatAgent('p1', callbacks); // existing agent — no new peak
+      pool.getOrCreateChatAgent('p2', callbacks); // new peak (active 2)
+
+      const calls = mockLogger.info.mock.calls as unknown as Array<
+        [Record<string, unknown>, string]
+      >;
+      const peakSnapshots = calls.filter(
+        ([data, msg]) => msg === 'Agent pool snapshot (Issue #4256)' && data?.reason === 'peak',
+      );
+      expect(peakSnapshots).toHaveLength(2);
+      expect(peakSnapshots[0][0]?.active).toBe(1);
+      expect(peakSnapshots[1][0]?.active).toBe(2);
+      expect(peakSnapshots[1][0]?.peakActive).toBe(2);
     });
   });
 });
