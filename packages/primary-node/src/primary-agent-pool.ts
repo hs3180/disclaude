@@ -80,6 +80,10 @@ export class PrimaryAgentPool {
   private readonly lastUsedAt = new Map<string, number>();
   /** Issue #4169: Periodic sweep timer (unref'd) for idle eviction. */
   private idleSweepTimer?: ReturnType<typeof setInterval>;
+  /** Issue #4256: Peak concurrent agent count since pool start (leak diagnostics). */
+  private peakActive = 0;
+  /** Issue #4256: Cumulative idle-evictions since pool start (leak diagnostics). */
+  private totalEvictions = 0;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
@@ -146,6 +150,13 @@ export class PrimaryAgentPool {
     }
     // Issue #4169: Track usage for idle eviction.
     this.lastUsedAt.set(chatId, Date.now());
+    // Issue #4256: Track peak concurrent agents for leak diagnostics. Each
+    // agent holds a query handle + inline MCP connections (incl. stdio child
+    // processes for configured external MCP servers), so the active count is
+    // the observable proxy for the per-process resource/subprocess ceiling.
+    if (this.agents.size > this.peakActive) {
+      this.peakActive = this.agents.size;
+    }
     return agent;
   }
 
@@ -237,6 +248,11 @@ export class PrimaryAgentPool {
       if (evicted.length) {
         logger.info({ count: evicted.length }, 'Evicted idle agents (Issue #4169)');
       }
+      // Issue #4256 (part 2): periodic pool-state snapshot for leak
+      // diagnostics. A monotonic active/peak growth despite eviction, or a
+      // busy count that never returns to zero, signals agents (and their
+      // inline MCP subprocesses) are not being released — see #4169/#4256.
+      this.logPoolSnapshot('idle-sweep');
     }, interval);
     this.idleSweepTimer.unref?.();
   }
@@ -262,7 +278,53 @@ export class PrimaryAgentPool {
         evicted.push(chatId);
       }
     }
+    // Issue #4256: tally evictions for the leak-diagnostics snapshot.
+    this.totalEvictions += evicted.length;
     return evicted;
+  }
+
+  /**
+   * Issue #4256 (part 2): snapshot of pool state for leak diagnostics.
+   *
+   * Each active agent holds a query handle, channel, and inline MCP
+   * connections (including stdio child processes for configured external MCP
+   * servers). The active/peak/eviction counts are the observable per-process
+   * proxy for that resource footprint, letting operators spot a leak (e.g.
+   * active grows monotonically, or busy never returns to zero) without
+   * enumerating live subprocesses.
+   *
+   * @returns A structured snapshot of current and cumulative pool state.
+   */
+  getPoolStats(): {
+    active: number;
+    busy: number;
+    idle: number;
+    peakActive: number;
+    totalEvictions: number;
+  } {
+    let busy = 0;
+    for (const agent of this.agents.values()) {
+      if (agent.isBusy) { busy++; }
+    }
+    return {
+      active: this.agents.size,
+      busy,
+      idle: this.agents.size - busy,
+      peakActive: this.peakActive,
+      totalEvictions: this.totalEvictions,
+    };
+  }
+
+  /**
+   * Issue #4256 (part 2): emit a structured pool-state snapshot log. Called on
+   * each idle sweep (and available for ad-hoc diagnostics). Pure observability
+   * — no behavior change.
+   *
+   * @param reason - What triggered the snapshot (e.g. 'idle-sweep').
+   */
+  private logPoolSnapshot(reason: string): void {
+    const stats = this.getPoolStats();
+    logger.info({ reason, ...stats }, 'Agent pool snapshot (Issue #4256)');
   }
 
   /**

@@ -430,4 +430,52 @@ describe('PrimaryAgentPool', () => {
       expect(() => pool.stopIdleSweep()).not.toThrow();
     });
   });
+
+  describe('pool stats / leak diagnostics (Issue #4256)', () => {
+    it('getPoolStats() reports active/busy/idle for current agents', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-a', callbacks);
+      pool.getOrCreateChatAgent('chat-b', callbacks);
+      pool.getOrCreateChatAgent('chat-c', callbacks);
+      // Mark one busy, the rest idle
+      mockAgents.get('chat-a')!.isBusy = true;
+
+      const stats = pool.getPoolStats();
+
+      expect(stats.active).toBe(3);
+      expect(stats.busy).toBe(1);
+      expect(stats.idle).toBe(2);
+    });
+
+    it('peakActive retains the high-water mark after agents are evicted', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('c1', callbacks);
+      pool.getOrCreateChatAgent('c2', callbacks);
+      pool.getOrCreateChatAgent('c3', callbacks);
+      expect(pool.getPoolStats().peakActive).toBe(3);
+
+      // Evict all three (all idle) — active drops to 0 but peakActive must NOT.
+      pool.evictIdleAgents(Date.now() + 5000);
+      const stats = pool.getPoolStats();
+      expect(stats.active).toBe(0);
+      expect(stats.peakActive).toBe(3);
+    });
+
+    it('totalEvictions accumulates across sweeps', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('e1', callbacks);
+      pool.getOrCreateChatAgent('e2', callbacks);
+
+      pool.evictIdleAgents(Date.now() + 5000);
+      expect(pool.getPoolStats().totalEvictions).toBe(2);
+
+      // Re-create and evict again — counter keeps climbing.
+      pool.getOrCreateChatAgent('e3', callbacks);
+      pool.evictIdleAgents(Date.now() + 10000);
+      expect(pool.getPoolStats().totalEvictions).toBe(3);
+    });
+  });
 });
