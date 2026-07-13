@@ -248,11 +248,21 @@ When you need to present structured data (status, metrics, analysis results, etc
  * significant tasks.
  *
  * Phase 1 of the task ETA system: task record format and guidance.
- * Records are stored as unstructured Markdown in `.claude/task-records.md`.
+ * Records are stored as unstructured Markdown in monthly files
+ * `.claude/task-records/YYYY-MM.md` (Issue #4261: rolling by month to prevent
+ * unbounded single-file growth that degrades agent performance).
  *
  * @returns Formatted task record guidance section
  */
 export function buildTaskRecordGuidance(): string {
+  // Issue #4261: derive the live current/previous month so the concrete example
+  // below never goes stale — a hardcoded month would mislead the agent into
+  // writing to last month's file once the calendar rolls over. new Date(y, m-1,
+  // 1) handles the Jan→Dec year-underflow for "previous month" for free.
+  const now = new Date();
+  const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prev = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
   return `
 
 ---
@@ -271,8 +281,17 @@ Record a task entry when you have completed a meaningful unit of work, such as:
 
 ### Storage Location
 
-Append entries to \`.claude/task-records.md\` in the current working directory.
-Create the file if it does not exist.
+Append entries to the current month's file: \`.claude/task-records/YYYY-MM.md\`
+(e.g., \`.claude/task-records/${cur}.md\`) in the current working
+directory. Create the file if it does not exist (and create the \`task-records/\`
+directory if needed); when creating it for the first time, write a single
+top-level \`# Task Records\` heading on the first line so every monthly file has
+a consistent title (the example below shows this). Monthly files keep the active
+file small — **do not** write to a single ever-growing \`task-records.md\`.
+
+Legacy: a pre-existing \`.claude/task-records.md\` (from before rolling) holds
+older history; leave it in place as an archive and write new records only to the
+monthly files.
 
 ### Record Format
 
@@ -316,7 +335,7 @@ Append each task as a new \`##\` section with today's date and task description:
 - **Include estimation basis**: Reference similar past tasks or specific complexity factors
 - **Keep reviews concise**: One or two sentences about what was learned
 - **Do NOT skip recording**: Consistent records are essential for improving future estimates
-- **Read existing records before estimating**: Check \`task-records.md\` for similar past tasks to improve your estimate`;
+- **Read existing records before estimating**: Read a **bounded recent window** — the current and previous month's files (e.g., \`task-records/${cur}.md\` and \`task-records/${prev}.md\`) — for similar past tasks to improve your estimate. Do NOT load the entire history; if you need older context you may tail-read **only the last ~50 lines** of the legacy \`task-records.md\` (it can hold thousands of lines), but never load it fully`;
 }
 
 /**

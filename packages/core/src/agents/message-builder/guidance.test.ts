@@ -167,7 +167,48 @@ describe('buildTaskRecordGuidance', () => {
 
   it('should specify storage location', () => {
     const result = buildTaskRecordGuidance();
-    expect(result).toContain('.claude/task-records.md');
+    // Issue #4261: rolling monthly files, not a single ever-growing file.
+    expect(result).toContain('.claude/task-records/YYYY-MM.md');
+  });
+
+  it('should instruct rolling monthly storage (Issue #4261)', () => {
+    const result = buildTaskRecordGuidance();
+    // The concrete example month must track the live current month, not a
+    // hardcoded literal — otherwise it goes stale and misleads the agent once
+    // the calendar rolls over.
+    const now = new Date();
+    const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prev = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+    expect(result).toContain(`task-records/${cur}.md`);
+    expect(result).toContain(`task-records/${prev}.md`);
+    expect(result).not.toMatch(/Append entries to `\.claude\/task-records\.md`/);
+  });
+
+  it('should bound the read-before-estimating window (Issue #4261)', () => {
+    const result = buildTaskRecordGuidance();
+    expect(result).toContain('Read existing records before estimating');
+    expect(result).toContain('bounded recent window');
+    expect(result).toContain('previous month');
+    expect(result).toContain('never load it fully');
+  });
+
+  it('should instruct writing a top-level heading when creating a new file', () => {
+    const result = buildTaskRecordGuidance();
+    // The Example block shows a `# Task Records` H1, so Storage Location must
+    // tell the agent to write that heading on first creation — otherwise new
+    // monthly files lack the top-level title the example implies.
+    expect(result).toContain('# Task Records');
+    expect(result).toMatch(/when creating it for the first time/i);
+  });
+
+  it('should bound the legacy tail-read to a concrete line limit', () => {
+    const result = buildTaskRecordGuidance();
+    // "tail-read" alone is too soft a bound for a multi-thousand-line legacy
+    // file — pin it to a concrete ~N lines so the agent never full-loads it.
+    expect(result).toMatch(/~\d+ lines/);
+    expect(result).toContain('legacy');
+    expect(result).toContain('never load it fully');
   });
 
   it('should include record format with required fields', () => {

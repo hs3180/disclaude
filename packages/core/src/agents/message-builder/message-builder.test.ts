@@ -630,7 +630,8 @@ describe('MessageBuilder', () => {
       }, 'chat-456');
 
       expect(result).toContain('Task Execution Recording');
-      expect(result).toContain('task-records.md');
+      // Issue #4261: rolling monthly files under task-records/YYYY-MM.md
+      expect(result).toContain('task-records/');
     });
   });
 
