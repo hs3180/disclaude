@@ -2,10 +2,10 @@ import type { ControlCommand, ControlResponse } from '../../types/channel.js';
 import type { ControlHandlerContext, CommandHandler } from '../types.js';
 
 /**
- * /status 命令处理
+ * /status 命令处理 — shows the local Primary node's status.
  *
- * Worker Node architecture has been removed (#2717).
- * Status now shows only the local node information.
+ * Single-node only: the Worker Node architecture was removed in #2717
+ * (residual cleanup tracked in #4291).
  */
 export const handleStatus: CommandHandler = (
   _command: ControlCommand,
