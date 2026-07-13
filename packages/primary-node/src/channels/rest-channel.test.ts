@@ -86,6 +86,13 @@ interface ApiResponseBody {
   channel?: string;
   id?: string;
   status?: string;
+  agentPool?: {
+    active: number;
+    busy: number;
+    idle: number;
+    peakActive: number;
+    totalEvictions: number;
+  };
 }
 
 /**
@@ -294,6 +301,23 @@ describe('RestChannel', () => {
         expect(response.body.status).toBe('ok');
         expect(response.body.channel).toBe('REST');
         expect(response.body.id).toBeDefined();
+      });
+
+      it('should omit agentPool when no stats provider is wired (legacy shape)', async () => {
+        const response = await simulateRequest({ method: 'GET', path: '/api/health' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.agentPool).toBeUndefined();
+      });
+
+      it('should include agentPool stats when a provider is wired (Issue #4256)', async () => {
+        const stats = { active: 2, busy: 1, idle: 1, peakActive: 3, totalEvictions: 5 };
+        channel.setAgentPoolStatsProvider({ getPoolStats: () => stats });
+
+        const response = await simulateRequest({ method: 'GET', path: '/api/health' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.agentPool).toEqual(stats);
       });
     });
 

@@ -66,6 +66,26 @@ const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
+ * Issue #4256 (part 2): structured pool-state snapshot for leak diagnostics.
+ *
+ * Returned by `PrimaryAgentPool.getPoolStats()` and surfaced on the REST
+ * `/api/health` endpoint. `totalEvictions` counts only `evictIdleAgents()`
+ * evictions — explicit `reset()` / `disposeAll()` disposals are NOT included.
+ */
+export interface AgentPoolStats {
+  /** Current live agents in the pool. */
+  active: number;
+  /** Live agents currently processing a turn (`isBusy`). */
+  busy: number;
+  /** Live agents not currently processing (`active - busy`). */
+  idle: number;
+  /** High-water mark of concurrent agents since pool start. */
+  peakActive: number;
+  /** Cumulative idle-evictions since pool start (excludes reset/disposeAll). */
+  totalEvictions: number;
+}
+
+/**
  * PrimaryAgentPool - Manages ChatAgent instances for Primary Node.
  *
  * Each chatId gets its own ChatAgent instance with full MessageBuilder
@@ -306,15 +326,12 @@ export class PrimaryAgentPool {
    * active grows monotonically, or busy never returns to zero) without
    * enumerating live subprocesses.
    *
+   * Surfaced on the REST `/api/health` endpoint so operators can query live
+   * pool state without scraping logs.
+   *
    * @returns A structured snapshot of current and cumulative pool state.
    */
-  getPoolStats(): {
-    active: number;
-    busy: number;
-    idle: number;
-    peakActive: number;
-    totalEvictions: number;
-  } {
+  getPoolStats(): AgentPoolStats {
     let busy = 0;
     for (const agent of this.agents.values()) {
       if (agent.isBusy) { busy++; }

@@ -93,6 +93,9 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
     } else {
       context.logger.warn('InputMessageRouter not available — REST /api/push endpoint will return 503');
     }
+    // Issue #4256 (part 2): wire pool-stats provider so /api/health reports
+    // live agent-pool state (active/busy/idle/peak/evictions) for leak diagnostics.
+    restChannel.setAgentPoolStatsProvider(context.agentPool);
   },
 };
 
