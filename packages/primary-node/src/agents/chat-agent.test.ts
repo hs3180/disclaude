@@ -86,24 +86,21 @@ vi.mock('@disclaude/core', () => {
       }
       return undefined;
     },
-    // Issue #4192 L0: real-ish classifyError/isTransient (mirror error-handler.ts
-    // keyword logic) so the restart-decision classification log is exercised.
-    classifyError: (error: unknown) => {
+    // Issue #4192 L0: real-ish tagErrorCategory — classifies once and returns
+    // {category, transient}. Covers the path under test (ECONNRESET → NETWORK,
+    // transient=true), matching error-handler.ts keyword logic for that path.
+    tagErrorCategory: (error: unknown): { category: string; transient: boolean } => {
       const msg = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
-      if (
-        msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('enotfound') ||
-        msg.includes('econnrefused') || msg.includes('network') || msg.includes('connection')
-      ) {
-        return 'NETWORK';
-      }
-      if (msg.includes('timeout')) { return 'TIMEOUT'; }
-      return 'UNKNOWN';
-    },
-    isTransient: (error: unknown) => {
-      const msg = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
-      return msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('enotfound') ||
-        msg.includes('econnrefused') || msg.includes('network') || msg.includes('connection') ||
-        msg.includes('timeout');
+      const isNetwork =
+        msg.includes('econnreset') ||
+        msg.includes('etimedout') ||
+        msg.includes('enotfound') ||
+        msg.includes('econnrefused') ||
+        msg.includes('network') ||
+        msg.includes('connection');
+      const category = isNetwork ? 'NETWORK' : msg.includes('timeout') ? 'TIMEOUT' : 'UNKNOWN';
+      const transient = isNetwork || msg.includes('timeout');
+      return { category, transient };
     },
   };
 });
@@ -392,8 +389,11 @@ describe('ChatAgent (primary-node)', () => {
     it('should send notice, record failure, suppress restart, preserve context', async () => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
-        chatId: 'oc_stall', callbacks: localCallbacks,
-        apiKey: 'key', model: 'model', provider: 'anthropic',
+        chatId: 'oc_stall',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
       });
 
       async function* stallResultIterator() {
@@ -416,9 +416,11 @@ describe('ChatAgent (primary-node)', () => {
       await new Promise<void>((r) => setTimeout(r, 150));
 
       // Notice delivered
-      expect(localCallbacks.sendMessage.mock.calls.some(
-        (c: any[]) => typeof c[1] === 'string' && c[1].includes('stall'),
-      )).toBe(true);
+      expect(
+        localCallbacks.sendMessage.mock.calls.some(
+          (c: any[]) => typeof c[1] === 'string' && c[1].includes('stall')
+        )
+      ).toBe(true);
       // recordFailure called (not recordSuccess)
       const rm = (agent as any).restartManager;
       expect(rm.recordFailure).toHaveBeenCalledWith('oc_stall', 'stall');
@@ -1149,12 +1151,15 @@ describe('ChatAgent (primary-node)', () => {
       // exactly the scenario #4194 reports. (Turn 1 has real output, so it does
       // not fire the warn; only turn 2 does.)
       const warnSpy = (agent as any).logger.warn;
-      await vi.waitFor(() => {
-        expect(warnSpy).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.stringContaining('Issue #4194')
-        );
-      }, { timeout: 1000, interval: 20 });
+      await vi.waitFor(
+        () => {
+          expect(warnSpy).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.stringContaining('Issue #4194')
+          );
+        },
+        { timeout: 1000, interval: 20 }
+      );
     });
 
     it('Issue #4258 (part 1): should send a diagnostic notice on an empty turn', async () => {
@@ -1191,16 +1196,20 @@ describe('ChatAgent (primary-node)', () => {
 
       // The diagnostic notice must be sent via sendMessage so the user is told
       // the turn produced nothing, rather than the bot appearing to ignore them.
-      await vi.waitFor(() => {
-        const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
-          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出'),
-        );
-        expect(diagnosticCall).toBeDefined();
-        expect(diagnosticCall![0]).toBe('oc_empty_turn_notify');
-        // The notice must be threaded to the turn's thread root (passed as
-        // sendMessage's parentMessageId, i.e. the 3rd argument).
-        expect(diagnosticCall![2]).toBe('thread-root-123');
-      }, { timeout: 1000, interval: 20 });
+      await vi.waitFor(
+        () => {
+          const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
+            (call: unknown[]) =>
+              typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+          );
+          expect(diagnosticCall).toBeDefined();
+          expect(diagnosticCall![0]).toBe('oc_empty_turn_notify');
+          // The notice must be threaded to the turn's thread root (passed as
+          // sendMessage's parentMessageId, i.e. the 3rd argument).
+          expect(diagnosticCall![2]).toBe('thread-root-123');
+        },
+        { timeout: 1000, interval: 20 }
+      );
     });
   });
 
@@ -1237,16 +1246,20 @@ describe('ChatAgent (primary-node)', () => {
         messageId: 'msg_1',
       });
 
-      const infoSpy = (agent as any).logger.info;
-      await vi.waitFor(() => {
-        const classifyCall = infoSpy.mock.calls.find(
-          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('classified error'),
-        );
-        expect(classifyCall).toBeDefined();
-        // Context object (1st arg) carries the classification verdict.
-        expect((classifyCall![0] as Record<string, unknown>).errorCategory).toBe('NETWORK');
-        expect((classifyCall![0] as Record<string, unknown>).transient).toBe(true);
-      }, { timeout: 1000, interval: 20 });
+      const warnSpy = (agent as any).logger.warn;
+      await vi.waitFor(
+        () => {
+          const classifyCall = warnSpy.mock.calls.find(
+            (call: unknown[]) =>
+              typeof call[1] === 'string' && (call[1] as string).includes('classified error')
+          );
+          expect(classifyCall).toBeDefined();
+          // Context object (1st arg) carries the classification verdict.
+          expect((classifyCall![0] as Record<string, unknown>).errorCategory).toBe('NETWORK');
+          expect((classifyCall![0] as Record<string, unknown>).transient).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
     });
   });
 });

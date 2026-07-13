@@ -44,8 +44,7 @@ import {
   getErrorStderr,
   isStartupFailure,
   forceCleanupLeakedListeners,
-  classifyError,
-  isTransient,
+  tagErrorCategory,
   type StreamingUserMessage,
   type QueryHandle,
   type ChatAgent as ChatAgentInterface,
@@ -891,7 +890,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    *
    */
   private async processIterator(
-    iterator: AsyncGenerator<{ parsed: { type: string; content?: string; terminatedReason?: 'stall' } }>
+    iterator: AsyncGenerator<{
+      parsed: { type: string; content?: string; terminatedReason?: 'stall' };
+    }>
   ): Promise<void> {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
@@ -1008,7 +1009,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.stalledTerminated = true;
             this.logger.warn(
               { chatId, messageCount },
-              'GLM stall: stream terminated by no-content-progress watchdog; recording failure, resolving turn',
+              'GLM stall: stream terminated by no-content-progress watchdog; recording failure, resolving turn'
             );
             this.restartManager.recordFailure(chatId, 'stall');
             this.isProcessingMessage = false;
@@ -1077,7 +1078,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 provider: this.provider,
               },
               'Empty turn completed with no user-visible output and no tool calls (Issue #4194). ' +
-                'Turn was marked successful but the user saw no reply; consider session reset.',
+                'Turn was marked successful but the user saw no reply; consider session reset.'
             );
 
             // Issue #4258 (part 1): send a diagnostic notice so the user knows
@@ -1093,18 +1094,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 .sendMessage(
                   chatId,
                   '⚠️ 本轮未产生任何可见输出，会话可能已失效。请重新发送消息触发重试；若持续无响应，请尝试重置会话。',
-                  emptyTurnThreadRoot,
+                  emptyTurnThreadRoot
                 )
                 .catch((notifyErr) => {
                   this.logger.warn(
                     { err: notifyErr, chatId },
-                    'Failed to send empty-turn diagnostic notice (Issue #4258)',
+                    'Failed to send empty-turn diagnostic notice (Issue #4258)'
                   );
                 });
             } catch (notifyErr) {
               this.logger.warn(
                 { err: notifyErr, chatId },
-                'Failed to send empty-turn diagnostic notice (Issue #4258)',
+                'Failed to send empty-turn diagnostic notice (Issue #4258)'
               );
             }
           }
@@ -1261,7 +1262,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.isProcessingMessage = false;
       this.logger.info(
         { chatId, messageCount },
-        'GLM stall: terminated turn ended; suppressing auto-restart, context preserved',
+        'GLM stall: terminated turn ended; suppressing auto-restart, context preserved'
       );
       return;
     }
@@ -1306,15 +1307,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // or persistent (restart won't fix it: validation/permission). Pure
     // observability — the restart decision itself is unchanged here;
     // transient-aware shouldRestart (L4) is a separate, larger change.
+    // Classify once via tagErrorCategory (returns {category, transient} from a
+    // single pass + tags the error for downstream L1/L2 layers) rather than
+    // calling classifyError() + isTransient() separately, which would classify
+    // twice. Logged at `warn` to match the sibling timing-summary log above.
     if (iteratorError) {
-      this.logger.info(
+      const { category, transient } = tagErrorCategory(iteratorError);
+      this.logger.warn(
         {
           chatId,
-          errorCategory: classifyError(iteratorError),
-          transient: isTransient(iteratorError),
+          errorCategory: category,
+          transient,
           errorMessage,
         },
-        'Agent loop ended unexpectedly; classified error for restart decision (Issue #4192 L0)',
+        'Agent loop ended unexpectedly; classified error for restart decision (Issue #4192 L0)'
       );
     }
     const decision = this.restartManager.shouldRestart(chatId, errorMessage);
