@@ -54,7 +54,6 @@ export type {
 
 // Re-export constants and utilities from @disclaude/core
 export {
-  getNodeCapabilities,
   DEFAULT_CHANNEL_CAPABILITIES,
   DEFAULT_IPC_CONFIG,
   createLogger,
