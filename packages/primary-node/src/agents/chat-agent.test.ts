@@ -90,7 +90,16 @@ vi.mock('@disclaude/core', () => {
 });
 
 vi.mock('@disclaude/mcp-server', () => ({
-  createChannelMcpServer: vi.fn(() => ({ type: 'inline' })),
+  // Issue #4302: mirror the real production shape. createChannelMcpServer()
+  // -> ClaudeSDKProvider.createMcpServer -> createSdkMcpServer, which returns a
+  // `{ type: 'sdk', name, instance }` wrapper whose `.instance.close()` is what
+  // dispose() tears down. (Previously `{ type: 'inline' }` with no instance, so
+  // collectInlineMcpInstances() never matched — the #4302 wiring was untested.)
+  createChannelMcpServer: vi.fn(() => ({
+    type: 'sdk',
+    name: 'channel-mcp',
+    instance: { close: vi.fn().mockResolvedValue(undefined) },
+  })),
 }));
 
 // Mock debug-group-service (Issue #3809)
@@ -107,6 +116,7 @@ vi.mock('../services/debug-group-service.js', () => ({
 }));
 
 import { ChatAgent } from './chat-agent.js';
+import { createChannelMcpServer } from '@disclaude/mcp-server';
 
 const createMockCallbacks = () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -288,6 +298,35 @@ describe('ChatAgent (primary-node)', () => {
       expect(() =>
         (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(chatAgent)
       ).not.toThrow();
+    });
+
+    it('Issue #4302: startAgentLoop retains the inline MCP instance; dispose() closes it', () => {
+      // Drive the real wiring: buildMcpServers() (real) -> createChannelMcpServer
+      // (mocked, production { type: 'sdk', instance } shape) -> collectInlineMcpInstances
+      // (real) -> ChatAgent.mcpInlineInstances. processMessage() starts the agent
+      // loop synchronously, so the field is populated before the next assertion.
+      const close = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close },
+      });
+
+      void chatAgent.processMessage({
+        chatId: 'oc_test_chat',
+        payload: 'hi',
+        messageId: 'msg_int_4302',
+      });
+
+      const retained = (chatAgent as any).mcpInlineInstances as unknown[];
+      expect(retained).toHaveLength(1);
+      expect((retained[0] as { close: unknown }).close).toBe(close);
+
+      // dispose() closes the retained instance (inst.close() runs synchronously
+      // inside Promise.resolve(...)) and clears the field.
+      (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(chatAgent);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect((chatAgent as any).mcpInlineInstances).toEqual([]);
     });
   });
 

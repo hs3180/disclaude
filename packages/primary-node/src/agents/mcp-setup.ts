@@ -78,9 +78,12 @@ export function buildMcpServers(
  * Issue #4302: extract the closeable in-process McpServer instances from a
  * {@link buildMcpServers} result.
  *
- * Inline servers (`McpSdkServerConfigWithInstance`, e.g. channel-mcp) carry an
- * `.instance` (an MCP SDK `McpServer` with a `close()` method) that disclaude
- * created and can tear down explicitly. Stdio external-server configs do NOT
+ * Inline (in-process) servers — e.g. the channel-mcp server, built via the
+ * SDK's `createSdkMcpServer`, which returns a `{ type: 'sdk', name, instance }`
+ * wrapper — carry an `.instance` (an MCP SDK `McpServer` exposing `close()`)
+ * that disclaude created and can tear down explicitly. Detection is duck-typed
+ * on `.instance.close` (the `type` field is intentionally ignored, so it tracks
+ * the real production shape). Stdio external-server configs do NOT
  * have an `.instance` — their subprocesses are spawned by the SDK inside the
  * CLI child and have no disclaude-side handle, so they are skipped here (their
  * teardown remains SDK-dependent; see #4302 criterion 1).

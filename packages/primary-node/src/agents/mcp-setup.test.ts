@@ -155,11 +155,16 @@ describe('buildMcpServers', () => {
 });
 
 describe('collectInlineMcpInstances (Issue #4302)', () => {
-  it('extracts the .instance from inline (in-process) MCP server configs', () => {
+  // Production inline servers come from the SDK's createSdkMcpServer, which
+  // returns a `{ type: 'sdk', name, instance }` wrapper (see
+  // ClaudeSDKProvider.createMcpServer -> createSdkMcpServer). Fixtures mirror
+  // that shape; collectInlineMcpInstances duck-types on `.instance.close` and
+  // ignores `type`, but the contract is pinned to the real shape here.
+  it('extracts the .instance from inline MCP server wrappers ({ type: "sdk", instance })', () => {
     const close = vi.fn().mockResolvedValue(undefined);
     const instance = { close };
     const mcpServers = {
-      'channel-mcp': { type: 'inline', instance },
+      'channel-mcp': { type: 'sdk', name: 'channel-mcp', instance },
     };
     const instances = collectInlineMcpInstances(mcpServers);
     expect(instances).toHaveLength(1);
@@ -168,15 +173,15 @@ describe('collectInlineMcpInstances (Issue #4302)', () => {
 
   it('skips stdio external-server configs (no .instance — SDK-spawned subprocess)', () => {
     const mcpServers = {
-      'channel-mcp': { type: 'inline', instance: { close: vi.fn() } },
+      'channel-mcp': { type: 'sdk', name: 'channel-mcp', instance: { close: vi.fn() } },
       'ext-server': { type: 'stdio', command: 'node', args: ['ext.js'] },
     };
     const instances = collectInlineMcpInstances(mcpServers);
     expect(instances).toHaveLength(1);
   });
 
-  it('returns empty for a value whose .instance has no close()', () => {
-    const mcpServers = { broken: { instance: {} } };
+  it('returns empty for an inline wrapper whose .instance has no close()', () => {
+    const mcpServers = { broken: { type: 'sdk', instance: {} } };
     expect(collectInlineMcpInstances(mcpServers)).toEqual([]);
   });
 
