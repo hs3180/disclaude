@@ -840,7 +840,10 @@ export class MessageHandler {
       }
 
       // Get chat history context when bot IS mentioned in group/topic for file messages
-      if (isGroupChat(chat_type) && fileBotMentioned) {
+      // Issue #4304: Skip group-level chat history for topic groups — it mixes
+      // messages from different threads. Topic groups already have thread-isolated
+      // context set above (fileThreadContext at line ~753).
+      if (isGroupChat(chat_type) && chat_type !== 'topic' && fileBotMentioned) {
         const chatHistoryContext = await this.getChatHistoryContext(chat_id);
         if (chatHistoryContext) {
           fileMetadata.chatHistoryContext = chatHistoryContext;
@@ -996,8 +999,11 @@ export class MessageHandler {
     if (chat_type === 'topic' && parent_id) {
       // Topic groups: build thread context from parent chain only
       threadContext = await this.getThreadContext(parent_id);
-    } else if (isTriggerModeMention) {
-      // Regular groups: use flat chat history
+    } else if (isTriggerModeMention && chat_type !== 'topic') {
+      // Regular groups: use flat chat history.
+      // Issue #4304 (part 2): topic groups never use flat chat history — it
+      // mixes messages across threads. A topic message without parent_id gets
+      // no injected context here, matching the file/image path.
       chatHistoryContext = await this.getChatHistoryContext(chat_id);
     }
 
