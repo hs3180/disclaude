@@ -213,7 +213,7 @@ export interface IpcConfig {
  * Default IPC configuration.
  *
  * Note: The socketPath here is a fallback default. In production,
- * Primary Node and Worker Node generate a random socket path
+ * Primary Node generates a random socket path
  * via `generateSocketPath()` to avoid multi-instance conflicts (Issue #1355).
  */
 export const DEFAULT_IPC_CONFIG: IpcConfig = {

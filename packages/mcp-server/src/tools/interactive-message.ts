@@ -217,7 +217,7 @@ export function unregisterFeishuHandlers(): void {
 /**
  * Start the IPC server for cross-process communication.
  *
- * IMPORTANT: This function should only be called by Primary/Worker Node,
+ * IMPORTANT: This function should only be called by the Primary Node,
  * NOT by MCP Server child processes. MCP Server processes should connect
  * as clients using getIpcClient().
  *
