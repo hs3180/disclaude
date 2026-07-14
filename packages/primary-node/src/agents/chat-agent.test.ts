@@ -328,6 +328,43 @@ describe('ChatAgent (primary-node)', () => {
       expect(close).toHaveBeenCalledTimes(1);
       expect((chatAgent as any).mcpInlineInstances).toEqual([]);
     });
+
+    it('Issue #4302: startAgentLoop restart closes the previous inline MCP instance before replacing it', () => {
+      // A restart re-enters startAgentLoop() (processIterator -> startAgentLoop
+      // after the previous query ended). buildMcpServers() hands back a fresh
+      // channel-mcp instance each call, so the previously retained instance is
+      // now stale. Without the teardown it would be overwritten and its close()
+      // would never run -> leak, the MCP analogue of #3378.
+      const closeA = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: closeA },
+      });
+
+      // First loop start: retains instance A (not yet closed).
+      (chatAgent as any).startAgentLoop();
+      let retained = (chatAgent as any).mcpInlineInstances as unknown[];
+      expect(retained).toHaveLength(1);
+      expect((retained[0] as { close: unknown }).close).toBe(closeA);
+      expect(closeA).not.toHaveBeenCalled();
+
+      // Second loop start (restart): a fresh instance B is built. The stale
+      // instance A must be closed before it is overwritten.
+      const closeB = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: closeB },
+      });
+      (chatAgent as any).startAgentLoop();
+
+      expect(closeA).toHaveBeenCalledTimes(1); // stale instance torn down
+      expect(closeB).not.toHaveBeenCalled();   // current instance retained
+      retained = (chatAgent as any).mcpInlineInstances as unknown[];
+      expect(retained).toHaveLength(1);
+      expect((retained[0] as { close: unknown }).close).toBe(closeB);
+    });
   });
 
   describe('shutdown', () => {

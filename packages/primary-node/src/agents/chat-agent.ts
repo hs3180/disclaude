@@ -761,6 +761,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #4302: retain closeable inline (in-process) MCP instances so
     // dispose() can tear them down explicitly (the SDK's queryHandle.close()
     // cascade is not verified for these McpServer instances).
+    //
+    // Issue #4302 (part 2 / restart path): startAgentLoop() runs again on a
+    // restart (processIterator -> startAgentLoop once the previous query ended).
+    // buildMcpServers() returns a fresh channel-mcp McpServer instance each
+    // call, so the previously retained set is now stale. Close it before
+    // overwriting, mirroring the queryHandle/channel teardown above (#3378);
+    // without this the prior restart's inline instances would leak (close()
+    // never invoked).
+    this.closeInlineMcpInstances();
     this.mcpInlineInstances = collectInlineMcpInstances(mcpServers);
 
     // Build SDK options using BaseAgent's createSdkOptions
@@ -874,6 +883,34 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         );
       }
     });
+  }
+
+  /**
+   * Issue #4302: close every currently-retained inline (in-process) MCP
+   * instance and clear the list.
+   *
+   * Called from two teardown sites:
+   * - `startAgentLoop()`, before replacing the field on a restart (part 2 of
+   *   #4302): mirrors the queryHandle/channel teardown of #3378/#3745 — a
+   *   wholesale overwrite without close() would leak the previous restart's
+   *   McpServer instances (their close() would never run).
+   * - `dispose()`: defense-in-depth teardown at end of life.
+   *
+   * Each close is fire-and-forget (wrapped in `Promise.resolve(...).catch()`)
+   * so a rejecting or throwing close() can't break the caller; the field is
+   * always reset to `[]` afterward.
+   */
+  private closeInlineMcpInstances(): void {
+    for (const inst of this.mcpInlineInstances) {
+      try {
+        void Promise.resolve(inst.close()).catch((err) => {
+          this.logger.warn({ err }, 'Failed to close inline MCP instance (Issue #4302)');
+        });
+      } catch (err) {
+        this.logger.warn({ err }, 'Inline MCP instance close() threw (Issue #4302)');
+      }
+    }
+    this.mcpInlineInstances = [];
   }
 
   /**
@@ -1544,19 +1581,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Defense-in-depth: the queryHandle.close() above verifies the query
     // transport teardown, not these McpServer instances disclaude created. The
     // query is already done (queryHandle closed above), so closing here is
-    // safe; each close is fire-and-forget so a rejection can't break dispose.
-    // (Stdio external MCP subprocesses have no disclaude-side handle; their
-    // teardown remains SDK-dependent — #4302 criterion 1.)
-    for (const inst of this.mcpInlineInstances) {
-      try {
-        void Promise.resolve(inst.close()).catch((err) => {
-          this.logger.warn({ err }, 'Failed to close inline MCP instance on dispose (Issue #4302)');
-        });
-      } catch (err) {
-        this.logger.warn({ err }, 'Inline MCP instance close() threw on dispose (Issue #4302)');
-      }
-    }
-    this.mcpInlineInstances = [];
+    // safe. (Stdio external MCP subprocesses have no disclaude-side handle;
+    // their teardown remains SDK-dependent — #4302 criterion 1.)
+    this.closeInlineMcpInstances();
 
     // Issue #4063: Reject per-turn completion on dispose (agent eviction during turn)
     this.rejectTurn(new Error('Agent disposed'));
