@@ -73,3 +73,39 @@ export function buildMcpServers(
 
   return mcpServers;
 }
+
+/**
+ * Issue #4302: extract the closeable in-process McpServer instances from a
+ * {@link buildMcpServers} result.
+ *
+ * Inline (in-process) servers — e.g. the channel-mcp server, built via the
+ * SDK's `createSdkMcpServer`, which returns a `{ type: 'sdk', name, instance }`
+ * wrapper — carry an `.instance` (an MCP SDK `McpServer` exposing `close()`)
+ * that disclaude created and can tear down explicitly. Detection is duck-typed
+ * on `.instance.close` (the `type` field is intentionally ignored, so it tracks
+ * the real production shape). Stdio external-server configs do NOT
+ * have an `.instance` — their subprocesses are spawned by the SDK inside the
+ * CLI child and have no disclaude-side handle, so they are skipped here (their
+ * teardown remains SDK-dependent; see #4302 criterion 1).
+ *
+ * The caller (ChatAgent) retains these and `close()`s them on `dispose()` as
+ * defense-in-depth, rather than relying solely on the SDK's
+ * `queryHandle.close()` cascade (which is verified for the query transport but
+ * not for these in-process instances).
+ *
+ * @param mcpServers - The record returned by {@link buildMcpServers}.
+ * @returns Closeable inline McpServer instances (empty if there are none).
+ */
+export function collectInlineMcpInstances(
+  mcpServers: Record<string, unknown>,
+): Array<{ close(): Promise<void> | void }> {
+  const instances: Array<{ close(): Promise<void> | void }> = [];
+  for (const cfg of Object.values(mcpServers)) {
+    const inst = (cfg as { instance?: { close(): Promise<void> | void } } | null | undefined)?.instance;
+    if (inst && typeof inst.close === 'function') {
+      instances.push(inst);
+    }
+  }
+  return instances;
+}
+

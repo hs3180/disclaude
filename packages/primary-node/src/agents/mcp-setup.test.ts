@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Config } from '@disclaude/core';
 import type { Logger } from 'pino';
-import { buildMcpServers } from './mcp-setup.js';
+import { buildMcpServers, collectInlineMcpInstances } from './mcp-setup.js';
 
 vi.mock('@disclaude/core', () => ({
   Config: {
@@ -151,5 +151,42 @@ describe('buildMcpServers', () => {
     expect(result).toHaveProperty('channel-mcp');
     expect(result).toHaveProperty('ext-server');
     expect(Object.keys(result)).toEqual(['channel-mcp', 'ext-server']);
+  });
+});
+
+describe('collectInlineMcpInstances (Issue #4302)', () => {
+  // Production inline servers come from the SDK's createSdkMcpServer, which
+  // returns a `{ type: 'sdk', name, instance }` wrapper (see
+  // ClaudeSDKProvider.createMcpServer -> createSdkMcpServer). Fixtures mirror
+  // that shape; collectInlineMcpInstances duck-types on `.instance.close` and
+  // ignores `type`, but the contract is pinned to the real shape here.
+  it('extracts the .instance from inline MCP server wrappers ({ type: "sdk", instance })', () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const instance = { close };
+    const mcpServers = {
+      'channel-mcp': { type: 'sdk', name: 'channel-mcp', instance },
+    };
+    const instances = collectInlineMcpInstances(mcpServers);
+    expect(instances).toHaveLength(1);
+    expect(instances[0]).toBe(instance);
+  });
+
+  it('skips stdio external-server configs (no .instance — SDK-spawned subprocess)', () => {
+    const mcpServers = {
+      'channel-mcp': { type: 'sdk', name: 'channel-mcp', instance: { close: vi.fn() } },
+      'ext-server': { type: 'stdio', command: 'node', args: ['ext.js'] },
+    };
+    const instances = collectInlineMcpInstances(mcpServers);
+    expect(instances).toHaveLength(1);
+  });
+
+  it('returns empty for an inline wrapper whose .instance has no close()', () => {
+    const mcpServers = { broken: { type: 'sdk', instance: {} } };
+    expect(collectInlineMcpInstances(mcpServers)).toEqual([]);
+  });
+
+  it('returns empty when there are no inline instances', () => {
+    expect(collectInlineMcpInstances({})).toEqual([]);
+    expect(collectInlineMcpInstances({ ext: { type: 'stdio', command: 'x' } })).toEqual([]);
   });
 });
