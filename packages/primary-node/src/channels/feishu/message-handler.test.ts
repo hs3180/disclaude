@@ -2510,4 +2510,42 @@ describe('MessageHandler', () => {
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('Issue #4251: extractMessageText thread-context completeness', () => {
+    // extractMessageText feeds getThreadContext; previously any message type
+    // other than text/post/interactive returned '' and was SILENTLY DROPPED
+    // from the thread history, leaving the bot with an incomplete view of the
+    // thread (and no signal that a message was missing).
+    it('extracts text / post / interactive content as before', () => {
+      const { handler } = createHandler();
+      const ext = (handler as any).extractMessageText.bind(handler);
+      expect(ext('text', JSON.stringify({ text: 'hello' }))).toBe('hello');
+      // interactive is mocked at module level to return a fixed string
+      expect(ext('interactive', JSON.stringify({}))).toBe('Mocked full card content');
+    });
+
+    it('surfaces share_chat / share_user cards instead of dropping them', () => {
+      const { handler } = createHandler();
+      const ext = (handler as any).extractMessageText.bind(handler);
+      expect(ext('share_chat', JSON.stringify({ share_chat_id: 'oc_share123' })))
+        .toBe('[分享的群名片: oc_share123]');
+      expect(ext('share_user', JSON.stringify({ share_user_id: 'on_user456' })))
+        .toBe('[分享的联系人名片: on_user456]');
+      // Issue #4316 nit ②: a card missing its id still reads as a card
+      expect(ext('share_chat', JSON.stringify({}))).toBe('[分享的群名片]');
+      expect(ext('share_user', JSON.stringify({}))).toBe('[分享的联系人名片]');
+    });
+
+    it('emits a transparent placeholder for any other unrecognized type (not empty)', () => {
+      const { handler } = createHandler();
+      const ext = (handler as any).extractMessageText.bind(handler);
+      // image/file/audio/media are no longer silently dropped
+      expect(ext('image', JSON.stringify({ image_key: 'img_ok' }))).toBe('[未解析的 image 消息]');
+      expect(ext('audio', JSON.stringify({ file_key: 'f' }))).toBe('[未解析的 audio 消息]');
+      // unknown type
+      expect(ext('some_future_type', '{}')).toBe('[未解析的 some_future_type 消息]');
+      // empty input still returns ''
+      expect(ext(undefined, '')).toBe('');
+    });
+  });
 });
