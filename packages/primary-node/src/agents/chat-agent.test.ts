@@ -532,6 +532,89 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  describe('Issue #4320: stop_reason surfaced in turn-complete log (Gap D)', () => {
+    it('should log stopReason from parsed.metadata on turn completion', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_stop_reason',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* resultIterator() {
+        yield {
+          parsed: {
+            type: 'result',
+            content: '✅ Complete',
+            metadata: { stopReason: 'tool_use' },
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: resultIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_stop_reason',
+        payload: 'do something',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 150));
+
+      // Gap D: the 'Result received, turn complete' log carries stopReason
+      // threaded from parsed.metadata.stopReason.
+      const { logger } = agent as any;
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ stopReason: 'tool_use' }),
+        'Result received, turn complete'
+      );
+    });
+
+    it('should log stopReason undefined when metadata has no stopReason', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_stop_reason_none',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* resultIterator() {
+        yield {
+          parsed: { type: 'result', content: '✅ Complete' },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: resultIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_stop_reason_none',
+        payload: 'do something',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 150));
+
+      // When no stopReason is present the field is undefined (key present, value
+      // absent) — an explicit marker rather than an omitted field.
+      const { logger } = agent as any;
+      const turnCompleteCall = logger.info.mock.calls.find(
+        (c: any[]) => c[1] === 'Result received, turn complete'
+      );
+      expect(turnCompleteCall).toBeDefined();
+      expect((turnCompleteCall as any[])[0].stopReason).toBeUndefined();
+    });
+  });
+
   describe('Issue #2920: startup failure detection and diagnostics', () => {
     it('should detect startup failure and show diagnostic message (no stderr)', async () => {
       const localCallbacks = createMockCallbacks();
