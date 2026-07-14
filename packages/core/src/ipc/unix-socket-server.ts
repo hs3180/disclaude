@@ -619,9 +619,11 @@ export class UnixSocketIpcServer {
           'Socket file lost, rebuilding IPC server...'
         );
         // Stop and restart — the caller is responsible for re-creating
-        // the environment variable. Since Primary Node / Worker Node
-        // set DISCLAUDE_WORKER_IPC_SOCKET after startIpcServer(),
+        // the environment variable. Since Primary Node sets
+        // DISCLAUDE_WORKER_IPC_SOCKET after startIpcServer(),
         // we simply stop; the parent will detect via isRunning().
+        // (The WORKER env-var name is a #4291 A.2 renaming candidate; the
+        // Worker Node subject itself was removed in #2964.)
         void this.rebuildServer();
       }
     }, 30_000);
