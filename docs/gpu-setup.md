@@ -10,6 +10,12 @@ are not affected.
 > This document covers the **part 1** scope: env-driven opt-in via
 > `runtime: nvidia` (approach b). See [Open questions](#open-questions-deferred)
 > for what is intentionally deferred.
+>
+> **Scope**: the GPU config applies to `primary`, the only compute service. The
+> `worker` / `test-primary` services and `Dockerfile.worker` were removed in
+> [#2964](https://github.com/hs3180/disclaude/pull/2964), so the current compose
+> has only `primary`, `playwright`, and `filebeat`. (If a worker service is ever
+> reintroduced, it should follow the same env-var pattern.)
 
 ## Prerequisites
 
@@ -96,11 +102,6 @@ by part 1. They need a maintainer decision:
   `runtime: nvidia` + bundled CUDA — is sufficient. Part 1 assumes (b); if ML
   workloads later need system-level CUDA/cuDNN, a separate GPU Dockerfile can be
   added without changing the env interface here.
-- **Primary-only compute scope**: #4285's GPU config applies to `primary`, the
-  only compute service. The `worker` / `test-primary` services and
-  `Dockerfile.worker` were removed (#2964) — the current compose has only
-  `primary`, `playwright`, and `filebeat`. (If a worker service is ever
-  reintroduced, it should follow the same env-var pattern.)
 - **`shm_size` default sizing**: 4G is the validated jupyter value; whether it
   should be larger depends on the workload's typical batch size / `num_workers`.
 - **GPU exposure method**: part 1 uses `runtime: nvidia` (jupyter-validated).
