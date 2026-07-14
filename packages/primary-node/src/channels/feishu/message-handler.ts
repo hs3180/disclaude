@@ -934,8 +934,11 @@ export class MessageHandler {
     if (chat_type === 'topic' && parent_id) {
       // Topic groups: build thread context from parent chain only
       threadContext = await this.getThreadContext(parent_id);
-    } else if (isTriggerModeMention) {
-      // Regular groups: use flat chat history
+    } else if (isTriggerModeMention && chat_type !== 'topic') {
+      // Regular groups: use flat chat history.
+      // Issue #4304 (part 2): topic groups never use flat chat history — it
+      // mixes messages across threads. A topic message without parent_id gets
+      // no injected context here, matching the file/image path.
       chatHistoryContext = await this.getChatHistoryContext(chat_id);
     }
 
