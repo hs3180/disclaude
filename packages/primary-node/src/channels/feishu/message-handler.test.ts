@@ -2547,5 +2547,20 @@ describe('MessageHandler', () => {
       // empty input still returns ''
       expect(ext(undefined, '')).toBe('');
     });
+
+    it('returns placeholder for a recognized type with malformed content (not silently dropped)', () => {
+      // Issue #4318: lock the recognized-type-but-malformed-content branch
+      // (the #4296 review nit). A `post` whose JSON lacks the `content` array
+      // enters the post branch but fails the `Array.isArray(parsed.content)`
+      // guard, so it falls through to the unhandled-type placeholder — surfacing
+      // the gap rather than silently dropping the message from thread history.
+      const { handler } = createHandler();
+      const ext = (handler as any).extractMessageText.bind(handler);
+      expect(ext('post', JSON.stringify({ title: 'x' }))).toBe('[未解析的 post 消息]');
+      // Contrast: a recognized type that is genuinely empty (no payload) still
+      // returns '' — only unparseable / unhandled content becomes a placeholder,
+      // never a legitimately empty message.
+      expect(ext('text', JSON.stringify({}))).toBe('');
+    });
   });
 });
