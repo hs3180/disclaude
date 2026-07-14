@@ -1982,6 +1982,38 @@ describe('MessageHandler', () => {
       expect(msg.metadata.chatHistoryContext).toBeUndefined();
     });
 
+    it('should NOT set chatHistoryContext for topic-group text messages without parent_id (Issue #4304 part 2)', async () => {
+      // Issue #4304 part 2: a topic message with NO parent_id must not fall back
+      // to flat chat history (which mixes messages across threads). Mock non-empty
+      // history so this test FAILS if the `chat_type !== 'topic'` guard is removed
+      // from the text-path else-if.
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('LEAKED_FLAT_HISTORY');
+
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_no_parent',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Standalone topic message' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            // intentionally no parent_id
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
     it('should not fetch thread context for non-topic groups', async () => {
       mockState.isBotMentioned = true;
       const mockClient = {
@@ -2294,6 +2326,66 @@ describe('MessageHandler', () => {
       expect(msg.metadata).toBeDefined();
       expect(msg.metadata.chatType).toBe('p2p');
       expect(msg.metadata.threadContext).toBeUndefined();
+    });
+
+    it('should NOT set chatHistoryContext for topic-group file messages (Issue #4304)', async () => {
+      // Regression: the file path previously injected flat chat history for ALL
+      // group chats incl. topic, mixing messages across threads. Mock a non-empty
+      // history so this test FAILS if the topic guard is removed.
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('LEAKED_FLAT_HISTORY');
+
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_topic_hist',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      // Topic groups must not fetch flat history (avoids cross-thread mixing)
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('should set chatHistoryContext for regular-group file messages (Issue #4304 control)', async () => {
+      // Positive control: regular groups still get flat chat history, proving
+      // the topic guard is specific to topic chats (not a blanket removal).
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('GROUP_FLAT_HISTORY');
+
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_group_hist',
+            chat_id: 'chat_group',
+            chat_type: 'group',
+            content: JSON.stringify({ file_key: 'file_001', file_name: 'doc.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      expect(mockState.getChatHistory).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      expect(msg.metadata.chatHistoryContext).toBe('GROUP_FLAT_HISTORY');
     });
   });
 
