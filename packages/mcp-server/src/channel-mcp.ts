@@ -1,8 +1,8 @@
 /**
  * Channel MCP Tools - In-process tool implementation.
  *
- * This module provides MCP tools that communicate with the Primary/Worker Node
- * via IPC. The IPC server is managed by the Primary/Worker Node, not by this
+ * This module provides MCP tools that communicate with the Primary Node
+ * via IPC. The IPC server is managed by the Primary Node, not by this
  * module. Tools use getIpcClient() to connect to the parent's IPC server.
  *
  * @module mcp-server/channel-mcp
