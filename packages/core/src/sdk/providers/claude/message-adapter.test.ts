@@ -428,6 +428,30 @@ describe('adaptSDKMessage', () => {
       expect(result.content).toBe('✅ Complete');
     });
 
+    it('should extract stop_reason into metadata.stopReason (Issue #4320)', () => {
+      const message = {
+        type: 'result' as const,
+        subtype: 'success',
+        stop_reason: 'tool_use',
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.metadata?.stopReason).toBe('tool_use');
+    });
+
+    it('should leave stopReason undefined when stop_reason is null/absent (Issue #4320)', () => {
+      const message = {
+        type: 'result' as const,
+        subtype: 'success',
+        stop_reason: null,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.metadata?.stopReason).toBeUndefined();
+    });
+
     it('should format error result', () => {
       const message = {
         type: 'result' as const,

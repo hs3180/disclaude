@@ -938,7 +938,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   private async processIterator(
     iterator: AsyncGenerator<{
-      parsed: { type: string; content?: string; terminatedReason?: 'stall' };
+      parsed: { type: string; content?: string; terminatedReason?: 'stall'; metadata?: Record<string, unknown> };
     }>
   ): Promise<void> {
     const chatId = this.boundChatId;
@@ -1084,6 +1084,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
               toolCallCount,
               messageCount,
+              // Issue #4320: surface why the turn ended (end_turn / max_tokens / tool_use / ...).
+              stopReason: parsed.metadata?.stopReason,
             },
             'Result received, turn complete'
           );
