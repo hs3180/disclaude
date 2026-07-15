@@ -9,7 +9,7 @@
 #   ./tests/integration/use-case-1-basic-reply.sh [options]
 #
 # Options:
-#   --timeout SECONDS   Request timeout (default: 30)
+#   --timeout SECONDS   Request timeout (default: 120)
 #   --port PORT         REST API port (default: 3099)
 #   --verbose           Enable verbose output
 #   --dry-run           Show test plan without executing
@@ -19,7 +19,12 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TIMEOUT="${TIMEOUT:-30}"
+# Issue #4307: Use Case 1 is the first integration test to hit the AI API, so it
+# bears the cold-start cost (first request + session init). A 30s client timeout
+# flakes on cold start — the RCA in #4307/#4312/#4321 shows every attempt timing
+# out at ~30s with HTTP 000 (no response), while Use Cases 2-5 (already warm)
+# pass. Default to 120s to match use-case-2-basic-reply and give cold start room.
+TIMEOUT="${TIMEOUT:-120}"
 
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
