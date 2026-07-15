@@ -2044,8 +2044,10 @@ describe('MessageHandler', () => {
       expect(msg.metadata?.threadContext).toBeUndefined();
     });
 
-    it('should not fetch thread context without client', async () => {
+    it('should not fetch ancestor thread context without client (still appends #4306 guidance)', async () => {
       mockState.isBotMentioned = true;
+      // NOTE: no handler.initialize(client) — no SDK client, so getThreadContext()
+      // cannot fetch ancestor text from the API (returns undefined).
       const { handler } = createHandler();
 
       await handler.handleMessageReceive({
@@ -2064,7 +2066,13 @@ describe('MessageHandler', () => {
       });
 
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.metadata?.threadContext).toBeUndefined();
+      // Issue #4306: With no client, no ancestor text is fetched, but topic-group
+      // thread messages still receive the lark-cli access guidance (it works
+      // independently of the in-process SDK client). So threadContext is the
+      // guidance only — defined, but without any fetched ancestor content.
+      expect(msg.metadata?.threadContext).not.toBeUndefined();
+      expect(msg.metadata?.threadContext).toContain('--thread msg_parent');
+      expect(msg.metadata?.threadContext).toContain('+threads-messages-list');
     });
   });
 
