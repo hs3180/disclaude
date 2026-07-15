@@ -68,9 +68,9 @@ export interface MessageCallbacks {
   emitControl: (control: ControlCommand) => Promise<ControlResponse>;
   sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<void>;
   /**
-   * Route card action to Worker Node if applicable.
+   * Route card action to the local agent if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
-   * so remote Worker Nodes receive the contextual prompt.
+   * so the agent receives the contextual prompt.
    * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
    */
   routeCardAction?: (message: {
