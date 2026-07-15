@@ -9,6 +9,7 @@
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
  * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
+ * - `GET /api/temp-chats` — List tracked temporary chats (REST parity with IPC listTempChats; #4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
  * - `POST /api/upload-file` — Upload a local file to a chat by filePath (REST parity with IPC uploadFile; #4279)
  * - `POST /api/send-message` — Send a text message to a chat (REST parity with IPC sendMessage; #4279)
@@ -149,6 +150,25 @@ export type SendInteractiveHandler = (
 ) => Promise<{ success: boolean; messageId?: string }>;
 
 /**
+ * A tracked temporary chat (Issue #1703).
+ */
+export type TempChat = {
+  chatId: string;
+  createdAt: string;
+  expiresAt: string;
+  creatorChatId?: string;
+  responded: boolean;
+};
+
+/**
+ * Handler for listTempChats. Delegates to the channel's listTempChats
+ * capability — REST parity with the IPC method (Issue #4279).
+ * Channel-agnostic. Single-process semantics (local store query); cross-process
+ * aggregation is a future concern (Phase-0 decision 2).
+ */
+export type ListTempChatsHandler = () => Promise<{ success: boolean; chats: TempChat[] }>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -191,6 +211,7 @@ export class HttpApiServer {
   private sendMessageHandler?: SendMessageHandler;
   private sendCardHandler?: SendCardHandler;
   private sendInteractiveHandler?: SendInteractiveHandler;
+  private listTempChatsHandler?: ListTempChatsHandler;
   private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
@@ -247,6 +268,13 @@ export class HttpApiServer {
    */
   setSendInteractiveHandler(handler: SendInteractiveHandler): void {
     this.sendInteractiveHandler = handler;
+  }
+
+  /**
+   * Set the handler for GET /api/temp-chats (Issue #4279).
+   */
+  setListTempChatsHandler(handler: ListTempChatsHandler): void {
+    this.listTempChatsHandler = handler;
   }
 
   setLoopHandlers(handlers: {
@@ -443,6 +471,8 @@ export class HttpApiServer {
     this.addRoute('POST', '/api/send-card', this.handleSendCard.bind(this));
     // Issue #4279: REST parity with IPC sendInteractive.
     this.addRoute('POST', '/api/send-interactive', this.handleSendInteractive.bind(this));
+    // Issue #4279: REST parity with IPC listTempChats.
+    this.addRoute('GET', '/api/temp-chats', this.handleListTempChats.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -535,6 +565,34 @@ export class HttpApiServer {
   ): Promise<void> {
     this.sendJson(res, 200, { pong: true });
     return Promise.resolve();
+  }
+
+  /**
+   * GET /api/temp-chats handler (Issue #4279).
+   *
+   * Returns the list of tracked temporary chats (Issue #1703). Channel-agnostic
+   * (no chatId). Single-process semantics — queries the local store; cross-
+   * process aggregation is a future concern (Phase-0 decision 2) and would not
+   * change this endpoint's contract. GET route → token-exempt (like /api/status).
+   * Response: `{ ok: true, success, chats: [...] }`.
+   */
+  private async handleListTempChats(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.listTempChatsHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'listTempChats handler not configured' });
+      return;
+    }
+    try {
+      const result = await this.listTempChatsHandler();
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err }, 'listTempChats handler error');
+      const msg = err instanceof Error ? err.message : 'listTempChats failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
   }
 
   /**

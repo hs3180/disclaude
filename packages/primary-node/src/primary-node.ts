@@ -822,6 +822,25 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * List tracked temporary chats (Issue #1703) — delegates to the channel's
+   * listTempChats capability. Channel-agnostic. REST parity with the IPC
+   * listTempChats method (Issue #4279). Single-process semantics.
+   *
+   * @returns { success: boolean; chats: TempChat[] }
+   */
+  async listTempChats(): Promise<{
+    success: boolean;
+    chats: Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>;
+  }> {
+    const h = this.resolveApiHandlers();
+    if (!h?.listTempChats) {
+      throw new Error('listTempChats not supported by this channel');
+    }
+    const chats = await h.listTempChats();
+    return { success: true, chats };
+  }
+
+  /**
    * Resolve the channel API handlers for a chatId.
    *
    * Shared by the composite IPC handlers and the LoopRunner push callback.

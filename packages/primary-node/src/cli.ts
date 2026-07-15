@@ -532,6 +532,10 @@ async function main(): Promise<void> {
         (chatId, params) => primaryNode.sendInteractive(chatId, params),
       );
 
+      // Issue #4279: wire REST GET /api/temp-chats to the channel's
+      // listTempChats capability (REST parity with the IPC method).
+      httpApiServer.setListTempChatsHandler(() => primaryNode.listTempChats());
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 
