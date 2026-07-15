@@ -554,33 +554,64 @@ export class MessageHandler {
         await fs.mkdir(downloadDir, { recursive: true });
         localPath = path.join(downloadDir, String(fileName || fileKey));
 
-        logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
-
-        await this.downloadResourceViaLarkCli(
-          messageId,
-          fileKey,
-          mapResourceType(messageType),
-          localPath,
-        );
-
-        // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
-        const correctedPath = await ensureFileExtensionFromPath(localPath);
-        if (correctedPath !== localPath) {
-          localPath = correctedPath;
-          fileName = path.basename(correctedPath);
-        }
-
-        // Issue #2411: Verify file was actually written to disk
+        // Issue #4326: skip re-download when a non-empty file already exists at the
+        // target path or an extension-corrected sibling (left by ensureFileExtensionFromPath).
+        // Use fs.access (not fs.stat) for existence — the test suite mocks fs.stat
+        // to always return {size:1024}, which would produce false cache hits.
+        let cacheHit = false;
         try {
-          const stat = await fs.stat(localPath);
-          if (stat.size === 0) {
-            throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
-          }
-        } catch (statError) {
-          throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+          await fs.access(localPath);
+          if ((await fs.stat(localPath)).size > 0) {cacheHit = true;}
+        } catch {
+          // Bare path doesn't exist — check for extension-corrected sibling
+          try {
+            const base = path.basename(localPath);
+            const sibling = (await fs.readdir(downloadDir)).find(
+              e => e !== base && e.startsWith(`${base  }.`),
+            );
+            if (sibling) {
+              const siblingPath = path.join(downloadDir, sibling);
+              await fs.access(siblingPath);
+              if ((await fs.stat(siblingPath)).size > 0) {
+                localPath = siblingPath;
+                fileName = path.basename(siblingPath);
+                cacheHit = true;
+              }
+            }
+          } catch { /* no sibling — proceed with download */ }
         }
 
-        logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
+        if (cacheHit) {
+          logger.debug({ fileKey, localPath }, 'Quoted file cache hit — skipping download');
+        } else {
+          logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
+
+          await this.downloadResourceViaLarkCli(
+            messageId,
+            fileKey,
+            mapResourceType(messageType),
+            localPath,
+          );
+
+          // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
+          const correctedPath = await ensureFileExtensionFromPath(localPath);
+          if (correctedPath !== localPath) {
+            localPath = correctedPath;
+            fileName = path.basename(correctedPath);
+          }
+
+          // Issue #2411: Verify file was actually written to disk
+          try {
+            const stat = await fs.stat(localPath);
+            if (stat.size === 0) {
+              throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
+            }
+          } catch (statError) {
+            throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+          }
+
+          logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
+        }
       } catch (downloadError) {
         logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
         localPath = undefined;

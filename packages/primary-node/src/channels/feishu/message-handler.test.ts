@@ -1721,6 +1721,36 @@ describe('MessageHandler', () => {
       expect(msg.attachments).toBeDefined();
     });
 
+    it('should skip download when file already exists (cache hit, Issue #4326)', async () => {
+      // Create a real file on disk so fs.access (unmocked) finds it.
+      // fs/promises.mkdir and writeFile are mocked, so use sync real fs.
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+      const filePath = join(downloadDir, 'image_img_cached');
+      realFs.writeFileSync(filePath, 'fake image data');
+
+      try {
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        const result = await (handler as any).handleQuotedFileMessage(
+          'image',
+          JSON.stringify({ image_key: 'img_cached' }),
+          'msg_cached',
+        );
+
+        // Cache hit: download was NOT called
+        expect(spy).not.toHaveBeenCalled();
+        // File path is returned in the attachment
+        expect(result?.attachment?.filePath).toBe(filePath);
+      } finally {
+        realFs.unlinkSync(filePath);
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
     it('should handle quoted media message with correct type label', async () => {
       mockExecFile.mockImplementation((...args: unknown[]) => {
         const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
