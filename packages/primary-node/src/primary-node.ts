@@ -739,6 +739,22 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Upload a local image and return a Feishu image_key (for card embedding) —
+   * delegates to the channel's uploadImage capability. Channel-agnostic (no
+   * chatId). REST parity with the IPC uploadImage method (Issue #4279).
+   *
+   * @returns { success: boolean; imageKey?: string }
+   */
+  async uploadImage(filePath: string): Promise<{ success: boolean; imageKey?: string }> {
+    const h = this.resolveApiHandlers();
+    if (!h?.uploadImage) {
+      throw new Error('uploadImage not supported by this channel');
+    }
+    const result = await h.uploadImage(filePath);
+    return { success: true, ...result };
+  }
+
+  /**
    * Send a text message to a chat — delegates to the channel's sendMessage
    * capability. REST parity with the IPC sendMessage method (Issue #4279).
    *
