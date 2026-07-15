@@ -462,6 +462,38 @@ describe('BaseAgent', () => {
       expect(messages[0].parsed.metadata?.toolName).toBe('Bash');
       expect(messages[0].parsed.sessionId).toBe('tool-session');
     });
+
+    it('should propagate stopReason through convertToLegacyFormat (Issue #4320, Gap C)', async () => {
+      const mockHandle: QueryHandle = { close: vi.fn(), cancel: vi.fn() };
+
+      const sdkMessage = createMockSdkMessage({
+        type: 'result',
+        content: '✅ Complete',
+        metadata: {
+          stopReason: 'tool_use',
+        },
+      });
+
+      mockSdkProvider.queryStream.mockImplementation(() => ({
+        handle: mockHandle,
+        iterator: (async function* () {
+          yield sdkMessage;
+        })(),
+      }));
+
+      const inputStream = createMockInput([]);
+
+      const result = agent.testCreateQueryStream(inputStream, defaultOptions);
+
+      const messages: IteratorYieldResult[] = [];
+      for await (const item of result.iterator) {
+        messages.push(item);
+      }
+
+      expect(messages).toHaveLength(1);
+      // Gap C: convertToLegacyFormat threads metadata.stopReason into parsed.metadata.stopReason
+      expect(messages[0].parsed.metadata?.stopReason).toBe('tool_use');
+    });
   });
 
   describe('dispose with initialized state', () => {

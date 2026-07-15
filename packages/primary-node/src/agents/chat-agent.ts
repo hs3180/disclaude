@@ -50,6 +50,7 @@ import {
   type ChatAgent as ChatAgentInterface,
   type AgentUserInput,
   type AgentMessage,
+  type IteratorYieldResult,
   type UserMessageParams,
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
@@ -936,10 +937,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * - Open circuit breaker after max restarts exceeded
    *
    */
+  // Issue #4320: use the canonical IteratorYieldResult['parsed'] (exported from
+  // @disclaude/core) instead of a hand-written shape — the two had already
+  // drifted (this copy omitted sessionId and made content optional), and every
+  // value here is produced by BaseAgent.convertToLegacyFormat which already
+  // returns IteratorYieldResult['parsed']. One source of truth, no drift.
   private async processIterator(
-    iterator: AsyncGenerator<{
-      parsed: { type: string; content?: string; terminatedReason?: 'stall' };
-    }>
+    iterator: AsyncGenerator<IteratorYieldResult>
   ): Promise<void> {
     const chatId = this.boundChatId;
     let iteratorError: Error | null = null;
@@ -1084,6 +1088,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               ttftMs: firstMessageMs ? firstMessageMs - startTime : undefined,
               toolCallCount,
               messageCount,
+              // Issue #4320: surface why the turn ended (end_turn / max_tokens / tool_use / ...).
+              stopReason: parsed.metadata?.stopReason,
             },
             'Result received, turn complete'
           );

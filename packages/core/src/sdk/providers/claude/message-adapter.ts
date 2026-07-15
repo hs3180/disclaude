@@ -173,6 +173,12 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
           }
         }
 
+        // Issue #4320: propagate SDK stop_reason (end_turn / max_tokens / tool_use / ...)
+        // into metadata so downstream logs can distinguish why a turn ended.
+        if (message.stop_reason) {
+          metadata.stopReason = message.stop_reason;
+        }
+
         return {
           type: 'result',
           content: statsText,

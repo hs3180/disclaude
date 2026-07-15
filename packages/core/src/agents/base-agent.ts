@@ -320,6 +320,7 @@ export abstract class BaseAgent implements Disposable {
         elapsed: message.metadata.elapsedMs,
         cost: message.metadata.costUsd,
         tokens: (message.metadata.inputTokens ?? 0) + (message.metadata.outputTokens ?? 0),
+        stopReason: message.metadata.stopReason,
       } : undefined,
       sessionId: message.metadata?.sessionId,
       terminatedReason: message.metadata?.terminatedReason,
