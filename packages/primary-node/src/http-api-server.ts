@@ -9,6 +9,7 @@
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
+ * - `POST /api/mark-chat-responded` — Mark a chat as responded (REST parity with IPC markChatResponded; #4279)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -70,6 +71,22 @@ export interface PushResponse {
 export type PushHandler = (chatId: string, message: string) => Promise<void>;
 
 /**
+ * Response payload for markChatResponded (mirrors IPC IpcResponsePayloads).
+ */
+export type ChatRespondedResponse = { success: boolean };
+
+/**
+ * Handler for markChatResponded requests. Delegates to the channel's
+ * markChatResponded capability — REST parity with the IPC method (Issue #4279).
+ *
+ * `response` matches the IPC payload: `{ selectedValue, responder, repliedAt }`.
+ */
+export type MarkChatRespondedHandler = (
+  chatId: string,
+  response: { selectedValue: string; responder: string; repliedAt: string },
+) => Promise<ChatRespondedResponse>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -108,6 +125,7 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
+  private markChatRespondedHandler?: MarkChatRespondedHandler;
   private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
@@ -136,6 +154,13 @@ export class HttpApiServer {
    */
   setPushHandler(handler: PushHandler): void {
     this.pushHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/mark-chat-responded (Issue #4279).
+   */
+  setMarkChatRespondedHandler(handler: MarkChatRespondedHandler): void {
+    this.markChatRespondedHandler = handler;
   }
 
   setLoopHandlers(handlers: {
@@ -321,6 +346,8 @@ export class HttpApiServer {
    */
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
+    // Issue #4279: REST parity with IPC markChatResponded.
+    this.addRoute('POST', '/api/mark-chat-responded', this.handleMarkChatResponded.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -451,6 +478,68 @@ export class HttpApiServer {
     } catch (err) {
       logger.error({ err, chatId }, 'Push handler error');
       const msg = err instanceof Error ? err.message : 'Push failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/mark-chat-responded handler (Issue #4279).
+   *
+   * Accepts `{ chatId, response: { selectedValue, responder, repliedAt } }` and
+   * delegates to the channel's markChatResponded capability. Mirrors the IPC
+   * markChatResponded method (payload aligned with IpcRequestPayloads).
+   */
+  private async handleMarkChatResponded(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.markChatRespondedHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'markChatResponded handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    const response = (parsed as Record<string, unknown> | null)?.response;
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof response !== 'object' || response === null ||
+      typeof (response as Record<string, unknown>).selectedValue !== 'string' ||
+      typeof (response as Record<string, unknown>).responder !== 'string' ||
+      typeof (response as Record<string, unknown>).repliedAt !== 'string'
+    ) {
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'Required: chatId (string), response: { selectedValue, responder, repliedAt } (strings)',
+      });
+      return;
+    }
+
+    const { chatId } = parsed as { chatId: string };
+    const resp = response as { selectedValue: string; responder: string; repliedAt: string };
+
+    try {
+      const result = await this.markChatRespondedHandler(chatId, resp);
+      this.sendJson(res, 200, { ok: true, success: result.success });
+    } catch (err) {
+      logger.error({ err, chatId }, 'markChatResponded handler error');
+      const msg = err instanceof Error ? err.message : 'markChatResponded failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
   }
