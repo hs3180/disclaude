@@ -213,7 +213,7 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
         }
       }
     }
-    pullRequests(first: 100, states: [OPEN]) {
+    pullRequests(first: 100, states: [OPEN, MERGED]) {
       totalCount
       pageInfo { hasNextPage }
       nodes {
@@ -221,6 +221,7 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
         title
         body
         headRefName
+        state
       }
     }
   }
@@ -273,20 +274,37 @@ function main() {
     log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, PRs total: ${repo.pullRequests.totalCount}. Only first 100 of each fetched.`);
   }
 
-  log(`Found ${allIssues.length} open issues, ${allPRs.length} open PRs`);
+  const openCount = allPRs.filter((pr) => pr.state === "OPEN").length;
+  const mergedCount = allPRs.length - openCount;
+  log(`Found ${allIssues.length} open issues, ${openCount} open PRs, ${mergedCount} merged PRs (${mergedFiltered} phantom-filtered)`);
 
-  // Build set of issue numbers referenced by open PRs
+  // Build set of issue numbers referenced by PRs (open OR merged).
+  // Open PRs: any keyword match (work in progress — don't duplicate).
+  // Merged PRs: closing keywords only + skip "part N" (epic not fully done).
   const prIssueNums = new Set();
   const ISSUE_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
+  const CLOSING_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
   const BRANCH_NUM = /(\d+)/g;
+  const PART_PATTERN = /part\s+\d/i;
+  let mergedFiltered = 0;
   for (const pr of allPRs) {
-    // Keyword-prefixed references in body and title (strict)
-    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(ISSUE_KEYWORD)) {
-      prIssueNums.add(Number(m[1]));
-    }
-    // Loose number matching in branch name (e.g. fix/issue-123)
-    for (const m of (pr.headRefName || "").matchAll(BRANCH_NUM)) {
-      prIssueNums.add(Number(m[1]));
+    const isOpen = pr.state === "OPEN";
+    const text = `${pr.body || ""} ${pr.title || ""}`;
+    if (isOpen) {
+      // Open PRs: any keyword + branch-name match (existing logic)
+      for (const m of text.matchAll(ISSUE_KEYWORD)) {
+        prIssueNums.add(Number(m[1]));
+      }
+      for (const m of (pr.headRefName || "").matchAll(BRANCH_NUM)) {
+        prIssueNums.add(Number(m[1]));
+      }
+    } else {
+      // Merged PRs: only closing keywords + skip "part N" (epic still open)
+      if (PART_PATTERN.test(pr.title || "")) continue;
+      for (const m of text.matchAll(CLOSING_KEYWORD)) {
+        prIssueNums.add(Number(m[1]));
+        mergedFiltered++;
+      }
     }
   }
   log(`Issues with open PRs: ${[...prIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
