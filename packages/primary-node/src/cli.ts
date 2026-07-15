@@ -520,6 +520,12 @@ async function main(): Promise<void> {
         (chatId, card, threadId, description) => primaryNode.sendCard(chatId, card, threadId, description),
       );
 
+      // Issue #4279: wire REST /api/send-interactive to the channel's
+      // sendInteractive capability (builds+sends card, registers action prompts).
+      httpApiServer.setSendInteractiveHandler(
+        (chatId, params) => primaryNode.sendInteractive(chatId, params),
+      );
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 

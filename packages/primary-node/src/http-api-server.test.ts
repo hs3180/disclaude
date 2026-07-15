@@ -333,6 +333,70 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('POST /api/send-interactive (Issue #4279)', () => {
+    const validBody = JSON.stringify({
+      chatId: 'oc_test',
+      question: 'approve?',
+      options: [{ text: '✅ Approve', value: 'approve', type: 'primary' }],
+      title: 'Review',
+      actionPrompts: { approve: 'approved' },
+    });
+
+    it('should delegate to the handler and return success + messageId', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ success: true, messageId: 'om_123' });
+      server.setSendInteractiveHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; messageId?: string };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.messageId).toBe('om_123');
+      expect(mockHandler).toHaveBeenCalledTimes(1);
+      expect(mockHandler.mock.calls[0]![0]).toBe('oc_test');
+      expect(mockHandler.mock.calls[0]![1].question).toBe('approve?');
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when options is missing/empty', async () => {
+      server.setSendInteractiveHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', question: 'q', options: [] }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setSendInteractiveHandler(vi.fn().mockRejectedValue(new Error('not supported')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('not supported');
+    });
+  });
+
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/unknown' });
