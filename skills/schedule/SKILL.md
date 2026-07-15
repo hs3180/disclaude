@@ -115,7 +115,7 @@ Schedule content prompt here
 | `chatId` | Yes | - | Chat ID for execution context |
 | `createdAt` | No | - | Creation timestamp |
 | `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
-| `modelTier` | No | - | Model tier for execution (e.g., "fast", "default") |
+| `modelTier` | No | - | Three-level model tier: `"high"`, `"low"`, or `"multimodal"` (resolved to a concrete model via `Config.getModelForTier`; Issue #3059). |
 
 ---
 
