@@ -19,6 +19,8 @@
  */
 
 import { createLogger } from '../utils/logger.js';
+import type { IpcRequestType, IpcRequestPayloads, IpcResponsePayloads } from './protocol.js';
+import type { IpcClientLike } from './ipc-client-facade.js';
 
 const logger = createLogger('RestIpcClient');
 
@@ -83,7 +85,7 @@ export interface RestIpcClientOptions {
   apiToken?: string;
 }
 
-export class RestIpcClient {
+export class RestIpcClient implements IpcClientLike {
   private readonly baseUrl: string;
   private readonly apiToken?: string;
 
@@ -154,6 +156,23 @@ export class RestIpcClient {
 
     // Apply per-route response shaping (default: strip the `ok` envelope).
     return (route.shape ?? stripOk)(json);
+  }
+
+  /**
+   * IpcClientLike-compatible request method — delegates to requestChannel with
+   * proper generic typing. This makes RestIpcClient a true drop-in for
+   * UnixSocketIpcClient (the mcp-server's getIpcClient can return either).
+   */
+  async request<T extends IpcRequestType>(
+    type: T,
+    payload: IpcRequestPayloads[T],
+    options?: { timeoutMs?: number },
+  ): Promise<IpcResponsePayloads[T]> {
+    return await this.requestChannel(
+      type,
+      payload as Record<string, unknown>,
+      options,
+    ) as IpcResponsePayloads[T];
   }
 
   /**

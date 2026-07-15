@@ -134,6 +134,16 @@ describe('RestIpcClient', () => {
       const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
       await expect(client.requestChannel('unknownMethod')).rejects.toThrow('unsupported method');
     });
+
+    it('should support IpcClientLike.request<T> (drop-in interface)', async () => {
+      mockFetch([{ json: { ok: true, success: true, messageId: 'om_456' } }]);
+      const client = new RestIpcClient({ baseUrl: 'http://localhost:9200', apiToken: 'tok' });
+
+      // request<T> delegates to requestChannel — same behavior, typed return.
+      const result = await client.request('sendMessage', { chatId: 'oc_test', text: 'hi' });
+
+      expect(result).toEqual({ success: true, messageId: 'om_456' });
+    });
   });
 
   describe('isAvailable', () => {
