@@ -122,6 +122,17 @@ ${threadContext}
 
 **Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the thread history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in this thread — which one are you referring to?"
 
+**Thread attachments & context (on-demand)**: The Thread Context above is text-only. Ancestor messages in this thread may carry attachments (research PDFs, images, media) that are NOT auto-delivered to you. When the user refers to "this thread / this report / 这篇" but the referenced attachment is absent from your context, fetch it yourself with \`lark-cli\` before answering (Issue #4306):
+
+- List every message in this thread AND download its attachments (recommended):
+  \`npx @larksuite/cli im +threads-messages-list --thread <message-id> --as bot --download-resources\`
+- Fetch specific messages by id (up to 50):
+  \`npx @larksuite/cli im +messages-mget --message-ids <om_xxx>,<om_yyy> --as bot\`
+- Download one message's attachment:
+  \`npx @larksuite/cli im +messages-resources-download --message-id <om_xxx> --file-key <key> --type image|file --as bot --output ./downloads/<name>\`
+
+The \`--thread\` flag accepts any \`om_xxx\`/\`omt_xxx\` from this thread (e.g. the Message ID in the metadata above, or one quoted in the Thread Context) and auto-resolves it to the thread root. Downloaded files land under \`./lark-im-resources/\` (or your \`--output\` path) — read them with the Read tool, then answer.
+
 ---
 `;
 }

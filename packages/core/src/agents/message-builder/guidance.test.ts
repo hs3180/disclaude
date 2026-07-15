@@ -93,6 +93,22 @@ describe('buildThreadContextSection', () => {
     expect(result).toContain('do NOT guess');
     expect(result).toContain('clarify which one');
   });
+
+  // Issue #4306: tell the agent how to fetch thread context / attachments on
+  // demand via lark-cli (ancestor-message attachments are not auto-delivered).
+  it('should include lark-cli on-demand thread context / attachment guidance', () => {
+    const result = buildThreadContextSection('context here');
+    expect(result).toContain('lark-cli');
+    // List all thread messages + download attachments (recommended path).
+    expect(result).toContain('+threads-messages-list');
+    expect(result).toContain('--download-resources');
+    // Fetch specific messages.
+    expect(result).toContain('+messages-mget');
+    // Download a single message's attachment.
+    expect(result).toContain('+messages-resources-download');
+    // --thread accepts any message id in the thread (auto-resolves to root).
+    expect(result).toContain('auto-resolves');
+  });
 });
 
 describe('buildNextStepGuidance', () => {
