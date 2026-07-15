@@ -43,6 +43,9 @@ export {
   type IpcUnavailableReason,
 } from './unix-socket-client.js';
 
+// REST IPC client (Issue #4279 Phase 2 — channel-method surface via HTTP)
+export { RestIpcClient, type RestIpcClientOptions } from './rest-ipc-client.js';
+
 // Client facade (protocol convenience methods)
 export {
   sendMessage,
