@@ -432,7 +432,15 @@ export class PrimaryNode extends EventEmitter {
         if (!h?.pushToAgent) {
           throw new Error('pushToAgent not supported by this channel');
         }
-        return h.pushToAgent(chatId, message);
+        // Issue #4281: latency baseline monitoring for #4168 REST IPC migration.
+        const t0 = Date.now();
+        const result = h.pushToAgent(chatId, message);
+        if (result && typeof result.then === 'function') {
+          void result
+            .then(() => logger.info({ chatId, elapsedMs: Date.now() - t0 }, 'pushToAgent latency baseline (#4281)'))
+            .catch(() => {});
+        }
+        return result;
       },
 
       uploadImage: (filePath) => {
