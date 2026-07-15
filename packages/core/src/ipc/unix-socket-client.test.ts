@@ -1,24 +1,23 @@
 /**
- * Unit tests for IPC Client: UnixSocketIpcClient, getIpcSocketPath, getIpcClient.
+ * Unit tests for UnixSocketIpcClient.
  *
  * Issue #1617 Phase 1: Tests for core IPC module.
  *
  * Tests cover:
  * - UnixSocketIpcClient: connect/disconnect, retry logic, availability checks,
  *   request methods (sendMessage, sendCard, uploadFile, sendInteractive, etc.)
- * - Helper functions: getIpcSocketPath, getIpcClient, resetIpcClient
+ *
+ * getIpcSocketPath / getIpcClient / resetIpcClient are tested in ipc-utils.test.ts
+ * (Issue #4129), co-located with the ipc-utils module.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, unlinkSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import {
   UnixSocketIpcClient,
-  getIpcSocketPath,
-  getIpcClient,
-  resetIpcClient,
   createInteractiveMessageHandler,
   uploadFile,
   sendInteractive,
@@ -26,7 +25,6 @@ import {
   sendCard,
 } from './index.js';
 import type { ChannelHandlersContainer } from './unix-socket-server.js';
-import { IPC_SOCKET_PATH_FILE } from './protocol.js';
 
 // ============================================================================
 // Test helpers
@@ -484,80 +482,5 @@ describe('UnixSocketIpcClient', () => {
       // Just verify it doesn't throw
       client.invalidateAvailabilityCache();
     });
-  });
-});
-
-// ============================================================================
-// Helper functions tests
-// ============================================================================
-
-describe('getIpcSocketPath', () => {
-  // Defensive cleanup: ensure IPC_SOCKET_PATH_FILE does not leak between tests (Issue #4061)
-  // NOTE: If you add a test for the file-based fallback path (no env vars, file exists),
-  // you must recreate the file within that test after this cleanup runs.
-  beforeEach(() => {
-    try { unlinkSync(IPC_SOCKET_PATH_FILE); } catch { /* ignore if not exists */ }
-  });
-
-  it('should return env var DISCLAUDE_WORKER_IPC_SOCKET if set', () => {
-    const original = process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET = '/tmp/worker.ipc';
-    expect(getIpcSocketPath()).toBe('/tmp/worker.ipc');
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET = original;
-  });
-
-  it('should return env var DISCLAUDE_IPC_SOCKET_PATH if set', () => {
-    const originalWorker = process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-    const originalPath = process.env.DISCLAUDE_IPC_SOCKET_PATH;
-    delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-    process.env.DISCLAUDE_IPC_SOCKET_PATH = '/tmp/custom.ipc';
-    expect(getIpcSocketPath()).toBe('/tmp/custom.ipc');
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET = originalWorker;
-    process.env.DISCLAUDE_IPC_SOCKET_PATH = originalPath;
-  });
-
-  it('should return default path when no env vars set', () => {
-    const originalWorker = process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-    const originalPath = process.env.DISCLAUDE_IPC_SOCKET_PATH;
-    delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-    delete process.env.DISCLAUDE_IPC_SOCKET_PATH;
-    // IPC_SOCKET_PATH_FILE already cleaned in beforeEach (Issue #4061)
-    expect(getIpcSocketPath()).toBe('/tmp/disclaude-interactive.ipc');
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET = originalWorker;
-    process.env.DISCLAUDE_IPC_SOCKET_PATH = originalPath;
-  });
-
-  it('should prefer DISCLAUDE_WORKER_IPC_SOCKET over DISCLAUDE_IPC_SOCKET_PATH', () => {
-    const originalWorker = process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-    const originalPath = process.env.DISCLAUDE_IPC_SOCKET_PATH;
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET = '/tmp/worker.ipc';
-    process.env.DISCLAUDE_IPC_SOCKET_PATH = '/tmp/custom.ipc';
-    expect(getIpcSocketPath()).toBe('/tmp/worker.ipc');
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET = originalWorker;
-    process.env.DISCLAUDE_IPC_SOCKET_PATH = originalPath;
-  });
-});
-
-describe('getIpcClient / resetIpcClient', () => {
-  afterEach(() => {
-    resetIpcClient();
-  });
-
-  it('should return a UnixSocketIpcClient instance', () => {
-    const client = getIpcClient();
-    expect(client).toBeInstanceOf(UnixSocketIpcClient);
-  });
-
-  it('should return same instance on subsequent calls (singleton)', () => {
-    const client1 = getIpcClient();
-    const client2 = getIpcClient();
-    expect(client1).toBe(client2);
-  });
-
-  it('should return new instance after reset', () => {
-    const client1 = getIpcClient();
-    resetIpcClient();
-    const client2 = getIpcClient();
-    expect(client1).not.toBe(client2);
   });
 });
