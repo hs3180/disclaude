@@ -556,29 +556,50 @@ export class MessageHandler {
 
         // Issue #4326: skip re-download when a non-empty file already exists at the
         // target path or an extension-corrected sibling (left by ensureFileExtensionFromPath).
-        // Use fs.access (not fs.stat) for existence — the test suite mocks fs.stat
-        // to always return {size:1024}, which would produce false cache hits.
-        let cacheHit = false;
-        try {
-          await fs.access(localPath);
-          if ((await fs.stat(localPath)).size > 0) {cacheHit = true;}
-        } catch {
-          // Bare path doesn't exist — check for extension-corrected sibling
+        //
+        // Cache validity is bound to fileKey via a `<path>.key` sidecar (written on
+        // first download): downloadDir is shared/persistent, and for `file`/`audio`
+        // the on-disk name is the user-supplied file_name, which can collide across
+        // distinct resources. Only a matching sidecar proves the on-disk bytes belong
+        // to THIS resource — without it a same-named-but-different file would be a
+        // false hit, handing the agent stale/wrong content.
+        //
+        // Existence is gated on fs.access (not fs.stat): the test suite mocks
+        // fs.stat to always return {size:1024}, which would otherwise give false hits.
+        const isCacheHitFor = async (candidate: string): Promise<boolean> => {
           try {
-            const base = path.basename(localPath);
-            const sibling = (await fs.readdir(downloadDir)).find(
-              e => e !== base && e.startsWith(`${base  }.`),
+            await fs.access(candidate);
+            if ((await fs.stat(candidate)).size === 0) {return false;}
+            const storedKey = (await fs.readFile(`${candidate}.key`, 'utf8')).trim();
+            return storedKey === fileKey;
+          } catch {
+            return false;
+          }
+        };
+
+        let cacheHit = false;
+        if (await isCacheHitFor(localPath)) {
+          cacheHit = true;
+        } else {
+          // Bare path missed — look for an extension-corrected sibling
+          // (ensureFileExtensionFromPath may have renamed <base> → <base>.<ext>).
+          // If multiple siblings exist, the first in FS order wins; the sidecar
+          // match still guarantees we only reuse the correct resource.
+          const base = path.basename(localPath);
+          let sibling: string | undefined;
+          try {
+            sibling = (await fs.readdir(downloadDir)).find(
+              // Skip `<name>.key` sidecars (they also start with `<base>.`).
+              e => e !== base && e.startsWith(`${base}.`) && !e.endsWith('.key'),
             );
-            if (sibling) {
-              const siblingPath = path.join(downloadDir, sibling);
-              await fs.access(siblingPath);
-              if ((await fs.stat(siblingPath)).size > 0) {
-                localPath = siblingPath;
-                fileName = path.basename(siblingPath);
-                cacheHit = true;
-              }
-            }
-          } catch { /* no sibling — proceed with download */ }
+          } catch (readdirError) {
+            logger.debug({ err: readdirError, downloadDir }, 'Failed to list download dir for cache sibling lookup');
+          }
+          if (sibling && await isCacheHitFor(path.join(downloadDir, sibling))) {
+            localPath = path.join(downloadDir, sibling);
+            fileName = path.basename(sibling);
+            cacheHit = true;
+          }
         }
 
         if (cacheHit) {
@@ -608,6 +629,15 @@ export class MessageHandler {
             }
           } catch (statError) {
             throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+          }
+
+          // Issue #4326: persist the fileKey sidecar so future lookups can verify
+          // the cache belongs to this resource (guards against same-named collisions).
+          try {
+            await fs.writeFile(`${localPath}.key`, fileKey, 'utf8');
+          } catch (sidecarError) {
+            // Non-fatal: a missing/unwritable sidecar just means the next lookup re-downloads.
+            logger.debug({ err: sidecarError, localPath }, 'Failed to write cache key sidecar');
           }
 
           logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');

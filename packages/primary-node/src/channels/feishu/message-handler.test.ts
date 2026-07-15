@@ -1721,15 +1721,17 @@ describe('MessageHandler', () => {
       expect(msg.attachments).toBeDefined();
     });
 
-    it('should skip download when file already exists (cache hit, Issue #4326)', async () => {
-      // Create a real file on disk so fs.access (unmocked) finds it.
-      // fs/promises.mkdir and writeFile are mocked, so use sync real fs.
+    it('should skip download when file exists with a matching key sidecar (cache hit, Issue #4326)', async () => {
+      // Cache validity is bound to fileKey via a `<path>.key` sidecar. fs.access
+      // and fs.readFile are unmocked (real); fs.stat is mocked to {size:1024} and
+      // fs.mkdir/writeFile are no-ops — so seed real files via sync fs.
       const realFs = await import('fs');
       const { join } = await import('path');
       const downloadDir = join('/tmp/mh-test', 'downloads');
       realFs.mkdirSync(downloadDir, { recursive: true });
       const filePath = join(downloadDir, 'image_img_cached');
       realFs.writeFileSync(filePath, 'fake image data');
+      realFs.writeFileSync(`${filePath}.key`, 'img_cached');
 
       try {
         const { handler } = createHandler();
@@ -1746,7 +1748,116 @@ describe('MessageHandler', () => {
         // File path is returned in the attachment
         expect(result?.attachment?.filePath).toBe(filePath);
       } finally {
-        realFs.unlinkSync(filePath);
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should re-download when no cached file exists (cache miss, Issue #4326)', async () => {
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+
+      try {
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        await (handler as any).handleQuotedFileMessage(
+          'image',
+          JSON.stringify({ image_key: 'img_miss' }),
+          'msg_miss',
+        );
+
+        // No file on disk → cache miss → download IS invoked
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should hit via extension-corrected sibling when the bare path is absent (Issue #4326)', async () => {
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+      // ensureFileExtensionFromPath may rename image_img_sib → image_img_sib.png.
+      // Seed only the renamed sibling + its sidecar; the bare path must not exist.
+      const siblingPath = join(downloadDir, 'image_img_sib.png');
+      realFs.writeFileSync(siblingPath, 'fake png data');
+      realFs.writeFileSync(`${siblingPath}.key`, 'img_sib');
+
+      try {
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        const result = await (handler as any).handleQuotedFileMessage(
+          'image',
+          JSON.stringify({ image_key: 'img_sib' }),
+          'msg_sib',
+        );
+
+        expect(spy).not.toHaveBeenCalled();
+        expect(result?.attachment?.filePath).toBe(siblingPath);
+      } finally {
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should re-download when a same-named file belongs to a different fileKey (Issue #4326 collision)', async () => {
+      // P1 regression: a user-supplied file_name can collide across distinct
+      // resources in the shared downloadDir. The sidecar must prevent a false hit
+      // that would hand the agent a different file's bytes.
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+      const filePath = join(downloadDir, 'report.pdf');
+      realFs.writeFileSync(filePath, 'resource A content');
+      realFs.writeFileSync(`${filePath}.key`, 'keyA');
+
+      try {
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        // Same file_name, DIFFERENT file_key → sidecar mismatch → must re-download
+        await (handler as any).handleQuotedFileMessage(
+          'file',
+          JSON.stringify({ file_key: 'keyB', file_name: 'report.pdf' }),
+          'msg_collision',
+        );
+
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        realFs.rmSync(downloadDir, { recursive: true, force: true });
+      }
+    });
+
+    it('should re-download when the cached file is 0 bytes (stale, Issue #4326)', async () => {
+      const realFs = await import('fs');
+      const { join } = await import('path');
+      const fsPromises = await import('fs/promises');
+      const downloadDir = join('/tmp/mh-test', 'downloads');
+      realFs.mkdirSync(downloadDir, { recursive: true });
+      const filePath = join(downloadDir, 'image_img_zero');
+      realFs.writeFileSync(filePath, ''); // 0 bytes
+      realFs.writeFileSync(`${filePath}.key`, 'img_zero');
+
+      try {
+        // fs.stat is globally mocked to {size:1024}; force the first stat (inside
+        // isCacheHitFor) to report 0 so the empty file is treated as a miss.
+        vi.mocked(fsPromises.stat).mockResolvedValueOnce({ size: 0 } as any);
+
+        const { handler } = createHandler();
+        const spy = vi.spyOn(handler as any, 'downloadResourceViaLarkCli').mockResolvedValue(undefined);
+
+        await (handler as any).handleQuotedFileMessage(
+          'image',
+          JSON.stringify({ image_key: 'img_zero' }),
+          'msg_zero',
+        );
+
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
         realFs.rmSync(downloadDir, { recursive: true, force: true });
       }
     });
