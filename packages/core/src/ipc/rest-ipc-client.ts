@@ -20,7 +20,12 @@
 
 import { createLogger } from '../utils/logger.js';
 import type { IpcRequestType, IpcRequestPayloads, IpcResponsePayloads } from './protocol.js';
-import type { IpcClientLike } from './ipc-client-facade.js';
+import {
+  type IpcClientLike,
+  loopStart as facadeLoopStart,
+  loopStop as facadeLoopStop,
+  loopStatus as facadeLoopStatus,
+} from './ipc-client-facade.js';
 
 const logger = createLogger('RestIpcClient');
 
@@ -198,5 +203,27 @@ export class RestIpcClient implements IpcClientLike {
   /** No persistent resources to close (stateless HTTP). */
   close(): void {
     // No-op — HTTP is stateless, unlike the Unix-socket IPC client.
+  }
+
+  /** Alias for close(), matching UnixSocketIpcClient.disconnect() signature. */
+  disconnect(): Promise<void> {
+    this.close();
+    return Promise.resolve();
+  }
+
+  // Convenience methods mirroring UnixSocketIpcClient (delegating to facade
+  // functions which call request<T> internally). This ensures full method
+  // parity so callers that use these directly work with either client.
+
+  async loopStart(params: Parameters<typeof facadeLoopStart>[1]) {
+    return await facadeLoopStart(this, params);
+  }
+
+  async loopStop(loopId: string) {
+    return await facadeLoopStop(this, loopId);
+  }
+
+  async loopStatus(loopId: string) {
+    return await facadeLoopStatus(this, loopId);
   }
 }
