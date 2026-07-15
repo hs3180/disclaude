@@ -26,10 +26,33 @@ const logger = createLogger('RestIpcClient');
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
- * Route table: IPC method → REST endpoint. All 8 channel methods + ping have
- * REST parity (HttpApiServer, Issue #4279).
+ * Default response shape: strip the `ok` REST envelope (REST responses are
+ * `{ ok: true, ...IpcResponsePayload }`; IPC payloads are just the inner fields).
  */
-const CHANNEL_ROUTES: Readonly<Record<string, { method: 'GET' | 'POST'; path: string }>> = {
+const stripOk = (body: Record<string, unknown>): Record<string, unknown> => {
+  const { ok: _ok, ...rest } = body;
+  return rest;
+};
+
+/** A route entry: REST endpoint + optional dynamic-path builder + response shaping. */
+interface Route {
+  method: 'GET' | 'POST';
+  /** Static path (e.g. `/api/send-message`). */
+  path?: string;
+  /** Dynamic path builder (e.g. for path-param routes like loopStatus). */
+  pathBuilder?: (payload: Record<string, unknown>) => string;
+  /** Per-route response shaping (default: strip `ok`). */
+  shape?: (body: Record<string, unknown>) => Record<string, unknown>;
+}
+
+/**
+ * Route table: IPC method → REST endpoint. Covers all 12 IPC methods:
+ * - 8 channel methods + ping → #4279 Phase 1 endpoints (strip-ok shaping).
+ * - pushToAgent → /api/push (REST {ok,message} → IPC {success}).
+ * - loopStart/loopStop/loopStatus → /api/loop/* (REST shapes adapted to IPC).
+ */
+const ROUTES: Readonly<Record<string, Route>> = {
+  // Channel methods (Issue #4279 Phase 1 endpoints)
   ping: { method: 'GET', path: '/api/ping' },
   sendMessage: { method: 'POST', path: '/api/send-message' },
   sendCard: { method: 'POST', path: '/api/send-card' },
@@ -38,6 +61,19 @@ const CHANNEL_ROUTES: Readonly<Record<string, { method: 'GET' | 'POST'; path: st
   sendInteractive: { method: 'POST', path: '/api/send-interactive' },
   listTempChats: { method: 'GET', path: '/api/temp-chats' },
   markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
+  // pushToAgent → /api/push (REST returns {ok, message}; IPC expects {success})
+  pushToAgent: { method: 'POST', path: '/api/push', shape: (b) => ({ success: b.ok === true }) },
+  // Loop Runner → /api/loop/* (REST shapes adapted to IPC payloads)
+  loopStart: {
+    method: 'POST', path: '/api/loop/start',
+    shape: (b) => ({ success: b.ok === true, ...(b.loopId ? { loopId: b.loopId } : {}) }),
+  },
+  loopStop: { method: 'POST', path: '/api/loop/stop', shape: (b) => ({ success: b.ok === true }) },
+  loopStatus: {
+    method: 'GET',
+    pathBuilder: (p) => `/api/loop/status/${p.loopId}`,
+    shape: (b) => ({ success: b.ok === true, ...(b.status ? { status: b.status } : {}) }),
+  },
 };
 
 export interface RestIpcClientOptions {
@@ -71,15 +107,13 @@ export class RestIpcClient {
     payload?: Record<string, unknown>,
     options?: { timeoutMs?: number },
   ): Promise<Record<string, unknown>> {
-    const route = CHANNEL_ROUTES[type];
+    const route = ROUTES[type];
     if (!route) {
-      throw new Error(
-        `RestIpcClient: method '${type}' is not in the channel route table. ` +
-          'pushToAgent/loop methods are not yet routed (Phase 2 follow-up).',
-      );
+      throw new Error(`RestIpcClient: unsupported method '${type}'`);
     }
 
-    const url = `${this.baseUrl}${route.path}`;
+    const path = route.pathBuilder ? route.pathBuilder(payload ?? {}) : (route.path ?? '');
+    const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {};
     const init: RequestInit = { method: route.method, headers };
 
@@ -118,9 +152,8 @@ export class RestIpcClient {
       throw new Error(`REST_${type}_FAILED: ${msg}`);
     }
 
-    // Strip the `ok` REST envelope; return the IPC payload fields.
-    const { ok: _ok, ...result } = json;
-    return result;
+    // Apply per-route response shaping (default: strip the `ok` envelope).
+    return (route.shape ?? stripOk)(json);
   }
 
   /**
