@@ -127,6 +127,24 @@ interface QuotedMessageResult {
 }
 
 /**
+ * Issue #4319: message types whose content is a downloadable media payload.
+ * Used by getThreadContext to decide whether to download + surface the file
+ * (instead of extractMessageText's opaque placeholder).
+ */
+const MEDIA_MESSAGE_TYPES = new Set(['image', 'file', 'audio', 'media', 'video']);
+
+/** Issue #4319: short Chinese label for a media message type (thread-context display). */
+function mediaThreadLabel(messageType?: string): string {
+  switch (messageType) {
+    case 'image': return '图片';
+    case 'file': return '文件';
+    case 'audio': return '语音';
+    case 'video': return '视频';
+    default: return '媒体';
+  }
+}
+
+/**
  * Message Handler.
  *
  * Handles incoming Feishu messages and card actions.
@@ -354,7 +372,32 @@ export class MessageHandler {
           break;
         }
 
-        const text = this.extractMessageText(msg.message.message_type, msg.message.content || '{}');
+        const msgType = msg.message.message_type;
+        let text = this.extractMessageText(msgType, msg.message.content || '{}');
+
+        // Issue #4319: media messages (image/file/audio/media/video) only yield an
+        // opaque placeholder from extractMessageText. Download the file (reusing the
+        // quoted-message path) and surface its name + local path so a media
+        // topic-anchor in the thread is legible to the agent instead of "[未解析的 image 消息]".
+        if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
+          try {
+            const media = await this.handleQuotedFileMessage(
+              msgType || '',
+              msg.message.content || '{}',
+              msg.message.message_id || currentId,
+            );
+            if (media?.attachment?.filePath) {
+              text = `[${mediaThreadLabel(msgType)}: ${media.attachment.fileName}]（已下载到本地: ${media.attachment.filePath}）`;
+            }
+            // else: keep extractMessageText's placeholder (download failed / no token)
+          } catch (mediaErr) {
+            logger.debug(
+              { err: mediaErr, messageId: msg.message.message_id },
+              'Failed to extract media in thread context; using placeholder',
+            );
+          }
+        }
+
         if (text) {
           threadMessages.push({
             messageId: msg.message.message_id || currentId,

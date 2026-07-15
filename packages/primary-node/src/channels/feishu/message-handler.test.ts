@@ -2014,6 +2014,60 @@ describe('MessageHandler', () => {
       expect(msg.metadata.chatHistoryContext).toBeUndefined();
     });
 
+    it('should download + surface media files in thread context (Issue #4319)', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            // Chain: image message (parent → root text)
+            get: vi.fn()
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'image',
+                    content: JSON.stringify({ image_key: 'img_test123' }),
+                    message_id: 'msg_image',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'See this screenshot' }),
+                    message_id: 'msg_root',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      // Stub the download path (lark-cli / disk) so this tests getThreadContext's
+      // media integration, not the download mechanics.
+      const spy = vi.spyOn(handler as any, 'handleQuotedFileMessage').mockResolvedValue({
+        text: '> **引用的消息**: [图片] img_test123',
+        attachment: { fileName: 'image_img_test123.png', filePath: '/tmp/downloads/image_img_test123.png' },
+      });
+
+      const result = await (handler as any).getThreadContext('msg_image');
+
+      expect(result).toBeDefined();
+      // Image is surfaced with its name + downloaded path, not the opaque placeholder
+      expect(result).toContain('[图片: image_img_test123.png]');
+      expect(result).toContain('/tmp/downloads/image_img_test123.png');
+      expect(result).not.toContain('[未解析的 image 消息]');
+      // Non-media (text) message is still extracted normally
+      expect(result).toContain('See this screenshot');
+      expect(spy).toHaveBeenCalledWith('image', JSON.stringify({ image_key: 'img_test123' }), 'msg_image');
+    });
+
     it('should not fetch thread context for non-topic groups', async () => {
       mockState.isBotMentioned = true;
       const mockClient = {
