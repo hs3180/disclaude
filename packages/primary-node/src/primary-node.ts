@@ -719,6 +719,28 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Send a text message to a chat — delegates to the channel's sendMessage
+   * capability. REST parity with the IPC sendMessage method (Issue #4279).
+   *
+   * @returns { success: boolean; messageId?: string } (mirrors IPC IpcResponsePayloads)
+   */
+  async sendMessage(
+    chatId: string,
+    text: string,
+    threadId?: string,
+    mentions?: Array<{ openId: string; name?: string }>,
+  ): Promise<{ success: boolean; messageId?: string }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h) {
+      throw new Error('No channel handlers available');
+    }
+    // The channel handler returns Promise<void> (the IPC layer synthesizes
+    // success/messageId); REST confirms acceptance with { success: true }.
+    await h.sendMessage(chatId, text, threadId, mentions);
+    return { success: true };
+  }
+
+  /**
    * Resolve the channel API handlers for a chatId.
    *
    * Shared by the composite IPC handlers and the LoopRunner push callback.
