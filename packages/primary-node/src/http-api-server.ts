@@ -8,6 +8,7 @@
  *
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
+ * - `GET /api/ping` — Liveness probe (`{ ok: true, pong: true }`); REST parity with IPC `ping` (#4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
  *
  * Authentication:
@@ -321,6 +322,9 @@ export class HttpApiServer {
    */
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
+    // Issue #4168 (Phase 1, #4279): REST parity with the IPC `ping` method —
+    // a token-exempt (GET) health-check endpoint.
+    this.addRoute('GET', '/api/ping', this.handlePing.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -394,6 +398,23 @@ export class HttpApiServer {
       version: PRIMARY_NODE_VERSION,
     };
     this.sendJson(res, 200, response);
+    return Promise.resolve();
+  }
+
+  /**
+   * GET /api/ping handler.
+   *
+   * Issue #4168 (Phase 1, #4279): REST health-check endpoint, mirroring the IPC
+   * `ping` method (`{ success: true, payload: { pong: true } }`). GET routes are
+   * token-exempt (see the apiToken check), so it works like /api/status for
+   * liveness probes.
+   */
+  private handlePing(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    this.sendJson(res, 200, { ok: true, pong: true });
     return Promise.resolve();
   }
 
