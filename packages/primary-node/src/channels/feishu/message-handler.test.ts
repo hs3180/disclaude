@@ -2068,6 +2068,60 @@ describe('MessageHandler', () => {
       expect(spy).toHaveBeenCalledWith('image', JSON.stringify({ image_key: 'img_test123' }), 'msg_image');
     });
 
+    it('should retain placeholder when media download fails — no attachment (Issue #4329)', async () => {
+      const mockClient = {
+        im: { message: { get: vi.fn().mockResolvedValueOnce({
+          data: { message: { message_type: 'image', content: JSON.stringify({ image_key: 'img_fail' }),
+            message_id: 'msg_img_fail', parent_id: undefined, sender: { sender_type: 'user' } } },
+        }) } },
+      };
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      vi.spyOn(handler as any, 'handleQuotedFileMessage').mockResolvedValue({
+        text: '> **引用的消息**: [图片] img_fail（下载失败）',
+      });
+      const result = await (handler as any).getThreadContext('msg_img_fail');
+      expect(result).toBeDefined();
+      expect(result).toContain('[未解析的 image 消息]');
+      expect(result).not.toContain('[图片:');
+    });
+
+    it('should retain placeholder when handleQuotedFileMessage throws (Issue #4329)', async () => {
+      const mockClient = {
+        im: { message: { get: vi.fn().mockResolvedValueOnce({
+          data: { message: { message_type: 'image', content: JSON.stringify({ image_key: 'img_throw' }),
+            message_id: 'msg_img_throw', parent_id: undefined, sender: { sender_type: 'user' } } },
+        }) } },
+      };
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      vi.spyOn(handler as any, 'handleQuotedFileMessage').mockRejectedValue(new Error('download failed'));
+      const result = await (handler as any).getThreadContext('msg_img_throw');
+      expect(result).toBeDefined();
+      expect(result).toContain('[未解析的 image 消息]');
+      expect(result).not.toContain('[图片:');
+    });
+
+    it('should surface non-image media with correct label — audio (Issue #4329)', async () => {
+      const mockClient = {
+        im: { message: { get: vi.fn().mockResolvedValueOnce({
+          data: { message: { message_type: 'audio', content: JSON.stringify({ file_key: 'audio_test' }),
+            message_id: 'msg_audio', parent_id: undefined, sender: { sender_type: 'user' } } },
+        }) } },
+      };
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      vi.spyOn(handler as any, 'handleQuotedFileMessage').mockResolvedValue({
+        text: '> **引用的消息**: [语音消息] audio_test',
+        attachment: { fileName: 'audio_test.mp3', filePath: '/tmp/downloads/audio_test.mp3' },
+      });
+      const result = await (handler as any).getThreadContext('msg_audio');
+      expect(result).toBeDefined();
+      expect(result).toContain('[语音: audio_test.mp3]');
+      expect(result).toContain('/tmp/downloads/audio_test.mp3');
+      expect(result).not.toContain('[未解析的 audio 消息]');
+    });
+
     it('should not fetch thread context for non-topic groups', async () => {
       mockState.isBotMentioned = true;
       const mockClient = {
