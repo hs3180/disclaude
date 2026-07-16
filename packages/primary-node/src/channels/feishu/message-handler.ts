@@ -597,33 +597,94 @@ export class MessageHandler {
         await fs.mkdir(downloadDir, { recursive: true });
         localPath = path.join(downloadDir, String(fileName || fileKey));
 
-        logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
-
-        await this.downloadResourceViaLarkCli(
-          messageId,
-          fileKey,
-          mapResourceType(messageType),
-          localPath,
-        );
-
-        // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
-        const correctedPath = await ensureFileExtensionFromPath(localPath);
-        if (correctedPath !== localPath) {
-          localPath = correctedPath;
-          fileName = path.basename(correctedPath);
-        }
-
-        // Issue #2411: Verify file was actually written to disk
-        try {
-          const stat = await fs.stat(localPath);
-          if (stat.size === 0) {
-            throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
+        // Issue #4326: skip re-download when a non-empty file already exists at the
+        // target path or an extension-corrected sibling (left by ensureFileExtensionFromPath).
+        //
+        // Cache validity is bound to fileKey via a `<path>.key` sidecar (written on
+        // first download): downloadDir is shared/persistent, and for `file`/`audio`
+        // the on-disk name is the user-supplied file_name, which can collide across
+        // distinct resources. Only a matching sidecar proves the on-disk bytes belong
+        // to THIS resource — without it a same-named-but-different file would be a
+        // false hit, handing the agent stale/wrong content.
+        //
+        // Existence is gated on fs.access (not fs.stat): the test suite mocks
+        // fs.stat to always return {size:1024}, which would otherwise give false hits.
+        const isCacheHitFor = async (candidate: string): Promise<boolean> => {
+          try {
+            await fs.access(candidate);
+            if ((await fs.stat(candidate)).size === 0) {return false;}
+            const storedKey = (await fs.readFile(`${candidate}.key`, 'utf8')).trim();
+            return storedKey === fileKey;
+          } catch {
+            return false;
           }
-        } catch (statError) {
-          throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+        };
+
+        let cacheHit = false;
+        if (await isCacheHitFor(localPath)) {
+          cacheHit = true;
+        } else {
+          // Bare path missed — look for an extension-corrected sibling
+          // (ensureFileExtensionFromPath may have renamed <base> → <base>.<ext>).
+          // If multiple siblings exist, the first in FS order wins; the sidecar
+          // match still guarantees we only reuse the correct resource.
+          const base = path.basename(localPath);
+          let sibling: string | undefined;
+          try {
+            sibling = (await fs.readdir(downloadDir)).find(
+              // Skip `<name>.key` sidecars (they also start with `<base>.`).
+              e => e !== base && e.startsWith(`${base}.`) && !e.endsWith('.key'),
+            );
+          } catch (readdirError) {
+            logger.debug({ err: readdirError, downloadDir }, 'Failed to list download dir for cache sibling lookup');
+          }
+          if (sibling && await isCacheHitFor(path.join(downloadDir, sibling))) {
+            localPath = path.join(downloadDir, sibling);
+            fileName = path.basename(sibling);
+            cacheHit = true;
+          }
         }
 
-        logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
+        if (cacheHit) {
+          logger.debug({ fileKey, localPath }, 'Quoted file cache hit — skipping download');
+        } else {
+          logger.info({ fileKey, fileName, localPath, quotedMessageId: messageId }, 'Downloading quoted file from Feishu');
+
+          await this.downloadResourceViaLarkCli(
+            messageId,
+            fileKey,
+            mapResourceType(messageType),
+            localPath,
+          );
+
+          // Issue #1637, #1663: Ensure file has correct extension via magic bytes detection
+          const correctedPath = await ensureFileExtensionFromPath(localPath);
+          if (correctedPath !== localPath) {
+            localPath = correctedPath;
+            fileName = path.basename(correctedPath);
+          }
+
+          // Issue #2411: Verify file was actually written to disk
+          try {
+            const stat = await fs.stat(localPath);
+            if (stat.size === 0) {
+              throw new Error(`Downloaded quoted file is empty (0 bytes): ${localPath}`);
+            }
+          } catch (statError) {
+            throw new Error(`Downloaded quoted file not found on disk: ${localPath}`, { cause: statError });
+          }
+
+          // Issue #4326: persist the fileKey sidecar so future lookups can verify
+          // the cache belongs to this resource (guards against same-named collisions).
+          try {
+            await fs.writeFile(`${localPath}.key`, fileKey, 'utf8');
+          } catch (sidecarError) {
+            // Non-fatal: a missing/unwritable sidecar just means the next lookup re-downloads.
+            logger.debug({ err: sidecarError, localPath }, 'Failed to write cache key sidecar');
+          }
+
+          logger.info({ fileKey, localPath }, 'Quoted file downloaded successfully');
+        }
       } catch (downloadError) {
         logger.error({ err: downloadError, fileKey, messageId }, 'Failed to download quoted file');
         localPath = undefined;
