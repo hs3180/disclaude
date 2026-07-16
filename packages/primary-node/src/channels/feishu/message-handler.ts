@@ -128,8 +128,9 @@ interface QuotedMessageResult {
 
 /**
  * Issue #4319: message types whose content is a downloadable media payload.
- * Used by getThreadContext to decide whether to download + surface the file
- * (instead of extractMessageText's opaque placeholder).
+ * Used by getThreadContext to decide whether to surface download guidance
+ * (message_id + key + command) instead of extractMessageText's opaque
+ * placeholder. getThreadContext itself stays read-only and does NOT download.
  */
 const MEDIA_MESSAGE_TYPES = new Set(['image', 'file', 'audio', 'media', 'video']);
 
@@ -254,9 +255,71 @@ export class MessageHandler {
   /**
    * Build a download command string for the agent to use as a fallback hint.
    */
-  private buildDownloadCmd(messageId: string, fileKey: string, resourceType: 'image' | 'file'): string {
+  private buildDownloadCmd(
+    messageId: string,
+    fileKey: string,
+    resourceType: 'image' | 'file',
+    outputPath?: string,
+  ): string {
     const ext = resourceType === 'image' ? 'jpg' : 'bin';
-    return `npx @larksuite/cli im +messages-resources-download --message-id ${messageId} --file-key ${fileKey} --type ${resourceType} --as bot --output ./downloaded_file.${ext}`;
+    const output = outputPath ?? `./downloaded_file.${ext}`;
+    return `npx @larksuite/cli im +messages-resources-download --message-id ${messageId} --file-key ${fileKey} --type ${resourceType} --as bot --output ${output}`;
+  }
+
+  /**
+   * Issue #4319 (read-only design, 2026-07-16): build actionable download
+   * guidance for a media message in thread context — WITHOUT downloading. The
+   * agent receives the message_id, the resource key, and a ready-to-run download
+   * command, so it can fetch the content on demand if it actually needs it.
+   *
+   * This is the read-only counterpart to handleQuotedFileMessage: getThreadContext
+   * must not spawn lark-cli or touch the filesystem just to summarize a thread.
+   *
+   * Returns undefined when no key can be parsed from content; the caller then
+   * keeps extractMessageText's opaque placeholder as the honest fallback.
+   */
+  private buildMediaThreadGuidance(
+    messageType: string,
+    content: string,
+    messageId: string,
+  ): string | undefined {
+    let fileKey: string | undefined;
+    let fileName: string | undefined;
+    try {
+      const parsed = JSON.parse(content);
+      if (messageType === 'image') {
+        fileKey = parsed.image_key;
+        fileName = `image_${fileKey}`;
+      } else if (messageType === 'audio') {
+        // Issue #1966: Audio messages use file_key in content JSON
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `audio_${fileKey}`;
+      } else {
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `file_${fileKey}`;
+      }
+    } catch {
+      return undefined;
+    }
+    if (!fileKey) {
+      return undefined;
+    }
+
+    const label = mediaThreadLabel(messageType);
+    const keyField = messageType === 'image' ? 'image_key' : 'file_key';
+    const resourceType = mapResourceType(messageType);
+    const ext = resourceType === 'image' ? 'jpg' : 'bin';
+    // Per-message output path so multiple media messages in one thread don't
+    // collide on a single ./downloaded_file.* target.
+    const outputPath = `./downloads/${messageId}.${ext}`;
+    const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType, outputPath);
+
+    return [
+      `[${label}消息 (${keyField}=${fileKey}${fileName ? `, 名称=${fileName}` : ''}): 线程上下文未自动获取其内容。如需查看，可执行下方命令下载后用 Read 工具读取]`,
+      '```bash',
+      downloadCmd,
+      '```',
+    ].join('\n');
   }
 
   /**
@@ -375,26 +438,23 @@ export class MessageHandler {
         const msgType = msg.message.message_type;
         let text = this.extractMessageText(msgType, msg.message.content || '{}');
 
-        // Issue #4319: media messages (image/file/audio/media/video) only yield an
-        // opaque placeholder from extractMessageText. Download the file (reusing the
-        // quoted-message path) and surface its name + local path so a media
-        // topic-anchor in the thread is legible to the agent instead of "[未解析的 image 消息]".
+        // Issue #4319 (read-only design, 2026-07-16): getThreadContext must stay
+        // read-only — it only does client.im.message.get and assembles text. For a
+        // media message we do NOT download (no handleQuotedFileMessage / spawned
+        // lark-cli); instead we surface actionable download guidance (message_id +
+        // key + a ready-to-run command) so the agent can fetch the bytes on demand
+        // if it actually needs them. This replaces the earlier eager-download
+        // approach (#4325), which had no place in a read-only context summary.
+        // Falls back to extractMessageText's placeholder only when no key can be
+        // parsed (nothing to point the agent at).
         if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
-          try {
-            const media = await this.handleQuotedFileMessage(
-              msgType || '',
-              msg.message.content || '{}',
-              msg.message.message_id || currentId,
-            );
-            if (media?.attachment?.filePath) {
-              text = `[${mediaThreadLabel(msgType)}: ${media.attachment.fileName}]（已下载到本地: ${media.attachment.filePath}）`;
-            }
-            // else: keep extractMessageText's placeholder (download failed / no token)
-          } catch (mediaErr) {
-            logger.debug(
-              { err: mediaErr, messageId: msg.message.message_id },
-              'Failed to extract media in thread context; using placeholder',
-            );
+          const guidance = this.buildMediaThreadGuidance(
+            msgType || '',
+            msg.message.content || '{}',
+            msg.message.message_id || currentId,
+          );
+          if (guidance) {
+            text = guidance;
           }
         }
 
