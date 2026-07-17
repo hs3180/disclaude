@@ -452,6 +452,36 @@ describe('adaptSDKMessage', () => {
       expect(result.metadata?.stopReason).toBeUndefined();
     });
 
+    it('should extract num_turns / duration_ms / duration_api_ms into metadata (Issue #4320 part 2)', () => {
+      const message = {
+        type: 'result' as const,
+        subtype: 'success',
+        stop_reason: 'end_turn',
+        num_turns: 3,
+        duration_ms: 4200,
+        duration_api_ms: 3100,
+        usage: { input_tokens: 100, output_tokens: 50 },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.metadata?.numTurns).toBe(3);
+      expect(result.metadata?.durationMs).toBe(4200);
+      expect(result.metadata?.durationApiMs).toBe(3100);
+    });
+
+    it('should leave turn stats undefined when SDK result omits them (Issue #4320 part 2)', () => {
+      const message = {
+        type: 'result' as const,
+        subtype: 'success',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.metadata?.numTurns).toBeUndefined();
+      expect(result.metadata?.durationMs).toBeUndefined();
+      expect(result.metadata?.durationApiMs).toBeUndefined();
+    });
+
     it('should format error result', () => {
       const message = {
         type: 'result' as const,

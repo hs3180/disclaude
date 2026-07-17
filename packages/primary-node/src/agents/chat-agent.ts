@@ -1090,6 +1090,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               messageCount,
               // Issue #4320: surface why the turn ended (end_turn / max_tokens / tool_use / ...).
               stopReason: parsed.metadata?.stopReason,
+              // Issue #4320 (part 2): turn-level observability — round-trips and
+              // end-to-end / API-only duration, so a premature end_turn (few
+              // round-trips, low duration_api_ms) is diagnosable at a glance.
+              numTurns: parsed.metadata?.numTurns,
+              durationMs: parsed.metadata?.durationMs,
+              durationApiMs: parsed.metadata?.durationApiMs,
             },
             'Result received, turn complete'
           );

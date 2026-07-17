@@ -179,6 +179,23 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
           metadata.stopReason = message.stop_reason;
         }
 
+        // Issue #4320 (part 2): propagate additional SDK result observability
+        // fields so a premature turn end (e.g. end_turn after a single
+        // round-trip, or very low duration_api_ms) is distinguishable from a
+        // genuinely long multi-step turn without re-deriving from raw SDK logs.
+        // Log-only metadata; the user-facing stats line is unchanged. Runtime
+        // guards mirror the rest of this handler (defend against runtime data
+        // diverging from the SDK type declarations).
+        if (typeof message.num_turns === 'number') {
+          metadata.numTurns = message.num_turns;
+        }
+        if (typeof message.duration_ms === 'number') {
+          metadata.durationMs = message.duration_ms;
+        }
+        if (typeof message.duration_api_ms === 'number') {
+          metadata.durationApiMs = message.duration_api_ms;
+        }
+
         return {
           type: 'result',
           content: statsText,
