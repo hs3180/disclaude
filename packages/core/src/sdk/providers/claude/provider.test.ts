@@ -465,6 +465,81 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
+    // Issue #4313: the L1 in-request retry count is operator-tunable via
+    // DISCLAUDE_QUERY_MAX_RETRIES (default 2). 0 disables; higher values retry
+    // more before rethrowing. True regression: revert the env read and the
+    // override tests regress to the hardcoded default of 2.
+    it('Issue #4313: DISCLAUDE_QUERY_MAX_RETRIES=0 disables the in-request retry', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_QUERY_MAX_RETRIES = '0';
+
+      // Always-throw transient error: with retries disabled, it must rethrow on
+      // the first attempt instead of retrying.
+      mockQuery.mockImplementation(() =>
+        Object.assign(
+          (async function* () { throw new Error('ECONNRESET: connection reset'); })(),
+          { interrupt: vi.fn(), close: vi.fn() },
+        ),
+      );
+
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      await expect(async () => {
+        for await (const _msg of result.iterator) { void _msg; }
+      }).rejects.toThrow('ECONNRESET');
+
+      expect(mockQuery).toHaveBeenCalledTimes(1); // no retry
+      delete process.env.DISCLAUDE_QUERY_MAX_RETRIES;
+    });
+
+    it('Issue #4313: DISCLAUDE_QUERY_MAX_RETRIES=3 retries up to 3 times before succeeding', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_QUERY_MAX_RETRIES = '3';
+
+      let callCount = 0;
+      mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown> }) => {
+        callCount++;
+        if (callCount <= 3) {
+          // First 3 attempts: transient error before any message.
+          return Object.assign(
+            (async function* () {
+              for await (const _msg of arg.prompt ?? []) { void _msg; }
+              throw new Error('ECONNRESET: connection reset');
+            })(),
+            { interrupt: vi.fn(), close: vi.fn() },
+          );
+        }
+        // 4th attempt succeeds.
+        return Object.assign(
+          (async function* () {
+            for await (const _msg of arg.prompt ?? []) { void _msg; }
+            yield { type: 'assistant', message: { content: [{ type: 'text', text: 'recovered' }] } };
+          })(),
+          { interrupt: vi.fn(), close: vi.fn() },
+        );
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+
+      // 3 failed attempts + 1 successful = 4 query calls; recovery message came through.
+      expect(mockQuery).toHaveBeenCalledTimes(4);
+      expect(messages.some((m) => m.role === 'assistant')).toBe(true);
+      delete process.env.DISCLAUDE_QUERY_MAX_RETRIES;
+    });
+
     // Issue #3706 (GLM stall): no-content-progress watchdog.
     // Margins chosen with headroom over the timeout to stay green under CI load.
     it('should terminate on GLM stall (message_start, no content_block_delta for STALL_TIMEOUT_MS)', async () => {
