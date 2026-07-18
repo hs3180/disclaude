@@ -119,7 +119,7 @@ Schedule content prompt here
 | `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
 | `timeoutMs` | No | `300000` (5 min) | Max execution time in ms; the task is forcefully terminated after this duration so a hung task can't block later runs (Issue #3894). |
 | `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
-| `clearContext` | No | `false` | Reset the chat's persistent agent **before** this task runs, so it executes on a fresh session with no accumulated conversation context (Issue #4206). Use for tasks that should run unaffected by prior chat history. ⚠️ Destructive to the chat's ongoing session — a later user message in the same chat also lands on the fresh session until context re-accumulates; confirm intent before enabling. |
+| `clearContext` | No | `false` | Reset the chat's persistent agent **before** this task runs, so it executes on a fresh session with no prior conversation context (Issue #4206). ⚠️ **Destructive**: subsequent user messages in the same chat also land on the fresh session until context re-accumulates — confirm intent before enabling. |
 
 ---
 
