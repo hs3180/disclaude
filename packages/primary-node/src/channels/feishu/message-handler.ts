@@ -135,12 +135,13 @@ const MEDIA_MESSAGE_TYPES = new Set(['image', 'file', 'audio', 'media', 'video']
 
 /** Issue #4319: short Chinese label for a media message type (thread-context display). */
 function mediaThreadLabel(messageType?: string): string {
+  // Issue #4330: align with handleQuotedFileMessage's typeLabel so both paths
+  // use the same Chinese labels for the same media types.
   switch (messageType) {
     case 'image': return '图片';
     case 'file': return '文件';
-    case 'audio': return '语音';
-    case 'video': return '视频';
-    default: return '媒体';
+    case 'audio': return '语音消息';
+    default: return '媒体文件';
   }
 }
 
@@ -533,7 +534,8 @@ export class MessageHandler {
           // Issue #1711: Extract full text from interactive card messages
           const parsed = JSON.parse(msgContent);
           quotedText = extractFullCardContent(parsed);
-        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio') {
+        // Issue #4330: include 'video' to match MEDIA_MESSAGE_TYPES used by getThreadContext.
+        } else if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
       } catch {
