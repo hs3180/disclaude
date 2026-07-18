@@ -535,7 +535,7 @@ export class MessageHandler {
           const parsed = JSON.parse(msgContent);
           quotedText = extractFullCardContent(parsed);
         // Issue #4330: include 'video' to match MEDIA_MESSAGE_TYPES used by getThreadContext.
-        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio' || msgType === 'video') {
+        } else if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
       } catch {
