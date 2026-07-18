@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { RestartManager } from './restart-manager.js';
 import { createLogger } from '../utils/logger.js';
+import { tagErrorCategory } from '../utils/error-handler.js';
 
 describe('RestartManager', () => {
   let manager: RestartManager;
@@ -49,6 +50,80 @@ describe('RestartManager', () => {
     it('Issue #4192 (L2): allows restart for transient (network) errors', () => {
       const decision = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(decision.allowed).toBe(true);
+    });
+
+    // Issue #4192 (L2): shouldRestart must reuse L0's pre-computed tag on the
+    // error object (acceptance: "复用 L0 的 tag, 不重复分类") instead of
+    // re-classifying a bare message string. classifyError keys off the error's
+    // constructor NAME as well as its message, so `isTransient(new Error(msg))`
+    // loses the name and misclassifies — e.g. a TimeoutError whose message has
+    // no "timeout" keyword classifies as UNKNOWN (non-transient) and would
+    // WRONGLY suppress a restart. These tests lock the tag-reuse path.
+
+    it('Issue #4192 (L2): reuses L0 tag — name-classified transient error allows restart', () => {
+      // A TimeoutError whose message lacks any transient keyword. classifyError
+      // keys off the constructor name → TIMEOUT → transient. But re-classifying
+      // `new Error(message)` would drop the name → UNKNOWN → non-transient.
+      class TimeoutError extends Error {
+        constructor(message: string) {
+          super(message);
+          this.name = 'TimeoutError';
+        }
+      }
+      const error = new TimeoutError('upstream stream ended unexpectedly');
+      tagErrorCategory(error); // attach the L0 tag (as chat-agent does before calling)
+      expect(tagErrorCategory(error).transient).toBe(true); // sanity: name → TIMEOUT
+
+      // With the fix: reads the tag → transient → restart allowed.
+      const decision = manager.shouldRestart('chat-1', error.message, error);
+      expect(decision.allowed).toBe(true);
+      // True regression: without the error arg (legacy message-only path), the
+      // bare-message re-classification says UNKNOWN/non-transient → refused.
+      const legacyDecision = manager.shouldRestart('chat-2', error.message);
+      expect(legacyDecision.allowed).toBe(false);
+      expect(legacyDecision.reason).toBe('non_transient');
+    });
+
+    it('Issue #4192 (L2): reuses L0 tag — name-classified persistent error refuses restart without consuming quota', () => {
+      // A ValidationError whose message lacks the "invalid/required/missing"
+      // keywords. classifyError keys off the name → VALIDATION → non-transient.
+      class ValidationError extends Error {
+        constructor(message: string) {
+          super(message);
+          this.name = 'ValidationError';
+        }
+      }
+      const error = new ValidationError('schema mismatch');
+      tagErrorCategory(error);
+      expect(tagErrorCategory(error).transient).toBe(false); // sanity
+
+      const decision = manager.shouldRestart('chat-1', error.message, error);
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toBe('non_transient');
+      // Persistent errors must NOT consume a restart slot (so a later transient
+      // error can still use the full quota).
+      expect(decision.restartCount).toBe(0);
+    });
+
+    it('Issue #4192 (L2): circuit breaker still trips on repeated transient tagged errors', () => {
+      class TimeoutError extends Error {
+        constructor(message: string) {
+          super(message);
+          this.name = 'TimeoutError';
+        }
+      }
+      const tagged = () => {
+        const e = new TimeoutError('stream ended');
+        tagErrorCategory(e);
+        return e;
+      };
+      manager.shouldRestart('chat-1', 'a', tagged());
+      manager.shouldRestart('chat-1', 'b', tagged());
+      manager.shouldRestart('chat-1', 'c', tagged());
+      const decision = manager.shouldRestart('chat-1', 'd', tagged());
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toBe('max_restarts_exceeded');
+      expect(decision.circuitOpen).toBe(true);
     });
 
     it('should allow first restart with no backoff', () => {
