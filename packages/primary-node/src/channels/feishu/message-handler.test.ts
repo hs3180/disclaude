@@ -1542,7 +1542,7 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.content).toContain('语音消息');
+      expect(msg.content).toContain('语音');
       expect(msg.content).toContain('发送了一段');
       expect(msg.content).toContain('voice.mp3');
       expect(msg.content).toContain('音频文件');
@@ -1582,7 +1582,7 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.content).toContain('媒体文件');
+      expect(msg.content).toContain('媒体');
       expect(msg.content).toContain('video.mp4');
       expect(msg.attachments).toBeDefined();
     });
@@ -1716,7 +1716,7 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.metadata.quotedMessage).toContain('语音消息');
+      expect(msg.metadata.quotedMessage).toContain('语音');
       expect(msg.metadata.quotedMessage).toContain('voice.mp3');
       expect(msg.attachments).toBeDefined();
     });
@@ -1904,7 +1904,7 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.metadata.quotedMessage).toContain('媒体文件');
+      expect(msg.metadata.quotedMessage).toContain('媒体');
       expect(msg.metadata.quotedMessage).toContain('video.mp4');
       expect(msg.attachments).toBeDefined();
     });

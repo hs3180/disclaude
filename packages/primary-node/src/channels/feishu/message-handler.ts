@@ -133,8 +133,13 @@ interface QuotedMessageResult {
  */
 const MEDIA_MESSAGE_TYPES = new Set(['image', 'file', 'audio', 'media', 'video']);
 
-/** Issue #4319: short Chinese label for a media message type (thread-context display). */
-function mediaThreadLabel(messageType?: string): string {
+/**
+ * Issue #4330: unified short Chinese label for a media message type.
+ * Shared by both getThreadContext (#4319) and the quoted-message path
+ * (handleQuotedFileMessage / handleMessageReceive) so the two paths
+ * produce consistent labels instead of drifting (语音 vs 语音消息 etc.).
+ */
+function mediaTypeLabel(messageType?: string): string {
   switch (messageType) {
     case 'image': return '图片';
     case 'file': return '文件';
@@ -387,7 +392,7 @@ export class MessageHandler {
               msg.message.message_id || currentId,
             );
             if (media?.attachment?.filePath) {
-              text = `[${mediaThreadLabel(msgType)}: ${media.attachment.fileName}]（已下载到本地: ${media.attachment.filePath}）`;
+              text = `[${mediaTypeLabel(msgType)}: ${media.attachment.fileName}]（已下载到本地: ${media.attachment.filePath}）`;
             }
             // else: keep extractMessageText's placeholder (download failed / no token)
           } catch (mediaErr) {
@@ -533,8 +538,10 @@ export class MessageHandler {
           // Issue #1711: Extract full text from interactive card messages
           const parsed = JSON.parse(msgContent);
           quotedText = extractFullCardContent(parsed);
-        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio') {
-          return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
+        } else if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
+          // Issue #4330: use the shared MEDIA_MESSAGE_TYPES set (includes video)
+          // so the quoted path stays in sync with getThreadContext's media check.
+          return await this.handleQuotedFileMessage(msgType || '', msgContent, msgId);
         }
       } catch {
         quotedText = msgContent || '';
@@ -691,16 +698,9 @@ export class MessageHandler {
       }
     }
 
-    let typeLabel: string;
-    if (messageType === 'image') {
-      typeLabel = '图片';
-    } else if (messageType === 'file') {
-      typeLabel = '文件';
-    } else if (messageType === 'audio') {
-      typeLabel = '语音消息';
-    } else {
-      typeLabel = '媒体文件';
-    }
+    // Issue #4330: use the shared mediaTypeLabel helper (was 语音消息/媒体文件, now unified
+    // with getThreadContext's labels — 语音/媒体).
+    const typeLabel = mediaTypeLabel(messageType);
     const resourceType = mapResourceType(messageType);
     const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType);
     if (!localPath) {
@@ -770,7 +770,8 @@ export class MessageHandler {
     }
 
     // Handle file/image messages - download to workspace and include path in prompt
-    if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio') {
+    // Issue #4330: use the shared MEDIA_MESSAGE_TYPES set (includes video)
+    if (MEDIA_MESSAGE_TYPES.has(message_type || '')) {
       logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
 
       // Parse content to extract file_key and file_name
@@ -853,16 +854,8 @@ export class MessageHandler {
       await this.addTypingReaction(message_id);
 
       // Build content with file path for the agent prompt
-      let typeLabel: string;
-      if (message_type === 'image') {
-        typeLabel = '图片';
-      } else if (message_type === 'file') {
-        typeLabel = '文件';
-      } else if (message_type === 'audio') {
-        typeLabel = '语音消息';
-      } else {
-        typeLabel = '媒体文件';
-      }
+      // Issue #4330: use the shared mediaTypeLabel helper (unified labels).
+      const typeLabel = mediaTypeLabel(message_type);
       const resourceType = mapResourceType(message_type);
       const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
       const filePrompt = localPath
