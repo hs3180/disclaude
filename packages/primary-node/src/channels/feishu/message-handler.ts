@@ -68,9 +68,9 @@ export interface MessageCallbacks {
   emitControl: (control: ControlCommand) => Promise<ControlResponse>;
   sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<void>;
   /**
-   * Route card action to Worker Node if applicable.
+   * Route card action to the local agent if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
-   * so remote Worker Nodes receive the contextual prompt.
+   * so the agent receives the contextual prompt.
    * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
    */
   routeCardAction?: (message: {
@@ -1169,8 +1169,8 @@ export class MessageHandler {
       }
     }
 
-    // Issue #1629: Resolve action prompt BEFORE routing so that remote
-    // Worker Nodes receive the contextual prompt via resolvedPrompt field.
+    // Issue #1629: Resolve action prompt BEFORE routing so that
+    // the agent receives the contextual prompt via the resolvedPrompt field.
     // Issue #1572: Try to resolve action prompt from InteractiveContextStore.
     // Falls back to default text if no prompt template is registered.
     const defaultMessage = `用户点击了按钮「${buttonText}」`;
@@ -1219,7 +1219,8 @@ export class MessageHandler {
       logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
     });
 
-    // Try to route card action to Worker Node first
+    // Consult routeCardAction first (single-node mode: checks context status only,
+    // never routes remotely — see card-action-router.ts)
     if (this.callbacks.routeCardAction) {
       logger.debug(
         { messageId: message_id, chatId: chat_id, actionValue: action.value },
@@ -1242,7 +1243,7 @@ export class MessageHandler {
       });
 
       if (result.routed) {
-        logger.info({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action routed to Worker Node');
+        logger.info({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action routed');
         return;
       }
 
@@ -1263,9 +1264,9 @@ export class MessageHandler {
     }
 
     // Emit card action as a message to the agent
-    // Issue #2007: This is the fallback path when routeCardAction returns false
-    // (no remote Worker Node registered). The message goes through the same
-    // pipeline as text messages via createDefaultMessageHandler → ChatAgent.processMessage.
+    // Issue #2007: routeCardAction never routes remotely in single-node mode, so
+    // card actions go through the same pipeline as text messages via
+    // createDefaultMessageHandler → ChatAgent.processMessage.
     let emitFailed = false;
     try {
       logger.debug(
