@@ -2068,6 +2068,48 @@ describe('MessageHandler', () => {
       expect(spy).toHaveBeenCalledWith('image', JSON.stringify({ image_key: 'img_test123' }), 'msg_image');
     });
 
+    it('should reuse the manual-download hint in thread context when media download fails (Issue #4327)', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            // Image message whose download fails (no tenant token / download error)
+            get: vi.fn().mockResolvedValueOnce({
+              data: {
+                message: {
+                  message_type: 'image',
+                  content: JSON.stringify({ image_key: 'img_fail' }),
+                  message_id: 'msg_image_fail',
+                  parent_id: undefined,
+                  sender: { sender_type: 'user' },
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      // handleQuotedFileMessage returns the download-failed hint (no attachment):
+      // a two-line "> "-prefixed block — label line + runnable download command.
+      vi.spyOn(handler as any, 'handleQuotedFileMessage').mockResolvedValue({
+        text: '> **引用的消息**: [图片] image_img_fail（下载失败）\n> 可使用以下命令下载: lark-cli im download --key img_fail',
+      });
+
+      const result = await (handler as any).getThreadContext('msg_image_fail');
+
+      expect(result).toBeDefined();
+      // Actionable hint is surfaced, not the opaque placeholder
+      expect(result).toContain('可使用以下命令下载');
+      expect(result).toContain('image_img_fail');
+      expect(result).not.toContain('[未解析的 image 消息]');
+      // The "> " quote prefix is stripped on every line (not just the first),
+      // so the download command is not buried under a blockquote marker.
+      expect(result).not.toContain('> 可使用以下命令下载');
+      expect(result).not.toContain('> **引用的消息**');
+    });
+
     it('should not fetch thread context for non-topic groups', async () => {
       mockState.isBotMentioned = true;
       const mockClient = {

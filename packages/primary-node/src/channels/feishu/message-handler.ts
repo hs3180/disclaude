@@ -391,7 +391,10 @@ export class MessageHandler {
             } else if (media?.text) {
               // Issue #4327: reuse the manual-download hint (includes a runnable
               // download command) instead of the opaque "[未解析的 image 消息]".
-              text = media.text.replace(/^>\s?/m, '');
+              // Strip the "> " quote prefix on every line — the hint is multiline
+              // (label line + download-command line), and the prefix is an artifact
+              // of the quoted-message context, not meaningful in thread history.
+              text = media.text.replace(/^>\s?/gm, '');
             }
             // else: keep extractMessageText's placeholder (download failed / no token)
           } catch (mediaErr) {
