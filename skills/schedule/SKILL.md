@@ -116,6 +116,9 @@ Schedule content prompt here
 | `createdAt` | No | - | Creation timestamp |
 | `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
 | `modelTier` | No | - | Three-level model tier: `"high"`, `"low"`, or `"multimodal"` (resolved to a concrete model via `Config.getModelForTier`; Issue #3059). |
+| `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
+| `timeoutMs` | No | `300000` (5 min) | Max execution time in ms; the task is forcefully terminated after this duration so a hung task can't block later runs (Issue #3894). |
+| `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
 
 ---
 
@@ -165,6 +168,9 @@ enabled: false
 - `blocking`: Blocking mode
 - `model`: Model selection
 - `modelTier`: Model tier selection
+- `timezone`: Cron timezone (IANA)
+- `timeoutMs`: Execution timeout (ms)
+- `cooldownPeriod`: Post-run cooldown (ms)
 - Content (body text)
 
 **Steps:**

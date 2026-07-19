@@ -46,7 +46,7 @@ export interface GetIpcSocketPathOptions {
  *
  * Priority:
  * 1. override parameter (e.g., --socket CLI argument)
- * 2. DISCLAUDE_WORKER_IPC_SOCKET env var (set by Worker Node for MCP Server)
+ * 2. DISCLAUDE_WORKER_IPC_SOCKET env var (set by Primary Node for the MCP Server subprocess — see primary-node.ts; legacy env name retained from the Worker Node architecture removed in #2964)
  * 3. DISCLAUDE_IPC_SOCKET_PATH env var (manual override)
  * 4. IPC_SOCKET_PATH_FILE (written by Primary Node, Issue #3808)
  * 5. DEFAULT_IPC_CONFIG.socketPath (Primary Node default)
