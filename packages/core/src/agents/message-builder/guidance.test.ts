@@ -109,6 +109,20 @@ describe('buildThreadContextSection', () => {
     // --thread accepts any message id in the thread (auto-resolves to root).
     expect(result).toContain('auto-resolves');
   });
+
+  // Issue #4306 nit fixes: mget also advertises its own --download-resources,
+  // and the single-attachment example lands under ./lark-im-resources/ — the
+  // same default dir as the other two commands (no ./downloads/ drift).
+  it('should keep lark-cli download paths consistent across the three commands', () => {
+    const result = buildThreadContextSection('context here');
+    // mget bullet itself mentions --download-resources (scoped to the mget
+    // command via regex — --download-resources also appears on the list line).
+    expect(result).toMatch(/\+messages-mget\b[^`]*--download-resources/);
+    // Single-attachment download example uses ./lark-im-resources/<name>,
+    // matching the default dir stated in the prose (no ./downloads/ drift).
+    expect(result).toContain('./lark-im-resources/<name>');
+    expect(result).not.toContain('./downloads/');
+  });
 });
 
 describe('buildNextStepGuidance', () => {

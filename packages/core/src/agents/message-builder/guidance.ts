@@ -126,10 +126,10 @@ ${threadContext}
 
 - List every message in this thread AND download its attachments (recommended):
   \`npx @larksuite/cli im +threads-messages-list --thread <message-id> --as bot --download-resources\`
-- Fetch specific messages by id (up to 50):
-  \`npx @larksuite/cli im +messages-mget --message-ids <om_xxx>,<om_yyy> --as bot\`
+- Fetch specific messages by id (up to 50), optionally downloading their attachments too:
+  \`npx @larksuite/cli im +messages-mget --message-ids <om_xxx>,<om_yyy> --as bot --download-resources\`
 - Download one message's attachment:
-  \`npx @larksuite/cli im +messages-resources-download --message-id <om_xxx> --file-key <key> --type image|file --as bot --output ./downloads/<name>\`
+  \`npx @larksuite/cli im +messages-resources-download --message-id <om_xxx> --file-key <key> --type image|file --as bot --output ./lark-im-resources/<name>\`
 
 The \`--thread\` flag accepts any \`om_xxx\`/\`omt_xxx\` from this thread (e.g. the Message ID in the metadata above, or one quoted in the Thread Context) and auto-resolves it to the thread root. Downloaded files land under \`./lark-im-resources/\` (or your \`--output\` path) — read them with the Read tool, then answer.
 
