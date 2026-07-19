@@ -112,9 +112,9 @@ export interface FeishuChannelConfig {
   /** Feishu App Secret */
   appSecret?: string;
   /**
-   * Route card action to Worker Node if applicable.
+   * Route card action to the local agent if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
-   * so remote Worker Nodes receive the contextual prompt.
+   * so the agent receives the contextual prompt.
    * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
    */
   routeCardAction?: (message: {

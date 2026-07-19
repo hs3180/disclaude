@@ -68,7 +68,9 @@ export interface FeedbackMessage {
 
 /**
  * Message sent from Communication Node to Execution Node when a card action occurs.
- * This enables Worker Node to receive card interaction callbacks from Primary Node.
+ * Historically enabled a remote Worker Node to receive card interaction callbacks
+ * from Primary Node over WebSocket. Unused in single-node mode (#2717/#2939): card
+ * actions now resolve locally (card-action-router.ts). Retained for reference.
  *
  * Issue #935: WebSocket bidirectional communication for card actions.
  */
@@ -88,10 +90,9 @@ export interface CardActionMessage {
   userId?: string;
   /**
    * Resolved prompt from InteractiveContextStore (Issue #1629).
-   * When Primary Node routes card actions to remote Worker Nodes,
-   * it resolves the prompt template before forwarding so the
-   * Worker Node can use the contextual message instead of a
-   * generic default.
+   * Historically: when Primary Node forwarded card actions to remote Worker Nodes,
+   * it resolved the prompt template first so the Worker Node could use the
+   * contextual message instead of a generic default. Unused in single-node mode.
    */
   resolvedPrompt?: string;
   /** Full action data for complex interactions */
@@ -105,7 +106,8 @@ export interface CardActionMessage {
 
 /**
  * Message sent from Communication Node to Execution Node for card context registration.
- * After a card is sent successfully, Primary Node notifies Worker Node of the message ID.
+ * Historically: after a card was sent, Primary Node notified the Worker Node of the
+ * message ID. Unused in single-node mode (#2717/#2939).
  *
  * Issue #935: WebSocket bidirectional communication for card actions.
  */
