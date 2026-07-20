@@ -13,6 +13,7 @@
  * - `POST /api/upload-file` — Upload a local file to a chat by filePath (REST parity with IPC uploadFile; #4279)
  * - `POST /api/send-message` — Send a text message to a chat (REST parity with IPC sendMessage; #4279)
  * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with IPC sendCard; #4279)
+ * - `POST /api/send-interactive` — Send an interactive card (buttons) to a chat (REST parity with IPC sendInteractive; #4279)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -126,6 +127,28 @@ export type SendCardHandler = (
 ) => Promise<{ success: boolean; messageId?: string }>;
 
 /**
+ * Params for sendInteractive (mirrors the IPC sendInteractive payload).
+ */
+export type SendInteractiveParams = {
+  question: string;
+  options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+  title?: string;
+  context?: string;
+  threadId?: string;
+  actionPrompts?: Record<string, string>;
+};
+
+/**
+ * Handler for sendInteractive requests. Delegates to the channel's
+ * sendInteractive capability (which builds+sends the card and registers
+ * action prompts) — REST parity with the IPC method (Issue #4279).
+ */
+export type SendInteractiveHandler = (
+  chatId: string,
+  params: SendInteractiveParams,
+) => Promise<{ success: boolean; messageId?: string }>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -167,6 +190,7 @@ export class HttpApiServer {
   private uploadFileHandler?: UploadFileHandler;
   private sendMessageHandler?: SendMessageHandler;
   private sendCardHandler?: SendCardHandler;
+  private sendInteractiveHandler?: SendInteractiveHandler;
   private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
@@ -216,6 +240,13 @@ export class HttpApiServer {
    */
   setSendCardHandler(handler: SendCardHandler): void {
     this.sendCardHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/send-interactive (Issue #4279).
+   */
+  setSendInteractiveHandler(handler: SendInteractiveHandler): void {
+    this.sendInteractiveHandler = handler;
   }
 
   setLoopHandlers(handlers: {
@@ -410,6 +441,8 @@ export class HttpApiServer {
     this.addRoute('POST', '/api/send-message', this.handleSendMessage.bind(this));
     // Issue #4279: REST parity with IPC sendCard.
     this.addRoute('POST', '/api/send-card', this.handleSendCard.bind(this));
+    // Issue #4279: REST parity with IPC sendInteractive.
+    this.addRoute('POST', '/api/send-interactive', this.handleSendInteractive.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -758,6 +791,72 @@ export class HttpApiServer {
     } catch (err) {
       logger.error({ err, chatId: raw.chatId }, 'sendCard handler error');
       const msg = err instanceof Error ? err.message : 'sendCard failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/send-interactive handler (Issue #4279).
+   *
+   * Accepts `{ chatId, question, options, title?, context?, threadId?, actionPrompts? }`
+   * and delegates to the channel's sendInteractive capability (which builds+sends
+   * the card and registers action prompts). Mirrors the IPC sendInteractive method.
+   * Response: `{ ok: true, success, messageId? }`.
+   */
+  private async handleSendInteractive(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.sendInteractiveHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'sendInteractive handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown> | null;
+    if (
+      typeof raw !== 'object' || raw === null ||
+      typeof raw.chatId !== 'string' ||
+      typeof raw.question !== 'string' ||
+      !Array.isArray(raw.options) || raw.options.length === 0
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required: chatId (string), question (string), options (non-empty array)' });
+      return;
+    }
+
+    const params: SendInteractiveParams = {
+      question: raw.question as string,
+      options: raw.options as SendInteractiveParams['options'],
+      ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
+      ...(typeof raw.context === 'string' ? { context: raw.context } : {}),
+      ...(typeof raw.threadId === 'string' ? { threadId: raw.threadId } : {}),
+      ...(raw.actionPrompts && typeof raw.actionPrompts === 'object' && !Array.isArray(raw.actionPrompts)
+        ? { actionPrompts: raw.actionPrompts as Record<string, string> }
+        : {}),
+    };
+
+    try {
+      const result = await this.sendInteractiveHandler(raw.chatId as string, params);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'sendInteractive handler error');
+      const msg = err instanceof Error ? err.message : 'sendInteractive failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
   }
