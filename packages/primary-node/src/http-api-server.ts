@@ -743,7 +743,9 @@ export class HttpApiServer {
       ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
       ...(typeof raw.context === 'string' ? { context: raw.context } : {}),
       ...(typeof raw.threadId === 'string' ? { threadId: raw.threadId } : {}),
-      ...(raw.actionPrompts && typeof raw.actionPrompts === 'object' ? { actionPrompts: raw.actionPrompts as Record<string, string> } : {}),
+      ...(raw.actionPrompts && typeof raw.actionPrompts === 'object' && !Array.isArray(raw.actionPrompts)
+        ? { actionPrompts: raw.actionPrompts as Record<string, string> }
+        : {}),
     };
 
     try {

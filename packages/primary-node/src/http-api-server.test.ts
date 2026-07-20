@@ -395,6 +395,26 @@ describe('HttpApiServer', () => {
       expect(statusCode).toBe(500);
       expect(JSON.parse(body).message).toContain('not supported');
     });
+
+    it('should drop actionPrompts when it is an array (typeof object, but not a record)', async () => {
+      // `typeof [] === 'object'`; the shallow check must not let arrays through.
+      const mockHandler = vi.fn().mockResolvedValue({ success: true, messageId: 'om_arr' });
+      server.setSendInteractiveHandler(mockHandler);
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          chatId: 'oc_test',
+          question: 'q',
+          options: [{ text: '✅', value: 'ok' }],
+          actionPrompts: [['approve', 'x']],
+        }),
+      });
+      expect(statusCode).toBe(200);
+      const forwarded = mockHandler.mock.calls[0]![1] as { actionPrompts?: unknown };
+      expect(forwarded.actionPrompts).toBeUndefined();
+    });
   });
 
   describe('unknown routes', () => {

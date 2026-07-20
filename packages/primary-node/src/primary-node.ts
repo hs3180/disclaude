@@ -795,7 +795,9 @@ export class PrimaryNode extends EventEmitter {
     if (resolvedPrompts && result.messageId) {
       this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts);
     }
-    return { success: !!result.messageId, messageId: result.messageId };
+    // success mirrors the IPC handler, which returns success: true whenever the
+    // channel handler resolves without throwing (unix-socket-server.ts sendInteractive).
+    return { success: true, messageId: result.messageId };
   }
 
   /**
