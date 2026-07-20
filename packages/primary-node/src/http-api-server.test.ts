@@ -164,6 +164,76 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('POST /api/upload-file (Issue #4279)', () => {
+    const validBody = JSON.stringify({ chatId: 'oc_test', filePath: '/tmp/report.pdf', threadId: 'om_root' });
+
+    it('should delegate to the handler and return upload metadata', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({
+        success: true, fileKey: 'file_v3_001', fileType: 'pdf', fileName: 'report.pdf', fileSize: 12345,
+      });
+      server.setUploadFileHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; fileKey?: string; fileSize?: number };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.fileKey).toBe('file_v3_001');
+      expect(data.fileSize).toBe(12345);
+      expect(mockHandler).toHaveBeenCalledWith('oc_test', '/tmp/report.pdf', 'om_root');
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when filePath is missing', async () => {
+      server.setUploadFileHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when chatId or filePath is empty', async () => {
+      server.setUploadFileHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: '', filePath: '' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setUploadFileHandler(vi.fn().mockRejectedValue(new Error('file not found')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('file not found');
+    });
+  });
+
   describe('GET /api/ping (Issue #4279)', () => {
     it('should return pong ok', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/ping' });

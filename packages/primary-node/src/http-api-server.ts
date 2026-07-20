@@ -10,6 +10,7 @@
  * - `GET /api/status` — Basic health/status check
  * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
+ * - `POST /api/upload-file` — Upload a local file to a chat by filePath (REST parity with IPC uploadFile; #4279)
  * - `POST /api/send-message` — Send a text message to a chat (REST parity with IPC sendMessage; #4279)
  * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with IPC sendCard; #4279)
  *
@@ -71,6 +72,31 @@ export interface PushResponse {
  * Handler for push requests. Routes a message to the appropriate agent.
  */
 export type PushHandler = (chatId: string, message: string) => Promise<void>;
+
+/**
+ * Response payload for uploadFile (mirrors IPC IpcResponsePayloads).
+ */
+export type UploadFileResponse = {
+  success: boolean;
+  fileKey?: string;
+  fileType?: string;
+  fileName?: string;
+  fileSize?: number;
+};
+
+/**
+ * Handler for uploadFile requests. Delegates to the channel's uploadFile
+ * capability — REST parity with the IPC method (Issue #4279).
+ *
+ * Uses a local `filePath` (not multipart) because the REST face is localhost-
+ * bound: the MCP server and Primary Node are co-located, so the file is already
+ * readable on the host — exact IPC parity without multipart overhead.
+ */
+export type UploadFileHandler = (
+  chatId: string,
+  filePath: string,
+  threadId: string | undefined,
+) => Promise<UploadFileResponse>;
 
 /**
  * Response payload for sendMessage (mirrors IPC IpcResponsePayloads).
@@ -138,6 +164,7 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
+  private uploadFileHandler?: UploadFileHandler;
   private sendMessageHandler?: SendMessageHandler;
   private sendCardHandler?: SendCardHandler;
   private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
@@ -168,6 +195,13 @@ export class HttpApiServer {
    */
   setPushHandler(handler: PushHandler): void {
     this.pushHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/upload-file (Issue #4279).
+   */
+  setUploadFileHandler(handler: UploadFileHandler): void {
+    this.uploadFileHandler = handler;
   }
 
   /**
@@ -367,6 +401,8 @@ export class HttpApiServer {
    */
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
+    // Issue #4279: REST parity with IPC uploadFile.
+    this.addRoute('POST', '/api/upload-file', this.handleUploadFile.bind(this));
     // Issue #4168 (Phase 1, #4279): REST parity with the IPC `ping` method —
     // a token-exempt (GET) health-check endpoint.
     this.addRoute('GET', '/api/ping', this.handlePing.bind(this));
@@ -522,6 +558,73 @@ export class HttpApiServer {
     } catch (err) {
       logger.error({ err, chatId }, 'Push handler error');
       const msg = err instanceof Error ? err.message : 'Push failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/upload-file handler (Issue #4279).
+   *
+   * Accepts `{ chatId, filePath, threadId? }` and delegates to the channel's
+   * uploadFile capability (reads the local file and uploads it). Uses a local
+   * filePath rather than multipart because the REST face is localhost-bound —
+   * the caller (MCP server) and Primary Node are co-located, so the file is
+   * already readable on the host (exact IPC parity, no transfer needed).
+   * Response: `{ ok: true, success, fileKey?, fileType?, fileName?, fileSize? }`.
+   */
+  private async handleUploadFile(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.uploadFileHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'uploadFile handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof (parsed as Record<string, unknown>).filePath !== 'string'
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), filePath (string)' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown>;
+
+    // Reject empty chatId/filePath early — symmetric with handlePush/handleSendMessage.
+    // Without this, an empty filePath would fall through to the handler and throw a
+    // messy ENOENT 500 instead of a clean 400.
+    if (!raw.chatId || !raw.filePath) {
+      this.sendJson(res, 400, { ok: false, message: 'chatId and filePath must be non-empty' });
+      return;
+    }
+
+    const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
+
+    try {
+      const result = await this.uploadFileHandler(raw.chatId as string, raw.filePath as string, threadId);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'uploadFile handler error');
+      const msg = err instanceof Error ? err.message : 'uploadFile failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
   }
