@@ -23,7 +23,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # bears the cold-start cost (first request + session init). A 30s client timeout
 # flakes on cold start — the RCA in #4307/#4312/#4321 shows every attempt timing
 # out at ~30s with HTTP 000 (no response), while Use Cases 2-5 (already warm)
-# pass. Default to 120s to match use-case-2-basic-reply and give cold start room.
+# pass. Default to 120s to match use-case-2-task-execution.sh and give cold start room.
 TIMEOUT="${TIMEOUT:-120}"
 
 source "$SCRIPT_DIR/common.sh"
