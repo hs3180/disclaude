@@ -179,6 +179,93 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('POST /api/send-message (Issue #4279)', () => {
+    it('should delegate to the handler and return success + messageId', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ success: true, messageId: 'om_123' });
+      server.setSendMessageHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi', threadId: 'om_root', mentions: [{ openId: 'ou_a' }] }),
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; messageId?: string };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.messageId).toBe('om_123');
+      expect(mockHandler).toHaveBeenCalledWith('oc_test', 'hi', 'om_root', [{ openId: 'ou_a' }]);
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi' }),
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when text is missing', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when chatId is missing', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when chatId or text is empty', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: '', text: '' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when a mention is malformed', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi', mentions: [{ name: 'no-open-id' }] }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setSendMessageHandler(vi.fn().mockRejectedValue(new Error('channel offline')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi' }),
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('channel offline');
+    });
+  });
+
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/unknown' });

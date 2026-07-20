@@ -10,6 +10,7 @@
  * - `GET /api/status` — Basic health/status check
  * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
+ * - `POST /api/send-message` — Send a text message to a chat (REST parity with IPC sendMessage; #4279)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -71,6 +72,22 @@ export interface PushResponse {
 export type PushHandler = (chatId: string, message: string) => Promise<void>;
 
 /**
+ * Response payload for sendMessage (mirrors IPC IpcResponsePayloads).
+ */
+export type SendMessageResponse = { success: boolean; messageId?: string };
+
+/**
+ * Handler for sendMessage requests. Delegates to the channel's sendMessage
+ * capability — REST parity with the IPC method (Issue #4279).
+ */
+export type SendMessageHandler = (
+  chatId: string,
+  text: string,
+  threadId: string | undefined,
+  mentions: Array<{ openId: string; name?: string }> | undefined,
+) => Promise<SendMessageResponse>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -109,6 +126,7 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
+  private sendMessageHandler?: SendMessageHandler;
   private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
@@ -137,6 +155,13 @@ export class HttpApiServer {
    */
   setPushHandler(handler: PushHandler): void {
     this.pushHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/send-message (Issue #4279).
+   */
+  setSendMessageHandler(handler: SendMessageHandler): void {
+    this.sendMessageHandler = handler;
   }
 
   setLoopHandlers(handlers: {
@@ -325,6 +350,8 @@ export class HttpApiServer {
     // Issue #4168 (Phase 1, #4279): REST parity with the IPC `ping` method —
     // a token-exempt (GET) health-check endpoint.
     this.addRoute('GET', '/api/ping', this.handlePing.bind(this));
+    // Issue #4279: REST parity with IPC sendMessage.
+    this.addRoute('POST', '/api/send-message', this.handleSendMessage.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -478,6 +505,77 @@ export class HttpApiServer {
   }
 
   /**
+   * POST /api/send-message handler (Issue #4279).
+   *
+   * Accepts `{ chatId, text, threadId?, mentions? }` and delegates to the
+   * channel's sendMessage capability. Mirrors the IPC sendMessage method
+   * (payload aligned with IpcRequestPayloads). Response: `{ success, messageId? }`.
+   */
+  private async handleSendMessage(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.sendMessageHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'sendMessage handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof (parsed as Record<string, unknown>).text !== 'string'
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), text (string)' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown>;
+
+    // Reject empty chatId/text early — symmetric with handlePush. Without this,
+    // the channel would return a messy 500 on empty input instead of a clean 400.
+    if (!raw.chatId || !raw.text) {
+      this.sendJson(res, 400, { ok: false, message: 'chatId and text must be non-empty' });
+      return;
+    }
+
+    const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
+
+    // Validate mentions element shape (each must be { openId: string }). REST is
+    // the trust boundary, so harden here even though the IPC path casts unchecked.
+    const mentions = normalizeMentions(raw.mentions);
+    if (mentions === null) {
+      this.sendJson(res, 400, { ok: false, message: 'mentions must be an array of { openId: string; name?: string }' });
+      return;
+    }
+
+    try {
+      const result = await this.sendMessageHandler(raw.chatId as string, raw.text as string, threadId, mentions);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'sendMessage handler error');
+      const msg = err instanceof Error ? err.message : 'sendMessage failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
    * GET /api/topic-stream — SSE endpoint for topic group message notifications.
    *
    * Issue #4031: Local apps connect to this endpoint to receive real-time
@@ -606,4 +704,31 @@ function readBody(req: IncomingMessage): Promise<string> {
     });
     req.on('error', reject);
   });
+}
+
+/**
+ * Normalize the optional `mentions` field of POST /api/send-message.
+ *
+ * Returns:
+ * - `undefined` when the field is absent (no mentions).
+ * - the typed array when every element is `{ openId: string; name?: string }`.
+ * - `null` when the field is present but malformed (caller responds 400).
+ *
+ * REST is the trust boundary, so this validates element shape even though the
+ * IPC path casts `mentions` unchecked (Issue #4279).
+ */
+function normalizeMentions(
+  raw: unknown,
+): Array<{ openId: string; name?: string }> | undefined | null {
+  if (raw === undefined) { return undefined; }
+  if (!Array.isArray(raw)) { return null; }
+  for (const m of raw) {
+    if (
+      typeof m !== 'object' || m === null ||
+      typeof (m as Record<string, unknown>).openId !== 'string'
+    ) {
+      return null;
+    }
+  }
+  return raw as Array<{ openId: string; name?: string }>;
 }
