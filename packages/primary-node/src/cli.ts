@@ -508,6 +508,12 @@ async function main(): Promise<void> {
         status: (loopId) => loopRunner.status(loopId),
       });
 
+      // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
+      // capability (REST parity with the IPC method).
+      httpApiServer.setUploadFileHandler(
+        (chatId, filePath, threadId) => primaryNode.uploadFile(chatId, filePath, threadId),
+      );
+
       // Issue #4279: wire REST /api/send-message to the channel's sendMessage
       // capability (REST parity with the IPC method).
       httpApiServer.setSendMessageHandler(

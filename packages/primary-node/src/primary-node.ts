@@ -721,6 +721,27 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Upload a local file to a chat — delegates to the channel's uploadFile
+   * capability (reads the file at filePath and uploads it). REST parity with
+   * the IPC uploadFile method (Issue #4279). filePath (not multipart) because
+   * the REST face is localhost-bound and the caller is co-located.
+   *
+   * @returns upload metadata (fileKey/fileType/fileName/fileSize)
+   */
+  async uploadFile(
+    chatId: string,
+    filePath: string,
+    threadId?: string,
+  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h) {
+      throw new Error('No channel handlers available');
+    }
+    const result = await h.uploadFile(chatId, filePath, threadId);
+    return { success: true, ...result };
+  }
+
+  /**
    * Send a text message to a chat — delegates to the channel's sendMessage
    * capability. REST parity with the IPC sendMessage method (Issue #4279).
    *
