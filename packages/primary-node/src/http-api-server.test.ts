@@ -169,8 +169,7 @@ describe('HttpApiServer', () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/ping' });
       expect(statusCode).toBe(200);
 
-      const data = JSON.parse(body) as { ok?: boolean; pong?: boolean };
-      expect(data.ok).toBe(true);
+      const data = JSON.parse(body) as { pong: boolean };
       expect(data.pong).toBe(true);
     });
 

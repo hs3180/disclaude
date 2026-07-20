@@ -8,7 +8,7 @@
  *
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
- * - `GET /api/ping` — Liveness probe (`{ ok: true, pong: true }`); REST parity with IPC `ping` (#4279)
+ * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
  *
  * Authentication:
@@ -404,17 +404,18 @@ export class HttpApiServer {
   /**
    * GET /api/ping handler.
    *
-   * Issue #4168 (Phase 1, #4279): REST health-check endpoint, mirroring the IPC
-   * `ping` method (`{ success: true, payload: { pong: true } }`). GET routes are
-   * token-exempt (see the apiToken check), so it works like /api/status for
-   * liveness probes.
+   * Issue #4168 (Phase 1, #4279): REST health-check endpoint. The response
+   * payload mirrors the IPC `ping` method's payload (`{ pong: true }`); the IPC
+   * envelope (`{ success: true, payload: ... }`) is dropped because HTTP 200
+   * already signals success. GET routes are token-exempt (see the apiToken
+   * check), so it works like /api/status for liveness probes.
    */
   private handlePing(
     _req: IncomingMessage,
     res: ServerResponse,
     _params: Record<string, string>,
   ): Promise<void> {
-    this.sendJson(res, 200, { ok: true, pong: true });
+    this.sendJson(res, 200, { pong: true });
     return Promise.resolve();
   }
 
