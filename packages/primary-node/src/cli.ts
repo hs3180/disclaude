@@ -508,6 +508,12 @@ async function main(): Promise<void> {
         status: (loopId) => loopRunner.status(loopId),
       });
 
+      // Issue #4279: wire REST /api/send-message to the channel's sendMessage
+      // capability (REST parity with the IPC method).
+      httpApiServer.setSendMessageHandler(
+        (chatId, text, threadId, mentions) => primaryNode.sendMessage(chatId, text, threadId, mentions),
+      );
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 
