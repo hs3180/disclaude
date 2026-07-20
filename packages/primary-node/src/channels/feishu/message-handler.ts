@@ -389,6 +389,13 @@ export class MessageHandler {
             );
             if (media?.attachment?.filePath) {
               text = `[${mediaThreadLabel(msgType)}: ${media.attachment.fileName}]（已下载到本地: ${media.attachment.filePath}）`;
+            } else if (media?.text) {
+              // Issue #4327: reuse the manual-download hint (includes a runnable
+              // download command) instead of the opaque "[未解析的 image 消息]".
+              // Strip the "> " quote prefix on every line — the hint is multiline
+              // (label line + download-command line), and the prefix is an artifact
+              // of the quoted-message context, not meaningful in thread history.
+              text = media.text.replace(/^>\s?/gm, '');
             }
             // else: keep extractMessageText's placeholder (download failed / no token)
           } catch (mediaErr) {
