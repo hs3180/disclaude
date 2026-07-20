@@ -2209,6 +2209,113 @@ describe('MessageHandler', () => {
       expect(spy).toHaveBeenCalledWith('image', JSON.stringify({ image_key: 'img_test123' }), 'msg_image');
     });
 
+    // Issue #4329: the existing #4319 test only covered the image happy path.
+    // These cover the remaining contract-stable branches: non-image media types
+    // (mediaThreadLabel mappings) and the handleQuotedFileMessage throw → catch
+    // path. The download-FAILURE branch (opaque placeholder vs manual-download
+    // hint) is deliberately deferred — its contract depends on #4327 (PR #4371),
+    // which is still pending.
+    it.each([
+      { type: 'audio', label: '语音', fileName: 'clip.mp3' },
+      { type: 'file', label: '文件', fileName: 'report.pdf' },
+      { type: 'video', label: '视频', fileName: 'demo.mp4' },
+    ])(
+      'should surface $type media with the "$label" label in thread context (Issue #4329)',
+      async ({ type, label, fileName }) => {
+        const mockClient = {
+          im: {
+            message: {
+              // Chain: <type> media message (parent → root text)
+              get: vi.fn()
+                .mockResolvedValueOnce({
+                  data: {
+                    message: {
+                      message_type: type,
+                      content: JSON.stringify({ file_key: `${type}_key` }),
+                      message_id: `msg_${type}`,
+                      parent_id: 'msg_root_media',
+                      sender: { sender_type: 'user' },
+                    },
+                  },
+                })
+                .mockResolvedValueOnce({
+                  data: {
+                    message: {
+                      message_type: 'text',
+                      content: JSON.stringify({ text: 'root msg' }),
+                      message_id: 'msg_root_media',
+                      parent_id: undefined,
+                      sender: { sender_type: 'user' },
+                    },
+                  },
+                }),
+            },
+          },
+        };
+
+        const { handler } = createHandler();
+        handler.initialize(mockClient as any);
+
+        vi.spyOn(handler as any, 'handleQuotedFileMessage').mockResolvedValue({
+          text: `> **引用的消息**: [${label}] ${type}_key`,
+          attachment: { fileName, filePath: `/tmp/downloads/${fileName}` },
+        });
+
+        const result = await (handler as any).getThreadContext(`msg_${type}`);
+
+        expect(result).toBeDefined();
+        // Correct per-type label from mediaThreadLabel (not the image label, not the opaque placeholder)
+        expect(result).toContain(`[${label}: ${fileName}]`);
+        expect(result).toContain(`/tmp/downloads/${fileName}`);
+        expect(result).not.toContain(`[未解析的 ${type} 消息]`);
+      },
+    );
+
+    it('should retain the opaque placeholder when handleQuotedFileMessage throws in thread context (Issue #4329)', async () => {
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'image',
+                    content: JSON.stringify({ image_key: 'img_throw' }),
+                    message_id: 'msg_throw',
+                    parent_id: 'msg_root_throw',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'root msg' }),
+                    message_id: 'msg_root_throw',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      // Download/extraction blows up — the catch path must keep the placeholder
+      // and NOT crash the whole thread-context build.
+      vi.spyOn(handler as any, 'handleQuotedFileMessage').mockRejectedValue(new Error('tenant token expired'));
+
+      const result = await (handler as any).getThreadContext('msg_throw');
+
+      expect(result).toBeDefined();
+      // extractMessageText's opaque placeholder is retained (catch path); no leak, no crash
+      expect(result).toContain('[未解析的 image 消息]');
+    });
+
     it('should not fetch thread context for non-topic groups', async () => {
       mockState.isBotMentioned = true;
       const mockClient = {
