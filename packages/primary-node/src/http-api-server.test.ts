@@ -277,6 +277,21 @@ describe('HttpApiServer', () => {
       expect(statusCode).toBe(400);
     });
 
+    it('should return 400 when filePath is an empty string', async () => {
+      const mockHandler = vi.fn();
+      server.setUploadImageHandler(mockHandler);
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-image',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filePath: '' }),
+      });
+      expect(statusCode).toBe(400);
+      expect(JSON.parse(body).message).toContain('non-empty');
+      // Empty filePath must not fall through to the handler (avoids messy ENOENT 500).
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
     it('should return 500 when the handler throws', async () => {
       server.setUploadImageHandler(vi.fn().mockRejectedValue(new Error('image too large')));
       const { statusCode, body } = await dispatch(server, {

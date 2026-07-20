@@ -1028,6 +1028,15 @@ export class HttpApiServer {
     }
 
     const raw = parsed as Record<string, unknown>;
+
+    // Reject empty filePath early — symmetric with handlePush/handleSendMessage/handleUploadFile.
+    // Without this, an empty filePath would fall through to the handler and throw a
+    // messy ENOENT 500 instead of a clean 400.
+    if (!raw.filePath) {
+      this.sendJson(res, 400, { ok: false, message: 'filePath must be non-empty' });
+      return;
+    }
+
     try {
       const result = await this.uploadImageHandler(raw.filePath as string);
       this.sendJson(res, 200, { ok: true, ...result });
