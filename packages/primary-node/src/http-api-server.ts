@@ -525,8 +525,23 @@ export class HttpApiServer {
     }
 
     const raw = parsed as Record<string, unknown>;
+
+    // Reject empty chatId/text early — symmetric with handlePush. Without this,
+    // the channel would return a messy 500 on empty input instead of a clean 400.
+    if (!raw.chatId || !raw.text) {
+      this.sendJson(res, 400, { ok: false, message: 'chatId and text must be non-empty' });
+      return;
+    }
+
     const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
-    const mentions = Array.isArray(raw.mentions) ? raw.mentions : undefined;
+
+    // Validate mentions element shape (each must be { openId: string }). REST is
+    // the trust boundary, so harden here even though the IPC path casts unchecked.
+    const mentions = normalizeMentions(raw.mentions);
+    if (mentions === null) {
+      this.sendJson(res, 400, { ok: false, message: 'mentions must be an array of { openId: string; name?: string }' });
+      return;
+    }
 
     try {
       const result = await this.sendMessageHandler(raw.chatId as string, raw.text as string, threadId, mentions);
@@ -667,4 +682,31 @@ function readBody(req: IncomingMessage): Promise<string> {
     });
     req.on('error', reject);
   });
+}
+
+/**
+ * Normalize the optional `mentions` field of POST /api/send-message.
+ *
+ * Returns:
+ * - `undefined` when the field is absent (no mentions).
+ * - the typed array when every element is `{ openId: string; name?: string }`.
+ * - `null` when the field is present but malformed (caller responds 400).
+ *
+ * REST is the trust boundary, so this validates element shape even though the
+ * IPC path casts `mentions` unchecked (Issue #4279).
+ */
+function normalizeMentions(
+  raw: unknown,
+): Array<{ openId: string; name?: string }> | undefined | null {
+  if (raw === undefined) { return undefined; }
+  if (!Array.isArray(raw)) { return null; }
+  for (const m of raw) {
+    if (
+      typeof m !== 'object' || m === null ||
+      typeof (m as Record<string, unknown>).openId !== 'string'
+    ) {
+      return null;
+    }
+  }
+  return raw as Array<{ openId: string; name?: string }>;
 }

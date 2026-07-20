@@ -205,6 +205,39 @@ describe('HttpApiServer', () => {
       expect(statusCode).toBe(400);
     });
 
+    it('should return 400 when chatId is missing', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when chatId or text is empty', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: '', text: '' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when a mention is malformed', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi', mentions: [{ name: 'no-open-id' }] }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
     it('should return 500 when the handler throws', async () => {
       server.setSendMessageHandler(vi.fn().mockRejectedValue(new Error('channel offline')));
       const { statusCode, body } = await dispatch(server, {
