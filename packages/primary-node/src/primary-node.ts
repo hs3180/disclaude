@@ -446,13 +446,10 @@ export class PrimaryNode extends EventEmitter {
         return h.uploadImage(filePath);
       },
 
-      listTempChats: () => {
-        const h = resolveHandlers();
-        if (!h?.listTempChats) {
-          throw new Error('listTempChats not supported by this channel');
-        }
-        return h.listTempChats();
-      },
+      // Delegates to resolveChannelTempChats (shared with the REST-facing
+      // listTempChats() public method) — returns the raw chat list; the IPC
+      // server wraps it into its { success, payload: { success, chats } } response.
+      listTempChats: () => this.resolveChannelTempChats(),
 
       markChatResponded: (chatId, response) => {
         const h = resolveHandlers(chatId);
@@ -822,6 +819,25 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Resolve and invoke the channel's listTempChats capability (Issue #1703).
+   *
+   * Shared by the IPC composite handler (which returns the raw chat list) and
+   * the REST-facing `listTempChats()` public method below (which wraps it into
+   * `{ success, chats }`). Throws if the active channel does not support
+   * temp-chat tracking. Returns the raw chat list — each caller wraps it into
+   * the response shape appropriate for its transport (IPC payload / REST body),
+   * so the two call sites keep their distinct return contracts.
+   */
+  private async resolveChannelTempChats(): Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>> {
+    const h = this.resolveApiHandlers();
+    if (!h?.listTempChats) {
+      throw new Error('listTempChats not supported by this channel');
+    }
+    const chats = await h.listTempChats();
+    return chats;
+  }
+
+  /**
    * List tracked temporary chats (Issue #1703) — delegates to the channel's
    * listTempChats capability. Channel-agnostic. REST parity with the IPC
    * listTempChats method (Issue #4279). Single-process semantics.
@@ -832,11 +848,7 @@ export class PrimaryNode extends EventEmitter {
     success: boolean;
     chats: Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>;
   }> {
-    const h = this.resolveApiHandlers();
-    if (!h?.listTempChats) {
-      throw new Error('listTempChats not supported by this channel');
-    }
-    const chats = await h.listTempChats();
+    const chats = await this.resolveChannelTempChats();
     return { success: true, chats };
   }
 
