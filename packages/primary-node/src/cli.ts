@@ -514,6 +514,18 @@ async function main(): Promise<void> {
         (chatId, filePath, threadId) => primaryNode.uploadFile(chatId, filePath, threadId),
       );
 
+      // Issue #4279: wire REST /api/send-message to the channel's sendMessage
+      // capability (REST parity with the IPC method).
+      httpApiServer.setSendMessageHandler(
+        (chatId, text, threadId, mentions) => primaryNode.sendMessage(chatId, text, threadId, mentions),
+      );
+
+      // Issue #4279: wire REST /api/send-card to the channel's sendCard
+      // capability (REST parity with the IPC method).
+      httpApiServer.setSendCardHandler(
+        (chatId, card, threadId, description) => primaryNode.sendCard(chatId, card, threadId, description),
+      );
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 
