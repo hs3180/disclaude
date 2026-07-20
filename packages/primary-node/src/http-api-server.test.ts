@@ -164,6 +164,21 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('GET /api/ping (Issue #4279)', () => {
+    it('should return pong ok', async () => {
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/ping' });
+      expect(statusCode).toBe(200);
+
+      const data = JSON.parse(body) as { pong: boolean };
+      expect(data.pong).toBe(true);
+    });
+
+    it('should return JSON content type', async () => {
+      const { headers } = await dispatch(server, { method: 'GET', url: '/api/ping' });
+      expect(headers['content-type']).toContain('application/json');
+    });
+  });
+
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/unknown' });
