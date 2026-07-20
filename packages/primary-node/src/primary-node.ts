@@ -58,6 +58,8 @@ import {
   MessageRouter as InputMessageRouter,
   // Issue #4283: LOOP.md file watcher consumer bridge
   LOOP_MD_DIR,
+  // Issue #4279: FeishuCard type for REST sendCard parity.
+  type FeishuCard,
 } from '@disclaude/core';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -737,6 +739,28 @@ export class PrimaryNode extends EventEmitter {
     // The channel handler returns Promise<void> (the IPC layer synthesizes
     // success/messageId); REST confirms acceptance with { success: true }.
     await h.sendMessage(chatId, text, threadId, mentions);
+    return { success: true };
+  }
+
+  /**
+   * Send a Feishu card to a chat — delegates to the channel's sendCard
+   * capability. REST parity with the IPC sendCard method (Issue #4279).
+   *
+   * @returns { success: boolean; messageId?: string } (mirrors IPC IpcResponsePayloads)
+   */
+  async sendCard(
+    chatId: string,
+    card: FeishuCard,
+    threadId?: string,
+    description?: string,
+  ): Promise<{ success: boolean; messageId?: string }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h) {
+      throw new Error('No channel handlers available');
+    }
+    // The channel handler returns Promise<void> (the IPC layer synthesizes
+    // success/messageId); REST confirms acceptance with { success: true }.
+    await h.sendCard(chatId, card, threadId, description);
     return { success: true };
   }
 

@@ -514,6 +514,12 @@ async function main(): Promise<void> {
         (chatId, text, threadId, mentions) => primaryNode.sendMessage(chatId, text, threadId, mentions),
       );
 
+      // Issue #4279: wire REST /api/send-card to the channel's sendCard
+      // capability (REST parity with the IPC method).
+      httpApiServer.setSendCardHandler(
+        (chatId, card, threadId, description) => primaryNode.sendCard(chatId, card, threadId, description),
+      );
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 
