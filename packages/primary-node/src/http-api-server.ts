@@ -11,6 +11,7 @@
  * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
  * - `POST /api/send-message` — Send a text message to a chat (REST parity with IPC sendMessage; #4279)
+ * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with IPC sendCard; #4279)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -21,7 +22,7 @@
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { createLogger, type TopicGroupMessageEvent } from '@disclaude/core';
+import { createLogger, type TopicGroupMessageEvent, type FeishuCard } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
 // Issue #4063: reuse the canonical loop types instead of re-declaring them inline.
 import type { LoopStartParams, LoopStatus } from './loop/loop-runner.js';
@@ -88,6 +89,17 @@ export type SendMessageHandler = (
 ) => Promise<SendMessageResponse>;
 
 /**
+ * Handler for sendCard requests. Delegates to the channel's sendCard
+ * capability — REST parity with the IPC method (Issue #4279).
+ */
+export type SendCardHandler = (
+  chatId: string,
+  card: FeishuCard,
+  threadId: string | undefined,
+  description: string | undefined,
+) => Promise<{ success: boolean; messageId?: string }>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -127,6 +139,7 @@ export class HttpApiServer {
   private nodeId?: string;
   private pushHandler?: PushHandler;
   private sendMessageHandler?: SendMessageHandler;
+  private sendCardHandler?: SendCardHandler;
   private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
@@ -162,6 +175,13 @@ export class HttpApiServer {
    */
   setSendMessageHandler(handler: SendMessageHandler): void {
     this.sendMessageHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/send-card (Issue #4279).
+   */
+  setSendCardHandler(handler: SendCardHandler): void {
+    this.sendCardHandler = handler;
   }
 
   setLoopHandlers(handlers: {
@@ -352,6 +372,8 @@ export class HttpApiServer {
     this.addRoute('GET', '/api/ping', this.handlePing.bind(this));
     // Issue #4279: REST parity with IPC sendMessage.
     this.addRoute('POST', '/api/send-message', this.handleSendMessage.bind(this));
+    // Issue #4279: REST parity with IPC sendCard.
+    this.addRoute('POST', '/api/send-card', this.handleSendCard.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -571,6 +593,68 @@ export class HttpApiServer {
     } catch (err) {
       logger.error({ err, chatId: raw.chatId }, 'sendMessage handler error');
       const msg = err instanceof Error ? err.message : 'sendMessage failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/send-card handler (Issue #4279).
+   *
+   * Accepts `{ chatId, card, threadId?, description? }` and delegates to the
+   * channel's sendCard capability. Mirrors the IPC sendCard method (payload
+   * aligned with IpcRequestPayloads). `card` is a Feishu card JSON object.
+   * Response: `{ ok: true, success: true }`.
+   */
+  private async handleSendCard(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.sendCardHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'sendCard handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof (parsed as Record<string, unknown>).card !== 'object' || (parsed as Record<string, unknown>).card === null
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), card (object)' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown>;
+    const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
+    const description = typeof raw.description === 'string' ? raw.description : undefined;
+
+    try {
+      const result = await this.sendCardHandler(
+        raw.chatId as string,
+        raw.card as FeishuCard,
+        threadId,
+        description,
+      );
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'sendCard handler error');
+      const msg = err instanceof Error ? err.message : 'sendCard failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
   }
