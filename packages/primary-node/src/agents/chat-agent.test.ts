@@ -1560,5 +1560,65 @@ describe('ChatAgent (primary-node)', () => {
       expect(rm.recordSuccess).not.toHaveBeenCalled();
     });
 
+    it('Issue #4260 (test 1): a system→result-only stream is marked failed, not silent success', async () => {
+      // #4194's exact reported scenario is a stream that emits a `system` SDK
+      // message (the GLM / Agent Teams flood, rendered by the adapter as an
+      // empty-content text event) and then a bare `result` marker — no assistant
+      // content, no tool calls. #4289 locked the *detection* for this shape
+      // (the empty-content system event does not count as user-visible output,
+      // so the empty-turn diagnostic notice fires). #4290 locked the corrective
+      // *action* for a result-only stream (recordFailure instead of
+      // recordSuccess). This test (#4260 test 1) closes the gap between them:
+      // for the system→result shape specifically, the turn must be recorded as
+      // a FAILURE so a chronically-broken session can still trip the restart
+      // circuit — it must NOT silently recordSuccess and report only ✅ Complete.
+      // True regression: fails if the empty-content `text` event ever started
+      // counting as user-visible output (count → 1 → isEmptyTurn false →
+      // recordSuccess called, recordFailure NOT called), regressing #4194/#4258.
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_empty_turn_system_failed',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* systemResultIterator() {
+        // Adapter rendering of an unhandled system subtype (e.g. task_started):
+        // { type: 'text', content: '', role: 'system', metadata: { systemSubtype } }
+        // (see message-adapter.ts `case 'system'`, locked by message-adapter.test.ts "D1").
+        yield {
+          parsed: { type: 'text', content: '', role: 'system', metadata: { systemSubtype: 'task_started' } },
+          raw: {},
+        };
+        // result marker only — no assistant text, no tool_use → empty turn.
+        yield {
+          parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: systemResultIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_empty_turn_system_failed',
+        payload: 'hi',
+        messageId: 'msg_1',
+      });
+
+      const rm = (agent as any).restartManager;
+      // #4258 (part 2 / ③): an empty turn — even one preceded by an empty-content
+      // system flood event — is a failure, not a success.
+      await vi.waitFor(() => {
+        expect(rm.recordFailure).toHaveBeenCalledWith('oc_empty_turn_system_failed', 'empty-turn');
+      }, { timeout: 1000, interval: 20 });
+      expect(rm.recordSuccess).not.toHaveBeenCalled();
+    });
+
   });
 });
