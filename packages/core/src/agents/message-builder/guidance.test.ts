@@ -93,6 +93,36 @@ describe('buildThreadContextSection', () => {
     expect(result).toContain('do NOT guess');
     expect(result).toContain('clarify which one');
   });
+
+  // Issue #4306: tell the agent how to fetch thread context / attachments on
+  // demand via lark-cli (ancestor-message attachments are not auto-delivered).
+  it('should include lark-cli on-demand thread context / attachment guidance', () => {
+    const result = buildThreadContextSection('context here');
+    expect(result).toContain('lark-cli');
+    // List all thread messages + download attachments (recommended path).
+    expect(result).toContain('+threads-messages-list');
+    expect(result).toContain('--download-resources');
+    // Fetch specific messages.
+    expect(result).toContain('+messages-mget');
+    // Download a single message's attachment.
+    expect(result).toContain('+messages-resources-download');
+    // --thread accepts any message id in the thread (auto-resolves to root).
+    expect(result).toContain('auto-resolves');
+  });
+
+  // Issue #4306 nit fixes: mget also advertises its own --download-resources,
+  // and the single-attachment example lands under ./lark-im-resources/ — the
+  // same default dir as the other two commands (no ./downloads/ drift).
+  it('should keep lark-cli download paths consistent across the three commands', () => {
+    const result = buildThreadContextSection('context here');
+    // mget bullet itself mentions --download-resources (scoped to the mget
+    // command via regex — --download-resources also appears on the list line).
+    expect(result).toMatch(/\+messages-mget\b[^`]*--download-resources/);
+    // Single-attachment download example uses ./lark-im-resources/<name>,
+    // matching the default dir stated in the prose (no ./downloads/ drift).
+    expect(result).toContain('./lark-im-resources/<name>');
+    expect(result).not.toContain('./downloads/');
+  });
 });
 
 describe('buildNextStepGuidance', () => {
