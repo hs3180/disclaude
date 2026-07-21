@@ -48,9 +48,21 @@ interface Route {
   path?: string;
   /** Dynamic path builder (e.g. for path-param routes like loopStatus). */
   pathBuilder?: (payload: Record<string, unknown>) => string;
+  /**
+   * Per-route success predicate (default: `res.ok && json.ok === true`).
+   * Routes whose endpoint returns a non-`{ ok }` envelope override this —
+   * e.g. `/api/ping` returns `{ pong: true }` (no `ok`), so its success is
+   * `res.ok && json.pong === true`. Without this, ping would always throw
+   * because the default guard demands `json.ok === true`.
+   */
+  success?: (json: Record<string, unknown>, res: Response) => boolean;
   /** Per-route response shaping (default: strip `ok`). */
   shape?: (body: Record<string, unknown>) => Record<string, unknown>;
 }
+
+/** Default success: HTTP ok AND the REST `{ ok: true }` envelope. */
+const defaultSuccess = (json: Record<string, unknown>, res: Response): boolean =>
+  res.ok && json.ok === true;
 
 /**
  * Route table: IPC method → REST endpoint. Covers all 12 IPC methods:
@@ -59,8 +71,14 @@ interface Route {
  * - loopStart/loopStop/loopStatus → /api/loop/* (REST shapes adapted to IPC).
  */
 const ROUTES: Readonly<Record<string, Route>> = {
-  // Channel methods (Issue #4279 Phase 1 endpoints)
-  ping: { method: 'GET', path: '/api/ping' },
+  // Channel methods (Issue #4279 Phase 1 endpoints). 6/8 are on `main`:
+  // ping/sendMessage/sendCard/uploadFile/sendInteractive/tempChats (PRs
+  // #4341/#4343/#4344/#4346/#4345/#4348). The two below are still pending:
+  //   - uploadImage: PR #4347 (OPEN) — endpoint not yet on `main`.
+  //   - markChatResponded: PR #4342 (CLOSED w/o merge) — endpoint not on `main`.
+  // Routes are kept for IPC-method parity; they 404 only until those land.
+  // ping returns `{ pong: true }` (no `ok` envelope) — see handlePing server-side.
+  ping: { method: 'GET', path: '/api/ping', success: (json, res) => res.ok && json.pong === true },
   sendMessage: { method: 'POST', path: '/api/send-message' },
   sendCard: { method: 'POST', path: '/api/send-card' },
   uploadFile: { method: 'POST', path: '/api/upload-file' },
@@ -143,20 +161,28 @@ export class RestIpcClient implements IpcClientLike {
     try {
       res = await fetch(url, init);
     } catch (err) {
+      // Map REST transport failures onto the IPC error-prefix contract so the
+      // shared `classifyError` (ipc-client-facade) tags them correctly:
+      //   timeout        → IPC_TIMEOUT        (→ "请求超时，稍后重试")
+      //   conn refused…  → IPC_NOT_AVAILABLE  (→ "Primary Node 未运行")
+      // The method name is preserved in the message for debuggability.
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`REST_${type}_FAILED: ${msg}`);
+      const isTimeout = err instanceof Error &&
+        (err.name === 'TimeoutError' || err.name === 'AbortError');
+      const code = isTimeout ? 'IPC_TIMEOUT' : 'IPC_NOT_AVAILABLE';
+      throw new Error(`${code}: REST ${type} (${msg})`);
     }
 
     let json: Record<string, unknown>;
     try {
       json = (await res.json()) as Record<string, unknown>;
     } catch {
-      throw new Error(`REST_${type}_FAILED: invalid JSON response (status ${res.status})`);
+      throw new Error(`IPC_REQUEST_FAILED: REST ${type} (invalid JSON response, status ${res.status})`);
     }
 
-    if (!res.ok || json.ok !== true) {
+    if (!(route.success ?? defaultSuccess)(json, res)) {
       const msg = (json.message as string | undefined) ?? `${type} failed (HTTP ${res.status})`;
-      throw new Error(`REST_${type}_FAILED: ${msg}`);
+      throw new Error(`IPC_REQUEST_FAILED: REST ${type} (${msg})`);
     }
 
     // Apply per-route response shaping (default: strip the `ok` envelope).
@@ -184,6 +210,13 @@ export class RestIpcClient implements IpcClientLike {
    * Health probe: GET /api/ping. Returns true if the server responds with
    * `{ pong: true }`. This is the REST equivalent of the IPC `isAvailable()`
    * socket probe (#4279 Phase 2).
+   *
+   * Note: this is `async` (HTTP is inherently async), unlike
+   * `UnixSocketIpcClient.isAvailable()` which is synchronous (it only stats
+   * the socket file). `IpcClientLike` does not declare `isAvailable`, and the
+   * mcp-server availability probe (`tools/ipc-utils.ts#isIpcAvailable`) still
+   * targets the Unix socket directly — so wiring this REST probe in is a
+   * separate Phase-2 follow-up, not a signature mismatch callers hit today.
    */
   async isAvailable(): Promise<boolean> {
     try {

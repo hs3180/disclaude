@@ -67,7 +67,7 @@ describe('RestIpcClient', () => {
     });
 
     it('should strip trailing slash from baseUrl', async () => {
-      const { calls } = mockFetch([{ json: { ok: true, pong: true } }]);
+      const { calls } = mockFetch([{ json: { pong: true } }]);
       const client = new RestIpcClient({ baseUrl: 'http://localhost:9200/' });
 
       await client.requestChannel('ping');
@@ -75,12 +75,25 @@ describe('RestIpcClient', () => {
       expect(calls[0].url).toBe('http://localhost:9200/api/ping');
     });
 
+    it('should route ping to /api/ping and return { pong: true } (no `ok` envelope)', async () => {
+      // Real handlePing returns `{ pong: true }` (no `ok`); ping's success
+      // predicate is `res.ok && json.pong === true`, not the default `ok` guard.
+      const { calls } = mockFetch([{ json: { pong: true } }]);
+      const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
+
+      const result = await client.requestChannel('ping');
+
+      expect(calls[0].url).toBe('http://localhost:9200/api/ping');
+      expect(calls[0].init.method).toBe('GET');
+      expect(result).toEqual({ pong: true });
+    });
+
     it('should throw on HTTP error status', async () => {
       mockFetch([{ status: 500, json: { ok: false, message: 'handler error' } }]);
       const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
 
       await expect(client.requestChannel('sendCard', { chatId: 'x', card: {} })).rejects.toThrow(
-        'REST_sendCard_FAILED: handler error',
+        'IPC_REQUEST_FAILED: REST sendCard (handler error)',
       );
     });
 
@@ -89,15 +102,30 @@ describe('RestIpcClient', () => {
       const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
 
       await expect(client.requestChannel('uploadFile', { chatId: 'x', filePath: '/a' })).rejects.toThrow(
-        'handler not configured',
+        'IPC_REQUEST_FAILED: REST uploadFile (handler not configured)',
       );
     });
 
-    it('should throw on fetch network failure', async () => {
+    it('should classify a fetch network failure as IPC_NOT_AVAILABLE', async () => {
       globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as typeof fetch;
       const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
 
-      await expect(client.requestChannel('ping')).rejects.toThrow('REST_ping_FAILED: ECONNREFUSED');
+      await expect(client.requestChannel('ping')).rejects.toThrow(
+        'IPC_NOT_AVAILABLE: REST ping (ECONNREFUSED)',
+      );
+    });
+
+    it('should classify a fetch timeout as IPC_TIMEOUT', async () => {
+      // AbortSignal.timeout surfaces as a TimeoutError/AbortError — must map to
+      // IPC_TIMEOUT so classifyError → 'ipc_timeout' (not ipc_request_failed).
+      const timeoutErr = new Error('The operation was aborted due to timeout');
+      timeoutErr.name = 'TimeoutError';
+      globalThis.fetch = (() => Promise.reject(timeoutErr)) as typeof fetch;
+      const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
+
+      await expect(client.requestChannel('sendMessage', { chatId: 'x', text: 'hi' })).rejects.toThrow(
+        'IPC_TIMEOUT: REST sendMessage',
+      );
     });
 
     it('should route pushToAgent to /api/push and shape {ok} → {success}', async () => {
@@ -148,7 +176,8 @@ describe('RestIpcClient', () => {
 
   describe('isAvailable', () => {
     it('should return true when /api/ping responds with pong:true', async () => {
-      mockFetch([{ json: { ok: true, pong: true } }]);
+      // Real handlePing returns `{ pong: true }` (no `ok` envelope).
+      mockFetch([{ json: { pong: true } }]);
       const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
       expect(await client.isAvailable()).toBe(true);
     });
