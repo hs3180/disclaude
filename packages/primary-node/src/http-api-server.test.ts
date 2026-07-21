@@ -487,6 +487,37 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('GET /api/temp-chats (Issue #4279)', () => {
+    it('should delegate to the handler and return the chat list', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({
+        success: true,
+        chats: [{ chatId: 'oc_t1', createdAt: '2026-07-16T00:00:00Z', expiresAt: '2026-07-16T01:00:00Z', responded: false }],
+      });
+      server.setListTempChatsHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/temp-chats' });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; chats?: Array<{ chatId: string }> };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.chats).toHaveLength(1);
+      expect(data.chats![0].chatId).toBe('oc_t1');
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, { method: 'GET', url: '/api/temp-chats' });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setListTempChatsHandler(vi.fn().mockRejectedValue(new Error('store offline')));
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/temp-chats' });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('store offline');
+    });
+  });
+
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/unknown' });
