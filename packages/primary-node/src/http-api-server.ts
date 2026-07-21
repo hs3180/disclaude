@@ -15,6 +15,7 @@
  * - `POST /api/send-message` — Send a text message to a chat (REST parity with IPC sendMessage; #4279)
  * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with IPC sendCard; #4279)
  * - `POST /api/send-interactive` — Send an interactive card (buttons) to a chat (REST parity with IPC sendInteractive; #4279)
+ * - `POST /api/upload-image` — Upload a local image by filePath, returns image_key for card embedding (REST parity with IPC uploadImage; #4279)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -169,6 +170,18 @@ export type TempChat = {
 export type ListTempChatsHandler = () => Promise<{ success: boolean; chats: TempChat[] }>;
 
 /**
+ * Response payload for uploadImage (mirrors IPC IpcResponsePayloads).
+ */
+export type UploadImageResponse = { success: boolean; imageKey?: string };
+
+/**
+ * Handler for uploadImage requests. Delegates to the channel's uploadImage
+ * capability — REST parity with the IPC method (Issue #4279). Channel-agnostic
+ * (no chatId). Uses a local filePath (see UploadFileHandler rationale).
+ */
+export type UploadImageHandler = (filePath: string) => Promise<UploadImageResponse>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -212,6 +225,7 @@ export class HttpApiServer {
   private sendCardHandler?: SendCardHandler;
   private sendInteractiveHandler?: SendInteractiveHandler;
   private listTempChatsHandler?: ListTempChatsHandler;
+  private uploadImageHandler?: UploadImageHandler;
   private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
@@ -275,6 +289,13 @@ export class HttpApiServer {
    */
   setListTempChatsHandler(handler: ListTempChatsHandler): void {
     this.listTempChatsHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/upload-image (Issue #4279).
+   */
+  setUploadImageHandler(handler: UploadImageHandler): void {
+    this.uploadImageHandler = handler;
   }
 
   setLoopHandlers(handlers: {
@@ -473,6 +494,9 @@ export class HttpApiServer {
     this.addRoute('POST', '/api/send-interactive', this.handleSendInteractive.bind(this));
     // Issue #4279: REST parity with IPC listTempChats.
     this.addRoute('GET', '/api/temp-chats', this.handleListTempChats.bind(this));
+
+    // Issue #4279: REST parity with IPC uploadImage.
+    this.addRoute('POST', '/api/upload-image', this.handleUploadImage.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -958,6 +982,69 @@ export class HttpApiServer {
     });
 
     return Promise.resolve();
+  }
+
+  /**
+   * POST /api/upload-image handler (Issue #4279).
+   *
+   * Accepts `{ filePath }` and delegates to the channel's uploadImage capability
+   * (reads the local image and returns a Feishu image_key for card embedding).
+   * Channel-agnostic (no chatId). Uses a local filePath (see handleUploadFile
+   * rationale: the REST face is localhost-bound, co-located, exact IPC parity).
+   * Response: `{ ok: true, success, imageKey? }`.
+   */
+  private async handleUploadImage(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.uploadImageHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'uploadImage handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).filePath !== 'string'
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required field: filePath (string)' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown>;
+
+    // Reject empty filePath early — symmetric with handlePush/handleSendMessage/handleUploadFile.
+    // Without this, an empty filePath would fall through to the handler and throw a
+    // messy ENOENT 500 instead of a clean 400.
+    if (!raw.filePath) {
+      this.sendJson(res, 400, { ok: false, message: 'filePath must be non-empty' });
+      return;
+    }
+
+    try {
+      const result = await this.uploadImageHandler(raw.filePath as string);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err }, 'uploadImage handler error');
+      const msg = err instanceof Error ? err.message : 'uploadImage failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
   }
 
   // Issue #4075: Loop Runner REST endpoints
