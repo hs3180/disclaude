@@ -536,6 +536,10 @@ async function main(): Promise<void> {
       // listTempChats capability (REST parity with the IPC method).
       httpApiServer.setListTempChatsHandler(() => primaryNode.listTempChats());
 
+      // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
+      // capability (REST parity with the IPC method).
+      httpApiServer.setUploadImageHandler((filePath) => primaryNode.uploadImage(filePath));
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 
