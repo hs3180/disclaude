@@ -1,0 +1,262 @@
+/**
+ * RestIpcClient — HTTP client for the REST IPC face (Issue #4279 Phase 2).
+ *
+ * A standalone client that calls the REST endpoints exposed by HttpApiServer
+ * (primary-node), providing REST parity with the IPC channel methods. This is
+ * Phase 2 part 1: the channel-method surface (ping/sendMessage/sendCard/
+ * uploadFile/uploadImage/sendInteractive/listTempChats/markChatResponded).
+ *
+ * The full IpcClientLike drop-in (adding pushToAgent → /api/push and loop
+ * methods → /api/loop/* with their distinct response shapes) is a follow-up —
+ * the mcp-server currently calls those via the Unix-socket IPC client.
+ *
+ * Routing is table-driven and response shaping is a generic strip-`ok` envelope
+ * (REST responses are `{ ok: true, ...IpcResponsePayload }`; IPC payloads are
+ * just the inner fields).
+ *
+ * Decision-3-independent: `apiToken` is a constructor param; the *source*
+ * (env/file/injection) is decided by the wiring step, not here.
+ */
+
+import { createLogger } from '../utils/logger.js';
+import type { IpcRequestType, IpcRequestPayloads, IpcResponsePayloads } from './protocol.js';
+import {
+  type IpcClientLike,
+  loopStart as facadeLoopStart,
+  loopStop as facadeLoopStop,
+  loopStatus as facadeLoopStatus,
+} from './ipc-client-facade.js';
+
+const logger = createLogger('RestIpcClient');
+
+/** Default request timeout (30s), matching the IPC client default. */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * Default response shape: strip the `ok` REST envelope (REST responses are
+ * `{ ok: true, ...IpcResponsePayload }`; IPC payloads are just the inner fields).
+ */
+const stripOk = (body: Record<string, unknown>): Record<string, unknown> => {
+  const { ok: _ok, ...rest } = body;
+  return rest;
+};
+
+/** A route entry: REST endpoint + optional dynamic-path builder + response shaping. */
+interface Route {
+  method: 'GET' | 'POST';
+  /** Static path (e.g. `/api/send-message`). */
+  path?: string;
+  /** Dynamic path builder (e.g. for path-param routes like loopStatus). */
+  pathBuilder?: (payload: Record<string, unknown>) => string;
+  /**
+   * Per-route success predicate (default: `res.ok && json.ok === true`).
+   * Routes whose endpoint returns a non-`{ ok }` envelope override this —
+   * e.g. `/api/ping` returns `{ pong: true }` (no `ok`), so its success is
+   * `res.ok && json.pong === true`. Without this, ping would always throw
+   * because the default guard demands `json.ok === true`.
+   */
+  success?: (json: Record<string, unknown>, res: Response) => boolean;
+  /** Per-route response shaping (default: strip `ok`). */
+  shape?: (body: Record<string, unknown>) => Record<string, unknown>;
+}
+
+/** Default success: HTTP ok AND the REST `{ ok: true }` envelope. */
+const defaultSuccess = (json: Record<string, unknown>, res: Response): boolean =>
+  res.ok && json.ok === true;
+
+/**
+ * Route table: IPC method → REST endpoint. Covers all 12 IPC methods:
+ * - 8 channel methods + ping → #4279 Phase 1 endpoints (strip-ok shaping).
+ * - pushToAgent → /api/push (REST {ok,message} → IPC {success}).
+ * - loopStart/loopStop/loopStatus → /api/loop/* (REST shapes adapted to IPC).
+ */
+const ROUTES: Readonly<Record<string, Route>> = {
+  // Channel methods (Issue #4279 Phase 1 endpoints). 6/8 are on `main`:
+  // ping/sendMessage/sendCard/uploadFile/sendInteractive/tempChats (PRs
+  // #4341/#4343/#4344/#4346/#4345/#4348). The two below are still pending:
+  //   - uploadImage: PR #4347 (OPEN) — endpoint not yet on `main`.
+  //   - markChatResponded: PR #4342 (CLOSED w/o merge) — endpoint not on `main`.
+  // Routes are kept for IPC-method parity; they 404 only until those land.
+  // ping returns `{ pong: true }` (no `ok` envelope) — see handlePing server-side.
+  ping: { method: 'GET', path: '/api/ping', success: (json, res) => res.ok && json.pong === true },
+  sendMessage: { method: 'POST', path: '/api/send-message' },
+  sendCard: { method: 'POST', path: '/api/send-card' },
+  uploadFile: { method: 'POST', path: '/api/upload-file' },
+  uploadImage: { method: 'POST', path: '/api/upload-image' },
+  sendInteractive: { method: 'POST', path: '/api/send-interactive' },
+  listTempChats: { method: 'GET', path: '/api/temp-chats' },
+  markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
+  // pushToAgent → /api/push (REST returns {ok, message}; IPC expects {success})
+  pushToAgent: { method: 'POST', path: '/api/push', shape: (b) => ({ success: b.ok === true }) },
+  // Loop Runner → /api/loop/* (REST shapes adapted to IPC payloads)
+  loopStart: {
+    method: 'POST', path: '/api/loop/start',
+    shape: (b) => ({ success: b.ok === true, ...(b.loopId ? { loopId: b.loopId } : {}) }),
+  },
+  loopStop: { method: 'POST', path: '/api/loop/stop', shape: (b) => ({ success: b.ok === true }) },
+  loopStatus: {
+    method: 'GET',
+    pathBuilder: (p) => `/api/loop/status/${p.loopId}`,
+    shape: (b) => ({ success: b.ok === true, ...(b.status ? { status: b.status } : {}) }),
+  },
+};
+
+export interface RestIpcClientOptions {
+  /** Base URL of the HttpApiServer (e.g. http://localhost:9200). */
+  baseUrl: string;
+  /** Optional bearer token for POST endpoints (GET routes are token-exempt). */
+  apiToken?: string;
+}
+
+export class RestIpcClient implements IpcClientLike {
+  private readonly baseUrl: string;
+  private readonly apiToken?: string;
+
+  constructor(opts: RestIpcClientOptions) {
+    // Strip trailing slash for clean URL concatenation.
+    this.baseUrl = opts.baseUrl.replace(/\/$/, '');
+    this.apiToken = opts.apiToken;
+  }
+
+  /**
+   * Send a channel-method request via REST. Returns the IPC response payload
+   * (the REST `{ ok, ...payload }` body with the `ok` envelope stripped).
+   *
+   * @param type - One of the CHANNEL_ROUTES keys (ping/sendMessage/...).
+   * @param payload - The IPC request payload (sent as the JSON body for POST).
+   * @param options - Optional timeoutMs.
+   * @returns The response payload (e.g. `{ success: true, messageId: '...' }`).
+   */
+  async requestChannel(
+    type: string,
+    payload?: Record<string, unknown>,
+    options?: { timeoutMs?: number },
+  ): Promise<Record<string, unknown>> {
+    const route = ROUTES[type];
+    if (!route) {
+      throw new Error(`RestIpcClient: unsupported method '${type}'`);
+    }
+
+    const path = route.pathBuilder ? route.pathBuilder(payload ?? {}) : (route.path ?? '');
+    const url = `${this.baseUrl}${path}`;
+    const headers: Record<string, string> = {};
+    const init: RequestInit = { method: route.method, headers };
+
+    if (route.method === 'POST') {
+      headers['content-type'] = 'application/json';
+      if (this.apiToken) {
+        headers.authorization = `Bearer ${this.apiToken}`;
+      }
+      init.body = JSON.stringify(payload ?? {});
+    }
+
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (timeoutMs > 0) {
+      init.signal = AbortSignal.timeout(timeoutMs);
+    }
+
+    logger.debug({ type, url, method: route.method }, 'RestIpcClient request');
+
+    let res: Response;
+    try {
+      res = await fetch(url, init);
+    } catch (err) {
+      // Map REST transport failures onto the IPC error-prefix contract so the
+      // shared `classifyError` (ipc-client-facade) tags them correctly:
+      //   timeout        → IPC_TIMEOUT        (→ "请求超时，稍后重试")
+      //   conn refused…  → IPC_NOT_AVAILABLE  (→ "Primary Node 未运行")
+      // The method name is preserved in the message for debuggability.
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTimeout = err instanceof Error &&
+        (err.name === 'TimeoutError' || err.name === 'AbortError');
+      const code = isTimeout ? 'IPC_TIMEOUT' : 'IPC_NOT_AVAILABLE';
+      throw new Error(`${code}: REST ${type} (${msg})`);
+    }
+
+    let json: Record<string, unknown>;
+    try {
+      json = (await res.json()) as Record<string, unknown>;
+    } catch {
+      throw new Error(`IPC_REQUEST_FAILED: REST ${type} (invalid JSON response, status ${res.status})`);
+    }
+
+    if (!(route.success ?? defaultSuccess)(json, res)) {
+      const msg = (json.message as string | undefined) ?? `${type} failed (HTTP ${res.status})`;
+      throw new Error(`IPC_REQUEST_FAILED: REST ${type} (${msg})`);
+    }
+
+    // Apply per-route response shaping (default: strip the `ok` envelope).
+    return (route.shape ?? stripOk)(json);
+  }
+
+  /**
+   * IpcClientLike-compatible request method — delegates to requestChannel with
+   * proper generic typing. This makes RestIpcClient a true drop-in for
+   * UnixSocketIpcClient (the mcp-server's getIpcClient can return either).
+   */
+  async request<T extends IpcRequestType>(
+    type: T,
+    payload: IpcRequestPayloads[T],
+    options?: { timeoutMs?: number },
+  ): Promise<IpcResponsePayloads[T]> {
+    return await this.requestChannel(
+      type,
+      payload as Record<string, unknown>,
+      options,
+    ) as IpcResponsePayloads[T];
+  }
+
+  /**
+   * Health probe: GET /api/ping. Returns true if the server responds with
+   * `{ pong: true }`. This is the REST equivalent of the IPC `isAvailable()`
+   * socket probe (#4279 Phase 2).
+   *
+   * Note: this is `async` (HTTP is inherently async), unlike
+   * `UnixSocketIpcClient.isAvailable()` which is synchronous (it only stats
+   * the socket file). `IpcClientLike` does not declare `isAvailable`, and the
+   * mcp-server availability probe (`tools/ipc-utils.ts#isIpcAvailable`) still
+   * targets the Unix socket directly — so wiring this REST probe in is a
+   * separate Phase-2 follow-up, not a signature mismatch callers hit today.
+   */
+  async isAvailable(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/ping`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) { return false; }
+      const json = (await res.json()) as { pong?: boolean };
+      return json.pong === true;
+    } catch (err) {
+      logger.debug({ err }, 'RestIpcClient health probe failed');
+      return false;
+    }
+  }
+
+  /** No persistent resources to close (stateless HTTP). */
+  close(): void {
+    // No-op — HTTP is stateless, unlike the Unix-socket IPC client.
+  }
+
+  /** Alias for close(), matching UnixSocketIpcClient.disconnect() signature. */
+  disconnect(): Promise<void> {
+    this.close();
+    return Promise.resolve();
+  }
+
+  // Convenience methods mirroring UnixSocketIpcClient (delegating to facade
+  // functions which call request<T> internally). This ensures full method
+  // parity so callers that use these directly work with either client.
+
+  async loopStart(params: Parameters<typeof facadeLoopStart>[1]) {
+    return await facadeLoopStart(this, params);
+  }
+
+  async loopStop(loopId: string) {
+    return await facadeLoopStop(this, loopId);
+  }
+
+  async loopStatus(loopId: string) {
+    return await facadeLoopStatus(this, loopId);
+  }
+}
