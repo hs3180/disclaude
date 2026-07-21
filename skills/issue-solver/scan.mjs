@@ -276,7 +276,7 @@ function main() {
 
   const openCount = allPRs.filter((pr) => pr.state === "OPEN").length;
   const mergedCount = allPRs.length - openCount;
-  log(`Found ${allIssues.length} open issues, ${openCount} open PRs, ${mergedCount} merged PRs (${mergedFiltered} phantom-filtered)`);
+  log(`Found ${allIssues.length} open issues, ${openCount} open PRs, ${mergedCount} merged PRs`);
 
   // Build set of issue numbers referenced by PRs (open OR merged).
   // Open PRs: any keyword match (work in progress — don't duplicate).
@@ -307,9 +307,9 @@ function main() {
       }
     }
   }
-  log(`Issues with open PRs: ${[...prIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
+  log(`Issues with PRs (open or merged): ${[...prIssueNums].sort((a, b) => a - b).join(", ") || "none"} (${mergedFiltered} merged-PR closing-ref(s) phantom-filtered)`);
 
-  // Filter: remove issues with open PRs
+  // Filter: remove issues with open or merged PRs
   const candidates = allIssues.filter((i) => !prIssueNums.has(i.number));
   log(`${candidates.length} candidate(s) after filtering`);
 
