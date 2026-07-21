@@ -446,6 +446,17 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
       // then fell back to create
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      // Issue #4252: fallback create must keep the message in the thread
+      // (root_id), otherwise it escapes to the chat root.
+      expect(mocks.createMock).toHaveBeenCalledWith({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: 'chat_123',
+          msg_type: 'text',
+          content: JSON.stringify({ text: 'Fallback test' }),
+          root_id: 'deleted_msg_999',
+        },
+      });
       expect(result).toBe('new_msg_001');
     });
 
@@ -464,6 +475,18 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
 
       expect(mocks.replyMock).toHaveBeenCalledTimes(1);
       expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      // Issue #4252: when reply() fails for a card (send_interactive /
+      // send_card), the fallback create must carry root_id so the card stays
+      // in the thread instead of landing in the chat root.
+      expect(mocks.createMock).toHaveBeenCalledWith({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: 'chat_123',
+          msg_type: 'interactive',
+          content: JSON.stringify(card),
+          root_id: 'root_msg_000',
+        },
+      });
       expect(result).toBe('new_msg_001');
     });
   });
