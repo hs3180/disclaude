@@ -213,7 +213,18 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
         }
       }
     }
-    pullRequests(first: 100, states: [OPEN, MERGED]) {
+    pullRequests(first: 100, states: [OPEN]) {
+      totalCount
+      pageInfo { hasNextPage }
+      nodes {
+        number
+        title
+        body
+        headRefName
+        state
+      }
+    }
+    mergedPRs: pullRequests(first: 100, states: [MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
       totalCount
       pageInfo { hasNextPage }
       nodes {
@@ -268,15 +279,18 @@ function main() {
 
   const repo = data.data.repository;
   const allIssues = repo.issues.nodes || [];
-  const allPRs = repo.pullRequests.nodes || [];
+  // OPEN and MERGED are fetched as SEPARATE connections so each gets its own
+  // first:100 window. Mixing them in one capped connection lets the (far more
+  // numerous) merged PRs crowd out open PRs, breaking the WIP filter.
+  const allPRs = [...(repo.pullRequests.nodes || []), ...(repo.mergedPRs?.nodes || [])];
 
-  if (repo.issues.pageInfo?.hasNextPage || repo.pullRequests.pageInfo?.hasNextPage) {
-    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, PRs total: ${repo.pullRequests.totalCount}. Only first 100 of each fetched.`);
+  if (repo.issues.pageInfo?.hasNextPage || repo.pullRequests.pageInfo?.hasNextPage || repo.mergedPRs?.pageInfo?.hasNextPage) {
+    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, open PRs total: ${repo.pullRequests.totalCount}, merged PRs total: ${repo.mergedPRs?.totalCount}. Only first 100 of each fetched.`);
   }
 
-  const openCount = allPRs.filter((pr) => pr.state === "OPEN").length;
-  const mergedCount = allPRs.length - openCount;
-  log(`Found ${allIssues.length} open issues, ${openCount} open PRs, ${mergedCount} merged PRs`);
+  const openCount = (repo.pullRequests.nodes || []).filter((pr) => pr.state === "OPEN").length;
+  const mergedCount = repo.mergedPRs?.nodes?.length || 0;
+  log(`Found ${allIssues.length} open issues, ${openCount} open PRs, ${mergedCount} merged PRs (recently updated)`);
 
   // Build set of issue numbers referenced by PRs (open OR merged).
   // Open PRs: any keyword match (work in progress — don't duplicate).
@@ -320,7 +334,7 @@ function main() {
 
   // Build Markdown output with full issue details
   let md = `# Issue Scan Results\n\n`;
-  md += `**Candidates:** ${candidates.length} | **Open PRs:** ${allPRs.length} | **Repo:** ${REPO}\n\n---\n\n`;
+  md += `**Candidates:** ${candidates.length} | **Open PRs:** ${openCount} | **Merged PRs (scan):** ${mergedCount} | **Repo:** ${REPO}\n\n---\n\n`;
 
   for (const issue of candidates) {
     const labels = (issue.labels?.nodes || []).map((l) => l.name);
