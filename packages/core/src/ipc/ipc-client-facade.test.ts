@@ -129,4 +129,63 @@ describe('ipc-client-facade', () => {
       expect(result).toEqual({ success: true });
     });
   });
+
+  describe('sendInteractive', () => {
+    it('should delegate with chatId merged into raw card params', async () => {
+      const client = createMockClient({ sendInteractive: { success: true, messageId: 'om_3' } });
+      const { sendInteractive } = await import('./ipc-client-facade.js');
+      const params = {
+        question: 'Approve?',
+        options: [
+          { text: 'Yes', value: 'yes', type: 'primary' as const },
+          { text: 'No', value: 'no', type: 'danger' as const },
+        ],
+        title: 'Review',
+        context: 'PR #4355',
+        threadId: 'om_thread',
+        actionPrompts: { yes: 'User approved', no: 'User declined' },
+      };
+
+      const result = await sendInteractive(client, 'oc_test', params);
+
+      expect(result).toEqual({ success: true, messageId: 'om_3' });
+      expect(client.request).toHaveBeenCalledWith('sendInteractive', {
+        chatId: 'oc_test',
+        ...params,
+      });
+    });
+  });
+
+  describe('classifyError', () => {
+    // classifyError is internal; exercise it through the public error path.
+    it('classifies IPC_NOT_AVAILABLE prefix as ipc_unavailable', async () => {
+      const client = createMockClient({ sendMessage: new Error('IPC_NOT_AVAILABLE: socket not connected') });
+      const { sendMessage } = await import('./ipc-client-facade.js');
+
+      const result = await sendMessage(client, 'oc_test', 'hi');
+
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_unavailable');
+    });
+
+    it('classifies IPC_TIMEOUT prefix as ipc_timeout', async () => {
+      const client = createMockClient({ sendMessage: new Error('IPC_TIMEOUT: request timed out after 5000ms') });
+      const { sendMessage } = await import('./ipc-client-facade.js');
+
+      const result = await sendMessage(client, 'oc_test', 'hi');
+
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_timeout');
+    });
+
+    it('defaults to ipc_request_failed for generic errors', async () => {
+      const client = createMockClient({ sendMessage: new Error('unexpected payload shape') });
+      const { sendMessage } = await import('./ipc-client-facade.js');
+
+      const result = await sendMessage(client, 'oc_test', 'hi');
+
+      expect(result.success).toBe(false);
+      expect(result.errorType).toBe('ipc_request_failed');
+    });
+  });
 });
