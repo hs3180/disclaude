@@ -43,6 +43,22 @@ describe('toolDefinitions', () => {
     }
   });
 
+  it('every required field should exist in properties (required ⊆ properties)', () => {
+    // TS types `required` as `string[]` but cannot enforce that each entry is
+    // actually a key of `properties` — this is a real runtime schema bug class.
+    for (const tool of toolDefinitions) {
+      const { required } = tool.inputSchema;
+      if (!required) {
+        continue; // required is optional
+      }
+      expect(Array.isArray(required)).toBe(true);
+      const propKeys = Object.keys(tool.inputSchema.properties);
+      for (const field of required) {
+        expect(propKeys, `tool "${tool.name}" requires unknown field "${field}"`).toContain(field);
+      }
+    }
+  });
+
   it('tool names should be unique', () => {
     const names = toolDefinitions.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
