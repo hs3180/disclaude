@@ -110,6 +110,19 @@ export interface AgentMessageMetadata {
    * 抑制自动重启并保留上下文。见 Issue #3706(GLM stall)。
    */
   terminatedReason?: 'stall';
+  /**
+   * 上游 API 错误标记(Issue #4322)。SDK 在上游返回 overloaded_error / 5xx 并重试
+   * 耗尽后,把错误只打到 stderr,却仍发一个 subtype=success 的 result —— 会让
+   * ChatAgent 误报 ✅ Complete(静默成功)。provider 据本轮捕获的 stderr 给该 success
+   * result 打上此标记,ChatAgent 据此改报 ❌ Failed 并 recordFailure。见
+   * provider.ts 的 stderrIndicatesUpstreamApiError()。
+   */
+  upstreamApiError?: boolean;
+  /**
+   * 触发 upstreamApiError 的 stderr 尾部(Issue #4322)。含上游 request_id 等可操作
+   * 信息,ChatAgent 在 ❌ Failed 提示里截取展示。仅在 upstreamApiError=true 时设置。
+   */
+  upstreamApiErrorStderr?: string;
 }
 
 /** Agent 消息类型 */

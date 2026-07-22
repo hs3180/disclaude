@@ -532,6 +532,199 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  describe('Issue #4322: upstream-API-error turn reported as failed, not ✅ Complete', () => {
+    it('should send ❌ Failed notice (with request_id) and recordFailure when provider tags the result', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_upstream',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // #4322 shape: the turn streamed partial user-visible work, THEN the SDK
+      // gave up on an upstream overloaded_error but still emitted a subtype=
+      // success result. The provider detected the stderr signature and tagged
+      // the result (upstreamApiError + upstreamApiErrorStderr with the upstream
+      // request_id), hoisted to top-level parsed fields by convertToLegacyFormat
+      // (same shape as terminatedReason for the stall path).
+      async function* upstreamErrorResultIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'partial work output' }, raw: {} };
+        yield {
+          parsed: {
+            type: 'result',
+            content: '✅ Complete | Cost: $1.3361 | Tokens: 71.8k',
+            upstreamApiError: true,
+            upstreamApiErrorStderr:
+              'Error in API request: {"type":"error","error":{"type":"overloaded_error","code":"500",' +
+              '"request_id":"20260714182952476a7a385dcd435c"}}',
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: upstreamErrorResultIterator(),
+      });
+      // BaseAgent mock doesn't define isAgentTeamsEnabled(); stub it so the
+      // #3706 zero-tool check at the result marker doesn't throw and short-
+      // circuit before the #4322 upstream-error branch runs.
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_upstream', payload: 'hello', messageId: 'msg_1' });
+      await vi.waitFor(
+        () => {
+          // ❌ Failed notice delivered, surfacing the upstream request_id (actionable).
+          const failedCall = localCallbacks.sendMessage.mock.calls.find(
+            (c: any[]) => typeof c[1] === 'string' && c[1].includes('上游 API 错误')
+          );
+          expect(failedCall).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      const failedCall = localCallbacks.sendMessage.mock.calls.find(
+        (c: any[]) => typeof c[1] === 'string' && c[1].includes('上游 API 错误')
+      );
+      expect(failedCall![1]).toContain('20260714182952476a7a385dcd435c');
+      expect(failedCall![0]).toBe('oc_upstream');
+      // Threaded to the turn's thread root (3rd sendMessage arg), like #4258.
+      expect(failedCall![2]).toBe('thread-root-123');
+
+      // recordFailure('upstream-api-error') — NOT recordSuccess — so chronic
+      // upstream issues can trip the restart circuit.
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_upstream', 'upstream-api-error');
+      expect(rm.recordSuccess).not.toHaveBeenCalled();
+    });
+
+    it('Issue #4322 (true-regression guard): an untagged successful turn does NOT fire the ❌ Failed notice', async () => {
+      // Same stream shape (partial work + result) but WITHOUT the upstreamApiError
+      // tag → a genuinely successful turn must be reported normally (recordSuccess),
+      // proving the notice + recordFailure branch is gated on the provider tag and
+      // not firing on every result. Revert the chat-agent branch and this still
+      // passes; revert the provider tagging and the upstream-error test above
+      // would regress (no notice / recordSuccess instead).
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_ok',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* okResultIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'done' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 0.5k' }, raw: {} };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: okResultIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_ok', payload: 'hello', messageId: 'msg_1' });
+      await vi.waitFor(
+        () => {
+          const rm = (agent as any).restartManager;
+          expect(rm.recordSuccess).toHaveBeenCalledWith('oc_ok');
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      expect(
+        localCallbacks.sendMessage.mock.calls.some(
+          (c: any[]) => typeof c[1] === 'string' && c[1].includes('上游 API 错误')
+        )
+      ).toBe(false);
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).not.toHaveBeenCalledWith('oc_ok', 'upstream-api-error');
+    });
+
+    it('Issue #4322 (edge case): an EMPTY turn killed by an upstream error surfaces only the ❌ notice, records upstream-api-error', async () => {
+      // Boundary: when the SDK gives up on an upstream overload BEFORE any
+      // content/tool flowed, the turn is BOTH empty (isEmptyTurn) and tagged
+      // upstreamApiError. The upstream ❌ notice (with request_id, and the
+      // correct "transient overload — retry shortly" diagnosis) must win over
+      // the generic ⚠️ empty-turn notice — whose "session may be invalid, try
+      // resetting" advice is wrong for a transient upstream error and would
+      // otherwise double-notify. The recorded reason must be the more specific
+      // 'upstream-api-error', not 'empty-turn'. True-regression for the
+      // precedence fix: revert the `&& !upstreamApiError` guard (or the
+      // recordFailure reorder) and this fails.
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_empty_upstream',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Result-only stream (no assistant text / no tools) → isEmptyTurn becomes
+      // true at the result, AND the result is tagged upstreamApiError.
+      async function* emptyUpstreamErrorIterator() {
+        yield {
+          parsed: {
+            type: 'result',
+            content: '✅ Complete | Cost: $1.3361 | Tokens: 71.8k',
+            upstreamApiError: true,
+            upstreamApiErrorStderr:
+              'Error in API request: {"type":"error","error":{"type":"overloaded_error","code":"500",' +
+              '"request_id":"20260714182952476a7a385dcd435c"}}',
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: emptyUpstreamErrorIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({
+        chatId: 'oc_empty_upstream',
+        payload: 'hello',
+        messageId: 'msg_1',
+      });
+
+      await vi.waitFor(
+        () => {
+          const rm = (agent as any).restartManager;
+          expect(rm.recordFailure).toHaveBeenCalledWith(
+            'oc_empty_upstream',
+            'upstream-api-error'
+          );
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      // ❌ upstream notice fired, surfacing the upstream request_id.
+      const upstreamNotice = localCallbacks.sendMessage.mock.calls.find(
+        (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('上游 API 错误')
+      );
+      expect(upstreamNotice).toBeDefined();
+      expect(upstreamNotice![1]).toContain('20260714182952476a7a385dcd435c');
+
+      // ⚠️ empty-turn notice did NOT fire (no double notice).
+      expect(
+        localCallbacks.sendMessage.mock.calls.some(
+          (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('未产生任何可见输出')
+        )
+      ).toBe(false);
+
+      const rm = (agent as any).restartManager;
+      // More specific cause wins; the generic empty-turn reason is NOT recorded.
+      expect(rm.recordFailure).not.toHaveBeenCalledWith('oc_empty_upstream', 'empty-turn');
+      expect(rm.recordSuccess).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Issue #4320: stop_reason surfaced in turn-complete log (Gap D)', () => {
     it('should log stopReason from parsed.metadata on turn completion', async () => {
       const localCallbacks = createMockCallbacks();
