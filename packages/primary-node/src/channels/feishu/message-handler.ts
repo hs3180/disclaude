@@ -628,8 +628,10 @@ export class MessageHandler {
           // Issue #1711: Extract full text from interactive card messages
           const parsed = JSON.parse(msgContent);
           quotedText = extractFullCardContent(parsed);
-        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio') {
-          return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
+        } else if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
+          // Issue #4330: use the shared MEDIA_MESSAGE_TYPES set (includes video)
+          // so the quoted path stays in sync with getThreadContext's media check.
+          return await this.handleQuotedFileMessage(msgType || '', msgContent, msgId);
         }
       } catch {
         quotedText = msgContent || '';
@@ -772,16 +774,9 @@ export class MessageHandler {
       }
     }
 
-    let typeLabel: string;
-    if (messageType === 'image') {
-      typeLabel = '图片';
-    } else if (messageType === 'file') {
-      typeLabel = '文件';
-    } else if (messageType === 'audio') {
-      typeLabel = '语音消息';
-    } else {
-      typeLabel = '媒体文件';
-    }
+    // Issue #4330: use the shared mediaThreadLabel helper (was 语音消息/媒体文件,
+    // now unified with getThreadContext's labels — 语音/媒体).
+    const typeLabel = mediaThreadLabel(messageType);
     const resourceType = mapResourceType(messageType);
     const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType);
     if (!localPath) {
@@ -851,7 +846,8 @@ export class MessageHandler {
     }
 
     // Handle file/image messages - download to workspace and include path in prompt
-    if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio') {
+    // Issue #4330: use the shared MEDIA_MESSAGE_TYPES set (includes video)
+    if (MEDIA_MESSAGE_TYPES.has(message_type || '')) {
       logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
 
       // Parse content to extract file_key and file_name
@@ -934,16 +930,8 @@ export class MessageHandler {
       await this.addTypingReaction(message_id);
 
       // Build content with file path for the agent prompt
-      let typeLabel: string;
-      if (message_type === 'image') {
-        typeLabel = '图片';
-      } else if (message_type === 'file') {
-        typeLabel = '文件';
-      } else if (message_type === 'audio') {
-        typeLabel = '语音消息';
-      } else {
-        typeLabel = '媒体文件';
-      }
+      // Issue #4330: use the shared mediaThreadLabel helper (unified labels).
+      const typeLabel = mediaThreadLabel(message_type);
       const resourceType = mapResourceType(message_type);
       const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
       const filePrompt = localPath
