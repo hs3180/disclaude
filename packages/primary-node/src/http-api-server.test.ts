@@ -164,6 +164,431 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('POST /api/upload-file (Issue #4279)', () => {
+    const validBody = JSON.stringify({ chatId: 'oc_test', filePath: '/tmp/report.pdf', threadId: 'om_root' });
+
+    it('should delegate to the handler and return upload metadata', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({
+        success: true, fileKey: 'file_v3_001', fileType: 'pdf', fileName: 'report.pdf', fileSize: 12345,
+      });
+      server.setUploadFileHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; fileKey?: string; fileSize?: number };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.fileKey).toBe('file_v3_001');
+      expect(data.fileSize).toBe(12345);
+      expect(mockHandler).toHaveBeenCalledWith('oc_test', '/tmp/report.pdf', 'om_root');
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when filePath is missing', async () => {
+      server.setUploadFileHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when chatId or filePath is empty', async () => {
+      server.setUploadFileHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: '', filePath: '' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setUploadFileHandler(vi.fn().mockRejectedValue(new Error('file not found')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-file',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('file not found');
+    });
+  });
+
+  describe('POST /api/upload-image (Issue #4279)', () => {
+    const validBody = JSON.stringify({ filePath: '/tmp/img.png' });
+
+    it('should delegate to the handler and return imageKey', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ success: true, imageKey: 'img_v3_001' });
+      server.setUploadImageHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-image',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; imageKey?: string };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.imageKey).toBe('img_v3_001');
+      expect(mockHandler).toHaveBeenCalledWith('/tmp/img.png');
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-image',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when filePath is missing', async () => {
+      server.setUploadImageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-image',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when filePath is an empty string', async () => {
+      const mockHandler = vi.fn();
+      server.setUploadImageHandler(mockHandler);
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-image',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ filePath: '' }),
+      });
+      expect(statusCode).toBe(400);
+      expect(JSON.parse(body).message).toContain('non-empty');
+      // Empty filePath must not fall through to the handler (avoids messy ENOENT 500).
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setUploadImageHandler(vi.fn().mockRejectedValue(new Error('image too large')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/upload-image',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('image too large');
+    });
+  });
+
+  describe('GET /api/ping (Issue #4279)', () => {
+    it('should return pong ok', async () => {
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/ping' });
+      expect(statusCode).toBe(200);
+
+      const data = JSON.parse(body) as { pong: boolean };
+      expect(data.pong).toBe(true);
+    });
+
+    it('should return JSON content type', async () => {
+      const { headers } = await dispatch(server, { method: 'GET', url: '/api/ping' });
+      expect(headers['content-type']).toContain('application/json');
+    });
+  });
+
+  describe('POST /api/send-message (Issue #4279)', () => {
+    it('should delegate to the handler and return success + messageId', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ success: true, messageId: 'om_123' });
+      server.setSendMessageHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi', threadId: 'om_root', mentions: [{ openId: 'ou_a' }] }),
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; messageId?: string };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.messageId).toBe('om_123');
+      expect(mockHandler).toHaveBeenCalledWith('oc_test', 'hi', 'om_root', [{ openId: 'ou_a' }]);
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi' }),
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when text is missing', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when chatId is missing', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hi' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when chatId or text is empty', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: '', text: '' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when a mention is malformed', async () => {
+      server.setSendMessageHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi', mentions: [{ name: 'no-open-id' }] }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setSendMessageHandler(vi.fn().mockRejectedValue(new Error('channel offline')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-message',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', text: 'hi' }),
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('channel offline');
+    });
+  });
+
+  describe('POST /api/send-card (Issue #4279)', () => {
+    const card = { config: { wide_screen_mode: true }, elements: [] };
+    const validBody = JSON.stringify({ chatId: 'oc_test', card, threadId: 'om_root', description: 'hi' });
+
+    it('should delegate to the handler and return success', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ success: true });
+      server.setSendCardHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-card',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(mockHandler).toHaveBeenCalledWith('oc_test', card, 'om_root', 'hi');
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-card',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when card is missing', async () => {
+      server.setSendCardHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-card',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test' }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 400 when chatId is missing', async () => {
+      server.setSendCardHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-card',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ card }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setSendCardHandler(vi.fn().mockRejectedValue(new Error('card rejected')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-card',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('card rejected');
+    });
+  });
+
+  describe('POST /api/send-interactive (Issue #4279)', () => {
+    const validBody = JSON.stringify({
+      chatId: 'oc_test',
+      question: 'approve?',
+      options: [{ text: '✅ Approve', value: 'approve', type: 'primary' }],
+      title: 'Review',
+      actionPrompts: { approve: 'approved' },
+    });
+
+    it('should delegate to the handler and return success + messageId', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ success: true, messageId: 'om_123' });
+      server.setSendInteractiveHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; messageId?: string };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.messageId).toBe('om_123');
+      expect(mockHandler).toHaveBeenCalledTimes(1);
+      expect(mockHandler.mock.calls[0]![0]).toBe('oc_test');
+      expect(mockHandler.mock.calls[0]![1].question).toBe('approve?');
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when options is missing/empty', async () => {
+      server.setSendInteractiveHandler(vi.fn());
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_test', question: 'q', options: [] }),
+      });
+      expect(statusCode).toBe(400);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setSendInteractiveHandler(vi.fn().mockRejectedValue(new Error('not supported')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('not supported');
+    });
+
+    it('should drop actionPrompts when it is an array (typeof object, but not a record)', async () => {
+      // `typeof [] === 'object'`; the shallow check must not let arrays through.
+      const mockHandler = vi.fn().mockResolvedValue({ success: true, messageId: 'om_arr' });
+      server.setSendInteractiveHandler(mockHandler);
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/send-interactive',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          chatId: 'oc_test',
+          question: 'q',
+          options: [{ text: '✅', value: 'ok' }],
+          actionPrompts: [['approve', 'x']],
+        }),
+      });
+      expect(statusCode).toBe(200);
+      const forwarded = mockHandler.mock.calls[0]![1] as { actionPrompts?: unknown };
+      expect(forwarded.actionPrompts).toBeUndefined();
+    });
+  });
+
+  describe('GET /api/temp-chats (Issue #4279)', () => {
+    it('should delegate to the handler and return the chat list', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({
+        success: true,
+        chats: [{ chatId: 'oc_t1', createdAt: '2026-07-16T00:00:00Z', expiresAt: '2026-07-16T01:00:00Z', responded: false }],
+      });
+      server.setListTempChatsHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/temp-chats' });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; chats?: Array<{ chatId: string }> };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(data.chats).toHaveLength(1);
+      expect(data.chats![0].chatId).toBe('oc_t1');
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, { method: 'GET', url: '/api/temp-chats' });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setListTempChatsHandler(vi.fn().mockRejectedValue(new Error('store offline')));
+      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/temp-chats' });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('store offline');
+    });
+  });
+
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/unknown' });

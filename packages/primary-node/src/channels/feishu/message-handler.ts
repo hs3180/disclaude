@@ -68,9 +68,9 @@ export interface MessageCallbacks {
   emitControl: (control: ControlCommand) => Promise<ControlResponse>;
   sendMessage: (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => Promise<void>;
   /**
-   * Route card action to Worker Node if applicable.
+   * Route card action to the local agent if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
-   * so remote Worker Nodes receive the contextual prompt.
+   * so the agent receives the contextual prompt.
    * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
    */
   routeCardAction?: (message: {
@@ -128,18 +128,14 @@ interface QuotedMessageResult {
 
 /**
  * Issue #4319: message types whose content is a downloadable media payload.
- * Used by getThreadContext to decide whether to download + surface the file
- * (instead of extractMessageText's opaque placeholder).
+ * Used by getThreadContext to decide whether to surface download guidance
+ * (message_id + key + command) instead of extractMessageText's opaque
+ * placeholder. getThreadContext itself stays read-only and does NOT download.
  */
 const MEDIA_MESSAGE_TYPES = new Set(['image', 'file', 'audio', 'media', 'video']);
 
-/**
- * Issue #4330: unified short Chinese label for a media message type.
- * Shared by both getThreadContext (#4319) and the quoted-message path
- * (handleQuotedFileMessage / handleMessageReceive) so the two paths
- * produce consistent labels instead of drifting (语音 vs 语音消息 etc.).
- */
-function mediaTypeLabel(messageType?: string): string {
+/** Issue #4319: short Chinese label for a media message type (thread-context display). */
+function mediaThreadLabel(messageType?: string): string {
   switch (messageType) {
     case 'image': return '图片';
     case 'file': return '文件';
@@ -259,9 +255,106 @@ export class MessageHandler {
   /**
    * Build a download command string for the agent to use as a fallback hint.
    */
-  private buildDownloadCmd(messageId: string, fileKey: string, resourceType: 'image' | 'file'): string {
+  private buildDownloadCmd(
+    messageId: string,
+    fileKey: string,
+    resourceType: 'image' | 'file',
+    outputPath?: string,
+  ): string {
     const ext = resourceType === 'image' ? 'jpg' : 'bin';
-    return `npx @larksuite/cli im +messages-resources-download --message-id ${messageId} --file-key ${fileKey} --type ${resourceType} --as bot --output ./downloaded_file.${ext}`;
+    const output = outputPath ?? `./downloaded_file.${ext}`;
+    return `npx @larksuite/cli im +messages-resources-download --message-id ${messageId} --file-key ${fileKey} --type ${resourceType} --as bot --output ${output}`;
+  }
+
+  /**
+   * Parse a media message's content JSON into its resource key + display name.
+   *
+   * Shared by the read-only thread guidance (buildMediaThreadGuidance) and the
+   * quoted-message download (handleQuotedFileMessage) so a new media type or key
+   * convention only has to be added in one place — the two paths previously
+   * duplicated this extraction verbatim.
+   *
+   * Returns `undefined` when `content` is not valid JSON, otherwise
+   * `{ fileKey, fileName }` — `fileKey` is undefined when the JSON carried no
+   * usable resource key. Callers own the fileKey-absent / parse-failure logging,
+   * which differs between the two paths.
+   */
+  private parseMediaContent(
+    messageType: string,
+    content: string,
+  ): { fileKey: string | undefined; fileName: string | undefined } | undefined {
+    try {
+      const parsed = JSON.parse(content);
+      let fileKey: string | undefined;
+      let fileName: string | undefined;
+      if (messageType === 'image') {
+        fileKey = parsed.image_key;
+        fileName = `image_${fileKey}`;
+      } else if (messageType === 'audio') {
+        // Issue #1966: Audio messages use file_key in content JSON
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `audio_${fileKey}`;
+      } else {
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `file_${fileKey}`;
+      }
+      return { fileKey, fileName };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Issue #4319 (read-only design, 2026-07-16): build actionable download
+   * guidance for a media message in thread context — WITHOUT downloading. The
+   * agent receives the message_id, the resource key, and a ready-to-run download
+   * command, so it can fetch the content on demand if it actually needs it.
+   *
+   * This is the read-only counterpart to handleQuotedFileMessage: getThreadContext
+   * must not spawn lark-cli or touch the filesystem just to summarize a thread.
+   *
+   * Returns undefined when no key can be parsed from content; the caller then
+   * keeps extractMessageText's opaque placeholder as the honest fallback.
+   */
+  private buildMediaThreadGuidance(
+    messageType: string,
+    content: string,
+    messageId: string,
+  ): string | undefined {
+    const media = this.parseMediaContent(messageType, content);
+    const fileKey = media?.fileKey;
+    const fileName = media?.fileName;
+    if (!fileKey || !fileName) {
+      // Review nit #4: surface why we fell back to the placeholder instead of
+      // going silent (the prior eager-download path logged on this branch).
+      logger.debug({ messageType, messageId }, 'No media key in thread context — using placeholder');
+      return undefined;
+    }
+
+    const label = mediaThreadLabel(messageType);
+    const keyField = messageType === 'image' ? 'image_key' : 'file_key';
+    const resourceType = mapResourceType(messageType);
+    // Review nit #3: prefer the resource's real filename (it carries the correct
+    // extension, e.g. report.pdf) so a later Read sees a properly-typed path;
+    // otherwise fall back to messageId with a best-effort extension. Images and
+    // nameless files only have a synthetic name with no extension, so the
+    // messageId fallback also keeps same-thread media messages from colliding.
+    const hasRealExt = fileName.includes('.');
+    const ext = resourceType === 'image' ? 'jpg' : 'bin';
+    const outputPath = hasRealExt
+      ? `./downloads/${fileName}`
+      : `./downloads/${messageId}.${ext}`;
+    const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType, outputPath);
+
+    // Review nit #2: fileName is always non-empty here (image → image_<key>;
+    // otherwise file_name || <type>_<key> with fileKey already checked), so the
+    // previous `fileName ? ... : ''` ternary was a dead branch — emit it directly.
+    return [
+      `[${label}消息 (${keyField}=${fileKey}, 名称=${fileName}): 线程上下文未自动获取其内容。如需查看，可执行下方命令下载后用 Read 工具读取]`,
+      '```bash',
+      downloadCmd,
+      '```',
+    ].join('\n');
   }
 
   /**
@@ -380,26 +473,23 @@ export class MessageHandler {
         const msgType = msg.message.message_type;
         let text = this.extractMessageText(msgType, msg.message.content || '{}');
 
-        // Issue #4319: media messages (image/file/audio/media/video) only yield an
-        // opaque placeholder from extractMessageText. Download the file (reusing the
-        // quoted-message path) and surface its name + local path so a media
-        // topic-anchor in the thread is legible to the agent instead of "[未解析的 image 消息]".
+        // Issue #4319 (read-only design, 2026-07-16): getThreadContext must stay
+        // read-only — it only does client.im.message.get and assembles text. For a
+        // media message we do NOT download (no handleQuotedFileMessage / spawned
+        // lark-cli); instead we surface actionable download guidance (message_id +
+        // key + a ready-to-run command) so the agent can fetch the bytes on demand
+        // if it actually needs them. This replaces the earlier eager-download
+        // approach (#4325), which had no place in a read-only context summary.
+        // Falls back to extractMessageText's placeholder only when no key can be
+        // parsed (nothing to point the agent at).
         if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
-          try {
-            const media = await this.handleQuotedFileMessage(
-              msgType || '',
-              msg.message.content || '{}',
-              msg.message.message_id || currentId,
-            );
-            if (media?.attachment?.filePath) {
-              text = `[${mediaTypeLabel(msgType)}: ${media.attachment.fileName}]（已下载到本地: ${media.attachment.filePath}）`;
-            }
-            // else: keep extractMessageText's placeholder (download failed / no token)
-          } catch (mediaErr) {
-            logger.debug(
-              { err: mediaErr, messageId: msg.message.message_id },
-              'Failed to extract media in thread context; using placeholder',
-            );
+          const guidance = this.buildMediaThreadGuidance(
+            msgType || '',
+            msg.message.content || '{}',
+            msg.message.message_id || currentId,
+          );
+          if (guidance) {
+            text = guidance;
           }
         }
 
@@ -538,10 +628,8 @@ export class MessageHandler {
           // Issue #1711: Extract full text from interactive card messages
           const parsed = JSON.parse(msgContent);
           quotedText = extractFullCardContent(parsed);
-        } else if (MEDIA_MESSAGE_TYPES.has(msgType || '')) {
-          // Issue #4330: use the shared MEDIA_MESSAGE_TYPES set (includes video)
-          // so the quoted path stays in sync with getThreadContext's media check.
-          return await this.handleQuotedFileMessage(msgType || '', msgContent, msgId);
+        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio') {
+          return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
       } catch {
         quotedText = msgContent || '';
@@ -569,31 +657,17 @@ export class MessageHandler {
     content: string,
     messageId: string,
   ): Promise<QuotedMessageResult | undefined> {
-    let fileKey: string | undefined;
-    let fileName: string | undefined;
-
-    try {
-      const parsed = JSON.parse(content);
-      if (messageType === 'image') {
-        fileKey = parsed.image_key;
-        fileName = `image_${fileKey}`;
-      } else if (messageType === 'audio') {
-        // Issue #1966: Audio messages use file_key in content JSON
-        fileKey = parsed.file_key;
-        fileName = parsed.file_name || `audio_${fileKey}`;
-      } else {
-        fileKey = parsed.file_key;
-        fileName = parsed.file_name || `file_${fileKey}`;
-      }
-    } catch {
+    const media = this.parseMediaContent(messageType, content);
+    if (!media) {
       logger.warn({ content, messageType, messageId }, 'Failed to parse quoted file message content');
       return undefined;
     }
-
+    const { fileKey } = media;
     if (!fileKey) {
       logger.warn({ messageType, messageId }, 'No file_key found in quoted message');
       return undefined;
     }
+    let { fileName } = media;
 
     // Download file to workspace/downloads directory
     // Issue #3960: downloadResourceViaLarkCli uses npx lark-cli, which only needs tenantAccessToken (not this.client)
@@ -698,9 +772,16 @@ export class MessageHandler {
       }
     }
 
-    // Issue #4330: use the shared mediaTypeLabel helper (was 语音消息/媒体文件, now unified
-    // with getThreadContext's labels — 语音/媒体).
-    const typeLabel = mediaTypeLabel(messageType);
+    let typeLabel: string;
+    if (messageType === 'image') {
+      typeLabel = '图片';
+    } else if (messageType === 'file') {
+      typeLabel = '文件';
+    } else if (messageType === 'audio') {
+      typeLabel = '语音消息';
+    } else {
+      typeLabel = '媒体文件';
+    }
     const resourceType = mapResourceType(messageType);
     const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType);
     if (!localPath) {
@@ -770,8 +851,7 @@ export class MessageHandler {
     }
 
     // Handle file/image messages - download to workspace and include path in prompt
-    // Issue #4330: use the shared MEDIA_MESSAGE_TYPES set (includes video)
-    if (MEDIA_MESSAGE_TYPES.has(message_type || '')) {
+    if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio') {
       logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
 
       // Parse content to extract file_key and file_name
@@ -854,8 +934,16 @@ export class MessageHandler {
       await this.addTypingReaction(message_id);
 
       // Build content with file path for the agent prompt
-      // Issue #4330: use the shared mediaTypeLabel helper (unified labels).
-      const typeLabel = mediaTypeLabel(message_type);
+      let typeLabel: string;
+      if (message_type === 'image') {
+        typeLabel = '图片';
+      } else if (message_type === 'file') {
+        typeLabel = '文件';
+      } else if (message_type === 'audio') {
+        typeLabel = '语音消息';
+      } else {
+        typeLabel = '媒体文件';
+      }
       const resourceType = mapResourceType(message_type);
       const downloadCmd = this.buildDownloadCmd(message_id, fileKey, resourceType);
       const filePrompt = localPath
@@ -1162,8 +1250,8 @@ export class MessageHandler {
       }
     }
 
-    // Issue #1629: Resolve action prompt BEFORE routing so that remote
-    // Worker Nodes receive the contextual prompt via resolvedPrompt field.
+    // Issue #1629: Resolve action prompt BEFORE routing so that
+    // the agent receives the contextual prompt via the resolvedPrompt field.
     // Issue #1572: Try to resolve action prompt from InteractiveContextStore.
     // Falls back to default text if no prompt template is registered.
     const defaultMessage = `用户点击了按钮「${buttonText}」`;
@@ -1212,7 +1300,8 @@ export class MessageHandler {
       logger.warn({ err, messageId: message_id, chatId: chat_id }, 'Failed to log card action');
     });
 
-    // Try to route card action to Worker Node first
+    // Consult routeCardAction first (single-node mode: checks context status only,
+    // never routes remotely — see card-action-router.ts)
     if (this.callbacks.routeCardAction) {
       logger.debug(
         { messageId: message_id, chatId: chat_id, actionValue: action.value },
@@ -1235,7 +1324,7 @@ export class MessageHandler {
       });
 
       if (result.routed) {
-        logger.info({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action routed to Worker Node');
+        logger.info({ messageId: message_id, chatId: chat_id, actionValue: action.value }, 'Card action routed');
         return;
       }
 
@@ -1256,9 +1345,9 @@ export class MessageHandler {
     }
 
     // Emit card action as a message to the agent
-    // Issue #2007: This is the fallback path when routeCardAction returns false
-    // (no remote Worker Node registered). The message goes through the same
-    // pipeline as text messages via createDefaultMessageHandler → ChatAgent.processMessage.
+    // Issue #2007: routeCardAction never routes remotely in single-node mode, so
+    // card actions go through the same pipeline as text messages via
+    // createDefaultMessageHandler → ChatAgent.processMessage.
     let emitFailed = false;
     try {
       logger.debug(

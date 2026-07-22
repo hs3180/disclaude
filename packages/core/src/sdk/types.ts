@@ -82,6 +82,20 @@ export interface AgentMessageMetadata {
   messageId?: string;
   /** 停止原因 */
   stopReason?: string;
+  /**
+   * Issue #4320 (part 2): SDK result num_turns —— 该 turn 内 SDK↔模型的交互
+   * 轮次数。用于诊断「过早 end_turn」:一轮就停 vs 正常多轮可立刻区分。
+   */
+  numTurns?: number;
+  /**
+   * Issue #4320 (part 2): SDK result duration_ms —— turn 端到端耗时(含工具执行)。
+   */
+  durationMs?: number;
+  /**
+   * Issue #4320 (part 2): SDK result duration_api_ms —— 纯模型 API 耗时(不含
+   * 本地工具执行)。与 durationMs 对比可定位是模型慢还是工具慢。
+   */
+  durationApiMs?: number;
   /** 会话 ID */
   sessionId?: string;
   /**

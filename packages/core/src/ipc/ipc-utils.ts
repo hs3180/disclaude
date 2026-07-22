@@ -14,6 +14,7 @@ import {
   IPC_SOCKET_PATH_FILE,
 } from './protocol.js';
 import { UnixSocketIpcClient } from './unix-socket-client.js';
+import { RestIpcClient } from './rest-ipc-client.js';
 
 const logger = createLogger('IpcUtils');
 
@@ -46,7 +47,7 @@ export interface GetIpcSocketPathOptions {
  *
  * Priority:
  * 1. override parameter (e.g., --socket CLI argument)
- * 2. DISCLAUDE_WORKER_IPC_SOCKET env var (set by Worker Node for MCP Server)
+ * 2. DISCLAUDE_WORKER_IPC_SOCKET env var (set by Primary Node for the MCP Server subprocess — see primary-node.ts; legacy env name retained from the Worker Node architecture removed in #2964)
  * 3. DISCLAUDE_IPC_SOCKET_PATH env var (manual override)
  * 4. IPC_SOCKET_PATH_FILE (written by Primary Node, Issue #3808)
  * 5. DEFAULT_IPC_CONFIG.socketPath (Primary Node default)
@@ -87,19 +88,35 @@ export function getIpcSocketPath(options?: GetIpcSocketPathOptions): string {
   return DEFAULT_IPC_CONFIG.socketPath;
 }
 
-// Singleton instance
-let ipcClientInstance: UnixSocketIpcClient | null = null;
+// Singleton instance — either UnixSocketIpcClient (default) or RestIpcClient
+// (Issue #4279 Phase 2: when DISCLAUDE_REST_IPC_ENABLED=true).
+let ipcClientInstance: UnixSocketIpcClient | RestIpcClient | null = null;
 
 /**
  * Get the global IPC client instance.
  *
  * Issue #1042: Uses socket path from environment variable if set.
  * Priority: DISCLAUDE_WORKER_IPC_SOCKET > DISCLAUDE_IPC_SOCKET_PATH > default
+ *
+ * Issue #4279 (Phase 2): When DISCLAUDE_REST_IPC_ENABLED=true, returns a
+ * RestIpcClient instead of UnixSocketIpcClient. Dual-path: the Unix-socket
+ * path is retained (not removed — that's Phase 3 #4280). Default: IPC (off).
+ *
+ * REST IPC config via env vars (decision 3 default: env injection):
+ * - DISCLAUDE_REST_IPC_ENABLED: 'true' to enable REST IPC.
+ * - DISCLAUDE_REST_IPC_BASE_URL: HttpApiServer URL (default http://localhost:9200).
+ * - DISCLAUDE_REST_IPC_API_TOKEN: bearer token for POST endpoints.
  */
-export function getIpcClient(): UnixSocketIpcClient {
+export function getIpcClient(): UnixSocketIpcClient | RestIpcClient {
   if (!ipcClientInstance) {
-    const socketPath = getIpcSocketPath();
-    ipcClientInstance = new UnixSocketIpcClient({ socketPath });
+    if (process.env.DISCLAUDE_REST_IPC_ENABLED === 'true') {
+      const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:9200';
+      const apiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+      ipcClientInstance = new RestIpcClient({ baseUrl, apiToken });
+    } else {
+      const socketPath = getIpcSocketPath();
+      ipcClientInstance = new UnixSocketIpcClient({ socketPath });
+    }
   }
   return ipcClientInstance;
 }

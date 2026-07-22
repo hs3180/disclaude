@@ -134,6 +134,31 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
     }
 
     case 'result': {
+      // Issue #4320 (part 2): extract SDK result observability fields for ALL
+      // result subtypes, not just success. A premature end via error_max_turns
+      // (or error_max_budget_usd / error_max_structured_output_retries) is
+      // exactly the case where num_turns / duration are most diagnostic —
+      // "ran N turns / M ms before hitting the limit" — so this is hoisted
+      // above the subtype branches so every result path carries the metadata.
+      // stop_reason is included here for the same reason (SDKResultError also
+      // declares stop_reason / num_turns / duration_* as required fields, so the
+      // access is type-safe on the full SDKResultMessage union). Log-only
+      // metadata; the user-facing stats line is unchanged. Runtime guards mirror
+      // the rest of this handler (defend against runtime data diverging from
+      // the SDK type declarations).
+      if (message.stop_reason) {
+        metadata.stopReason = message.stop_reason;
+      }
+      if (typeof message.num_turns === 'number') {
+        metadata.numTurns = message.num_turns;
+      }
+      if (typeof message.duration_ms === 'number') {
+        metadata.durationMs = message.duration_ms;
+      }
+      if (typeof message.duration_api_ms === 'number') {
+        metadata.durationApiMs = message.duration_api_ms;
+      }
+
       if (message.subtype === 'success') {
         // TypeScript 通过 subtype === 'success' 将 message 收窄为 SDKResultSuccess。
         // SDKResultSuccess 包含 usage: NonNullableUsage 和 total_cost_usd: number。
@@ -173,12 +198,6 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
           }
         }
 
-        // Issue #4320: propagate SDK stop_reason (end_turn / max_tokens / tool_use / ...)
-        // into metadata so downstream logs can distinguish why a turn ended.
-        if (message.stop_reason) {
-          metadata.stopReason = message.stop_reason;
-        }
-
         return {
           type: 'result',
           content: statsText,
@@ -200,10 +219,15 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
+      // 其他错误 subtype（error_max_turns / error_max_budget_usd /
+      // error_max_structured_output_retries）落到此兜底：保持空内容（避免被
+      // chat-agent 当作用户可见回复），但携带上面提取的 metadata，使「撞 max turns
+      // 提前结束」这类场景的 num_turns / duration 仍可被诊断。
       return {
         type: 'text',
         content: '',
         role: 'assistant',
+        metadata,
         raw: message,
       };
     }

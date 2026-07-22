@@ -58,6 +58,8 @@ import {
   MessageRouter as InputMessageRouter,
   // Issue #4283: LOOP.md file watcher consumer bridge
   LOOP_MD_DIR,
+  // Issue #4279: FeishuCard type for REST sendCard parity.
+  type FeishuCard,
 } from '@disclaude/core';
 import { CardActionRouter } from './routers/card-action-router.js';
 import { DebugGroupService, getDebugGroupService } from './services/debug-group-service.js';
@@ -444,13 +446,10 @@ export class PrimaryNode extends EventEmitter {
         return h.uploadImage(filePath);
       },
 
-      listTempChats: () => {
-        const h = resolveHandlers();
-        if (!h?.listTempChats) {
-          throw new Error('listTempChats not supported by this channel');
-        }
-        return h.listTempChats();
-      },
+      // Delegates to resolveChannelTempChats (shared with the REST-facing
+      // listTempChats() public method) — returns the raw chat list; the IPC
+      // server wraps it into its { success, payload: { success, chats } } response.
+      listTempChats: () => this.resolveChannelTempChats(),
 
       markChatResponded: (chatId, response) => {
         const h = resolveHandlers(chatId);
@@ -716,6 +715,157 @@ export class PrimaryNode extends EventEmitter {
    */
   getInputMessageRouter(): InputMessageRouter | undefined {
     return this.inputMessageRouter;
+  }
+
+  /**
+   * Upload a local file to a chat — delegates to the channel's uploadFile
+   * capability (reads the file at filePath and uploads it). REST parity with
+   * the IPC uploadFile method (Issue #4279). filePath (not multipart) because
+   * the REST face is localhost-bound and the caller is co-located.
+   *
+   * @returns upload metadata (fileKey/fileType/fileName/fileSize)
+   */
+  async uploadFile(
+    chatId: string,
+    filePath: string,
+    threadId?: string,
+  ): Promise<{ success: boolean; fileKey?: string; fileType?: string; fileName?: string; fileSize?: number }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h) {
+      throw new Error('No channel handlers available');
+    }
+    const result = await h.uploadFile(chatId, filePath, threadId);
+    return { success: true, ...result };
+  }
+
+  /**
+   * Upload a local image and return a Feishu image_key (for card embedding) —
+   * delegates to the channel's uploadImage capability. Channel-agnostic (no
+   * chatId). REST parity with the IPC uploadImage method (Issue #4279).
+   *
+   * @returns { success: boolean; imageKey?: string }
+   */
+  async uploadImage(filePath: string): Promise<{ success: boolean; imageKey?: string }> {
+    const h = this.resolveApiHandlers();
+    if (!h?.uploadImage) {
+      throw new Error('uploadImage not supported by this channel');
+    }
+    const result = await h.uploadImage(filePath);
+    return { success: true, ...result };
+  }
+
+  /**
+   * Send a text message to a chat — delegates to the channel's sendMessage
+   * capability. REST parity with the IPC sendMessage method (Issue #4279).
+   *
+   * @returns { success: boolean; messageId?: string } (mirrors IPC IpcResponsePayloads)
+   */
+  async sendMessage(
+    chatId: string,
+    text: string,
+    threadId?: string,
+    mentions?: Array<{ openId: string; name?: string }>,
+  ): Promise<{ success: boolean; messageId?: string }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h) {
+      throw new Error('No channel handlers available');
+    }
+    // The channel handler returns Promise<void> (the IPC layer synthesizes
+    // success/messageId); REST confirms acceptance with { success: true }.
+    await h.sendMessage(chatId, text, threadId, mentions);
+    return { success: true };
+  }
+
+  /**
+   * Send a Feishu card to a chat — delegates to the channel's sendCard
+   * capability. REST parity with the IPC sendCard method (Issue #4279).
+   *
+   * @returns { success: boolean; messageId?: string } (mirrors IPC IpcResponsePayloads)
+   */
+  async sendCard(
+    chatId: string,
+    card: FeishuCard,
+    threadId?: string,
+    description?: string,
+  ): Promise<{ success: boolean; messageId?: string }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h) {
+      throw new Error('No channel handlers available');
+    }
+    // The channel handler returns Promise<void> (the IPC layer synthesizes
+    // success/messageId); REST confirms acceptance with { success: true }.
+    await h.sendCard(chatId, card, threadId, description);
+    return { success: true };
+  }
+
+  /**
+   * Send an interactive card (with buttons) to a chat — builds+sends the card
+   * via the channel's sendInteractive capability and registers the action
+   * prompts so button clicks resolve. REST parity with the IPC sendInteractive
+   * method (Issue #4279); the registration mirrors the IPC handler (Issue #1572).
+   *
+   * @returns { success: boolean; messageId?: string }
+   */
+  async sendInteractive(
+    chatId: string,
+    params: {
+      question: string;
+      options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+      title?: string;
+      context?: string;
+      threadId?: string;
+      actionPrompts?: Record<string, string>;
+    },
+  ): Promise<{ success: boolean; messageId?: string }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h?.sendInteractive) {
+      throw new Error('sendInteractive not supported by this channel');
+    }
+    const result = await h.sendInteractive(chatId, params);
+    // Mirror the IPC handler: register resolved action prompts (defaults may be
+    // auto-generated by the channel handler — Issue #1572).
+    const resolvedPrompts = (result as { actionPrompts?: Record<string, string> }).actionPrompts
+      ?? params.actionPrompts;
+    if (resolvedPrompts && result.messageId) {
+      this.interactiveContextStore.register(result.messageId, chatId, resolvedPrompts);
+    }
+    // success mirrors the IPC handler, which returns success: true whenever the
+    // channel handler resolves without throwing (unix-socket-server.ts sendInteractive).
+    return { success: true, messageId: result.messageId };
+  }
+
+  /**
+   * Resolve and invoke the channel's listTempChats capability (Issue #1703).
+   *
+   * Shared by the IPC composite handler (which returns the raw chat list) and
+   * the REST-facing `listTempChats()` public method below (which wraps it into
+   * `{ success, chats }`). Throws if the active channel does not support
+   * temp-chat tracking. Returns the raw chat list — each caller wraps it into
+   * the response shape appropriate for its transport (IPC payload / REST body),
+   * so the two call sites keep their distinct return contracts.
+   */
+  private async resolveChannelTempChats(): Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>> {
+    const h = this.resolveApiHandlers();
+    if (!h?.listTempChats) {
+      throw new Error('listTempChats not supported by this channel');
+    }
+    const chats = await h.listTempChats();
+    return chats;
+  }
+
+  /**
+   * List tracked temporary chats (Issue #1703) — delegates to the channel's
+   * listTempChats capability. Channel-agnostic. REST parity with the IPC
+   * listTempChats method (Issue #4279). Single-process semantics.
+   *
+   * @returns { success: boolean; chats: TempChat[] }
+   */
+  async listTempChats(): Promise<{
+    success: boolean;
+    chats: Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>;
+  }> {
+    const chats = await this.resolveChannelTempChats();
+    return { success: true, chats };
   }
 
   /**

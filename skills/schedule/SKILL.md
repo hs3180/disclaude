@@ -115,7 +115,11 @@ Schedule content prompt here
 | `chatId` | Yes | - | Chat ID for execution context |
 | `createdAt` | No | - | Creation timestamp |
 | `model` | No | - | Model to use for execution (e.g., "sonnet", "opus") |
-| `modelTier` | No | - | Model tier for execution (e.g., "fast", "default") |
+| `modelTier` | No | - | Three-level model tier: `"high"`, `"low"`, or `"multimodal"` (resolved to a concrete model via `Config.getModelForTier`; Issue #3059). |
+| `timezone` | No | `Asia/Shanghai` | IANA timezone for cron scheduling (e.g., `"UTC"`, `"America/New_York"`). Validated against the IANA database (Issue #3860). |
+| `timeoutMs` | No | `300000` (5 min) | Max execution time in ms; the task is forcefully terminated after this duration so a hung task can't block later runs (Issue #3894). |
+| `cooldownPeriod` | No | - | Cooldown in ms; prevents re-execution for this duration after a run completes (Issue #869). |
+| `clearContext` | No | `false` | Reset the chat's persistent agent **before** this task runs, so it executes on a fresh session with no prior conversation context (Issue #4206). ⚠️ **Destructive**: subsequent user messages in the same chat also land on the fresh session until context re-accumulates — confirm intent before enabling. |
 
 ---
 
@@ -165,6 +169,10 @@ enabled: false
 - `blocking`: Blocking mode
 - `model`: Model selection
 - `modelTier`: Model tier selection
+- `timezone`: Cron timezone (IANA)
+- `timeoutMs`: Execution timeout (ms)
+- `cooldownPeriod`: Post-run cooldown (ms)
+- `clearContext`: Fresh-session toggle (resets persistent agent before the task runs; see Field Reference)
 - Content (body text)
 
 **Steps:**

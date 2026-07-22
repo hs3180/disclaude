@@ -8,7 +8,14 @@
  *
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
+ * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
+ * - `GET /api/temp-chats` — List tracked temporary chats (REST parity with IPC listTempChats; #4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
+ * - `POST /api/upload-file` — Upload a local file to a chat by filePath (REST parity with IPC uploadFile; #4279)
+ * - `POST /api/send-message` — Send a text message to a chat (REST parity with IPC sendMessage; #4279)
+ * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with IPC sendCard; #4279)
+ * - `POST /api/send-interactive` — Send an interactive card (buttons) to a chat (REST parity with IPC sendInteractive; #4279)
+ * - `POST /api/upload-image` — Upload a local image by filePath, returns image_key for card embedding (REST parity with IPC uploadImage; #4279)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -19,7 +26,7 @@
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { createLogger, type TopicGroupMessageEvent } from '@disclaude/core';
+import { createLogger, type TopicGroupMessageEvent, type FeishuCard } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
 // Issue #4063: reuse the canonical loop types instead of re-declaring them inline.
 import type { LoopStartParams, LoopStatus } from './loop/loop-runner.js';
@@ -70,6 +77,111 @@ export interface PushResponse {
 export type PushHandler = (chatId: string, message: string) => Promise<void>;
 
 /**
+ * Response payload for uploadFile (mirrors IPC IpcResponsePayloads).
+ */
+export type UploadFileResponse = {
+  success: boolean;
+  fileKey?: string;
+  fileType?: string;
+  fileName?: string;
+  fileSize?: number;
+};
+
+/**
+ * Handler for uploadFile requests. Delegates to the channel's uploadFile
+ * capability — REST parity with the IPC method (Issue #4279).
+ *
+ * Uses a local `filePath` (not multipart) because the REST face is localhost-
+ * bound: the MCP server and Primary Node are co-located, so the file is already
+ * readable on the host — exact IPC parity without multipart overhead.
+ */
+export type UploadFileHandler = (
+  chatId: string,
+  filePath: string,
+  threadId: string | undefined,
+) => Promise<UploadFileResponse>;
+
+/**
+ * Response payload for sendMessage (mirrors IPC IpcResponsePayloads).
+ */
+export type SendMessageResponse = { success: boolean; messageId?: string };
+
+/**
+ * Handler for sendMessage requests. Delegates to the channel's sendMessage
+ * capability — REST parity with the IPC method (Issue #4279).
+ */
+export type SendMessageHandler = (
+  chatId: string,
+  text: string,
+  threadId: string | undefined,
+  mentions: Array<{ openId: string; name?: string }> | undefined,
+) => Promise<SendMessageResponse>;
+
+/**
+ * Handler for sendCard requests. Delegates to the channel's sendCard
+ * capability — REST parity with the IPC method (Issue #4279).
+ */
+export type SendCardHandler = (
+  chatId: string,
+  card: FeishuCard,
+  threadId: string | undefined,
+  description: string | undefined,
+) => Promise<{ success: boolean; messageId?: string }>;
+
+/**
+ * Params for sendInteractive (mirrors the IPC sendInteractive payload).
+ */
+export type SendInteractiveParams = {
+  question: string;
+  options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
+  title?: string;
+  context?: string;
+  threadId?: string;
+  actionPrompts?: Record<string, string>;
+};
+
+/**
+ * Handler for sendInteractive requests. Delegates to the channel's
+ * sendInteractive capability (which builds+sends the card and registers
+ * action prompts) — REST parity with the IPC method (Issue #4279).
+ */
+export type SendInteractiveHandler = (
+  chatId: string,
+  params: SendInteractiveParams,
+) => Promise<{ success: boolean; messageId?: string }>;
+
+/**
+ * A tracked temporary chat (Issue #1703).
+ */
+export type TempChat = {
+  chatId: string;
+  createdAt: string;
+  expiresAt: string;
+  creatorChatId?: string;
+  responded: boolean;
+};
+
+/**
+ * Handler for listTempChats. Delegates to the channel's listTempChats
+ * capability — REST parity with the IPC method (Issue #4279).
+ * Channel-agnostic. Single-process semantics (local store query); cross-process
+ * aggregation is a future concern (Phase-0 decision 2).
+ */
+export type ListTempChatsHandler = () => Promise<{ success: boolean; chats: TempChat[] }>;
+
+/**
+ * Response payload for uploadImage (mirrors IPC IpcResponsePayloads).
+ */
+export type UploadImageResponse = { success: boolean; imageKey?: string };
+
+/**
+ * Handler for uploadImage requests. Delegates to the channel's uploadImage
+ * capability — REST parity with the IPC method (Issue #4279). Channel-agnostic
+ * (no chatId). Uses a local filePath (see UploadFileHandler rationale).
+ */
+export type UploadImageHandler = (filePath: string) => Promise<UploadImageResponse>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -108,6 +220,12 @@ export class HttpApiServer {
   private startTime = 0;
   private nodeId?: string;
   private pushHandler?: PushHandler;
+  private uploadFileHandler?: UploadFileHandler;
+  private sendMessageHandler?: SendMessageHandler;
+  private sendCardHandler?: SendCardHandler;
+  private sendInteractiveHandler?: SendInteractiveHandler;
+  private listTempChatsHandler?: ListTempChatsHandler;
+  private uploadImageHandler?: UploadImageHandler;
   private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
   private loopStopHandler?: (loopId: string) => void;
   private loopStatusHandler?: (loopId: string) => LoopStatus | null;
@@ -136,6 +254,48 @@ export class HttpApiServer {
    */
   setPushHandler(handler: PushHandler): void {
     this.pushHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/upload-file (Issue #4279).
+   */
+  setUploadFileHandler(handler: UploadFileHandler): void {
+    this.uploadFileHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/send-message (Issue #4279).
+   */
+  setSendMessageHandler(handler: SendMessageHandler): void {
+    this.sendMessageHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/send-card (Issue #4279).
+   */
+  setSendCardHandler(handler: SendCardHandler): void {
+    this.sendCardHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/send-interactive (Issue #4279).
+   */
+  setSendInteractiveHandler(handler: SendInteractiveHandler): void {
+    this.sendInteractiveHandler = handler;
+  }
+
+  /**
+   * Set the handler for GET /api/temp-chats (Issue #4279).
+   */
+  setListTempChatsHandler(handler: ListTempChatsHandler): void {
+    this.listTempChatsHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/upload-image (Issue #4279).
+   */
+  setUploadImageHandler(handler: UploadImageHandler): void {
+    this.uploadImageHandler = handler;
   }
 
   setLoopHandlers(handlers: {
@@ -321,6 +481,22 @@ export class HttpApiServer {
    */
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
+    // Issue #4279: REST parity with IPC uploadFile.
+    this.addRoute('POST', '/api/upload-file', this.handleUploadFile.bind(this));
+    // Issue #4168 (Phase 1, #4279): REST parity with the IPC `ping` method —
+    // a token-exempt (GET) health-check endpoint.
+    this.addRoute('GET', '/api/ping', this.handlePing.bind(this));
+    // Issue #4279: REST parity with IPC sendMessage.
+    this.addRoute('POST', '/api/send-message', this.handleSendMessage.bind(this));
+    // Issue #4279: REST parity with IPC sendCard.
+    this.addRoute('POST', '/api/send-card', this.handleSendCard.bind(this));
+    // Issue #4279: REST parity with IPC sendInteractive.
+    this.addRoute('POST', '/api/send-interactive', this.handleSendInteractive.bind(this));
+    // Issue #4279: REST parity with IPC listTempChats.
+    this.addRoute('GET', '/api/temp-chats', this.handleListTempChats.bind(this));
+
+    // Issue #4279: REST parity with IPC uploadImage.
+    this.addRoute('POST', '/api/upload-image', this.handleUploadImage.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -398,6 +574,52 @@ export class HttpApiServer {
   }
 
   /**
+   * GET /api/ping handler.
+   *
+   * Issue #4168 (Phase 1, #4279): REST health-check endpoint. The response
+   * payload mirrors the IPC `ping` method's payload (`{ pong: true }`); the IPC
+   * envelope (`{ success: true, payload: ... }`) is dropped because HTTP 200
+   * already signals success. GET routes are token-exempt (see the apiToken
+   * check), so it works like /api/status for liveness probes.
+   */
+  private handlePing(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    this.sendJson(res, 200, { pong: true });
+    return Promise.resolve();
+  }
+
+  /**
+   * GET /api/temp-chats handler (Issue #4279).
+   *
+   * Returns the list of tracked temporary chats (Issue #1703). Channel-agnostic
+   * (no chatId). Single-process semantics — queries the local store; cross-
+   * process aggregation is a future concern (Phase-0 decision 2) and would not
+   * change this endpoint's contract. GET route → token-exempt (like /api/status).
+   * Response: `{ ok: true, success, chats: [...] }`.
+   */
+  private async handleListTempChats(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.listTempChatsHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'listTempChats handler not configured' });
+      return;
+    }
+    try {
+      const result = await this.listTempChatsHandler();
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err }, 'listTempChats handler error');
+      const msg = err instanceof Error ? err.message : 'listTempChats failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
    * POST /api/push handler.
    *
    * Accepts `{ chatId: string, message: string }` and routes the message
@@ -456,6 +678,272 @@ export class HttpApiServer {
   }
 
   /**
+   * POST /api/upload-file handler (Issue #4279).
+   *
+   * Accepts `{ chatId, filePath, threadId? }` and delegates to the channel's
+   * uploadFile capability (reads the local file and uploads it). Uses a local
+   * filePath rather than multipart because the REST face is localhost-bound —
+   * the caller (MCP server) and Primary Node are co-located, so the file is
+   * already readable on the host (exact IPC parity, no transfer needed).
+   * Response: `{ ok: true, success, fileKey?, fileType?, fileName?, fileSize? }`.
+   */
+  private async handleUploadFile(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.uploadFileHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'uploadFile handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof (parsed as Record<string, unknown>).filePath !== 'string'
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), filePath (string)' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown>;
+
+    // Reject empty chatId/filePath early — symmetric with handlePush/handleSendMessage.
+    // Without this, an empty filePath would fall through to the handler and throw a
+    // messy ENOENT 500 instead of a clean 400.
+    if (!raw.chatId || !raw.filePath) {
+      this.sendJson(res, 400, { ok: false, message: 'chatId and filePath must be non-empty' });
+      return;
+    }
+
+    const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
+
+    try {
+      const result = await this.uploadFileHandler(raw.chatId as string, raw.filePath as string, threadId);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'uploadFile handler error');
+      const msg = err instanceof Error ? err.message : 'uploadFile failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/send-message handler (Issue #4279).
+   *
+   * Accepts `{ chatId, text, threadId?, mentions? }` and delegates to the
+   * channel's sendMessage capability. Mirrors the IPC sendMessage method
+   * (payload aligned with IpcRequestPayloads). Response: `{ success, messageId? }`.
+   */
+  private async handleSendMessage(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.sendMessageHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'sendMessage handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof (parsed as Record<string, unknown>).text !== 'string'
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), text (string)' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown>;
+
+    // Reject empty chatId/text early — symmetric with handlePush. Without this,
+    // the channel would return a messy 500 on empty input instead of a clean 400.
+    if (!raw.chatId || !raw.text) {
+      this.sendJson(res, 400, { ok: false, message: 'chatId and text must be non-empty' });
+      return;
+    }
+
+    const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
+
+    // Validate mentions element shape (each must be { openId: string }). REST is
+    // the trust boundary, so harden here even though the IPC path casts unchecked.
+    const mentions = normalizeMentions(raw.mentions);
+    if (mentions === null) {
+      this.sendJson(res, 400, { ok: false, message: 'mentions must be an array of { openId: string; name?: string }' });
+      return;
+    }
+
+    try {
+      const result = await this.sendMessageHandler(raw.chatId as string, raw.text as string, threadId, mentions);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'sendMessage handler error');
+      const msg = err instanceof Error ? err.message : 'sendMessage failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/send-card handler (Issue #4279).
+   *
+   * Accepts `{ chatId, card, threadId?, description? }` and delegates to the
+   * channel's sendCard capability. Mirrors the IPC sendCard method (payload
+   * aligned with IpcRequestPayloads). `card` is a Feishu card JSON object.
+   * Response: `{ ok: true, success: true }`.
+   */
+  private async handleSendCard(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.sendCardHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'sendCard handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof (parsed as Record<string, unknown>).card !== 'object' || (parsed as Record<string, unknown>).card === null
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), card (object)' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown>;
+    const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
+    const description = typeof raw.description === 'string' ? raw.description : undefined;
+
+    try {
+      const result = await this.sendCardHandler(
+        raw.chatId as string,
+        raw.card as FeishuCard,
+        threadId,
+        description,
+      );
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'sendCard handler error');
+      const msg = err instanceof Error ? err.message : 'sendCard failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/send-interactive handler (Issue #4279).
+   *
+   * Accepts `{ chatId, question, options, title?, context?, threadId?, actionPrompts? }`
+   * and delegates to the channel's sendInteractive capability (which builds+sends
+   * the card and registers action prompts). Mirrors the IPC sendInteractive method.
+   * Response: `{ ok: true, success, messageId? }`.
+   */
+  private async handleSendInteractive(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.sendInteractiveHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'sendInteractive handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown> | null;
+    if (
+      typeof raw !== 'object' || raw === null ||
+      typeof raw.chatId !== 'string' ||
+      typeof raw.question !== 'string' ||
+      !Array.isArray(raw.options) || raw.options.length === 0
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required: chatId (string), question (string), options (non-empty array)' });
+      return;
+    }
+
+    const params: SendInteractiveParams = {
+      question: raw.question as string,
+      options: raw.options as SendInteractiveParams['options'],
+      ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
+      ...(typeof raw.context === 'string' ? { context: raw.context } : {}),
+      ...(typeof raw.threadId === 'string' ? { threadId: raw.threadId } : {}),
+      ...(raw.actionPrompts && typeof raw.actionPrompts === 'object' && !Array.isArray(raw.actionPrompts)
+        ? { actionPrompts: raw.actionPrompts as Record<string, string> }
+        : {}),
+    };
+
+    try {
+      const result = await this.sendInteractiveHandler(raw.chatId as string, params);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'sendInteractive handler error');
+      const msg = err instanceof Error ? err.message : 'sendInteractive failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
    * GET /api/topic-stream — SSE endpoint for topic group message notifications.
    *
    * Issue #4031: Local apps connect to this endpoint to receive real-time
@@ -494,6 +982,69 @@ export class HttpApiServer {
     });
 
     return Promise.resolve();
+  }
+
+  /**
+   * POST /api/upload-image handler (Issue #4279).
+   *
+   * Accepts `{ filePath }` and delegates to the channel's uploadImage capability
+   * (reads the local image and returns a Feishu image_key for card embedding).
+   * Channel-agnostic (no chatId). Uses a local filePath (see handleUploadFile
+   * rationale: the REST face is localhost-bound, co-located, exact IPC parity).
+   * Response: `{ ok: true, success, imageKey? }`.
+   */
+  private async handleUploadImage(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.uploadImageHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'uploadImage handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).filePath !== 'string'
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required field: filePath (string)' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown>;
+
+    // Reject empty filePath early — symmetric with handlePush/handleSendMessage/handleUploadFile.
+    // Without this, an empty filePath would fall through to the handler and throw a
+    // messy ENOENT 500 instead of a clean 400.
+    if (!raw.filePath) {
+      this.sendJson(res, 400, { ok: false, message: 'filePath must be non-empty' });
+      return;
+    }
+
+    try {
+      const result = await this.uploadImageHandler(raw.filePath as string);
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err }, 'uploadImage handler error');
+      const msg = err instanceof Error ? err.message : 'uploadImage failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
   }
 
   // Issue #4075: Loop Runner REST endpoints
@@ -584,4 +1135,31 @@ function readBody(req: IncomingMessage): Promise<string> {
     });
     req.on('error', reject);
   });
+}
+
+/**
+ * Normalize the optional `mentions` field of POST /api/send-message.
+ *
+ * Returns:
+ * - `undefined` when the field is absent (no mentions).
+ * - the typed array when every element is `{ openId: string; name?: string }`.
+ * - `null` when the field is present but malformed (caller responds 400).
+ *
+ * REST is the trust boundary, so this validates element shape even though the
+ * IPC path casts `mentions` unchecked (Issue #4279).
+ */
+function normalizeMentions(
+  raw: unknown,
+): Array<{ openId: string; name?: string }> | undefined | null {
+  if (raw === undefined) { return undefined; }
+  if (!Array.isArray(raw)) { return null; }
+  for (const m of raw) {
+    if (
+      typeof m !== 'object' || m === null ||
+      typeof (m as Record<string, unknown>).openId !== 'string'
+    ) {
+      return null;
+    }
+  }
+  return raw as Array<{ openId: string; name?: string }>;
 }

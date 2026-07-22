@@ -112,9 +112,9 @@ export interface FeishuChannelConfig {
   /** Feishu App Secret */
   appSecret?: string;
   /**
-   * Route card action to Worker Node if applicable.
+   * Route card action to the local agent if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
-   * so remote Worker Nodes receive the contextual prompt.
+   * so the agent receives the contextual prompt.
    * Issue #2247: Returns RouteCardActionResult to distinguish expired contexts.
    */
   routeCardAction?: (message: {
@@ -408,7 +408,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
             { threadId, err, chatId: message.chatId },
             'Thread reply failed, falling back to message.create',
           );
-          // Fall through to create path
+          // Fall through to create path (with root_id, see below).
         }
       }
       const createResp = await client.im.message.create({
@@ -419,6 +419,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           receive_id: message.chatId,
           msg_type: msgType,
           content,
+          // Issue #4252: when we intended a thread reply, keep the message in
+          // the thread on the create fallback too. Without root_id, message.create
+          // posts to the chat root, so the card/text escapes the thread — the
+          // observed symptom for send_interactive/send_card when reply() fails.
+          ...(useThreadReply ? { root_id: message.threadId as string } : {}),
         },
       });
       return createResp.data?.message_id;

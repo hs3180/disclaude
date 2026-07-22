@@ -508,6 +508,38 @@ async function main(): Promise<void> {
         status: (loopId) => loopRunner.status(loopId),
       });
 
+      // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
+      // capability (REST parity with the IPC method).
+      httpApiServer.setUploadFileHandler(
+        (chatId, filePath, threadId) => primaryNode.uploadFile(chatId, filePath, threadId),
+      );
+
+      // Issue #4279: wire REST /api/send-message to the channel's sendMessage
+      // capability (REST parity with the IPC method).
+      httpApiServer.setSendMessageHandler(
+        (chatId, text, threadId, mentions) => primaryNode.sendMessage(chatId, text, threadId, mentions),
+      );
+
+      // Issue #4279: wire REST /api/send-card to the channel's sendCard
+      // capability (REST parity with the IPC method).
+      httpApiServer.setSendCardHandler(
+        (chatId, card, threadId, description) => primaryNode.sendCard(chatId, card, threadId, description),
+      );
+
+      // Issue #4279: wire REST /api/send-interactive to the channel's
+      // sendInteractive capability (builds+sends card, registers action prompts).
+      httpApiServer.setSendInteractiveHandler(
+        (chatId, params) => primaryNode.sendInteractive(chatId, params),
+      );
+
+      // Issue #4279: wire REST GET /api/temp-chats to the channel's
+      // listTempChats capability (REST parity with the IPC method).
+      httpApiServer.setListTempChatsHandler(() => primaryNode.listTempChats());
+
+      // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
+      // capability (REST parity with the IPC method).
+      httpApiServer.setUploadImageHandler((filePath) => primaryNode.uploadImage(filePath));
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 
