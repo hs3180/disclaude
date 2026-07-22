@@ -40,19 +40,19 @@ describe('RestartManager', () => {
   });
 
   describe('shouldRestart', () => {
-    it('Issue #4192 (L2): blocks restart for non-transient errors', () => {
+    it('Issue #4314 (L2): blocks restart for non-transient errors', () => {
       const decision = manager.shouldRestart('chat-1', 'validation failed: invalid input');
       expect(decision.allowed).toBe(false);
       expect(decision.reason).toBe('non_transient');
       expect(decision.restartCount).toBe(0); // doesn't consume a restart slot
     });
 
-    it('Issue #4192 (L2): allows restart for transient (network) errors', () => {
+    it('Issue #4314 (L2): allows restart for transient (network) errors', () => {
       const decision = manager.shouldRestart('chat-1', 'Network Error: timeout');
       expect(decision.allowed).toBe(true);
     });
 
-    // Issue #4192 (L2): shouldRestart must reuse L0's pre-computed tag on the
+    // Issue #4314 (L2): shouldRestart must reuse L0's pre-computed tag on the
     // error object (acceptance: "复用 L0 的 tag, 不重复分类") instead of
     // re-classifying a bare message string. classifyError keys off the error's
     // constructor NAME as well as its message, so `isTransient(new Error(msg))`
@@ -60,10 +60,12 @@ describe('RestartManager', () => {
     // no "timeout" keyword classifies as UNKNOWN (non-transient) and would
     // WRONGLY suppress a restart. These tests lock the tag-reuse path.
 
-    it('Issue #4192 (L2): reuses L0 tag — name-classified transient error allows restart', () => {
+    it('Issue #4314 (L2): reuses L0 tag — name-classified transient error allows restart', () => {
       // A TimeoutError whose message lacks any transient keyword. classifyError
-      // keys off the constructor name → TIMEOUT → transient. But re-classifying
-      // `new Error(message)` would drop the name → UNKNOWN → non-transient.
+      // keys off the constructor name → NETWORK (the NETWORK branch matches
+      // names containing 'timeout' before the TIMEOUT branch) → transient. But
+      // re-classifying `new Error(message)` would drop the name → UNKNOWN →
+      // non-transient.
       class TimeoutError extends Error {
         constructor(message: string) {
           super(message);
@@ -72,7 +74,7 @@ describe('RestartManager', () => {
       }
       const error = new TimeoutError('upstream stream ended unexpectedly');
       tagErrorCategory(error); // attach the L0 tag (as chat-agent does before calling)
-      expect(tagErrorCategory(error).transient).toBe(true); // sanity: name → TIMEOUT
+      expect(tagErrorCategory(error).transient).toBe(true); // sanity: name → NETWORK (transient)
 
       // With the fix: reads the tag → transient → restart allowed.
       const decision = manager.shouldRestart('chat-1', error.message, error);
@@ -84,7 +86,7 @@ describe('RestartManager', () => {
       expect(legacyDecision.reason).toBe('non_transient');
     });
 
-    it('Issue #4192 (L2): reuses L0 tag — name-classified persistent error refuses restart without consuming quota', () => {
+    it('Issue #4314 (L2): reuses L0 tag — name-classified persistent error refuses restart without consuming quota', () => {
       // A ValidationError whose message lacks the "invalid/required/missing"
       // keywords. classifyError keys off the name → VALIDATION → non-transient.
       class ValidationError extends Error {
@@ -105,7 +107,26 @@ describe('RestartManager', () => {
       expect(decision.restartCount).toBe(0);
     });
 
-    it('Issue #4192 (L2): circuit breaker still trips on repeated transient tagged errors', () => {
+    it('Issue #4314 (L2): untagged passed error is classified by name (fallback must not wrap as new Error)', () => {
+      // nit: when the caller passes an error that has NO L0 tag, the fallback
+      // must classify the original error object (preserving constructor name),
+      // NOT `new Error(message)` — otherwise it reintroduces the exact
+      // name-loss bug locked above. A name-classified transient error with no
+      // tag must still be seen as transient.
+      class TimeoutError extends Error {
+        constructor(message: string) {
+          super(message);
+          this.name = 'TimeoutError';
+        }
+      }
+      const error = new TimeoutError('upstream stream ended unexpectedly');
+      // Deliberately NOT calling tagErrorCategory(error): simulates an untagged
+      // error reaching shouldRestart (no L0 tag to read).
+      const decision = manager.shouldRestart('chat-1', error.message, error);
+      expect(decision.allowed).toBe(true); // name → NETWORK → transient → restart
+    });
+
+    it('Issue #4314 (L2): circuit breaker still trips on repeated transient tagged errors', () => {
       class TimeoutError extends Error {
         constructor(message: string) {
           super(message);

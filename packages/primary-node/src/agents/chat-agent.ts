@@ -1480,7 +1480,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         'Agent loop ended unexpectedly; classified error for restart decision (Issue #4192 L0)'
       );
     }
-    // Issue #4192 (L2): pass the original (L0-tagged) error so RestartManager
+    // Issue #4314 (L2): pass the original (L0-tagged) error so RestartManager
     // reads the authoritative transient verdict from the tag instead of
     // re-classifying the bare message string (which loses the constructor name).
     const decision = this.restartManager.shouldRestart(chatId, errorMessage, iteratorError);
