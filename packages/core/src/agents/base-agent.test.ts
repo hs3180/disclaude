@@ -471,6 +471,9 @@ describe('BaseAgent', () => {
         content: '✅ Complete',
         metadata: {
           stopReason: 'tool_use',
+          numTurns: 3,
+          durationMs: 4200,
+          durationApiMs: 3100,
         },
       });
 
@@ -493,6 +496,11 @@ describe('BaseAgent', () => {
       expect(messages).toHaveLength(1);
       // Gap C: convertToLegacyFormat threads metadata.stopReason into parsed.metadata.stopReason
       expect(messages[0].parsed.metadata?.stopReason).toBe('tool_use');
+      // Issue #4320 (part 2): convertToLegacyFormat also threads the turn-level
+      // observability fields (num_turns / duration_ms / duration_api_ms).
+      expect(messages[0].parsed.metadata?.numTurns).toBe(3);
+      expect(messages[0].parsed.metadata?.durationMs).toBe(4200);
+      expect(messages[0].parsed.metadata?.durationApiMs).toBe(3100);
     });
   });
 
