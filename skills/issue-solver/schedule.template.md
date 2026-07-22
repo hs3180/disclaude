@@ -91,10 +91,6 @@ GH_TOKEN=$(grep '^GH_TOKEN=' /data/workspace/.runtime-env | sed 's/^GH_TOKEN=//'
 
 若脚本输出无候选 issue，直接回复"无候选 issue"并结束，不做任何操作。
 
----
-
-若脚本输出无候选 issue，直接回复"无候选 issue"并结束，不做任何操作。
-
 ## 环境变量
 
 | 变量 | 必需 | 说明 |
