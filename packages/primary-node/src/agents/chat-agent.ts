@@ -1131,7 +1131,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // produced no reliable work product, so it must be reported as failed,
           // not masked as ✅ Complete.
           const upstreamApiError = parsed.upstreamApiError === true;
-          if (isEmptyTurn) {
+          // Issue #4322 edge case: when a turn is empty BECAUSE of an upstream
+          // API error, the more specific ❌ upstream notice below (with the
+          // upstream request_id and the correct "transient overload — retry
+          // shortly" diagnosis) takes precedence. Skip the generic ⚠️ empty-turn
+          // notice here, whose "session may be invalid, try resetting" advice is
+          // wrong for a transient upstream overload and would otherwise
+          // double-notify. The upstream warn/notice still fires below.
+          if (isEmptyTurn && !upstreamApiError) {
             this.logger.warn(
               {
                 chatId,
@@ -1192,7 +1199,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 model: this.model,
                 provider: this.provider,
                 stopReason: parsed.metadata?.stopReason,
-                upstreamApiErrorStderr: parsed.metadata?.upstreamApiErrorStderr,
+                // upstreamApiErrorStderr lives at the top level of `parsed`
+                // (hoisted by convertToLegacyFormat), NOT inside parsed.metadata
+                // (which only carries tool/cost/token/stopReason fields).
+                upstreamApiErrorStderr: parsed.upstreamApiErrorStderr,
               },
               'Turn ended via upstream API error but SDK emitted subtype=success result (Issue #4322). ' +
                 'Reporting as failed instead of ✅ Complete.'
@@ -1252,14 +1262,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // an actual restart, so this is bounded and safe. Mirrors the GLM
           // stall handling above (recordFailure('stall')). Reset/retry (②)
           // remains a larger follow-up needing session-lifecycle design.
-          if (isEmptyTurn) {
-            this.restartManager.recordFailure(chatId, 'empty-turn');
-          } else if (upstreamApiError) {
+          // Record the most specific failure cause. When a turn is BOTH empty
+          // and tagged upstreamApiError, prefer 'upstream-api-error' so the
+          // recorded reason matches the ❌ notice surfaced above. recordFailure
+          // only logs the label and bumps the failure count — the branch order
+          // does not change circuit behavior (counting is reason-agnostic).
+          if (upstreamApiError) {
             // Issue #4322: a turn killed by an upstream API error is a failure
             // symptom, not a success — record it so chronic upstream issues can
             // trip the restart circuit. Same bounded, non-restarting contract as
             // empty-turn / stall above. Turn-level retry is #4314's follow-up.
             this.restartManager.recordFailure(chatId, 'upstream-api-error');
+          } else if (isEmptyTurn) {
+            this.restartManager.recordFailure(chatId, 'empty-turn');
           } else {
             // Record success to reset restart state
             this.restartManager.recordSuccess(chatId);
