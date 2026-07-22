@@ -19,10 +19,10 @@ Replace the Unix-socket IPC between the MCP server and Primary Node with a REST 
 
 | Phase | Scope | Issue | Status |
 |-------|-------|-------|--------|
-| Phase 1 | 8 REST endpoints (channel-method parity) | #4279 | ✅ Complete (#4341–#4348) |
+| Phase 1 | 7 REST endpoints (channel-method parity) | #4279 | ✅ Complete (#4341, #4343–#4348) |
 | Phase 2 | RestIpcClient + getIpcClient wiring | #4279 | ✅ Complete (#4349) |
 | Phase 3 | Remove Unix-socket IPC | #4280 | ⬜ Future |
-| Phase 4 | Latency monitoring + migration acceptance | #4281 | 🔄 Part 1 done (#4351) |
+| Phase 4 | Migration acceptance (safety review + full integration) | #4281 | ⬜ Future |
 
 Dual-path retention: IPC stays as default (Phase 3 removes it). REST is opt-in via env var.
 
@@ -53,10 +53,11 @@ MCP Server (mcp-server)
 | POST | `/api/send-message` | sendMessage | #4343 |
 | POST | `/api/send-card` | sendCard | #4344 |
 | POST | `/api/send-interactive` | sendInteractive | #4345 |
-| POST | `/api/mark-chat-responded` | markChatResponded | #4342 |
 | POST | `/api/upload-file` | uploadFile | #4346 |
 | POST | `/api/upload-image` | uploadImage | #4347 |
 | GET | `/api/temp-chats` | listTempChats | #4348 |
+
+> ⚠️ `markChatResponded` was descoped — #4342 was closed as **won't-implement** (the IPC method has 0 in-tree callers and the `responded` flag it writes is never read). There is no `/api/mark-chat-responded` route on `main`; the client route-map entry is documented inert in `rest-ipc-client.ts:78`. Phase 1 ships **7** active endpoints.
 
 ### 3.2 Design decisions
 
@@ -104,14 +105,14 @@ if (process.env.DISCLAUDE_REST_IPC_ENABLED === 'true') {
 ## 5. Remaining Work
 
 - **Phase 3 (#4280)**: Remove Unix-socket IPC + consolidate LoopRunner dual-path. Only after Phase 1+2 are production-tested with REST enabled.
-- **Phase 4 (#4281)**: Migration acceptance (verify REST latency vs IPC baseline from #4351) + pushToAgent/loopStep latency monitoring. #4351 (pushToAgent baseline) is done.
+- **Phase 4 (#4281)**: Migration acceptance — safety review + full integration of REST IPC. Latency baseline monitoring was **removed** from #4281 (#4351 closed: REST IPC is an architectural migration, not a perf optimization; the ~51× same-machine latency regression was measured in #4275 and already accepted in #4281, so continuous runtime instrumentation + drift alerting would add log noise with no action consumer).
 
 ## 6. PR Index
 
 | PR | Title |
 |----|-------|
 | #4341 | GET /api/ping |
-| #4342 | POST /api/mark-chat-responded |
+| #4342 | POST /api/mark-chat-responded — ❌ closed (won't-implement: 0 callers, flag unread) |
 | #4343 | POST /api/send-message |
 | #4344 | POST /api/send-card |
 | #4345 | POST /api/send-interactive |
@@ -119,4 +120,4 @@ if (process.env.DISCLAUDE_REST_IPC_ENABLED === 'true') {
 | #4347 | POST /api/upload-image (filePath) |
 | #4348 | GET /api/temp-chats (single-process) |
 | #4349 | RestIpcClient (12 methods + IpcClientLike + wiring) |
-| #4351 | pushToAgent latency baseline monitoring |
+| #4351 | pushToAgent latency baseline monitoring — ❌ closed (descoped from #4281) |
