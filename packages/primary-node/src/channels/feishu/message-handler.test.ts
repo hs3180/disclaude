@@ -1542,7 +1542,7 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.content).toContain('语音消息');
+      expect(msg.content).toContain('语音');
       expect(msg.content).toContain('发送了一段');
       expect(msg.content).toContain('voice.mp3');
       expect(msg.content).toContain('音频文件');
@@ -1582,9 +1582,54 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.content).toContain('媒体文件');
+      expect(msg.content).toContain('媒体');
       expect(msg.content).toContain('video.mp4');
       expect(msg.attachments).toBeDefined();
+    });
+
+    it('should handle video message with correct type label', async () => {
+      // Issue #4330: a received video can arrive as message_type 'video' (not just
+      // 'media'); it must be handled (not silently dropped), labeled 视频, and
+      // downloaded via type=file per the Feishu resource API.
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            create: vi.fn().mockResolvedValue({ data: {} }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_video',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ file_key: 'video_001', file_name: 'clip.mp4' }),
+            message_type: 'video',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.content).toContain('视频');
+      expect(msg.content).toContain('clip.mp4');
+      expect(msg.attachments).toBeDefined();
+      // Video downloads via type=file (Feishu spec; mapResourceType('video') -> 'file').
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+      const dlArgs = mockExecFile.mock.calls[0][1] as string[];
+      expect(dlArgs[dlArgs.indexOf('--type') + 1]).toBe('file');
     });
 
     it('should show original message_type in failed download prompt', async () => {
@@ -1716,7 +1761,7 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.metadata.quotedMessage).toContain('语音消息');
+      expect(msg.metadata.quotedMessage).toContain('语音');
       expect(msg.metadata.quotedMessage).toContain('voice.mp3');
       expect(msg.attachments).toBeDefined();
     });
@@ -1904,9 +1949,63 @@ describe('MessageHandler', () => {
 
       expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
       const msg = firstCallArg(mockState.emitMessage);
-      expect(msg.metadata.quotedMessage).toContain('媒体文件');
+      expect(msg.metadata.quotedMessage).toContain('媒体');
       expect(msg.metadata.quotedMessage).toContain('video.mp4');
       expect(msg.attachments).toBeDefined();
+    });
+
+    it('should handle quoted video message with correct type label', async () => {
+      // Issue #4330: a quoted (replied-to) video with message_type 'video' must be
+      // downloaded + labeled 视频 in the quoted context (previously dropped because
+      // the quoted path's inline type check omitted 'video').
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+        callback(null, { stdout: 'ok', stderr: '' });
+      });
+
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                message: {
+                  message_type: 'video',
+                  content: JSON.stringify({ file_key: 'video_q_001', file_name: 'clip.mp4' }),
+                  message_id: 'msg_q_video',
+                },
+              },
+            }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive(textEvent('Reply', {
+        event: {
+          message: {
+            message_id: 'msg_reply_q_video',
+            chat_id: 'chat_001',
+            chat_type: 'p2p',
+            content: JSON.stringify({ text: 'Reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_q_video',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      }));
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('视频');
+      expect(msg.metadata.quotedMessage).toContain('clip.mp4');
+      expect(msg.attachments).toBeDefined();
+      // Video downloads via type=file.
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+      const dlArgs = mockExecFile.mock.calls[0][1] as string[];
+      expect(dlArgs[dlArgs.indexOf('--type') + 1]).toBe('file');
     });
 
     it('should return download failure message when quoted file download fails', async () => {
