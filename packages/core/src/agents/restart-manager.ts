@@ -22,7 +22,7 @@
  */
 
 import type { Logger } from '../utils/logger.js';
-import { isTransient } from '../utils/error-handler.js';
+import { isTransient, getErrorCategoryTag } from '../utils/error-handler.js';
 
 /**
  * Configuration for RestartManager.
@@ -130,9 +130,15 @@ export class RestartManager {
    *
    * @param chatId - The chat identifier
    * @param errorMessage - The error that triggered restart consideration
+   * @param error - The original error object, when available. If it carries an
+   *   L0 classification tag (attached by {@link tagErrorCategory}), that tag's
+   *   `transient` flag is reused as the authoritative transient verdict — see
+   *   the non-transient skip below. Issue #4314 (L2): reuse L0's tag instead of
+   *   re-classifying; when no tag is present the error object itself (not a
+   *   bare message) is classified so the constructor name is preserved.
    * @returns RestartDecision with allowed status and wait time
    */
-  shouldRestart(chatId: string, errorMessage: string): RestartDecision {
+  shouldRestart(chatId: string, errorMessage: string, error?: unknown): RestartDecision {
     const now = Date.now();
     let state = this.states.get(chatId);
 
@@ -181,13 +187,26 @@ export class RestartManager {
       };
     }
 
-    // Issue #4192 (L2): skip restart for non-transient errors — restarting
+    // Issue #4314 (L2): skip restart for non-transient errors — restarting
     // won't fix a CONFIGURATION/PERMISSION/VALIDATION issue and wastes a
     // restart slot + IO. The error is still recorded (above) for diagnostics.
-    if (!isTransient(new Error(errorMessage))) {
+    //
+    // Reuse L0's pre-computed tag when the original error is available: it was
+    // classified from the full error (message + constructor name + AppError
+    // category), so it is authoritative. When there is no tag, classify the
+    // passed error object directly — NEVER wrap it as `new Error(message)`,
+    // which drops the constructor name: a `TimeoutError` whose message lacks
+    // the "timeout" keyword would classify as UNKNOWN (non-transient) and
+    // WRONGLY suppress a restart that would likely help. `new Error(...)` is
+    // the last resort, used only when the caller passed no error at all.
+    const l0Tag = error !== undefined ? getErrorCategoryTag(error) : undefined;
+    const isTransientError = l0Tag
+      ? l0Tag.transient
+      : isTransient(error ?? new Error(errorMessage));
+    if (!isTransientError) {
       this.logger.warn(
-        { chatId, errorMessage },
-        'Non-transient error — restart skipped (Issue #4192 L2)',
+        { chatId, errorMessage, errorCategory: l0Tag?.category },
+        'Non-transient error — restart skipped (Issue #4314 L2)',
       );
       return {
         allowed: false,
