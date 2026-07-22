@@ -267,6 +267,44 @@ export class MessageHandler {
   }
 
   /**
+   * Parse a media message's content JSON into its resource key + display name.
+   *
+   * Shared by the read-only thread guidance (buildMediaThreadGuidance) and the
+   * quoted-message download (handleQuotedFileMessage) so a new media type or key
+   * convention only has to be added in one place — the two paths previously
+   * duplicated this extraction verbatim.
+   *
+   * Returns `undefined` when `content` is not valid JSON, otherwise
+   * `{ fileKey, fileName }` — `fileKey` is undefined when the JSON carried no
+   * usable resource key. Callers own the fileKey-absent / parse-failure logging,
+   * which differs between the two paths.
+   */
+  private parseMediaContent(
+    messageType: string,
+    content: string,
+  ): { fileKey: string | undefined; fileName: string | undefined } | undefined {
+    try {
+      const parsed = JSON.parse(content);
+      let fileKey: string | undefined;
+      let fileName: string | undefined;
+      if (messageType === 'image') {
+        fileKey = parsed.image_key;
+        fileName = `image_${fileKey}`;
+      } else if (messageType === 'audio') {
+        // Issue #1966: Audio messages use file_key in content JSON
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `audio_${fileKey}`;
+      } else {
+        fileKey = parsed.file_key;
+        fileName = parsed.file_name || `file_${fileKey}`;
+      }
+      return { fileKey, fileName };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Issue #4319 (read-only design, 2026-07-16): build actionable download
    * guidance for a media message in thread context — WITHOUT downloading. The
    * agent receives the message_id, the resource key, and a ready-to-run download
@@ -283,39 +321,36 @@ export class MessageHandler {
     content: string,
     messageId: string,
   ): string | undefined {
-    let fileKey: string | undefined;
-    let fileName: string | undefined;
-    try {
-      const parsed = JSON.parse(content);
-      if (messageType === 'image') {
-        fileKey = parsed.image_key;
-        fileName = `image_${fileKey}`;
-      } else if (messageType === 'audio') {
-        // Issue #1966: Audio messages use file_key in content JSON
-        fileKey = parsed.file_key;
-        fileName = parsed.file_name || `audio_${fileKey}`;
-      } else {
-        fileKey = parsed.file_key;
-        fileName = parsed.file_name || `file_${fileKey}`;
-      }
-    } catch {
-      return undefined;
-    }
-    if (!fileKey) {
+    const media = this.parseMediaContent(messageType, content);
+    const fileKey = media?.fileKey;
+    const fileName = media?.fileName;
+    if (!fileKey || !fileName) {
+      // Review nit #4: surface why we fell back to the placeholder instead of
+      // going silent (the prior eager-download path logged on this branch).
+      logger.debug({ messageType, messageId }, 'No media key in thread context — using placeholder');
       return undefined;
     }
 
     const label = mediaThreadLabel(messageType);
     const keyField = messageType === 'image' ? 'image_key' : 'file_key';
     const resourceType = mapResourceType(messageType);
+    // Review nit #3: prefer the resource's real filename (it carries the correct
+    // extension, e.g. report.pdf) so a later Read sees a properly-typed path;
+    // otherwise fall back to messageId with a best-effort extension. Images and
+    // nameless files only have a synthetic name with no extension, so the
+    // messageId fallback also keeps same-thread media messages from colliding.
+    const hasRealExt = fileName.includes('.');
     const ext = resourceType === 'image' ? 'jpg' : 'bin';
-    // Per-message output path so multiple media messages in one thread don't
-    // collide on a single ./downloaded_file.* target.
-    const outputPath = `./downloads/${messageId}.${ext}`;
+    const outputPath = hasRealExt
+      ? `./downloads/${fileName}`
+      : `./downloads/${messageId}.${ext}`;
     const downloadCmd = this.buildDownloadCmd(messageId, fileKey, resourceType, outputPath);
 
+    // Review nit #2: fileName is always non-empty here (image → image_<key>;
+    // otherwise file_name || <type>_<key> with fileKey already checked), so the
+    // previous `fileName ? ... : ''` ternary was a dead branch — emit it directly.
     return [
-      `[${label}消息 (${keyField}=${fileKey}${fileName ? `, 名称=${fileName}` : ''}): 线程上下文未自动获取其内容。如需查看，可执行下方命令下载后用 Read 工具读取]`,
+      `[${label}消息 (${keyField}=${fileKey}, 名称=${fileName}): 线程上下文未自动获取其内容。如需查看，可执行下方命令下载后用 Read 工具读取]`,
       '```bash',
       downloadCmd,
       '```',
@@ -622,31 +657,17 @@ export class MessageHandler {
     content: string,
     messageId: string,
   ): Promise<QuotedMessageResult | undefined> {
-    let fileKey: string | undefined;
-    let fileName: string | undefined;
-
-    try {
-      const parsed = JSON.parse(content);
-      if (messageType === 'image') {
-        fileKey = parsed.image_key;
-        fileName = `image_${fileKey}`;
-      } else if (messageType === 'audio') {
-        // Issue #1966: Audio messages use file_key in content JSON
-        fileKey = parsed.file_key;
-        fileName = parsed.file_name || `audio_${fileKey}`;
-      } else {
-        fileKey = parsed.file_key;
-        fileName = parsed.file_name || `file_${fileKey}`;
-      }
-    } catch {
+    const media = this.parseMediaContent(messageType, content);
+    if (!media) {
       logger.warn({ content, messageType, messageId }, 'Failed to parse quoted file message content');
       return undefined;
     }
-
+    const { fileKey } = media;
     if (!fileKey) {
       logger.warn({ messageType, messageId }, 'No file_key found in quoted message');
       return undefined;
     }
+    let { fileName } = media;
 
     // Download file to workspace/downloads directory
     // Issue #3960: downloadResourceViaLarkCli uses npx lark-cli, which only needs tenantAccessToken (not this.client)

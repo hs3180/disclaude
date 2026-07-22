@@ -2211,6 +2211,49 @@ describe('MessageHandler', () => {
       expect(result).toContain('See this screenshot');
     });
 
+    it('should use the real filename (with extension) as the download target (review nit #3)', () => {
+      const { handler } = createHandler();
+      const guidance = (handler as any).buildMediaThreadGuidance(
+        'file',
+        JSON.stringify({ file_key: 'file_xyz', file_name: 'report.pdf' }),
+        'msg_real_ext',
+      );
+      expect(guidance).toBeDefined();
+      // The real name carries its extension — a later Read sees report.pdf, not <id>.bin
+      expect(guidance).toContain('./downloads/report.pdf');
+      expect(guidance).not.toMatch(/msg_real_ext\.bin/);
+      // Still surfaces the key + message id + ready-to-run command
+      expect(guidance).toContain('file_key=file_xyz');
+      expect(guidance).toContain('名称=report.pdf');
+      expect(guidance).toContain('messages-resources-download');
+      expect(guidance).toContain('msg_real_ext');
+    });
+
+    it('should fall back to messageId + best-effort extension when there is no real filename (review nit #3)', () => {
+      const { handler } = createHandler();
+      // Nameless file → synthetic fileName has no extension → use messageId.bin
+      const guidance = (handler as any).buildMediaThreadGuidance(
+        'file',
+        JSON.stringify({ file_key: 'file_noname' }),
+        'msg_no_ext',
+      );
+      expect(guidance).toBeDefined();
+      expect(guidance).toContain('./downloads/msg_no_ext.bin');
+      expect(guidance).toContain('file_key=file_noname');
+    });
+
+    it('should keep the per-messageId .jpg path for images (no real name available)', () => {
+      const { handler } = createHandler();
+      const guidance = (handler as any).buildMediaThreadGuidance(
+        'image',
+        JSON.stringify({ image_key: 'img_only' }),
+        'msg_img',
+      );
+      expect(guidance).toBeDefined();
+      expect(guidance).toContain('./downloads/msg_img.jpg');
+      expect(guidance).toContain('image_key=img_only');
+    });
+
     it('should not fetch thread context for non-topic groups', async () => {
       mockState.isBotMentioned = true;
       const mockClient = {
