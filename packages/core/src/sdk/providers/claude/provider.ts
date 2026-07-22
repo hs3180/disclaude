@@ -499,7 +499,15 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       // been emitted to the consumer, so a retry can safely replay the buffered
       // input without duplicating output or re-running tool side effects. Backoff
       // uses the centralized computeBackoffDelay (#4227). At most MAX_QUERY_RETRIES.
-      const MAX_QUERY_RETRIES = 2;
+      //
+      // Issue #4313: MAX_QUERY_RETRIES is operator-tunable via
+      // DISCLAUDE_QUERY_MAX_RETRIES (e.g. to retry more before rethrowing when the
+      // upstream is flaky — cf. the overloaded_error scenario in #4322). 0
+      // disables the in-request retry. Default 2 (preserves prior behavior).
+      const MAX_QUERY_RETRIES = (() => {
+        const env = Number.parseInt(process.env.DISCLAUDE_QUERY_MAX_RETRIES ?? '', 10);
+        return Number.isFinite(env) && env >= 0 ? env : 2;
+      })();
       const QUERY_RETRY_TIMING = {
         initialDelayMs: 500, backoffMultiplier: 2, maxDelayMs: 8000, jitter: true,
       };
