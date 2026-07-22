@@ -15,7 +15,8 @@ const logger = createLogger('IpcUtils');
 /**
  * Check if IPC is available for Feishu API calls.
  * Issue #1035: Prefer IPC when available for unified client management.
- * Issue #1042: Use Worker Node IPC socket path if available.
+ * Issue #1042: Use the IPC socket path (legacy DISCLAUDE_WORKER_IPC_SOCKET name;
+ *   Worker Node architecture removed in #2964) if available.
  * Issue #1355: Use actual connection probing instead of file-existence check.
  *   The socket file may disappear while the process still holds the fd,
  *   or the file may exist but the server is not listening.
