@@ -628,7 +628,7 @@ export class MessageHandler {
           // Issue #1711: Extract full text from interactive card messages
           const parsed = JSON.parse(msgContent);
           quotedText = extractFullCardContent(parsed);
-        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio') {
+        } else if (msgType === 'image' || msgType === 'file' || msgType === 'media' || msgType === 'audio' || msgType === 'video') {
           return await this.handleQuotedFileMessage(msgType, msgContent, msgId);
         }
       } catch {
@@ -779,6 +779,8 @@ export class MessageHandler {
       typeLabel = '文件';
     } else if (messageType === 'audio') {
       typeLabel = '语音消息';
+    } else if (messageType === 'video') {
+      typeLabel = '视频';
     } else {
       typeLabel = '媒体文件';
     }
@@ -851,7 +853,7 @@ export class MessageHandler {
     }
 
     // Handle file/image messages - download to workspace and include path in prompt
-    if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio') {
+    if (message_type === 'image' || message_type === 'file' || message_type === 'media' || message_type === 'audio' || message_type === 'video') {
       logger.info({ chatId: chat_id, messageType: message_type, messageId: message_id }, 'File/image message received');
 
       // Parse content to extract file_key and file_name
@@ -941,6 +943,8 @@ export class MessageHandler {
         typeLabel = '文件';
       } else if (message_type === 'audio') {
         typeLabel = '语音消息';
+      } else if (message_type === 'video') {
+        typeLabel = '视频';
       } else {
         typeLabel = '媒体文件';
       }
