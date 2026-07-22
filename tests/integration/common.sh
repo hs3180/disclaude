@@ -805,12 +805,38 @@ assert_sync_chat_ok() {
     local request_start_ms
     request_start_ms=$(date +%s%N 2>/dev/null || date +%s)
 
-    result=$(make_sync_request "$message" "$chat_id")
+    # Issue #4321: retry on cold-start / rate-limit-like timeouts. The AI API can
+    # exceed the per-request timeout on a cold first call (no warm connection),
+    # surfacing as HTTP 000 (no response) — which sinks the whole use-case since
+    # the outer runner's 3x retry hits the same cold start. is_rate_limit_failure
+    # already treats 000/429 as retryable; reuse the RATE_LIMIT_* backoff so a
+    # cold-start miss is retried within the use-case. Only 000/429/rate-limit-body
+    # is retried — real failures (HTTP 500, success=false, empty body) break and
+    # fail fast, preserving test fidelity. Diagnostics below use the final result.
+    local max_retries="${RATE_LIMIT_MAX_RETRIES}"
+    local initial_delay="${RATE_LIMIT_INITIAL_DELAY}"
+    local backoff_val="${RATE_LIMIT_BACKOFF}"
+    local attempt=0
+    while true; do
+        result=$(make_sync_request "$message" "$chat_id")
+        parse_response "$result"
+        # Success, or exhausted retries, or a non-retryable failure → stop.
+        if [ "$RESPONSE_STATUS" = "200" ] \
+            || [ $attempt -ge $max_retries ] \
+            || ! is_rate_limit_failure "$RESPONSE_STATUS" "$RESPONSE_BODY"; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        local delay=$(( initial_delay * backoff_val ** (attempt - 1) ))
+        log_warn "Cold-start/rate-limit timeout (HTTP $RESPONSE_STATUS), retrying in ${delay}s... (attempt $((attempt + 1))/$((max_retries + 1)))"
+        sleep "$delay"
+    done
+    if [ $attempt -gt 0 ] && [ "$RESPONSE_STATUS" = "200" ]; then
+        log_info "Request succeeded on attempt $((attempt + 1)) (cold-start retry, Issue #4321)"
+    fi
 
     local request_end_ms
     request_end_ms=$(date +%s%N 2>/dev/null || date +%s)
-
-    parse_response "$result"
 
     RESPONSE_TEXT=$(extract_json_field "response")
 
@@ -884,60 +910,6 @@ is_rate_limit_failure() {
         return 0
     fi
 
-    return 1
-}
-
-# Send sync chat request with automatic retry on rate-limit-like failures
-# Uses exponential backoff: RATE_LIMIT_INITIAL_DELAY * RATE_LIMIT_BACKOFF^attempt
-# Usage: assert_sync_chat_ok_with_retry "message" ["chatId"]
-# Returns: 0 on success, 1 on failure
-assert_sync_chat_ok_with_retry() {
-    local message="$1"
-    local chat_id="${2:-}"
-    local max_retries="${RATE_LIMIT_MAX_RETRIES}"
-    local initial_delay="${RATE_LIMIT_INITIAL_DELAY}"
-    local backoff="${RATE_LIMIT_BACKOFF}"
-
-    local attempt=0
-    while [ $attempt -le $max_retries ]; do
-        local result
-        result=$(make_sync_request "$message" "$chat_id")
-        parse_response "$result"
-
-        RESPONSE_TEXT=$(extract_json_field "response")
-
-        # Success path
-        if [ "$RESPONSE_STATUS" = "200" ] && [ "$(extract_json_bool "success")" = "true" ] && [ -n "$RESPONSE_TEXT" ]; then
-            if [ $attempt -gt 0 ]; then
-                log_info "Request succeeded on attempt $((attempt + 1)) (rate-limit retry)"
-            fi
-            log_pass "Chat request successful (HTTP 200, non-empty response)"
-            log_info "Response: $RESPONSE_TEXT"
-            return 0
-        fi
-
-        # Check if failure is rate-limit-like and we have retries left
-        if [ $attempt -lt $max_retries ] && is_rate_limit_failure "$RESPONSE_STATUS" "$RESPONSE_BODY"; then
-            local delay=$((initial_delay * backoff ** attempt))
-            log_warn "Rate-limit-like failure (HTTP $RESPONSE_STATUS), retrying in ${delay}s... (attempt $((attempt + 1))/$((max_retries + 1)))"
-            sleep "$delay"
-            attempt=$((attempt + 1))
-            continue
-        fi
-
-        # Non-rate-limit failure or out of retries — report error
-        if [ "$RESPONSE_STATUS" != "200" ]; then
-            log_fail "Chat request failed with HTTP $RESPONSE_STATUS"
-        elif [ "$(extract_json_bool "success")" != "true" ]; then
-            log_fail "Chat request returned success=false"
-        elif [ -z "$RESPONSE_TEXT" ]; then
-            log_fail "Chat request returned empty response text"
-        fi
-        log_debug "Response: $RESPONSE_BODY"
-        return 1
-    done
-
-    log_fail "Chat request failed after $((max_retries + 1)) attempts (rate-limit retries exhausted)"
     return 1
 }
 
