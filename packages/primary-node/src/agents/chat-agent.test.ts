@@ -613,6 +613,48 @@ describe('ChatAgent (primary-node)', () => {
       expect(turnCompleteCall).toBeDefined();
       expect((turnCompleteCall as any[])[0].stopReason).toBeUndefined();
     });
+
+    it('should log numTurns / durationMs / durationApiMs on turn completion (Issue #4320 part 2)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_turn_stats',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* resultIterator() {
+        yield {
+          parsed: {
+            type: 'result',
+            content: '✅ Complete',
+            metadata: { stopReason: 'end_turn', numTurns: 3, durationMs: 4200, durationApiMs: 3100 },
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: resultIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_turn_stats',
+        payload: 'do something',
+        messageId: 'msg_1',
+      });
+      await new Promise<void>((r) => setTimeout(r, 150));
+
+      // Part 2: turn-level observability is surfaced alongside stopReason so a
+      // premature end_turn (few round-trips / low API time) is diagnosable.
+      const { logger } = agent as any;
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ numTurns: 3, durationMs: 4200, durationApiMs: 3100 }),
+        'Result received, turn complete'
+      );
+    });
   });
 
   describe('Issue #2920: startup failure detection and diagnostics', () => {
