@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider } from './provider.js';
+import { StderrCapture, getErrorStderr, isStartupFailure, attachStderrToError, ClaudeSDKProvider, stderrIndicatesUpstreamApiError } from './provider.js';
 import { ErrorCategory } from '../../../utils/error-handler.js';
 import type { AgentMessage, UserInput } from '../../types.js';
 
@@ -209,6 +209,44 @@ describe('isStartupFailure', () => {
     expect(isStartupFailure(0, 9999)).toBe(true);
     // At threshold
     expect(isStartupFailure(0, 10_000)).toBe(false);
+  });
+});
+
+// ============================================================================
+// stderrIndicatesUpstreamApiError (Issue #4322)
+// ============================================================================
+//
+// Pure helper that anchors upstream-API-error detection to the stderr markers
+// observed in the glm-5.2 + claude-agent-sdk incident. True regression: if the
+// regex is removed/emptied, every case below flips and the helper returns false.
+
+describe('stderrIndicatesUpstreamApiError (Issue #4322)', () => {
+  it('detects the SDK "server_overload after retries" give-up marker', () => {
+    expect(
+      stderrIndicatesUpstreamApiError(
+        'API server_overload after retries: [500][操作失败][20260714182952476a7a385dcd435c]'
+      )
+    ).toBe(true);
+  });
+
+  it('detects the upstream "overloaded_error" type', () => {
+    expect(
+      stderrIndicatesUpstreamApiError(
+        'Error in API request: {"type":"error","error":{"type":"overloaded_error","code":"500"}}'
+      )
+    ).toBe(true);
+  });
+
+  it('detects Claude-Code-style "API Error: [5xx" prints', () => {
+    expect(stderrIndicatesUpstreamApiError('API Error: [500] Bad gateway')).toBe(true);
+    expect(stderrIndicatesUpstreamApiError('API Error: 503 Service Unavailable')).toBe(true);
+  });
+
+  it('does NOT flag benign stderr (no false positives)', () => {
+    expect(stderrIndicatesUpstreamApiError('')).toBe(false);
+    expect(stderrIndicatesUpstreamApiError('client ready\nREST Channel started')).toBe(false);
+    // A 4xx is not an upstream-5xx-overload signal.
+    expect(stderrIndicatesUpstreamApiError('API Error: 401 Bad credentials')).toBe(false);
   });
 });
 
@@ -973,6 +1011,104 @@ describe('ClaudeSDKProvider', () => {
       }
 
       expect(inputCount).toBe(2);
+    });
+
+    // Issue #4322: when the SDK gives up on an upstream API error (overloaded_error
+    // / 5xx) it prints the error to stderr but STILL emits a subtype=success result,
+    // which downstream would silently report as ✅ Complete. The provider detects the
+    // stderr signature and tags the success result so ChatAgent can report ❌ Failed.
+    it('Issue #4322: tags the success result with upstreamApiError when stderr shows an upstream overload', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown>; options?: { stderr?: (data: string) => void } }) =>
+        Object.assign(
+          (async function* () {
+            // Simulate the SDK printing the give-up marker to stderr, then emitting
+            // a subtype=success result anyway (the exact #4322 incident shape).
+            arg.options?.stderr?.(
+              'API server_overload after retries: [500][操作失败][20260714182952476a7a385dcd435c]'
+            );
+            yield {
+              type: 'result',
+              subtype: 'success',
+              total_cost_usd: 1.3361,
+              usage: { input_tokens: 60000, output_tokens: 11800 },
+            };
+          })(),
+          { interrupt: vi.fn(), close: vi.fn() },
+        ),
+      );
+
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+
+      const resultMsg = messages.find((m) => m.type === 'result');
+      expect(resultMsg).toBeDefined();
+      // Tagged so ChatAgent reports ❌ Failed instead of ✅ Complete.
+      expect(resultMsg?.metadata?.upstreamApiError).toBe(true);
+      // stderr tail (carrying the upstream request_id) surfaced for actionable notice.
+      expect(resultMsg?.metadata?.upstreamApiErrorStderr).toContain('20260714182952476a7a385dcd435c');
+    });
+
+    // Issue #4322 (false-positive guard): a transient error that the L1 retry
+    // RECOVERS from must NOT tag the recovered success result. The failed
+    // attempt printed the overload marker to stderr, but the per-attempt stderr
+    // reset clears it before the retry — so the recovered turn stays clean.
+    it('Issue #4322: does NOT tag a recovered L1 retry (stale stderr reset per attempt)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      let callCount = 0;
+      mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown>; options?: { stderr?: (data: string) => void } }) => {
+        callCount++;
+        if (callCount === 1) {
+          // Failed attempt: prints the overload marker to stderr, then throws a
+          // transient error (→ L1 retry, since messageCount === 0).
+          return Object.assign(
+            (async function* () {
+              arg.options?.stderr?.('API server_overload after retries: [500][操作失败][req]');
+              for await (const _msg of arg.prompt ?? []) { void _msg; }
+              throw new Error('ECONNRESET: connection reset');
+            })(),
+            { interrupt: vi.fn(), close: vi.fn() },
+          );
+        }
+        // Retry: clean success, no new stderr → must NOT be tagged.
+        return Object.assign(
+          (async function* () {
+            for await (const _msg of arg.prompt ?? []) { void _msg; }
+            yield {
+              type: 'result',
+              subtype: 'success',
+              total_cost_usd: 0.01,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            };
+          })(),
+          { interrupt: vi.fn(), close: vi.fn() },
+        );
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+
+      expect(mockQuery).toHaveBeenCalledTimes(2); // retried + recovered
+      const resultMsg = messages.find((m) => m.type === 'result');
+      expect(resultMsg).toBeDefined();
+      // NOT tagged — the recovered turn genuinely succeeded.
+      expect(resultMsg?.metadata?.upstreamApiError).toBeFalsy();
     });
   });
 

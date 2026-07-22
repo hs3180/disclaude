@@ -58,6 +58,13 @@ export interface IteratorYieldResult {
     sessionId?: string;
     /** provider stall 看门狗合成的 result 携带,ChatAgent 据此分支处理(Issue #3706) */
     terminatedReason?: 'stall';
+    /**
+     * provider 据本轮 stderr 标记:SDK 在上游 overloaded_error / 5xx 重试耗尽后仍发
+     * subtype=success result,ChatAgent 据此改报 ❌ Failed + recordFailure(Issue #4322)。
+     */
+    upstreamApiError?: boolean;
+    /** 触发 upstreamApiError 的 stderr 尾部(含上游 request_id),Issue #4322。 */
+    upstreamApiErrorStderr?: string;
   };
   /** SDK Agent message */
   raw: SdkAgentMessage;
@@ -327,6 +334,8 @@ export abstract class BaseAgent implements Disposable {
       } : undefined,
       sessionId: message.metadata?.sessionId,
       terminatedReason: message.metadata?.terminatedReason,
+      upstreamApiError: message.metadata?.upstreamApiError,
+      upstreamApiErrorStderr: message.metadata?.upstreamApiErrorStderr,
     };
   }
 

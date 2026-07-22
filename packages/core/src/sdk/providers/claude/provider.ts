@@ -44,6 +44,46 @@ const STALL_TERMINATE_NOTICE =
   '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
 
 // ============================================================================
+// Upstream API error detection (Issue #4322)
+// ============================================================================
+//
+// Symptom: a scheduled-task (or any) turn killed mid-execution by an upstream
+// API error (HTTP 500 overloaded_error) is reported as `✅ Complete` — a silent
+// failure. Root cause: after the SDK exhausts its built-in retries on an upstream
+// overload, it prints the error to stderr but STILL emits a `result` with
+// subtype=success (carrying the accumulated usage), so ChatAgent faithfully
+// reports ✅ Complete and nothing surfaces the failure.
+//
+// Fix (part 1, this slice): detect the upstream-API-error signature in the
+// stderr captured for the turn and tag the success result's metadata so the
+// consumer (ChatAgent) can report ❌ Failed + recordFailure instead of masking
+// it. Turn-level retry is a separate, larger follow-up (Issue #4314 / #4192 L2).
+
+/**
+ * Stderr signatures that definitively indicate the SDK gave up on an upstream
+ * API error during this turn (Issue #4322). Anchored to the markers observed
+ * in the glm-5.2 + claude-agent-sdk incident:
+ *   - `server_overload after retries` — the SDK's terminal "exhausted retries on
+ *     upstream overload" line (unambiguous; a recovered transient would NOT
+ *     print "after retries").
+ *   - `overloaded_error` — the upstream error type the SDK surfaces.
+ *   - `API Error: [5xx` / `API Error: 5xx` — Claude-Code-style failure print.
+ *
+ * Intentionally conservative: a transient error that the SDK retried and
+ * recovered from does not emit "after retries", so this avoids false positives
+ * on recovered turns. Broaden in a follow-up if other 5xx shapes appear.
+ */
+const UPSTREAM_API_ERROR_RE = /server_overload after retries|overloaded_error|API Error:\s*\[?\s*5\d\d/i;
+
+/**
+ * True when the captured stderr indicates the turn was killed by an upstream
+ * API error (Issue #4322). Exported for unit testing.
+ */
+export function stderrIndicatesUpstreamApiError(stderr: string): boolean {
+  return UPSTREAM_API_ERROR_RE.test(stderr);
+}
+
+// ============================================================================
 // Process Listener Cleanup (Issue #3378)
 // ============================================================================
 
@@ -474,6 +514,13 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         lastProgressMs = 0;
         listenersCleanedUp = false;
         if (queryAttempt > 0) {
+          // Issue #4322: clear stale stderr from the previous (failed) attempt
+          // before recreating the query, so a recovered L1 retry isn't falsely
+          // tagged upstreamApiError by the prior attempt's error line. Reset
+          // here (not at the top of the loop) so attempt 0's stderr — which may
+          // be fed during query() creation, before the loop — is preserved for
+          // the catch's attachStderrToError, and so each retry starts clean.
+          stderrCapture.reset();
           queryResult = query({
             prompt: adaptInputStream(),
             options: sdkOptions as Parameters<typeof query>[0]['options'],
@@ -612,6 +659,26 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
             // "🤔 Thinking…" / "🔄 Compacting…")仍属 system 通道噪声;若让它参与重置,会把
             // 「空消息 + 偶发 status」交替的 flood 不断清零、永远到不了阈值。
             consecutiveEmptySystemCount = 0;
+          }
+
+          // Issue #4322: 上游 API 错误(overloaded_error / 5xx)可能在本轮已流出
+          // 部分输出后才杀掉 turn。SDK 把错误打到 stderr 但仍发 subtype=success 的
+          // result,下游会静默报 ✅ Complete。若本轮捕获的 stderr 带上游 API 错误
+          // 特征,给该 success result 打 upstreamApiError 标记,让 ChatAgent 改报
+          // ❌ Failed + recordFailure。不覆盖 stall 合成的 result(terminatedReason)。
+          if (
+            adapted.type === 'result' &&
+            !adapted.metadata?.terminatedReason &&
+            stderrCapture.hasContent() &&
+            stderrIndicatesUpstreamApiError(stderrCapture.getCaptured())
+          ) {
+            adapted.metadata = {
+              ...(adapted.metadata ?? {}),
+              upstreamApiError: true,
+              // Surface the stderr tail (carries the upstream request_id) so the
+              // consumer can include an actionable reference in the ❌ Failed notice.
+              upstreamApiErrorStderr: stderrCapture.getTail(300),
+            };
           }
 
           yield adapted;
