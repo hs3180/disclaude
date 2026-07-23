@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionManager } from './session-manager.js';
+import { SessionManager, buildSessionKey } from './session-manager.js';
 import { MessageChannel } from './message-channel.js';
 import type { QueryHandle } from '../sdk/index.js';
 import type { Logger } from '../utils/logger.js';
@@ -305,6 +305,62 @@ describe('SessionManager', () => {
       const createdAt = session.createdAt.getTime();
       expect(createdAt).toBeGreaterThanOrEqual(before);
       expect(createdAt).toBeLessThanOrEqual(after);
+    });
+  });
+
+  describe('buildSessionKey (Issue #4305 part 1)', () => {
+    // Key-derivation primitive for per-thread session isolation. Part 1
+    // introduces the helper + tests; wiring it into SessionManager methods and
+    // ChatAgent routing is part 2. These lock the contract that part 2 depends
+    // on: p2p chats (no threadRoot) keep the existing chatId-only key, while
+    // topic-group threads get a composite key — and the two never collide.
+
+    it('returns chatId unchanged when threadRoot is omitted (p2p / non-topic chats)', () => {
+      expect(buildSessionKey('oc_chat1')).toBe('oc_chat1');
+    });
+
+    it('returns chatId unchanged when threadRoot is undefined', () => {
+      expect(buildSessionKey('oc_chat1', undefined)).toBe('oc_chat1');
+    });
+
+    it('treats an empty-string threadRoot as "no thread" (p2p fallback)', () => {
+      // A falsy threadRoot must collapse to the chatId-only key so an absent
+      // thread anchor never produces a trailing separator.
+      expect(buildSessionKey('oc_chat1', '')).toBe('oc_chat1');
+    });
+
+    it('combines chatId + threadRoot with a "::" separator when threadRoot is present', () => {
+      expect(buildSessionKey('oc_chat1', 'om_threadA')).toBe('oc_chat1::om_threadA');
+    });
+
+    it('is stable: the same inputs always produce the same key', () => {
+      expect(buildSessionKey('oc_chat1', 'om_threadA'))
+        .toBe(buildSessionKey('oc_chat1', 'om_threadA'));
+    });
+
+    it('isolates threads: same chatId, different threadRoots → different keys', () => {
+      // The core #4305 invariant — thread A and thread B in the same topic
+      // group must map to distinct sessions. If these collided, threads would
+      // share a session and context would leak across threads.
+      const keyA = buildSessionKey('oc_chat1', 'om_threadA');
+      const keyB = buildSessionKey('oc_chat1', 'om_threadB');
+      expect(keyA).not.toBe(keyB);
+      expect(keyA).toBe('oc_chat1::om_threadA');
+      expect(keyB).toBe('oc_chat1::om_threadB');
+    });
+
+    it('never collides between a thread-less session and a thread session of the same chat', () => {
+      // A p2p session (chatId) and a thread session (chatId::threadRoot) for the
+      // same chat must be distinct keys, so a chat that is both addressed p2p
+      // and as a thread can't have one clobber the other.
+      const p2p = buildSessionKey('oc_chat1');
+      const threaded = buildSessionKey('oc_chat1', 'om_threadA');
+      expect(p2p).not.toBe(threaded);
+    });
+
+    it('isolates chats: same threadRoot, different chatIds → different keys', () => {
+      expect(buildSessionKey('oc_chat1', 'om_threadA'))
+        .not.toBe(buildSessionKey('oc_chat2', 'om_threadA'));
     });
   });
 });
