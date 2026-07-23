@@ -2353,6 +2353,118 @@ describe('MessageHandler', () => {
       expect(guidance).toContain('image_key=img_only');
     });
 
+    it('should return undefined (keep the opaque placeholder) when a media message has no parseable key (Issue #4329)', () => {
+      // Issue #4329: the read-only thread-context path must keep an honest
+      // fallback when it cannot point the agent at a downloadable resource.
+      // buildMediaThreadGuidance returns undefined for media content with no
+      // resource key (malformed / missing image_key|file_key); getThreadContext
+      // then keeps extractMessageText's opaque `[未解析的 <type> 消息]`
+      // placeholder instead of fabricating guidance or silently dropping the
+      // message.
+      // Re-scoped from #4329's original "stub handleQuotedFileMessage returns
+      // no filePath" suggestion: getThreadContext has been read-only since
+      // #4319/#4358 and no longer calls handleQuotedFileMessage, so the
+      // equivalent gap is the no-key branch of buildMediaThreadGuidance.
+      const { handler } = createHandler();
+      // No resource key in content → nothing to point the agent at.
+      expect((handler as any).buildMediaThreadGuidance('image', JSON.stringify({}), 'msg_no_key'))
+        .toBeUndefined();
+      expect((handler as any).buildMediaThreadGuidance('file', JSON.stringify({ unrelated: 'x' }), 'msg_no_key'))
+        .toBeUndefined();
+      // Malformed (non-JSON) content → parseMediaContent returns undefined →
+      // guidance is again undefined (placeholder kept downstream).
+      expect((handler as any).buildMediaThreadGuidance('audio', 'not-json', 'msg_bad'))
+        .toBeUndefined();
+    });
+
+    it('should surface the correct label for non-image media in read-only guidance (Issue #4329)', () => {
+      // Issue #4329: mediaThreadLabel mappings for non-image types were
+      // previously untested in the read-only thread-context path (only
+      // image/file guidance was covered). Lock audio→语音, video→视频, and the
+      // default fallback so a future label change is caught.
+      const { handler } = createHandler();
+
+      const audioGuidance = (handler as any).buildMediaThreadGuidance(
+        'audio',
+        JSON.stringify({ file_key: 'aud_1', file_name: 'voice.opus' }),
+        'msg_audio',
+      );
+      expect(audioGuidance).toBeDefined();
+      expect(audioGuidance).toContain('语音');
+      expect(audioGuidance).toContain('file_key=aud_1');
+
+      const videoGuidance = (handler as any).buildMediaThreadGuidance(
+        'video',
+        JSON.stringify({ file_key: 'vid_1', file_name: 'clip.mp4' }),
+        'msg_video',
+      );
+      expect(videoGuidance).toBeDefined();
+      expect(videoGuidance).toContain('视频');
+      expect(videoGuidance).toContain('file_key=vid_1');
+
+      // Unknown / generic media type → default 媒体 label.
+      const mediaGuidance = (handler as any).buildMediaThreadGuidance(
+        'media',
+        JSON.stringify({ file_key: 'gen_1', file_name: 'blob.dat' }),
+        'msg_media',
+      );
+      expect(mediaGuidance).toBeDefined();
+      expect(mediaGuidance).toContain('媒体');
+    });
+
+    it('getThreadContext keeps the opaque placeholder (no download command) for a keyless media ancestor (Issue #4329)', async () => {
+      // End-to-end lock for the no-key fallback: a thread media ancestor whose
+      // content carries no resource key surfaces extractMessageText's opaque
+      // placeholder, with NO download command and NO eager download — the
+      // read-only contract from #4319 must hold even when guidance is absent.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    // image with no image_key — nothing to point the agent at
+                    message_type: 'image',
+                    content: JSON.stringify({}),
+                    message_id: 'msg_no_key',
+                    parent_id: 'msg_root',
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              })
+              .mockResolvedValueOnce({
+                data: {
+                  message: {
+                    message_type: 'text',
+                    content: JSON.stringify({ text: 'thread root' }),
+                    message_id: 'msg_root',
+                    parent_id: undefined,
+                    sender: { sender_type: 'user' },
+                  },
+                },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      const downloadSpy = vi.spyOn(handler as any, 'handleQuotedFileMessage');
+
+      const result = await (handler as any).getThreadContext('msg_no_key');
+
+      expect(result).toBeDefined();
+      // Honest placeholder retained; no fabricated download guidance / command.
+      expect(result).toContain('[未解析的 image 消息]');
+      expect(result).not.toContain('messages-resources-download');
+      // Read-only: still no eager download on the fallback path.
+      expect(downloadSpy).not.toHaveBeenCalled();
+      // Non-media ancestor still extracted normally.
+      expect(result).toContain('thread root');
+    });
+
     it('should not fetch thread context for non-topic groups', async () => {
       mockState.isBotMentioned = true;
       const mockClient = {
