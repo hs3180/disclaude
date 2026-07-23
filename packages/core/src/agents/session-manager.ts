@@ -39,6 +39,37 @@ export interface SessionManagerConfig {
 }
 
 /**
+ * Build the SessionManager map key for a session.
+ *
+ * Issue #4305: today sessions are keyed by `chatId` alone, so every thread in a
+ * Feishu topic group shares one agent session and a thread's context leaks
+ * across threads. This helper is the key-derivation primitive for per-thread
+ * session isolation:
+ * - when `threadRoot` is supplied (a topic-group thread anchor), the key
+ *   combines chatId + threadRoot so each thread gets its own session;
+ * - when omitted (p2p / non-topic chats), the key is just `chatId`,
+ *   preserving today's behavior exactly.
+ *
+ * This is part 1 of #4305 — it only introduces the primitive + tests. Wiring it
+ * into {@link SessionManager}'s methods and ChatAgent's routing is part 2, at
+ * which point `threadRoot` flows in from the message's root id.
+ *
+ * Separator choice: Feishu chat ids (`oc_…`) and message/thread ids (`om_…`)
+ * never contain `::`, so `chatId::threadRoot` is unambiguous. An empty-string
+ * `threadRoot` is treated as "no thread" (falsy), matching the p2p fallback.
+ *
+ * @param chatId - The chat identifier (always present).
+ * @param threadRoot - Optional thread/root-message id. Omitted for p2p chats.
+ * @returns The map key — `chatId` when no thread, else `chatId::threadRoot`.
+ */
+export function buildSessionKey(chatId: string, threadRoot?: string): string {
+  if (!threadRoot) {
+    return chatId;
+  }
+  return `${chatId}::${threadRoot}`;
+}
+
+/**
  * SessionManager - Manages ChatAgent session lifecycle.
  *
  * Each chatId gets its own session containing a QueryHandle and MessageChannel.
