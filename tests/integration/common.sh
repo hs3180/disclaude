@@ -55,8 +55,17 @@ API_URL="http://${HOST}:${REST_PORT}"
 TIMEOUT="${TIMEOUT:-30}"
 SERVER_PID=""
 
-# Log file in current working directory
-SERVER_LOG="disclaude-test-server.log"
+# Log file in current working directory. Per-suite (Issue #4312 #3):
+# start_server() writes with ">" (truncate), so a shared filename made each
+# suite overwrite the previous one's log — deriving the name from the calling
+# script keeps each suite's diagnostics for review. An explicit SERVER_LOG
+# from the caller still wins (backward compatible).
+if [ -z "$SERVER_LOG" ]; then
+    _server_log_slug="$(basename "$0" .sh 2>/dev/null | tr -c 'A-Za-z0-9_-' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')"
+    [ -z "${_server_log_slug//-/}" ] && _server_log_slug="test"
+    SERVER_LOG="disclaude-test-server-${_server_log_slug}.log"
+    unset _server_log_slug
+fi
 
 # Test workspace directory for isolation (Issue #3414)
 # Each test run gets its own isolated workspace to prevent Scheduler
