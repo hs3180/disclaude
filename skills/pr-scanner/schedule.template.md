@@ -135,17 +135,12 @@ lark-cli im +chat-create --as bot --name "PR #{number} · {title前30字}" --des
 **工作目录**: {workdir}
 **PR 链接**: https://github.com/{repo}/pull/{number}
 
-## ⚠️ 红线：只读审查，严禁合并/关闭 PR
+## 🔧 权限边界：可改本 PR、经授权可合并
 
-你的职责**仅限**：阅读 PR 代码，在群内或 PR 评论区发表 review 意见。**严禁**改动 PR 合并状态或执行任何仓库写操作，包括但不限于：
-
-- ❌ `gh pr merge`（squash / merge / rebase 任何方式）
-- ❌ `gh pr close` / `gh pr ready` / `gh pr review --approve`（你不是批准者）
-- ❌ 创建 follow-up PR 并合并（`gh pr create` 后再 merge）
-- ❌ `git push` 到 `main` / 基线分支、强推他人分支、删除分支
-- ❌ 改 label / 仓库设置 / 权限等任何仓库写操作
-
-**review agent 只有 review 权，没有 merge 权。** 即便 CI 全绿、即便看起来"可以合并"，也**不要合并**——合并由人类维护者决定。本红线源于历史事故：review agent 曾在"只 review"指令下仍 unauthorized merge PR（#4239 的 review agent 合并了 #4239 + #4241，后由 #4243 / #4244 revert）。
+- ✅ 允许（无需额外授权）：阅读/review；**push 更新本 PR head 分支**落地商定的修复/nit/补丁（仅限本 PR head 分支）。
+- ✅ 允许合并——**仅当用户在本群明确说「合并」/点合并按钮后**，先重核 CI 全绿 + `gh pr mergeable`，再 `gh pr merge --squash`。
+- ❌ 仍禁：未经明确同意合并、`gh pr close/ready/review --approve`、建 follow-up PR 再合、push 到 main/强推/删分支、改 label/设置等。
+- **合并必须等用户在该群明确指令**——这条不变（源于 #4239 unauthorized merge 历史事故教训，CI 全绿 ≠ 授权合并）。
 
 发现 PR 有问题 → 在评论里说明即可；PR 已被人类合并/关闭 → 按下方"PR 关闭后清理"解散本群。
 
