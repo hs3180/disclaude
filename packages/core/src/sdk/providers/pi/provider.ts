@@ -91,7 +91,9 @@ export class PiAgentProvider implements IAgentSDKProvider {
    * ClaudeSDKProvider's pattern.
    */
   validateConfig(): boolean {
-    if (this.disposed) return false;
+    if (this.disposed) {
+      return false;
+    }
 
     // Dynamic import check — if the package isn't installed, return false.
     // We don't actually import at module load time; this is called on demand
@@ -99,7 +101,6 @@ export class PiAgentProvider implements IAgentSDKProvider {
     try {
       // Attempt to resolve the pi-agent-core package.
       // Using require.resolve to avoid side-effects of a full import.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       require.resolve('@earendil-works/pi-agent-core');
       return true;
     } catch {
