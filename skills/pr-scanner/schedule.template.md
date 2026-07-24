@@ -109,6 +109,7 @@ lark-cli api GET "/open-apis/im/v1/messages" --as bot --query container_id_type=
 1. **解散前**在群内发总结消息：「⏰ 本 review 群已达最高提醒级别（加急）且持续 >4h 无响应，scanner 自动解散以释放名额。PR 仍 open，将在冷却后（默认 24h）由 scanner 重新排队建群。」
 2. **调用 dissolve-group** 解散（清理群 + workdir + 映射条目）：`DISSOLVE_KEY=pr-{number}`；如 Skill 不可用，回退到 Bash：`cd {workspace_root} && DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`（同「PR 关闭后清理」）。
 3. **冷却抑制**：解散后向映射表写入抑制条目 `pr-{number}`：`{purpose: "pr-review-suppressed", suppressedAt: <now>, suppressedUntil: <now+24h>, reason: "timeout-4h"}`。该条目使步骤 3 视该 PR 为「已有群」（不重复建群）、且不计入步骤 5 的并发名额（`purpose != "pr-review"`）。
+   - ⚠️ **写入方式**：步骤 4c.2 已由 dissolve-group 删除该 `pr-{number}` 条目，故此处必须**直接原子写 `bot-chat-mapping.json`**（读 JSON → `table[key] = entry` → 临时文件 + 原子 rename，与 dissolve-group 自身做法一致）。**不可用 `store.update`**（key 不在缓存中会返回 `null`、不写入）；`store.set` 仅持久化 `MappingEntry` 固定字段（`chatId/createdAt/purpose/workdir/lastReminderAt/reminderCount`），不含 `suppressedAt/suppressedUntil/reason`，会丢弃这三项 → 冷却落不了盘、4c.4 的到期检查无依据。
 4. **冷却到期**：每次扫描检查所有 `purpose: "pr-review-suppressed"` 条目，若 `suppressedUntil` 已过则删除条目 —— 该 PR 重新变为「新 PR」，可被步骤 5 重新建群。
 
 **说明**：仅当 PR 仍 open 且 `reminderCount` ≥ 3 且 >4h 无用户消息才解散；若期间有用户消息则按「活跃度恢复重置」归零计数器，**不解散**。
