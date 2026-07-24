@@ -105,11 +105,23 @@ export interface AgentMessageMetadata {
    */
   systemSubtype?: string;
   /**
-   * stall 终止标记:provider 的 no-content-progress 看门狗在「在飞请求内 N 秒无
-   * content_block_delta」时合成此 result。ChatAgent 据此发提示 + recordFailure +
-   * 抑制自动重启并保留上下文。见 Issue #3706(GLM stall)。
+   * 终止标记:此 result 表示一次「非成功但合法」的 turn 终止 —— 不是崩溃,因此
+   * ChatAgent 把流结束当成「turn 完成」而非「意外崩溃」,从而抑制虚假自动重启并
+   * 保留会话上下文。两种来源:
+   *  - `'stall'`:provider 的 no-content-progress 看门狗在「在飞请求内 N 秒无
+   *    content_block_delta」时合成此 result。见 Issue #3706(GLM stall)。
+   *  - `'max_turns'` / `'max_budget_usd'` / `'max_structured_output_retries'`:
+   *    SDK 的 `error_max_*` 上限终止(Issue #4378)——turn 因撞到轮次/预算/结构化
+   *    输出重试上限而结束。adapter 把这类 result 映射成 type:'result' + 此标记,
+   *    使 chat-agent 的 result 分支正常触发(turn-complete 日志带 num_turns /
+   *    duration、turn 正常 resolve、不触发虚假重启)。follow-up 可像 stall 检查
+   *    一样在此标记上 recordFailure(如 'max-turns')而不触发实际重启。
    */
-  terminatedReason?: 'stall';
+  terminatedReason?:
+    | 'stall'
+    | 'max_turns'
+    | 'max_budget_usd'
+    | 'max_structured_output_retries';
   /**
    * 上游 API 错误标记(Issue #4322)。SDK 在上游返回 overloaded_error / 5xx 并重试
    * 耗尽后,把错误只打到 stderr,却仍发一个 subtype=success 的 result —— 会让
