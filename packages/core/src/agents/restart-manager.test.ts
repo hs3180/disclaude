@@ -223,6 +223,83 @@ describe('RestartManager', () => {
     });
   });
 
+  describe('Issue #4315 (L4): persistent errors do not consume restart quota', () => {
+    // #4315's remaining unchecked criterion — "配额不被持久错误吃掉": a persistent
+    // error is rejected at the non_transient branch BEFORE restartCount is
+    // incremented and BEFORE currentBackoffMs is advanced, so it must not eat
+    // into the transient-restart quota, trip the circuit, or advance backoff.
+    // These are true regressions: each fails if the restartCount++ / backoff
+    // update in shouldRestart ever moves above the non_transient early-return.
+
+    it('a persistent error does not consume a restart slot — full transient quota remains', () => {
+      // Persistent error is rejected...
+      const persistent = manager.shouldRestart('chat-1', 'validation failed: invalid input');
+      expect(persistent.allowed).toBe(false);
+      expect(persistent.reason).toBe('non_transient');
+      expect(persistent.restartCount).toBe(0);
+
+      // ...and must leave the entire transient quota intact: all maxRestarts (3)
+      // transient retries are still allowed afterward. If the persistent error
+      // had incremented the counter, the 3rd transient here would be blocked
+      // (max_restarts_exceeded) instead of allowed.
+      const t1 = manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      expect(t1.allowed).toBe(true);
+      expect(t1.restartCount).toBe(1);
+
+      const t2 = manager.shouldRestart('chat-1', 'Network Error: timeout 2');
+      expect(t2.allowed).toBe(true);
+      expect(t2.restartCount).toBe(2);
+
+      const t3 = manager.shouldRestart('chat-1', 'Network Error: timeout 3');
+      expect(t3.allowed).toBe(true);
+      expect(t3.restartCount).toBe(3);
+    });
+
+    it('interleaved persistent errors stay invisible to the quota and the circuit', () => {
+      // transient, persistent, transient, persistent, transient -> 3 transient
+      // restarts used; the two persistent errors must not count toward the quota.
+      const t1 = manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      expect(t1.allowed).toBe(true);
+
+      const p1 = manager.shouldRestart('chat-1', 'permission denied: access forbidden');
+      expect(p1.allowed).toBe(false);
+      expect(p1.reason).toBe('non_transient');
+
+      const t2 = manager.shouldRestart('chat-1', 'Network Error: timeout 2');
+      expect(t2.allowed).toBe(true);
+
+      const p2 = manager.shouldRestart('chat-1', 'validation failed: required input');
+      expect(p2.allowed).toBe(false);
+      expect(p2.reason).toBe('non_transient');
+
+      const t3 = manager.shouldRestart('chat-1', 'Network Error: timeout 3');
+      expect(t3.allowed).toBe(true);
+      expect(t3.restartCount).toBe(3);
+      expect(t3.circuitOpen).toBe(false);
+
+      // Only a 4th TRANSIENT error trips the circuit — the two persistent
+      // errors did not consume slots, so the breaker still needs a 4th transient.
+      const t4 = manager.shouldRestart('chat-1', 'Network Error: timeout 4');
+      expect(t4.allowed).toBe(false);
+      expect(t4.reason).toBe('max_restarts_exceeded');
+      expect(t4.circuitOpen).toBe(true);
+    });
+
+    it('a persistent error does not advance backoff state for the next transient restart', () => {
+      // One transient restart consumes a slot and doubles the backoff.
+      manager.shouldRestart('chat-1', 'Network Error: timeout 1');
+      expect(manager.getState('chat-1')?.restartCount).toBe(1);
+      expect(manager.getState('chat-1')?.currentBackoffMs).toBe(2000); // initialBackoffMs (1000) * multiplier (2)
+
+      // A persistent error must not touch restartCount or currentBackoffMs.
+      const persistent = manager.shouldRestart('chat-1', 'permission denied: access forbidden');
+      expect(persistent.allowed).toBe(false);
+
+      expect(manager.getState('chat-1')?.restartCount).toBe(1); // unchanged — persistent did not consume a slot
+      expect(manager.getState('chat-1')?.currentBackoffMs).toBe(2000); // unchanged — not doubled to 4000
+    });
+  });
+
   describe('recordSuccess', () => {
     it('should reset restart count after success', () => {
       manager.shouldRestart('chat-1', 'Network Error: timeout');
