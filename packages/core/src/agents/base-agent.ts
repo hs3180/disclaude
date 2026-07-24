@@ -56,8 +56,17 @@ export interface IteratorYieldResult {
     content: string;
     metadata?: Record<string, unknown>;
     sessionId?: string;
-    /** provider stall 看门狗合成的 result 携带,ChatAgent 据此分支处理(Issue #3706) */
-    terminatedReason?: 'stall';
+    /**
+     * 终止标记(与 AgentMessageMetadata.terminatedReason 同口径)。两种来源:
+     *  - `'stall'`:provider 的 no-content-progress 看门狗合成(Issue #3706)。
+     *  - `'max_turns'` / `'max_budget_usd'` / `'max_structured_output_retries'`:
+     *    SDK 的 `error_max_*` 上限终止,由 message-adapter 映射(Issue #4378)。
+     */
+    terminatedReason?:
+      | 'stall'
+      | 'max_turns'
+      | 'max_budget_usd'
+      | 'max_structured_output_retries';
     /**
      * provider 据本轮 stderr 标记:SDK 在上游 overloaded_error / 5xx 重试耗尽后仍发
      * subtype=success result,ChatAgent 据此改报 ❌ Failed + recordFailure(Issue #4322)。
