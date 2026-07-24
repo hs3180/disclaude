@@ -14,6 +14,8 @@
  * pattern.
  */
 
+import { createRequire } from 'node:module';
+
 import type { IAgentSDKProvider } from '../../interface.js';
 import type {
   AgentQueryOptions,
@@ -99,9 +101,13 @@ export class PiAgentProvider implements IAgentSDKProvider {
     // We don't actually import at module load time; this is called on demand
     // by getInfo() / isProviderAvailable().
     try {
-      // Attempt to resolve the pi-agent-core package.
-      // Using require.resolve to avoid side-effects of a full import.
-      require.resolve('@earendil-works/pi-agent-core');
+      // Resolve the pi-agent-core package without importing it (avoids the
+      // side-effects of a full import). This file is ESM, so bare `require`
+      // is undefined here — using createRequire() gives us a working
+      // require.resolve(). (import.meta.resolve is an alternative but only
+      // became synchronous/unflagged in Node 20.6+; createRequire is stable
+      // across our >=18 floor.)
+      createRequire(import.meta.url).resolve('@earendil-works/pi-agent-core');
       return true;
     } catch {
       return false;
