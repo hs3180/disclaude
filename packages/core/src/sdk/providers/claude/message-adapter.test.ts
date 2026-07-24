@@ -495,11 +495,13 @@ describe('adaptSDKMessage', () => {
       expect(result.content).toContain('Timeout');
     });
 
-    it('should extract turn stats for error_max_turns too (Issue #4320 part 2 nit)', () => {
-      // error_max_turns is the most diagnostic premature-end case — "ran N
-      // turns before hitting the limit" — yet it falls through to the empty-text
-      // fallback (not type:'result'). The observability metadata must still
-      // survive so the turn end can be diagnosed downstream.
+    it('Issue #4378: error_max_turns emits a terminal result (not empty text) carrying turn stats', () => {
+      // error_max_turns is the most diagnostic premature-end case — "ran N turns
+      // before hitting the limit". Previously it collapsed to empty type:'text',
+      // so chat-agent skipped its result block → no turn-complete log + a false
+      // "unexpected end" auto-restart (#4378). It now mirrors the stall terminal-
+      // result prior art: type:'result' + terminatedReason, while the #4320
+      // observability metadata still propagates through the new branch.
       const message = {
         type: 'result' as const,
         subtype: 'error_max_turns',
@@ -511,14 +513,51 @@ describe('adaptSDKMessage', () => {
       };
 
       const result = adaptSDKMessage(asMsg(message));
-      // Falls through to the empty-text fallback (unchanged user-visible behavior)...
-      expect(result.type).toBe('text');
-      expect(result.content).toBe('');
-      // ...but the extraction above the subtype branches still propagates.
+      // No longer the empty-text fallback: a recognizable terminal result.
+      expect(result.type).toBe('result');
+      expect(result.content).not.toBe('');
+      // Honest, non-success wording (must not look like ✅ Complete, else the
+      // empty-turn counter in chat-agent would skip it — see #4194).
+      expect(result.content).toContain('⚠️');
+      expect(result.content).not.toContain('Complete');
+      // terminatedReason marker lets a chat-agent follow-up recordFailure on
+      // max-turns exactly like the stall check (parsed.terminatedReason === 'stall').
+      expect(result.metadata?.terminatedReason).toBe('max_turns');
+      // The hoisted observability metadata still survives the new branch.
       expect(result.metadata?.stopReason).toBe('end_turn');
       expect(result.metadata?.numTurns).toBe(50);
       expect(result.metadata?.durationMs).toBe(123000);
       expect(result.metadata?.durationApiMs).toBe(98000);
+    });
+
+    it('Issue #4378: error_max_budget_usd emits a terminal result with budget marker', () => {
+      const message = {
+        type: 'result' as const,
+        subtype: 'error_max_budget_usd',
+        num_turns: 3,
+        duration_ms: 9000,
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('result');
+      expect(result.content).toContain('⚠️');
+      expect(result.metadata?.terminatedReason).toBe('max_budget_usd');
+      // Stats still propagate even when only partially present.
+      expect(result.metadata?.numTurns).toBe(3);
+      expect(result.metadata?.durationMs).toBe(9000);
+    });
+
+    it('Issue #4378: error_max_structured_output_retries emits a terminal result', () => {
+      const message = {
+        type: 'result' as const,
+        subtype: 'error_max_structured_output_retries',
+        num_turns: 1,
+      };
+
+      const result = adaptSDKMessage(asMsg(message));
+      expect(result.type).toBe('result');
+      expect(result.content).toContain('⚠️');
+      expect(result.metadata?.terminatedReason).toBe('max_structured_output_retries');
     });
 
     it('should handle result with unknown subtype', () => {

@@ -219,10 +219,33 @@ export function adaptSDKMessage(message: SDKMessage): AgentMessage {
         };
       }
 
-      // 其他错误 subtype（error_max_turns / error_max_budget_usd /
-      // error_max_structured_output_retries）落到此兜底：保持空内容（避免被
-      // chat-agent 当作用户可见回复），但携带上面提取的 metadata，使「撞 max turns
-      // 提前结束」这类场景的 num_turns / duration 仍可被诊断。
+      // Issue #4378: error_max_* 终止型错误 subtype。SDK 因撞到上限（轮次 / 预算 /
+      // 结构化输出重试）而结束本次 turn —— 这是「合法终止」而非「崩溃」。此前这些
+      // subtype 落到下方兜底变成空 type:'text'，chat-agent 见到 type:'text' 便跳过
+      // result 分支，把正常的流结束误判成「意外崩溃」→ 触发虚假自动重启
+      // （「⚠️ 会话遇到错误，正在重新连接」），且 turn-complete 日志（带 num_turns /
+      // duration）从不打印 —— 正是 #4320 想诊断的「提前结束」场景却最不可见。
+      //
+      // 镜像 stall 终止型 result 的既有范式（#3706）：发 type:'result' + terminatedReason
+      // 标记。这样 chat-agent 的 result 分支正常触发（turn-complete 日志带上
+      // num_turns / duration / stopReason、turn 正常 resolve、不触发虚假重启），
+      // terminatedReason 让 follow-up 能像 stall 检查（chat-agent.ts 的
+      // `parsed.terminatedReason === 'stall'`）一样在此 recordFailure 而不重启。
+      // 注意 content 非空且不以 '✅ Complete' 开头 → 会被当成可见输出计数，避免被
+      // #4194 的空-turn 检测误判（max-turns ≠ 空 turn）。
+      const maxTermination = adaptMaxTerminationResult(message.subtype);
+      if (maxTermination) {
+        return {
+          type: 'result',
+          content: maxTermination.content,
+          role: 'assistant',
+          metadata: { ...metadata, terminatedReason: maxTermination.terminatedReason },
+          raw: message,
+        };
+      }
+
+      // 真正未识别的 subtype 落到此兜底：保持空内容（避免被 chat-agent 当作用户可见
+      // 回复），但携带上面提取的 metadata 供诊断。
       return {
         type: 'text',
         content: '',
@@ -325,6 +348,39 @@ export function adaptUserInput(input: UserInput): SDKUserMessage {
     parent_tool_use_id: null,
     session_id: '',
   };
+}
+
+/**
+ * Issue #4378: 把 SDK `error_max_*` 终止型 result subtype 映射为「用户可见提示 +
+ * terminatedReason 标记」，若 subtype 不是已知的三种上限终止之一则返回 undefined
+ * （交由调用方的空-text 兜底处理）。
+ *
+ * 仅覆盖三种「撞上限」的 SDK 终止型错误 subtype —— `error_during_execution` 有自己的
+ * 分支（上方的 type:'error'），其它未识别 subtype 走空-text 兜底。提示文案为中文，
+ * 与同类的 stall 终止提示（provider.ts 的 STALL_TERMINATE_NOTICE）口径一致。
+ */
+function adaptMaxTerminationResult(
+  subtype: string,
+): { content: string; terminatedReason: 'max_turns' | 'max_budget_usd' | 'max_structured_output_retries' } | undefined {
+  switch (subtype) {
+    case 'error_max_turns':
+      return {
+        content: '⚠️ 已达最大轮次上限，本次响应提前结束。',
+        terminatedReason: 'max_turns',
+      };
+    case 'error_max_budget_usd':
+      return {
+        content: '⚠️ 已达费用预算上限，本次响应提前结束。',
+        terminatedReason: 'max_budget_usd',
+      };
+    case 'error_max_structured_output_retries':
+      return {
+        content: '⚠️ 结构化输出重试次数耗尽，本次响应提前结束。',
+        terminatedReason: 'max_structured_output_retries',
+      };
+    default:
+      return undefined;
+  }
 }
 
 /**
