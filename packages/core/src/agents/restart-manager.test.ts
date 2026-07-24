@@ -172,7 +172,7 @@ describe('RestartManager', () => {
       const t2 = manager.shouldRestart('chat-1', 'Network Error: timeout 2');
       expect(t2.allowed).toBe(true);
 
-      const p2 = manager.shouldRestart('chat-1', 'validation failed: bad input');
+      const p2 = manager.shouldRestart('chat-1', 'validation failed: required input');
       expect(p2.allowed).toBe(false);
       expect(p2.reason).toBe('non_transient');
 
