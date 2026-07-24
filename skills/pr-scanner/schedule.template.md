@@ -8,7 +8,7 @@ chatId: "{controlChannelChatId}"
 
 扫描仓库 `{repo}` 的 open PR，通过映射表追踪已创建的讨论群，为新 PR 创建群并写入映射。
 
-**适用于**: 扫描 PR、创建讨论群、追踪映射 ｜ **不适用于**: 发卡片、解散群、merge/close PR
+**适用于**: 扫描 PR、创建讨论群、追踪映射、超时群自动解散 ｜ **不适用于**: 发卡片、merge/close PR
 
 ## 参数
 
@@ -90,7 +90,7 @@ lark-cli api GET "/open-apis/im/v1/messages" --as bot --query container_id_type=
 | **超过 2h 无消息** 且 `reminderCount` 为 0 或空 | 发送普通卡片提醒，`reminderCount` → 1，记录 `lastReminderAt` |
 | **超过 2.5h 无消息** 且 `reminderCount` = 1 且距上次提醒 > 30min | 发送 **@用户** 提醒，`reminderCount` → 2，更新 `lastReminderAt` |
 | **超过 3h 无消息** 且 `reminderCount` = 2 且距上次提醒 > 30min | 发送 **飞书加急消息**（urgent），`reminderCount` → 3，更新 `lastReminderAt` |
-| **超过 4h 无消息** 且 `reminderCount` ≥ 3 | 不再升级，保持当前状态（用户驱动解散） |
+| **超过 4h 无消息** 且 `reminderCount` ≥ 3（多次提醒超时） | **scanner 自动解散该群**（步骤 4c），释放名额给排队 PR |
 
 提醒消息模板：
 
@@ -101,6 +101,18 @@ lark-cli api GET "/open-apis/im/v1/messages" --as bot --query container_id_type=
 每次发送提醒后，使用 `store.update(key, { lastReminderAt, reminderCount })` 原子更新映射表中该条目。
 
 **活跃度恢复重置**: 如果群内有新消息（`create_time` 在 2h 以内），且 `reminderCount` > 0，则调用 `store.update(key, { reminderCount: 0 })` 重置计数器，跳过提醒。
+
+### 4c. 超时自动解散与冷却抑制（多次提醒超时）
+
+对 `reminderCount` ≥ 3 且**超过 4h 无任何用户消息**的群（"多次提醒超时"），scanner **主动解散**，防止单个 PR 长期占住名额、阻塞排队 PR：
+
+1. **解散前**在群内发总结消息：「⏰ 本 review 群已达最高提醒级别（加急）且持续 >4h 无响应，scanner 自动解散以释放名额。PR 仍 open，将在冷却后（默认 24h）由 scanner 重新排队建群。」
+2. **调用 dissolve-group** 解散（清理群 + workdir + 映射条目）：`DISSOLVE_KEY=pr-{number}`；如 Skill 不可用，回退到 Bash：`cd {workspace_root} && DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`（同「PR 关闭后清理」）。
+3. **冷却抑制**：解散后向映射表写入抑制条目 `pr-{number}`：`{purpose: "pr-review-suppressed", suppressedAt: <now>, suppressedUntil: <now+24h>, reason: "timeout-4h"}`。该条目使步骤 3 视该 PR 为「已有群」（不重复建群）、且不计入步骤 5 的并发名额（`purpose != "pr-review"`）。
+   - ⚠️ **写入方式**：步骤 4c.2 已由 dissolve-group 删除该 `pr-{number}` 条目，故此处必须**直接原子写 `bot-chat-mapping.json`**（读 JSON → `table[key] = entry` → 临时文件 + 原子 rename，与 dissolve-group 自身做法一致）。**不可用 `store.update`**（key 不在缓存中会返回 `null`、不写入）；`store.set` 仅持久化 `MappingEntry` 固定字段（`chatId/createdAt/purpose/workdir/lastReminderAt/reminderCount`），不含 `suppressedAt/suppressedUntil/reason`，会丢弃这三项 → 冷却落不了盘、4c.4 的到期检查无依据。
+4. **冷却到期**：每次扫描检查所有 `purpose: "pr-review-suppressed"` 条目，若 `suppressedUntil` 已过则删除条目 —— 该 PR 重新变为「新 PR」，可被步骤 5 重新建群。
+
+**说明**：仅当 PR 仍 open 且 `reminderCount` ≥ 3 且 >4h 无用户消息才解散；若期间有用户消息则按「活跃度恢复重置」归零计数器，**不解散**。
 
 ### 5. 新 PR — 创建讨论群
 
@@ -176,7 +188,7 @@ rm -rf "{workdir}"
 ## 设计原则
 
 1. **映射表是缓存** — 可从飞书 API 重建
-2. **Agent 驱动解散** — review agent 在 PR 关闭后调用 dissolve-group 解散群（#3972）
+2. **解散触发** — review agent 在 PR 合并/关闭后解散（#3972）；scanner 对「多次提醒超时」（`reminderCount` ≥ 3 且 >4h 无用户响应）的群自动解散并冷却抑制 24h（步骤 4c）
 3. **幂等操作** — 映射表过滤防重复创建
 4. **无 Label 依赖** — 状态全在映射表
 5. **临时目录隔离** — 每个 PR 独立目录，互不干扰，PR 关闭时清理
