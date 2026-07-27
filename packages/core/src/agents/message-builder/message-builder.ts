@@ -133,7 +133,14 @@ export class MessageBuilder {
     // Issue #3989: For topic threads, skip flat chat history — use thread context only
     // to avoid mixing messages from different threads into the agent's context.
     const chatHistorySection = isTopicThread ? '' : buildChatHistorySection(msg.chatHistoryContext);
-    const persistedHistorySection = buildPersistedHistorySection(msg.persistedHistoryContext, msg.chatLogFilePaths);
+    // Issue #4401 (part 1): For topic threads, also skip the persisted chat-log
+    // section. persistedHistoryContext + chatLogFilePaths are scoped per-chat
+    // (oc_xxx.md) and mix messages from other threads, so they leak across
+    // threads exactly like flat chat history does. Mirrors the gate above; the
+    // composer drops the empty string via its truthiness guard.
+    const persistedHistorySection = isTopicThread
+      ? ''
+      : buildPersistedHistorySection(msg.persistedHistoryContext, msg.chatLogFilePaths);
     const threadContextSection = buildThreadContextSection(msg.threadContext);
 
     // Channel-specific content after history (e.g., @ mention section)

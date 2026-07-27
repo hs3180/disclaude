@@ -1142,6 +1142,18 @@ export class MessageHandler {
     let chatHistoryContext: string | undefined;
     let threadContext: string | undefined;
 
+    // Issue #4401 (part 1) diagnostic: record the raw arriving chat_type at the
+    // context-decision point. Real Feishu topic groups expose `chat_mode=topic`
+    // on the chat (via GET /im/v1/chats/{chat_id}), NOT necessarily
+    // `chat_type=topic` on the message event — so the branch below may never
+    // fire. This log lets a maintainer confirm the actual value from a real
+    // topic-group message and decide whether Direction 1 (chat_mode fetch) is
+    // needed. Safe to remove once detection is finalized.
+    logger.debug(
+      { messageId: message_id, chatId: chat_id, chat_type, hasParentId: !!parent_id },
+      'Feishu message context-decision point',
+    );
+
     if (chat_type === 'topic' && parent_id) {
       // Topic groups: build thread context from parent chain only
       threadContext = await this.getThreadContext(parent_id);

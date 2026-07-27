@@ -698,6 +698,28 @@ describe('MessageBuilder', () => {
       expect(result).toContain('Thread Context');
       expect(result).toContain('Thread content');
     });
+
+    it('should skip persisted chat-log section for topic threads (Issue #4401 part 1)', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'topic',
+        // persistedHistoryContext + chatLogFilePaths are scoped per-chat
+        // (oc_xxx.md) and mix content across threads — must be suppressed in
+        // topic mode even when present.
+        persistedHistoryContext: 'Previous session from another thread...',
+        chatLogFilePaths: ['workspace/chat-logs/oc_chat-456.md'],
+        threadContext: 'Thread content...',
+      }, 'chat-456');
+
+      // Per-chat persisted history + chat-log file paths must be suppressed
+      expect(result).not.toContain('Previous Session Context');
+      expect(result).not.toContain('Previous session from another thread');
+      expect(result).not.toContain('Chat log files');
+      expect(result).not.toContain('oc_chat-456.md');
+      // Thread context is still injected for topic threads
+      expect(result).toContain('Thread Context');
+    });
   });
 
   describe('buildEnhancedContent - topic thread detection (Issue #3641)', () => {
