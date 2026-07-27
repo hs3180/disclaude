@@ -39,6 +39,13 @@ export type ModelTier = 'high' | 'low' | 'multimodal';
 export interface AgentConfig {
   /** API provider preference (anthropic, glm) */
   provider?: 'anthropic' | 'glm';
+  /**
+   * Agent SDK backend — which agent runtime boots (Issue #4388).
+   * Orthogonal to the model-layer `provider` above: `agentBackend` selects the
+   * agent runtime (claude-code CLI vs pi.dev), `provider` selects the LLM API.
+   * The two compose (e.g. pi backend + GLM model). Default: 'claude'.
+   */
+  agentBackend?: 'claude' | 'pi';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */

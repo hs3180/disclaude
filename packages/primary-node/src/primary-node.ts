@@ -52,6 +52,8 @@ import {
   ScheduleFileWatcher,
   CooldownManager,
   Config,
+  // Issue #4388: select Agent SDK backend from config at boot.
+  setDefaultProvider,
   type ScheduledTask,
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
@@ -523,6 +525,24 @@ export class PrimaryNode extends EventEmitter {
     }
 
     logger.info({ nodeId: this.localNodeId }, 'Starting PrimaryNode');
+
+    // Issue #4388: select the Agent SDK backend from config (default 'claude').
+    // Must run before any ChatAgent is created (getProvider() reads the default).
+    // agentBackend is orthogonal to the model-layer `provider` (LLM API).
+    const agentBackend = Config.AGENT_BACKEND;
+    if (agentBackend && agentBackend !== 'claude') {
+      try {
+        setDefaultProvider(agentBackend);
+        logger.info({ agentBackend }, 'Agent SDK backend selected from config');
+      } catch (error) {
+        // Don't crash boot — fall back to the default 'claude' backend.
+        logger.error(
+          { err: error, agentBackend },
+          'Unknown agent.agentBackend in config — falling back to "claude". ' +
+            'Use one of the registered backends (see the error above).',
+        );
+      }
+    }
 
     // Start IPC server for MCP Server connections (Issue #1042)
     await this.startIpcServer();

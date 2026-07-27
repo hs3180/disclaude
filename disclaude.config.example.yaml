@@ -30,6 +30,12 @@ agent:
   # Options: anthropic, glm
   provider: "glm"
 
+  # Agent SDK backend — which agent runtime boots (Issue #4388).
+  # Orthogonal to `provider` above: this selects the agent runtime
+  # (claude-code CLI vs pi.dev), `provider` selects the LLM API; they compose.
+  # Options: claude (default), pi
+  # agentBackend: "pi"
+
   # Model to use for AI operations (fallback default)
   # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)
   model: "glm-4.7"
