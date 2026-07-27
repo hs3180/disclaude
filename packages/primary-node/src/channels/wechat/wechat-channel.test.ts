@@ -103,6 +103,7 @@ describe('WeChatChannel', () => {
         supportsMarkdown: false,
         supportsMention: false,
         supportsUpdate: false,
+        supportsStreaming: false,
         supportedMcpTools: ['send_text', 'send_file'],
       });
     });
