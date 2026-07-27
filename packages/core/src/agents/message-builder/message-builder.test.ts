@@ -657,6 +657,33 @@ describe('MessageBuilder', () => {
       expect(result).not.toContain('Thread Context');
     });
 
+    // Issue #4402: lark-cli self-service guidance is injected for topic threads
+    // based on isTopicThread — EVEN when threadContext wasn't pre-built (the
+    // case where the agent most needs to know it can self-serve via lark-cli).
+    it('should inject lark-cli self-service guidance for topic threads even without threadContext', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: '深入分析这篇研报',
+        messageId: 'msg-123',
+        chatType: 'topic',
+        // NOTE: no threadContext — the pre-build failed. Guidance must still appear.
+      }, 'chat-456');
+
+      expect(result).toContain('Topic-thread self-service');
+      expect(result).toContain('lark-cli');
+      expect(result).toContain('+threads-messages-list');
+    });
+
+    it('should NOT inject lark-cli self-service guidance for non-topic chats', () => {
+      const result = messageBuilder.buildEnhancedContent({
+        text: 'Hello',
+        messageId: 'msg-123',
+        chatType: 'group',
+      }, 'chat-456');
+
+      expect(result).not.toContain('Topic-thread self-service');
+      expect(result).not.toContain('+threads-messages-list');
+    });
+
     it('should not include thread context for skill commands', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: '/reset',

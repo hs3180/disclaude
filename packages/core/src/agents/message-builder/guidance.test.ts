@@ -10,6 +10,7 @@ import {
   buildChatHistorySection,
   buildPersistedHistorySection,
   buildThreadContextSection,
+  buildThreadSelfServiceGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
@@ -94,10 +95,22 @@ describe('buildThreadContextSection', () => {
     expect(result).toContain('clarify which one');
   });
 
+  // Issue #4402: the lark-cli self-service guidance was EXTRACTED from
+  // buildThreadContextSection into buildThreadSelfServiceGuidance (so it can be
+  // injected based on isTopicThread, independent of threadContext pre-build).
+  // buildThreadContextSection must no longer carry it (avoids duplication).
+  it('should NOT include lark-cli guidance after the #4402 extraction', () => {
+    const result = buildThreadContextSection('context here');
+    expect(result).not.toContain('lark-cli');
+    expect(result).not.toContain('+threads-messages-list');
+  });
+});
+
+describe('buildThreadSelfServiceGuidance (Issue #4402)', () => {
   // Issue #4306: tell the agent how to fetch thread context / attachments on
   // demand via lark-cli (ancestor-message attachments are not auto-delivered).
   it('should include lark-cli on-demand thread context / attachment guidance', () => {
-    const result = buildThreadContextSection('context here');
+    const result = buildThreadSelfServiceGuidance();
     expect(result).toContain('lark-cli');
     // List all thread messages + download attachments (recommended path).
     expect(result).toContain('+threads-messages-list');
@@ -114,7 +127,7 @@ describe('buildThreadContextSection', () => {
   // and the single-attachment example lands under ./lark-im-resources/ — the
   // same default dir as the other two commands (no ./downloads/ drift).
   it('should keep lark-cli download paths consistent across the three commands', () => {
-    const result = buildThreadContextSection('context here');
+    const result = buildThreadSelfServiceGuidance();
     // mget bullet itself mentions --download-resources (scoped to the mget
     // command via regex — --download-resources also appears on the list line).
     expect(result).toMatch(/\+messages-mget\b[^`]*--download-resources/);
@@ -122,6 +135,11 @@ describe('buildThreadContextSection', () => {
     // matching the default dir stated in the prose (no ./downloads/ drift).
     expect(result).toContain('./lark-im-resources/<name>');
     expect(result).not.toContain('./downloads/');
+  });
+
+  it('always returns the guidance (caller gates on isTopicThread)', () => {
+    // No threadContext parameter — injection is the caller's responsibility.
+    expect(buildThreadSelfServiceGuidance()).toContain('Topic-thread self-service');
   });
 });
 
