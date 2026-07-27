@@ -31,6 +31,7 @@ export const REST_CHANNEL_DESCRIPTOR: ChannelDescriptor<RestChannelConfig> = {
     supportsMarkdown: true,
     supportsMention: false,
     supportsUpdate: false,
+    supportsStreaming: false,
     supportedMcpTools: ['send_text', 'send_card', 'send_interactive', 'send_file'],
   },
 };
@@ -49,6 +50,7 @@ export const FEISHU_CHANNEL_DESCRIPTOR: ChannelDescriptor<FeishuChannelConfig> =
     supportsMarkdown: true,
     supportsMention: true,
     supportsUpdate: true,
+    supportsStreaming: false,
     supportedMcpTools: ['send_text', 'send_card', 'send_interactive', 'send_file'],
   },
 };
@@ -67,6 +69,7 @@ export const WECHAT_CHANNEL_DESCRIPTOR: ChannelDescriptor<WeChatChannelConfig> =
     supportsMarkdown: false,
     supportsMention: false,
     supportsUpdate: false,
+    supportsStreaming: false,
     supportedMcpTools: ['send_text', 'send_file'],
   },
 };

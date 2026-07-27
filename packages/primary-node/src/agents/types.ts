@@ -80,6 +80,38 @@ export interface ChatAgentCallbacks {
    * @returns Array of absolute file paths to chat log files
    */
   getChatLogFilePaths?: (chatId: string) => Promise<string[]>;
+
+  // --------------------------------------------------------------------------
+  // Streaming contract — Issue #4208 P2-a (#4397)
+  // --------------------------------------------------------------------------
+  // All three are optional. If a channel does not support streaming (i.e.
+  // `capabilities.supportsStreaming === false`) OR declines per-call, it leaves
+  // these unset / returns null, and ChatAgent degrades to `sendMessage` — the
+  // reply is never lost. No caller wires these yet (Phase 2b will); until then
+  // they are pure contract.
+  // --------------------------------------------------------------------------
+
+  /**
+   * Begin a streaming reply. Creates the in-place message/card to patch and
+   * returns a stream handle (e.g. card/message id), or `null` to signal
+   * "degrade to sendMessage" for this turn.
+   * @param chatId - Platform-specific chat identifier
+   * @param parentMessageId - Optional parent message id for thread replies
+   */
+  startStreaming?: (chatId: string, parentMessageId?: string) => Promise<string | null>;
+
+  /**
+   * Patch the in-flight stream identified by `id` (returned by startStreaming)
+   * with the latest accumulated `text` (replace-semantics unless a future
+   * Phase opts into append).
+   */
+  streamText?: (id: string, text: string) => Promise<void>;
+
+  /**
+   * Finalize (freeze) the in-flight stream identified by `id`. No further
+   * streamText calls will be made for this id.
+   */
+  finalizeStreaming?: (id: string) => Promise<void>;
 }
 
 // ============================================================================

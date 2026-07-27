@@ -32,6 +32,7 @@ const DEFAULT_CAPABILITIES: ChannelCapabilities = {
   supportsMarkdown: true,
   supportsMention: false,
   supportsUpdate: false,
+  supportsStreaming: false,
 };
 
 // Helper to create mock channel

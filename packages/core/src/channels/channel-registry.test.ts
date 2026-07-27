@@ -37,6 +37,7 @@ function createMockDescriptor(overrides?: Partial<ChannelDescriptor>): ChannelDe
         supportsMarkdown: true,
         supportsMention: false,
         supportsUpdate: false,
+        supportsStreaming: false,
         supportedMcpTools: [],
       }),
     }),
@@ -47,6 +48,7 @@ function createMockDescriptor(overrides?: Partial<ChannelDescriptor>): ChannelDe
       supportsMarkdown: true,
       supportsMention: false,
       supportsUpdate: false,
+      supportsStreaming: false,
       supportedMcpTools: [],
     },
     ...overrides,
@@ -176,6 +178,7 @@ describe('ChannelRegistry', () => {
               supportsMarkdown: true,
               supportsMention: false,
               supportsUpdate: false,
+              supportsStreaming: false,
               supportedMcpTools: [],
             }),
           };
@@ -228,6 +231,7 @@ describe('ChannelRegistry', () => {
         supportsMarkdown: true,
         supportsMention: false,
         supportsUpdate: false,
+        supportsStreaming: false,
         supportedMcpTools: ['send_text', 'send_card'],
       };
 
