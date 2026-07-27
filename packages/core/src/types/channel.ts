@@ -224,6 +224,13 @@ export interface ChannelCapabilities {
   /** Whether the channel supports message updates */
   supportsUpdate: boolean;
   /**
+   * Whether the channel supports streaming replies (incremental in-place
+   * updates of a single message/card — Issue #4208 P2-a). Sibling to
+   * `supportsUpdate`. Defaults to `false`; non-Feishu channels (REST, CLI,
+   * WeChat) leave it false and ChatAgent degrades to `sendMessage`.
+   */
+  supportsStreaming: boolean;
+  /**
    * Supported MCP tools for this channel.
    * Issue #590 Phase 3: Agent Prompt 动态适配
    * Used to filter available tools in the prompt based on channel capabilities.
@@ -241,6 +248,7 @@ export const DEFAULT_CHANNEL_CAPABILITIES: ChannelCapabilities = {
   supportsMarkdown: true,
   supportsMention: false,
   supportsUpdate: false,
+  supportsStreaming: false,
   supportedMcpTools: [],
 };
 

@@ -348,6 +348,7 @@ export class RestChannel extends BaseChannel<RestChannelConfig> {
       supportsMarkdown: true,
       supportsMention: false,
       supportsUpdate: false,
+      supportsStreaming: false,
       supportedMcpTools: [],
     };
   }

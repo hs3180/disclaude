@@ -196,6 +196,7 @@ export class WeChatChannel extends BaseChannel<WeChatChannelConfig> {
       supportsMarkdown: false,
       supportsMention: false,
       supportsUpdate: false,
+      supportsStreaming: false,
       supportedMcpTools: ['send_text', 'send_file'],
     };
   }

@@ -92,6 +92,22 @@ describe('AgentFactory', () => {
       expect(Config.getModelForTier).not.toHaveBeenCalled();
     });
 
+    it('should accept callbacks without the optional streaming fields (Issue #4397 P2-a)', () => {
+      // The streaming callbacks (startStreaming / streamText / finalizeStreaming)
+      // are optional. A ChatAgentCallbacks carrying only the required send*
+      // fields must type-check and be accepted — absent streaming ⇒ ChatAgent
+      // degrades to sendMessage (reply never lost).
+      const minimalCallbacks = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendCard: vi.fn().mockResolvedValue(undefined),
+        sendFile: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = AgentFactory.createAgent('chat-stream', minimalCallbacks);
+
+      expect(agent).toBeDefined();
+      expect(getLastConfig().callbacks).toBe(minimalCallbacks);
+    });
+
     it('should merge options with default config', () => {
       const callbacks = createMockCallbacks();
       const options: AgentCreateOptions = {

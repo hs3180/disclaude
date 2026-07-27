@@ -64,6 +64,7 @@ export const REST_WIRED_DESCRIPTOR: WiredChannelDescriptor<RestChannelConfig> = 
     supportsMarkdown: true,
     supportsMention: false,
     supportsUpdate: false,
+    supportsStreaming: false,
   },
 
   createCallbacks: (channel, context) =>
@@ -122,6 +123,7 @@ export const FEISHU_WIRED_DESCRIPTOR: WiredChannelDescriptor<FeishuChannelConfig
     supportsMarkdown: true,
     supportsMention: true,
     supportsUpdate: true,
+    supportsStreaming: false,
   },
 
   createCallbacks: (channel, context) =>
@@ -306,6 +308,7 @@ export const WECHAT_WIRED_DESCRIPTOR: WiredChannelDescriptor<WeChatChannelConfig
     supportsMarkdown: false,
     supportsMention: false,
     supportsUpdate: false,
+    supportsStreaming: false,
     supportedMcpTools: ['send_text', 'send_file'],
   },
 
