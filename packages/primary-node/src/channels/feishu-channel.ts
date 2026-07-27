@@ -112,6 +112,12 @@ export interface FeishuChannelConfig {
   /** Feishu App Secret */
   appSecret?: string;
   /**
+   * Enable native streaming replies (Card Kit). Issue #4400 / #4208.
+   * Default false → supportsStreaming capability is false → ChatAgent uses
+   * sendMessage (unchanged). When true, the channel reports supportsStreaming.
+   */
+  streamingCard?: boolean;
+  /**
    * Route card action to the local agent if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
    * so the agent receives the contextual prompt.
@@ -668,6 +674,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportsMarkdown: true,
       supportsMention: true,
       supportsUpdate: true,
+      // Issue #4400 / #4208: native streaming is opt-in via the
+      // streamingCard flag (default off → capability false → ChatAgent
+      // degrades to sendMessage). The callback impl lands in a follow-up.
+      supportsStreaming: this.config.streamingCard === true,
       supportedMcpTools: [
         'send_text',
         'send_card',
