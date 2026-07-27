@@ -68,6 +68,31 @@ describe('WeChatMessageListener', () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
+  /**
+   * getUpdates mock that stays pending (never resolves on its own) so pollLoop
+   * holds in its first cycle, but rejects with an AbortError once the abort
+   * signal fires — letting stop() tear the loop down cleanly.
+   *
+   * Replaces `() => new Promise(() => {})`, which ignores the abort signal and
+   * leaks a live pollLoop + never-resolving promise into every later test
+   * (root cause of the Test Coverage 30s timeout — Issue #4394).
+   */
+  function getUpdatesPendingUntilAborted({
+    signal,
+  }: {
+    signal?: AbortSignal;
+  }): Promise<never> {
+    return new Promise((_resolve, reject) => {
+      const onAbort = () =>
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
   describe('start / stop lifecycle', () => {
     it('should start and stop cleanly', async () => {
       // Make getUpdates return empty to exit the loop quickly
@@ -83,10 +108,8 @@ describe('WeChatMessageListener', () => {
       expect(listener.isListening()).toBe(false);
     });
 
-    it('should warn when start is called while already running', () => {
-      mockClient.getUpdates = vi.fn().mockImplementation(() => {
-        return new Promise(() => {}); // never resolves
-      });
+    it('should warn when start is called while already running', async () => {
+      mockClient.getUpdates = vi.fn().mockImplementation(getUpdatesPendingUntilAborted);
 
       listener.start();
       listener.start(); // second call
@@ -94,6 +117,8 @@ describe('WeChatMessageListener', () => {
       expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining('already running'),
       );
+
+      await stopAndFlush(listener);
     });
 
     it('should be safe to call stop multiple times', async () => {
@@ -472,10 +497,11 @@ describe('WeChatMessageListener', () => {
       expect(listener.isListening()).toBe(false);
     });
 
-    it('should return true after start', () => {
-      mockClient.getUpdates = vi.fn().mockImplementation(() => new Promise(() => {}));
+    it('should return true after start', async () => {
+      mockClient.getUpdates = vi.fn().mockImplementation(getUpdatesPendingUntilAborted);
       listener.start();
       expect(listener.isListening()).toBe(true);
+      await stopAndFlush(listener);
     });
 
     it('should return false after stop', async () => {
