@@ -173,6 +173,9 @@ export class Config {
   static readonly FEISHU_APP_ID = fileConfigOnly.feishu?.appId || '';
   static readonly FEISHU_APP_SECRET = fileConfigOnly.feishu?.appSecret || '';
   static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.feishu?.cliChatId || '';
+  // Issue #4400 / #4208: gray-rollout flag for native streaming replies.
+  // Plumbed through to FeishuChannelConfig.streamingCard in resolveChannelConfigs.
+  static readonly FEISHU_STREAMING_CARD = fileConfigOnly.feishu?.streamingCard ?? false;
 
   // GLM configuration (from config file)
           // No fallback defaults - model must be explicitly configured

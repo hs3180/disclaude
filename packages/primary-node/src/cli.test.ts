@@ -152,10 +152,11 @@ describe('parseArgs', () => {
 
 describe('resolveChannelConfigs', () => {
   // Minimal mock of the Config singleton interface used by resolveChannelConfigs
-  function createMockConfig(feishuAppId = '', feishuAppSecret = '') {
+  function createMockConfig(feishuAppId = '', feishuAppSecret = '', streamingCard = false) {
     return {
       FEISHU_APP_ID: feishuAppId,
       FEISHU_APP_SECRET: feishuAppSecret,
+      FEISHU_STREAMING_CARD: streamingCard,
     };
   }
 
@@ -221,7 +222,22 @@ describe('resolveChannelConfigs', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual({
       type: 'feishu',
-      config: { appId: 'cli_test_app_id', appSecret: 'cli_test_app_secret' },
+      config: { appId: 'cli_test_app_id', appSecret: 'cli_test_app_secret', streamingCard: false },
+    });
+  });
+
+  // Issue #4400 / #4208: feishu.streamingCard must be plumbed through to the
+  // resolved channel config (and on to getCapabilities().supportsStreaming).
+  // Regression test — previously the flag was added to the YAML type but never
+  // reached FeishuChannelConfig, so supportsStreaming stayed false even when on.
+  it('should plumb streamingCard=true into the resolved Feishu config', () => {
+    const rawConfig = {} as DisclaudeConfigWithChannels;
+    const mockConfig = createMockConfig('cli_test_app_id', 'cli_test_app_secret', true);
+    const entries = resolveChannelConfigs(rawConfig, mockConfig as never);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({
+      type: 'feishu',
+      config: { appId: 'cli_test_app_id', appSecret: 'cli_test_app_secret', streamingCard: true },
     });
   });
 
