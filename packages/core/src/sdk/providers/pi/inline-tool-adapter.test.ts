@@ -20,10 +20,12 @@ function makeTool(overrides: Partial<InlineToolDefinition> = {}): InlineToolDefi
 }
 
 describe('adaptInlineTool (Issue #4387 / #4384)', () => {
-  it('mirrors name + description from the disclaude definition', () => {
+  it('mirrors name + description and derives a label for pi UI display', () => {
     const tool = adaptInlineTool(makeTool());
     expect(tool.name).toBe('search');
     expect(tool.description).toBe('Search the web');
+    // InlineToolDefinition has no label field — derived from name.
+    expect(tool.label).toBe('search');
   });
 
   it('emits a permissive placeholder schema (Zod→TypeBox deferred to part 2)', () => {
@@ -31,34 +33,47 @@ describe('adaptInlineTool (Issue #4387 / #4384)', () => {
     expect(tool.parameters).toEqual({ type: 'object', additionalProperties: true });
   });
 
-  it('validates params via Zod and invokes the handler with parsed input', async () => {
+  it('validates params via Zod and returns a pi AgentToolResult shape', async () => {
     const handler = vi.fn(({ q }: { q: string }) => Promise.resolve(`results for ${q}`));
     const tool = adaptInlineTool({ ...makeTool(), handler } as unknown as InlineToolDefinition);
     const res = await tool.execute('call_1', { q: 'pi.dev' }, undefined, undefined, undefined);
 
-    expect(res).toEqual({ result: 'results for pi.dev' });
+    // Success value flows to the two fields pi's agent loop reads: the
+    // model-facing `content[0].text` and the structured `details`.
+    expect(res.content).toEqual([{ type: 'text', text: 'results for pi.dev' }]);
+    expect(res.details).toBe('results for pi.dev');
     expect(handler).toHaveBeenCalledWith({ q: 'pi.dev' });
   });
 
-  it('returns isError on Zod validation failure (does not throw)', async () => {
+  it('JSON-stringifies non-string handler results into the content text', async () => {
+    const tool = adaptInlineTool({
+      ...makeTool(),
+      handler: vi.fn(() => Promise.resolve({ hits: 3 })),
+    } as unknown as InlineToolDefinition);
+    const res = await tool.execute('call_1', { q: 'x' }, undefined, undefined, undefined);
+
+    expect(res.content[0]).toMatchObject({ type: 'text', text: '{"hits":3}' });
+    expect(res.details).toEqual({ hits: 3 });
+  });
+
+  it('throws on Zod validation failure (pi converts to an isError result)', async () => {
     const handler = vi.fn(() => Promise.resolve('should not reach'));
     const tool = adaptInlineTool({ ...makeTool(), handler } as unknown as InlineToolDefinition);
     // q is required — passing a wrong shape must fail validation.
-    const res = await tool.execute('call_1', { wrong: 1 }, undefined, undefined, undefined);
-
-    expect(res.isError).toBe(true);
-    expect(typeof res.result).toBe('string'); // the Zod error message
+    await expect(
+      tool.execute('call_1', { wrong: 1 }, undefined, undefined, undefined),
+    ).rejects.toThrow();
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('returns isError when the handler throws', async () => {
+  it('re-throws when the handler throws (pi converts to an isError result)', async () => {
     const tool = adaptInlineTool({
       ...makeTool(),
       handler: vi.fn(() => Promise.reject(new Error('boom'))),
     } as unknown as InlineToolDefinition);
-    const res = await tool.execute('call_1', { q: 'x' }, undefined, undefined, undefined);
-
-    expect(res).toEqual({ isError: true, result: 'boom' });
+    await expect(
+      tool.execute('call_1', { q: 'x' }, undefined, undefined, undefined),
+    ).rejects.toThrow('boom');
   });
 
   it('honors an already-aborted signal (handler not called)', async () => {
@@ -66,10 +81,9 @@ describe('adaptInlineTool (Issue #4387 / #4384)', () => {
     const tool = adaptInlineTool({ ...makeTool(), handler } as unknown as InlineToolDefinition);
     const controller = new AbortController();
     controller.abort();
-    const res = await tool.execute('call_1', { q: 'x' }, controller.signal, undefined, undefined);
-
-    expect(res.isError).toBe(true);
-    expect(res.result).toMatch(/aborted/i);
+    await expect(
+      tool.execute('call_1', { q: 'x' }, controller.signal, undefined, undefined),
+    ).rejects.toThrow(/aborted/i);
     expect(handler).not.toHaveBeenCalled();
   });
 });

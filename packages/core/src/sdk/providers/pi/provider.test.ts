@@ -226,15 +226,16 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
     // Issue #4387 (part 1): createInlineTool is now implemented — it adapts a
     // disclaude InlineToolDefinition into a pi AgentHarnessTool shape (execute
     // wrapper + Zod validation; schema translation deferred to part 2).
-    it('createInlineTool returns a pi tool shape (name + execute) instead of throwing', () => {
+    it('createInlineTool returns a pi tool shape (name + label + execute) instead of throwing', () => {
       const tool = provider.createInlineTool({
         name: 'echo',
         description: 'echoes the input',
         parameters: { parse: (p: unknown) => p } as never, // minimal Zod-like stub
         handler: (p: unknown) => Promise.resolve(p),
-      } as InlineToolDefinition) as { name: string; execute: Function };
+      } as InlineToolDefinition) as { name: string; label: string; execute: Function };
 
       expect(tool.name).toBe('echo');
+      expect(tool.label).toBe('echo');
       expect(typeof tool.execute).toBe('function');
     });
 

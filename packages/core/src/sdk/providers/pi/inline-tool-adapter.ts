@@ -21,28 +21,45 @@
 
 import type { InlineToolDefinition } from '../../types.js';
 
-/**
- * Structural mirror of pi's `AgentToolResult` (the value execute resolves to).
- * `result` carries the success value; `isError: true` marks a controlled
- * failure (param validation, handler error, abort).
- */
-export interface PiAgentToolResult {
-  result?: unknown;
-  isError?: boolean;
-  /** Optional progress/error details. */
-  details?: unknown;
+/** Mirror of pi's `TextContent` (`{ type: 'text', text }`). */
+export interface PiTextContent {
+  type: 'text';
+  text: string;
+  textSignature?: string;
 }
 
-/** Structural mirror of pi's per-turn update callback (progress reports). */
-export type PiAgentToolUpdateCallback = (details: unknown) => void;
+/** Mirror of pi's `ImageContent` (`{ type: 'image', data, mimeType }`). */
+export interface PiImageContent {
+  type: 'image';
+  data: string;
+  mimeType: string;
+}
+
+/**
+ * Structural mirror of pi's `AgentToolResult<T>` (the value execute resolves
+ * to). pi's agent loop reads `content` (model-facing text/image) and `details`
+ * (structured payload for logs/UI) when building the tool-result message; the
+ * optional `usage` / `addedToolNames` / `terminate` fields are omitted because
+ * this adapter does not produce them.
+ */
+export interface PiAgentToolResult {
+  content: (PiTextContent | PiImageContent)[];
+  details: unknown;
+}
+
+/** Structural mirror of pi's `AgentToolUpdateCallback` (progress reports). */
+export type PiAgentToolUpdateCallback = (partialResult: PiAgentToolResult) => void;
 
 /**
  * Structural mirror of pi's `AgentHarnessTool` — only the fields this adapter
  * produces. The real type is generic over a `TContext`; we leave it untyped
- * here (the adapter does not consume the context).
+ * here (the adapter does not consume the context). `label` is required by pi's
+ * `AgentTool` for UI display; disclaude's `InlineToolDefinition` has no label
+ * field, so it is derived from `name` until a dedicated field is added.
  */
 export interface PiAgentHarnessTool {
   name: string;
+  label: string;
   description: string;
   /**
    * Permissive placeholder schema. Part 2 will translate the disclaude Zod
@@ -59,42 +76,52 @@ export interface PiAgentHarnessTool {
 }
 
 /**
+ * Render a handler result as the model-facing content array: strings pass
+ * through verbatim, everything else is JSON-stringified. `JSON.stringify`
+ * returns `undefined` only for `undefined` input, which we normalize to
+ * `'null'` so `text` is always a string (as `TextContent` requires).
+ */
+function toContent(result: unknown): (PiTextContent | PiImageContent)[] {
+  const text =
+    typeof result === 'string' ? result : (JSON.stringify(result) ?? 'null');
+  return [{ type: 'text', text }];
+}
+
+/**
  * Adapt a disclaude `InlineToolDefinition` into a pi `AgentHarnessTool` shape.
  *
  * The execute wrapper:
- * 1. Honors an already-aborted signal (returns `{ isError: true }`).
+ * 1. Honors an already-aborted signal (throws).
  * 2. Validates `params` through the disclaude Zod schema (authoritative).
  * 3. Invokes the disclaude handler with the parsed params.
- * 4. Shapes the return value as a pi `AgentToolResult`.
+ * 4. Shapes the success value as a pi `AgentToolResult` (`content` +
+ *    `details`).
  *
- * Param-validation failures and handler errors are returned as
- * `{ isError: true, result: <message> }` rather than thrown, so pi's tool
- * dispatch always receives a result (a thrown error from a tool's execute
- * would surface as an unhandled tool-call failure rather than a tool result).
+ * Per pi's `AgentTool.execute` contract, failures (abort, param-validation
+ * errors, handler errors) are THROWN rather than encoded in `content`: pi's
+ * agent loop catches a thrown execute error and synthesizes an `isError` tool
+ * result from the message (see `executePreparedToolCall` in pi-agent-core).
+ * Keeping the success return always in the `{ content, details }` shape is what
+ * lets the model consume tool output correctly.
  */
 export function adaptInlineTool(
   definition: InlineToolDefinition,
 ): PiAgentHarnessTool {
   return {
     name: definition.name,
+    label: definition.name,
     description: definition.description,
     parameters: { type: 'object', additionalProperties: true },
 
     execute: async (_toolCallId, params, signal, _onUpdate, _context) => {
       if (signal?.aborted) {
-        return { isError: true, result: 'aborted before execution' };
+        throw new Error('aborted before execution');
       }
-      try {
-        // Authoritative param validation via the disclaude Zod schema.
-        const parsed = definition.parameters.parse(params);
-        const result = await definition.handler(parsed);
-        return { result };
-      } catch (error) {
-        return {
-          isError: true,
-          result: error instanceof Error ? error.message : String(error),
-        };
-      }
+      // Authoritative param validation via the disclaude Zod schema.
+      // Throws on invalid input — pi converts to an isError tool result.
+      const parsed = definition.parameters.parse(params);
+      const result = await definition.handler(parsed);
+      return { content: toContent(result), details: result };
     },
   };
 }
