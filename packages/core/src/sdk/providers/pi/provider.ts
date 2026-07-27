@@ -25,6 +25,7 @@ import type {
   StreamQueryResult,
   UserInput,
 } from '../../types.js';
+import { adaptInlineTool } from './inline-tool-adapter.js';
 
 /**
  * The not-implemented message for stubbed methods, pointing to the
@@ -73,8 +74,11 @@ export class PiAgentProvider implements IAgentSDKProvider {
     throw new Error(NOT_IMPLEMENTED);
   }
 
-  createInlineTool(_definition: InlineToolDefinition): unknown {
-    throw new Error(NOT_IMPLEMENTED);
+  createInlineTool(definition: InlineToolDefinition): unknown {
+    // Issue #4387 (S4, part 1): wrap the disclaude tool for pi's tool dispatch.
+    // Zod→TypeBox schema translation is deferred (permissive placeholder) —
+    // see inline-tool-adapter.ts.
+    return adaptInlineTool(definition);
   }
 
   createMcpServer(_config: McpServerConfig): unknown {

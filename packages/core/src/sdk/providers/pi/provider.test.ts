@@ -223,10 +223,19 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
       );
     });
 
-    it('createInlineTool throws not-implemented pointing at #4386 / #4387', () => {
-      expect(() =>
-        provider.createInlineTool({} as InlineToolDefinition),
-      ).toThrow(NOT_IMPLEMENTED_MSG);
+    // Issue #4387 (part 1): createInlineTool is now implemented — it adapts a
+    // disclaude InlineToolDefinition into a pi AgentHarnessTool shape (execute
+    // wrapper + Zod validation; schema translation deferred to part 2).
+    it('createInlineTool returns a pi tool shape (name + execute) instead of throwing', () => {
+      const tool = provider.createInlineTool({
+        name: 'echo',
+        description: 'echoes the input',
+        parameters: { parse: (p: unknown) => p } as never, // minimal Zod-like stub
+        handler: (p: unknown) => Promise.resolve(p),
+      } as InlineToolDefinition) as { name: string; execute: Function };
+
+      expect(tool.name).toBe('echo');
+      expect(typeof tool.execute).toBe('function');
     });
 
     it('createMcpServer throws not-implemented pointing at #4386 / #4387', () => {
