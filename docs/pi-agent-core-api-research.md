@@ -53,7 +53,8 @@ equivalent.
 | pi `AgentEvent.type`   | payload highlights                              | → disclaude `AgentMessageType` |
 | ---------------------- | ----------------------------------------------- | ------------------------------ |
 | `agent_start`          | —                                               | `status` (session start)       |
-| `message_start`        | `message: AgentMessage`                         | `status` (turn boundary)       |
+| `turn_start`           | —                                               | `status` (turn boundary)       |
+| `message_start`        | `message: AgentMessage`                         | `status` (message boundary)    |
 | `message_update`       | `message` + `assistantMessageEvent` (text/tool delta) | `text` (and `tool_use` when the delta carries a tool call) |
 | `message_end`          | `message`                                       | `text` (final assistant text)  |
 | `tool_execution_start` | `toolCallId`, `toolName`, `args`                | `tool_use`                     |
@@ -64,16 +65,22 @@ equivalent.
 
 `AssistantMessageEvent` (from `@earendil-works/pi-ai`) is the raw model stream
 delta carried on `message_update`; S3's message-adapter should read text/tool
-deltas off it. Reasoning/thinking deltas were not present as a distinct event
-type in 0.82.1 (no `reasoning`/`thinking` symbol) — confirm at S3 impl time if
-reasoning streaming is needed.
+deltas off it. Reasoning/thinking is NOT a top-level `AgentEvent.type` (the union
+above has no `thinking_*`/`reasoning_*` discriminant), but it IS supported in
+0.82.1 and surfaces as a content block on `message_update`: pi declares
+`ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"`
+(`types.d.ts:254`), a `thinkingBudgets?` option (`agent.d.ts:20`), and the proxy
+layer emits `thinking_start` / `thinking_delta` / `thinking_end`
+(`proxy.d.ts:26-33`) that populate an assistant content block
+`{ type: "thinking" }`. S3 should map those deltas onto disclaude's reasoning
+message type rather than expect a dedicated event.
 
 ## 3. Tool definition format — TypeBox + richer execute
 
 pi (`harness/types.ts:58`):
 
 ```ts
-type AgentHarnessTool<TContext, TParameters extends TSchema = TSchema, TDetails = unknown>
+type AgentHarnessTool<TContext extends object | undefined, TParameters extends TSchema = TSchema, TDetails = unknown>
   = Omit<AgentTool<TParameters, TDetails>, 'execute'> & {
     execute(toolCallId: string,
             params: Static<TParameters>,
