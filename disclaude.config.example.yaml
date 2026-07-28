@@ -68,6 +68,11 @@ feishu:
   # CLI chat ID for testing (optional)
   cliChatId: ""
 
+  # Native streaming replies (Card Kit typewriter + breathing cursor).
+  # Issue #4400 / #4208: gray-rollout flag. Default false — when off, the
+  # channel reports supportsStreaming=false and the agent uses sendMessage.
+  # streamingCard: false
+
   # Message deduplication settings
   deduplication:
     # Maximum number of message IDs to keep in memory
