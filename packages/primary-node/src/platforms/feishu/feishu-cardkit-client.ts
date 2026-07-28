@@ -2,24 +2,33 @@
  * Feishu Card Kit raw-HTTP client.
  *
  * Issue #4395 (#4208 P1-a): the installed @larksuiteoapi/node-sdk has NO Card
- * Kit client (verified in #4238), so native streaming (typewriter + breathing
- * cursor via JSON-2.0 `config.streaming_mode`) requires direct HTTP calls.
+ * Kit client, so native streaming (typewriter + breathing cursor via JSON-2.0
+ * `config.streaming_mode`) requires direct HTTP calls.
  *
- * Endpoints (confirmed by #4238 research, authoritative):
- *   PATCH /open-apis/cardkit/v1/cards/{card_id}/elements/{element_id}/content
- *     — typewriter streaming: incremental element content.
- *   PATCH /open-apis/cardkit/v1/cards/{card_id}
- *     — finalize: write the final card / drop the streaming marker.
+ * Endpoints (verified against the live Feishu API 2026-07-28; the earlier
+ * "#4238 says PATCH" claim was wrong — PATCH 404s, the real method is PUT):
+ *   PUT   /open-apis/cardkit/v1/cards/{card_id}/elements/{element_id}/content
+ *           — typewriter streaming: incremental element content.
+ *             Body: { content, sequence, uuid }.
+ *   PUT   /open-apis/cardkit/v1/cards/{card_id}
+ *           — write/replace the full card (e.g. append buttons after streaming).
+ *             Body: { card: { type: 'card_json', data: <stringified card> }, sequence, uuid }.
+ *   PATCH /open-apis/cardkit/v1/cards/{card_id}/settings
+ *           — finalize: turn off the breathing cursor (streaming_mode = false).
+ *             Body: { settings: <stringified settings>, sequence, uuid }.
+ *
+ * `sequence` is a single per-card counter that increments across ALL operations
+ * (PUT content, PUT card, PATCH settings share it); out-of-order/reused values
+ * are rejected with business code 300317. The client is stateless — the caller
+ * (streaming state machine #4399) owns the counter and passes it in.
  *
  * Auth: tenant_access_token sent as `Bearer`. disclaude's existing Feishu
  * plumbing carries it in `process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN`
  * (see feishu-channel.ts); `createCardKitClientFromEnv()` reuses that.
  *
- * Scope (this file = #4395 part 1): the PATCH operations. `createCard` (obtain
- * a card_id) is deferred to part 2 — the create endpoint was not confirmed by
- * #4238 and the card_id may come from the message-send path rather than a
- * dedicated Card Kit create call; callers obtain a card_id by other means for
- * now. Nothing in disclaude wires this client yet (pure infrastructure).
+ * Scope (this file = #4395 part 1): the update/finalize operations. `createCard`
+ * (obtain a card_id) is deferred to part 2; callers obtain a card_id by other
+ * means for now. Nothing in disclaude wires this client yet (pure infrastructure).
  */
 
 import { createLogger } from '@disclaude/core';
@@ -51,6 +60,12 @@ function safeParseJson(raw: string | undefined): unknown {
   }
 }
 
+/** Generate a request uuid (Card Kit echoes it for idempotency debugging). */
+function randomUuid(): string {
+  const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  return c?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 /** Error thrown for non-2xx Card Kit responses (incl. 401 token failure). */
 export class CardKitClientError extends Error {
   /** HTTP status code. */
@@ -75,14 +90,15 @@ export interface CardKitClientOptions {
   fetchImpl?: typeof fetch;
   /** Per-request timeout in ms (default 15000). Guards against hung streams. */
   timeoutMs?: number;
-  /** External AbortSignal; aborting it cancels any in-flight PATCH. */
+  /** External AbortSignal; aborting it cancels any in-flight request. */
   signal?: AbortSignal;
 }
 
 /**
- * Raw-HTTP Card Kit client. Two PATCH operations for native streaming.
+ * Raw-HTTP Card Kit client. PUT/PATCH operations for native streaming,
+ * verified against the live Feishu API.
  *
- * @see #4395, #4238, #4208
+ * @see #4395, #4411, #4208
  */
 export class FeishuCardKitClient {
   private readonly token: string;
@@ -106,44 +122,91 @@ export class FeishuCardKitClient {
   }
 
   /**
-   * PATCH a single element's content (typewriter streaming).
-   * `PATCH /cardkit/v1/cards/{card_id}/elements/{element_id}/content`.
+   * PUT a single element's content (typewriter streaming).
+   * `PUT /cardkit/v1/cards/{card_id}/elements/{element_id}/content`.
    *
    * @param cardId - the streaming card id
    * @param elementId - stable element id (e.g. STREAMING_REPLY_ELEMENT_ID from #4396)
-   * @param content - new content for the element (replace-semantics)
+   * @param content - new content for the element (replace-semantics; old text
+   *                  should be a prefix of new text for the typewriter effect)
+   * @param sequence - per-card monotonic counter (shared across all operations)
+   * @param uuid - optional request id; generated if omitted
    */
-  patchElementContent(
+  updateElementContent(
     cardId: string,
     elementId: string,
     content: string,
-  ): Promise<CardKitPatchResult> {
-    return this.patch(
+    sequence: number,
+    uuid?: string,
+  ): Promise<CardKitResult> {
+    return this.request(
+      'PUT',
       `/cards/${encodeURIComponent(cardId)}/elements/${encodeURIComponent(elementId)}/content`,
-      { content },
+      { content, sequence, uuid: uuid ?? randomUuid() },
     );
   }
 
   /**
-   * PATCH the whole card (finalize / drop streaming marker).
-   * `PATCH /cardkit/v1/cards/{card_id}`.
+   * PUT the whole card (replace / append elements, e.g. add buttons after the
+   * stream finishes).
+   * `PUT /cardkit/v1/cards/{card_id}`.
    *
    * @param cardId - the streaming card id
-   * @param body - the final card body (JSON-2.0); caller owns the shape
+   * @param card - the JSON-2.0 card object; serialized into `{card:{type,data}}`
+   * @param sequence - per-card monotonic counter (shared across all operations)
+   * @param uuid - optional request id; generated if omitted
    */
-  patchCard(cardId: string, body: unknown): Promise<CardKitPatchResult> {
-    return this.patch(`/cards/${encodeURIComponent(cardId)}`, body);
+  updateCard(
+    cardId: string,
+    card: unknown,
+    sequence: number,
+    uuid?: string,
+  ): Promise<CardKitResult> {
+    return this.request('PUT', `/cards/${encodeURIComponent(cardId)}`, {
+      card: { type: 'card_json', data: JSON.stringify(card) },
+      sequence,
+      uuid: uuid ?? randomUuid(),
+    });
   }
 
   /**
-   * Core PATCH with Bearer auth, timeout, and Feishu business-code handling.
+   * Finalize streaming: turn the breathing cursor off (streaming_mode = false).
+   * `PATCH /cardkit/v1/cards/{card_id}/settings`.
+   *
+   * (This is the one Card Kit settings operation that genuinely uses PATCH —
+   * verified live. The content/card updates above are PUT.)
+   *
+   * @param cardId - the streaming card id
+   * @param sequence - per-card monotonic counter (shared across all operations)
+   * @param uuid - optional request id; generated if omitted
+   * @param settings - optional settings object; defaults to streaming_mode off
+   */
+  finalizeStreaming(
+    cardId: string,
+    sequence: number,
+    uuid?: string,
+    settings: Record<string, unknown> = { config: { streaming_mode: false } },
+  ): Promise<CardKitResult> {
+    return this.request('PATCH', `/cards/${encodeURIComponent(cardId)}/settings`, {
+      settings: JSON.stringify(settings),
+      sequence,
+      uuid: uuid ?? randomUuid(),
+    });
+  }
+
+  /**
+   * Core request with Bearer auth, timeout, and Feishu business-code handling.
    *
    * Feishu's error model is HTTP 200 + body `{ code: <non-zero>, msg }`: a bare
    * `res.ok` check would silently swallow token/param/permission/rate-limit
    * failures as `{ ok: true }`, so we parse the body and check `code` (mirrors
    * the `ret !== 0` check in wechat/api-client.ts).
    */
-  private async patch(path: string, body: unknown): Promise<CardKitPatchResult> {
+  private async request(
+    method: 'PUT' | 'PATCH',
+    path: string,
+    body: unknown,
+  ): Promise<CardKitResult> {
     const url = `${this.baseUrl}${CARDKIT_PATH}${path}`;
 
     const controller = new AbortController();
@@ -153,7 +216,7 @@ export class FeishuCardKitClient {
 
     try {
       const res = await this.fetchImpl(url, {
-        method: 'PATCH',
+        method,
         headers: {
           Authorization: `Bearer ${this.token}`,
           'Content-Type': 'application/json; charset=utf-8',
@@ -179,22 +242,22 @@ export class FeishuCardKitClient {
 
       if (!res.ok) {
         throw new CardKitClientError(
-          `Card Kit PATCH ${path} failed: HTTP ${res.status}`,
+          `Card Kit ${method} ${path} failed: HTTP ${res.status}`,
           res.status,
           parsed,
         );
       }
 
       // Feishu business error: HTTP 200 + `code !== 0` (e.g. 99991663 invalid
-      // token, bad card_id, permission denied, rate-limit). Without this guard
-      // such failures are reported to callers as `{ ok: true }`.
+      // token, 300317 bad sequence, permission denied, rate-limit). Without this
+      // guard such failures are reported to callers as `{ ok: true }`.
       const bodyObj = parsed as { code?: unknown; msg?: unknown; message?: unknown } | undefined;
       const code = bodyObj?.code;
       if (typeof code === 'number' && code !== 0) {
         const msg = bodyObj?.msg ?? bodyObj?.message ?? `code ${code}`;
         logger.error({ path, code, msg }, 'Card Kit API returned a business error');
         throw new CardKitClientError(
-          `Card Kit PATCH ${path} failed: business code ${code} (${msg})`,
+          `Card Kit ${method} ${path} failed: business code ${code} (${msg})`,
           res.status,
           parsed,
         );
@@ -205,7 +268,7 @@ export class FeishuCardKitClient {
       clearTimeout(timer);
       if (err instanceof Error && err.name === 'AbortError') {
         throw new CardKitClientError(
-          `Card Kit PATCH ${path} aborted (timed out after ${this.timeoutMs}ms or cancelled)`,
+          `Card Kit ${method} ${path} aborted (timed out after ${this.timeoutMs}ms or cancelled)`,
           0,
         );
       }
@@ -214,7 +277,7 @@ export class FeishuCardKitClient {
   }
 }
 
-export interface CardKitPatchResult {
+export interface CardKitResult {
   ok: true;
   status: number;
   /** Parsed JSON response body when present. */
