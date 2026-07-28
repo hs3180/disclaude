@@ -125,6 +125,10 @@ export {
   RestartManager,
 } from './agents/restart-manager.js';
 
+// Empty-turn retry policy (Issue #4391): eligibility + bounded-to-1 retry for
+// the (deferred) empty-turn session-reset/replay mechanism.
+export { EmptyTurnRetryPolicy } from './agents/empty-turn-retry-policy.js';
+
 // MCP tool health tracker (Issue #4179 part 1): per-session circuit breaker
 // for MCP tools — records consecutive failures and marks a tool degraded once
 // it crosses a threshold, so the agent can pivot to alternatives instead of
