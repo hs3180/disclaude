@@ -32,6 +32,25 @@ export const DEFAULT_CARDKIT_BASE_URL = 'https://open.feishu.cn';
 /** Card Kit API path prefix. */
 const CARDKIT_PATH = '/open-apis/cardkit/v1';
 
+/** Default per-request timeout in ms (mirrors wechat/api-client.ts). */
+const DEFAULT_CARDKIT_TIMEOUT_MS = 15_000;
+
+/**
+ * Parse raw response text as JSON, falling back to the raw text (or undefined
+ * when empty). Reading the body once as text and parsing it ourselves avoids
+ * the double-consume bug of calling `.json()` then `.text()` on one Response.
+ */
+function safeParseJson(raw: string | undefined): unknown {
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
 /** Error thrown for non-2xx Card Kit responses (incl. 401 token failure). */
 export class CardKitClientError extends Error {
   /** HTTP status code. */
@@ -54,6 +73,10 @@ export interface CardKitClientOptions {
   baseUrl?: string;
   /** Inject fetch (tests). Defaults to globalThis.fetch. */
   fetchImpl?: typeof fetch;
+  /** Per-request timeout in ms (default 15000). Guards against hung streams. */
+  timeoutMs?: number;
+  /** External AbortSignal; aborting it cancels any in-flight PATCH. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -65,6 +88,8 @@ export class FeishuCardKitClient {
   private readonly token: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
+  private readonly signal?: AbortSignal;
 
   constructor(options: CardKitClientOptions) {
     if (!options || !options.tenantAccessToken) {
@@ -76,6 +101,8 @@ export class FeishuCardKitClient {
     if (!this.fetchImpl) {
       throw new Error('FeishuCardKitClient: no global fetch available — pass options.fetchImpl');
     }
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_CARDKIT_TIMEOUT_MS;
+    this.signal = options.signal;
   }
 
   /**
@@ -108,48 +135,82 @@ export class FeishuCardKitClient {
     return this.patch(`/cards/${encodeURIComponent(cardId)}`, body);
   }
 
-  /** Core PATCH with Bearer auth + 401/non-2xx handling. */
+  /**
+   * Core PATCH with Bearer auth, timeout, and Feishu business-code handling.
+   *
+   * Feishu's error model is HTTP 200 + body `{ code: <non-zero>, msg }`: a bare
+   * `res.ok` check would silently swallow token/param/permission/rate-limit
+   * failures as `{ ok: true }`, so we parse the body and check `code` (mirrors
+   * the `ret !== 0` check in wechat/api-client.ts).
+   */
   private async patch(path: string, body: unknown): Promise<CardKitPatchResult> {
     const url = `${this.baseUrl}${CARDKIT_PATH}${path}`;
-    const res = await this.fetchImpl(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      body: JSON.stringify(body),
-    });
 
-    if (res.status === 401) {
-      // Token expired or invalid — surface a clear, actionable error so the
-      // caller can refresh LARKSUITE_CLI_TENANT_ACCESS_TOKEN and retry.
-      throw new CardKitClientError(
-        'Card Kit API rejected tenant_access_token (401 Unauthorized). Refresh LARKSUITE_CLI_TENANT_ACCESS_TOKEN.',
-        401,
-      );
-    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Let a caller-initiated cancel also abort the in-flight request.
+    this.signal?.addEventListener('abort', () => controller.abort(), { once: true });
 
-    if (!res.ok) {
-      let responseBody: unknown;
-      try {
-        responseBody = await res.json();
-      } catch {
-        responseBody = await res.text().catch(() => undefined);
-      }
-      throw new CardKitClientError(
-        `Card Kit PATCH ${path} failed: HTTP ${res.status}`,
-        res.status,
-        responseBody,
-      );
-    }
-
-    let data: unknown;
     try {
-      data = await res.json();
-    } catch {
-      data = undefined; // empty/204 body
+      const res = await this.fetchImpl(url, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      // Read the body ONCE as text then parse — `.json()` followed by `.text()`
+      // on the same Response consumes the stream twice (the second read is empty).
+      const parsed = safeParseJson(await res.text().catch(() => undefined));
+
+      if (res.status === 401) {
+        // Token expired/invalid — surface a clear, actionable error so the
+        // caller can refresh LARKSUITE_CLI_TENANT_ACCESS_TOKEN and retry.
+        throw new CardKitClientError(
+          'Card Kit API rejected tenant_access_token (401 Unauthorized). Refresh LARKSUITE_CLI_TENANT_ACCESS_TOKEN.',
+          401,
+          parsed,
+        );
+      }
+
+      if (!res.ok) {
+        throw new CardKitClientError(
+          `Card Kit PATCH ${path} failed: HTTP ${res.status}`,
+          res.status,
+          parsed,
+        );
+      }
+
+      // Feishu business error: HTTP 200 + `code !== 0` (e.g. 99991663 invalid
+      // token, bad card_id, permission denied, rate-limit). Without this guard
+      // such failures are reported to callers as `{ ok: true }`.
+      const bodyObj = parsed as { code?: unknown; msg?: unknown; message?: unknown } | undefined;
+      const code = bodyObj?.code;
+      if (typeof code === 'number' && code !== 0) {
+        const msg = bodyObj?.msg ?? bodyObj?.message ?? `code ${code}`;
+        logger.error({ path, code, msg }, 'Card Kit API returned a business error');
+        throw new CardKitClientError(
+          `Card Kit PATCH ${path} failed: business code ${code} (${msg})`,
+          res.status,
+          parsed,
+        );
+      }
+
+      return { ok: true, status: res.status, data: parsed };
+    } catch (err) {
+      clearTimeout(timer);
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new CardKitClientError(
+          `Card Kit PATCH ${path} aborted (timed out after ${this.timeoutMs}ms or cancelled)`,
+          0,
+        );
+      }
+      throw err;
     }
-    return { ok: true, status: res.status, data };
   }
 }
 
@@ -169,10 +230,10 @@ export interface CardKitPatchResult {
 export function createCardKitClientFromEnv(
   options?: Omit<CardKitClientOptions, 'tenantAccessToken'>,
 ): FeishuCardKitClient {
-  const tenantAccessToken = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN || '';
+  const tenantAccessToken = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
   if (!tenantAccessToken) {
-    logger.warn(
-      'LARKSUITE_CLI_TENANT_ACCESS_TOKEN is not set — Card Kit streaming will fail with 401.',
+    throw new Error(
+      'createCardKitClientFromEnv: LARKSUITE_CLI_TENANT_ACCESS_TOKEN is not set — Card Kit streaming cannot authenticate. Export it before constructing the client.',
     );
   }
   return new FeishuCardKitClient({ ...(options || {}), tenantAccessToken });

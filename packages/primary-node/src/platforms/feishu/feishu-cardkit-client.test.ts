@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   FeishuCardKitClient,
+  createCardKitClientFromEnv,
   DEFAULT_CARDKIT_BASE_URL,
 } from './feishu-cardkit-client.js';
 
@@ -93,13 +94,14 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
   });
 
   describe('401 handling', () => {
-    it('throws CardKitClientError(status=401) with an actionable message', async () => {
+    it('throws CardKitClientError(status=401) with an actionable message + body', async () => {
       mockFetch.mockResolvedValueOnce(fakeResponse(401, { code: 99991663, msg: 'invalid token' }));
       const client = makeClient();
       await expect(client.patchCard(CARD_ID, {})).rejects.toMatchObject({
         name: 'CardKitClientError',
         status: 401,
         message: expect.stringContaining('Refresh LARKSUITE_CLI_TENANT_ACCESS_TOKEN'),
+        responseBody: { code: 99991663, msg: 'invalid token' },
       });
     });
   });
@@ -131,6 +133,101 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       });
       await client.patchCard(CARD_ID, {});
       expect(calls[0].url).toContain('https://open.larksuite.com/open-apis/cardkit/v1/cards/');
+    });
+  });
+
+  describe('business-code handling (Feishu error model)', () => {
+    it('throws CardKitClientError when a 200 response carries a non-zero code', async () => {
+      // Feishu returns HTTP 200 + body { code: <non-zero>, msg } on business
+      // errors (e.g. 99991663 invalid token). Must NOT be reported as ok.
+      mockFetch.mockResolvedValueOnce(
+        fakeResponse(200, { code: 99991663, msg: 'invalid access token' }),
+      );
+      const client = makeClient();
+      await expect(client.patchCard(CARD_ID, {})).rejects.toMatchObject({
+        name: 'CardKitClientError',
+        status: 200,
+        message: expect.stringContaining('business code 99991663'),
+        responseBody: { code: 99991663, msg: 'invalid access token' },
+      });
+    });
+
+    it('succeeds when a 200 response has no code field (e.g. empty body)', async () => {
+      mockFetch.mockResolvedValueOnce(fakeResponse(200, {}));
+      const client = makeClient();
+      await expect(client.patchCard(CARD_ID, {})).resolves.toMatchObject({
+        ok: true,
+        status: 200,
+      });
+    });
+  });
+
+  describe('timeout / abort', () => {
+    /** A fetch that hangs until its signal aborts, then rejects AbortError. */
+    function hangingFetch(_url: string, init: RequestInit): Promise<Response> {
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => {
+          const e = new Error('The operation was aborted');
+          e.name = 'AbortError';
+          reject(e);
+        });
+      });
+    }
+
+    it('aborts (CardKitClientError status=0) when the request exceeds timeoutMs', async () => {
+      mockFetch.mockImplementationOnce(hangingFetch);
+      const client = new FeishuCardKitClient({
+        tenantAccessToken: 't',
+        fetchImpl: mockFetch,
+        timeoutMs: 30,
+      });
+      await expect(client.patchCard(CARD_ID, {})).rejects.toMatchObject({
+        name: 'CardKitClientError',
+        status: 0,
+        message: expect.stringContaining('aborted'),
+      });
+    });
+
+    it('honors an external options.signal', async () => {
+      mockFetch.mockImplementationOnce(hangingFetch);
+      const external = new AbortController();
+      const client = new FeishuCardKitClient({
+        tenantAccessToken: 't',
+        fetchImpl: mockFetch,
+        timeoutMs: 60_000,
+        signal: external.signal,
+      });
+      const pending = client.patchCard(CARD_ID, {});
+      external.abort();
+      await expect(pending).rejects.toMatchObject({
+        name: 'CardKitClientError',
+        status: 0,
+      });
+    });
+  });
+
+  describe('createCardKitClientFromEnv', () => {
+    const origToken = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
+
+    afterEach(() => {
+      if (origToken === undefined) {
+        delete process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
+      } else {
+        process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN = origToken;
+      }
+    });
+
+    it('throws a clear error if LARKSUITE_CLI_TENANT_ACCESS_TOKEN is unset', () => {
+      delete process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
+      expect(() => createCardKitClientFromEnv({ fetchImpl: mockFetch })).toThrow(
+        /LARKSUITE_CLI_TENANT_ACCESS_TOKEN is not set/i,
+      );
+    });
+
+    it('builds a client when the env var is set', () => {
+      process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN = 'env-token';
+      const client = createCardKitClientFromEnv({ fetchImpl: mockFetch });
+      expect(client).toBeInstanceOf(FeishuCardKitClient);
     });
   });
 });
