@@ -33,25 +33,35 @@ describe('buildStreamingPlaceholderCard (Issue #4396 / #4208 P1-b)', () => {
 
   it('initializes the thinking region to the placeholder', () => {
     const [thinking] = buildStreamingPlaceholderCard().body.elements;
-    expect(thinking.text.content).toBe(STREAMING_THINKING_PLACEHOLDER);
+    expect(thinking.content).toBe(STREAMING_THINKING_PLACEHOLDER);
   });
 
-  it('initializes the reply region empty (filled by streaming PATCHes)', () => {
+  it('initializes the reply region empty (filled by streaming PUTs)', () => {
     const [, reply] = buildStreamingPlaceholderCard().body.elements;
-    expect(reply.text.content).toBe('');
+    expect(reply.content).toBe('');
   });
 
-  it('uses div + lark_md text blocks (Card Kit 2.0 text element shape)', () => {
+  it('uses top-level markdown elements (the only streamable Card Kit 2.0 shape)', () => {
     for (const el of buildStreamingPlaceholderCard().body.elements) {
-      expect(el.tag).toBe('div');
-      expect(el.text.tag).toBe('lark_md');
+      // Live-verified: only top-level `markdown`/`plain_text` elements accept a
+      // streaming content PUT — a `div` wrapper is rejected by Card Kit.
+      expect(el.tag).toBe('markdown');
+      expect(el).not.toHaveProperty('text');
+    }
+  });
+
+  it('keeps every element_id within the Card Kit 20-char limit (live-verified)', () => {
+    for (const el of buildStreamingPlaceholderCard().body.elements) {
+      expect(el.element_id.length).toBeLessThanOrEqual(20);
+      // Card Kit rule: alphabetic start, [a-zA-Z0-9_] only.
+      expect(el.element_id).toMatch(/^[A-Za-z][A-Za-z0-9_]*$/);
     }
   });
 
   it('allows overriding the thinking placeholder while keeping element_ids stable', () => {
     const card = buildStreamingPlaceholderCard({ thinkingPlaceholder: '🌀 Working…' });
-    expect(card.body.elements[0].text.content).toBe('🌀 Working…');
-    expect(card.body.elements[1].text.content).toBe('');
+    expect(card.body.elements[0].content).toBe('🌀 Working…');
+    expect(card.body.elements[1].content).toBe('');
     expect(card.body.elements.map((e) => e.element_id)).toEqual([
       STREAMING_THINKING_ELEMENT_ID,
       STREAMING_REPLY_ELEMENT_ID,
@@ -64,20 +74,14 @@ describe('buildStreamingPlaceholderCard (Issue #4396 / #4208 P1-b)', () => {
         "body": {
           "elements": [
             {
-              "element_id": "streaming_thinking_region",
-              "tag": "div",
-              "text": {
-                "content": "🤔 思考中…",
-                "tag": "lark_md",
-              },
+              "content": "🤔 思考中…",
+              "element_id": "streaming_thinking",
+              "tag": "markdown",
             },
             {
-              "element_id": "streaming_reply_region",
-              "tag": "div",
-              "text": {
-                "content": "",
-                "tag": "lark_md",
-              },
+              "content": "",
+              "element_id": "streaming_reply",
+              "tag": "markdown",
             },
           ],
         },

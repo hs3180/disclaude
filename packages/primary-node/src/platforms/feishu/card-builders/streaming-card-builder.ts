@@ -3,7 +3,7 @@
  *
  * Issue #4396 (#4208 P1-b): emits a schema-2.0 streaming placeholder card with
  * stable `element_id`s so the Card Kit client (#4395) knows exactly which
- * element to PATCH during typewriter streaming, and the ChatAgent streaming
+ * element to PUT during typewriter streaming, and the ChatAgent streaming
  * state machine (#4399 / P2-b) knows where to write thinking vs reply text.
  *
  * Mixed-schema policy (#4238): the streaming card is JSON-2.0
@@ -12,34 +12,39 @@
  * root-level `elements`) to limit blast radius. This card therefore
  * intentionally does NOT conform to the 1.0-shaped `FeishuCard` type.
  *
- * Pure builder — no wiring, no caller yet. Schema follows Feishu Card Kit 2.0
- * and the #4238 research findings; the exact field placement can be
- * reconciled against a live PATCH when #4395 lands.
+ * Schema verified against the live Card Kit API (2026-07-29, `cardkit/v1` via
+ * `lark-cli --as bot`): only a top-level `markdown`/`plain_text` element is a
+ * valid streaming target — a `div` wrapper is rejected ("tag is not supported,
+ * tag:div"), a top-level `lark_md` is rejected ("type of element is not
+ * supported tag: lark_md"), and `element_id` must be ≤ 20 chars
+ * (alphabetic start, `[a-zA-Z0-9_]` only). The streaming update itself is a
+ * **PUT** `/cards/{card_id}/elements/{element_id}/content` (NOT PATCH, which
+ * 404s at the gateway); see [[cardkit-endpoint-research-4238-reverted]].
  *
  * @see https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/card-json-structure
  */
 
-/** Stable element_id for the thinking / stream-of-thought region. */
-export const STREAMING_THINKING_ELEMENT_ID = 'streaming_thinking_region';
+/** Stable element_id for the thinking / stream-of-thought region (≤ 20 chars). */
+export const STREAMING_THINKING_ELEMENT_ID = 'streaming_thinking';
 
-/** Stable element_id for the reply region (the final answer). */
-export const STREAMING_REPLY_ELEMENT_ID = 'streaming_reply_region';
+/** Stable element_id for the reply region, the final answer (≤ 20 chars). */
+export const STREAMING_REPLY_ELEMENT_ID = 'streaming_reply';
 
 /** Default thinking-region placeholder shown while the agent is working. */
 export const STREAMING_THINKING_PLACEHOLDER = '🤔 思考中…';
 
 /**
- * A text block element in a JSON-2.0 card body. The `element_id` is the target
- * of `PATCH /cardkit/v1/cards/{card_id}/elements/{element_id}/content`.
+ * A streamable text element in a JSON-2.0 card body. The `element_id` is the
+ * target of `PUT /cardkit/v1/cards/{card_id}/elements/{element_id}/content`
+ * (body: `{ content, sequence, uuid }`; `sequence` strictly increases across
+ * the whole card). Live-verified: must be a top-level `markdown` (or
+ * `plain_text`) element — NOT a `div` wrapper, and `element_id` ≤ 20 chars.
  */
 export interface StreamingCardElement {
-  tag: 'div';
-  /** Stable id the Card Kit client PATCHes during streaming. */
+  tag: 'markdown';
+  /** Stable id (≤ 20 chars) the Card Kit client PUTs during streaming. */
   element_id: string;
-  text: {
-    tag: 'lark_md';
-    content: string;
-  };
+  content: string;
 }
 
 /**
@@ -68,9 +73,9 @@ export interface BuildStreamingCardOptions {
 /**
  * Build a JSON-2.0 streaming placeholder card with stable element_ids.
  *
- * - Thinking region: initialized to the placeholder (PATCHed as
- *   stream-of-thought arrives, then cleared/replaced on finalize).
- * - Reply region: initialized empty (filled by streaming PATCHes).
+ * - Thinking region: initialized to the placeholder (PUT as stream-of-thought
+ *   arrives, then cleared/replaced on finalize via PATCH /settings).
+ * - Reply region: initialized empty (filled by streaming PUTs).
  *
  * The returned element_ids are exported as `STREAMING_THINKING_ELEMENT_ID` /
  * `STREAMING_REPLY_ELEMENT_ID` so the client and state machine reference the
@@ -86,14 +91,14 @@ export function buildStreamingPlaceholderCard(
     body: {
       elements: [
         {
-          tag: 'div',
+          tag: 'markdown',
           element_id: STREAMING_THINKING_ELEMENT_ID,
-          text: { tag: 'lark_md', content: thinkingContent },
+          content: thinkingContent,
         },
         {
-          tag: 'div',
+          tag: 'markdown',
           element_id: STREAMING_REPLY_ELEMENT_ID,
-          text: { tag: 'lark_md', content: '' },
+          content: '',
         },
       ],
     },
