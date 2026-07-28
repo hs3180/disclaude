@@ -462,6 +462,18 @@ describe('FeishuChannel getCapabilities', () => {
     expect(caps.supportedMcpTools).toContain('send_interactive');
     expect(caps.supportedMcpTools).toContain('send_file');
   });
+
+  // Issue #4400 / #4208: streamingCard flag gates the supportsStreaming
+  // capability. Default off; on when the flag is set.
+  it('reports supportsStreaming=false by default (streamingCard off)', () => {
+    const channel = new FeishuChannel({ appId: 'test', appSecret: 'test' });
+    expect(channel.getCapabilities().supportsStreaming).toBe(false);
+  });
+
+  it('reports supportsStreaming=true when streamingCard is enabled', () => {
+    const channel = new FeishuChannel({ appId: 'test', appSecret: 'test', streamingCard: true });
+    expect(channel.getCapabilities().supportsStreaming).toBe(true);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

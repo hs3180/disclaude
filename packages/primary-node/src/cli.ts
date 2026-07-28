@@ -725,7 +725,9 @@ export function resolveChannelConfigs(
   if (feishuAppId && feishuAppSecret) {
     entries.push({
       type: 'feishu',
-      config: { appId: feishuAppId, appSecret: feishuAppSecret },
+      // Issue #4400 / #4208: plumb streamingCard through to FeishuChannelConfig
+      // so getCapabilities().supportsStreaming reflects feishu.streamingCard.
+      config: { appId: feishuAppId, appSecret: feishuAppSecret, streamingCard: config.FEISHU_STREAMING_CARD },
     });
   }
 
