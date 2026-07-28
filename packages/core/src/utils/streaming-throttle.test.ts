@@ -115,6 +115,18 @@ describe('StreamingThrottle (Issue #4399 / #4208 P2-b)', () => {
     expect(throttle.effectiveIntervalMs).toBe(1000);
   });
 
+  it('note429 first backoff is capped at maxBackoffMs when 2*minIntervalMs exceeds it', () => {
+    // Regression: the first note429() used minIntervalMs*2 *without* the cap,
+    // so a low maxBackoffMs (< 2*minIntervalMs) backed off past the cap on the
+    // very first 429 (only later doublings were capped). min=200/max=300 ⇒ the
+    // first backoff must be 300, not 400.
+    const { throttle } = makeThrottle({ minIntervalMs: 200, maxBackoffMs: 300 });
+    throttle.note429(); // 2*200=400, capped at 300
+    expect(throttle.effectiveIntervalMs).toBe(300);
+    throttle.note429(); // already at cap, stays 300
+    expect(throttle.effectiveIntervalMs).toBe(300);
+  });
+
   it('noteSuccess resets the backoff', () => {
     const { throttle } = makeThrottle({ minIntervalMs: 100 });
     throttle.note429();

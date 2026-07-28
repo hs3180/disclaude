@@ -101,10 +101,14 @@ export class StreamingThrottle {
 
   /** Signal a 429 was received — exponential backoff (doubles, capped). */
   note429(): void {
-    this.backoffMs =
-      this.backoffMs === 0
-        ? this.minIntervalMs * 2
-        : Math.min(this.backoffMs * 2, this.maxBackoffMs);
+    // Both the first backoff (minIntervalMs*2) and subsequent doublings must
+    // respect the cap. Without wrapping the first branch in Math.min, a config
+    // with 2*minIntervalMs > maxBackoffMs would let the first 429 back off
+    // *past* the cap (only later doublings were capped).
+    this.backoffMs = Math.min(
+      this.backoffMs === 0 ? this.minIntervalMs * 2 : this.backoffMs * 2,
+      this.maxBackoffMs,
+    );
   }
 
   /** Reset backoff after a successful PATCH (optional). */
