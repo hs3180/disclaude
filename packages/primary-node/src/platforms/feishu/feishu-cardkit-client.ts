@@ -211,8 +211,15 @@ export class FeishuCardKitClient {
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    // Let a caller-initiated cancel also abort the in-flight request.
-    this.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+    // Let a caller-initiated cancel also abort the in-flight request. We remove
+    // this listener ourselves when the request ends (see `finally` below):
+    // `{ once: true }` only self-removes when the signal actually fires, so on a
+    // long-lived client issuing many requests against a single external signal
+    // it would otherwise accumulate past the AbortSignal default listener cap
+    // (10) and emit a MaxListenersExceededWarning on every request past the 10th.
+    const externalSignal = this.signal;
+    const onExternalAbort = (): void => controller.abort();
+    externalSignal?.addEventListener('abort', onExternalAbort);
 
     try {
       const res = await this.fetchImpl(url, {
@@ -224,7 +231,6 @@ export class FeishuCardKitClient {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      clearTimeout(timer);
 
       // Read the body ONCE as text then parse — `.json()` followed by `.text()`
       // on the same Response consumes the stream twice (the second read is empty).
@@ -265,14 +271,34 @@ export class FeishuCardKitClient {
 
       return { ok: true, status: res.status, data: parsed };
     } catch (err) {
-      clearTimeout(timer);
+      // Typed errors (401 / non-2xx / business code) already carry status +
+      // body — pass them through unchanged so the caller sees the real status
+      // and the original response body.
+      if (err instanceof CardKitClientError) {
+        throw err;
+      }
+      // Timeout or external cancel — fetch rejects with an AbortError.
       if (err instanceof Error && err.name === 'AbortError') {
         throw new CardKitClientError(
           `Card Kit ${method} ${path} aborted (timed out after ${this.timeoutMs}ms or cancelled)`,
           0,
         );
       }
-      throw err;
+      // Network-layer failures (e.g. `TypeError: fetch failed`, DNS, connection
+      // reset) — wrap so callers can catch ALL client errors uniformly via
+      // `instanceof CardKitClientError` instead of handling bare fetch errors
+      // with no status/body. status 0 = no HTTP response was received.
+      throw new CardKitClientError(
+        `Card Kit ${method} ${path} request failed: ${err instanceof Error ? err.message : String(err)}`,
+        0,
+      );
+    } finally {
+      // Always release the timer and the external-signal listener, whether the
+      // request succeeded, threw, or was aborted. (Nit fix: previously the
+      // {once:true} listener leaked on every non-aborting request, eventually
+      // tripping the AbortSignal 10-listener cap on long-lived clients.)
+      clearTimeout(timer);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
     }
   }
 }

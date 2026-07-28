@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   FeishuCardKitClient,
   createCardKitClientFromEnv,
+  CardKitClientError,
   DEFAULT_CARDKIT_BASE_URL,
 } from './feishu-cardkit-client.js';
 
@@ -246,6 +247,71 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
         name: 'CardKitClientError',
         status: 0,
       });
+    });
+  });
+
+  describe('network-error wrapping (non-Abort fetch failures)', () => {
+    it('wraps a raw fetch error (e.g. TypeError) as CardKitClientError(status=0)', async () => {
+      // fetch rejects with a bare TypeError on DNS / connection failures. The
+      // caller must be able to catch it via `instanceof CardKitClientError`.
+      mockFetch.mockImplementationOnce(() => Promise.reject(new TypeError('fetch failed')));
+      const client = makeClient();
+
+      await expect(client.updateCard(CARD_ID, {}, 1)).rejects.toSatisfy(
+        (err: unknown) => err instanceof CardKitClientError && err.status === 0 &&
+          /fetch failed/.test(err.message),
+      );
+    });
+
+    it('does not double-wrap a typed error (401 keeps status=401 + body)', async () => {
+      mockFetch.mockResolvedValueOnce(fakeResponse(401, { code: 99991663, msg: 'invalid token' }));
+      const client = makeClient();
+
+      await expect(client.updateCard(CARD_ID, {}, 1)).rejects.toSatisfy(
+        (err: unknown) => err instanceof CardKitClientError && err.status === 401,
+      );
+    });
+  });
+
+  describe('external-signal listener cleanup (no accumulation)', () => {
+    it('removes the per-request abort listener when the request ends', async () => {
+      const external = new AbortController();
+      const addSpy = vi.spyOn(external.signal, 'addEventListener');
+      const removeSpy = vi.spyOn(external.signal, 'removeEventListener');
+      const client = new FeishuCardKitClient({
+        tenantAccessToken: 't',
+        fetchImpl: mockFetch,
+        signal: external.signal,
+      });
+      await client.updateCard(CARD_ID, {}, 1);
+
+      expect(addSpy).toHaveBeenCalledTimes(1);
+      expect(addSpy.mock.calls[0][0]).toBe('abort');
+      expect(removeSpy).toHaveBeenCalledTimes(1);
+      expect(removeSpy.mock.calls[0][0]).toBe('abort');
+      // Same function reference removed as added (not a throwaway anonymous fn).
+      expect(addSpy.mock.calls[0][1]).toBe(removeSpy.mock.calls[0][1]);
+    });
+
+    it('matches every add with a remove across many requests (no listener leak)', async () => {
+      // AbortSignal's default listener cap is 10. A long-lived client that adds
+      // a {once:true} listener per request and never removes it would trip
+      // MaxListenersExceededWarning past the 10th request. Every add MUST be
+      // paired with a remove on a settled request.
+      const external = new AbortController();
+      const addSpy = vi.spyOn(external.signal, 'addEventListener');
+      const removeSpy = vi.spyOn(external.signal, 'removeEventListener');
+      const client = new FeishuCardKitClient({
+        tenantAccessToken: 't',
+        fetchImpl: mockFetch,
+        signal: external.signal,
+      });
+      for (let i = 0; i < 25; i++) {
+        await client.updateCard(CARD_ID, {}, i);
+      }
+
+      expect(addSpy).toHaveBeenCalledTimes(25);
+      expect(removeSpy).toHaveBeenCalledTimes(25);
     });
   });
 
