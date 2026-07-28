@@ -25,6 +25,21 @@ Manage schedules with full CRUD operations.
 
 **Keywords that trigger this skill**: "定时任务", "schedule", "cron", "timer", "reminder", "每天", "每周", "定期", "周期性", "recurring", "periodic"
 
+## Loop vs Schedule — pick the right mechanism
+
+`schedule` (this skill) and `loop` (the separate `loop` skill — a Ralph Loop) both run recurring tasks, but they differ in how they're driven and how recoverable they are. **Confirm `schedule` is what you want before creating one.**
+
+| Aspect | schedule (this skill) | loop (Ralph Loop) |
+| --- | --- | --- |
+| Driver | cron step executor — fires the prompt once per tick | Ralph Loop — `pushToAgent` each iteration, agent self-drives across steps |
+| Best for | Fixed-time, independent tasks (daily reports, reminders, periodic scans) | Multi-step autonomous iteration where each step feeds the next |
+| `chatId` hot-editable | ✅ Edit `SCHEDULE.md` → takes effect | ❌ Read once at start; editing `LOOP.md` `chatId` has no effect |
+| Deleting the definition file | Stops future runs | ❌ Does **not** stop a running loop (watcher only handles create/change) |
+| How to stop | Delete file / set `enabled: false` | Only `loop_stop(loopId)` |
+| Unique ID | — | `loopId` is pushed to the exec chat once |
+
+**Rule of thumb:** fixed-time trigger with independent runs → `schedule`; multi-round autonomous iteration where each step feeds the next → `loop`.
+
 ## Core Principle
 
 **ALWAYS send feedback to user via `send_user_feedback` after EVERY operation.**

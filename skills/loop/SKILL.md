@@ -12,6 +12,21 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, mcp__channel-mcp__send_text
 
 > **方向（与 #4193 / #4039 / #4283 一致）**：本 skill **创建 LOOP.md**。LOOP.md 文件 watcher（#4283）是消费端——文件写入后 watcher 自动调 `startFromLoopMd`，无需手动调 `loop_start`。`loop_start`（inline-prompt）仍是活契约，本 skill 不使用（LOOP.md 是 skill 驱动的新入口，非废弃旧接口）。
 
+## loop vs schedule：先确认用哪个
+
+`loop`（本 skill，Ralph Loop）与 `schedule`（cron 步骤执行器）都做"周期性任务"，但机制与可纠正性差别很大。**建 loop 前先对照下表确认 loop 是你要的**——loop 一旦启动，`chatId` 不可热改、删 `LOOP.md` 也不会停（见下文「停止 / 改正 loop」），建错很难自助纠正。
+
+| 维度 | schedule（cron） | loop（Ralph Loop，本 skill） |
+| --- | --- | --- |
+| 驱动方式 | cron 步骤执行器，到点跑一次 prompt | Ralph Loop，每轮 `pushToAgent` 驱动 agent 自主迭代 |
+| 适合 | 固定时刻触发的独立任务（日报、提醒、定时扫描） | 需要多轮自主推进、上一轮喂下一轮的循环任务 |
+| `chatId` 可热改 | ✅ 改 `SCHEDULE.md` 即生效 | ❌ 启动时只读一次，改 `LOOP.md` 的 `chatId` **不生效** |
+| 删除定义文件 | 停止后续执行 | ❌ **不影响在跑的 loop**（watcher 只处理 create/change，无 remove） |
+| 停止方式 | 删文件 / 设 `enabled: false` | 仅 `loop_stop(loopId)`（见下） |
+| 唯一 ID | — | `loopId` 只在执行群推送一次，丢了只能翻群 |
+
+> 选不定时：**到点触发、每轮独立 → schedule；多轮自主迭代、上一轮喂下一轮 → loop**。
+
 ## 初始化步骤
 
 ### 1. 收集参数
@@ -87,6 +102,16 @@ LOOP.md 写入后，**文件 watcher（#4283）自动检测到文件创建**，�
 ## loopId 流转
 
 watcher 启动 loop 后返回 `loopId`（格式 `loop-{N}-{timestamp}`），推送到执行群。用户可用此 `loopId` 调 MCP `loop_stop` / `loop_status` 停止/查询循环。
+
+## 停止 / 改正 loop（重要）
+
+LOOP.md **不是**运行中 loop 的开关——删除或改 `chatId` 都**不能**停掉或重定向已在跑的 loop：
+
+- **删 `LOOP.md`** → watcher 只监听 create/change（文件 `existsSync` 命中才触发），**不会** stop 已启动的 loop；loop 会继续跑到 `maxSteps` / `maxDuration` 超时。
+- **改 `LOOP.md` 的 `chatId`** → runner 启动时只读一次，**改了也不生效**；正文 prompt 倒是每轮重读（可调方向，下一轮生效）。
+- **唯一可靠的停止方式**：MCP `loop_stop(loopId)`。`loopId` 在 loop 启动时由 watcher 推送到执行群（**仅一次**），务必记下；丢了只能去执行群翻历史。
+
+建错 `chatId`（例如把执行群填成了卡片目标群）时：**别只改文件**——先 `loop_stop(loopId)` 停掉错的，再用本 skill 重建一个新的 loop。
 
 ## 运行时模型（供参考）
 
