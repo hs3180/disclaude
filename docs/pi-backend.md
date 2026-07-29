@@ -12,6 +12,7 @@ Disclaude 的 Agent 运行时（agent runtime）可通过配置切换。默认�
 - [4. 校验与回退](#4-校验与回退)
 - [5. 当前限制（重要）](#5-当前限制重要)
 - [6. 何时该用 pi / 何时该留在 claude](#6-何时该用-pi--何时该留在-claude)
+- [7. 验证记录（实验）](#7-验证记录实验)
 
 ---
 
@@ -48,10 +49,17 @@ agent:
 
 完整示例见 `disclaude.config.example.yaml`（搜索 `agentBackend`）。
 
+> **前置条件（重要）**：仅改配置不足以让 pi 真正可用。pi 后端还要求运行环境满足：
+> - 实际可导入的包是 **`@earendil-works/pi-agent-core`**（上方链接的 `earendil-works/pi` 是 monorepo，被 import 的子包才是它）。pi provider 用 `createRequire(import.meta.url).resolve('@earendil-works/pi-agent-core')` 在运行时探测它（`packages/core/src/sdk/providers/pi/provider.ts`）。
+> - 通过 `pi-ai` 配好模型 provider 的 API key。
+>
+> **未满足时不会崩溃，也不会自动回退 claude**——pi 仍被选为默认后端，但其方法（agent loop / MCP）在调用时抛 not-implemented（详见第 4、5 节）。可用 `getAvailableProviders()` 查看 `pi` 的 `available` 字段确认是否就绪。
+
 ## 4. 校验与回退
 
-- **校验**：配置加载时（`packages/core/src/config/loader.ts`）会校验 `agent.agentBackend` 的取值；非 `claude`/`pi` 会抛出明确错误，列出已注册的后端供修正。
-- **回退**：若运行时注册失败（如 pi 后端未注册或加载出错），`PrimaryNode` 不会崩溃，而是记日志后**回退到默认 `claude` 后端**继续启动。日志关键词：`Agent SDK backend selected from config` / `Unknown agent.agentBackend ... falling back to "claude"`。
+- **取值校验（加载时）**：`packages/core/src/config/loader.ts` 的 `validateConfig()` 校验 `agent.agentBackend`；非 `claude`/`pi` 时返回失败并记录错误，例如：`agent.agentBackend must be one of: claude, pi (got "...")`。
+- **未知后端名 → 回退 claude（启动时）**：`PrimaryNode.start()` 用 `setDefaultProvider(agentBackend)` 设默认后端；传入**未注册**的后端名会抛 `Unknown provider type: ... Available: claude, pi`，`PrimaryNode` 捕获后**不崩溃、回退 `claude`**（日志 `Unknown agent.agentBackend in config — falling back to "claude"`）。
+- **⚠️ 注意：pi 缺前置条件 *不会* 触发上述回退**。`pi` 已在工厂表中硬注册（`packages/core/src/sdk/factory.ts`），故 `setDefaultProvider('pi')` 总是成功、pi 成为默认后端。当 `@earendil-works/pi-agent-core` 未安装 / `pi-ai` key 缺失时，pi 的 `validateConfig()` 返回 `false`、`getInfo().available === false`，但**启动照常以 pi 为默认**，直到首次调用 agent loop / MCP 才抛 not-implemented（见第 5 节）。即：缺前置条件 = 运行期方法报错，**而非**静默回退 claude。
 
 ## 5. 当前限制（重要）
 
@@ -66,3 +74,25 @@ pi 后端目前是「已可注册、能力受限」状态。切换前请知悉�
 
 - **用 `pi`**：想体验/对比 earendil-works/pi 运行时、做后端可替换性验证、且当前任务**不依赖 MCP 工具与权限门控**。
 - **留在 `claude`（默认）**：生产环境、或任务需要 MCP（浏览器自动化等）/ 权限模式时——这是功能最全的后端。
+
+## 7. 验证记录（实验）
+
+为确认本页描述与代码一致，编写一次性脚本直接调用 `@disclaude/core` 的真实模块（`config/loader.ts` 的 `validateConfig`、`sdk/factory.ts` 的注册表与 `setDefaultProvider`、`sdk/providers/pi/provider.ts` 的 `PiAgentProvider`），对各项断言实测。测试环境：**未安装** `@earendil-works/pi-agent-core`（即模拟「缺前置条件」的常见情形）。
+
+结果 **14 项断言全部通过**，关键观测值如下（合并展示）：
+
+| 断言（对应章节） | 实测结果 |
+|---|---|
+| `validateConfig`：`'pi'`/`'claude'` → true；缺省 → true（跳过）；`'bogus'` → false（§3、§4 校验） | ✅ bogus 失败，错误串含 `must be one of: claude, pi` |
+| `setDefaultProvider('pi')` 成功，默认后端变为 pi（§1） | ✅ `getDefaultProviderType() === 'pi'` |
+| `setDefaultProvider('bogus')` 抛错并列出可用项（§4 回退） | ✅ `Unknown provider type: bogus. Available: claude, pi` |
+| `getProvider('pi')` 是 `PiAgentProvider` | ✅ name=`pi`，version=`0.0.0-skeleton` |
+| 注册表同时含 claude 与 pi（§1） | ✅ `[claude(available=true), pi(available=false)]` |
+| `pi.createMcpServer()` 抛错（§5 MCP 非原生，#4417） | ✅ `... not implemented yet ... tools/MCP in #4387 (S4)` |
+| 未装 pi-ai 时 `pi.validateConfig()` → false（§3 前置条件） | ✅ false |
+| `pi.getInfo().available === false` 且原因提及 pi-agent-core | ✅ reason=`pi-agent-core package not installed or not configured` |
+| pi 无 permission 相关 API（§5 无权限系统，#4389） | ✅ 原型方法仅 `getInfo / queryStream / createInlineTool / createMcpServer / validateConfig / dispose` |
+| `provider=glm + agentBackend=pi` 同时通过校验（§2 正交） | ✅ true |
+| `provider=anthropic + agentBackend=claude` 同时通过校验（§2 正交） | ✅ true |
+
+> 断言「注册表 `[claude(available=true), pi(available=false)]`」与「`pi.validateConfig()===false`」直接支撑了第 4 节的关键结论：**pi 已注册、会被选为默认后端，但 `available=false`——缺前置条件不会触发 claude 回退**。脚本为一次性验证用，未随 PR 提交；如需复现，按本节所述导入上述三个模块即可。
