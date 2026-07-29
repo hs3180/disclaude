@@ -165,6 +165,18 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     return false;
   }
 
+  // Issue #4388: validate agent.agentBackend (agent SDK runtime selection).
+  if (config.agent?.agentBackend !== undefined) {
+    const allowed = ['claude', 'pi'] as const;
+    if (!allowed.includes(config.agent.agentBackend)) {
+      logger.error(
+        `agent.agentBackend must be one of: ${allowed.join(', ')} (got "${config.agent.agentBackend}"). ` +
+          'It selects the agent runtime (claude-code vs pi.dev), separate from the model-layer provider.',
+      );
+      return false;
+    }
+  }
+
   // Validate logging config if present
   if (config.logging?.level && typeof config.logging.level !== 'string') {
     logger.error('logging.level must be a string');
