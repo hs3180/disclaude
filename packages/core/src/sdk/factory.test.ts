@@ -311,4 +311,22 @@ describe('Provider Factory', () => {
       expect(isProviderAvailable('throws')).toBe(false);
     });
   });
+
+  describe('config-driven backend selection (Issue #4388)', () => {
+    it("setDefaultProvider('pi') makes getProvider() return the pi backend", () => {
+      // Mirrors the boot wiring in PrimaryNode.start(): a non-'claude'
+      // agentBackend in config → setDefaultProvider(agentBackend).
+      setDefaultProvider('pi');
+      expect(getDefaultProviderType()).toBe('pi');
+
+      const provider = getProvider();
+      expect(provider.name).toBe('pi');
+    });
+
+    it('throws a helpful error listing registered backends for an unknown type', () => {
+      expect(() => setDefaultProvider('mistral')).toThrow(
+        /Unknown provider type: mistral.*Available:.*claude.*pi/s,
+      );
+    });
+  });
 });

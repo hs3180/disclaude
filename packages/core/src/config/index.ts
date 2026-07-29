@@ -187,6 +187,11 @@ export class Config {
           static readonly ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
           static readonly CLAUDE_MODEL = fileConfigOnly.agent?.model || '';
 
+          // Agent SDK backend — which agent runtime boots (Issue #4388).
+          // Orthogonal to the model-layer provider (GLM vs Anthropic LLM API).
+          // undefined ⇒ 'claude' default. Consumed by PrimaryNode.start().
+          static readonly AGENT_BACKEND = fileConfigOnly.agent?.agentBackend;
+
           // Tier model configuration (Issue #3059)
           private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
           private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';
