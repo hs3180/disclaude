@@ -8,7 +8,7 @@
  * Issue #3901: All tests use InputMessageRouter.
  */
 
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { CronJob } from 'cron';
 import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './scheduler.js';
 import type { ScheduleManager } from './schedule-manager.js';
@@ -90,6 +90,26 @@ describe('Scheduler', () => {
       callbacks: mockCallbacks,
       inputMessageRouter: mockRouter,
       jobFactory: testJobFactory,
+    });
+  });
+
+  // Issue #4394 (part 2): "有 start 必有 stop" — several tests below call
+  // `scheduler.start()` but not every path stops before the test ends. Stop()
+  // is idempotent (the "stop without starting" test above resolves undefined),
+  // so a defensive afterEach teardown guarantees no started scheduler leaks
+  // across tests even when a test forgets to stop. testJobFactory (#4218)
+  // already avoids real CronJob timers, but this closes the hygiene gap for any
+  // future start()-side-effect (watchers, drains) without changing behavior.
+  //
+  // stop(0) skips the graceful drain deliberately: three tests below leave an
+  // intentionally never-completing task (`new Promise(() => {})`) on this shared
+  // scheduler, and the default 5000ms drain would block the full timeout on each
+  // during cleanup (~15s added, 18s vs 3s for the file). Drain semantics are
+  // already asserted by those tests' own explicit `stop()` calls, so cleanup
+  // only needs to stop timers + clear state — keeping it instant.
+  afterEach(async () => {
+    await scheduler.stop(0).catch(() => {
+      /* defensive teardown — never fail a test from cleanup */
     });
   });
 
