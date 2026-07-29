@@ -36,6 +36,24 @@ describe('adaptPiEvent (Issue #4386 / #4384)', () => {
         type: 'message_update',
         assistantMessageEvent: { type: 'text_end' },
       },
+      // pi-ai's real tool-call sub-events (toolcall_*, NOT Anthropic's tool_use_*):
+      {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'toolcall_delta' },
+      },
+      {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'toolcall_end' },
+      },
+      // pi-ai terminates the sub-stream with done/error (NOT message_end):
+      {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'done' },
+      },
+      {
+        type: 'message_update',
+        assistantMessageEvent: { type: 'error' },
+      },
     ];
     for (const ev of skipped) {
       expect(adaptPiEvent(ev)).toBeNull();

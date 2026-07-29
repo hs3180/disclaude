@@ -15,11 +15,7 @@
  * on a pi version bump and should be re-verified (cf. #4384 §6: 0.x, pre-1.0).
  */
 
-import type {
-  AgentMessage,
-  AgentMessageMetadata,
-  AgentMessageType,
-} from '../../types.js';
+import type { AgentMessage, AgentMessageMetadata, AgentMessageType } from '../../types.js';
 
 // ---------------------------------------------------------------------------
 // Structural mirrors of the pi event shapes the adapter reads.
@@ -27,24 +23,43 @@ import type {
 // dropped to keep the surface small.
 // ---------------------------------------------------------------------------
 
-/** Subset of pi-ai's `AssistantMessageEvent` that this adapter reads. */
-export type PiAssistantMessageEvent = {
-  type:
-    | 'start'
-    | 'text_start'
-    | 'text_end'
-    | 'thinking_start'
-    | 'thinking_end'
-    | 'tool_use_start'
-    | 'tool_use_end'
-    | 'message_end';
-} | {
-  type: 'text_delta';
-  delta: string;
-} | {
-  type: 'thinking_delta';
-  delta: string;
-};
+/**
+ * Subset of pi-ai's `AssistantMessageEvent` (the `assistantMessageEvent` field
+ * of pi's `message_update` AgentEvent). Verified against
+ * `@earendil-works/pi-ai@0.82.1` types.d.ts:365.
+ *
+ * Only the `type` discriminant + the `delta` field consumed by the adapter are
+ * mirrored. pi-ai's real type additionally carries `contentIndex` and a
+ * `partial: AssistantMessage` snapshot on every variant, plus `content` /
+ * `toolCall` / `reason` on the *_end / done variants — intentionally dropped.
+ *
+ * Naming gotchas (do NOT confuse with Anthropic/disclaude vocabulary):
+ * - pi-ai uses `toolcall_*`, NOT Anthropic-style `tool_use_*`.
+ * - The sub-stream terminates with `done` / `error`, NOT `message_end`
+ *   (`message_end` is a pi-agent-core *AgentEvent*, not a sub-event here).
+ */
+export type PiAssistantMessageEvent =
+  | {
+      type:
+        | 'start'
+        | 'text_start'
+        | 'text_end'
+        | 'thinking_start'
+        | 'thinking_end'
+        | 'toolcall_start'
+        | 'toolcall_delta'
+        | 'toolcall_end'
+        | 'done'
+        | 'error';
+    }
+  | {
+      type: 'text_delta';
+      delta: string;
+    }
+  | {
+      type: 'thinking_delta';
+      delta: string;
+    };
 
 /** Subset of pi-agent-core's `AgentEvent` discriminated union (types.ts:368). */
 export type PiAgentEvent =
@@ -116,7 +131,9 @@ export function adaptPiEvent(event: PiAgentEvent): AgentMessage | null {
       if (sub.type === 'text_delta') {
         return makeMessage('text', sub.delta, {});
       }
-      // thinking_delta / text_start / text_end / message_end / start / *_start / *_end → skip (MVP)
+      // thinking_delta / text_start / text_end / toolcall_* / done / error / start
+      // / thinking_* → skip (MVP). (done/error terminate the AssistantMessage
+      // sub-stream; the agent-level agent_end → result is the stream terminator.)
       return null;
     }
 
@@ -160,7 +177,7 @@ export function adaptPiEvent(event: PiAgentEvent): AgentMessage | null {
 function makeMessage(
   type: AgentMessageType,
   content: string,
-  metadata: AgentMessageMetadata,
+  metadata: AgentMessageMetadata
 ): AgentMessage {
   return { type, content, role: 'assistant', metadata };
 }
