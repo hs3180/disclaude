@@ -401,6 +401,18 @@ export class MessageHandler {
   }
 
   /**
+   * Invalidate the cached chat_mode / group_message_type for a chat.
+   *
+   * Called when a chat's properties change (im.chat.updated_v1) so the next
+   * message re-fetches the current mode instead of trusting a stale cached
+   * value — e.g. after an admin toggles a group between group / topic format,
+   * which would otherwise stay misclassified until process restart.
+   */
+  invalidateChatModeCache(chatId: string): void {
+    this.chatModeCache.delete(chatId);
+  }
+
+  /**
    * Extract open_id from sender object.
    */
   /**
