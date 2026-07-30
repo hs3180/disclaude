@@ -146,6 +146,28 @@ function mediaThreadLabel(messageType?: string): string {
 }
 
 /**
+ * Does this chat resource describe a thread-capable ("topic") group?
+ *
+ * Feishu has two thread-isolated group forms, both arriving with event
+ * `chat_type === 'group'`:
+ *  1. True topic group — `chat_mode === 'topic'` (Issue #4401).
+ *  2. Group-format group switched to thread messages — `chat_mode === 'group'`
+ *     && `group_message_type === 'thread'` (Issue #4428, the #4401 residual).
+ *
+ * Both need the thread-isolation path (#3989/#4304), so both resolve the
+ * effective chat_type to `'topic'`. `chat_mode === 'topic'` chats do not return
+ * `group_message_type`, and the field is absent from the SDK's generated types,
+ * so it is read defensively upstream.
+ */
+function isThreadCapableGroup(chatMode?: string, groupMessageType?: string): boolean {
+  if (chatMode === 'topic') {
+    return true;
+  }
+  // Issue #4428: the second thread-capable form.
+  return chatMode === 'group' && groupMessageType === 'thread';
+}
+
+/**
  * Message Handler.
  *
  * Handles incoming Feishu messages and card actions.
@@ -153,16 +175,19 @@ function mediaThreadLabel(messageType?: string): string {
 export class MessageHandler {
   private client?: lark.Client;
   /**
-   * Per-chat `chat_mode` cache for topic-group detection (Issue #4401).
+   * Per-chat topic-detection cache (Issues #4401 / #4428).
    *
-   * Keyed by chat_id; value is the raw `chat_mode` returned by
-   * `GET /open-apis/im/v1/chats/{chat_id}` ('group' | 'topic' | …). A failed
-   * lookup is intentionally NOT cached so a transient error doesn't permanently
-   * misclassify a chat. Invalidation on group↔topic conversion
-   * (`im.chat.updated_v1`) is a documented follow-up — conversions are rare and
-   * the worst case is a stale classification until process restart.
+   * Keyed by chat_id; value holds the two chat-resource fields that decide
+   * thread isolation — `chat_mode` ('group' | 'topic' | …) and, for
+   * group-mode chats, `group_message_type` ('chat' | 'thread'). Both come from
+   * the same `GET /open-apis/im/v1/chats/{chat_id}` response (zero extra API
+   * cost). A failed lookup is intentionally NOT cached so a transient error
+   * doesn't permanently misclassify a chat. Invalidation on chat↔thread /
+   * group↔topic conversion (`im.chat.updated_v1`) is a documented follow-up —
+   * conversions are rare and the worst case is a stale classification until
+   * process restart.
    */
-  private chatModeCache = new Map<string, string>();
+  private chatModeCache = new Map<string, { chatMode?: string; groupMessageType?: string }>();
   private interactionManager: InteractionManager;
   private triggerModeManager: TriggerModeManager;
   private mentionDetector: MentionDetector;
@@ -373,6 +398,18 @@ export class MessageHandler {
    */
   clearClient(): void {
     this.client = undefined;
+  }
+
+  /**
+   * Invalidate the cached chat_mode / group_message_type for a chat.
+   *
+   * Called when a chat's properties change (im.chat.updated_v1) so the next
+   * message re-fetches the current mode instead of trusting a stale cached
+   * value — e.g. after an admin toggles a group between group / topic format,
+   * which would otherwise stay misclassified until process restart.
+   */
+  invalidateChatModeCache(chatId: string): void {
+    this.chatModeCache.delete(chatId);
   }
 
   /**
@@ -1434,22 +1471,25 @@ export class MessageHandler {
   }
 
   /**
-   * Resolve the effective chat type, detecting topic groups via `chat_mode`.
+   * Resolve the effective chat type, detecting thread-capable groups.
    *
-   * Feishu message events expose `chat_type` as `'p2p' | 'group'` only — a topic
-   * group (chat resource `chat_mode === 'topic'`) still arrives with
-   * `chat_type === 'group'`. Without this resolution, every
-   * `chat_type === 'topic'` predicate downstream is structurally dead and thread
-   * isolation (#3989/#4304) is silently bypassed (Issue #4401).
+   * Feishu message events expose `chat_type` as `'p2p' | 'group'` only — both
+   * thread-isolated group forms still arrive with `chat_type === 'group'`:
+   *  1. A true topic group (chat resource `chat_mode === 'topic'`) — Issue #4401.
+   *  2. A group-format group switched to thread messages
+   *     (`chat_mode === 'group'` && `group_message_type === 'thread'`) — Issue #4428.
+   * Without this resolution, every `chat_type === 'topic'` predicate downstream
+   * is structurally dead and thread isolation (#3989/#4304) is silently bypassed.
    *
-   * Fetches `chat_mode` via `GET /open-apis/im/v1/chats/{chat_id}` (the same
-   * call `checkAndAutoDisableSmallGroup` uses for member counts), cached per
-   * chat_id. Non-group events and cache misses that error fall back to the
-   * event's chat_type so message processing is never blocked.
+   * Fetches `chat_mode` and `group_message_type` from the same
+   * `GET /open-apis/im/v1/chats/{chat_id}` response (the same call
+   * `checkAndAutoDisableSmallGroup` uses for member counts), cached per chat_id.
+   * Non-group events and cache misses that error fall back to the event's
+   * chat_type so message processing is never blocked.
    *
    * @param chatId - Chat the message arrived in.
    * @param eventChatType - Raw `chat_type` from the message event.
-   * @returns `'topic'` for topic groups, otherwise the event's chat_type.
+   * @returns `'topic'` for thread-capable groups, otherwise the event's chat_type.
    */
   private async resolveTopicChatType(
     chatId: string,
@@ -1463,7 +1503,7 @@ export class MessageHandler {
     }
     const cached = this.chatModeCache.get(chatId);
     if (cached !== undefined) {
-      return cached === 'topic' ? 'topic' : eventChatType;
+      return isThreadCapableGroup(cached.chatMode, cached.groupMessageType) ? 'topic' : eventChatType;
     }
     if (!this.client) {
       return eventChatType;
@@ -1472,12 +1512,17 @@ export class MessageHandler {
       const response = await this.client.im.chat.get({
         path: { chat_id: chatId },
       });
-      // chat_mode exists on the chat resource but is absent from the SDK's
-      // generated types, so read it defensively.
-      const chatMode = (response.data as { chat_mode?: string } | undefined)?.chat_mode;
-      this.chatModeCache.set(chatId, chatMode ?? 'unknown');
-      if (chatMode === 'topic') {
-        logger.debug({ chatId }, 'Topic group detected via chat_mode (event chat_type was "group")');
+      // chat_mode / group_message_type exist on the chat resource but are absent
+      // from the SDK's generated types, so read them defensively.
+      const data = response.data as { chat_mode?: string; group_message_type?: string } | undefined;
+      const chatMode = data?.chat_mode;
+      const groupMessageType = data?.group_message_type;
+      this.chatModeCache.set(chatId, { chatMode, groupMessageType });
+      if (isThreadCapableGroup(chatMode, groupMessageType)) {
+        logger.debug(
+          { chatId, chatMode, groupMessageType },
+          'Thread-capable group detected (event chat_type was "group")',
+        );
         return 'topic';
       }
       return eventChatType;
