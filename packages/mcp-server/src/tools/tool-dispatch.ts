@@ -13,6 +13,8 @@ import {
   send_file,
   send_interactive_message,
   push_to_agent,
+  loop_stop,
+  loop_status,
 } from './index.js';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
 
@@ -161,6 +163,27 @@ export async function dispatchToolCall(
         chatId: toolArgs.chatId,
         message: toolArgs.message,
       });
+      return successResult(result.success ? result.message : `⚠️ ${result.message}`);
+    }
+
+    // Issue #4419 (3a): expose loop lifecycle tools so the agent can stop a
+    // runaway loop. loopId is validated here (defense in depth — the handler
+    // also checks) and the handler result is surfaced unchanged.
+    case 'loop_stop': {
+      if (typeof toolArgs.loopId !== 'string' || toolArgs.loopId.trim().length === 0) {
+        return errorResult('⚠️ Invalid loopId: must be a non-empty string');
+      }
+
+      const result = await loop_stop({ loopId: toolArgs.loopId });
+      return successResult(result.success ? result.message : `⚠️ ${result.message}`);
+    }
+
+    case 'loop_status': {
+      if (typeof toolArgs.loopId !== 'string' || toolArgs.loopId.trim().length === 0) {
+        return errorResult('⚠️ Invalid loopId: must be a non-empty string');
+      }
+
+      const result = await loop_status({ loopId: toolArgs.loopId });
       return successResult(result.success ? result.message : `⚠️ ${result.message}`);
     }
 

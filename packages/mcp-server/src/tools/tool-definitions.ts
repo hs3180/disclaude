@@ -212,4 +212,51 @@ The agent will be lazily created if it doesn't exist yet, and the instruction wi
       required: ['chatId', 'message'],
     },
   },
+  {
+    // Issue #4419 (3a): expose loop lifecycle tools in the common agent
+    // toolset so a business agent can stop a runaway loop itself — previously
+    // loop_stop/loop_status existed as implementations but were NOT wired into
+    // tools/list, so the agent had no way to halt a misconfigured loop and had
+    // to wait for maxDuration timeout.
+    name: 'loop_stop',
+    description: `Stop a running loop execution by its loopId.
+
+A loop repeatedly pushes instructions to a chat agent on a schedule. Use this to halt a loop that is no longer needed or was misconfigured (e.g. wrong execution chat). The loopId is announced once in the execution chat when the loop starts.
+
+## Parameters
+- **loopId**: The loop identifier (string)
+
+## Important
+Deleting the loop's LOOP.md definition file does NOT stop a running loop — only loop_stop does.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        loopId: {
+          type: 'string',
+          description: 'The loop identifier to stop (shown at loop start).',
+        },
+      },
+      required: ['loopId'],
+    },
+  },
+  {
+    // Issue #4419 (3a): expose loop_status alongside loop_stop.
+    name: 'loop_status',
+    description: `Get the current status of a running loop execution by its loopId.
+
+Returns the loop's state, current/total step count, and start time so you can decide whether a loop is still running or should be stopped.
+
+## Parameters
+- **loopId**: The loop identifier (string)`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        loopId: {
+          type: 'string',
+          description: 'The loop identifier to query (shown at loop start).',
+        },
+      },
+      required: ['loopId'],
+    },
+  },
 ];

@@ -13,6 +13,20 @@ describe('toolDefinitions', () => {
     expect(toolDefinitions.length).toBeGreaterThanOrEqual(5);
   });
 
+  // Issue #4419 (3a): loop_stop / loop_status must be exposed in the agent
+  // toolset so a business agent can stop a runaway loop itself. These existed
+  // as implementations but were previously missing from tools/list.
+  it('exposes loop_stop and loop_status (Issue #4419)', () => {
+    const names = toolDefinitions.map(t => t.name);
+    expect(names).toContain('loop_stop');
+    expect(names).toContain('loop_status');
+    for (const tool of toolDefinitions) {
+      if (tool.name === 'loop_stop' || tool.name === 'loop_status') {
+        expect(tool.inputSchema.required).toContain('loopId');
+      }
+    }
+  });
+
   it('every tool should have a non-empty name', () => {
     for (const tool of toolDefinitions) {
       expect(tool.name).toBeTruthy();

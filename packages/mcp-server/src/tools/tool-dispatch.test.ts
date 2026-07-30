@@ -19,6 +19,8 @@ vi.mock('./index.js', () => ({
   send_file: vi.fn(),
   send_interactive_message: vi.fn(),
   push_to_agent: vi.fn(),
+  loop_stop: vi.fn(),
+  loop_status: vi.fn(),
 }));
 
 vi.mock('../utils/card-validator.js', () => ({
@@ -34,6 +36,8 @@ import {
   send_file,
   send_interactive_message,
   push_to_agent,
+  loop_stop,
+  loop_status,
 } from './index.js';
 import { isValidFeishuCard } from '../utils/card-validator.js';
 
@@ -376,6 +380,55 @@ describe('dispatchToolCall', () => {
       vi.mocked(push_to_agent).mockResolvedValue({ success: false, message: 'IPC unavailable' });
       const result = await dispatchToolCall('push_to_agent', { chatId: VALID_CHAT_ID, message: 'Hello' }) as ToolResult;
       expect(result.content[0].text).toContain('⚠️');
+    });
+  });
+
+  describe('loop_stop', () => {
+    it('rejects missing loopId', async () => {
+      const result = await dispatchToolCall('loop_stop', {}) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('loopId');
+      expect(loop_stop).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-string loopId', async () => {
+      const result = await dispatchToolCall('loop_stop', { loopId: 123 }) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(loop_stop).not.toHaveBeenCalled();
+    });
+
+    it('calls loop_stop on valid input and returns success', async () => {
+      vi.mocked(loop_stop).mockResolvedValue({ success: true, message: 'Loop stopped: loop_abc' });
+      const result = await dispatchToolCall('loop_stop', { loopId: 'loop_abc' }) as ToolResult;
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('Loop stopped');
+      expect(loop_stop).toHaveBeenCalledWith({ loopId: 'loop_abc' });
+    });
+
+    it('prefixes handler failure with ⚠️', async () => {
+      vi.mocked(loop_stop).mockResolvedValue({ success: false, message: 'Loop not found' });
+      const result = await dispatchToolCall('loop_stop', { loopId: 'loop_abc' }) as ToolResult;
+      expect(result.content[0].text).toContain('⚠️');
+    });
+  });
+
+  describe('loop_status', () => {
+    it('rejects missing loopId', async () => {
+      const result = await dispatchToolCall('loop_status', {}) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('loopId');
+      expect(loop_status).not.toHaveBeenCalled();
+    });
+
+    it('calls loop_status on valid input and returns success', async () => {
+      vi.mocked(loop_status).mockResolvedValue({
+        success: true,
+        message: 'Loop loop_abc: running (step 2/5, started 2026-07-30T06:00:00Z)',
+      });
+      const result = await dispatchToolCall('loop_status', { loopId: 'loop_abc' }) as ToolResult;
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain('running');
+      expect(loop_status).toHaveBeenCalledWith({ loopId: 'loop_abc' });
     });
   });
 
