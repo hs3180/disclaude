@@ -152,6 +152,17 @@ function mediaThreadLabel(messageType?: string): string {
  */
 export class MessageHandler {
   private client?: lark.Client;
+  /**
+   * Per-chat `chat_mode` cache for topic-group detection (Issue #4401).
+   *
+   * Keyed by chat_id; value is the raw `chat_mode` returned by
+   * `GET /open-apis/im/v1/chats/{chat_id}` ('group' | 'topic' | …). A failed
+   * lookup is intentionally NOT cached so a transient error doesn't permanently
+   * misclassify a chat. Invalidation on group↔topic conversion
+   * (`im.chat.updated_v1`) is a documented follow-up — conversions are rare and
+   * the worst case is a stale classification until process restart.
+   */
+  private chatModeCache = new Map<string, string>();
   private interactionManager: InteractionManager;
   private triggerModeManager: TriggerModeManager;
   private mentionDetector: MentionDetector;
@@ -816,13 +827,22 @@ export class MessageHandler {
       return;
     }
 
-    const { message_id, chat_id, chat_type, content, message_type, create_time, mentions, parent_id } = message;
+    const { message_id, chat_id, chat_type: rawChatType, content, message_type, create_time, mentions, parent_id } = message;
     const threadId = message_id;
 
     if (!message_id || !chat_id || !content || !message_type) {
       logger.warn('Missing required message fields');
       return;
     }
+
+    // Issue #4401: Feishu message events carry chat_type as 'p2p' | 'group'
+    // only — a topic group still arrives as chat_type 'group', so the raw
+    // value would leave every downstream `chat_type === 'topic'` predicate dead
+    // and bypass thread isolation (#3989/#4304). Resolve the *effective* chat
+    // type from the chat resource's chat_mode (cached per chat_id) so the
+    // existing topic contract actually fires. Falls back to the event value on
+    // any error so message processing never blocks on the lookup.
+    const chat_type = await this.resolveTopicChatType(chat_id, rawChatType);
 
     // Pre-compute whether a bot sender @mentions our bot (bot-to-bot, #1742).
     const botMentionsUs = sender?.sender_type === 'app' && this.mentionDetector.isBotMentioned(mentions);
@@ -1410,6 +1430,61 @@ export class MessageHandler {
           text: `❌ 处理卡片操作时发生错误：${error instanceof Error ? error.message : '未知错误'}`,
         });
       }
+    }
+  }
+
+  /**
+   * Resolve the effective chat type, detecting topic groups via `chat_mode`.
+   *
+   * Feishu message events expose `chat_type` as `'p2p' | 'group'` only — a topic
+   * group (chat resource `chat_mode === 'topic'`) still arrives with
+   * `chat_type === 'group'`. Without this resolution, every
+   * `chat_type === 'topic'` predicate downstream is structurally dead and thread
+   * isolation (#3989/#4304) is silently bypassed (Issue #4401).
+   *
+   * Fetches `chat_mode` via `GET /open-apis/im/v1/chats/{chat_id}` (the same
+   * call `checkAndAutoDisableSmallGroup` uses for member counts), cached per
+   * chat_id. Non-group events and cache misses that error fall back to the
+   * event's chat_type so message processing is never blocked.
+   *
+   * @param chatId - Chat the message arrived in.
+   * @param eventChatType - Raw `chat_type` from the message event.
+   * @returns `'topic'` for topic groups, otherwise the event's chat_type.
+   */
+  private async resolveTopicChatType(
+    chatId: string,
+    eventChatType: string | undefined,
+  ): Promise<string | undefined> {
+    // Only group chats can be topic groups; p2p is never topic. Preserving a
+    // literal `'topic'` event value keeps existing tests (and any future event
+    // that does carry it) meaningful.
+    if (eventChatType !== 'group') {
+      return eventChatType;
+    }
+    const cached = this.chatModeCache.get(chatId);
+    if (cached !== undefined) {
+      return cached === 'topic' ? 'topic' : eventChatType;
+    }
+    if (!this.client) {
+      return eventChatType;
+    }
+    try {
+      const response = await this.client.im.chat.get({
+        path: { chat_id: chatId },
+      });
+      // chat_mode exists on the chat resource but is absent from the SDK's
+      // generated types, so read it defensively.
+      const chatMode = (response.data as { chat_mode?: string } | undefined)?.chat_mode;
+      this.chatModeCache.set(chatId, chatMode ?? 'unknown');
+      if (chatMode === 'topic') {
+        logger.debug({ chatId }, 'Topic group detected via chat_mode (event chat_type was "group")');
+        return 'topic';
+      }
+      return eventChatType;
+    } catch (error) {
+      // Don't cache the failure — let the next message retry.
+      logger.debug({ err: error, chatId }, 'Failed to fetch chat_mode for topic detection; falling back to event chat_type');
+      return eventChatType;
     }
   }
 
