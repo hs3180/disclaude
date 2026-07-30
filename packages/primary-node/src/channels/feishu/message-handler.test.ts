@@ -2330,6 +2330,120 @@ describe('MessageHandler', () => {
       expect(chatGet).toHaveBeenCalledTimes(1);
     });
 
+    it('re-fetches chat_mode after invalidateChatModeCache clears the cache (Issue #4428 invalidation)', async () => {
+      // im.chat.updated_v1 fires when a chat's properties change (rename, or a
+      // group/topic format toggle). The channel dispatcher calls
+      // invalidateChatModeCache so the next message does not trust a stale
+      // cached mode. Prime the cache, confirm a second message is served from
+      // cache, invalidate, then confirm a third message re-fetches.
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'topic', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+
+      const event = (messageId: string) => ({
+        event: {
+          message: {
+            message_id: messageId,
+            chat_id: 'chat_topic_invalidate',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'hi' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      await handler.handleMessageReceive(event('msg_a'));
+      await handler.handleMessageReceive(event('msg_b'));
+      // Cached after the first fetch; the second message did not re-fetch.
+      expect(chatGet).toHaveBeenCalledTimes(1);
+
+      // Simulate im.chat.updated_v1 arriving from the channel dispatcher.
+      handler.invalidateChatModeCache('chat_topic_invalidate');
+
+      await handler.handleMessageReceive(event('msg_c'));
+      // Cache was invalidated, so the third message re-fetches chat_mode.
+      expect(chatGet).toHaveBeenCalledTimes(2);
+    });
+
+    it('detects a topic-format group from group_message_type=thread when chat_mode is "group" (Issue #4428)', async () => {
+      // Issue #4428 (#4401 residual): a group-format group switched to thread
+      // messages arrives with chat_type "group" AND chat_mode "group", so the
+      // #4401 chat_mode signal does not fire. group_message_type="thread" is the
+      // only authoritative signal for this second thread-capable form. Mock
+      // non-empty flat history so this test FAILS if group_message_type
+      // resolution regresses (flat history would leak across threads).
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('LEAKED_FLAT_HISTORY');
+
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'group', group_message_type: 'thread', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_via_groupMessageType',
+            chat_id: 'chat_topic_format_group',
+            chat_type: 'group', // <- chat_mode is also "group"; only group_message_type reveals the thread form
+            content: JSON.stringify({ text: 'Topic reply via group_message_type' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            // no parent_id: a standalone topic post must still skip flat history
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(chatGet).toHaveBeenCalledWith({ path: { chat_id: 'chat_topic_format_group' } });
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      // chat_type is normalized to "topic" so the downstream contract fires.
+      expect(msg.metadata.chatType).toBe('topic');
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('does NOT classify a plain group (group_message_type=chat) as a topic group (Issue #4428)', async () => {
+      // Issue #4428 negative case: a group-mode chat with thread messages OFF
+      // (group_message_type="chat") must stay a plain group — only the "thread"
+      // value triggers topic isolation.
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'group', group_message_type: 'chat', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_plain_group',
+            chat_id: 'chat_plain_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Plain group reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.chatType).toBe('group');
+    });
+
     it('should surface download guidance (not eager download) for media in thread context (Issue #4319)', async () => {
       const mockClient = {
         im: {

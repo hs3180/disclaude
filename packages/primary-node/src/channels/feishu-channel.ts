@@ -303,6 +303,20 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           );
         }
       },
+      'im.chat.updated_v1': (data: unknown) => {
+        // A chat's properties changed (rename, description, or a group/topic
+        // format toggle). Drop the cached chat_mode / group_message_type so the
+        // next message re-fetches — no need to parse the diff, lazy re-fetch on
+        // the next message is correct and wastes nothing when no message comes.
+        try {
+          const chatId = extractChatIdFromEvent(data);
+          if (chatId) {
+            this.feishuMessageHandler.invalidateChatModeCache(chatId);
+          }
+        } catch (error) {
+          logger.warn({ err: error }, 'Failed to invalidate chat_mode cache on chat update');
+        }
+      },
     });
 
     // Create SDK logger
