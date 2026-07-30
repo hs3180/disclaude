@@ -117,17 +117,20 @@ describe('handleRequest', () => {
   });
 
   describe('tools/list', () => {
-    it('should return all 5 tool definitions (incl. push_to_agent)', async () => {
+    it('should return all tool definitions (incl. push_to_agent, loop_stop, loop_status)', async () => {
       const response = await handleRequest(makeRequest('tools/list'));
       expect(response.result).toBeDefined();
       const { tools } = response.result as { tools: { name: string }[] };
-      expect(tools).toHaveLength(5);
+      expect(tools).toHaveLength(7);
       const names = tools.map((t) => t.name);
       expect(names).toContain('send_text');
       expect(names).toContain('send_card');
       expect(names).toContain('send_interactive');
       expect(names).toContain('send_file');
       expect(names).toContain('push_to_agent');
+      // Issue #4419 (3a): loop lifecycle tools now exposed in the agent toolset.
+      expect(names).toContain('loop_stop');
+      expect(names).toContain('loop_status');
     });
   });
 
