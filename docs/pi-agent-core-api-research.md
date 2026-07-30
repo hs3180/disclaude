@@ -32,7 +32,7 @@
 
 ## 1. MCP — NOT natively consumed ❌
 
-`grep -rn -iE 'mcp' dist/**/*.d.ts` returns **no matches**. The package has no
+`grep -rn -iE 'mcp' --include='*.d.ts' dist` returns **no matches**. The package has no
 MCP client/server types. Tool calling is exclusively through its own
 `AgentHarnessTool` format (see §3) plus a set of **built-in harness tools**
 (`bash`, `read`, `write`, `edit`, `image`, `edit-diff`, `file-mutation-queue`
@@ -48,7 +48,7 @@ equivalent.
 ## 2. Streaming events — `AgentEvent` discriminated union
 
 `agentLoop(...)` returns `EventStream<AgentEvent, AgentMessage[]>`
-(`agent-loop.d.ts:12`). `AgentEvent` (`types.ts:368`) is:
+(`agent-loop.d.ts:12`). `AgentEvent` (`types.d.ts:368`) is:
 
 | pi `AgentEvent.type`   | payload highlights                              | → disclaude `AgentMessageType` |
 | ---------------------- | ----------------------------------------------- | ------------------------------ |
@@ -77,7 +77,7 @@ message type rather than expect a dedicated event.
 
 ## 3. Tool definition format — TypeBox + richer execute
 
-pi (`harness/types.ts:58`):
+pi (`harness/types.d.ts:58`):
 
 ```ts
 type AgentHarnessTool<TContext extends object | undefined, TParameters extends TSchema = TSchema, TDetails = unknown>
