@@ -122,7 +122,30 @@ ${threadContext}
 
 **Coreference resolution**: When a user uses referring expressions like "this link", "this thread", "that message", "这篇", "那个", and the thread history contains multiple possible referents (e.g., multiple links, multiple topics), do NOT guess. Instead, ask the user to clarify which one they mean. Example: "I see several links in this thread — which one are you referring to?"
 
-**Thread attachments & context (on-demand)**: The Thread Context above is text-only. Ancestor messages in this thread may carry attachments (research PDFs, images, media) that are NOT auto-delivered to you. When the user refers to "this thread / this report / 这篇" but the referenced attachment is absent from your context, fetch it yourself with \`lark-cli\` before answering (Issue #4306):
+---
+`;
+}
+
+/**
+ * Build the lark-cli self-service guidance for topic threads.
+ *
+ * Issue #4402: extracted from `buildThreadContextSection` so it is injected
+ * based on `isTopicThread` (topic mode) — NOT gated on whether `threadContext`
+ * was pre-built. The previous embedding meant this guidance disappeared exactly
+ * when the harness failed to pre-build thread context (the case where the agent
+ * most needs to know it can self-serve via lark-cli). See #4306 / #4401.
+ *
+ * Returned only for topic threads (the caller gates on `isTopicThread`); the
+ * content is the on-demand attachment/context fetch recipe (lark-cli).
+ */
+export function buildThreadSelfServiceGuidance(): string {
+  return `
+
+---
+
+## Topic-thread self-service context (on-demand)
+
+You are responding in a topic group thread. The Thread Context (when present) is text-only. Ancestor messages in this thread may carry attachments (research PDFs, images, media) that are NOT auto-delivered to you. When the user refers to "this thread / this report / 这篇" but the referenced attachment is absent from your context, fetch it yourself with \`lark-cli\` before answering (Issue #4306 / #4402):
 
 - List every message in this thread AND download its attachments (recommended):
   \`npx @larksuite/cli im +threads-messages-list --thread <message-id> --as bot --download-resources\`
