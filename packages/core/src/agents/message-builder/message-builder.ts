@@ -33,6 +33,7 @@ import {
   buildChatHistorySection,
   buildPersistedHistorySection,
   buildThreadContextSection,
+  buildThreadSelfServiceGuidance,
   buildNextStepGuidance,
   buildOutputFormatGuidance,
   buildTaskRecordGuidance,
@@ -135,6 +136,9 @@ export class MessageBuilder {
     const chatHistorySection = isTopicThread ? '' : buildChatHistorySection(msg.chatHistoryContext);
     const persistedHistorySection = buildPersistedHistorySection(msg.persistedHistoryContext, msg.chatLogFilePaths);
     const threadContextSection = buildThreadContextSection(msg.threadContext);
+    // Issue #4402: lark-cli self-service guidance, decoupled from threadContext.
+    // Injected for topic threads even when threadContext wasn't pre-built.
+    const threadSelfServiceGuidance = isTopicThread ? buildThreadSelfServiceGuidance() : '';
 
     // Channel-specific content after history (e.g., @ mention section)
     const postHistory = this.options.buildPostHistory?.(ctx);
@@ -166,6 +170,9 @@ export class MessageBuilder {
     }
     if (threadContextSection) {
       sections.push(threadContextSection);
+    }
+    if (threadSelfServiceGuidance) {
+      sections.push(threadSelfServiceGuidance);
     }
     if (postHistory) {
       sections.push(postHistory);
