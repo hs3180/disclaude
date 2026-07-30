@@ -1287,9 +1287,12 @@ describe('MessageHandler', () => {
         im: {
           chat: {
             get: vi.fn()
-              // First call: 2 members (small group)
+              // Call 1: topic-detection (Issue #4401) for the 1st message — value
+              // is irrelevant (no chat_mode ⇒ treated as a plain group, cached).
               .mockResolvedValueOnce({ data: { user_count: '1', bot_count: '1' } })
-              // Second call: 3 members (group grew)
+              // Call 2: 2 members (small group) — small-group check on 1st message
+              .mockResolvedValueOnce({ data: { user_count: '1', bot_count: '1' } })
+              // Call 3: 3 members (group grew) — small-group recheck on 2nd message
               .mockResolvedValueOnce({ data: { user_count: '2', bot_count: '1' } }),
           },
         },
@@ -1369,7 +1372,8 @@ describe('MessageHandler', () => {
           sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
         },
       });
-      expect(mockClient.im.chat.get).toHaveBeenCalledTimes(1);
+      // 2 calls on the 1st message: 1 topic-detection (#4401) + 1 small-group check.
+      expect(mockClient.im.chat.get).toHaveBeenCalledTimes(2);
       expect(triggerModeManager.isTriggerEnabled('chat_throttle')).toBe(true);
 
       // Second message: within cooldown, should NOT recheck
@@ -1386,8 +1390,9 @@ describe('MessageHandler', () => {
           sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
         },
       });
-      // API should NOT have been called again
-      expect(mockClient.im.chat.get).toHaveBeenCalledTimes(1);
+      // API should NOT have been called again (still the 2 calls from msg 1:
+      // topic-detection is cached per chat_id, and small-group is in cooldown).
+      expect(mockClient.im.chat.get).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -2252,6 +2257,77 @@ describe('MessageHandler', () => {
       const msg = firstCallArg(mockState.emitMessage);
       expect(msg.metadata).toBeDefined();
       expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('detects a topic group from chat_mode when the event chat_type is "group" (Issue #4401)', async () => {
+      // Issue #4401: real topic groups arrive with chat_type "group" (the event
+      // enum is only p2p|group); chat_mode is the only authoritative signal.
+      // Mock non-empty flat history so this test FAILS if chat_mode resolution
+      // regresses (flat history would leak across threads).
+      mockState.getChatHistory.mockReset();
+      mockState.getChatHistory.mockResolvedValue('LEAKED_FLAT_HISTORY');
+
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'topic', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_topic_via_chatmode',
+            chat_id: 'chat_topic_group',
+            chat_type: 'group', // <- the real-world case: event says "group"
+            content: JSON.stringify({ text: 'Topic reply via chat_mode' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            // no parent_id: a standalone topic post must still skip flat history
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(chatGet).toHaveBeenCalledWith({ path: { chat_id: 'chat_topic_group' } });
+      expect(mockState.getChatHistory).not.toHaveBeenCalled();
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata).toBeDefined();
+      // chat_type is normalized to "topic" so the downstream contract fires.
+      expect(msg.metadata.chatType).toBe('topic');
+      expect(msg.metadata.chatHistoryContext).toBeUndefined();
+    });
+
+    it('caches chat_mode so a second message in the same chat does not re-fetch (Issue #4401)', async () => {
+      const chatGet = vi.fn().mockResolvedValue({
+        data: { chat_mode: 'topic', user_count: '5', bot_count: '1' },
+      });
+      const mockClient = { im: { chat: { get: chatGet } } };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+
+      const event = (messageId: string) => ({
+        event: {
+          message: {
+            message_id: messageId,
+            chat_id: 'chat_topic_cached',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'hi' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      } as any);
+
+      await handler.handleMessageReceive(event('msg_a'));
+      await handler.handleMessageReceive(event('msg_b'));
+
+      // One chat.get per chat_id, then served from cache.
+      expect(chatGet).toHaveBeenCalledTimes(1);
     });
 
     it('should surface download guidance (not eager download) for media in thread context (Issue #4319)', async () => {
