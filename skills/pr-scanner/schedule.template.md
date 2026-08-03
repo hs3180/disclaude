@@ -15,6 +15,7 @@ chatId: "{controlChannelChatId}"
 - **仓库**: `{repo}`
 - **并发上限**: {maxConcurrent}
 - **邀请用户**: `{inviteUsers}`（可选，逗号分隔的飞书 open_id，创建讨论群时自动邀请）
+- **映射文件(canonical)**: `{mappingFile}`（默认 `{workspace_root}/workspace/bot-chat-mapping.json`；dissolve-group 回退命令须显式传 `MAPPING_FILE={mappingFile}` 以免解析到错误文件，见步骤 4c.2）
 
 ## 数据结构
 
@@ -107,7 +108,9 @@ lark-cli api GET "/open-apis/im/v1/messages" --as bot --query container_id_type=
 对 `reminderCount` ≥ 3 且**超过 4h 无任何用户消息**的群（"多次提醒超时"），scanner **主动解散**，防止单个 PR 长期占住名额、阻塞排队 PR：
 
 1. **解散前**在群内发总结消息：「⏰ 本 review 群已达最高提醒级别（加急）且持续 >4h 无响应，scanner 自动解散以释放名额。PR 仍 open，将在冷却后（默认 24h）由 scanner 重新排队建群。」
-2. **调用 dissolve-group** 解散（清理群 + workdir + 映射条目）：`DISSOLVE_KEY=pr-{number}`；如 Skill 不可用，回退到 Bash：`cd {workspace_root} && DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`（同「PR 关闭后清理」）。
+2. **调用 dissolve-group** 解散（清理群 + workdir + 映射条目）：`DISSOLVE_KEY=pr-{number}`；如 Skill 不可用，回退到 Bash：`cd {workspace_root} && MAPPING_FILE={mappingFile} DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`（同「PR 关闭后清理」）。
+   - ⚠️ **必须显式 `MAPPING_FILE={mappingFile}`**：`dissolve-group.ts` 默认按脚本所在目录 `../../..` 解析 mapping 路径，从非 canonical 位置运行会落到错误文件、与 scanner 主流程 desync（曾致孤儿群/重复群）。
+   - ⚠️ **不可用软链兜底**：该 skill 用 write-tmp+rename 原子写，rename 会替换软链本身而非目标 → desync 复现。
 3. **冷却抑制**：解散后向映射表写入抑制条目 `pr-{number}`：`{purpose: "pr-review-suppressed", suppressedAt: <now>, suppressedUntil: <now+24h>, reason: "timeout-4h"}`。该条目使步骤 3 视该 PR 为「已有群」（不重复建群）、且不计入步骤 5 的并发名额（`purpose != "pr-review"`）。
    - ⚠️ **写入方式**：步骤 4c.2 已由 dissolve-group 删除该 `pr-{number}` 条目，故此处必须**直接原子写 `bot-chat-mapping.json`**（读 JSON → `table[key] = entry` → 临时文件 + 原子 rename，与 dissolve-group 自身做法一致）。**不可用 `store.update`**（key 不在缓存中会返回 `null`、不写入）；`store.set` 仅持久化 `MappingEntry` 固定字段（`chatId/createdAt/purpose/workdir/lastReminderAt/reminderCount`），不含 `suppressedAt/suppressedUntil/reason`，会丢弃这三项 → 冷却落不了盘、4c.4 的到期检查无依据。
 4. **冷却到期**：每次扫描检查所有 `purpose: "pr-review-suppressed"` 条目，若 `suppressedUntil` 已过则删除条目 —— 该 PR 重新变为「新 PR」，可被步骤 5 重新建群。
@@ -165,7 +168,7 @@ lark-cli im +chat-create --as bot --name "PR #{number} · {title前30字}" --des
 2. 使用 Skill 工具调用 dissolve-group 解散本群并释放名额：
    Skill: dissolve-group，参数: DISSOLVE_KEY=pr-{number}
    如 Skill 不可用，回退到 Bash 执行：
-   `cd {workspace_root} && DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`
+   `cd {workspace_root} && MAPPING_FILE={mappingFile} DISSOLVE_KEY=pr-{number} npx tsx skills/dissolve-group/dissolve-group.ts`
 ```
 
 ### 6. 清理临时目录
