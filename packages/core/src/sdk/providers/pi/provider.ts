@@ -81,8 +81,34 @@ export class PiAgentProvider implements IAgentSDKProvider {
     return adaptInlineTool(definition);
   }
 
-  createMcpServer(_config: McpServerConfig): unknown {
-    throw new Error(NOT_IMPLEMENTED);
+  createMcpServer(config: McpServerConfig): unknown {
+    if (config.type === 'inline') {
+      // Issue #4417 (S4, part 1): build an inline MCP server handle from
+      // disclaude tool definitions, mirroring ClaudeSDKProvider (claude/
+      // provider.ts). Each tool is wrapped via createInlineTool, which produces
+      // a pi AgentHarnessTool shape (inline-tool-adapter.ts). The returned
+      // handle carries the AgentHarnessTool[] that the pi queryStream path
+      // (#4386 part 3) will inject into the agentLoop via setTools.
+      //
+      // Part-1 scope: inline handle construction + stdio decision. Deferred to
+      // later parts of #4417: external stdio MCP servers (e.g. Playwright MCP),
+      // which need the @modelcontextprotocol/sdk client → AgentHarnessTool
+      // converter (S4b), and the live tool injection (needs the running
+      // agentLoop, #4386).
+      const tools = (config.tools?.map((tool) => this.createInlineTool(tool)) ?? []);
+      return {
+        name: config.name,
+        version: config.version,
+        tools,
+      };
+    }
+
+    // stdio MCP servers are not supported by the pi backend, matching
+    // ClaudeSDKProvider's stance. External stdio servers require the
+    // @modelcontextprotocol/sdk client converter tracked under #4417 (S4b).
+    throw new Error(
+      'stdio MCP servers are not supported by PiAgentProvider.createMcpServer',
+    );
   }
 
   // --------------------------------------------------------------------------
