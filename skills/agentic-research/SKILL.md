@@ -133,6 +133,35 @@ Bad: "I'll use some sample data to demonstrate..."
 2. **Verify accuracy**: Are sources cited correctly?
 3. **Get feedback**: Does the output meet user needs?
 
+## Handling User Feedback During Async Research
+
+> Issue #4017. When research runs asynchronously (a separate execution chat driven by loop / scheduled ticks), user feedback — corrections, intent changes, scope or source-preference adjustments — originates in the **initial conversation** with the user, *not* in the research execution chat. The execution chat carries progress updates and delivery; it is not a feedback channel. Feedback reaches the async research **only through the shared state file** — never by reading the initial conversation's messages.
+
+The mechanism is a safe, append-only write to `RESEARCH.md`: the conversation Agent captures feedback there, and the research Agent reads it each tick. There is **no cross-conversation message reading and no `sourceChatId` wiring** — the earlier cross-conversation approach was reviewed and rejected (see closed PR #4030); the agreed direction is direct, safe `RESEARCH.md` modification.
+
+### Write side — capture feedback into RESEARCH.md (conversation Agent)
+
+When the user gives feedback in the initial conversation while async research is running, **directly modify `RESEARCH.md`** in the research workdir:
+
+1. Append a timestamped entry to a dedicated `## User Feedback` section (create the section if it does not yet exist). Keep it **append-only** — never rewrite or delete prior entries.
+2. One feedback point per entry. In 1–3 lines state **what** the user wants changed (intent / correction / new constraint / source preference) and, if given, **why**. Quote the user's words where it removes ambiguity.
+3. Do not pre-filter or editorialize — capture the user's intent faithfully; the research Agent decides whether and how to apply it.
+
+Example entry:
+
+- **2026-08-04 14:05 — narrow scope**: User said "Drop the EU comparison; focus only on US and China." → limit geography to US + China; EU section out of scope.
+
+Only the `## User Feedback` section is written from the conversation side; the research Agent owns every other section of `RESEARCH.md`.
+
+### Read side — let feedback adjust direction (research Agent)
+
+At the **start of each tick**, re-read the `## User Feedback` section of `RESEARCH.md` alongside the rest of the state file. Treat new entries as **suggestive, not authoritative**: evaluate each against the current findings before acting, acknowledge what you applied in the next progress card, and do not retroactively rewrite already-delivered sections unless the feedback explicitly asks for it.
+
+### Properties
+
+- **Async and non-blocking.** Writing feedback never interrupts the running tick; it takes effect on the next read. Never block a tick waiting for feedback.
+- **Single channel.** The `## User Feedback` section of `RESEARCH.md` is the only feedback path into the async research — the user should not need to repeat themselves in the execution chat.
+
 ## Quality Checklist
 
 Before completing a research task:
