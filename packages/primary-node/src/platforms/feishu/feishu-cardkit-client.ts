@@ -7,6 +7,11 @@
  *
  * Endpoints (verified against the live Feishu API 2026-07-28; the earlier
  * "#4238 says PATCH" claim was wrong — PATCH 404s, the real method is PUT):
+ *   POST  /open-apis/cardkit/v1/cards
+ *           — create a card, obtain a `card_id` (#4395 part 2).
+ *             Body: { type: 'card_json', data: <stringified card> }.
+ *             (Create has no uuid/sequence — those belong to the update ops.)
+ *             Decision #4208 (2026-08-03) settled this create path.
  *   PUT   /open-apis/cardkit/v1/cards/{card_id}/elements/{element_id}/content
  *           — typewriter streaming: incremental element content.
  *             Body: { content, sequence, uuid }.
@@ -26,9 +31,12 @@
  * plumbing carries it in `process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN`
  * (see feishu-channel.ts); `createCardKitClientFromEnv()` reuses that.
  *
- * Scope (this file = #4395 part 1): the update/finalize operations. `createCard`
- * (obtain a card_id) is deferred to part 2; callers obtain a card_id by other
- * means for now. Nothing in disclaude wires this client yet (pure infrastructure).
+ * Scope (this file = #4395 parts 1 + 2): the create + update/finalize
+ * operations. `createCard` (part 2) was deferred from #4411 until the create
+ * path was settled — decision #4208 (2026-08-03) settled it on Card Kit native
+ * POST /cards. The message-send step that makes a created card appear in a
+ * conversation is wiring (ChatAgent / #4399 / #4400), NOT this client. Nothing
+ * in disclaude wires this client yet (pure infrastructure).
  */
 
 import { createLogger } from '@disclaude/core';
@@ -122,6 +130,34 @@ export class FeishuCardKitClient {
   }
 
   /**
+   * Create a streaming card and obtain its `card_id` (#4395 part 2).
+   * `POST /cardkit/v1/cards`.
+   *
+   * The card is sent as `{ type: 'card_json', data: <stringified card> }` — the
+   * same envelope `updateCard` uses. The response's `data.card_id` is the
+   * handle every subsequent PUT/PATCH operation targets (callers pass it to
+   * `updateElementContent` / `updateCard` / `finalizeStreaming`). Decision #4208
+   * (2026-08-03) settled the create path: Card Kit native POST /cards with
+   * `type: card_json`, then a separate message-send step makes the card appear
+   * in a conversation — that send is wiring (ChatAgent / #4399 / #4400), out of
+   * scope for this pure-infrastructure client.
+   *
+   * @param card - the JSON-2.0 card object (e.g. buildStreamingPlaceholderCard()
+   *               from #4396); serialized into `{type:'card_json', data}`
+   * @returns the created card's id + the parsed response body
+   */
+  async createCard(card: unknown): Promise<CardKitCreateResult> {
+    // Create has no uuid/sequence (those are update-op fields, verified against
+    // the Feishu create-card doc — POST /cards body is {type, data} only).
+    const result = await this.request('POST', '/cards', {
+      type: 'card_json',
+      data: JSON.stringify(card),
+    });
+    const cardId = extractCardId(result.data);
+    return { ...result, cardId };
+  }
+
+  /**
    * PUT a single element's content (typewriter streaming).
    * `PUT /cardkit/v1/cards/{card_id}/elements/{element_id}/content`.
    *
@@ -137,12 +173,12 @@ export class FeishuCardKitClient {
     elementId: string,
     content: string,
     sequence: number,
-    uuid?: string,
+    uuid?: string
   ): Promise<CardKitResult> {
     return this.request(
       'PUT',
       `/cards/${encodeURIComponent(cardId)}/elements/${encodeURIComponent(elementId)}/content`,
-      { content, sequence, uuid: uuid ?? randomUuid() },
+      { content, sequence, uuid: uuid ?? randomUuid() }
     );
   }
 
@@ -160,7 +196,7 @@ export class FeishuCardKitClient {
     cardId: string,
     card: unknown,
     sequence: number,
-    uuid?: string,
+    uuid?: string
   ): Promise<CardKitResult> {
     return this.request('PUT', `/cards/${encodeURIComponent(cardId)}`, {
       card: { type: 'card_json', data: JSON.stringify(card) },
@@ -185,7 +221,7 @@ export class FeishuCardKitClient {
     cardId: string,
     sequence: number,
     uuid?: string,
-    settings: Record<string, unknown> = { config: { streaming_mode: false } },
+    settings: Record<string, unknown> = { config: { streaming_mode: false } }
   ): Promise<CardKitResult> {
     return this.request('PATCH', `/cards/${encodeURIComponent(cardId)}/settings`, {
       settings: JSON.stringify(settings),
@@ -203,9 +239,9 @@ export class FeishuCardKitClient {
    * the `ret !== 0` check in wechat/api-client.ts).
    */
   private async request(
-    method: 'PUT' | 'PATCH',
+    method: 'POST' | 'PUT' | 'PATCH',
     path: string,
-    body: unknown,
+    body: unknown
   ): Promise<CardKitResult> {
     const url = `${this.baseUrl}${CARDKIT_PATH}${path}`;
 
@@ -242,7 +278,7 @@ export class FeishuCardKitClient {
         throw new CardKitClientError(
           'Card Kit API rejected tenant_access_token (401 Unauthorized). Refresh LARKSUITE_CLI_TENANT_ACCESS_TOKEN.',
           401,
-          parsed,
+          parsed
         );
       }
 
@@ -250,7 +286,7 @@ export class FeishuCardKitClient {
         throw new CardKitClientError(
           `Card Kit ${method} ${path} failed: HTTP ${res.status}`,
           res.status,
-          parsed,
+          parsed
         );
       }
 
@@ -265,7 +301,7 @@ export class FeishuCardKitClient {
         throw new CardKitClientError(
           `Card Kit ${method} ${path} failed: business code ${code} (${msg})`,
           res.status,
-          parsed,
+          parsed
         );
       }
 
@@ -281,7 +317,7 @@ export class FeishuCardKitClient {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new CardKitClientError(
           `Card Kit ${method} ${path} aborted (timed out after ${this.timeoutMs}ms or cancelled)`,
-          0,
+          0
         );
       }
       // Network-layer failures (e.g. `TypeError: fetch failed`, DNS, connection
@@ -290,7 +326,7 @@ export class FeishuCardKitClient {
       // with no status/body. status 0 = no HTTP response was received.
       throw new CardKitClientError(
         `Card Kit ${method} ${path} request failed: ${err instanceof Error ? err.message : String(err)}`,
-        0,
+        0
       );
     } finally {
       // Always release the timer and the external-signal listener, whether the
@@ -311,18 +347,53 @@ export interface CardKitResult {
 }
 
 /**
+ * Result of `createCard`. Extends {@link CardKitResult} with the created card's
+ * id, extracted from the Feishu response (`data.card_id`) when present.
+ */
+export interface CardKitCreateResult extends CardKitResult {
+  /**
+   * The created card's id, or `undefined` if the response did not carry one.
+   * Feishu returns `{ code: 0, data: { card_id } }`; a missing id on a 2xx /
+   * code-0 response is unexpected but non-fatal — callers should treat it as a
+   * protocol mismatch rather than proceed to PUT/PATCH a phantom handle.
+   */
+  cardId?: string;
+}
+
+/**
+ * Pull `card_id` out of a Card Kit create response.
+ *
+ * Feishu wraps payload data one level deep: `{ code, msg, data: { card_id } }`.
+ * We tolerate a couple of shapes (top-level `card_id`, or `data.card_id`) so a
+ * harmless envelope change doesn't break callers, but return `undefined`
+ * rather than guessing when neither is present.
+ */
+function extractCardId(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') {
+    return undefined;
+  }
+  const obj = body as { card_id?: unknown; data?: { card_id?: unknown } };
+  const direct = typeof obj.card_id === 'string' ? obj.card_id : undefined;
+  if (direct) {
+    return direct;
+  }
+  const nested = obj.data && typeof obj.data.card_id === 'string' ? obj.data.card_id : undefined;
+  return nested;
+}
+
+/**
  * Build a FeishuCardKitClient from the standard env var
  * (`LARKSUITE_CLI_TENANT_ACCESS_TOKEN`), the same source feishu-channel uses.
  *
  * @throws if the env var is unset (caller must surface a clear message).
  */
 export function createCardKitClientFromEnv(
-  options?: Omit<CardKitClientOptions, 'tenantAccessToken'>,
+  options?: Omit<CardKitClientOptions, 'tenantAccessToken'>
 ): FeishuCardKitClient {
   const tenantAccessToken = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
   if (!tenantAccessToken) {
     throw new Error(
-      'createCardKitClientFromEnv: LARKSUITE_CLI_TENANT_ACCESS_TOKEN is not set — Card Kit streaming cannot authenticate. Export it before constructing the client.',
+      'createCardKitClientFromEnv: LARKSUITE_CLI_TENANT_ACCESS_TOKEN is not set — Card Kit streaming cannot authenticate. Export it before constructing the client.'
     );
   }
   return new FeishuCardKitClient({ ...(options || {}), tenantAccessToken });
