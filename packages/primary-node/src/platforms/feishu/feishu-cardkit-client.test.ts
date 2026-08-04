@@ -114,7 +114,7 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
   });
 
   describe('createCard (obtain a card_id — #4395 part 2)', () => {
-    it('POSTs /cards with the card wrapped as {type:"card_json", data} + uuid + Bearer', async () => {
+    it('POSTs /cards with the card wrapped as {type:"card_json", data} + Bearer (no uuid)', async () => {
       const client = makeClient();
       const card = { schema: '2.0', config: { streaming_mode: true }, body: { elements: [] } };
       await client.createCard(card);
@@ -125,10 +125,11 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       expect((calls[0].init.headers as Record<string, string>).Authorization).toBe(
         'Bearer tn-token-xyz'
       );
+      // Body is exactly {type, data} — create has no uuid/sequence (update-op
+      // fields). toEqual guards against uuid regressing back into the body.
       expect(JSON.parse(calls[0].init.body as string)).toEqual({
         type: 'card_json',
         data: JSON.stringify(card),
-        uuid: expect.any(String),
       });
     });
 
@@ -140,12 +141,6 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       const body = JSON.parse(calls[0].init.body as string);
       expect(typeof body.data).toBe('string');
       expect(JSON.parse(body.data)).toEqual(card);
-    });
-
-    it('honors an explicit uuid', async () => {
-      const client = makeClient();
-      await client.createCard({}, 'fixed-uuid-123');
-      expect(JSON.parse(calls[0].init.body as string).uuid).toBe('fixed-uuid-123');
     });
 
     it('extracts card_id from the response data and returns ok', async () => {

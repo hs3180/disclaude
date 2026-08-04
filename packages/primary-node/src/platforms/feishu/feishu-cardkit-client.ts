@@ -9,7 +9,8 @@
  * "#4238 says PATCH" claim was wrong — PATCH 404s, the real method is PUT):
  *   POST  /open-apis/cardkit/v1/cards
  *           — create a card, obtain a `card_id` (#4395 part 2).
- *             Body: { type: 'card_json', data: <stringified card>, uuid }.
+ *             Body: { type: 'card_json', data: <stringified card> }.
+ *             (Create has no uuid/sequence — those belong to the update ops.)
  *             Decision #4208 (2026-08-03) settled this create path.
  *   PUT   /open-apis/cardkit/v1/cards/{card_id}/elements/{element_id}/content
  *           — typewriter streaming: incremental element content.
@@ -143,14 +144,14 @@ export class FeishuCardKitClient {
    *
    * @param card - the JSON-2.0 card object (e.g. buildStreamingPlaceholderCard()
    *               from #4396); serialized into `{type:'card_json', data}`
-   * @param uuid - optional request id; generated if omitted
    * @returns the created card's id + the parsed response body
    */
-  async createCard(card: unknown, uuid?: string): Promise<CardKitCreateResult> {
+  async createCard(card: unknown): Promise<CardKitCreateResult> {
+    // Create has no uuid/sequence (those are update-op fields, verified against
+    // the Feishu create-card doc — POST /cards body is {type, data} only).
     const result = await this.request('POST', '/cards', {
       type: 'card_json',
       data: JSON.stringify(card),
-      uuid: uuid ?? randomUuid(),
     });
     const cardId = extractCardId(result.data);
     return { ...result, cardId };
