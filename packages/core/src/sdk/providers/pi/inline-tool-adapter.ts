@@ -13,12 +13,18 @@
  * pi-agent-core; re-verify on a pi version bump.
  *
  * Part-1 scope: the execute wrapper (Zod param validation → handler →
- * `AgentToolResult` shaping, with abort handling). The Zod→TypeBox parameter
- * SCHEMA translation is deferred to part 2 — until it lands, `parameters` is a
- * permissive placeholder, so the model does not see the real param shape
- * (execute still validates inputs through Zod at runtime).
+ * `AgentToolResult` shaping, with abort handling).
+ *
+ * Part-2 scope: the Zod→JSON-Schema parameter translation. pi tools use TypeBox
+ * (`TSchema`) parameter schemas; TypeBox serializes to JSON Schema, so the
+ * adapter emits a JSON-Schema-shaped object (via Zod's own `z.toJSONSchema`)
+ * rather than taking a hard dependency on @sinclair/typebox — consistent with
+ * the structural-mirror approach used for the rest of pi's types here. The
+ * model now sees the real parameter shape; execute still validates inputs
+ * authoritatively through Zod at runtime.
  */
 
+import { z } from 'zod';
 import type { InlineToolDefinition } from '../../types.js';
 
 /** Mirror of pi's `TextContent` (`{ type: 'text', text }`). */
@@ -51,6 +57,24 @@ export interface PiAgentToolResult {
 export type PiAgentToolUpdateCallback = (partialResult: PiAgentToolResult) => void;
 
 /**
+ * JSON-Schema-shaped parameter schema — what TypeBox's `TSchema` serializes to
+ * and what the model receives as the tool's input schema. Mirrored structurally
+ * (no hard @sinclair/typebox dependency); produced by translating the disclaude
+ * Zod schema via `z.toJSONSchema` (see `zodToJsonSchema`). The index signature
+ * keeps it permissive enough for any JSON-Schema keyword while naming the
+ * fields this adapter actually emits.
+ */
+export type PiToolParameters = {
+  type?: string;
+  properties?: Record<string, PiToolParameters>;
+  required?: string[];
+  items?: PiToolParameters;
+  enum?: unknown[];
+  additionalProperties?: boolean;
+  [key: string]: unknown;
+};
+
+/**
  * Structural mirror of pi's `AgentHarnessTool` — only the fields this adapter
  * produces. The real type is generic over a `TContext`; we leave it untyped
  * here (the adapter does not consume the context). `label` is required by pi's
@@ -62,16 +86,17 @@ export interface PiAgentHarnessTool {
   label: string;
   description: string;
   /**
-   * Permissive placeholder schema. Part 2 will translate the disclaude Zod
-   * schema to TypeBox so the model sees the real parameter shape.
+   * Translated from the disclaude Zod schema so the model sees the real
+   * parameter shape. Falls back to a permissive placeholder if Zod cannot
+   * serialize the schema (execute still validates inputs at runtime).
    */
-  parameters: { type: 'object'; additionalProperties: true };
+  parameters: PiToolParameters;
   execute: (
     toolCallId: string,
     params: unknown,
     signal: AbortSignal | undefined,
     onUpdate: PiAgentToolUpdateCallback | undefined,
-    context: unknown,
+    context: unknown
   ) => Promise<PiAgentToolResult>;
 }
 
@@ -82,9 +107,35 @@ export interface PiAgentHarnessTool {
  * `'null'` so `text` is always a string (as `TextContent` requires).
  */
 function toContent(result: unknown): (PiTextContent | PiImageContent)[] {
-  const text =
-    typeof result === 'string' ? result : (JSON.stringify(result) ?? 'null');
+  const text = typeof result === 'string' ? result : (JSON.stringify(result) ?? 'null');
   return [{ type: 'text', text }];
+}
+
+/**
+ * Translate a disclaude Zod parameter schema into the JSON-Schema shape pi's
+ * TypeBox `TSchema` serializes to — i.e. what the model reads as the tool's
+ * input schema (TypeBox's runtime representation IS JSON Schema). Uses Zod's
+ * own `z.toJSONSchema` so we follow Zod's semantics exactly
+ * (string/number/boolean/array/object/enum/required, strict objects) rather
+ * than hand-rolling a walker that would be fragile across Zod versions.
+ *
+ * On any translation failure (exotic or custom Zod types Zod itself cannot
+ * serialize) the permissive placeholder is returned so the tool still registers
+ * — execute continues to validate inputs authoritatively via Zod at runtime.
+ */
+function zodToJsonSchema(parameters: z.ZodType): PiToolParameters {
+  try {
+    const schema = z.toJSONSchema(parameters) as Record<string, unknown>;
+    // `z.toJSONSchema` annotates the document root with `$schema`; a tool input
+    // schema is a nested schema (TypeBox's nested object schemas don't carry
+    // it), so strip it to keep the model-facing schema clean.
+    if (schema && typeof schema === 'object' && '$schema' in schema) {
+      delete schema.$schema;
+    }
+    return schema as PiToolParameters;
+  } catch {
+    return { type: 'object', additionalProperties: true };
+  }
 }
 
 /**
@@ -104,14 +155,12 @@ function toContent(result: unknown): (PiTextContent | PiImageContent)[] {
  * Keeping the success return always in the `{ content, details }` shape is what
  * lets the model consume tool output correctly.
  */
-export function adaptInlineTool(
-  definition: InlineToolDefinition,
-): PiAgentHarnessTool {
+export function adaptInlineTool(definition: InlineToolDefinition): PiAgentHarnessTool {
   return {
     name: definition.name,
     label: definition.name,
     description: definition.description,
-    parameters: { type: 'object', additionalProperties: true },
+    parameters: zodToJsonSchema(definition.parameters),
 
     execute: async (_toolCallId, params, signal, _onUpdate, _context) => {
       if (signal?.aborted) {
