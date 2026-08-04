@@ -88,3 +88,12 @@ export { ProcessLock } from './process-lock.js';
 // Chat Type Utilities (Issue #4136)
 export type { ChatType } from './chat-type-utils.js';
 export { isGroupChat, isPrivateChat } from './chat-type-utils.js';
+
+// Streaming Throttle + Reply Driver (Issue #4399 / #4208 P2-b)
+export { StreamingThrottle } from './streaming-throttle.js';
+export type { StreamingThrottleOptions } from './streaming-throttle.js';
+export { StreamingReplyDriver } from './streaming-reply-driver.js';
+export type {
+  StreamingReplyDriverOptions,
+  StreamingReplyLogger,
+} from './streaming-reply-driver.js';
