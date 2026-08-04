@@ -64,11 +64,13 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       expect(calls).toHaveLength(1);
       const [{ url, init }] = calls;
       expect(url).toBe(
-        `${DEFAULT_CARDKIT_BASE_URL}/open-apis/cardkit/v1/cards/${CARD_ID}/elements/${ELEMENT_ID}/content`,
+        `${DEFAULT_CARDKIT_BASE_URL}/open-apis/cardkit/v1/cards/${CARD_ID}/elements/${ELEMENT_ID}/content`
       );
       expect(init.method).toBe('PUT');
       expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tn-token-xyz');
-      expect((init.headers as Record<string, string>)['Content-Type']).toContain('application/json');
+      expect((init.headers as Record<string, string>)['Content-Type']).toContain(
+        'application/json'
+      );
       expect(JSON.parse(init.body as string)).toEqual({
         content: 'incremental text',
         sequence: 3,
@@ -86,11 +88,15 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
   describe('updateCard (full-card replace / append)', () => {
     it('PUTs the card endpoint wrapping the card as {card:{type,data}} + sequence', async () => {
       const client = makeClient();
-      const finalCard = { schema: '2.0', config: { streaming_mode: false }, body: { elements: [] } };
+      const finalCard = {
+        schema: '2.0',
+        config: { streaming_mode: false },
+        body: { elements: [] },
+      };
       await client.updateCard(CARD_ID, finalCard, 5);
 
       expect(calls[0].url).toBe(
-        `${DEFAULT_CARDKIT_BASE_URL}/open-apis/cardkit/v1/cards/${CARD_ID}`,
+        `${DEFAULT_CARDKIT_BASE_URL}/open-apis/cardkit/v1/cards/${CARD_ID}`
       );
       expect(calls[0].init.method).toBe('PUT');
       expect(JSON.parse(calls[0].init.body as string)).toEqual({
@@ -107,6 +113,75 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
     });
   });
 
+  describe('createCard (obtain a card_id — #4395 part 2)', () => {
+    it('POSTs /cards with the card wrapped as {type:"card_json", data} + Bearer (no uuid)', async () => {
+      const client = makeClient();
+      const card = { schema: '2.0', config: { streaming_mode: true }, body: { elements: [] } };
+      await client.createCard(card);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe(`${DEFAULT_CARDKIT_BASE_URL}/open-apis/cardkit/v1/cards`);
+      expect(calls[0].init.method).toBe('POST');
+      expect((calls[0].init.headers as Record<string, string>).Authorization).toBe(
+        'Bearer tn-token-xyz'
+      );
+      // Body is exactly {type, data} — create has no uuid/sequence (update-op
+      // fields). toEqual guards against uuid regressing back into the body.
+      expect(JSON.parse(calls[0].init.body as string)).toEqual({
+        type: 'card_json',
+        data: JSON.stringify(card),
+      });
+    });
+
+    it('stringifies the card (data is a JSON string, not a nested object)', async () => {
+      const client = makeClient();
+      const card = { schema: '2.0', body: { elements: [{ tag: 'markdown' }] } };
+      await client.createCard(card);
+      // `data` MUST be a JSON string (Card Kit requirement), not a nested object.
+      const body = JSON.parse(calls[0].init.body as string);
+      expect(typeof body.data).toBe('string');
+      expect(JSON.parse(body.data)).toEqual(card);
+    });
+
+    it('extracts card_id from the response data and returns ok', async () => {
+      const client = makeClient();
+      mockFetch.mockResolvedValueOnce(
+        fakeResponse(200, { code: 0, msg: 'ok', data: { card_id: 'card_new_1' } })
+      );
+      const result = await client.createCard({ schema: '2.0' });
+      expect(result).toEqual({
+        ok: true,
+        status: 200,
+        cardId: 'card_new_1',
+        data: { code: 0, msg: 'ok', data: { card_id: 'card_new_1' } },
+      });
+    });
+
+    it('returns cardId=undefined when the response omits it (no silent phantom handle)', async () => {
+      const client = makeClient();
+      mockFetch.mockResolvedValueOnce(fakeResponse(200, { code: 0, msg: 'ok' }));
+      const result = await client.createCard({});
+      expect(result.ok).toBe(true);
+      expect(result.cardId).toBeUndefined();
+    });
+
+    it('also accepts a top-level card_id (envelope-tolerant)', async () => {
+      const client = makeClient();
+      mockFetch.mockResolvedValueOnce(fakeResponse(200, { code: 0, card_id: 'top_level_id' }));
+      const result = await client.createCard({});
+      expect(result.cardId).toBe('top_level_id');
+    });
+
+    it('surfaces 401 via the same CardKitClientError path as update ops', async () => {
+      mockFetch.mockResolvedValueOnce(fakeResponse(401, { code: 99991663, msg: 'invalid token' }));
+      const client = makeClient();
+      await expect(client.createCard({})).rejects.toMatchObject({
+        name: 'CardKitClientError',
+        status: 401,
+      });
+    });
+  });
+
   describe('finalizeStreaming (stop breathing cursor)', () => {
     it('PATCHes the settings endpoint with stringified settings + sequence', async () => {
       const client = makeClient();
@@ -115,7 +190,7 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       expect(calls).toHaveLength(1);
       const [{ url, init }] = calls;
       expect(url).toBe(
-        `${DEFAULT_CARDKIT_BASE_URL}/open-apis/cardkit/v1/cards/${CARD_ID}/settings`,
+        `${DEFAULT_CARDKIT_BASE_URL}/open-apis/cardkit/v1/cards/${CARD_ID}/settings`
       );
       expect(init.method).toBe('PATCH');
       expect(JSON.parse(init.body as string)).toEqual({
@@ -132,7 +207,7 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
         tag: 'done',
       });
       expect(JSON.parse(calls[0].init.body as string).settings).toBe(
-        JSON.stringify({ config: { streaming_mode: false }, tag: 'done' }),
+        JSON.stringify({ config: { streaming_mode: false }, tag: 'done' })
       );
     });
   });
@@ -165,7 +240,7 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
   describe('construction', () => {
     it('throws if tenantAccessToken is missing', () => {
       expect(() => new FeishuCardKitClient({ tenantAccessToken: '' } as never)).toThrow(
-        /tenantAccessToken is required/i,
+        /tenantAccessToken is required/i
       );
     });
 
@@ -185,7 +260,7 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       // Feishu returns HTTP 200 + body { code: <non-zero>, msg } on business
       // errors (e.g. 99991663 invalid token, 300317 bad sequence). Must NOT be ok.
       mockFetch.mockResolvedValueOnce(
-        fakeResponse(200, { code: 99991663, msg: 'invalid access token' }),
+        fakeResponse(200, { code: 99991663, msg: 'invalid access token' })
       );
       const client = makeClient();
       await expect(client.updateCard(CARD_ID, {}, 1)).rejects.toMatchObject({
@@ -258,8 +333,8 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       const client = makeClient();
 
       await expect(client.updateCard(CARD_ID, {}, 1)).rejects.toSatisfy(
-        (err: unknown) => err instanceof CardKitClientError && err.status === 0 &&
-          /fetch failed/.test(err.message),
+        (err: unknown) =>
+          err instanceof CardKitClientError && err.status === 0 && /fetch failed/.test(err.message)
       );
     });
 
@@ -268,7 +343,7 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       const client = makeClient();
 
       await expect(client.updateCard(CARD_ID, {}, 1)).rejects.toSatisfy(
-        (err: unknown) => err instanceof CardKitClientError && err.status === 401,
+        (err: unknown) => err instanceof CardKitClientError && err.status === 401
       );
     });
   });
@@ -329,7 +404,7 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
     it('throws a clear error if LARKSUITE_CLI_TENANT_ACCESS_TOKEN is unset', () => {
       delete process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
       expect(() => createCardKitClientFromEnv({ fetchImpl: mockFetch })).toThrow(
-        /LARKSUITE_CLI_TENANT_ACCESS_TOKEN is not set/i,
+        /LARKSUITE_CLI_TENANT_ACCESS_TOKEN is not set/i
       );
     });
 
