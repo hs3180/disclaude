@@ -151,4 +151,49 @@ describe('StreamingThrottle (Issue #4399 / #4208 P2-b)', () => {
     throttle.schedule('a');
     expect(emit).not.toHaveBeenCalled();
   });
+
+  it('drain() resolves immediately when nothing is in flight', async () => {
+    const { throttle } = makeThrottle();
+    await expect(throttle.drain()).resolves.toBeUndefined();
+  });
+
+  it('drain() awaits in-flight fire-and-forget emissions', async () => {
+    // Leading emit returns a deferred PATCH so we control when it settles.
+    let resolvePatch: () => void = () => {};
+    const emit = vi.fn(
+      (_content: string) =>
+        new Promise<void>((resolve) => {
+          resolvePatch = resolve;
+        }),
+    );
+    const throttle = new StreamingThrottle(emit, { minIntervalMs: 100 });
+
+    throttle.schedule('a'); // leading emit → in-flight PATCH (pending)
+    expect(emit).toHaveBeenCalledTimes(1);
+
+    let drained = false;
+    const drainPromise = throttle.drain().then(() => {
+      drained = true;
+    });
+
+    // PATCH still pending → drain() must not have resolved.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    resolvePatch(); // PATCH settles → drain() completes
+    await drainPromise;
+    expect(drained).toBe(true);
+  });
+
+  it('drain() never throws even if an in-flight PATCH rejected', async () => {
+    // A rejected PATCH must not surface as an unhandled rejection via the
+    // tracker, and drain() (allSettled) must resolve rather than throw.
+    const emit = vi.fn(() => Promise.reject(new Error('patch-fail')));
+    const throttle = new StreamingThrottle(emit, { minIntervalMs: 100 });
+
+    throttle.schedule('a'); // leading emit → rejects
+    await expect(throttle.drain()).resolves.toBeUndefined();
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
 });

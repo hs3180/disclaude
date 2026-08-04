@@ -150,6 +150,50 @@ describe('StreamingReplyDriver — streaming path', () => {
     // The finish flush (2nd call) resolved, so finalize ran.
     expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-1');
   });
+
+  it('finish() drains in-flight PATCHes before the final flush (no overtake race)', async () => {
+    // Regression for the #4438 review's Low finding: a slow earlier
+    // fire-and-forget PATCH must settle before the direct final flush, so it
+    // can't land after — and overwrite — the final content. The leading PATCH
+    // is made slow & controllable via a deferred.
+    let resolveLeading: () => void = () => {};
+    const log: string[] = [];
+    const cb = makeCallbacks({
+      streamText: vi.fn((_id: string, text: string) => {
+        log.push(text);
+        if (text === 'a') {
+          return new Promise<void>((resolve) => {
+            resolveLeading = resolve;
+          });
+        }
+        return Promise.resolve();
+      }),
+    });
+    const driver = makeDriver(cb);
+
+    await driver.pushText('a'); // leading PATCH in flight (pending)
+    await driver.pushText('b'); // trailing, coalesced within the window
+
+    let finished = false;
+    const finishPromise = driver.finish().then(() => {
+      finished = true;
+    });
+
+    // Let microtasks settle. finish() is blocked in throttle.drain() awaiting
+    // the leading PATCH, so the final flush must NOT have been issued yet.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    expect(log).toEqual(['a']); // only the leading PATCH so far
+
+    resolveLeading(); // leading PATCH settles → drain() completes → final flush
+    await finishPromise;
+
+    // Final flush carries the full buffer and was issued AFTER the leading
+    // PATCH settled — the slow emission can no longer overtake the final one.
+    expect(log).toEqual(['a', 'a\nb']);
+    expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-1');
+  });
 });
 
 describe('StreamingReplyDriver — finish semantics', () => {

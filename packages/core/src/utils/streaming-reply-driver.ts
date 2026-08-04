@@ -17,7 +17,9 @@
  * - **finish()**: if `streaming`, flush the final accumulated text *directly*
  *   to the card (NOT via the throttle — its trailing timer would be dropped by
  *   `finalize`) then `finalizeStreaming`. Idempotent; safe on every turn-exit
- *   path (normal result, stall, iterator error, abort).
+ *   path (normal result, stall, iterator error, abort). Before the direct
+ *   flush it `drain()`s the throttle so a slow earlier fire-and-forget PATCH
+ *   can't land after (and overwrite) the final content.
  *
  * **Reply-never-lost guarantee** (the hard contract from #4208/#4399):
  *  - start declines or throws → text goes to `sendMessage`;
@@ -126,6 +128,11 @@ export class StreamingReplyDriver {
       // Stop the throttle's trailing timer FIRST so its pending emission
       // (which finalize drops) doesn't race the direct flush below.
       this.throttle?.finalize();
+      // Await any in-flight fire-and-forget PATCH so a slow earlier emission
+      // can't land after — and thus overwrite, or hit a frozen — the direct
+      // final flush below. Closes the narrow leading-vs-flush race noted in
+      // the #4438 review (drain() uses allSettled, never throws).
+      await this.throttle?.drain();
       try {
         if (this.buffer) {
           // Direct (awaited) final PATCH — guarantees the card holds the full
@@ -168,17 +175,18 @@ export class StreamingReplyDriver {
       this.throttle =
         this.options.throttle ??
         new StreamingThrottle(
-          (text) => {
-            // Own our error handling (the throttle voids emitFn): a rejected
-            // streamText here must NOT become an unhandled rejection. Swallow —
-            // finish() re-delivers the complete text regardless.
+          // Return the PATCH promise so the throttle can track it (drain()).
+          // Own our error handling: a rejected streamText here must NOT become
+          // an unhandled rejection — the .catch both swallows the error and
+          // makes the returned promise always resolve, so finish()'s drain()
+          // never throws. finish() re-delivers the complete text regardless.
+          (text) =>
             this.options.streamText(id, text).catch((err) => {
               this.logger.debug(
                 { err, chatId: this.options.chatId },
                 'mid-stream streamText PATCH failed (will be re-delivered on finish)',
               );
-            });
-          },
+            }),
           { minIntervalMs: this.options.minIntervalMs },
         );
     } else {
