@@ -341,6 +341,43 @@ export interface IChannel {
    * Issue #3824: Channel ownership query for post-restart routing.
    */
   ownsChatId(chatId: string): boolean;
+
+  // --------------------------------------------------------------------------
+  // Streaming reply contract — Issue #4208 P2 (#4397 / #4400).
+  // --------------------------------------------------------------------------
+  // Optional provider-side counterparts of the ChatAgent streaming callbacks.
+  // Only a channel that advertises `getCapabilities().supportsStreaming === true`
+  // implements these; others leave them unset and ChatAgent degrades to
+  // `sendMessage` (the reply is never lost). The ChatAgent-side gate reads
+  // `supportsStreaming` per chat AND requires all three callbacks to be wired
+  // before activating the StreamingReplyDriver (#4399).
+  // --------------------------------------------------------------------------
+
+  /**
+   * Begin a streaming reply: create the in-place message/card to patch and
+   * return a stream handle (e.g. card/message id), or `null` to signal
+   * "degrade to sendMessage" for this turn. Throwing is equivalent to
+   * returning `null` (the driver catches and degrades).
+   *
+   * Issue #4400: implemented on FeishuChannel behind `streamingCard`.
+   *
+   * @param chatId - Platform-specific chat identifier
+   * @param parentMessageId - Optional parent message id for thread replies
+   */
+  startStreaming?(chatId: string, parentMessageId?: string): Promise<string | null>;
+
+  /**
+   * Patch the in-flight stream identified by `id` (returned by startStreaming)
+   * with the latest accumulated `text` (replace-semantics — the full buffer is
+   * passed each call; the platform applies the typewriter delta).
+   */
+  streamText?(id: string, text: string): Promise<void>;
+
+  /**
+   * Finalize (freeze) the in-flight stream identified by `id`. No further
+   * streamText calls will be made for this id.
+   */
+  finalizeStreaming?(id: string): Promise<void>;
 }
 
 /**
