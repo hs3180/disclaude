@@ -8,7 +8,7 @@
 
 import { existsSync } from 'fs';
 import { createConnection } from 'net';
-import { getIpcSocketPath, createLogger } from '@disclaude/core';
+import { getIpcSocketPath, getIpcClient, RestIpcClient, createLogger } from '@disclaude/core';
 
 const logger = createLogger('IpcUtils');
 
@@ -20,13 +20,52 @@ const logger = createLogger('IpcUtils');
  * Issue #1355: Use actual connection probing instead of file-existence check.
  *   The socket file may disappear while the process still holds the fd,
  *   or the file may exist but the server is not listening.
+ * Issue #4168 (REST IPC prep): When `DISCLAUDE_REST_IPC_ENABLED=true` (#4279
+ *   Phase 2) there is no Unix socket — this check must delegate to the REST
+ *   client's `GET /api/ping` health probe instead of stat'ing a socket that
+ *   doesn't exist. Without this, every MCP tool that gates on
+ *   `isIpcAvailable()` (loop-start/stop/status, push-to-agent,
+ *   interactive-message, send-message, send-card, send-file) refuses to run
+ *   under the REST transport, blocking the flag flip documented in #4168's
+ *   migration-status comment (gap #1).
  *
- * This function performs a file-existence check first (fast path),
- * then attempts an actual connection to verify the server is alive.
+ * For the Unix-socket transport this function performs a file-existence check
+ * first (fast path), then attempts an actual connection to verify the server
+ * is alive.
  *
- * @returns Promise resolving to true if IPC server is reachable
+ * @returns Promise resolving to true if the IPC server is reachable
  */
 export async function isIpcAvailable(): Promise<boolean> {
+  // REST IPC transport (#4279 Phase 2): no Unix socket exists, so the socket
+  // probe below would always report unavailable. Delegate to the active REST
+  // client's health probe (GET /api/ping → { pong: true }). Transport selection
+  // uses the same env var in `getIpcClient()`, so under REST mode the returned
+  // client is always a `RestIpcClient`.
+  if (process.env.DISCLAUDE_REST_IPC_ENABLED === 'true') {
+    const client = getIpcClient();
+    if (client instanceof RestIpcClient) {
+      try {
+        const available = await client.isAvailable();
+        logger.debug(
+          { available, reason: available ? 'rest_ping_ok' : 'rest_ping_fail' },
+          'IPC availability check (REST transport)',
+        );
+        return available;
+      } catch (error) {
+        logger.debug(
+          { reason: 'rest_ping_exception', err: error },
+          'IPC availability check: not available (REST probe exception)',
+        );
+        return false;
+      }
+    }
+    logger.debug(
+      { reason: 'rest_mode_client_mismatch' },
+      'IPC availability check: REST mode enabled but client is not a RestIpcClient',
+    );
+    return false;
+  }
+
   const socketPath = getIpcSocketPath();
 
   // Fast path: socket file must exist

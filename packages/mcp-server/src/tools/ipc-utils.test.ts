@@ -235,3 +235,87 @@ describe('isIpcAvailable', () => {
     });
   });
 });
+
+describe('isIpcAvailable — REST IPC transport (#4168)', () => {
+  let isIpcAvailable: typeof import('./ipc-utils.js').isIpcAvailable;
+  let savedRestEnv: string | undefined;
+
+  /**
+   * Stand-in for `RestIpcClient` exposed via the mocked `@disclaude/core` as
+   * `RestIpcClient`, so `client instanceof RestIpcClient` in the code under
+   * test matches instances built here.
+   */
+  class FakeRestClient {
+    isAvailable = vi.fn();
+  }
+
+  /** Wire up `@disclaude/core` so REST mode resolves to `client`. */
+  async function setupRestMocks(client: unknown) {
+    vi.doMock('@disclaude/core', () => ({
+      getIpcSocketPath: (...args: unknown[]) => mockGetIpcSocketPath(...args),
+      createLogger: (...args: unknown[]) => mockCreateLogger(...args),
+      getIpcClient: () => client,
+      RestIpcClient: FakeRestClient,
+    }));
+    vi.doMock('fs', () => ({ existsSync: vi.fn().mockReturnValue(true) }));
+    vi.resetModules();
+    const mod = await import('./ipc-utils.js');
+    ({ isIpcAvailable } = mod);
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateLogger.mockReturnValue(mockLogger);
+    savedRestEnv = process.env.DISCLAUDE_REST_IPC_ENABLED;
+    process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
+  });
+
+  afterEach(async () => {
+    if (savedRestEnv === undefined) {
+      delete process.env.DISCLAUDE_REST_IPC_ENABLED;
+    } else {
+      process.env.DISCLAUDE_REST_IPC_ENABLED = savedRestEnv;
+    }
+    vi.restoreAllMocks();
+    await vi.resetModules();
+  });
+
+  it('delegates to RestIpcClient.isAvailable() and returns true when the ping succeeds', async () => {
+    const fake = new FakeRestClient();
+    fake.isAvailable.mockResolvedValue(true);
+    await setupRestMocks(fake);
+
+    const result = await isIpcAvailable();
+    expect(result).toBe(true);
+    expect(fake.isAvailable).toHaveBeenCalledTimes(1);
+    expect(mockGetIpcSocketPath).not.toHaveBeenCalled();
+  });
+
+  it('returns false when the REST ping reports unavailable', async () => {
+    const fake = new FakeRestClient();
+    fake.isAvailable.mockResolvedValue(false);
+    await setupRestMocks(fake);
+
+    const result = await isIpcAvailable();
+    expect(result).toBe(false);
+    expect(fake.isAvailable).toHaveBeenCalledTimes(1);
+    expect(mockGetIpcSocketPath).not.toHaveBeenCalled();
+  });
+
+  it('returns false (without throwing) when the REST probe throws', async () => {
+    const fake = new FakeRestClient();
+    fake.isAvailable.mockRejectedValue(new Error('network down'));
+    await setupRestMocks(fake);
+
+    const result = await isIpcAvailable();
+    expect(result).toBe(false);
+  });
+
+  it('returns false and skips the socket probe when the client is not a RestIpcClient', async () => {
+    await setupRestMocks({ not: 'a rest client' });
+
+    const result = await isIpcAvailable();
+    expect(result).toBe(false);
+    expect(mockGetIpcSocketPath).not.toHaveBeenCalled();
+  });
+});
