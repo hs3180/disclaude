@@ -76,9 +76,16 @@ Installed `@earendil-works/{pi-agent-core,pi-ai,pi-coding-agent}@0.83.0` and gre
 | `pi-ai@0.83.0` | **0** |
 | `pi-coding-agent@0.83.0` | **0** |
 
-**Conclusion:** the entire pi stack at 0.83.0 still has **no MCP client/server symbols** — parity
-with the 0.82.1 finding in `docs/pi-agent-core-api-research.md` §1. Upstream added no MCP between
-0.82.1 and 0.83.0.
+**Conclusion:** the entire pi stack at 0.83.0 still has **no MCP client/server symbols in its
+public TypeScript surface** (`dist/**/*.d.ts`) — parity with the 0.82.1 finding in
+`docs/pi-agent-core-api-research.md` §1. Upstream added no MCP between 0.82.1 and 0.83.0.
+
+> Scope note: a non-`.d.ts` grep is *not* uniformly zero — `pi-ai` carries an Anthropic OAuth scope
+> string `user:mcp_servers` (`dist/auth/oauth/anthropic.js`, an auth constant, not an MCP client),
+> and `pi-coding-agent` bundles its `node_modules` deps which contain MCP references. Neither is a
+> pi-authored MCP client/server, and neither is in the API surface disclaude integrates against
+> (`pi-agent-core`, which is 0 across **all** files). The `.d.ts`-surface finding above is what
+> governs the converter decision.
 
 **Implication for the decision:** a "B1.5 — wait for upstream MCP" option is **not viable as of
 0.83.0**; there is no visible upstream MCP track to wait on. (Whether the author has *planned* MCP
@@ -203,8 +210,10 @@ the MCP tool `name`/`description`.
 The converted tools plug in via the harness registry (see B-Q3): `harness.setTools([...converted])`.
 How pi then presents them to the LLM is governed by `AgentLoopConfig.convertToLlm`
 (`dist/types.d.ts:145` — `(messages: AgentMessage[]) => Message[]`), which is the same hook
-disclaude's pi options-adapter already knows it must supply (`pi/options-adapter.ts:38-46` lists
-`convertToLlm` among the deferred provider.ts part-3 duties). The converter therefore does **not**
+disclaude's pi options-adapter already knows it must supply (`pi/options-adapter.ts:25` describes
+`convertToLlm` as part of pi's `AgentLoopConfig`; the per-run wiring is deferred to provider.ts
+part-3, alongside the `mcpServers` converter at `pi/options-adapter.ts:38`). The converter does
+**not**
 need to know how schemas reach the wire — only that it hands pi well-formed TypeBox-shaped
 `parameters`.
 
@@ -216,7 +225,7 @@ need to know how schemas reach the wire — only that it hands pi well-formed Ty
 | **R2** | MCP result content shapes pi doesn't expect (e.g. embedded resource links) → `AgentToolResult.content` mapping gaps. | Tool output silently truncated. | Map only `text`/`image` first (the union pi accepts), stringify the rest; expand in PoC. |
 | **R3** | `label` synthesis + tool-name collisions/namespace (`channel-mcp.send_text` vs a stdio tool named `send_text`). | Wrong tool dispatched. | Namespace converted names by server (`<server>__<tool>`); keep MCP `name` for `callTool`. |
 | **R4** | Streaming progress: MCP tools don't emit pi-style partials, so `onUpdate` is unused — fine, but large tool outputs won't stream. | UX regression for big Playwright dumps. | Acceptable; document. |
-| **R5** | Lifecycle: stdio MCP clients (Playwright) must be started/stopped with the agent; inline `channel-mcp` must be closed (`mcp-setup.ts:78-80`, the `collectInlineMcpInstances` closeable pattern). | Resource leak / dangling chrome. | Reuse `buildMcpServers`/`collectInlineMcpInstances` lifecycle hooks (B-Q4). |
+| **R5** | Lifecycle: stdio MCP clients (Playwright) must be started/stopped with the agent; inline `channel-mcp` must be closed (`mcp-setup.ts:99`, the `collectInlineMcpInstances` closeable pattern). | Resource leak / dangling chrome. | Reuse `buildMcpServers`/`collectInlineMcpInstances` lifecycle hooks (B-Q4). |
 
 **Effort estimate** (rough, for sizing B1 against B2/B3; not a commitment): the schema-translation
 + execute-wrap is small (the MCP SDK + TypeBox do the heavy lifting). The cost is dominated by
@@ -272,12 +281,13 @@ MCP servers, and the config layer (`packages/core/src/config/index.ts:521-523`,
 mcpServers['channel-mcp'] = createChannelMcpServer();   // inline transport
 ```
 
-Tools surfaced (from the `contextTools` allow-list at `mcp-setup.ts:48` and the tool modules in
+Tools surfaced (from the `contextTools` allow-list at `mcp-setup.ts:47` and the tool modules in
 `packages/mcp-server/src/tools/`): `send_text`, `send_card`, `send_interactive`, `send_file`,
 `push_to_agent`, plus the loop tools (`loop-start`/`loop-stop`/`loop-status`,
 `packages/mcp-server/src/tools/loop-*.ts`). These are **inline MCP** — the server object lives
 in-process; the Claude adapter passes it straight through via `adaptInlineMcpServer`
-(`packages/core/src/sdk/providers/claude/options-adapter.ts:124-149`).
+(`packages/core/src/sdk/providers/claude/options-adapter.ts` — `adaptMcpServers:124` dispatches by
+server type, `adaptInlineMcpServer:157` wraps inline servers).
 
 > **Overlap note:** these inline tools are functionally the same surface as the inline-tool work
 > tracked in **#4387** (see open PR #4441 "inline-tool Zod→JSON-Schema parameter translation"). On
@@ -392,9 +402,11 @@ Until part 2 lands, the recommendation above is honestly labeled **conditional**
 - pi `dist/harness/types.d.ts`: `AgentHarnessTool` :58, `AgentHarnessOptions.tools` :656.
 - pi `dist/harness/agent-harness.d.ts`: `setTools` :76, `setActiveTools` :78.
 - `typebox@1.3.7`: `build/value/index.d.mts:1-19`, `build/schema/engine/type.mjs:8,27`.
-- disclaude: `packages/core/src/sdk/providers/pi/options-adapter.ts:16-20,38`;
-  `packages/core/src/sdk/providers/claude/options-adapter.ts:124-149`;
-  `packages/primary-node/src/agents/mcp-setup.ts:33-80`;
+- disclaude: `packages/core/src/sdk/providers/pi/options-adapter.ts:16-20,25,38`;
+  `packages/core/src/sdk/providers/claude/options-adapter.ts` (`adaptMcpServers:124`,
+  `adaptInlineMcpServer:157`);
+  `packages/primary-node/src/agents/mcp-setup.ts` (`buildMcpServers:33-75`,
+  `collectInlineMcpInstances:99`, `contextTools:47`);
   `packages/core/src/config/index.ts:521`; `disclaude.config.example.yaml:249-268`;
   `package-lock.json` (`@modelcontextprotocol/sdk@1.29.0`).
 - Companion: `docs/pi-agent-core-api-research.md` (#4384 spike).
