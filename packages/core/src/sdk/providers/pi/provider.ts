@@ -75,8 +75,8 @@ export class PiAgentProvider implements IAgentSDKProvider {
   }
 
   createInlineTool(definition: InlineToolDefinition): unknown {
-    // Issue #4387 (S4, part 1): wrap the disclaude tool for pi's tool dispatch.
-    // Zod→TypeBox schema translation is deferred (permissive placeholder) —
+    // Issue #4387 (S4): wrap the disclaude tool for pi's tool dispatch.
+    // Zod→JSON-Schema parameter translation lives in the adapter —
     // see inline-tool-adapter.ts.
     return adaptInlineTool(definition);
   }
