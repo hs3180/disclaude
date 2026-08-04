@@ -49,6 +49,14 @@ export class StreamingThrottle {
   private trailingTimer: ReturnType<typeof setTimeout> | undefined;
   private pendingContent: string | undefined;
   private finalized = false;
+  /**
+   * Promises for emissions that `emitNow` has fired but whose `emitFn` (the
+   * PATCH) has not yet settled. Tracked so `drain()` can await them before a
+   * driver's final flush — closing the race where a slow earlier fire-and-forget
+   * PATCH lands after (and thus overwrites, or hits a frozen) the direct final
+   * PATCH.
+   */
+  private readonly inFlight: Set<Promise<unknown>> = new Set();
 
   constructor(
     emitFn: (content: string) => Promise<void> | void,
@@ -131,12 +139,38 @@ export class StreamingThrottle {
     this.pendingContent = undefined;
   }
 
+  /**
+   * Await every emission that `emitNow` has already fired (the fire-and-forget
+   * PATCHes) to settle. Call AFTER `finalize()` — finalize cancels the trailing
+   * timer so no NEW emissions race in while drain() blocks; drain() then waits
+   * for the last already-emitted PATCH to resolve/reject, so a slow earlier
+   * emission can no longer land after (and thus overwrite, or hit a frozen)
+   * the driver's direct final flush. Never throws: uses `Promise.allSettled`.
+   *
+   * Guarantees only what was in flight at call time; emissions a caller adds
+   * concurrently (i.e. drain() invoked without finalize() first) are not
+   * awaited — the documented contract is finalize()-then-drain().
+   */
+  async drain(): Promise<void> {
+    const snapshot = [...this.inFlight];
+    await Promise.allSettled(snapshot);
+  }
+
   private emitNow(content: string): void {
     this.lastEmitMs = this.now();
     this.pendingContent = undefined;
     // Fire-and-forget: the caller's emitFn (the PATCH) owns its own error
-    // handling; the throttle's contract is purely about timing.
-    void this.emitFn(content);
+    // handling; the throttle's contract is purely about timing. Track the
+    // in-flight promise so drain() can await it, and attach settle handlers
+    // (both branches) so the tracker never surfaces a rejected PATCH as an
+    // unhandled rejection — the .then resolves cleanly because the handlers
+    // return normally.
+    const p = Promise.resolve(this.emitFn(content));
+    this.inFlight.add(p);
+    const clear = (): void => {
+      this.inFlight.delete(p);
+    };
+    p.then(clear, clear);
   }
 
   private clearTrailingTimer(): void {

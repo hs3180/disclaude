@@ -45,6 +45,7 @@ import {
   isStartupFailure,
   forceCleanupLeakedListeners,
   tagErrorCategory,
+  StreamingReplyDriver,
   type StreamingUserMessage,
   type QueryHandle,
   type ChatAgent as ChatAgentInterface,
@@ -958,6 +959,30 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
     let userVisibleOutputCount = 0;
 
+    // Issue #4399 (#4208 P2-b): streaming-card state machine. Only constructed
+    // when the channel advertises supportsStreaming AND provides all three
+    // streaming callbacks; otherwise `streamDriver` is null and the assistant
+    // dispatch below is bit-identical to today (sendMessage per chunk). The
+    // driver owns the reply-never-lost guarantee (start-decline / flush-failure
+    // → sendMessage fallback) and is finalized on every turn-exit path below.
+    const streamCapabilities = this.callbacks.getCapabilities?.(chatId);
+    const streamDriver =
+      !!streamCapabilities?.supportsStreaming &&
+      !!this.callbacks.startStreaming &&
+      !!this.callbacks.streamText &&
+      !!this.callbacks.finalizeStreaming
+        ? new StreamingReplyDriver({
+            chatId,
+            parentMessageId: this.conversationOrchestrator.getThreadRoot(chatId) ?? undefined,
+            startStreaming: this.callbacks.startStreaming,
+            streamText: this.callbacks.streamText,
+            finalizeStreaming: this.callbacks.finalizeStreaming,
+            sendMessage: (cid, content, threadRoot) =>
+              this.callbacks.sendMessage(cid, content, threadRoot),
+            logger: this.logger,
+          })
+        : null;
+
     try {
       for await (const { parsed } of iterator) {
         // Issue #2926: Check abort signal at the start of each iteration.
@@ -1035,7 +1060,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // Capture as a local so the marker check stays type-safe after the
             // awaited sendMessage (which defeats parsed.content narrowing).
             const visibleContent = parsed.content;
-            await this.callbacks.sendMessage(chatId, visibleContent, threadRoot);
+            // Issue #4399: route assistant text through the streaming driver
+            // (PATCHes one in-place card) when the channel supports streaming;
+            // everything else (result markers, system notices, tool output in
+            // non-topic chats) still uses sendMessage. The driver degrades to
+            // sendMessage itself if streaming is declined/broken, so this never
+            // changes whether the reply is delivered — only whether it streams.
+            // (type === 'text' is exclusively assistant reply text — status /
+            // thinking messages are type 'status', tool events are tool_use/….)
+            const isAssistantReplyText = parsed.type === 'text';
+            if (streamDriver && isAssistantReplyText) {
+              await streamDriver.pushText(visibleContent, threadRoot);
+            } else {
+              await this.callbacks.sendMessage(chatId, visibleContent, threadRoot);
+            }
             // Issue #4194: the ✅ Complete result marker is sent as the result
             // message itself — exclude it so empty turns (no real reply) are
             // detectable at completion. Match by content (the codebase-wide
@@ -1402,6 +1440,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       if (this.callbacks.onDone) {
         const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
         await this.callbacks.onDone(chatId, threadRoot);
+      }
+    } finally {
+      // Issue #4399 (#4208 P2-b): finalize the in-place streaming card on every
+      // turn-exit path (normal result, stall, abort, iterator error). No-op
+      // when streaming never started or the channel doesn't stream — the
+      // driver's finish() is idempotent and only acts in the streaming state.
+      if (streamDriver) {
+        const finishThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        await streamDriver.finish(finishThreadRoot);
       }
     }
 

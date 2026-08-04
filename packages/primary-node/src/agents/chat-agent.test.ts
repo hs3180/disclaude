@@ -13,7 +13,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock all @disclaude/core dependencies
-vi.mock('@disclaude/core', () => {
+vi.mock('@disclaude/core', async (importOriginal) => {
+  // Issue #4399: StreamingReplyDriver is exercised for real (the wiring under
+  // test). Pull the real class from the actual module; everything else stays
+  // explicitly mocked below.
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
   const BaseAgent = vi.fn().mockImplementation(function (this: any) {
     this.createSdkOptions = vi.fn(() => ({ mcpServers: {} }));
     this.createQueryStream = vi.fn(() => ({
@@ -47,6 +51,8 @@ vi.mock('@disclaude/core', () => {
       getMcpServersConfig: vi.fn(() => null),
     },
     BaseAgent,
+    // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
+    StreamingReplyDriver: actual.StreamingReplyDriver,
     MessageBuilder: vi.fn().mockImplementation(() => ({
       buildEnhancedContent: vi.fn((input: any) => input.text),
     })),
@@ -1855,5 +1861,110 @@ describe('ChatAgent (primary-node)', () => {
       expect(rm.recordSuccess).not.toHaveBeenCalled();
     });
 
+  });
+
+  describe('Issue #4399: streaming-card dispatch (supportsStreaming)', () => {
+    // A ChannelCapabilities with streaming on/off. Other fields are populated
+    // so message-building never sees an undefined capability during the turn.
+    const caps = (supportsStreaming: boolean) => ({
+      supportsCard: true,
+      supportsThread: true,
+      supportsFile: true,
+      supportsMarkdown: true,
+      supportsMention: true,
+      supportsUpdate: supportsStreaming,
+      supportsStreaming,
+    });
+
+    it('streams assistant text via startStreaming/streamText/finalizeStreaming when the channel supports it', async () => {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        getCapabilities: vi.fn(() => caps(true)),
+        startStreaming: vi.fn(() => Promise.resolve('card-42')),
+        streamText: vi.fn(() => Promise.resolve()),
+        finalizeStreaming: vi.fn(() => Promise.resolve()),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_stream',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* replyIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'Hello' }, raw: {} };
+        yield { parsed: { type: 'text', role: 'assistant', content: 'world' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 10' }, raw: {} };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: replyIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_stream', payload: 'hi', messageId: 'msg_1' });
+
+      // The streaming callbacks fire once the turn flows.
+      await vi.waitFor(() => {
+        expect(localCallbacks.finalizeStreaming).toHaveBeenCalledWith('card-42');
+      }, { timeout: 1000, interval: 20 });
+
+      // startStreaming called once for the turn (chatId + thread root).
+      expect(localCallbacks.startStreaming).toHaveBeenCalledTimes(1);
+      expect(localCallbacks.startStreaming).toHaveBeenCalledWith('oc_stream', expect.anything());
+      // streamText PATCHed the card (leading chunk + final flush).
+      expect(localCallbacks.streamText).toHaveBeenCalledWith('card-42', 'Hello');
+      // The reply text was routed through the streaming card, NOT sendMessage.
+      const sentTexts = localCallbacks.sendMessage.mock.calls
+        .map((c: any[]) => c[1])
+        .filter((s: unknown): s is string => typeof s === 'string');
+      expect(sentTexts).not.toContain('Hello');
+      expect(sentTexts).not.toContain('world');
+      // The ✅ Complete result marker is NOT assistant text — it still goes via sendMessage.
+      expect(sentTexts.some((s) => s.startsWith('✅ Complete'))).toBe(true);
+    });
+
+    it('degrades to sendMessage (streaming callbacks unused) when supportsStreaming is false', async () => {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        getCapabilities: vi.fn(() => caps(false)),
+        // Provided to prove their presence alone does NOT activate streaming.
+        startStreaming: vi.fn(() => Promise.resolve('card-x')),
+        streamText: vi.fn(() => Promise.resolve()),
+        finalizeStreaming: vi.fn(() => Promise.resolve()),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_nostream',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* noStreamIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'Hi there' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 5' }, raw: {} };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: noStreamIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_nostream', payload: 'hi', messageId: 'msg_1' });
+      await vi.waitFor(() => {
+        expect(localCallbacks.sendMessage.mock.calls.some(
+          (c: any[]) => c[1] === 'Hi there'
+        )).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      // Default-off: streaming callbacks never used even though they are present.
+      expect(localCallbacks.startStreaming).not.toHaveBeenCalled();
+      expect(localCallbacks.streamText).not.toHaveBeenCalled();
+      expect(localCallbacks.finalizeStreaming).not.toHaveBeenCalled();
+    });
   });
 });
