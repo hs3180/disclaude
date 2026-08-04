@@ -102,6 +102,42 @@ if (process.env.DISCLAUDE_REST_IPC_ENABLED === 'true') {
 | `DISCLAUDE_REST_IPC_BASE_URL` | No | `http://localhost:9200` | HttpApiServer URL. |
 | `DISCLAUDE_REST_IPC_API_TOKEN` | No | unset | Bearer token for POST endpoints. |
 
+### 4.4 Token coordination across processes (PrimaryNode ↔ MCP server)
+
+The env-var table above covers only the **MCP-server / `RestIpcClient`** side. The
+**`HttpApiServer` (PrimaryNode)** reads its token from a different source, and the two
+processes are **not** wired together by spawn injection or a shared file — the operator
+must coordinate them manually. This is a required deployment step before flipping the
+REST flag; a mismatch silently breaks every write route.
+
+| Process | Token source | Where it is read |
+|---------|--------------|------------------|
+| PrimaryNode (`HttpApiServer`) | `--api-token TOKEN` CLI flag | `packages/primary-node/src/cli.ts:86` → `cli.ts:481` (`new HttpApiServer({ apiToken })`) |
+| MCP server (`RestIpcClient`) | `DISCLAUDE_REST_IPC_API_TOKEN` env var | §4.3 above → `packages/core/src/ipc/ipc-utils.ts` |
+
+The PrimaryNode token is **not** read from an env var and is **not** auto-generated; it is
+only present when `--api-token` is passed on the PrimaryNode command line.
+
+Enforcement (`packages/primary-node/src/http-api-server.ts:528-536`): every non-GET route
+compares `Authorization: Bearer <token>` against the configured `apiToken` with
+`timingSafeEqual`; GET routes (e.g. `/api/ping`) are token-exempt.
+
+Failure modes when the two sides disagree:
+
+- **Both set to the same value** → POST routes authenticate normally. ✅
+- **PrimaryNode has `--api-token` but the MCP server's env is unset _or_ a different value**
+  → every POST route returns `401 { error: 'Unauthorized', message: 'Invalid or missing API token' }`.
+  The health probe (`GET /api/ping`) still succeeds, so `isAvailable()` stays green while real
+  calls fail — easy to misdiagnose as a networking issue.
+- **PrimaryNode started _without_ `--api-token`** → the auth guard is skipped
+  (`if (req.method !== 'GET' && this.config.apiToken)` is falsy), so the server accepts any
+  request regardless of the client token. This is only acceptable for a trusted localhost
+  binding during local development; it must not be used for any reachable binding.
+
+**Recommendation:** in any deployment where REST IPC is enabled, pass the same secret both as
+`--api-token` to the PrimaryNode and as `DISCLAUDE_REST_IPC_API_TOKEN` to the MCP server. Leave
+both unset only for single-host local testing.
+
 ## 5. Remaining Work
 
 - **Phase 3 (#4280)**: Remove Unix-socket IPC + consolidate LoopRunner dual-path. Only after Phase 1+2 are production-tested with REST enabled.
