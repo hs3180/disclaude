@@ -98,9 +98,9 @@ export interface FeishuConfig {
    * Enable native streaming replies (Card Kit typewriter + breathing cursor).
    * Issue #4400 / #4208: gray-rollout flag. Default `false` — when off, the
    * Feishu channel reports `supportsStreaming: false` and the ChatAgent uses
-   * the traditional `sendMessage` path (unchanged). The streaming callback
-   * implementation lands in a follow-up; this flag currently only gates the
-   * capability bit.
+   * the traditional `sendMessage` path (unchanged). When on, the channel
+   * exposes the startStreaming/streamText/finalizeStreaming callbacks (Card
+   * Kit two-step flow) which the ChatAgent's StreamingReplyDriver drives.
    */
   streamingCard?: boolean;
   /** Message deduplication settings */

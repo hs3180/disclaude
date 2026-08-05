@@ -164,6 +164,24 @@ export function createChannelCallbacksFactory(
     // (send_text, etc.) is always included — even for REST channel where
     // these tools route through Feishu IPC and fail with test credentials.
     getCapabilities: (_chatId: string) => channel.getCapabilities(),
+    // Issue #4400 (#4208 P2-c): wire the IChannel streaming callbacks when the
+    // channel exposes them. The ChatAgent gate additionally requires
+    // `getCapabilities().supportsStreaming === true` (per chatId) before
+    // constructing the StreamingReplyDriver, so wiring here is safe for any
+    // channel — non-streaming channels leave these unset and degrade to
+    // sendMessage unchanged.
+    ...((): Partial<Pick<ChatAgentCallbacks, 'startStreaming' | 'streamText' | 'finalizeStreaming'>> => {
+      const { startStreaming, streamText, finalizeStreaming } = channel;
+      if (!startStreaming || !streamText || !finalizeStreaming) {
+        return {};
+      }
+      return {
+        startStreaming: (chatId: string, parentMessageId?: string) =>
+          startStreaming.call(channel, chatId, parentMessageId),
+        streamText: (id: string, text: string) => streamText.call(channel, id, text),
+        finalizeStreaming: (id: string) => finalizeStreaming.call(channel, id),
+      };
+    })(),
   });
 }
 
