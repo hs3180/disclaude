@@ -111,6 +111,53 @@ export function extractChatIdFromEvent(data: unknown): string | undefined {
 }
 
 /**
+ * Extract structured Feishu API error details from a thrown lark SDK / axios error.
+ *
+ * Feishu returns business-level errors (e.g. an HTTP 400 for `im.message.reply`)
+ * as a JSON body of shape `{ code, msg, log_id, data }`. The lark SDK surfaces
+ * these as axios-style errors where the body lives on `err.response.data`, but
+ * that body rarely serializes cleanly through the logger — which is why Issue
+ * #4452 recorded 644 thread-reply failures "falling back to message.create"
+ * with no captured root cause (the `code`/`msg`/`log_id` that pinpoint it).
+ *
+ * This normalizes the common shapes (axios `.response.data`, a direct `.code`
+ * / `.msg` on the thrown object, and a bare `Error`) into a flat object safe to
+ * spread into a pino log field. Only fields that are actually present are
+ * included, so logs stay clean for ordinary `Error` throws.
+ */
+export function extractFeishuApiError(err: unknown): Record<string, unknown> {
+  if (!err || typeof err !== 'object') {
+    return { errorMessage: String(err) };
+  }
+  const e = err as Record<string, unknown>;
+  // Feishu business error body: prefer axios `.response.data`, then a direct
+  // `.data`, then the thrown object itself (some SDKs unwrap the body).
+  const response = e.response as Record<string, unknown> | undefined;
+  const body = (response?.data ?? e.data ?? e) as Record<string, unknown> | undefined;
+  const apiCode = body?.code ?? e.code;
+  const apiMsg = body?.msg ?? e.msg ?? e.message;
+  const logId = body?.log_id ?? e.log_id ?? e.logId;
+  const httpStatus = response?.status ?? e.status;
+
+  const detail: Record<string, unknown> = {
+    errorMessage: typeof e.message === 'string' ? e.message : String(err),
+  };
+  if (apiCode !== undefined) {
+    detail.apiCode = apiCode;
+  }
+  if (apiMsg !== undefined && apiMsg !== e.message) {
+    detail.apiMsg = apiMsg;
+  }
+  if (logId !== undefined) {
+    detail.apiLogId = logId;
+  }
+  if (httpStatus !== undefined) {
+    detail.httpStatus = httpStatus;
+  }
+  return detail;
+}
+
+/**
  * Feishu channel configuration.
  */
 export interface FeishuChannelConfig {
@@ -441,8 +488,17 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           });
           return replyResp.data?.message_id;
         } catch (err) {
+          // Issue #4452: capture the Feishu API-level error (code/msg/log_id)
+          // so the frequent reply() 400s become diagnosable. Rather than dump
+          // the raw (very verbose) axios error, `extractFeishuApiError` pulls
+          // out the body the lark SDK buries on `err.response.data` plus the
+          // HTTP status — the fields needed to pinpoint why reply() failed.
           logger.warn(
-            { threadId, err, chatId: message.chatId },
+            {
+              threadId,
+              chatId: message.chatId,
+              ...extractFeishuApiError(err),
+            },
             'Thread reply failed, falling back to message.create',
           );
           // Fall through to create path (with root_id, see below).
