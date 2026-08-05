@@ -48,6 +48,15 @@ import {
   uploadFile,
 } from '../utils/feishu-upload.js';
 import { extractCardTextContent } from '../platforms/feishu/card-builders/card-text-extractor.js';
+// Issue #4400 (#4208 P2-c): Card Kit streaming wiring.
+import {
+  FeishuCardKitClient,
+  createCardKitClientFromEnv,
+} from '../platforms/feishu/feishu-cardkit-client.js';
+import {
+  buildStreamingPlaceholderCard,
+  STREAMING_REPLY_ELEMENT_ID,
+} from '../platforms/feishu/card-builders/streaming-card-builder.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -167,6 +176,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   private appId: string;
   private appSecret: string;
   private client?: lark.Client;
+
+  // Issue #4400 (#4208 P2-c): Card Kit streaming state.
+  // `streamingSequences` holds the per-card monotonic `sequence` counter that
+  // Card Kit requires across ALL PUT/PATCH operations on one card (out-of-order
+  // / reused values are rejected with business code 300317). createCard itself
+  // carries no sequence, so the first PUT starts at 1.
+  private streamingCardKitClient?: FeishuCardKitClient;
+  private readonly streamingSequences = new Map<string, number>();
 
   /** WebSocket connection manager for health detection & auto-reconnect (Issue #1351) */
   private wsConnectionManager?: WsConnectionManager;
@@ -690,7 +707,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportsUpdate: true,
       // Issue #4400 / #4208: native streaming is opt-in via the
       // streamingCard flag (default off → capability false → ChatAgent
-      // degrades to sendMessage). The callback impl lands in a follow-up.
+      // degrades to sendMessage). When on, the streaming callbacks below
+      // implement the Card Kit two-step flow driven by StreamingReplyDriver.
       supportsStreaming: this.config.streamingCard === true,
       supportedMcpTools: [
         'send_text',
@@ -699,6 +717,151 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         'send_file',
       ],
     };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Issue #4400 (#4208 P2-c): Card Kit streaming wiring.
+  //
+  // Implements the IChannel streaming contract (startStreaming / streamText /
+  // finalizeStreaming) the ChatAgent StreamingReplyDriver (#4399) drives. The
+  // 2-step Card Kit flow (verified against the live Feishu API):
+  //   1. startStreaming  → POST /cardkit/v1/cards (createCard) → card_id,
+  //                        then IM-send the card to the chat by card_id
+  //                        (msg_type "interactive", {type:'card',data:{card_id}}).
+  //   2. streamText      → PUT /cards/{card_id}/elements/{element_id}/content
+  //                        (full buffer; platform applies the typewriter delta).
+  //   3. finalizeStreaming → PATCH /cards/{card_id}/settings (streaming_mode off).
+  //
+  // Safety: every step is gated on the streamingCard flag and degrades to
+  // sendMessage on ANY failure — startStreaming returns null (or throws) and
+  // the StreamingReplyDriver catches it, so a reply is never lost. The flag is
+  // default-off, so today's flows are bit-identical until a gray rollout.
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Lazily build the Card Kit HTTP client from the tenant token env var that
+   * feishu-channel already maintains. Returns null (→ sendMessage degrade) if
+   * the token is missing rather than throwing, so a misconfigured deployment
+   * never loses a reply.
+   */
+  private getCardKitClient(): FeishuCardKitClient | null {
+    if (this.streamingCardKitClient) {
+      return this.streamingCardKitClient;
+    }
+    try {
+      this.streamingCardKitClient = createCardKitClientFromEnv();
+      return this.streamingCardKitClient;
+    } catch (err) {
+      logger.warn(
+        { err },
+        'startStreaming: Card Kit client unavailable (tenant token missing?) — declining to sendMessage',
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Begin a streaming reply: create a streaming card and send it to the chat.
+   * Returns the card_id handle for subsequent streamText/finalizeStreaming
+   * calls, or null to signal "degrade to sendMessage".
+   */
+  async startStreaming(chatId: string, parentMessageId?: string): Promise<string | null> {
+    // Defense-in-depth: the ChatAgent already gates on supportsStreaming, but a
+    // misconfigured capability must never silently activate streaming.
+    if (this.config.streamingCard !== true) {
+      return null;
+    }
+    const cardKitClient = this.getCardKitClient();
+    if (!cardKitClient) {
+      return null;
+    }
+    const larkClient = this.client;
+    if (!larkClient) {
+      logger.warn({ chatId }, 'startStreaming: lark IM client not ready — declining to sendMessage');
+      return null;
+    }
+    try {
+      // Step 1: create the streaming card entity → card_id.
+      const created = await cardKitClient.createCard(buildStreamingPlaceholderCard());
+      const { cardId } = created;
+      if (!cardId) {
+        logger.warn(
+          { chatId, created },
+          'startStreaming: createCard returned no card_id — declining to sendMessage',
+        );
+        return null;
+      }
+      // Step 2: send the created card to the conversation by card_id. The same
+      // app that created the card entity must send it. `root_id` keeps the card
+      // inside a topic thread when present (mirrors sendMessage's create path).
+      await larkClient.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify({ type: 'card', data: { card_id: cardId } }),
+          ...(parentMessageId ? { root_id: parentMessageId } : {}),
+        },
+      });
+      // createCard carries no sequence; the first PUT/PATCH uses sequence 1.
+      this.streamingSequences.set(cardId, 0);
+      logger.info(
+        { chatId, cardId, parentMessageId },
+        'startStreaming: streaming card created and sent to chat',
+      );
+      return cardId;
+    } catch (err) {
+      // Decline → the StreamingReplyDriver degrades this turn to sendMessage.
+      logger.warn({ err, chatId }, 'startStreaming failed — degrading to sendMessage');
+      return null;
+    }
+  }
+
+  /**
+   * Patch the in-flight card's reply element with the latest accumulated text.
+   * The Card Kit `sequence` is strictly increasing per card; assigning it
+   * synchronously (before the await) keeps it monotonic in emission order even
+   * though the throttle fires PATCHes fire-and-forget. A rejected PATCH (e.g.
+   * rare wire-level reorder → 300317) is swallowed by the driver and the
+   * complete buffer is re-delivered on finalize.
+   */
+  async streamText(id: string, text: string): Promise<void> {
+    if (!this.streamingSequences.has(id)) {
+      // Unknown / already-finalized card — nothing to patch.
+      return;
+    }
+    const client = this.streamingCardKitClient;
+    if (!client) {
+      return;
+    }
+    const sequence = (this.streamingSequences.get(id) ?? 0) + 1;
+    this.streamingSequences.set(id, sequence);
+    await client.updateElementContent(id, STREAMING_REPLY_ELEMENT_ID, text, sequence);
+  }
+
+  /**
+   * Freeze the in-flight card (turn the breathing cursor off) and drop its
+   * sequence state. Idempotent — safe on every turn-exit path.
+   */
+  async finalizeStreaming(id: string): Promise<void> {
+    if (!this.streamingSequences.has(id)) {
+      return;
+    }
+    const client = this.streamingCardKitClient;
+    const sequence = (this.streamingSequences.get(id) ?? 0) + 1;
+    this.streamingSequences.set(id, sequence);
+    try {
+      if (client) {
+        await client.finalizeStreaming(id, sequence);
+      }
+      logger.info({ cardId: id, sequence }, 'finalizeStreaming: streaming card frozen');
+    } catch (err) {
+      // A failed freeze degrades (driver sendMessage-flushes the full buffer);
+      // still clean up so the per-card counter does not leak.
+      logger.warn({ err, cardId: id }, 'finalizeStreaming failed — driver will sendMessage-flush');
+    } finally {
+      this.streamingSequences.delete(id);
+    }
   }
 
   /**
