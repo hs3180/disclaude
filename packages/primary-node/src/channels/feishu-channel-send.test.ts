@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import { FeishuChannel } from './feishu-channel.js';
+import { FeishuChannel, extractFeishuApiError } from './feishu-channel.js';
 
 // ─── Mock Logger ────────────────────────────────────────────────────────────
 
@@ -749,6 +749,94 @@ describe('FeishuChannel doSendMessage — Issue #1619', () => {
         expect.stringMatching(/^A{197}\.\.\.$/),
         'interactive',
       );
+    });
+  });
+
+  // Issue #4452: thread reply() 400s were logged with no captured root cause.
+  // Verify the Feishu API business error (code/msg/log_id) now flows into the
+  // warn payload so the frequent fallbacks become diagnosable.
+  describe('Thread reply failure diagnostics — Issue #4452', () => {
+    it('should log Feishu API code/msg/log_id when reply fails with a business error', async () => {
+      const { client, mocks } = createMockClient();
+      // Simulate a lark SDK / axios error: Feishu returns a 400 with a JSON body
+      // { code, msg, log_id } on err.response.data.
+      const feishuApiError = Object.assign(new Error('Request failed with status code 400'), {
+        response: {
+          status: 400,
+          data: { code: 230002, msg: 'reply message not found', log_id: '202608051100 abc' },
+        },
+      });
+      mocks.replyMock.mockRejectedValueOnce(feishuApiError);
+      const channel = createTestChannel(client);
+
+      const result = await channel.sendMessage({
+        chatId: 'chat_123',
+        type: 'text',
+        text: 'Fallback test',
+        threadId: 'om_deleted_msg',
+      });
+
+      // Still falls back to create and returns its message id.
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(result).toBe('new_msg_001');
+
+      // The warn log must carry the API-level detail, not just the axios message.
+      const warnCalls = mockLogger.warn.mock.calls;
+      const fallbackCall = warnCalls.find(
+        (c) => c[1] === 'Thread reply failed, falling back to message.create',
+      );
+      expect(fallbackCall).toBeDefined();
+      const [payload] = fallbackCall!;
+      expect(payload).toMatchObject({
+        threadId: 'om_deleted_msg',
+        chatId: 'chat_123',
+        apiCode: 230002,
+        apiMsg: 'reply message not found',
+        apiLogId: '202608051100 abc',
+        httpStatus: 400,
+      });
+    });
+  });
+
+  describe('extractFeishuApiError — Issue #4452', () => {
+    it('extracts code/msg/log_id/status from an axios-style lark error', () => {
+      const err = Object.assign(new Error('Request failed with status code 400'), {
+        response: {
+          status: 400,
+          data: { code: 230002, msg: 'reply message not found', log_id: 'log-1' },
+        },
+      });
+      expect(extractFeishuApiError(err)).toMatchObject({
+        apiCode: 230002,
+        apiMsg: 'reply message not found',
+        apiLogId: 'log-1',
+        httpStatus: 400,
+        errorMessage: 'Request failed with status code 400',
+      });
+    });
+
+    it('extracts a direct code/msg on the thrown object (unwrapped body)', () => {
+      const err = Object.assign(new Error('boom'), {
+        code: 99991663,
+        msg: 'rate limited',
+        log_id: 'log-2',
+      });
+      expect(extractFeishuApiError(err)).toMatchObject({
+        apiCode: 99991663,
+        apiMsg: 'rate limited',
+        apiLogId: 'log-2',
+      });
+    });
+
+    it('falls back to errorMessage for a bare Error (no apiCode dumped)', () => {
+      const detail = extractFeishuApiError(new Error('Thread deleted'));
+      expect(detail).toEqual({ errorMessage: 'Thread deleted' });
+      expect(detail.apiCode).toBeUndefined();
+    });
+
+    it('handles non-object throws', () => {
+      expect(extractFeishuApiError('string thrown')).toEqual({ errorMessage: 'string thrown' });
+      expect(extractFeishuApiError(undefined)).toEqual({ errorMessage: 'undefined' });
     });
   });
 });
