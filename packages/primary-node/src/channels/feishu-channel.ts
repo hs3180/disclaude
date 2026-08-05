@@ -707,7 +707,8 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       supportsUpdate: true,
       // Issue #4400 / #4208: native streaming is opt-in via the
       // streamingCard flag (default off → capability false → ChatAgent
-      // degrades to sendMessage). The callback impl lands in a follow-up.
+      // degrades to sendMessage). When on, the streaming callbacks below
+      // implement the Card Kit two-step flow driven by StreamingReplyDriver.
       supportsStreaming: this.config.streamingCard === true,
       supportedMcpTools: [
         'send_text',
