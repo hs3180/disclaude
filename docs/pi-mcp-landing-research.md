@@ -1,14 +1,18 @@
-# MCP Landing Path for the pi Backend — Research (#4431, part 1)
+# MCP Landing Path for the pi Backend — Research (#4431, parts 1–2)
 
 > Parent: **#4383** · Serves decision **(b) MCP path** (choose between B1/B2/B3) ·
 > Type: research / feasibility (decision-gating).
 >
-> **This is part 1 of [#4431](https://github.com/hs3180/disclaude/issues/4431).**
-> Part 1 answers the four research questions **B-Q1..B-Q4 with codebase + upstream-tarball evidence**.
-> The **Playwright-MCP end-to-end PoC** and the **upstream release-notes / discussion web
-> survey** are explicitly deferred to **part 2** (see §"Deferred to part 2"). Every claim below
-> cites a `file:line`; there are **zero web sources** in part 1 (the pi version facts come from
-> `npm view` + installed tarballs, not the website).
+> **Part 1** answers the four research questions **B-Q1..B-Q4 with codebase + upstream-tarball
+> evidence** (every claim cites a `file:line`; the pi version facts come from `npm view` +
+> installed tarballs, not the website).
+>
+> **Part 2** adds the deferred **upstream roadmap / release-notes / discussion web survey**
+> (new §"B-Q1.1 — Upstream MCP web survey (part 2)") — it is the one section that legitimately
+> cites **web sources** (GitHub issues / discussions / code-search on `earendil-works/pi`). It
+> **strengthens**, and slightly refines, the B-Q1 conclusion that "wait for upstream" is not
+> viable. The **Playwright-MCP end-to-end PoC** remains deferred (needs a live pi runtime;
+> see §"Deferred to part 2").
 
 Companion docs:
 
@@ -96,6 +100,82 @@ converter (B1) or an explicit capability cut (B2/B3).
 > Version caveat (carried from the spike, `pi/options-adapter.ts:18-20`): pi is 0.x / pre-1.0 and
 > iterates fast; re-run this grep on any pi bump. The disclaude pin today is still 0.82.1
 > (`pi/options-adapter.ts:16-17`); 0.83.0 is the *latest observed*, not yet pinned.
+
+---
+
+## B-Q1.1 — Upstream MCP web survey (part 2)
+
+**Question (part 2, item 2):** beyond the 0.83.0 *code* fact, does the upstream pi project have
+an **announced MCP plan** in releases / discussions / issues — i.e. is "wait for upstream to add
+MCP to the embeddable library" a real option, or dead?
+
+**Headline finding:** MCP is a **mature, shipped, app/extension-layer feature** of pi-the-product
+— it is *not* nascent and *not* on the `pi-agent-core` library track. This **strengthens** the
+B-Q1 conclusion: "wait for upstream" is doubly not viable, because moving MCP into the embeddable
+library would be an upstream **re-architecture**, not a version bump, and there is no visible
+intent to do it.
+
+### Evidence (all fetched live from `github.com/earendil-works/pi`)
+
+**1. MCP is a long-shipped, exercised app feature — 121 issue/PR hits across the project.** A
+representative slice (state + title, observed via `gh api search/issues?q=repo:earendil-works/pi+mcp`):
+
+| # | state | title (abbr.) | what it shows |
+|---|---|---|---|
+| [#1221](https://github.com/earendil-works/pi/pull/1221) | PR · merged | "Added Agents, **MCP**, Slash Comments and Autocomplete improvements" | the original MCP landing |
+| [#4689](https://github.com/earendil-works/pi/issues/4689) | closed | "/skills and **/mcp** toggles should control system prompt visibility" | a first-class `/mcp` command |
+| [#5364](https://github.com/earendil-works/pi/issues/5364) | closed | "Add support for **MCP structuredContent** in tool results" | MCP result-shape work |
+| [#4226](https://github.com/earendil-works/pi/issues/4226) | closed | "[BUG] **MCP tools fail** — parameters sent as strings instead of native types" | MCP param typing at the app tool boundary |
+| [#5469](https://github.com/earendil-works/pi/issues/5469) | closed | "Collapse **MCP tool results** by default (opt-out)" | MCP UX in the TUI |
+| [#5857](https://github.com/earendil-works/pi/issues/5857) | closed | "**MCP HTTP servers** retried with full exponential backoff on 401/403 → ~49s startup hang" | MCP HTTP transport in the app |
+| [#5687](https://github.com/earendil-works/pi/issues/5687) | closed | "pi list and pi update never exit when **an extension runs an MCP server**" | MCP = extension-hosted |
+| [#4500](https://github.com/earendil-works/pi/issues/4500) | closed | "Dynamic OpenAPI → Pi Tools Extension and Tool Selection Challenges" | extension tool plumbing (MCP-adjacent) |
+
+These are **product/runtime** concerns (TUI command, HTTP transport, result rendering, extension
+lifecycle) — the surface of an *application* that hosts MCP, not a library that exposes a
+`createMcpServer` API.
+
+**2. MCP lives in `packages/coding-agent` + the extension runtime — NOT in the embeddable
+`packages/agent-core`.** GitHub code search, scoped by package path:
+
+```
+$ gh api 'search/code?q=repo:earendil-works/pi+mcp+path:packages/agent-core'   # → 0 files
+$ gh api 'search/code?q=repo:earendil-works/pi+mcp+path:packages/coding-agent' # → 5 files
+```
+
+Zero MCP source under `packages/agent-core`; non-zero under `packages/coding-agent`. This
+**triangulates** part 1's tarball finding (`pi-agent-core@0.83.0/dist` = 0 MCP symbols,
+`docs/pi-mcp-landing-research.md` §B-Q1) from a second, independent angle: even in the *source*
+tree the MCP code sits in the app package. disclaude embeds `pi-agent-core`
+(`docs/pi-agent-core-api-research.md` #4384 spike) as an **in-process loop**, so it inherits the
+loop but **not** pi's extension/MCP runtime — which is exactly why part 1 needs a converter.
+
+**3. No open RFC / discussion / release note proposes moving MCP into the library API.** Of 272
+discussions, the only two with "mcp" in the title are a **user** integration proposal
+([#6758](https://github.com/earendil-works/pi/discussions/6758) — QVeris data tool *as an MCP
+server*) and a **benchmark** ([#6646](https://github.com/earendil-works/pi/discussions/6646) —
+Pi vs OpenCode vs Codex, MCP as a compared feature). Neither is an upstream plan to expose MCP
+to library consumers. Recent releases (last 30) name **no** MCP headline change. The one issue
+that *names* `pi-agent-core` next to MCP ([#5778](https://github.com/earendil-works/pi/issues/5778)
+— "pi-agent-core hangs indefinitely on unresponsive streams or tool execution deadlocks") is
+about the loop's robustness *while hosting* extension/MCP tools, not about agent-core gaining an
+MCP API.
+
+### Decision impact (refines the part-1 recommendation)
+
+- **B1.5 ("wait for upstream MCP") is dead — more confidently than part 1 stated.** It is not
+  merely that 0.83.0 has no MCP; there is **no upstream track** that would put one in
+  `pi-agent-core`. MCP is an app/extension capability; reaching it as a library embedder would
+  require upstream to re-architect MCP *out of* `packages/coding-agent` + the extension runtime
+  *into* `packages/agent-core`'s public API — and nothing signals that.
+- **The recommendation (B1, write the converter) stands, and its chief residual risk drops a
+  notch.** Part 1 hedged on "maybe a pi bump brings MCP"; this survey downgrades that hedge:
+  even a major-version bump is unlikely to deliver library-level MCP without an explicit upstream
+  effort disclaude would see in discussions/releases.
+- **Honest limit:** GitHub code-search totals are directional (the index is best-effort), and the
+  discussion/release survey is a point-in-time read of a fast-moving repo. The conclusion rests
+  on the **triangulation** (0 in agent-core source + 0 in agent-core `dist` + 121 app-layer hits +
+  no library-API plan), not on any single count.
 
 ---
 
@@ -358,23 +438,26 @@ capability and is strictly dominated by B3 (which preserves the option to land B
 
 ---
 
-## Deferred to part 2
+## Deferred items (parts 1–2)
 
-Part 1 is deliberately **local-evidence-only**. The following are required to fully satisfy
-[#4431](https://github.com/hs3180/disclaude/issues/4431) acceptance and are deferred:
+Part 1 is deliberately **local-evidence-only**; part 2 added the upstream **web survey**
+(§B-Q1.1). The remaining items required to fully satisfy
+[#4431](https://github.com/hs3180/disclaude/issues/4431) acceptance:
 
-1. **Playwright MCP end-to-end PoC** (resolves R1, R2) — write a minimal converter
-   (`@modelcontextprotocol/sdk` `Client` + `StdioClientTransport` → `listTools` → wrap each as
-   `AgentHarnessTool` → `harness.setTools`), connect to a Playwright MCP endpoint, and run one
-   `callTool` through pi's `agentLoop`. Acceptance item: "Playwright MCP PoC has run/no-run
+1. **Playwright MCP end-to-end PoC** (resolves R1, R2) — **still deferred.** Write a minimal
+   converter (`@modelcontextprotocol/sdk` `Client` + `StdioClientTransport` → `listTools` → wrap
+   each as `AgentHarnessTool` → `harness.setTools`), connect to a Playwright MCP endpoint, and run
+   one `callTool` through pi's `agentLoop`. Needs a live pi runtime + a Playwright MCP endpoint;
+   not doable from a docs-only context. Acceptance item: "Playwright MCP PoC has run/no-run
    evidence (if recommending B1)".
-2. **Upstream roadmap / release-notes web survey** — confirm there is no announced MCP plan in the
-   pi repo's releases/discussions (strengthens the B-Q1 "not viable to wait" conclusion beyond the
-   0.83.0 code fact). Zero web sources are cited in part 1; this is the one place they belong.
+2. ~~**Upstream roadmap / release-notes web survey**~~ — **done in part 2 (§B-Q1.1).** Conclusion:
+   MCP is a mature app/extension-layer feature with no library-API track upstream, so "wait for
+   upstream" is doubly not viable.
 3. **Convert the recommendation into a #4417 scope note** once the PoC selects the row in the
-   decision table above.
+   decision table above — **still deferred** (depends on item 1).
 
-Until part 2 lands, the recommendation above is honestly labeled **conditional**.
+Until the PoC lands, the recommendation above is honestly labeled **conditional** (the web survey
+in §B-Q1.1 strengthens, but does not remove, the R1 dependency on the PoC).
 
 ---
 
@@ -387,11 +470,15 @@ Until part 2 lands, the recommendation above is honestly labeled **conditional**
 - [x] **B-Q3 answered with evidence** — `setTools` is the bridge; no MCP-specific plugin exists.
 - [x] **B-Q4 answered with evidence** — `channel-mcp` (inline) + Playwright/user stdio; pi adapter
       deferral site `pi/options-adapter.ts:38`.
-- [x] **Latest pi-agent-core MCP status re-verified (not just 0.82.1)** — 0.83.0 re-verified here.
-- [ ] **Playwright MCP PoC run evidence** — **deferred to part 2** (hence the conditional
-      recommendation; not fabricated).
+- [x] **Latest pi-agent-core MCP status re-verified (not just 0.82.1)** — 0.83.0 re-verified here
+      (part 1) **and** upstream source/code-search re-verified (part 2, §B-Q1.1).
+- [ ] **Playwright MCP PoC run evidence** — **still deferred** (needs a live pi runtime; hence the
+      conditional recommendation; not fabricated).
 - [x] **Report gives a recommendation + decision criteria** — B1 conditional, with a PoC-gated
       decision table.
+- [x] **Upstream roadmap / release-notes / discussion web survey** — **part 2 (§B-Q1.1)**: MCP is
+      a mature app/extension feature (121 issue hits), 0 MCP source under `packages/agent-core`,
+      no library-API plan in discussions/releases → "wait for upstream" doubly not viable.
 
 ---
 
@@ -410,3 +497,20 @@ Until part 2 lands, the recommendation above is honestly labeled **conditional**
   `packages/core/src/config/index.ts:521`; `disclaude.config.example.yaml:249-268`;
   `package-lock.json` (`@modelcontextprotocol/sdk@1.29.0`).
 - Companion: `docs/pi-agent-core-api-research.md` (#4384 spike).
+
+### Web sources (part 2, §B-Q1.1 — all on `github.com/earendil-works/pi`, fetched live)
+
+- Issues/PRs (MCP as a shipped app/extension feature): [#1221](https://github.com/earendil-works/pi/pull/1221),
+  [#4689](https://github.com/earendil-works/pi/issues/4689), [#5364](https://github.com/earendil-works/pi/issues/5364),
+  [#4226](https://github.com/earendil-works/pi/issues/4226), [#5469](https://github.com/earendil-works/pi/issues/5469),
+  [#5857](https://github.com/earendil-works/pi/issues/5857), [#5687](https://github.com/earendil-works/pi/issues/5687),
+  [#4500](https://github.com/earendil-works/pi/issues/4500).
+- `pi-agent-core` named next to MCP (loop robustness, not a library API): [#5778](https://github.com/earendil-works/pi/issues/5778).
+- Discussions (272 total; "mcp" in title = user integration + benchmark, **not** an upstream
+  library-API plan): [#6758](https://github.com/earendil-works/pi/discussions/6758),
+  [#6646](https://github.com/earendil-works/pi/discussions/6646).
+- Code search (directional, via `gh api search/code`): `mcp` under `packages/agent-core` → **0**
+  files; under `packages/coding-agent` → **5** files.
+- Survey method: `gh api search/issues?q=repo:earendil-works/pi+mcp` → **121** total hits
+  (issues + PRs, all states); `gh api repos/earendil-works/pi` → `has_discussions: true`,
+  `has_issues: true`, `default_branch: main`.
