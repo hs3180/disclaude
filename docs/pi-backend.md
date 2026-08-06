@@ -65,7 +65,7 @@ agent:
 
 pi 后端目前是「已可注册、能力受限」状态。切换前请知悉：
 
-1. **MCP 非原生**：pi 后端尚无原生 MCP 支持。Disclaude 重度依赖的 MCP（如 Playwright MCP、内联工具）在 pi 后端下**不可用**，需由适配层桥接——该工作跟踪于 [#4417](https://github.com/hs3180/disclaude/issues/4417)（createMcpServer 适配器），落地前 pi 后端无法驱动 MCP 工具。
+1. **MCP 非原生**：pi 运行时本身不带原生 MCP（`pi-agent-core` 整包无 MCP API，spike #4384 已证），由 disclaude 适配层桥接。[#4417](https://github.com/hs3180/disclaude/issues/4417) part 1 已落地 **inline MCP 句柄构造**：`createMcpServer({type:'inline', ...})` 经 `createInlineTool` 把 disclaude 工具包成 pi `AgentHarnessTool[]`、返回 `{name, version, tools}`（实测见 §7、单测 `provider.test.ts:247`）；**stdio MCP**（如 Playwright MCP）仍抛 `stdio MCP servers are not supported`（与 Claude provider 一致，决策已记录）。但句柄**尚无法注入运行中的 agentLoop**——live 工具注入依赖 `queryStream`（[#4386](https://github.com/hs3180/disclaude/issues/4386) 仍 `NOT_IMPLEMENTED`），故 pi 后端**当前仍无法实际驱动 MCP 工具**，待 #4386 落地。
 2. **无内置权限系统**：pi 运行时本身不带权限门控（与 claude-code 的 `permissionMode` 不同）。pi 后端的权限补齐跟踪于 [#4389](https://github.com/hs3180/disclaude/issues/4389)，落地前请勿在 pi 后端上依赖细粒度权限控制。权限兜底范式选型（含 Claude 现状审计 + pi `pi-agent-core@0.83.0` 复核 + 威胁模型）见 [`pi-permission-gating-research.md`](./pi-permission-gating-research.md)（#4432 part 1）。
 
 > 这两项会随 #4417 / #4389 的推进更新；本页描述以它们当前（open）状态为准。
@@ -79,7 +79,7 @@ pi 后端目前是「已可注册、能力受限」状态。切换前请知悉�
 
 为确认本页描述与代码一致，编写一次性脚本直接调用 `@disclaude/core` 的真实模块（`config/loader.ts` 的 `validateConfig`、`sdk/factory.ts` 的注册表与 `setDefaultProvider`、`sdk/providers/pi/provider.ts` 的 `PiAgentProvider`），对各项断言实测。测试环境：**未安装** `@earendil-works/pi-agent-core`（即模拟「缺前置条件」的常见情形）。
 
-结果 **14 项断言全部通过**，关键观测值如下（合并展示）：
+结果 **15 项断言全部通过**（`createMcpServer` 自 #4417 part 1 起拆为 inline 返回句柄 / stdio 抛错两项复测，并由单测 `packages/core/src/sdk/providers/pi/provider.test.ts:247` 固化），关键观测值如下（合并展示）：
 
 | 断言（对应章节） | 实测结果 |
 |---|---|
@@ -88,7 +88,8 @@ pi 后端目前是「已可注册、能力受限」状态。切换前请知悉�
 | `setDefaultProvider('bogus')` 抛错并列出可用项（§4 回退） | ✅ `Unknown provider type: bogus. Available: claude, pi` |
 | `getProvider('pi')` 是 `PiAgentProvider` | ✅ name=`pi`，version=`0.0.0-skeleton` |
 | 注册表同时含 claude 与 pi（§1） | ✅ `[claude(available=true), pi(available=false)]` |
-| `pi.createMcpServer()` 抛错（§5 MCP 非原生，#4417） | ✅ `... not implemented yet ... tools/MCP in #4387 (S4)` |
+| `pi.createMcpServer({type:'inline',...})` 返回句柄（§5，#4417 part 1） | ✅ `{name, version, tools:[...]}`——工具经 `createInlineTool` 包成 `AgentHarnessTool`（`label`/`execute` 就绪），无 pi 运行时即可构造（纯包装，`provider.test.ts:247`） |
+| `pi.createMcpServer({type:'stdio',...})` 抛错（§5，#4417 part 1 决策） | ✅ `stdio MCP servers are not supported by PiAgentProvider.createMcpServer`（与 Claude provider 一致） |
 | 未装 pi-ai 时 `pi.validateConfig()` → false（§3 前置条件） | ✅ false |
 | `pi.getInfo().available === false` 且原因提及 pi-agent-core | ✅ reason=`pi-agent-core package not installed or not configured` |
 | pi 无 permission 相关 API（§5 无权限系统，#4389） | ✅ 原型方法仅 `getInfo / queryStream / createInlineTool / createMcpServer / validateConfig / dispose` |
