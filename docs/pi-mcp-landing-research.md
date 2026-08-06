@@ -28,6 +28,8 @@ Companion docs:
 | **B-Q3** Is there a lighter bridge than per-tool wrapping? | **No shortcut, but a clean injection point exists.** `AgentHarness.setTools(tools, activeToolNames?)` (agent-harness.d.ts:76) is the dynamic tool registry — wrap each MCP tool, then `setTools`. Zero MCP-specific plugin/registry symbols exist. |
 | **B-Q4** Which MCP servers must the converter cover? | **Two classes.** (a) `channel-mcp` — **inline, in-process** (`send_text`/`send_card`/`send_interactive`/`send_file` + `push-to-agent` + loop tools); (b) **Playwright MCP + any user-configured stdio server** (`disclaude.config.example.yaml:249`). Class (a) overlaps the inline-tool work in #4387; class (b) needs the MCP client converter. |
 
+> **✅ DECISION (owner, 2026-08-06, discussion chat): B1.** pi backend writes the MCP→`AgentHarnessTool` converter (#4417), full parity. The part-2 PoC is **B1's first slice** (it resolves R1), not a gate on the decision — so the destination is now fixed at B1; the decision table below governs the *execution* (full converter now vs B3-now→B1-later) based on the PoC outcome.
+
 **Recommendation (conditional, pending the part-2 PoC):** pursue **B1** (write the converter, #4417).
 It is the only option that preserves feature parity (Playwright + custom MCP servers). The single
 unverified risk is whether pi's TypeBox schema engine needs TypeBox `Kind` symbols on a passthrough
@@ -329,6 +331,8 @@ deferred to **#4417**. That is the exact scope the B1/B2/B3 decision governs.
 ---
 
 ## Recommendation + decision criteria (for #4383 decision (b))
+
+> **✅ DECISION (owner, 2026-08-06): B1.** Recorded in [#4383 decision update, 2026-08-06](https://github.com/hs3180/disclaude/issues/4383#issuecomment-5200152809). B1 is the chosen destination; the part-2 PoC is the first execution slice (resolves R1); the table below is the execution contingency, not a re-opening of the decision.
 
 **Recommendation: B1 (write the converter, #4417), conditional on the part-2 PoC confirming R1.**
 
