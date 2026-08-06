@@ -66,7 +66,7 @@ agent:
 pi 后端目前是「已可注册、能力受限」状态。切换前请知悉：
 
 1. **MCP 非原生**：pi 后端尚无原生 MCP 支持。Disclaude 重度依赖的 MCP（如 Playwright MCP、内联工具）在 pi 后端下**不可用**，需由适配层桥接——该工作跟踪于 [#4417](https://github.com/hs3180/disclaude/issues/4417)（createMcpServer 适配器），落地前 pi 后端无法驱动 MCP 工具。
-2. **无内置权限系统**：pi 运行时本身不带权限门控（与 claude-code 的 `permissionMode` 不同）。pi 后端的权限补齐跟踪于 [#4389](https://github.com/hs3180/disclaude/issues/4389)，落地前请勿在 pi 后端上依赖细粒度权限控制。
+2. **无内置权限系统**：pi 运行时本身不带权限门控（与 claude-code 的 `permissionMode` 不同）。pi 后端的权限补齐跟踪于 [#4389](https://github.com/hs3180/disclaude/issues/4389)，落地前请勿在 pi 后端上依赖细粒度权限控制。权限兜底范式选型（含 Claude 现状审计 + pi `pi-agent-core@0.83.0` 复核 + 威胁模型）见 [`pi-permission-gating-research.md`](./pi-permission-gating-research.md)（#4432 part 1）。
 
 > 这两项会随 #4417 / #4389 的推进更新；本页描述以它们当前（open）状态为准。
 
