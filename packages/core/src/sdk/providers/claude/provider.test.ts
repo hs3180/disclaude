@@ -418,6 +418,43 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalled();
     });
 
+    // Issue #4442 (part 2): empty stream — the SDK yields zero messages
+    // (200-OK-zero-content / silent turn death). The provider must NOT let this
+    // complete silently: it elevates the case to a structured ERROR so the failure
+    // is observable in logs (the #4442 ask: 判错/上报 rather than 静默完成).
+    it('Issue #4442 (part 2): logs a structured ERROR when the SDK query yields zero messages (empty stream)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      loggerMock.error.mockClear();
+
+      // Mock SDK query to return an empty async iterable (yields nothing).
+      mockQuery.mockReturnValue((async function* () {
+        /* empty stream — 200-OK but zero content events */
+      })());
+
+      async function* testInput(): AsyncGenerator<UserInput> {
+        yield { role: 'user', content: 'Hi' };
+      }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'],
+        cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) {
+        messages.push(msg);
+      }
+
+      // Empty stream → zero messages yielded to the consumer (silent completion).
+      expect(messages.length).toBe(0);
+      // The silent completion is elevated to a structured ERROR referencing #4442.
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        expect.objectContaining({ totalMs: expect.any(Number), partialsObserved: false }),
+        expect.stringMatching(/Issue #4442[\s\S]*zero messages/),
+      );
+    });
+
     // Issue #4192 (L1): provider in-request retry on transient error before the
     // first SDK message. The query is re-created with replayed (buffered) input.
     it('Issue #4192 (L1): retries the query on a transient error before the first SDK message', async () => {
