@@ -2,7 +2,8 @@
 /**
  * Issue Scanner — configurable target repository via TARGET_REPO env var
  *
- * Lists open issues that don't have an associated open PR.
+ * Lists open issues that don't have an associated open PR, or whose work already
+ * landed in a merged PR (phantom-pool filter — formal closing keywords only).
  * Outputs Markdown with full issue details + comments for each candidate.
  *
  * Usage:
@@ -213,15 +214,14 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
         }
       }
     }
-    pullRequests(first: 100, states: [OPEN]) {
+    openPRs: pullRequests(first: 100, states: [OPEN]) {
+      totalCount
+      nodes { number title body headRefName }
+    }
+    mergedPRs: pullRequests(first: 100, states: [MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
       totalCount
       pageInfo { hasNextPage }
-      nodes {
-        number
-        title
-        body
-        headRefName
-      }
+      nodes { number title body headRefName }
     }
   }
 }`;
@@ -267,32 +267,66 @@ function main() {
 
   const repo = data.data.repository;
   const allIssues = repo.issues.nodes || [];
-  const allPRs = repo.pullRequests.nodes || [];
+  const openPRs = repo.openPRs.nodes || [];
+  const mergedPRs = repo.mergedPRs.nodes || [];
 
-  if (repo.issues.pageInfo?.hasNextPage || repo.pullRequests.pageInfo?.hasNextPage) {
-    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, PRs total: ${repo.pullRequests.totalCount}. Only first 100 of each fetched.`);
+  if (repo.issues.pageInfo?.hasNextPage || repo.mergedPRs.pageInfo?.hasNextPage) {
+    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, open PRs: ${repo.openPRs.totalCount}, merged PRs: ${repo.mergedPRs.totalCount}. Only first 100 of each fetched.`);
   }
 
-  log(`Found ${allIssues.length} open issues, ${allPRs.length} open PRs`);
+  log(`Found ${allIssues.length} open issues, ${openPRs.length} open PRs, ${mergedPRs.length} merged PRs (capped at 100)`);
 
-  // Build set of issue numbers referenced by open PRs
-  const prIssueNums = new Set();
-  const ISSUE_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
+  // Open PRs reference work-in-progress issues (any keyword match) — exclude them.
+  // Merged PRs that closed an issue (formal closing keyword, non-"part N") signal
+  // already-shipped work — the phantom-pool filter. Open and merged are fetched as
+  // separate connections so the (small) open-PR set is never crowded out of the
+  // capped window by the much larger merged-PR set.
+  const OPEN_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
+  const CLOSING_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+  const PART_PATTERN = /part\s+\d/i;
   const BRANCH_NUM = /(\d+)/g;
-  for (const pr of allPRs) {
-    // Keyword-prefixed references in body and title (strict)
-    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(ISSUE_KEYWORD)) {
-      prIssueNums.add(Number(m[1]));
+
+  const openPRIssueNums = new Set();
+  for (const pr of openPRs) {
+    // Any keyword-prefixed reference in body/title — work in progress, don't duplicate.
+    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(OPEN_KEYWORD)) {
+      openPRIssueNums.add(Number(m[1]));
     }
     // Loose number matching in branch name (e.g. fix/issue-123)
     for (const m of (pr.headRefName || "").matchAll(BRANCH_NUM)) {
-      prIssueNums.add(Number(m[1]));
+      openPRIssueNums.add(Number(m[1]));
     }
   }
-  log(`Issues with open PRs: ${[...prIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
 
-  // Filter: remove issues with open PRs
-  const candidates = allIssues.filter((i) => !prIssueNums.has(i.number));
+  const mergedPRIssueNums = new Set();
+  let skippedPartPRs = 0;
+  for (const pr of mergedPRs) {
+    // Skip "part N" titles: an epic with a merged part-N PR is usually still open
+    // for remaining parts, so its closing keyword should not exclude the issue.
+    if (PART_PATTERN.test(pr.title || "")) { skippedPartPRs++; continue; }
+    // Closing keywords only (no "related") — work already shipped.
+    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(CLOSING_KEYWORD)) {
+      mergedPRIssueNums.add(Number(m[1]));
+    }
+  }
+
+  // An issue is excluded if it has an in-progress (open) PR or its work already
+  // shipped in a merged PR (phantom). Only the latter counts as phantom-filtered.
+  const excludedIssueNums = new Set(openPRIssueNums);
+  let phantomFilteredCount = 0;
+  for (const n of mergedPRIssueNums) {
+    if (!excludedIssueNums.has(n)) phantomFilteredCount++;
+    excludedIssueNums.add(n);
+  }
+
+  const openPRCount = openPRs.length;
+  const mergedPRCount = mergedPRs.length;
+  log(`Issues with open PRs: ${[...openPRIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
+  log(`Phantom-filtered (merged closing-keyword) issues: ${[...mergedPRIssueNums].sort((a, b) => a - b).join(", ") || "none"} (${phantomFilteredCount} additional; skipped ${skippedPartPRs} part-N merged PRs)`);
+  log(`PRs scanned: ${openPRCount} open, ${mergedPRCount} merged`);
+
+  // Filter: remove issues with open PRs or already-shipped merged-PR work
+  const candidates = allIssues.filter((i) => !excludedIssueNums.has(i.number));
   log(`${candidates.length} candidate(s) after filtering`);
 
   if (!candidates.length) {
@@ -302,7 +336,7 @@ function main() {
 
   // Build Markdown output with full issue details
   let md = `# Issue Scan Results\n\n`;
-  md += `**Candidates:** ${candidates.length} | **Open PRs:** ${allPRs.length} | **Repo:** ${REPO}\n\n---\n\n`;
+  md += `**Candidates:** ${candidates.length} | **Open PRs:** ${openPRCount} | **Merged PRs scanned:** ${mergedPRCount} | **Repo:** ${REPO}\n\n---\n\n`;
 
   for (const issue of candidates) {
     const labels = (issue.labels?.nodes || []).map((l) => l.name);
