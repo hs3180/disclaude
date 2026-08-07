@@ -65,10 +65,10 @@ agent:
 
 pi 后端目前是「已可注册、能力受限」状态。切换前请知悉：
 
-1. **MCP 非原生**：pi 运行时本身不带原生 MCP（`pi-agent-core` 整包无 MCP API，spike #4384 已证），由 disclaude 适配层桥接。[#4417](https://github.com/hs3180/disclaude/issues/4417) part 1 已落地 **inline MCP 句柄构造**：`createMcpServer({type:'inline', ...})` 经 `createInlineTool` 把 disclaude 工具包成 pi `AgentHarnessTool[]`、返回 `{name, version, tools}`（实测见 §7、单测 `provider.test.ts:247`）；**stdio MCP**（如 Playwright MCP）仍抛 `stdio MCP servers are not supported`（与 Claude provider 一致，决策已记录）。但句柄**尚无法注入运行中的 agentLoop**——live 工具注入依赖 `queryStream`（[#4386](https://github.com/hs3180/disclaude/issues/4386) 仍 `NOT_IMPLEMENTED`），故 pi 后端**当前仍无法实际驱动 MCP 工具**，待 #4386 落地。
+1. **MCP 非原生**：pi 运行时本身不带原生 MCP（`pi-agent-core` 整包无 MCP API，spike #4384 已证；pi 的 MCP 仅存于其 **app/扩展层**，非 disclaude 内嵌的 `agent-core` 库，调研见 [#4461](https://github.com/hs3180/disclaude/pull/4461)）。适配层侧，已关闭的 [#4417](https://github.com/hs3180/disclaude/issues/4417) part 1 落地了 **inline MCP 句柄构造**：`createMcpServer({type:'inline', ...})` 经 `createInlineTool` 把 disclaude 工具包成 pi `AgentHarnessTool[]`、返回 `{name, version, tools}`（实测见 §7、单测 `provider.test.ts:247`）；**stdio MCP**（如 Playwright MCP）抛 `stdio MCP servers are not supported`（与 Claude provider 一致）。🔴 **2026-08-07 决策：pi 后端将不做 MCP**（逆转 B1，[#4461](https://github.com/hs3180/disclaude/pull/4461) 记录决策）——inline 句柄**不再**接 live 工具注入（`queryStream` [#4386](https://github.com/hs3180/disclaude/issues/4386) 现以 "MVP, no MCP" 推进），故 pi 后端**不会支持 MCP 工具**。需 MCP 能力（浏览器自动化等）请留在 claude 后端，或跟随 [#4459](https://github.com/hs3180/disclaude/issues/4459) / [#4460](https://github.com/hs3180/disclaude/issues/4460) 把相应 MCP 迁为 Skills。
 2. **无内置权限系统**：pi 运行时本身不带权限门控（与 claude-code 的 `permissionMode` 不同）。pi 后端的权限补齐跟踪于 [#4389](https://github.com/hs3180/disclaude/issues/4389)，落地前请勿在 pi 后端上依赖细粒度权限控制。权限兜底范式选型（含 Claude 现状审计 + pi `pi-agent-core@0.83.0` 复核 + 威胁模型）见 [`pi-permission-gating-research.md`](./pi-permission-gating-research.md)（#4432 part 1）。
 
-> 这两项会随 #4417 / #4389 的推进更新；本页描述以它们当前（open）状态为准。
+> 第 1 项（MCP）已于 2026-08-07 定为**不支持**（[#4417](https://github.com/hs3180/disclaude/issues/4417) 已关闭、决策见 [#4461](https://github.com/hs3180/disclaude/pull/4461)）；第 2 项（权限）仍跟踪于 open 的 [#4389](https://github.com/hs3180/disclaude/issues/4389)。本页描述以各自当前状态为准。
 
 ## 6. 何时该用 pi / 何时该留在 claude
 
