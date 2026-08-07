@@ -4,7 +4,7 @@
  * Issue #2939: Simplified to single-node mode — removed remote node routing tests.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { CardActionRouter } from './card-action-router.js';
 
 describe('CardActionRouter', () => {
@@ -24,6 +24,9 @@ describe('CardActionRouter', () => {
   });
 
   afterEach(() => {
+    // Restore real timers so a per-test vi.useFakeTimers() can never leak into
+    // sibling tests (issue #4394 teardown hygiene).
+    vi.useRealTimers();
     router.dispose();
   });
 
@@ -57,12 +60,16 @@ describe('CardActionRouter', () => {
 
   describe('maxAge expiry', () => {
     it('should return { routed: false, expired: true } when context has expired', async () => {
+      // CardActionRouter reads Date.now() for maxAge expiry, so advance a fake
+      // clock past maxAge instead of a real 10ms wall-clock wait (issue #4394 §3).
+      vi.useFakeTimers();
+
       // Create router with very short maxAge (1ms)
       const expiredRouter = new CardActionRouter({ maxAge: 1 });
 
       expiredRouter.registerChatContext('chat-expired', 'node-1');
-      // Wait for entry to expire
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Advance fake clock past maxAge so the entry is considered expired
+      vi.advanceTimersByTime(10);
 
       const expiredMessage = { ...baseMessage, chatId: 'chat-expired' };
       const result = await expiredRouter.routeCardAction(expiredMessage);
@@ -71,7 +78,11 @@ describe('CardActionRouter', () => {
       expiredRouter.dispose();
     });
 
-    it('should distinguish between expired and not_found contexts (#2247)', async () => {
+    it('should distinguish between expired and not_found contexts (#2247)', () => {
+      // Expiry is a Date.now() comparison, so advance a fake clock past maxAge
+      // instead of a real 10ms wall-clock wait (issue #4394 §3 broader pattern).
+      vi.useFakeTimers();
+
       const expiredRouter = new CardActionRouter({ maxAge: 1 });
 
       // Not registered at all
@@ -80,7 +91,7 @@ describe('CardActionRouter', () => {
 
       // Register and let expire
       expiredRouter.registerChatContext('chat-expired', 'node-1');
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      vi.advanceTimersByTime(10);
 
       const expired = expiredRouter.getChatContext('chat-expired');
       expect(expired).toEqual({ status: 'expired' });
