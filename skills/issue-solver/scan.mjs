@@ -211,6 +211,16 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
         comments(first: 30) {
           nodes { body author { login } }
         }
+        closedByPullRequestsReferences(first: 10) {
+          nodes { number title state merged }
+        }
+        timelineItems(first: 50, itemTypes: [CLOSED_EVENT, REOPENED_EVENT]) {
+          nodes {
+            __typename
+            ... on ClosedEvent { createdAt }
+            ... on ReopenedEvent { createdAt }
+          }
+        }
       }
     }
     pullRequests(first: 100, states: [OPEN]) {
@@ -221,6 +231,7 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
         title
         body
         headRefName
+        state
       }
     }
   }
@@ -270,29 +281,57 @@ function main() {
   const allPRs = repo.pullRequests.nodes || [];
 
   if (repo.issues.pageInfo?.hasNextPage || repo.pullRequests.pageInfo?.hasNextPage) {
-    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, PRs total: ${repo.pullRequests.totalCount}. Only first 100 of each fetched.`);
+    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, open PRs total: ${repo.pullRequests.totalCount}. Only first 100 of each fetched.`);
   }
 
-  log(`Found ${allIssues.length} open issues, ${allPRs.length} open PRs`);
+  const openCount = allPRs.filter((pr) => pr.state === "OPEN").length;
+  log(`Found ${allIssues.length} open issues, ${openCount} open PRs`);
 
-  // Build set of issue numbers referenced by open PRs
+  // WIP filter: remove issues that already have an OPEN PR (work in progress —
+  // don't duplicate). Branch-name numbers also count (e.g. fix/issue-123).
   const prIssueNums = new Set();
   const ISSUE_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
   const BRANCH_NUM = /(\d+)/g;
   for (const pr of allPRs) {
-    // Keyword-prefixed references in body and title (strict)
-    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(ISSUE_KEYWORD)) {
-      prIssueNums.add(Number(m[1]));
-    }
-    // Loose number matching in branch name (e.g. fix/issue-123)
-    for (const m of (pr.headRefName || "").matchAll(BRANCH_NUM)) {
-      prIssueNums.add(Number(m[1]));
+    const text = `${pr.body || ""} ${pr.title || ""}`;
+    for (const m of text.matchAll(ISSUE_KEYWORD)) prIssueNums.add(Number(m[1]));
+    for (const m of (pr.headRefName || "").matchAll(BRANCH_NUM)) prIssueNums.add(Number(m[1]));
+  }
+
+  // Candidate-anchored phantom filter: decide each issue's "done" status from its
+  // OWN data (closing-PR linkage + reopen history), NOT by scanning merged-PR
+  // bodies. Rationale: scan only fetches OPEN issues, so a merged closing keyword
+  // that actually stuck would already have CLOSED the issue and removed it from
+  // this pool. Any OPEN issue with a merged closing-PR was therefore closed-then-
+  // REOPENED — the work was reverted or only partially merged — and must STAY a
+  // candidate. Only an OPEN issue with a merged closing-PR that was NEVER reopened
+  // (a true close-hygiene gap: keyword recognized, issue never auto-closed) is a
+  // phantom. This is bounded by the open-issue count (~tens), not the merged-PR
+  // count (thousands), so there is no 100-PR window to truncate.
+  // Limitation (tracked #4373): issues whose merged PR used only a *weak* ref
+  // (feat/test/docs/Refs #N, no closing keyword) are not detectable here and stay
+  // as candidates — the solver's per-tick code-grep remains the backstop.
+  const reopenedIssueNums = new Set();
+  const phantomIssueNums = new Set();
+  for (const issue of allIssues) {
+    const mergedClosingPRs = (issue.closedByPullRequestsReferences?.nodes || [])
+      .filter((pr) => pr.merged);
+    if (!mergedClosingPRs.length) continue; // no closing-PR linkage → not this kind of phantom
+    const tl = issue.timelineItems?.nodes || [];
+    const closes = tl.filter((e) => e.__typename === "ClosedEvent").map((e) => e.createdAt).sort();
+    const reopens = tl.filter((e) => e.__typename === "ReopenedEvent").map((e) => e.createdAt).sort();
+    const lastClose = closes[closes.length - 1];
+    const reopenedAfterClose = reopens.length > 0 && (!lastClose || reopens[reopens.length - 1] > lastClose);
+    if (reopenedAfterClose) {
+      reopenedIssueNums.add(issue.number); // reverted / partial — keep
+    } else {
+      phantomIssueNums.add(issue.number); // close-hygiene gap — filter
     }
   }
-  log(`Issues with open PRs: ${[...prIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
+  log(`Merged-closing-PR issues — phantom-filtered: ${[...phantomIssueNums].sort((a, b) => a - b).join(", ") || "none"} | reopened(kept): ${[...reopenedIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
 
-  // Filter: remove issues with open PRs
-  const candidates = allIssues.filter((i) => !prIssueNums.has(i.number));
+  // Filter: remove WIP issues (open PR) and phantom issues (merged closing-PR, not reopened)
+  const candidates = allIssues.filter((i) => !prIssueNums.has(i.number) && !phantomIssueNums.has(i.number));
   log(`${candidates.length} candidate(s) after filtering`);
 
   if (!candidates.length) {
@@ -302,7 +341,7 @@ function main() {
 
   // Build Markdown output with full issue details
   let md = `# Issue Scan Results\n\n`;
-  md += `**Candidates:** ${candidates.length} | **Open PRs:** ${allPRs.length} | **Repo:** ${REPO}\n\n---\n\n`;
+  md += `**Candidates:** ${candidates.length} | **Open PRs:** ${openCount} | **Repo:** ${REPO}\n\n---\n\n`;
 
   for (const issue of candidates) {
     const labels = (issue.labels?.nodes || []).map((l) => l.name);
