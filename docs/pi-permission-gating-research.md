@@ -9,7 +9,7 @@
 
 1. **disclaude does not itself enforce tool permissions today — not on the Claude path, and (a fortiori) not on the pi path.** The Claude backend *delegates* the entire permission contract to the Claude Agent SDK subprocess via three options (`permissionMode` / `allowedTools`+`disallowedTools` / `settingSources`), and `IAgentSDKProvider` exposes **no permission surface at all**. There is no `canUseTool` / pre-tool-call hook anywhere in `packages/core` or `packages/primary-node`.
 2. **The default permission mode is `bypassPermissions`** (`base-agent.ts:136`). So "the Claude backend gates tools" is, in practice, "the SDK is *configured* to gate, and disclaude asks it not to." This re-frames #4389's premise ("audit how Claude enforces, replicate on pi"): there is little disclaude-owned enforcement to replicate — the real task is to **build** a gating layer that both backends can share.
-3. **`pi-agent-core@0.83.0` (newer than the spike's 0.82.1) still has no permission / approval / allowlist / pre-tool-call system.** The only `permission` token in the whole package is a `FileErrorCode = "permission_denied"` enum value (POSIX-style error, not a gate). What pi *does* expose is a pluggable **`FileSystem` + `Shell`** environment (`ExecutionEnv`) — the natural injection point for OS-level / sandbox-style gating.
+3. **`pi-agent-core@0.83.0` (newer than the spike's 0.82.1) still has no permission / approval / allowlist / pre-tool-call system.** ⚠️ **(part 2 corrected this — see C-Q2.5: pi-agent-core *does* expose an unlabeled `beforeToolCall` deny hook; the "no pre-tool-call" wording below is superseded for that one point.)** The only `permission` token in the whole package is a `FileErrorCode = "permission_denied"` enum value (POSIX-style error, not a gate). What pi *does* expose is a pluggable **`FileSystem` + `Shell`** environment (`ExecutionEnv`) — the natural injection point for OS-level / sandbox-style gating.
 4. The pi provider skeleton already implements a **coarse tool-name allowlist** (`allowedTools` − `disallowedTools` → pi's active-tool set), and explicitly defers runtime gating to #4389 (`providers/pi/options-adapter.ts:39`). So today the pi path has tool-*enumeration* filtering but **no per-call permission decision**.
 5. **Threat-model bottom line:** with `agentBackend = pi`, **disclaude is the sole permission authority** (pi inherits the launcher's perms and never asks). Any gating must live in disclaude-owned code that **every** tool invocation routes through — in particular the MCP→pi converter injection point (#4417) must not become a bypass.
 
@@ -84,7 +84,7 @@ npm view @earendil-works/pi-agent-core version   # → 0.83.0   (spike used 0.82
 
 The version has bumped since the spike; the permission question was re-verified against 0.83.0.
 
-### C-Q2.2 No permission/approval/allowlist/pre-tool-call system
+### C-Q2.2 No permission/approval/allowlist/pre-tool-call system ⚠️ (the pre-tool-call point is corrected in C-Q2.5: pi-agent-core does expose a `beforeToolCall` deny hook)
 
 Across `package/dist/**/*.d.ts`:
 
