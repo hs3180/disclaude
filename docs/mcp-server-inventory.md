@@ -54,7 +54,7 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
   (documented at [`packages/core/src/sdk/providers/claude/options-adapter.ts:97`](../packages/core/src/sdk/providers/claude/options-adapter.ts));
   `instance` is an MCP SDK `McpServer` exposing `close()`.
 - **Teardown**: disclaude retains the closeable inline instances via `collectInlineMcpInstances()`
-  (`mcp-setup.ts:96`) and `close()`s them on `ChatAgent.dispose()` (issue #4302, defense-in-depth).
+  (`mcp-setup.ts:99`) and `close()`s them on `ChatAgent.dispose()` (issue #4302, defense-in-depth).
 - **IPC backing**: the tools talk to the Primary Node over IPC via `getIpcClient()`
   ([`channel-mcp.ts:1-10`](../packages/mcp-server/src/channel-mcp.ts) module doc). The IPC transport itself is
   being unified to REST ([#4168](https://github.com/hs3180/disclaude/issues/4168)); that is orthogonal to the
@@ -67,11 +67,15 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
 
 ### Loop-runner tools (legacy, not in the active channel surface)
 
-`channel-mcp.ts` imports and re-exports `loop_start` / `loop_stop` / `loop_status`
-([`channel-mcp.ts:33-37`](../packages/mcp-server/src/channel-mcp.ts), from `./tools/loop-{start,stop,status}.ts`,
-issue #4075), but **none of them appear in `channelToolDefinitions`** (`channel-mcp.ts:250`) nor in the
-standalone server's `tool-definitions.ts` (see S3). They are programmatic exports only, tied to the
-**deprecated loop system** ([#4039](https://github.com/hs3180/disclaude/issues/4039) /
+`channel-mcp.ts` imports `loop_start` / `loop_stop` / `loop_status`
+([`channel-mcp.ts:24-26`](../packages/mcp-server/src/channel-mcp.ts), via `./tools/index.js`, issue #4075) and
+re-exports them ([`channel-mcp.ts:49-51`](../packages/mcp-server/src/channel-mcp.ts), from
+`./tools/loop-{start,stop,status}.js`). Their tool *definitions* still live in the legacy **`channelTools`**
+record ([`channel-mcp.ts:83`](../packages/mcp-server/src/channel-mcp.ts), loop entries `:204-247`) — a public
+package export ([`index.ts:75`](../packages/mcp-server/src/index.ts)) that has **no internal consumer**; only
+the active `channelToolDefinitions` array feeds `buildMcpServers()`. Accordingly, **none of them appear in
+`channelToolDefinitions`** (`channel-mcp.ts:250`) nor in the standalone server's `tool-definitions.ts` (see S3).
+They are tied to the **deprecated loop system** ([#4039](https://github.com/hs3180/disclaude/issues/4039) /
 [#4430](https://github.com/hs3180/disclaude/issues/4430)). The loop retirement (`#4430`) owns their removal;
 `#4459` does not need to touch them.
 
