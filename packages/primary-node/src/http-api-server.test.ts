@@ -152,15 +152,24 @@ describe('HttpApiServer', () => {
     });
 
     it('should increase uptime over time', async () => {
-      const { body: body1 } = await dispatch(server, { method: 'GET', url: '/api/status' });
-      const data1 = JSON.parse(body1) as StatusResponse;
+      // Drive the uptime clock with fake timers instead of a real 1100ms wall-
+      // clock wait. uptime = floor((Date.now() - startTime) / 1000), so
+      // advancing the fake clock past a second boundary increments it
+      // deterministically — no host-load-dependent sleep (Issue #4394 test hygiene).
+      vi.useFakeTimers();
+      try {
+        const { body: body1 } = await dispatch(server, { method: 'GET', url: '/api/status' });
+        const data1 = JSON.parse(body1) as StatusResponse;
 
-      await new Promise((resolve) => setTimeout(resolve, 1100));
+        vi.advanceTimersByTime(1100);
 
-      const { body: body2 } = await dispatch(server, { method: 'GET', url: '/api/status' });
-      const data2 = JSON.parse(body2) as StatusResponse;
+        const { body: body2 } = await dispatch(server, { method: 'GET', url: '/api/status' });
+        const data2 = JSON.parse(body2) as StatusResponse;
 
-      expect(data2.uptime).toBeGreaterThanOrEqual(data1.uptime);
+        expect(data2.uptime).toBeGreaterThanOrEqual(data1.uptime);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
