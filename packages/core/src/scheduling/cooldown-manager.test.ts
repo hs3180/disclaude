@@ -36,6 +36,9 @@ describe('CooldownManager', () => {
   });
 
   afterEach(() => {
+    // Restore real timers so a per-test vi.useFakeTimers() can never leak into
+    // sibling tests (issue #4394 teardown hygiene).
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -58,10 +61,12 @@ describe('CooldownManager', () => {
     });
 
     it('should return false after cooldown expires', async () => {
-      // Record execution with very short cooldown
+      // Record a 1ms cooldown, then advance a fake clock past it. CooldownManager
+      // reads time via Date.now(), so fake timers make the expiry deterministic
+      // instead of a real 10ms wall-clock wait (issue #4394 §3 broader pattern).
+      vi.useFakeTimers();
       await manager.recordExecution('task-1', 1); // 1ms cooldown
-      // Wait a bit
-      await new Promise(resolve => setTimeout(resolve, 10));
+      vi.advanceTimersByTime(10);
       const result = await manager.isInCooldown('task-1');
       expect(result).toBe(false);
     });
@@ -168,10 +173,13 @@ describe('CooldownManager', () => {
     });
 
     it('should not include expired tasks', async () => {
+      // Advance a fake clock past task-1's 1ms cooldown while task-2's 60s stays.
+      // Deterministic replacement for the real 10ms wall-clock wait (issue #4394 §3).
+      vi.useFakeTimers();
       await manager.recordExecution('task-1', 1); // 1ms cooldown
       await manager.recordExecution('task-2', 60000);
 
-      await new Promise(resolve => setTimeout(resolve, 10));
+      vi.advanceTimersByTime(10);
 
       const all = await manager.getAllInCooldown();
       expect(all).toHaveLength(1);
