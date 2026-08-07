@@ -157,10 +157,16 @@ function validateStep(step, index) {
       if (!step.url) return `step[${index}] (nav) requires "url"`;
       break;
     case "click":
-    case "type":
     case "hover":
     case "extract":
       if (!step.selector) return `step[${index}] (${step.action}) requires "selector"`;
+      break;
+    case "type":
+      // NOTE: `type` needs both selector and text. This must be its own case — a
+      // shared `case "type":` fall-through above would shadow this block (duplicate
+      // case labels are dead code in JS), silently dropping the text requirement.
+      if (!step.selector) return `step[${index}] (type) requires "selector"`;
+      if (step.text === undefined) return `step[${index}] (type) requires "text"`;
       break;
     case "select":
       if (!step.selector) return `step[${index}] (select) requires "selector"`;
@@ -171,9 +177,6 @@ function validateStep(step, index) {
       break;
     case "eval":
       if (!step.expr) return `step[${index}] (eval) requires "expr"`;
-      break;
-    case "type":
-      if (step.text === undefined) return `step[${index}] (type) requires "text"`;
       break;
     case "fill":
       if (!Array.isArray(step.fields)) return `step[${index}] (fill) requires "fields" array`;
@@ -389,14 +392,18 @@ async function cmdScript({ opts }) {
   }
   const session = await launchSession({ sessionFile: opts.session });
   const results = [];
+  let savedSession = null;
   try {
     for (let i = 0; i < steps.length; i++) {
       results.push(await execStep(session.page, steps[i], i, ARTIFACT_DIR));
     }
   } finally {
-    const saved = await closeSession({ ...session, sessionFile: opts.session });
-    return { steps: results, ...(saved ? { sessionSaved: saved } : {}) };
+    // closeSession must always run, but the return MUST NOT live in `finally`:
+    // a `return` here would swallow any exception thrown by execStep above,
+    // turning a mid-script step failure into a silent {ok:true, steps:[...]}.
+    savedSession = await closeSession({ ...session, sessionFile: opts.session });
   }
+  return { steps: results, ...(savedSession ? { sessionSaved: savedSession } : {}) };
 }
 
 async function cmdOneShot(action, positionals, opts) {
