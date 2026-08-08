@@ -6,7 +6,7 @@
  * Extended with supplementary tests from deep review (PR #1996).
  */
 
-import { describe, it, beforeEach, expect } from 'vitest';
+import { describe, it, beforeEach, expect, vi } from 'vitest';
 import { InteractiveContextStore } from './interactive-context.js';
 
 describe('InteractiveContextStore', () => {
@@ -519,24 +519,26 @@ describe('InteractiveContextStore', () => {
 
   describe('cleanupExpired', () => {
     it('should clean up expired contexts', () => {
-      const shortMaxAge = 100; // 100ms
-      const store = new InteractiveContextStore(shortMaxAge);
+      vi.useFakeTimers();
+      try {
+        const shortMaxAge = 100; // 100ms
+        const store = new InteractiveContextStore(shortMaxAge);
 
-      store.register('msg-old', 'chat-1', { ok: 'OK' });
+        store.register('msg-old', 'chat-1', { ok: 'OK' });
 
-      // Wait for expiration
-      return new Promise<void>((resolve) => {
-        setTimeout(() => {
-          store.register('msg-new', 'chat-1', { ok: 'OK' });
-          const cleaned = store.cleanupExpired();
-          expect(cleaned).toBe(1);
-          expect(store.getActionPrompts('msg-old')).toBeUndefined();
-          expect(store.getActionPrompts('msg-new')).toBeDefined();
-          // chatId index should point to the non-expired context
-          expect(store.getActionPromptsByChatId('chat-1')).toBeDefined();
-          resolve();
-        }, 150);
-      });
+        // Advance past maxAge to expire the entry (deterministic, no wall-clock wait)
+        vi.advanceTimersByTime(150);
+
+        store.register('msg-new', 'chat-1', { ok: 'OK' });
+        const cleaned = store.cleanupExpired();
+        expect(cleaned).toBe(1);
+        expect(store.getActionPrompts('msg-old')).toBeUndefined();
+        expect(store.getActionPrompts('msg-new')).toBeDefined();
+        // chatId index should point to the non-expired context
+        expect(store.getActionPromptsByChatId('chat-1')).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should return 0 when no contexts are expired', () => {
@@ -546,44 +548,50 @@ describe('InteractiveContextStore', () => {
     });
 
     it('should clean up multiple expired entries from chatId index (#1625)', () => {
-      const shortMaxAge = 100;
-      const store = new InteractiveContextStore(shortMaxAge);
+      vi.useFakeTimers();
+      try {
+        const shortMaxAge = 100;
+        const store = new InteractiveContextStore(shortMaxAge);
 
-      store.register('msg-old1', 'chat-1', { a: 'A' });
-      store.register('msg-old2', 'chat-1', { b: 'B' });
+        store.register('msg-old1', 'chat-1', { a: 'A' });
+        store.register('msg-old2', 'chat-1', { b: 'B' });
 
-      return new Promise<void>((resolve) => {
-        setTimeout(() => {
-          store.register('msg-new', 'chat-1', { c: 'C' });
-          const cleaned = store.cleanupExpired();
-          expect(cleaned).toBe(2);
-          expect(store.size).toBe(1);
-          expect(store.getActionPromptsByChatId('chat-1')).toEqual({ c: 'C' });
-          resolve();
-        }, 150);
-      });
+        // Advance past maxAge to expire both entries (deterministic, no wall-clock wait)
+        vi.advanceTimersByTime(150);
+
+        store.register('msg-new', 'chat-1', { c: 'C' });
+        const cleaned = store.cleanupExpired();
+        expect(cleaned).toBe(2);
+        expect(store.size).toBe(1);
+        expect(store.getActionPromptsByChatId('chat-1')).toEqual({ c: 'C' });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should clean up inverted index entries for expired contexts (#1625 review)', () => {
-      const shortMaxAge = 100;
-      const store = new InteractiveContextStore(shortMaxAge);
+      vi.useFakeTimers();
+      try {
+        const shortMaxAge = 100;
+        const store = new InteractiveContextStore(shortMaxAge);
 
-      store.register('msg-expired', 'chat-1', { expired_action: 'Gone' });
+        store.register('msg-expired', 'chat-1', { expired_action: 'Gone' });
 
-      return new Promise<void>((resolve) => {
-        setTimeout(() => {
-          store.register('msg-fresh', 'chat-1', { fresh_action: 'Still here' });
-          store.cleanupExpired();
+        // Advance past maxAge to expire the entry (deterministic, no wall-clock wait)
+        vi.advanceTimersByTime(150);
 
-          // Expired action should no longer be findable
-          expect(store.findActionPromptsByChatId('chat-1', 'expired_action')).toBeUndefined();
-          // Fresh action should still work
-          expect(store.findActionPromptsByChatId('chat-1', 'fresh_action')).toEqual({
-            fresh_action: 'Still here',
-          });
-          resolve();
-        }, 150);
-      });
+        store.register('msg-fresh', 'chat-1', { fresh_action: 'Still here' });
+        store.cleanupExpired();
+
+        // Expired action should no longer be findable
+        expect(store.findActionPromptsByChatId('chat-1', 'expired_action')).toBeUndefined();
+        // Fresh action should still work
+        expect(store.findActionPromptsByChatId('chat-1', 'fresh_action')).toEqual({
+          fresh_action: 'Still here',
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
