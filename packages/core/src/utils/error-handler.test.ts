@@ -227,6 +227,25 @@ describe('isTransient', () => {
   it('should return true for rate limit errors', () => {
     expect(isTransient(new Error('Rate limit exceeded'))).toBe(true);
   });
+
+  // Issue #4442: a thrown 429 / rate-limit / overload response must be
+  // transient so the Claude provider's L1 in-request retry (which keys off
+  // tagErrorCategory().transient) actually fires with exponential backoff.
+  it('should return true for 429 / rate-limit / overload errors (#4442)', () => {
+    expect(isTransient(new Error('HTTP 429'))).toBe(true);
+    expect(isTransient(new Error('429 Too Many Requests'))).toBe(true);
+    expect(isTransient(new Error('too many requests'))).toBe(true);
+    expect(isTransient(new Error('rate_limit_error: request throttled'))).toBe(true);
+    expect(isTransient(new Error('Service Unavailable (503)'))).toBe(true);
+    expect(isTransient(new Error('Bad Gateway 502'))).toBe(true);
+  });
+
+  // Regression for the exact path the provider L1 retry checks: a plain thrown
+  // 429 must surface transient=true via tagErrorCategory (not just isRetryable).
+  it('tagErrorCategory marks a thrown 429 as transient (provider L1 retry path, #4442)', () => {
+    expect(tagErrorCategory(new Error('HTTP 429')).transient).toBe(true);
+    expect(tagErrorCategory(new Error('rate_limit_error')).transient).toBe(true);
+  });
 });
 
 describe('getSeverity', () => {
