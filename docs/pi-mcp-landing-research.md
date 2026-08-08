@@ -10,6 +10,16 @@
 > cites a `file:line`; there are **zero web sources** in part 1 (the pi version facts come from
 > `npm view` + installed tarballs, not the website).
 
+> 🔴 **SUPERSEDED — 2026-08-07 (owner decision): B1 reversed; the pi backend will NOT support MCP.**
+> Parent decision [#4383](https://github.com/hs3180/disclaude/issues/4383) now selects **no MCP**
+> (pi exposes MCP only at its app/CLI layer, which disclaude does not embed — see the addendum at
+> the bottom). The B1 converter [#4417](https://github.com/hs3180/disclaude/issues/4417) is
+> **closed (won't-do)**; this research umbrella [#4431](https://github.com/hs3180/disclaude/issues/4431)
+> is **closed**. MCP and Playwright migrate to **Skills** instead →
+> [#4459](https://github.com/hs3180/disclaude/issues/4459) (MCP→Skills) and
+> [#4460](https://github.com/hs3180/disclaude/issues/4460) (Playwright→Skill).
+> The historical B1/B2/B3 analysis and part-1 evidence below are retained unchanged for the record.
+
 Companion docs:
 
 - `docs/pi-agent-core-api-research.md` — the #4384 spike. It established (against
@@ -414,3 +424,37 @@ Until part 2 lands, the recommendation above is honestly labeled **conditional**
   `packages/core/src/config/index.ts:521`; `disclaude.config.example.yaml:249-268`;
   `package-lock.json` (`@modelcontextprotocol/sdk@1.29.0`).
 - Companion: `docs/pi-agent-core-api-research.md` (#4384 spike).
+
+---
+
+## Update — 2026-08-07: B1 reversed; pi backend will not support MCP
+
+**Owner decision (2026-08-07, discussion chat):** the pi backend will **not** support MCP. This
+**reverses the B1 decision** recorded above (2026-08-06). The part-2 upstream survey
+([#4455](https://github.com/hs3180/disclaude/issues/4455)) was closed because its "B1 stands"
+conclusion is now stale, but its **factual** finding is sound and is retained here — it is exactly
+what makes no-MCP the right call.
+
+**Finding retained from the part-2 survey (#4455):** MCP in pi lives at the **app / extension
+layer** of the pi product — 121 issue/PR hits across the pi repo, a `/mcp` command, MCP HTTP
+servers, and `structuredContent` support — **not** in the embeddable **`agent-core`** library,
+which has **0 MCP symbols** (consistent with part-1 B-Q1 above: `pi-agent-core@0.83.0`,
+`grep -rniE 'mcp' dist --include='*.d.ts'` → 0 across `pi-agent-core` / `pi-ai` / `pi-coding-agent`).
+
+**Why this supports no-MCP:** disclaude does **not** run pi's CLI/app — it embeds the
+`@earendil-works/pi-agent-core` *library* in-process (the `PiAgentProvider` + `AgentHarness` loop).
+That library has no MCP client, so pi's app-layer MCP is **structurally unreachable** from
+disclaude's embedding. There is nothing to convert or land; the B1 converter had no reachable
+target.
+
+**Consequence — migration target is Skills, not MCP:**
+
+- [#4417](https://github.com/hs3180/disclaude/issues/4417) (MCP→`AgentHarnessTool` converter, B1) — **closed (won't-do)**.
+- [#4431](https://github.com/hs3180/disclaude/issues/4431) (this research umbrella) — **closed**.
+- MCP server support and Playwright both migrate to **disclaude Skills (CLI + README)**, tracked in
+  [#4459](https://github.com/hs3180/disclaude/issues/4459) (MCP→Skills) and
+  [#4460](https://github.com/hs3180/disclaude/issues/4460) (Playwright→Skill).
+- The inline-tool path ([#4387](https://github.com/hs3180/disclaude/issues/4387)) remains pi's
+  sole/primary tool mechanism (Skills-compatible).
+
+This addendum is the only change; the part-1 historical analysis above is left unchanged.
