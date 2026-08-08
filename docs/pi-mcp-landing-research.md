@@ -1,5 +1,7 @@
 # MCP Landing Path for the pi Backend — Research (#4431, part 1)
 
+> 🔴 **SUPERSEDED 2026-08-07 (owner).** The **B1** decision below (build the MCP→`AgentHarnessTool` converter, preserve full MCP parity) is **reversed**: the pi backend will **not support MCP** — see [#4383 decision update 2026-08-07](https://github.com/hs3180/disclaude/issues/4383). #4417 closed (won't-do), #4431 closed (superseded). MCP/Playwright migrate to Skills/CLI: #4459 / #4460. The research below is kept as a **historical record** of why B1 was originally chosen; see the **Update 2026-08-07** addendum at the bottom for what changed.
+
 > Parent: **#4383** · Serves decision **(b) MCP path** (choose between B1/B2/B3) ·
 > Type: research / feasibility (decision-gating).
 >
@@ -414,3 +416,11 @@ Until part 2 lands, the recommendation above is honestly labeled **conditional**
   `packages/core/src/config/index.ts:521`; `disclaude.config.example.yaml:249-268`;
   `package-lock.json` (`@modelcontextprotocol/sdk@1.29.0`).
 - Companion: `docs/pi-agent-core-api-research.md` (#4384 spike).
+
+---
+
+## Update 2026-08-07 — B1 superseded: pi backend will not support MCP
+
+**Decision (owner, 2026-08-07):** the pi backend will **not** support MCP. This reverses the B1 decision (2026-08-06) recorded above. Rationale and fallout are in [#4383](https://github.com/hs3180/disclaude/issues/4383): aligning with the disclaude "reduce MCP" direction and pi's no-MCP core philosophy. #4417 (the converter) is closed as won't-do — its largest work/risk item (the external/stdio `@modelcontextprotocol/sdk` path) is dropped. Inline tools (#4387) remain the pi backend's tool path. MCP/Playwright migrate to Skills (CLI + README): #4459 (general MCP retirement + Skill format) and #4460 (Playwright → Skill).
+
+**Factual finding (decision-relevant):** the embeddable **`agent-core`** library that disclaude integrates has **0 MCP symbols** in source and `dist` (triangulated by spike #4384 / PR #4408). That is why disclaude cannot reach MCP and why the "wait for upstream" option (B1.5) was never viable — supporting the no-MCP decision. (pi's full *coding-agent* app has MCP *history* — closed issues reference a `/mcp` toggle, `structuredContent`, and MCP-tool bugs, and the README Philosophy still says "No MCP, prefer Skills" — but re-verification found those cited issues are all CLOSED and there is no current `mcp` module in `coding-agent/src`; in any case the app layer is **irrelevant** to disclaude, which embeds the library, not the app.)
