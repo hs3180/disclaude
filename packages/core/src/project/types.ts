@@ -20,9 +20,7 @@
  * Callers should check `ok` before accessing `data`.
  * Error messages are human-readable (Chinese) for direct user display.
  */
-export type ProjectResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: string };
+export type ProjectResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Project Context
@@ -59,6 +57,40 @@ export interface ProjectContextConfig {
  * @returns The project's working directory, or undefined for default
  */
 export type CwdProvider = (chatId: string) => string | undefined;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CwdResolution
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Why the effective cwd differs from the bound target.
+ *
+ * - `unbound`: chat has no project binding → SDK uses the workspace dir.
+ * - `bound`:   chat is bound to an existing directory → agent runs there.
+ * - `bound-missing`: chat is bound but the directory does not exist → the
+ *   agent silently falls back to the workspace (Issue #4448).
+ */
+export type CwdResolutionReason = 'unbound' | 'bound' | 'bound-missing';
+
+/**
+ * Structured result of resolving the effective cwd for a chat session.
+ *
+ * Returned by `ProjectManager.resolveCwd()`. `CwdProvider` only yields the cwd
+ * (or `undefined`), so a bound-but-missing directory is indistinguishable from
+ * "unbound" — the silent fallback to workspace went unnoticed (#4448).
+ * `resolveCwd` returns the bound target, the effective cwd, and the reason, so
+ * callers (e.g. `/project info`) can surface the mismatch instead of hiding it.
+ *
+ * @see ProjectManager.resolveCwd
+ */
+export interface CwdResolution {
+  /** The cwd the agent will actually run in. `undefined` → SDK falls back to workspace. */
+  effectiveCwd: string | undefined;
+  /** The bound target working directory, or `undefined` when unbound. */
+  boundWorkingDir: string | undefined;
+  /** Why `effectiveCwd` differs from `boundWorkingDir`. */
+  reason: CwdResolutionReason;
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Project State Types (Issue #3335)
