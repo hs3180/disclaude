@@ -27,9 +27,20 @@
  * @module agents/factory
  */
 
-import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type ModelTier, type CwdProvider } from '@disclaude/core';
+import {
+  Config,
+  createLogger,
+  type BaseAgentConfig,
+  type AgentProvider,
+  type SchedulerCallbacks,
+  type MessageBuilderOptions,
+  type ModelTier,
+  type CwdProvider,
+} from '@disclaude/core';
 import { ChatAgent } from './chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
+
+const logger = createLogger('AgentFactory');
 
 // ============================================================================
 // Issue #1412: Helper function for converting SchedulerCallbacks to ChatAgentCallbacks
@@ -246,6 +257,19 @@ export class AgentFactory {
     options: AgentCreateOptions = {}
   ): ChatAgent {
     const baseConfig = this.getBaseConfig(options);
+
+    // Issue #4448 (direction #4): `cwdProvider` is optional, but omitting it
+    // silently runs the agent in the workspace cwd, ignoring any `/project`
+    // binding for this chat. There is currently no production caller that
+    // omits it (every spawn path injects one via PrimaryAgentPool); warn so a
+    // future caller does not silently trip the workspace fallback.
+    if (!options.cwdProvider) {
+      logger.warn(
+        { chatId },
+        'AgentFactory.createAgent called without cwdProvider; agent will run in the workspace cwd and ignore any /project binding'
+      );
+    }
+
     const config: ChatAgentConfig = {
       ...baseConfig,
       chatId,
