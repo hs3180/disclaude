@@ -301,7 +301,7 @@ describe('RestChannel — extended coverage', () => {
       });
 
       // Give the handler a tick to be called
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       // Verify handler was called with correct params
       expect(handler).toHaveBeenCalledWith(
@@ -407,7 +407,7 @@ describe('RestChannel — extended coverage', () => {
       });
 
       // Give it a tick for the request to register
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       // Send text response
       await channel.sendMessage({
@@ -446,7 +446,7 @@ describe('RestChannel — extended coverage', () => {
       });
 
       // Give it a tick for the request to register
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       // Send text response
       await channel.sendMessage({
@@ -473,7 +473,7 @@ describe('RestChannel — extended coverage', () => {
         body: { chatId: 'multi-buffer-chat', message: 'test' },
       });
 
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise<void>((resolve) => setImmediate(resolve));
 
       await channel.sendMessage({
         chatId: 'multi-buffer-chat',
