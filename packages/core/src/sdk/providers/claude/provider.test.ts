@@ -579,66 +579,98 @@ describe('ClaudeSDKProvider', () => {
     });
 
     // Issue #3706 (GLM stall): no-content-progress watchdog.
-    // Margins chosen with headroom over the timeout to stay green under CI load.
+    // Issue #4394 (test hygiene): drive the watchdog deterministically with fake
+    // timers + a background drain. The mock generators no longer busy-poll with
+    // real `setTimeout` loops (the side-effect #4394 flags); they stall on a
+    // promise resolved only by the watchdog's interrupt()/close(), and time is
+    // advanced explicitly. Same coverage, no wall-clock dependency.
     it('should terminate on GLM stall (message_start, no content_block_delta for STALL_TIMEOUT_MS)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
-      let interrupted = false;
-      const interruptSpy = vi.fn(() => { interrupted = true; return Promise.resolve(); });
-      const gen = (async function* () {
-        yield { type: 'stream_event', event: { type: 'message_start' } };
-        while (!interrupted) { await new Promise<void>(r => setTimeout(r, 5)); }
-      })();
-      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
-      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
-      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) { messages.push(msg); }
-      expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
-      expect(interruptSpy).toHaveBeenCalledTimes(1);
+      vi.useFakeTimers();
+      try {
+        let resumeStream!: () => void;
+        const streamResumes = new Promise<void>((resolve) => { resumeStream = resolve; });
+        const interruptSpy = vi.fn(() => { resumeStream(); return Promise.resolve(); });
+        const gen = (async function* () {
+          yield { type: 'stream_event', event: { type: 'message_start' } };
+          await streamResumes; // stall until the watchdog interrupts (no polling)
+        })();
+        mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+        async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+        const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+        const messages: AgentMessage[] = [];
+        const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
+        await vi.advanceTimersByTimeAsync(80); // watchdog fires → interrupt() → stream resumes
+        await drained;
+        expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
+        expect(interruptSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should NOT terminate on healthy stream (content_block_delta resets watchdog)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
-      const interruptSpy = vi.fn();
-      const gen = (async function* () {
-        yield { type: 'stream_event', event: { type: 'message_start' } };
-        for (let i = 0; i < 5; i++) {
-          yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
-          await new Promise<void>(r => setTimeout(r, 15));
-        }
-        yield { type: 'stream_event', event: { type: 'message_stop' } };
-        yield { type: 'result', subtype: 'success' };
-      })();
-      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
-      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
-      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) { messages.push(msg); }
-      expect(interruptSpy).not.toHaveBeenCalled();
+      vi.useFakeTimers();
+      try {
+        const interruptSpy = vi.fn();
+        const gen = (async function* () {
+          yield { type: 'stream_event', event: { type: 'message_start' } };
+          for (let i = 0; i < 5; i++) {
+            yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
+            await new Promise<void>(r => setTimeout(r, 15)); // fake-timer-spaced deltas
+          }
+          yield { type: 'stream_event', event: { type: 'message_stop' } };
+          yield { type: 'result', subtype: 'success' };
+        })();
+        mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+        async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+        const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+        const messages: AgentMessage[] = [];
+        const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
+        // 5 deltas spaced 15ms apart total 75ms (< 80ms timeout); each delta stamps
+        // lastProgressMs so the single watchdog timer wakes early and re-arms, never
+        // firing. message_stop at t=75 then clears it.
+        await vi.advanceTimersByTimeAsync(75);
+        await drained;
+        expect(interruptSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should NOT terminate during between-request gap (message_stop clears watchdog)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
-      const interruptSpy = vi.fn();
-      const gen = (async function* () {
-        yield { type: 'stream_event', event: { type: 'message_start' } };
-        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
-        yield { type: 'stream_event', event: { type: 'message_stop' } };
-        await new Promise<void>(r => setTimeout(r, 250)); // gap >> timeout, but watchdog cleared
-        yield { type: 'stream_event', event: { type: 'message_start' } };
-        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
-        yield { type: 'stream_event', event: { type: 'message_stop' } };
-        yield { type: 'result', subtype: 'success' };
-      })();
-      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
-      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
-      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) { messages.push(msg); }
-      expect(interruptSpy).not.toHaveBeenCalled();
+      vi.useFakeTimers();
+      try {
+        const interruptSpy = vi.fn();
+        const gen = (async function* () {
+          yield { type: 'stream_event', event: { type: 'message_start' } };
+          yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
+          yield { type: 'stream_event', event: { type: 'message_stop' } };
+          await new Promise<void>(r => setTimeout(r, 250)); // gap >> timeout, but watchdog cleared
+          yield { type: 'stream_event', event: { type: 'message_start' } };
+          yield { type: 'stream_event', event: { type: 'content_block_delta', delta: {} } };
+          yield { type: 'stream_event', event: { type: 'message_stop' } };
+          yield { type: 'result', subtype: 'success' };
+        })();
+        mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+        async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+        const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+        const messages: AgentMessage[] = [];
+        const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
+        // message_stop at t=0 clears the armed watchdog, so the 250ms gap elapses
+        // with no in-flight request → no firing. The second message_start re-arms but
+        // the stream ends before the next timeout window.
+        await vi.advanceTimersByTimeAsync(250);
+        await drained;
+        expect(interruptSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should force-close the query when interrupt() does not end the stream (Issue #3706)', async () => {
@@ -647,21 +679,32 @@ describe('ClaudeSDKProvider', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
       process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '20';
-      let closed = false;
-      const interruptSpy = vi.fn(() => Promise.resolve()); // does NOT unblock the stream
-      const closeSpy = vi.fn(() => { closed = true; });
-      const gen = (async function* () {
-        yield { type: 'stream_event', event: { type: 'message_start' } };
-        while (!closed) { await new Promise<void>(r => setTimeout(r, 5)); } // only close() unblocks
-      })();
-      mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: closeSpy }));
-      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
-      const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
-      const messages: AgentMessage[] = [];
-      for await (const msg of result.iterator) { messages.push(msg); }
-      expect(interruptSpy).toHaveBeenCalledTimes(1);
-      expect(closeSpy).toHaveBeenCalledTimes(1);
-      expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
+      vi.useFakeTimers();
+      try {
+        let endStream!: () => void;
+        const streamEnds = new Promise<void>((resolve) => { endStream = resolve; });
+        const interruptSpy = vi.fn(() => Promise.resolve()); // does NOT unblock the stream
+        const closeSpy = vi.fn(() => { endStream(); }); // only close() unblocks
+        const gen = (async function* () {
+          yield { type: 'stream_event', event: { type: 'message_start' } };
+          await streamEnds; // stall until close() (no polling)
+        })();
+        mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: closeSpy }));
+        async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+        const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+        const messages: AgentMessage[] = [];
+        const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
+        // 50ms stall → watchdog fires interrupt() (no-op for teardown) + arms the 20ms
+        // force-close grace; advancing past the grace triggers query.close() → stream ends.
+        await vi.advanceTimersByTimeAsync(50);
+        await vi.advanceTimersByTimeAsync(20);
+        await drained;
+        expect(interruptSpy).toHaveBeenCalledTimes(1);
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should log a blind-watchdog warning when partials never flow (Issue #3706)', async () => {
