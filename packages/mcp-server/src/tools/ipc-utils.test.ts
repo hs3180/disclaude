@@ -234,4 +234,103 @@ describe('isIpcAvailable', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('when REST IPC is enabled (DISCLAUDE_REST_IPC_ENABLED=true)', () => {
+    // Issue #4280 (Phase 3 prereq): under REST transport the probe must hit
+    // GET /api/ping instead of the Unix socket.
+    let originalFetch: typeof globalThis.fetch;
+    let savedRestEnabled: string | undefined;
+    let savedRestBaseUrl: string | undefined;
+
+    beforeEach(() => {
+      savedRestEnabled = process.env.DISCLAUDE_REST_IPC_ENABLED;
+      savedRestBaseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+      process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
+      delete process.env.DISCLAUDE_REST_IPC_BASE_URL;
+      originalFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      if (savedRestEnabled === undefined) { delete process.env.DISCLAUDE_REST_IPC_ENABLED; }
+      else { process.env.DISCLAUDE_REST_IPC_ENABLED = savedRestEnabled; }
+      if (savedRestBaseUrl === undefined) { delete process.env.DISCLAUDE_REST_IPC_BASE_URL; }
+      else { process.env.DISCLAUDE_REST_IPC_BASE_URL = savedRestBaseUrl; }
+      globalThis.fetch = originalFetch;
+    });
+
+    it('should return true when REST /api/ping responds with { pong: true }', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => ({ pong: true }),
+      }) as unknown as typeof globalThis.fetch;
+      await setupIpcMocks({ socketExists: false });
+
+      const result = await isIpcAvailable();
+      expect(result).toBe(true);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://localhost:9200/api/ping',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it('should honor DISCLAUDE_REST_IPC_BASE_URL (and strip trailing slash)', async () => {
+      process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:9999/';
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => ({ pong: true }),
+      }) as unknown as typeof globalThis.fetch;
+      await setupIpcMocks({ socketExists: false });
+
+      const result = await isIpcAvailable();
+      expect(result).toBe(true);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://127.0.0.1:9999/api/ping',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    it('should return false when ping responds without pong', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => ({ pong: false }),
+      }) as unknown as typeof globalThis.fetch;
+      await setupIpcMocks({ socketExists: false });
+
+      const result = await isIpcAvailable();
+      expect(result).toBe(false);
+    });
+
+    it('should return false when ping responds non-2xx', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: () => ({}),
+      }) as unknown as typeof globalThis.fetch;
+      await setupIpcMocks({ socketExists: false });
+
+      const result = await isIpcAvailable();
+      expect(result).toBe(false);
+    });
+
+    it('should return false when fetch throws', async () => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) as unknown as typeof globalThis.fetch;
+      await setupIpcMocks({ socketExists: false });
+
+      const result = await isIpcAvailable();
+      expect(result).toBe(false);
+    });
+
+    it('should not consult the Unix socket path (REST takes precedence)', async () => {
+      mockGetIpcSocketPath.mockClear();
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => ({ pong: true }),
+      }) as unknown as typeof globalThis.fetch;
+      await setupIpcMocks({ socketExists: true });
+
+      const result = await isIpcAvailable();
+      expect(result).toBe(true);
+      expect(mockGetIpcSocketPath).not.toHaveBeenCalled();
+    });
+  });
 });
