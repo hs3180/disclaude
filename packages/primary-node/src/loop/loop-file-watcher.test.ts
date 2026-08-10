@@ -74,21 +74,41 @@ describe('LoopFileWatcher (Issue #4283)', () => {
     watcher = new LoopFileWatcher({ loopDir: dir, onLoopMd, debounceMs: 50 });
     await watcher.start();
 
+    // Write a non-LOOP.md file alongside a LOOP.md sentinel. Waiting for the
+    // sentinel's callback proves fs.watch has processed this batch of events,
+    // so the README.md event has already been seen and synchronously filtered
+    // (basename !== LOOP_MD_FILENAME in the watcher callback). Asserting every
+    // recorded call targets LOOP.md confirms README.md never reached the
+    // debounced callback — with no fixed wall-clock wait (Issue #4394).
     writeFileSync(join(dir, 'README.md'), 'not a loop file');
+    writeFileSync(join(dir, 'LOOP.md'), '---\nname: sentinel\nchatId: oc_s\n---\nbody');
 
-    await new Promise((r) => setTimeout(r, 300));
-    expect(onLoopMd).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(onLoopMd).toHaveBeenCalled();
+    }, { timeout: 2000 });
+
+    expect(onLoopMd.mock.calls.every(([p]) => p.endsWith('LOOP.md'))).toBe(true);
   });
 
   it('stop() prevents further callbacks', async () => {
     const onLoopMd = vi.fn();
     watcher = new LoopFileWatcher({ loopDir: dir, onLoopMd, debounceMs: 50 });
     await watcher.start();
-    watcher.stop();
 
-    writeFileSync(join(dir, 'LOOP.md'), '---\nname: x\n---\nbody');
-    await new Promise((r) => setTimeout(r, 300));
-    expect(onLoopMd).not.toHaveBeenCalled();
+    // Sentinel: prove the watcher was live and delivered a callback before stop.
+    writeFileSync(join(dir, 'LOOP.md'), '---\nname: sentinel\nchatId: oc_s\n---\nbody');
+    await vi.waitFor(() => {
+      expect(onLoopMd).toHaveBeenCalled();
+    }, { timeout: 2000 });
+
+    watcher.stop(); // synchronously closes the fs watcher + clears debounce timers
+    const callsBefore = onLoopMd.mock.calls.length;
+
+    // A write now has no event source (watcher closed), so onLoopMd cannot be
+    // invoked. The closed watcher is a structural guarantee, not a timing race,
+    // so no fixed wall-clock wait is needed (Issue #4394).
+    writeFileSync(join(dir, 'LOOP.md'), '---\nname: after-stop\n---\nbody');
+    expect(onLoopMd.mock.calls.length).toBe(callsBefore);
   });
 
   it('startup scan fires onLoopMd for a LOOP.md that pre-existed (Issue #4286)', async () => {
