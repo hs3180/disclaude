@@ -159,8 +159,8 @@ async function simulateRawRequest(options: {
   // Wait for response to end. The mock res.end() emits 'finish' synchronously,
   // so a normally-handled request is already ended by the time we get here; a
   // handler that defers end() to a later tick is drained deterministically
-  // instead of a real 100ms wall-clock fallback (Issue #4394; mirrors the same
-  // fix landed for rest-channel.test.ts simulateRequest).
+  // instead of a real 100ms wall-clock fallback (Issue #4394; reuses the
+  // depth-10 setImmediate drain pattern from the 20ms "tick" waits below).
   if (!res._ended) {
     await new Promise<void>((resolve) => {
       res.on('finish', resolve);
@@ -221,8 +221,8 @@ async function simulateRequest(options: {
   // Wait for response to end. The mock res.end() emits 'finish' synchronously,
   // so a normally-handled request is already ended by the time we get here; a
   // handler that defers end() to a later tick is drained deterministically
-  // instead of a real 100ms wall-clock fallback (Issue #4394; mirrors the same
-  // fix landed for rest-channel.test.ts simulateRequest).
+  // instead of a real 100ms wall-clock fallback (Issue #4394; reuses the
+  // depth-10 setImmediate drain pattern from the 20ms "tick" waits below).
   if (!res._ended) {
     await new Promise<void>((resolve) => {
       res.on('finish', resolve);
