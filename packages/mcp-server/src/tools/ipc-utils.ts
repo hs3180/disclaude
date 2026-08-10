@@ -25,8 +25,38 @@ const logger = createLogger('IpcUtils');
  * then attempts an actual connection to verify the server is alive.
  *
  * @returns Promise resolving to true if IPC server is reachable
+ *
+ * Issue #4280 (Phase 3 prereq): when REST IPC is the configured transport
+ * (`DISCLAUDE_REST_IPC_ENABLED=true`, selected in `getIpcClient` under #4279
+ * Phase 2), probe the REST `/api/ping` endpoint instead of the Unix socket.
+ * Without this branch every MCP tool that gates on `isIpcAvailable()`
+ * (loop-start/status/stop, send-card, interactive-message, push-to-agent)
+ * reports "IPC service unavailable" under REST mode, even though the REST
+ * server is live. The Unix-socket probe below is the default transport and is
+ * retained unchanged; removing it is the actual Phase 3 IPC deletion (#4280).
  */
 export async function isIpcAvailable(): Promise<boolean> {
+  if (process.env.DISCLAUDE_REST_IPC_ENABLED === 'true') {
+    const baseUrl = (process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:9200').replace(/\/$/, '');
+    try {
+      const res = await fetch(`${baseUrl}/api/ping`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!res.ok) {
+        logger.debug({ baseUrl, status: res.status, reason: 'rest_ping_not_ok' }, 'IPC availability check: REST ping non-OK');
+        return false;
+      }
+      const json = (await res.json()) as { pong?: boolean };
+      const available = json.pong === true;
+      logger.debug({ baseUrl, available }, `IPC availability check: REST ${available ? 'available (ping ok)' : 'not available (no pong)'}`);
+      return available;
+    } catch (error) {
+      logger.debug({ baseUrl, reason: 'rest_ping_exception', err: error }, 'IPC availability check: REST ping failed');
+      return false;
+    }
+  }
+
   const socketPath = getIpcSocketPath();
 
   // Fast path: socket file must exist
