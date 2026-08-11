@@ -165,9 +165,17 @@ describe('LOOP.md-driven loop end-to-end (#4193 / #4040 skill path)', () => {
       expect(runner.status(loopId)?.state).toBe('stopped');
     }, { timeout: 1000 });
 
+    // stop() aborts the loop's AbortSignal synchronously (loop-runner.ts stop():
+    // state='stopped' then abortController.abort()). The runLoop for-loop checks
+    // `signal.aborted` at the start of each iteration, before invoking
+    // pushCallback, so it breaks at the next iteration boundary and pushes no
+    // further. When stop() lands during the stepInterval wait (the case here:
+    // stop() is called while the loop awaits the 60ms interval), waitForInterval
+    // resolves immediately on abort and the next iteration breaks pre-push. An
+    // aborted loop cannot resume, so capping at the count observed once stopped
+    // is a structural guarantee — not a timing race — and needs no fixed
+    // wall-clock wait (Issue #4394).
     const stoppedAt = pushToAgent.mock.calls.length;
-    // Give the loop a window to (incorrectly) push again after stop.
-    await new Promise((resolve) => setTimeout(resolve, 150));
     expect(pushToAgent.mock.calls.length).toBe(stoppedAt); // no further pushes
   });
 
