@@ -191,8 +191,12 @@ describe('ChannelLifecycleManager', () => {
     });
 
     it('should support async setup hook', async () => {
+      // Issue #4394: avoid real setTimeout wall-clock wait inside the mock;
+      // a microtask yield keeps the setup hook genuinely async (so that
+      // createAndWire exercises its `await setup(...)` path) without spawning
+      // a real OS timer or depending on host load.
       const setup = vi.fn().mockImplementation(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await Promise.resolve();
       });
       const descriptor = createTestDescriptor({ setup });
       const manager = new ChannelLifecycleManager(channelManager, context);
