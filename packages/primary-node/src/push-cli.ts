@@ -17,7 +17,7 @@
  * @module primary-node/push-cli
  */
 
-import { UnixSocketIpcClient, getIpcSocketPath, pushToAgent } from '@disclaude/core';
+import { UnixSocketIpcClient, getIpcClient, getIpcSocketPath, pushToAgent } from '@disclaude/core';
 import { existsSync } from 'node:fs';
 
 interface PushCliOptions {
@@ -133,18 +133,30 @@ export async function main(): Promise<void> {
     }
   }
 
-  // Resolve socket path using core's getIpcSocketPath() with CLI override
-  const socketPath = getIpcSocketPath({ override: options.socketPath });
+  const restEnabled = process.env.DISCLAUDE_REST_IPC_ENABLED === 'true';
 
-  // Check if socket file exists
-  if (!existsSync(socketPath)) {
-    console.error(`Error: IPC socket not found at ${socketPath}`);
-    console.error('Make sure disclaude Primary Node is running.');
-    process.exit(1);
+  // Issue #4280 (part 1): use the central getIpcClient() facade so disclaude-push
+  // works under the REST IPC transport (DISCLAUDE_REST_IPC_ENABLED=true, selected
+  // in getIpcClient under #4279 Phase 2), not only the Unix socket. The --socket
+  // override forces a Unix-socket client at that exact path (legacy explicit-path
+  // usage), bypassing the facade. The full Unix-socket removal is tracked in #4280.
+  const client = options.socketPath
+    ? new UnixSocketIpcClient({ socketPath: options.socketPath })
+    : getIpcClient();
+
+  // Fast-fail with a clear message only when actually using a Unix socket — i.e.
+  // the --socket override (explicit path) or the default transport (REST off).
+  // Under REST mode without --socket there is no socket file, so pushToAgent
+  // itself reports reachability.
+  const usingUnixSocket = !!options.socketPath || !restEnabled;
+  if (usingUnixSocket) {
+    const socketPath = getIpcSocketPath({ override: options.socketPath });
+    if (!existsSync(socketPath)) {
+      console.error(`Error: IPC socket not found at ${socketPath}`);
+      console.error('Make sure disclaude Primary Node is running.');
+      process.exit(1);
+    }
   }
-
-  // Connect and send pushToAgent request
-  const client = new UnixSocketIpcClient({ socketPath });
 
   try {
     const result = await pushToAgent(client, options.chatId, message);
