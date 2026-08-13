@@ -631,8 +631,8 @@ describe('ClaudeSDKProvider', () => {
         const messages: AgentMessage[] = [];
         const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
         // 5 deltas spaced 15ms apart total 75ms (< 80ms timeout); each delta stamps
-        // lastProgressMs so the single watchdog timer wakes early and re-arms, never
-        // firing. message_stop at t=75 then clears it.
+        // lastProgressMs. The single armed 80ms timer never elapses: the stream
+        // completes within the window, so message_stop at t=75 clears it before firing.
         await vi.advanceTimersByTimeAsync(75);
         await drained;
         expect(interruptSpy).not.toHaveBeenCalled();
