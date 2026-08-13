@@ -6,6 +6,25 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { MessageQueue } from './message-queue.js';
 import type { QueuedMessage } from './types.js';
 
+/**
+ * Issue #4394 (part 8): deterministic event-loop drain, replacing fixed
+ * `await new Promise(r => setTimeout(r, N))` wall-clock waits.
+ *
+ * `MessageQueue.consume()` blocks on a Promise that push/close resolve on the
+ * microtask queue (no internal timers / setImmediate). The previous tests
+ * waited a fixed 20-50ms of wall-clock time "for the consumer to reach the
+ * blocked state" — load-sensitive, and the same class of flake that caused the
+ * Test Coverage 30s timeout (Issue #4394). Because the consumer reaches its
+ * drained/blocked state purely via microtasks, a few `setImmediate` (macrotask)
+ * boundaries let all pending microtasks settle deterministically, with no fixed
+ * ms wait and no load sensitivity.
+ */
+const flushPending = async (rounds = 4) => {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+};
+
 describe('MessageQueue', () => {
   let queue: MessageQueue;
 
@@ -83,18 +102,22 @@ describe('MessageQueue', () => {
       queue.push({ text: 'First', messageId: 'msg-1' });
       queue.push({ text: 'Second', messageId: 'msg-2' });
 
-      // Don't close yet, the consumer should wait
-      // Push one more and close
-      setTimeout(() => {
-        queue.push({ text: 'Third', messageId: 'msg-3' });
-        queue.close();
-      }, 50);
-
       const messages: QueuedMessage[] = [];
-      for await (const msg of consumer) {
-        messages.push(msg);
-      }
+      // Drain First/Second and let the consumer reach the blocked state before
+      // pushing the late message + closing. Replaces a fixed 50ms setTimeout
+      // with a deterministic event-loop drain (Issue #4394 part 8).
+      const consumePromise = (async () => {
+        for await (const msg of consumer) {
+          messages.push(msg);
+        }
+      })();
+      await flushPending();
 
+      // Push one more and close; the blocked consumer wakes, drains Third, exits.
+      queue.push({ text: 'Third', messageId: 'msg-3' });
+      queue.close();
+
+      await consumePromise;
       expect(messages).toHaveLength(3);
     });
 
@@ -189,8 +212,9 @@ describe('MessageQueue', () => {
         }
       })();
 
-      // Close the queue after a short delay (consumer is blocked)
-      await new Promise(resolve => setTimeout(resolve, 20));
+      // Let the consumer reach the blocked state, then close. Replaces a fixed
+      // 20ms setTimeout with a deterministic event-loop drain (Issue #4394 part 8).
+      await flushPending();
       queue.close();
 
       // Consumer should exit cleanly
@@ -211,8 +235,9 @@ describe('MessageQueue', () => {
         }
       })();
 
-      // Push a message after short delay (consumer is blocked)
-      await new Promise(resolve => setTimeout(resolve, 20));
+      // Let the consumer reach the blocked state, then push. Replaces a fixed
+      // 20ms setTimeout with a deterministic event-loop drain (Issue #4394 part 8).
+      await flushPending();
       queue.push({ text: 'Wakeup', messageId: 'msg-1' });
 
       await consumePromise;
