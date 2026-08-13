@@ -156,10 +156,22 @@ async function simulateRawRequest(options: {
 
   await requestHandler(req, res);
 
+  // Wait for response to end. The mock res.end() emits 'finish' synchronously,
+  // so a normally-handled request is already ended by the time we get here; a
+  // handler that defers end() to a later tick is drained deterministically
+  // instead of a real 100ms wall-clock fallback (Issue #4394; reuses the
+  // depth-10 setImmediate drain pattern from the 20ms "tick" waits below).
   if (!res._ended) {
     await new Promise<void>((resolve) => {
-      res.on('finish', () => resolve());
-      setTimeout(resolve, 100);
+      res.on('finish', resolve);
+      const drain = (depth: number) => {
+        if (res._ended || depth >= 10) {
+          resolve();
+          return;
+        }
+        setImmediate(() => drain(depth + 1));
+      };
+      drain(0);
     });
   }
 
@@ -206,10 +218,22 @@ async function simulateRequest(options: {
 
   await requestHandler(req, res);
 
+  // Wait for response to end. The mock res.end() emits 'finish' synchronously,
+  // so a normally-handled request is already ended by the time we get here; a
+  // handler that defers end() to a later tick is drained deterministically
+  // instead of a real 100ms wall-clock fallback (Issue #4394; reuses the
+  // depth-10 setImmediate drain pattern from the 20ms "tick" waits below).
   if (!res._ended) {
     await new Promise<void>((resolve) => {
-      res.on('finish', () => resolve());
-      setTimeout(resolve, 100);
+      res.on('finish', resolve);
+      const drain = (depth: number) => {
+        if (res._ended || depth >= 10) {
+          resolve();
+          return;
+        }
+        setImmediate(() => drain(depth + 1));
+      };
+      drain(0);
     });
   }
 
