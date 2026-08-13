@@ -278,13 +278,12 @@ function main() {
   log(`Found ${allIssues.length} open issues, ${openPRs.length} open PRs, ${mergedPRs.length} merged PRs (capped at 100)`);
 
   // Open PRs reference work-in-progress issues (any keyword match) — exclude them.
-  // Merged PRs that closed an issue (formal closing keyword, non-"part N") signal
+  // Merged PRs that closed an issue (formal closing keyword) signal
   // already-shipped work — the phantom-pool filter. Open and merged are fetched as
   // separate connections so the (small) open-PR set is never crowded out of the
   // capped window by the much larger merged-PR set.
   const OPEN_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
   const CLOSING_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
-  const PART_PATTERN = /part\s+\d/i;
   const BRANCH_NUM = /(\d+)/g;
 
   const openPRIssueNums = new Set();
@@ -300,12 +299,13 @@ function main() {
   }
 
   const mergedPRIssueNums = new Set();
-  let skippedPartPRs = 0;
   for (const pr of mergedPRs) {
-    // Skip "part N" titles: an epic with a merged part-N PR is usually still open
-    // for remaining parts, so its closing keyword should not exclude the issue.
-    if (PART_PATTERN.test(pr.title || "")) { skippedPartPRs++; continue; }
-    // Closing keywords only (no "related") — work already shipped.
+    // Closing keywords only (no "related") — work already shipped. A "part N"
+    // title alone does not mean the referenced issue is still incomplete: the
+    // "(part N)" may be the author's own numbering, or the PR may fully resolve a
+    // different single-shot issue. GitHub's closing-keyword semantics (not the
+    // title) are the source of truth for "is this issue done", so part-N PRs are
+    // scanned like any other rather than skipped wholesale (#4374).
     for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(CLOSING_KEYWORD)) {
       mergedPRIssueNums.add(Number(m[1]));
     }
@@ -333,7 +333,7 @@ function main() {
   const openPRCount = openPRs.length;
   const mergedPRCount = mergedPRs.length;
   log(`Issues with open PRs: ${[...openPRIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
-  log(`Merged closing-keyword refs: ${[...mergedPRIssueNums].sort((a, b) => a - b).join(", ") || "none"} — ${phantomFilteredOpenCount} actually excluded from the open pool (rest are auto-closed by merge; reopen-only); skipped ${skippedPartPRs} part-N merged PRs`);
+  log(`Merged closing-keyword refs: ${[...mergedPRIssueNums].sort((a, b) => a - b).join(", ") || "none"} — ${phantomFilteredOpenCount} actually excluded from the open pool (rest are auto-closed by merge; reopen-only)`);
   log(`PRs scanned: ${openPRCount} open, ${mergedPRCount} merged`);
 
   // Filter: remove issues with open PRs or already-shipped merged-PR work
