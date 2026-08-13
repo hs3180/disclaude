@@ -8,14 +8,15 @@
  * (#4383, owner decision 2026-08-07): disclaude unifies both backends on the
  * Skills (CLI + README) model defined in `docs/skill-format-spec.md`.
  *
- * What this part implements — the `send_text` subcommand only:
+ * What this implements — the `send_text` (part 3) and `send_file` (part 4)
+ * subcommands:
  *   The agent shells out via Bash instead of calling the in-process MCP tool.
- *   The CLI reuses the SAME first-party implementation (`send_text` from
- *   `@disclaude/mcp-server`) — it does not re-implement the Feishu send path.
- *   `send_text` reaches the PrimaryNode over IPC (`getIpcClient()`), so this CLI
- *   is a one-shot process per call that connects, sends, and exits — the same
- *   transport the standalone `disclaude-mcp` server (S3) already uses from a
- *   separate process. No long-lived session is required for a single send.
+ *   The CLI reuses the SAME first-party implementations (`send_text` /
+ *   `send_file` from `@disclaude/mcp-server`) — it does not re-implement the
+ *   Feishu send path. Both reach the PrimaryNode over IPC (`getIpcClient()`),
+ *   so this CLI is a one-shot process per call that connects, sends, and exits
+ *   — the same transport the standalone `disclaude-mcp` server (S3) already
+ *   uses from a separate process. No long-lived session is required per call.
  *
  * Output contract — exactly ONE JSON object on stdout (see spec §2.2):
  *   success: { ok: true,  command: "send_text", chatId, result, durationMs }
@@ -25,8 +26,13 @@
  * redirects stdout → stderr for the duration of the IPC call to keep the result
  * object the only thing on stdout.
  *
+ * Part 4 (send_file) — same pattern, reusing `send_file` from
+ * `@disclaude/mcp-server` (uploads via IPC to the PrimaryNode). Relative paths
+ * are resolved against the configured workspace dir by the first-party impl;
+ * file existence is NOT pre-validated here for that reason.
+ *
  * Deferred (later parts of #4459) — out of scope here:
- *   • the other 4 channel tools (send_card, send_interactive, send_file,
+ *   • the remaining 3 channel tools (send_card, send_interactive,
  *     push_to_agent) — they follow the same pattern as subcommands here.
  *   • live end-to-end parity verification against the MCP tool (requires a
  *     running PrimaryNode + Feishu credentials); this part verifies the CLI
@@ -40,8 +46,9 @@
  *   node skills/channel/cli.mjs --help
  *   node skills/channel/cli.mjs send_text --chat oc_xxx --text "Hello"
  *   echo "long body" | node skills/channel/cli.mjs send_text --chat oc_xxx
+ *   node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
  *
- * Part 3 of #4459 — does not auto-close the parent issue.
+ * Part 4 of #4459 — does not auto-close the parent issue.
  */
 
 import { performance } from "node:perf_hooks";
@@ -57,9 +64,9 @@ Usage:
   <large text> | node skills/channel/cli.mjs <command> --chat <id>
 
 Commands:
-  send_text   Send a plain text message to a chat (part 3; the other 4 channel
-              tools — send_card, send_interactive, send_file, push_to_agent —
-              are deferred to later parts of #4459).
+  send_text   Send a plain text message to a chat (part 3).
+  send_file   Send a file to a chat (part 4). The remaining tools — send_card,
+              send_interactive, push_to_agent — are deferred to later parts.
   help        Show this help message.
 
 send_text options:
@@ -68,6 +75,13 @@ send_text options:
   --text-file <path>   Read text content from a file (use "-" for stdin explicitly).
   --parent <id>        Optional parent message ID (thread reply).
   --mentions <json>    Optional JSON array of { "openId": string, "name"?: string }.
+  --help, -h           Show this help message.
+
+send_file options:
+  --chat <id>          Target chat ID (e.g. oc_xxx). Required.
+  --file <path>        Path to the file to send. Required. Relative paths are
+                      resolved against the configured disclaude workspace dir.
+  --parent <id>        Optional parent message ID (thread reply).
   --help, -h           Show this help message.
 
 Output:
@@ -86,8 +100,10 @@ Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text-file ./msg.txt --parent om_parent
   node skills/channel/cli.mjs send_text --chat oc_abc --text "@owner pls review" \\
     --mentions '[{"openId":"ou_xxx","name":"owner"}]'
+  node skills/channel/cli.mjs send_file --chat oc_abc --file ./report.pdf
+  node skills/channel/cli.mjs send_file --chat oc_abc --file ./log.txt --parent om_parent
 
-Version ${VERSION} — part 3 of #4459. This Skill does not auto-close the parent issue.`;
+Version ${VERSION} — part 4 of #4459. This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
@@ -278,6 +294,88 @@ async function cmdSendText(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// send_file command
+// ---------------------------------------------------------------------------
+
+async function cmdSendFile(argv) {
+  const args = parseArgs(argv);
+  const start = performance.now();
+
+  // --- validate (before any import, so failures are cheap and deterministic) ---
+  const chatId = args.chat;
+  if (!chatId || typeof chatId !== "string") {
+    emitFail("send_file", "Missing required option --chat <id>", "pass --chat oc_xxx");
+    return 1;
+  }
+
+  // Path presence only: existence/resolution is delegated to the first-party
+  // send_file (relative paths resolve against the configured workspace dir, and
+  // fs.stat there produces the authoritative error).
+  const filePath = args.file;
+  if (!filePath || typeof filePath !== "string") {
+    emitFail("send_file", "Missing required option --file <path>", "pass --file <path> (relative paths resolve against the workspace dir)");
+    return 1;
+  }
+
+  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+
+  // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
+  let mod;
+  try {
+    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+  } catch (err) {
+    emitFail(
+      "send_file",
+      `Failed to load @disclaude/mcp-server: ${err.message}`,
+      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_file from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  const sendFile = mod.send_file;
+  if (typeof sendFile !== "function") {
+    emitFail("send_file", "@disclaude/mcp-server does not export send_file (unexpected build)");
+    return 1;
+  }
+
+  let result;
+  try {
+    result = await withStdoutToStderr(() =>
+      sendFile({ filePath, chatId, parentMessageId })
+    );
+  } catch (err) {
+    emitFail(
+      "send_file",
+      `send_file threw: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 1;
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  if (result && result.success) {
+    emitOk({
+      command: "send_file",
+      chatId,
+      result: result.message ?? "sent",
+      fileName: result.fileName,
+      fileSize: result.fileSize,
+      durationMs,
+    });
+    return 0;
+  }
+
+  emitFail(
+    "send_file",
+    (result && (result.error || result.message)) || "send_file returned without success",
+    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
+      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
+      : undefined
+  );
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -291,6 +389,10 @@ async function main(argv) {
 
   if (subcommand === "send_text") {
     return cmdSendText(argv.slice(1));
+  }
+
+  if (subcommand === "send_file") {
+    return cmdSendFile(argv.slice(1));
   }
 
   process.stdout.write(HELP + "\n");
