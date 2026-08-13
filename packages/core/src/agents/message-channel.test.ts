@@ -19,6 +19,25 @@ function createTestMessage(content: string): StreamingUserMessage {
   };
 }
 
+/**
+ * Issue #4394 (part 10): deterministic event-loop drain, replacing fixed
+ * `await new Promise(r => setTimeout(r, N))` wall-clock waits.
+ *
+ * Why this is safe for the MessageChannel tests below: the async generator in
+ * `MessageChannel.generator()` runs synchronously up to its wait-for-message
+ * suspension (`await new Promise(resolve => { this.resolver = resolve })`); the
+ * resume on `push()`/`close()` and the consumer's `for await` hand-off all hop
+ * through the microtask queue. A few `setImmediate` (macrotask) boundaries
+ * therefore let every pending microtask settle — so by the time this resolves,
+ * the consumer has either parked on the resolver (test 1) or picked up the
+ * pushed message and re-parked (test 2). No fixed-ms wait, no load sensitivity.
+ */
+const flushPending = async (rounds = 4) => {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+};
+
 describe('MessageChannel', () => {
   let channel: MessageChannel;
 
@@ -128,8 +147,11 @@ describe('MessageChannel', () => {
         return results;
       })();
 
-      // Wait a bit, then push a message and close
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Let the consumer's async-generator body run (via microtasks) until it
+      // parks on the channel's resolver — i.e. it is genuinely waiting on the
+      // empty queue. Deterministic drain instead of a fixed 10ms wall-clock
+      // wait (Issue #4394 part 10).
+      await flushPending();
       channel.push(createTestMessage('delayed'));
       channel.close();
 
@@ -250,7 +272,11 @@ describe('MessageChannel', () => {
           const content = `message-${i}`;
           channel.push(createTestMessage(content));
           producedMessages.push(content);
-          await new Promise((resolve) => setTimeout(resolve, 5));
+          // Yield a macrotask boundary between pushes so the consumer can pick
+          // up each message and re-park, exercising the interleaved path
+          // deterministically instead of via a fixed 5ms wall-clock wait
+          // (Issue #4394 part 10).
+          await flushPending();
         }
         channel.close();
       };
