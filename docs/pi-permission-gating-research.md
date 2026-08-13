@@ -186,6 +186,53 @@ The official CLI built on the same `pi-agent-core` is itself a real-world data p
 
 ---
 
+## Part 4 addendum (2026-08-13): C-Q3.1 — Claude Agent SDK permission-hook surface (installed-tarball evidence)
+
+> **Scope:** answers the **Claude Agent SDK** portion of deferred item C-Q3 — the one C-Q3 vendor whose SDK is an installed dependency (`@anthropic-ai/claude-agent-sdk@0.3.177`, pinned at `packages/core/package.json:19`), so it is inspectable locally without web sources. The other three C-Q3 vendors (OpenAI Codex sandbox / Aider / Cursor) remain **web-deferred** (Deferred §1). No web sources used; every claim cites `sdk.d.ts:line` of the installed tarball or a repo `file:line`.
+
+C-Q1.3 established that disclaude's Claude backend only *configures* the SDK (`permissionMode` / `allowedTools`/`disallowedTools` / `settingSources` via `options-adapter.ts:31-60`) and that "the `canUseTool` callback … happens inside the Claude Agent SDK subprocess — not in disclaude's TypeScript." Re-reading the SDK's own type declarations refines that framing: **the SDK exposes two programmatic, embedder-settable permission surfaces that disclaude does not currently use** — so disclaude is not forced into passive delegation; it could inject a disclaude-owned gate on the Claude path too.
+
+### C-Q3.1.1 `canUseTool` — a programmatic pre-tool-call callback (direct analog of pi's `beforeToolCall`)
+
+`sdk.d.ts:188` declares (JSDoc at `:184-185`: *"Permission callback function for controlling tool usage. Called before each tool execution to determine if it should be allowed."*):
+
+```ts
+export declare type CanUseTool = (toolName: string, input: Record<string, unknown>, options: {
+  signal: AbortSignal; suggestions?: PermissionUpdate[]; blockedPath?: string;
+  decisionReason?: string; title?: string; displayName?: string; description?: string;
+  toolUseID: string; agentID?: string; /* … */
+}) => Promise<PermissionResult>;
+```
+
+- It is an **Options field**, not an internal-only detail: `canUseTool?: CanUseTool` on the SDK `Options` (`sdk.d.ts:1349`) — an embedder passes it to `query({ options })`, exactly where disclaude already passes `permissionMode` (`providers/claude/options-adapter.ts:31-33`).
+- `PermissionResult` (`sdk.d.ts:2075`) is a tagged union: `{ behavior: 'allow'; updatedInput?; updatedPermissions? } | { behavior: 'deny'; message; interrupt? }`. **Allow can rewrite the tool input** (`updatedInput`); **deny carries a reason and may interrupt** — richer than pi's `beforeToolCall` deny shape `{ block: true, reason }` (C-Q2.5), which cannot rewrite args.
+- disclaude does **not** set it: `grep -rniE 'canUseTool|PreToolUse|\bhooks\b' packages/core/src/sdk/providers/claude/` → 0 hits. Today the SDK therefore falls back to its internal `permissionMode` policy (default `bypassPermissions` per `base-agent.ts:136`).
+
+**This is the structural twin of pi's `beforeToolCall` (C-Q2.5):** same shape — embedder supplies a per-call callback receiving `(toolName, args)` and returning allow/deny. The Claude path could host a disclaude-owned gate with no adapter/protocol work.
+
+### C-Q3.1.2 `hooks` — a second, richer programmatic surface (PreToolUse → permissionDecision)
+
+The SDK also exposes an in-process hook system: `hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>` on `Options` (`sdk.d.ts:1490`). `HookEvent` (`:821`) enumerates 30 events including **`PreToolUse`**, `PostToolUse`, `PermissionRequest`, `PermissionDenied`. A `PreToolUse` hook's output may carry `permissionDecision?: HookPermissionDecision` (`PreToolUseHookSpecificOutput`, `sdk.d.ts:2216-2218`), where `HookPermissionDecision = 'allow' | 'deny' | 'ask' | 'defer'` (`sdk.d.ts:827`).
+
+- `PreToolUse` fires **before** tool execution and can deny (`permissionDecision: 'deny'`), so it is a second programmable gate — distinct from `canUseTool` in that it is array-valued, runs as async hook callbacks, and can also `ask`/`defer`. The SDK notes PreToolUse-hook denies **bypass `canUseTool`** (`sdk.d.ts:3758`, JSDoc on the auto-deny event: *"PreToolUse hook denies bypass canUseTool and are not covered here."*).
+- disclaude registers **no** `hooks` either (same 0-hit grep above).
+
+### C-Q3.1.3 `PermissionMode` is a 6-value enum, not the 2 disclaude models
+
+`sdk.d.ts:2053`: `PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'`. disclaude's mirror type (`packages/core/src/sdk/types.ts:226`) models only `'default' | 'bypassPermissions'`. The unread values are material to a non-interactive embedder: **`dontAsk`** denies anything not pre-allowed (headless deny-all); **`auto`** auto-approves via classifier. A future disclaude-owned gate on the Claude path could pin `dontAsk` and funnel every decision through `canUseTool` — the SDK already supports that combination.
+
+### C-Q3.1.4 Cross-vendor implication (for the eventual C1/C2/C3 call)
+
+With this data point, the "programmatic pre-tool-call deny callback" paradigm now has **three independent confirmations** — Anthropic Claude SDK `canUseTool` (here), `pi-agent-core` `beforeToolCall` (C-Q2.5), and the `pi-coding-agent` CLI `beforeToolCall` extension bridge (C-Q2.6) — and the Claude SDK additionally offers the richer `hooks`/`PreToolUse` surface. This is the **first non-pi-family** C-Q3 data point, so it modestly strengthens the preliminary lean (paradigm (a): a per-call pre-tool hook as the primary gate, with allowlist/arg-policy as feeders, `ExecutionEnv` sandbox as bash backstop). It does **not** by itself finalize C1/C2/C3 — the Codex/Aider/Cursor comparison (Deferred §1) is still needed for a genuine cross-vendor matrix, and one confirming vendor is not a benchmark.
+
+### What part 4 does *not* do (honest scope)
+
+- **C-Q3 is not closed.** Only the Claude Agent SDK sub-question is answered here. OpenAI Codex sandbox / Aider / Cursor remain web-deferred (Deferred §1).
+- **The final C1/C2/C3 recommendation is still not made** (depends on the rest of C-Q3).
+- **No claim about whether disclaude *should* set `canUseTool`/`hooks` on the Claude path** — that is a #4389 design decision (it would tighten the Claude backend's current `bypassPermissions` default). Part 4 only establishes the surface exists and is currently unused.
+
+---
+
 ## Threat model (disclaude-owned gating)
 
 > ⚠️ **Part 3 (2026-08-08) revises invariants #2 and #3 below** — see the [Part 3 addendum](#part-3-addendum-2026-08-08-mcp-retired--gating-surface-shrinks-to-inline-only) above. The MCP→pi converter (#4417) is closed won't-do; the only tool injection point on the pi path is now the inline-tool adapter (#4387), and the browser surface migrates to a Playwright Skill (#4460). The framing below is retained as the historical part-1/part-2 reasoning.
@@ -233,7 +280,7 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
 - [x] **C-Q1 answered with evidence** (C-Q1.1–C-Q1.5, every claim cites `file:line`).
 - [x] **C-Q2 answered with evidence** — re-verified on **0.83.0** (C-Q2.1–C-Q2.4); **C-Q2.2 corrected in part 2** (pi-agent-core *does* expose a `beforeToolCall` deny hook, C-Q2.5) and **C-Q2.6 adds the pi-coding-agent CLI gating model** (closes deferred #3).
-- [ ] **C-Q3 — industry-paradigm comparison** (Claude Agent SDK permission hooks / OpenAI Codex sandbox / Aider / Cursor) — **still deferred** (requires web research against external SDK docs). Part 2 added one **ecosystem** data point (pi-coding-agent CLI, C-Q2.6), but that is the same pi family, not an independent cross-vendor benchmark.
+- [◐] **C-Q3 — industry-paradigm comparison** (Claude Agent SDK permission hooks / OpenAI Codex sandbox / Aider / Cursor) — **partial**: the **Claude Agent SDK** sub-question is answered from the installed tarball (part 4, C-Q3.1 — the SDK's two programmatic embedder-settable gates, `canUseTool` + `PreToolUse` `permissionDecision`, both unused by disclaude). Part 2 added one **ecosystem** data point (pi-coding-agent CLI, C-Q2.6), but that is the same pi family; part 4 adds the first **non-pi-family** vendor. **Codex / Aider / Cursor still web-deferred.**
 - [◐] **C-Q4 — candidate-paradigm comparison matrix** — *preliminary*, evidence-based map delivered; **final cost/invasiveness/bypassability scoring + final recommendation deferred to part 2** (depends on C-Q3).
 - [x] **Threat model written** (disclaude sole authority; tool injection point not bypassable). ⚠️ **(part 3)** revised for the 2026-08-07 MCP-removal decision: the injection point is now inline-only (#4387), not the MCP converter (#4417 closed) — see Part 3 addendum.
 - [◐] **Recommendation + #4389 mapping** — preliminary lean + #4389 acceptance map delivered; final C1/C2/C3 selection deferred (depends on C-Q3).
@@ -244,7 +291,7 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
 ## Deferred to part 2 (honest gaps)
 
-1. **C-Q3 — external/industry benchmarking.** How do Claude Agent SDK's `canUseTool`/permission hooks, OpenAI Codex's sandbox, Aider's yes-no/edit, and Cursor's permission flow actually work, and which is the closest analog for "in-process TS agent that must gate bash + browser"? This needs reading external SDK docs (web) and was **not** attempted here to avoid unsourced claims.
+1. **C-Q3 — external/industry benchmarking.** How do OpenAI Codex's sandbox, Aider's yes-no/edit, and Cursor's permission flow actually work, and which is the closest analog for "in-process TS agent that must gate bash + browser"? This needs reading external SDK docs (web) and was **not** attempted here to avoid unsourced claims. **✅ The Claude Agent SDK slice is answered in part 4 (C-Q3.1)** — it was inspectable locally (installed dependency, no web needed); the remaining three vendors stay web-deferred.
 2. **Final C1/C2/C3 recommendation.** Depends on C-Q3; the preliminary lean ((b)+(c) core, (d) backstop) is offered but not final.
 3. **`pi-coding-agent` CLI behavior.** ✅ **Done in part 2** (C-Q2.6): audited `@earendil-works/pi-coding-agent@0.83.0` — project-trust + tool allowlist/denylist + extension `beforeToolCall` bridge + TUI-only confirm; no OS sandbox. It is out of disclaude's in-process scope (disclaude embeds `pi-agent-core`, not the CLI), but it confirms the `beforeToolCall` hook (C-Q2.5) is the surface pi's own tooling builds on.
 4. **Arg-level policy semantics.** ✅ **Answered in part 2**: feasible at the gate layer — `BeforeToolCallContext.args` (`types.d.ts:75-76`) exposes the **schema-validated arguments**, so a `beforeToolCall` gate can inspect a specific bash command / URL, not just the tool name. Whether to *require* arg-level inspection is still a #4389 design choice, but the capability is present.
@@ -256,4 +303,5 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 - Repo: `hs3180/disclaude` @ `3902efd` (main HEAD at part-1 research time); part-2 additions re-checked against HEAD `e723b8d` (`PiAgentProvider.queryStream` still `NOT_IMPLEMENTED`).
 - pi tarballs: `@earendil-works/pi-agent-core@0.83.0` (part 1 + part 2; grepped `package/dist`); `@earendil-works/pi-coding-agent@0.83.0` (part 2, C-Q2.6; `npm pack`, grepped `package/dist`).
 - Part 3 (2026-08-08) adds no new code/tarball claims; it records a decision and re-points existing claims to current main. Sources: owner decision comment [hs3180/disclaude#4383 (comment 5208309432)](https://github.com/hs3180/disclaude/issues/4383#issuecomment-5208309432) (2026-08-07); issue states re-verified via the GitHub API on 2026-08-08 — #4417 `closed`/`not_planned`, #4387 open (adapter at `packages/core/src/sdk/providers/pi/inline-tool-adapter.ts:158`), #4386 open (`provider.ts:74` still `NOT_IMPLEMENTED`); #4459 / #4460 open (Skills migration).
+- Part 4 (2026-08-13) inspects the installed `@anthropic-ai/claude-agent-sdk@0.3.177` tarball (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` of a repo install; version pinned at `packages/core/package.json:19`) — `CanUseTool` `:186-230`, `canUseTool` Options field `:1349`, `PermissionResult` `:2075`, `hooks`/`HookEvent`/`HookPermissionDecision` `:1490`/`:821`/`:827`, `PreToolUseHookSpecificOutput.permissionDecision` `:2216-2218`, PreToolUse-bypasses-canUseTool JSDoc `:3758`, `PermissionMode` `:2053`. disclaude-side claims re-verified against current main: `options-adapter.ts:31-60`, `sdk/types.ts:226`, `base-agent.ts:136`, and `grep canUseTool|PreToolUse|hooks packages/core/src/sdk/providers/claude/` → 0 hits.
 - No web sources were used for any part; every claim is traceable to a file:line or a linked GitHub source above.
