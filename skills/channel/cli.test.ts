@@ -30,9 +30,12 @@
 //     redirect is deterministic with no flush race.
 //  3. help / unknown-command surface and exit codes.
 //
-// This file is the TEMPLATE for the remaining 4 channel tools (send_card,
-// send_interactive, send_file, push_to_agent) deferred to later parts of
-// #4459: same spawn harness, same "exactly one JSON" assertions.
+// This file is the TEMPLATE for the remaining channel tools
+// (send_interactive, send_file, push_to_agent) deferred to later parts of
+// #4459: same spawn harness, same "exactly one JSON" assertions. send_card
+// (part 5) reuses this harness below for its validation tests; the card
+// preprocessing / send path needs a built PrimaryNode + creds and is covered
+// by the channel-mcp handler tests, not here.
 //
 // Part 3 of #4459 — does not auto-close the parent issue.
 
@@ -138,6 +141,59 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
       expect(String(obj.error)).toMatch(/text-file/i);
+    });
+  });
+
+  describe('send_card validation failures — exactly one JSON, exit 1 (part 5)', () => {
+    // These all fail in the cheap, pre-import validation path, so they need no
+    // PrimaryNode, no creds, and no built @disclaude/mcp-server — they lock the
+    // send_card command surface and output contract the agent depends on.
+    it('missing --chat', async () => {
+      const r = await runCli(['send_card', '--card', '{"elements":[]}']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/--chat/i);
+    });
+
+    it('missing card content (no --card / --card-file / stdin)', async () => {
+      // stdin is a closed pipe (EOF) in runCli, so the stdin fallback yields ''
+      // and the CLI reports missing card content rather than blocking.
+      const r = await runCli(['send_card', '--chat', 'oc_test']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/card content|missing/i);
+    });
+
+    it('invalid --card JSON', async () => {
+      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', 'not-json']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/invalid card json/i);
+    });
+
+    it('card is not an object (array rejected — mirrors handler guard)', async () => {
+      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', '[1,2,3]']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/must be an object/i);
+    });
+
+    // Post-import validation path: an object card that fails isValidFeishuCard
+    // (missing config/header). This imports @disclaude/mcp-server (so it needs
+    // `npm run build`, like the redirect test below) but never reaches a pino
+    // write — it locks the one-JSON teardown contract (cli.mjs exitWithCode /
+    // resultEmitted): the failure JSON is the ONLY object on stdout even though
+    // process.exit trips pino's sonic-boom "not ready" flush.
+    it('invalid card structure (object missing config/header) — exactly one JSON', async () => {
+      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', '{"elements":[]}']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout); // asserts stdout is exactly ONE JSON line
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/invalid card structure/i);
     });
   });
 
