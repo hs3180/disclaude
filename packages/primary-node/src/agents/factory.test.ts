@@ -291,6 +291,31 @@ describe('AgentFactory', () => {
       const config = getLastConfig();
       expect(config.messageBuilderOptions).toBe(messageBuilderOptions);
     });
+
+    // Issue #4448 (direction #4, observation B): the pilot (long-lived) path
+    // mirrors createAgent's guard — omitting cwdProvider silently runs the
+    // pilot in the workspace cwd, ignoring any /project binding. The factory
+    // must surface that footgun with a warning so a pool/options path that
+    // omits it does not silently trip the workspace fallback.
+    it('warns when cwdProvider is omitted (Issue #4448 direction #4, observation B)', () => {
+      const callbacks = createMockCallbacks();
+
+      AgentFactory.createChatAgent('pilot', 'pilot-no-cwd', callbacks);
+
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        { chatId: 'pilot-no-cwd' },
+        expect.stringContaining('without cwdProvider')
+      );
+    });
+
+    it('does not warn when cwdProvider is provided (Issue #4448 direction #4, observation B)', () => {
+      const callbacks = createMockCallbacks();
+      const cwdProvider = (_chatId: string) => '/bound/project/dir';
+
+      AgentFactory.createChatAgent('pilot', 'pilot-with-cwd', callbacks, { cwdProvider });
+
+      expect(mockLoggerWarn).not.toHaveBeenCalled();
+    });
   });
 
   // ==========================================================================

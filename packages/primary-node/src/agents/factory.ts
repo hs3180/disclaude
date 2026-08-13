@@ -210,6 +210,20 @@ export class AgentFactory {
         options = opt || {};
       }
 
+      // Issue #4448 (direction #4, observation B): mirror the `createAgent`
+      // guard on the long-lived pilot path. `cwdProvider` is optional, but
+      // omitting it silently runs the pilot in the workspace cwd, ignoring any
+      // `/project` binding for this chat. The single production caller
+      // (PrimaryAgentPool.getOrCreateChatAgent) always injects one when wired
+      // from cli.ts; warn so a pool/options path that omits it (or a future
+      // caller) does not silently trip the workspace fallback.
+      if (!options.cwdProvider) {
+        logger.warn(
+          { chatId },
+          'AgentFactory.createChatAgent called without cwdProvider; agent will run in the workspace cwd and ignore any /project binding'
+        );
+      }
+
       const baseConfig = this.getBaseConfig(options);
       const config: ChatAgentConfig = {
         ...baseConfig,
