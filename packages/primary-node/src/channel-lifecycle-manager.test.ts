@@ -192,7 +192,11 @@ describe('ChannelLifecycleManager', () => {
 
     it('should support async setup hook', async () => {
       const setup = vi.fn().mockImplementation(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        // Yield one event-loop tick without a real wall-clock timer — a real
+        // `setTimeout` here is a host-load-dependent side effect that can flake
+        // under coverage instrumentation; `setImmediate` drains deterministically
+        // (Issue #4394 part 12, mirroring the part-3 flushPending idiom).
+        await new Promise((resolve) => setImmediate(resolve));
       });
       const descriptor = createTestDescriptor({ setup });
       const manager = new ChannelLifecycleManager(channelManager, context);
