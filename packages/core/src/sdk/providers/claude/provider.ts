@@ -723,6 +723,29 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         }
         // Issue #3003: log iterator completion timing
         const totalMs = Date.now() - queryStartMs;
+        // Issue #4442 (part 2): empty stream — the SDK yielded zero messages, so the
+        // turn produced no content at all (200-OK-zero-content / empty stream). This is
+        // the "silent turn death" mode: the for-await ends cleanly and the turn completes
+        // as if successful, masked by the INFO "iterator completed" line below. Unlike the
+        // stall watchdog (#3706 — which needs stream_event partials that GLM/litellm may
+        // not forward, leaving it blind), this pathology is detectable from messageCount
+        // alone. Elevate to a structured ERROR so the failure is observable in logs
+        // instead of silent (the #4442 ask: 判错/上报 rather than 静默完成). Recovery
+        // (retry on empty stream / synthetic error result) is a riskier follow-up tracked
+        // separately in #4442 (ask 1, the 429 classifier, lands via #4451).
+        if (messageCount === 0) {
+          logger.error(
+            {
+              totalMs,
+              model: options.model,
+              apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
+              partialsObserved,
+            },
+            'Issue #4442: SDK query completed with zero messages (empty stream / '
+              + '200-OK-zero-content) — turn produced no content; the SDK layer treats this '
+              + 'as a clean completion so no retry fires (silent turn death)',
+          );
+        }
         logger.info(
           { totalMs, messageCount, ttftMs: firstMessageMs ? firstMessageMs - queryStartMs : undefined },
           'SDK iterator completed'
