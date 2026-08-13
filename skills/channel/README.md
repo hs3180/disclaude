@@ -1,13 +1,13 @@
 # channel Skill — CLI replacement for `channel-mcp` (#4459)
 
-> **Status (part 3 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
-> `send_text` command surface + output contract implemented (reuses the first-party
-> `send_text` from `@disclaude/mcp-server` over IPC). **Live end-to-end parity**
-> against the inline MCP tool is **deferred** (requires a running PrimaryNode +
-> Feishu credentials) — this part verifies the command surface, validation, and
-> graceful-degradation paths, mirroring how
-> [#4464](https://github.com/hs3180/disclaude/pull/4464) part 1 deferred live
-> browser parity. The other 4 channel tools (`send_card`, `send_interactive`,
+> **Status (parts 3 + 7 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
+> `send_text` (part 3) and `send_interactive` (part 7) command surfaces + output
+> contracts implemented (both reuse the first-party tools from
+> `@disclaude/mcp-server` over IPC). **Live end-to-end parity** against the inline
+> MCP tool is **deferred** (requires a running PrimaryNode + Feishu credentials) —
+> these parts verify the command surface, validation, and graceful-degradation
+> paths, mirroring how [#4464](https://github.com/hs3180/disclaude/pull/4464) part
+> 1 deferred live browser parity. The other 3 channel tools (`send_card`,
 > `send_file`, `push_to_agent`) are deferred to later parts. This README does
 > **not** auto-close the parent issue.
 
@@ -40,6 +40,19 @@ node skills/channel/cli.mjs send_text --chat oc_xxx --text-file ./msg.md --paren
 # @-mention a user
 node skills/channel/cli.mjs send_text --chat oc_xxx --text "pls review" \
   --mentions '[{"openId":"ou_yyy","name":"owner"}]'
+
+# Send an interactive card with buttons (PrimaryNode builds the card; button
+# clicks are routed back to the agent as prompts)
+node skills/channel/cli.mjs send_interactive --chat oc_xxx \
+  --question "Which option do you prefer?" \
+  --options '[{"text":"Approve","value":"approve","type":"primary"},
+              {"text":"Reject","value":"reject","type":"danger"}]' \
+  --title "Code Review"
+
+# Pipe a longer question on stdin + custom action prompts
+echo "Deploy to prod?" | node skills/channel/cli.mjs send_interactive --chat oc_xxx \
+  --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \
+  --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
 ```
 
 **Runtime (host deps, not bundled):** reuses `send_text` from
@@ -52,8 +65,8 @@ credentials. Run inside a disclaude workspace where the packages are built
 | Command | Positional args | Options | Status |
 |---|---|---|---|
 | `send_text` | — | `--chat <id>` *(req)*, `--text <string>`, `--text-file <path>`, `--parent <id>`, `--mentions <json>` | ✅ part 3 |
+| `send_interactive` | — | `--chat <id>` *(req)*, `--question <string>` *(req)*, `--options <json>` *(req)*, `--title <string>`, `--context <string>`, `--action-prompts <json>`, `--parent <id>` | ✅ part 7 |
 | `send_card` | — | — | ⏳ deferred (#4459 later part) |
-| `send_interactive` | — | — | ⏳ deferred (#4459 later part) |
 | `send_file` | — | — | ⏳ deferred (#4459 later part) |
 | `push_to_agent` | — | — | ⏳ deferred (#4459 later part) |
 | `help` | — | — | ✅ |
@@ -62,7 +75,9 @@ credentials. Run inside a disclaude workspace where the packages are built
 `--text-file -` to read stdin explicitly) for larger bodies; or pipe on stdin
 when no `--text`/`--text-file` is given and stdin is not a TTY. This follows the
 Skill format spec §2.1 rule: never require the agent to embed multi-KB text
-inline.
+inline. `send_interactive` follows the same rule for its `--question`
+(`--question` / `--question-file` / piped stdin); its `--options` is always a
+JSON array flag (structured, not free text).
 
 **Options** are long-form only (`--flag` / `--opt VALUE`), per spec §2.1.
 
@@ -75,17 +90,22 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 ```jsonc
 // success — exit 0
 {"ok":true,"command":"send_text","chatId":"oc_xxx","result":"✅ Text message sent","durationMs":42}
+{"ok":true,"command":"send_interactive","chatId":"oc_xxx","result":"✅ Interactive message sent with 2 action(s)","optionCount":2,"durationMs":58}
 
 // failure — exit 1
 {"ok":false,"command":"send_text","error":"Missing required option --chat <id>","hint":"pass --chat oc_xxx"}
+{"ok":false,"command":"send_interactive","error":"options must be a non-empty array"}
+{"ok":false,"command":"send_interactive","error":"Invalid --options JSON: ..."}
 {"ok":false,"command":"send_text","error":"IPC service unavailable. Please ensure Primary Node is running.","hint":"ensure the disclaude PrimaryNode is running and IPC is reachable"}
 {"ok":false,"command":"send_text","error":"Failed to load @disclaude/mcp-server: ...","hint":"run inside a disclaude workspace with packages built (npm run build); ..."}
 ```
 
-Failure modes covered: missing/invalid args, unreadable `--text-file`, malformed
-`--mentions` JSON, `@disclaude/mcp-server` not built/resolvable, IPC
-unreachable, and IPC send failure (the underlying `send_text` already maps these
-to `SendMessageResult { success:false, error, message }`).
+Failure modes covered: missing/invalid args, unreadable `--text-file`/`--question-file`,
+malformed `--mentions`/`--options`/`--action-prompts` JSON, invalid option
+structure (empty `text`/`value`, bad `type`), `@disclaude/mcp-server` not
+built/resolvable, IPC unreachable, and IPC send failure (the underlying
+first-party tools already map these to `SendMessageResult` /
+`SendInteractiveResult { success:false, error, message }`).
 
 ## Artifacts
 
@@ -117,6 +137,17 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | Capability gating | MCP layer gates on `supportedMcpTools` per chat | **not** gated here — the agent invokes the CLI at its own discretion | see open item below |
 | Logging | pino → stdout (in-process, acceptable) | pino → **stderr** for the call's duration (stdout reserved for the result JSON) | none functionally |
 
+`send_interactive` (part 7) parity is the same shape, with one extra note worth
+recording explicitly: the first-party `send_interactive_message` is a **pure
+forwarding client** — it passes the raw `question`/`options`/`title`/`context`/
+`actionPrompts` to the PrimaryNode via the `sendInteractive` IPC, and the
+**PrimaryNode** builds the card, sends it, and registers the button-click action
+prompts (`packages/mcp-server/src/tools/interactive-message.ts`, #1571/#1572).
+Button handling therefore lives on the PrimaryNode side and is **not** part of
+this one-shot CLI — the CLI never starts an IPC server or owns a button handler,
+exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
+`--question-file`/`--options`/`--title`/`--context`/`--action-prompts`/`--parent`.
+
 **Open item deferred to a later part / owner input (not resolved here):** the MCP
 `channel-mcp` surface is gated per-chat on `supportedMcpTools`
 (`packages/primary-node/src/agents/mcp-setup.ts:45-52`). A CLI is invoked at the
@@ -126,7 +157,7 @@ re-impose it; the inventory flags this as open question 2
 (`docs/mcp-server-inventory.md`). Resolving it consistently across all 5 tools is
 left to a later part of #4459 once the full surface is migrated.
 
-**Out of scope for this part:** `send_card`, `send_interactive`, `send_file`,
-`push_to_agent` (follow the same subcommand pattern here); live end-to-end
-delivery verification (needs PrimaryNode + creds); the S2 external-MCP-loader
-removal (#4459 scope 4, gated on the Playwright migration #4460).
+**Out of scope for these parts:** `send_card`, `send_file`, `push_to_agent`
+(follow the same subcommand pattern here); live end-to-end delivery verification
+(needs PrimaryNode + creds); the S2 external-MCP-loader removal (#4459 scope 4,
+gated on the Playwright migration #4460).
