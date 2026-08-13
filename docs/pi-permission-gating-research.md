@@ -2,6 +2,8 @@
 
 > Serves #4383 decision **(c) permission gating**. Parent: #4383. Implementation issue: #4389.
 > **This is part 1** — it delivers **C-Q1 (Claude gating baseline audit)** + **C-Q2 (pi-ecosystem permission status, re-verified on `pi-agent-core@0.83.0`)** + the **threat model** + a **preliminary candidate-paradigm map**. **C-Q3 (industry-paradigm benchmarking — Codex / Aider / Cursor / Claude Agent SDK hooks) and the final C1/C2/C3 recommendation are deferred to part 2** (they require web research against external SDK docs; this part stays strictly grounded in the repo + the installed pi tarball, no speculation).
+> **Part 2** (merged) corrected C-Q2.2 (pi-agent-core exposes a native `beforeToolCall` deny hook, C-Q2.5) and audited the `pi-coding-agent` CLI gating model (C-Q2.6).
+> **Part 3 (2026-08-08) revises the threat model + candidate map for the 2026-08-07 MCP-removal decision** — see the [Part 3 addendum](#part-3-addendum-2026-08-08-mcp-retired--gating-surface-shrinks-to-inline-only). Summary: the pi backend will **not** support MCP (#4417 closed won't-do), so the only tool path left to gate is **inline tools (#4387)**; the "MCP converter must not become a bypass" invariant is now moot. C-Q3 (industry benchmarking) remains web-deferred and is **not** touched by part 3.
 
 ---
 
@@ -11,7 +13,7 @@
 2. **The default permission mode is `bypassPermissions`** (`base-agent.ts:136`). So "the Claude backend gates tools" is, in practice, "the SDK is *configured* to gate, and disclaude asks it not to." This re-frames #4389's premise ("audit how Claude enforces, replicate on pi"): there is little disclaude-owned enforcement to replicate — the real task is to **build** a gating layer that both backends can share.
 3. **`pi-agent-core@0.83.0` (newer than the spike's 0.82.1) still has no permission / approval / allowlist / pre-tool-call system.** ⚠️ **(part 2 corrected this — see C-Q2.5: pi-agent-core *does* expose an unlabeled `beforeToolCall` deny hook; the "no pre-tool-call" wording below is superseded for that one point.)** The only `permission` token in the whole package is a `FileErrorCode = "permission_denied"` enum value (POSIX-style error, not a gate). What pi *does* expose is a pluggable **`FileSystem` + `Shell`** environment (`ExecutionEnv`) — the natural injection point for OS-level / sandbox-style gating.
 4. The pi provider skeleton already implements a **coarse tool-name allowlist** (`allowedTools` − `disallowedTools` → pi's active-tool set), and explicitly defers runtime gating to #4389 (`providers/pi/options-adapter.ts:39`). So today the pi path has tool-*enumeration* filtering but **no per-call permission decision**.
-5. **Threat-model bottom line:** with `agentBackend = pi`, **disclaude is the sole permission authority** (pi inherits the launcher's perms and never asks). Any gating must live in disclaude-owned code that **every** tool invocation routes through — in particular the MCP→pi converter injection point (#4417) must not become a bypass.
+5. **Threat-model bottom line:** with `agentBackend = pi`, **disclaude is the sole permission authority** (pi inherits the launcher's perms and never asks). Any gating must live in disclaude-owned code that **every** tool invocation routes through — in particular the MCP→pi converter injection point (#4417) must not become a bypass. ⚠️ **(part 3 — superseded)** #4417 is closed won't-do (2026-08-07 decision: the pi backend will not support MCP); the only tool path left to gate is **inline tools (#4387)**. See the Part 3 addendum.
 
 ---
 
@@ -157,7 +159,36 @@ The official CLI built on the same `pi-agent-core` is itself a real-world data p
 
 ---
 
+## Part 3 addendum (2026-08-08): MCP retired → gating surface shrinks to inline-only
+
+> **Decision (owner, 2026-08-07, [hs3180/disclaude#4383 comment 5208309432](https://github.com/hs3180/disclaude/issues/4383#issuecomment-5208309432)):** the pi backend will **not** support MCP. This aligns with the disclaude "reduce MCP" direction and pi's design philosophy (no MCP — use Skills). It reverses the prior B1 decision (build a full MCP→`AgentHarnessTool` converter preserving Playwright/custom-stdio/inline-channel parity).
+
+**What closed (the change of state this part records):**
+
+| Item | Before part 3 | After the 2026-08-07 decision |
+|---|---|---|
+| **#4417** (MCP→`AgentHarnessTool` converter) | Open — assumed to be the pi path's MCP injection point | **Closed `not_planned` (won't-do)** — the converter is no longer needed because the pi backend drops MCP. |
+| **#4387** (`createInlineTool` / `adaptInlineTool`) | One of two tool paths (inline) | **Elevated to the sole/primary tool path** for pi (the Skills-compatible mechanism, not MCP protocol). Adapter present at `providers/pi/inline-tool-adapter.ts:158`. |
+| **#4431 / #4384** (MCP landing research / spike) | Open | **Closed** (B1 recommendation superseded; MCP-non-native conclusion reinforced). |
+| **New work** | — | **#4459** (retire disclaude's MCP-server support → Skills) + **#4460** (replace Playwright MCP with a Playwright Skill) are the actual "reduce MCP" deliverables. |
+
+**How this changes the threat model below (invariant #2) and the candidate map (rows a/b):**
+
+- **Invariant #2 is now moot as written.** Parts 1–2 framed the "MCP→pi converter" (#4417) as the critical choke point that must not become a bypass. With #4417 closed and MCP dropped, **there is no MCP converter on the pi path at all** — the only injection point is the inline-tool adapter (#4387). The invariant reduces to: *the inline-tool adapter must route every tool's `execute` through the gate.* The spirit (no tool reaches the OS/browser ungated) is unchanged; the surface area shrinks.
+- **The browser surface moves from "Playwright MCP" to "Playwright Skill" (#4460).** Invariant #3's "Playwright MCP (drives a browser)" example is no longer accurate for the pi path — browser driving migrates to a Skill. The high-risk capability (arbitrary browser automation) persists; only the delivery vehicle changes. A Skill-backed browser is still ultimately a tool/`execute` the inline path must gate.
+- **The preliminary recommendation is strengthened, not weakened.** Part 2's lean — set `PiAgent.beforeToolCall` (C-Q2.5) to deny per-call — was justified partly by "covers inline + MCP uniformly." With MCP gone, the same hook now covers **the entire** (single) tool path; there is no second injection point to also secure. Candidate (b) (tool-wrapper at injection) likewise narrows from "#4417/#4387" to "#4387 only."
+
+**What part 3 does *not* do (honest scope):**
+
+- **C-Q3 (industry-paradigm benchmarking) is untouched.** It remains deferred — it requires reading external SDK docs (web) and the doc's stance is "no unsourced claims." The 2026-08-07 decision does not supply that external data; it only changes the in-repo surface. A future part that can cite external docs should still do C-Q3 (Claude Agent SDK hooks / Codex sandbox / Aider / Cursor) before the final C1/C2/C3 call.
+- **The final C1/C2/C3 recommendation is still not made.** Part 2's preliminary lean (beforeToolCall hook primary; allowlist/arg-policy as feeders; `ExecutionEnv` sandbox as bash backstop) holds, and is modestly reinforced by the smaller surface — but C-Q3 gating still applies.
+- **#4389 (implementation) remains blocked** on #4386 (`PiAgentProvider.queryStream` still throws `NOT_IMPLEMENTED`, re-verified on current main at `providers/pi/provider.ts:74`). The decision does not unblock the loop; it only simplifies what the gate must cover once the loop is live.
+
+---
+
 ## Threat model (disclaude-owned gating)
+
+> ⚠️ **Part 3 (2026-08-08) revises invariants #2 and #3 below** — see the [Part 3 addendum](#part-3-addendum-2026-08-08-mcp-retired--gating-surface-shrinks-to-inline-only) above. The MCP→pi converter (#4417) is closed won't-do; the only tool injection point on the pi path is now the inline-tool adapter (#4387), and the browser surface migrates to a Playwright Skill (#4460). The framing below is retained as the historical part-1/part-2 reasoning.
 
 The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
@@ -177,8 +208,8 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
 | Paradigm | Fits pi's actual surface? | disclaude-owned? | Covers bash+browser? | Notes from evidence |
 |---|---|---|---|---|
-| **(a) pre-tool-call hook (replicate Claude `canUseTool`)** | ✅ **(revised part 2)** pi-agent-core exposes a native `beforeToolCall` deny hook (C-Q2.5) | ✅ | ✅ | Part 1 said "pi has no hook slot" — **corrected**: `beforeToolCall` with `{block:true}` is documented + invoked in-loop (`agent-loop.js:405`). disclaude sets it on the `PiAgent`; covers inline + MCP uniformly. |
-| **(b) tool-wrapper强制注入 [C2]** — wrap each tool's `execute` | ✅ disclaude controls injection at #4417/#4387 | ✅ | ✅ | Natural fit: the converter/inline-tool factory already wraps `execute`; inserting a gate there covers **inline + MCP** uniformly (matches threat-model invariant #2). |
+| **(a) pre-tool-call hook (replicate Claude `canUseTool`)** | ✅ **(revised part 2)** pi-agent-core exposes a native `beforeToolCall` deny hook (C-Q2.5) | ✅ | ✅ | Part 1 said "pi has no hook slot" — **corrected**: `beforeToolCall` with `{block:true}` is documented + invoked in-loop (`agent-loop.js:405`). disclaude sets it on the `PiAgent`; covers inline + MCP uniformly. ⚠️ **(part 3)** with MCP dropped (#4417 closed), "inline + MCP" collapses to **inline-only (#4387)** — the single tool path; the hook's coverage claim is unchanged but total. |
+| **(b) tool-wrapper强制注入 [C2]** — wrap each tool's `execute` | ✅ disclaude controls injection at #4417/#4387 | ✅ | ✅ | Natural fit: the converter/inline-tool factory already wraps `execute`; inserting a gate there covers **inline + MCP** uniformly (matches threat-model invariant #2). ⚠️ **(part 3)** "injection at #4417/#4387" narrows to **#4387 only** (#4417 closed won't-do); invariant #2's MCP-converter framing is moot — see Part 3 addendum. |
 | **(c) deny-all allowlist [C3]** — tool-name + arg policy | ◐ already half-done (tool-name only, `options-adapter.ts:86-177`) | ✅ | ◐ name-level only; arg-level needs (b) | Tightening today's coarse list to deny-by-default is cheap; full arg-level deny needs a wrapper. |
 | **(d) OS-level sandbox (container / seccomp / custom `ExecutionEnv`)** | ✅ pi's `ExecutionEnv` = `FileSystem`+`Shell` (`types.d.ts:238`) is the native slot | ✅ (disclaude supplies the env) | ✅ (Shell covers bash; browser needs separate handling) | Strongest "can't be bypassed by a clever tool" option; heaviest to build. Maps to pi's only structural gating surface (C-Q2.3). |
 | **(e) capability-scoped tool injection** | ✅ | ✅ | ✅ | A config-driven subset of (b)/(c); composes with them rather than replacing. |
@@ -192,7 +223,7 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 | #4389 acceptance item | Status after this part |
 |---|---|
 | 1. Audit how the Claude backend enforces permissions today | ✅ **Done** (C-Q1 — the audit; key finding: disclaude delegates + defaults to bypass, so "replicate" ≈ "build shared layer") |
-| 2. Permission gate fires for pi-path tool calls (inline + MCP) | ⏳ Implementation work (#4389), but **mechanism now concrete (part 2)**: set `PiAgent.beforeToolCall` (C-Q2.5) → disclaude's gate returns `{ block: true, reason }` to deny; fires in-loop before every tool, so inline + MCP (#4417) are both covered. Gated on #4386 (queryStream live). |
+| 2. Permission gate fires for pi-path tool calls (inline + MCP) | ⏳ Implementation work (#4389), but **mechanism now concrete (part 2)**: set `PiAgent.beforeToolCall` (C-Q2.5) → disclaude's gate returns `{ block: true, reason }` to deny; fires in-loop before every tool, so inline + MCP (#4417) are both covered. Gated on #4386 (queryStream live). ⚠️ **(part 3)** "inline + MCP (#4417)" → **inline-only (#4387)**; #4417 closed won't-do (MCP dropped). Still gated on #4386 (`provider.ts:74` still `NOT_IMPLEMENTED`). |
 | 3. Deny path tested | ⏳ Implementation work (#4389) |
 | 4. Threat-model note on the pi docs page (S5) | ◐ This doc is the threat-model source; a one-paragraph distillation still needs to land in `docs/pi-backend.md` as part of #4388/#4389 follow-up |
 
@@ -204,9 +235,10 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 - [x] **C-Q2 answered with evidence** — re-verified on **0.83.0** (C-Q2.1–C-Q2.4); **C-Q2.2 corrected in part 2** (pi-agent-core *does* expose a `beforeToolCall` deny hook, C-Q2.5) and **C-Q2.6 adds the pi-coding-agent CLI gating model** (closes deferred #3).
 - [ ] **C-Q3 — industry-paradigm comparison** (Claude Agent SDK permission hooks / OpenAI Codex sandbox / Aider / Cursor) — **still deferred** (requires web research against external SDK docs). Part 2 added one **ecosystem** data point (pi-coding-agent CLI, C-Q2.6), but that is the same pi family, not an independent cross-vendor benchmark.
 - [◐] **C-Q4 — candidate-paradigm comparison matrix** — *preliminary*, evidence-based map delivered; **final cost/invasiveness/bypassability scoring + final recommendation deferred to part 2** (depends on C-Q3).
-- [x] **Threat model written** (disclaude sole authority; MCP injection point not bypassable).
-- [◐] **Recommendation + #4389 mapping** — preliminary lean + #4389 acceptance map delivered; final C1/C2/C3 selection deferred to part 2.
-- [x] **Uncovered items marked honestly** (this section + "Deferred to part 2").
+- [x] **Threat model written** (disclaude sole authority; tool injection point not bypassable). ⚠️ **(part 3)** revised for the 2026-08-07 MCP-removal decision: the injection point is now inline-only (#4387), not the MCP converter (#4417 closed) — see Part 3 addendum.
+- [◐] **Recommendation + #4389 mapping** — preliminary lean + #4389 acceptance map delivered; final C1/C2/C3 selection deferred (depends on C-Q3).
+- [x] **Decision drift tracked honestly** — part 3 records that the 2026-08-07 owner decision (pi will not support MCP) supersedes the part-1/part-2 MCP-converter framing; the doc no longer presents a closed issue (#4417) as a live injection point.
+- [x] **Uncovered items marked honestly** (this section + "Deferred").
 
 ---
 
@@ -223,4 +255,5 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
 - Repo: `hs3180/disclaude` @ `3902efd` (main HEAD at part-1 research time); part-2 additions re-checked against HEAD `e723b8d` (`PiAgentProvider.queryStream` still `NOT_IMPLEMENTED`).
 - pi tarballs: `@earendil-works/pi-agent-core@0.83.0` (part 1 + part 2; grepped `package/dist`); `@earendil-works/pi-coding-agent@0.83.0` (part 2, C-Q2.6; `npm pack`, grepped `package/dist`).
-- No web sources were used for either part; every claim is traceable to a file:line above.
+- Part 3 (2026-08-08) adds no new code/tarball claims; it records a decision and re-points existing claims to current main. Sources: owner decision comment [hs3180/disclaude#4383 (comment 5208309432)](https://github.com/hs3180/disclaude/issues/4383#issuecomment-5208309432) (2026-08-07); issue states re-verified via the GitHub API on 2026-08-08 — #4417 `closed`/`not_planned`, #4387 open (adapter at `packages/core/src/sdk/providers/pi/inline-tool-adapter.ts:158`), #4386 open (`provider.ts:74` still `NOT_IMPLEMENTED`); #4459 / #4460 open (Skills migration).
+- No web sources were used for any part; every claim is traceable to a file:line or a linked GitHub source above.
