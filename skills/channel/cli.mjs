@@ -109,11 +109,25 @@ Version ${VERSION} — part 4 of #4459. This Skill does not auto-close the paren
 // Output helpers — every command result is ONE JSON object on stdout.
 // ---------------------------------------------------------------------------
 
+// Guards the single-JSON-object stdout contract. Each emit* sets this and
+// becomes a no-op once a result has already been written. This matters on
+// fast-failure paths: withStdoutToStderr's process.stdout.write redirect can
+// leave pino's SonicBoom stream "not ready", and process.exit() then triggers
+// its on-exit flushSync, which throws; that throw reaches the top-level
+// .catch() below, which would otherwise emitFail() a spurious second
+// "CLI crashed" line. With this guard the crash trace stays on stderr
+// (diagnostics, per spec §2.2) while stdout remains exactly one line.
+let stdoutResultEmitted = false;
+
 function emitOk(payload) {
+  if (stdoutResultEmitted) return;
+  stdoutResultEmitted = true;
   process.stdout.write(JSON.stringify({ ok: true, ...payload }) + "\n");
 }
 
 function emitFail(command, error, hint) {
+  if (stdoutResultEmitted) return;
+  stdoutResultEmitted = true;
   const body = { ok: false, command, error };
   if (hint) body.hint = hint;
   process.stdout.write(JSON.stringify(body) + "\n");
