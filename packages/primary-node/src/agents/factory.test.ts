@@ -17,7 +17,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Track ChatAgent constructor calls for assertions
 const chatAgentConstructorCalls: any[] = [];
 
-// Mock @disclaude/core — Config is the main dependency
+// Handle to the logger.warn mock so tests can assert the cwdProvider-absent
+// warning (Issue #4448 direction #4). vi.hoisted keeps it referenceable inside
+// the hoisted vi.mock factory below.
+const { mockLoggerWarn } = vi.hoisted(() => ({ mockLoggerWarn: vi.fn() }));
+
+// Mock @disclaude/core — Config is the main dependency; createLogger backs the
+// factory's module-level `logger` (Issue #4448 direction #4 guard).
 vi.mock('@disclaude/core', () => ({
   Config: {
     getAgentConfig: vi.fn(() => ({
@@ -28,6 +34,16 @@ vi.mock('@disclaude/core', () => ({
     })),
     getModelForTier: vi.fn(() => undefined),
   },
+  createLogger: vi.fn(() => ({
+    warn: mockLoggerWarn,
+    info: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+    child: vi.fn(function (this: any) {
+      return this;
+    }),
+  })),
 }));
 
 // Mock ChatAgent constructor — capture config for assertions
@@ -187,6 +203,29 @@ describe('AgentFactory', () => {
       const config = getLastConfig();
       expect(config.messageBuilderOptions).toBeUndefined();
     });
+
+    // Issue #4448 (direction #4): omitting cwdProvider silently runs the agent
+    // in the workspace cwd, ignoring any /project binding. The factory must
+    // surface that footgun with a warning so a future caller does not trip it.
+    it('warns when cwdProvider is omitted (Issue #4448 direction #4)', () => {
+      const callbacks = createMockCallbacks();
+
+      AgentFactory.createAgent('chat-no-cwd', callbacks);
+
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        { chatId: 'chat-no-cwd' },
+        expect.stringContaining('without cwdProvider')
+      );
+    });
+
+    it('does not warn when cwdProvider is provided (Issue #4448 direction #4)', () => {
+      const callbacks = createMockCallbacks();
+      const cwdProvider = (_chatId: string) => '/bound/project/dir';
+
+      AgentFactory.createAgent('chat-with-cwd', callbacks, { cwdProvider });
+
+      expect(mockLoggerWarn).not.toHaveBeenCalled();
+    });
   });
 
   // ==========================================================================
@@ -251,6 +290,31 @@ describe('AgentFactory', () => {
 
       const config = getLastConfig();
       expect(config.messageBuilderOptions).toBe(messageBuilderOptions);
+    });
+
+    // Issue #4448 (direction #4, observation B): the pilot (long-lived) path
+    // mirrors createAgent's guard — omitting cwdProvider silently runs the
+    // pilot in the workspace cwd, ignoring any /project binding. The factory
+    // must surface that footgun with a warning so a pool/options path that
+    // omits it does not silently trip the workspace fallback.
+    it('warns when cwdProvider is omitted (Issue #4448 direction #4, observation B)', () => {
+      const callbacks = createMockCallbacks();
+
+      AgentFactory.createChatAgent('pilot', 'pilot-no-cwd', callbacks);
+
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        { chatId: 'pilot-no-cwd' },
+        expect.stringContaining('without cwdProvider')
+      );
+    });
+
+    it('does not warn when cwdProvider is provided (Issue #4448 direction #4, observation B)', () => {
+      const callbacks = createMockCallbacks();
+      const cwdProvider = (_chatId: string) => '/bound/project/dir';
+
+      AgentFactory.createChatAgent('pilot', 'pilot-with-cwd', callbacks, { cwdProvider });
+
+      expect(mockLoggerWarn).not.toHaveBeenCalled();
     });
   });
 
