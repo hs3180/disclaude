@@ -216,6 +216,7 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
     }
     openPRs: pullRequests(first: 100, states: [OPEN]) {
       totalCount
+      pageInfo { hasNextPage }
       nodes { number title body headRefName }
     }
     mergedPRs: pullRequests(first: 100, states: [MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
@@ -270,7 +271,7 @@ function main() {
   const openPRs = repo.openPRs.nodes || [];
   const mergedPRs = repo.mergedPRs.nodes || [];
 
-  if (repo.issues.pageInfo?.hasNextPage || repo.mergedPRs.pageInfo?.hasNextPage) {
+  if (repo.issues.pageInfo?.hasNextPage || repo.openPRs.pageInfo?.hasNextPage || repo.mergedPRs.pageInfo?.hasNextPage) {
     log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, open PRs: ${repo.openPRs.totalCount}, merged PRs: ${repo.mergedPRs.totalCount}. Only first 100 of each fetched.`);
   }
 
@@ -311,18 +312,28 @@ function main() {
   }
 
   // An issue is excluded if it has an in-progress (open) PR or its work already
-  // shipped in a merged PR (phantom). Only the latter counts as phantom-filtered.
+  // shipped in a merged PR (phantom).
   const excludedIssueNums = new Set(openPRIssueNums);
-  let phantomFilteredCount = 0;
   for (const n of mergedPRIssueNums) {
-    if (!excludedIssueNums.has(n)) phantomFilteredCount++;
     excludedIssueNums.add(n);
+  }
+
+  // GitHub auto-closes an issue when a merged PR uses a closing keyword for it,
+  // so a merged closing-keyword nearly always points at an already-CLOSED issue
+  // (absent from the open pool above). The only OPEN issues this filter can
+  // exclude are ones REOPENED after such a merge — which are real candidates —
+  // so on the open pool the filter is false-negative-only. Report the count that
+  // actually bites the open candidate set, not the raw ref total.
+  const openIssueNums = new Set(allIssues.map((i) => i.number));
+  let phantomFilteredOpenCount = 0;
+  for (const n of mergedPRIssueNums) {
+    if (openIssueNums.has(n) && !openPRIssueNums.has(n)) phantomFilteredOpenCount++;
   }
 
   const openPRCount = openPRs.length;
   const mergedPRCount = mergedPRs.length;
   log(`Issues with open PRs: ${[...openPRIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
-  log(`Phantom-filtered (merged closing-keyword) issues: ${[...mergedPRIssueNums].sort((a, b) => a - b).join(", ") || "none"} (${phantomFilteredCount} additional; skipped ${skippedPartPRs} part-N merged PRs)`);
+  log(`Merged closing-keyword refs: ${[...mergedPRIssueNums].sort((a, b) => a - b).join(", ") || "none"} — ${phantomFilteredOpenCount} actually excluded from the open pool (rest are auto-closed by merge; reopen-only); skipped ${skippedPartPRs} part-N merged PRs`);
   log(`PRs scanned: ${openPRCount} open, ${mergedPRCount} merged`);
 
   // Filter: remove issues with open PRs or already-shipped merged-PR work
