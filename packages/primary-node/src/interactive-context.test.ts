@@ -6,7 +6,7 @@
  * Extended with supplementary tests from deep review (PR #1996).
  */
 
-import { describe, it, beforeEach, expect, vi } from 'vitest';
+import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest';
 import { InteractiveContextStore } from './interactive-context.js';
 
 describe('InteractiveContextStore', () => {
@@ -14,6 +14,12 @@ describe('InteractiveContextStore', () => {
 
   beforeEach(() => {
     store = new InteractiveContextStore();
+  });
+
+  afterEach(() => {
+    // Restore real timers so a per-test vi.useFakeTimers() can never leak into
+    // sibling tests (issue #4394 teardown hygiene).
+    vi.useRealTimers();
   });
 
   describe('register', () => {
