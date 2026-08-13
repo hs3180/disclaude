@@ -438,8 +438,14 @@ describe('ChatAgent (primary-node)', () => {
       resolveTask();
       (chatAgent as any).taskCompletionPromise = undefined;
 
-      // Wait for deferred update to apply
-      await new Promise<void>((r) => setTimeout(r, 50));
+      // Wait for deferred update to apply (Issue #4394: deterministic wait
+      // instead of a fixed 50ms wall-clock setTimeout).
+      await vi.waitFor(
+        () => {
+          expect((chatAgent as any).callbacks).toBe(busyCallbacks);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Verify callbacks were applied (check via processMessage which uses callbacks)
       // The agent should use busyCallbacks now
@@ -519,14 +525,19 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_stall', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 150));
 
-      // Notice delivered
-      expect(
-        localCallbacks.sendMessage.mock.calls.some(
-          (c: any[]) => typeof c[1] === 'string' && c[1].includes('stall')
-        )
-      ).toBe(true);
+      // Notice delivered (Issue #4394: deterministic wait for the stall notice
+      // instead of a fixed 150ms wall-clock setTimeout).
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (c: any[]) => typeof c[1] === 'string' && c[1].includes('stall')
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
       // recordFailure called (not recordSuccess)
       const rm = (agent as any).restartManager;
       expect(rm.recordFailure).toHaveBeenCalledWith('oc_stall', 'stall');
@@ -763,14 +774,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'do something',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 150));
-
       // Gap D: the 'Result received, turn complete' log carries stopReason
-      // threaded from parsed.metadata.stopReason.
+      // threaded from parsed.metadata.stopReason. (Issue #4394: deterministic
+      // wait for the log instead of a fixed 150ms wall-clock setTimeout.)
       const { logger } = agent as any;
-      expect(logger.info).toHaveBeenCalledWith(
-        expect.objectContaining({ stopReason: 'tool_use' }),
-        'Result received, turn complete'
+      await vi.waitFor(
+        () => {
+          expect(logger.info).toHaveBeenCalledWith(
+            expect.objectContaining({ stopReason: 'tool_use' }),
+            'Result received, turn complete'
+          );
+        },
+        { timeout: 1000, interval: 20 }
       );
     });
 
@@ -801,15 +816,21 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'do something',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 150));
-
       // When no stopReason is present the field is undefined (key present, value
-      // absent) — an explicit marker rather than an omitted field.
+      // absent) — an explicit marker rather than an omitted field. (Issue #4394:
+      // deterministic wait instead of a fixed 150ms wall-clock setTimeout.)
       const { logger } = agent as any;
+      await vi.waitFor(
+        () => {
+          expect(
+            logger.info.mock.calls.find((c: any[]) => c[1] === 'Result received, turn complete')
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
       const turnCompleteCall = logger.info.mock.calls.find(
         (c: any[]) => c[1] === 'Result received, turn complete'
       );
-      expect(turnCompleteCall).toBeDefined();
       expect((turnCompleteCall as any[])[0].stopReason).toBeUndefined();
     });
 
@@ -844,14 +865,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'do something',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 150));
-
       // Part 2: turn-level observability is surfaced alongside stopReason so a
       // premature end_turn (few round-trips / low API time) is diagnosable.
+      // (Issue #4394: deterministic wait instead of a fixed 150ms setTimeout.)
       const { logger } = agent as any;
-      expect(logger.info).toHaveBeenCalledWith(
-        expect.objectContaining({ numTurns: 3, durationMs: 4200, durationApiMs: 3100 }),
-        'Result received, turn complete'
+      await vi.waitFor(
+        () => {
+          expect(logger.info).toHaveBeenCalledWith(
+            expect.objectContaining({ numTurns: 3, durationMs: 4200, durationApiMs: 3100 }),
+            'Result received, turn complete'
+          );
+        },
+        { timeout: 1000, interval: 20 }
       );
     });
   });
@@ -884,8 +909,19 @@ describe('ChatAgent (primary-node)', () => {
         messageId: 'msg_1',
       });
 
-      // Wait for processIterator to handle the error
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Wait for processIterator to handle the error (Issue #4394:
+      // deterministic wait for the diagnostic instead of a fixed 100ms
+      // wall-clock setTimeout).
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.find(
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
+            )
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should show startup failure message
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
@@ -932,7 +968,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'hello',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the diagnostic instead of a fixed
+      // 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.find(
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
+            )
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should show stderr content in the diagnostic message
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
@@ -968,7 +1015,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'hello',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the startup-failure diagnostic
+      // (which proves the error path ran) instead of a fixed 100ms setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.find(
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
+            )
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Session should be inactive (not restarted)
       expect(agent.hasActiveSession()).toBe(false);
@@ -1014,7 +1072,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'hello',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 150));
+      // Issue #4394: deterministic wait for the Session-error diagnostic
+      // instead of a fixed 150ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.find(
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Session error')
+            )
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should show Session error (not startup failure)
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
@@ -1062,12 +1131,24 @@ describe('ChatAgent (primary-node)', () => {
       // Start the session by sending a message
       void agent.processMessage({ chatId: 'oc_abort_test', payload: 'hello', messageId: 'msg_1' });
 
-      // Wait a bit for some messages to process, then reset
-      await new Promise<void>((r) => setTimeout(r, 50));
+      // Wait until the session is active (streaming has started), then reset.
+      // (Issue #4394: deterministic wait instead of a fixed 50ms setTimeout.)
+      await vi.waitFor(
+        () => {
+          expect(agent.hasActiveSession()).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
       agent.reset();
 
-      // Wait for processIterator to complete
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Wait for processIterator to complete after the reset (Issue #4394:
+      // deterministic wait instead of a fixed 100ms setTimeout).
+      await vi.waitFor(
+        () => {
+          expect(agent.hasActiveSession()).toBe(false);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // The agent should have stopped - verify session is not active
       expect(agent.hasActiveSession()).toBe(false);
@@ -1096,8 +1177,14 @@ describe('ChatAgent (primary-node)', () => {
 
       void agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });
 
-      // Wait then stop
-      await new Promise<void>((r) => setTimeout(r, 50));
+      // Wait until the session is active (streaming has started), then stop.
+      // (Issue #4394: deterministic wait instead of a fixed 50ms setTimeout.)
+      await vi.waitFor(
+        () => {
+          expect(agent.hasActiveSession()).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
       const stopped = agent.stop();
 
       expect(stopped).toBe(true);
@@ -1203,7 +1290,19 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'read file',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout — all forwarding
+      // has settled by the time the result marker is logged.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should forward to debug group with prefix
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
@@ -1247,7 +1346,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'read file',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
         (call: any[]) => call[0] === 'oc_debug_group'
@@ -1283,7 +1393,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'run command',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
         (call: any[]) => call[0] === 'oc_debug_group'
@@ -1315,7 +1436,18 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_user_chat', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // No messages should go to debug group
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
@@ -1348,7 +1480,18 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_user_chat', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // No messages to debug group
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
@@ -1381,7 +1524,18 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_debug_group', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should only send to user chat (which is the same as debug group)
       // but NOT double-forward
@@ -1415,7 +1569,18 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_topic_chat', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Debug group should still get the forwarded message
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
@@ -1519,8 +1684,14 @@ describe('ChatAgent (primary-node)', () => {
       });
       expect(chatAgent.isBusy).toBe(true);
 
-      // Wait for the result to be processed
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Wait for the result to be processed (Issue #4394: deterministic wait
+      // instead of a fixed 100ms wall-clock setTimeout).
+      await vi.waitFor(
+        () => {
+          expect(chatAgent.isBusy).toBe(false);
+        },
+        { timeout: 1000, interval: 20 }
+      );
       expect(chatAgent.isBusy).toBe(false);
     });
   });
