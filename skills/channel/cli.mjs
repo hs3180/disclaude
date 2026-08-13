@@ -8,14 +8,19 @@
  * (#4383, owner decision 2026-08-07): disclaude unifies both backends on the
  * Skills (CLI + README) model defined in `docs/skill-format-spec.md`.
  *
- * What this part implements — the `send_text` subcommand only:
+ * What this part implements — the `send_text` (part 3) and `push_to_agent`
+ * (part 6) subcommands:
  *   The agent shells out via Bash instead of calling the in-process MCP tool.
- *   The CLI reuses the SAME first-party implementation (`send_text` from
- *   `@disclaude/mcp-server`) — it does not re-implement the Feishu send path.
- *   `send_text` reaches the PrimaryNode over IPC (`getIpcClient()`), so this CLI
- *   is a one-shot process per call that connects, sends, and exits — the same
- *   transport the standalone `disclaude-mcp` server (S3) already uses from a
+ *   The CLI reuses the SAME first-party implementations (`send_text` and
+ *   `push_to_agent` from `@disclaude/mcp-server`) — it does not re-implement the
+ *   Feishu send path. Both reach the PrimaryNode over IPC (`getIpcClient()`), so
+ *   this CLI is a one-shot process per call that connects, sends, and exits — the
+ *   same transport the standalone `disclaude-mcp` server (S3) already uses from a
  *   separate process. No long-lived session is required for a single send.
+ *   `push_to_agent` follows the exact same shape as `send_text` (it is a simple
+ *   { chatId, message } send whose MCP entry handler is the bare first-party
+ *   function — no card/table/image transforms, so no extra helper exports are
+ *   needed; see README §Parity).
  *
  * Output contract — exactly ONE JSON object on stdout (see spec §2.2):
  *   success: { ok: true,  command: "send_text", chatId, result, durationMs }
@@ -26,8 +31,9 @@
  * object the only thing on stdout.
  *
  * Deferred (later parts of #4459) — out of scope here:
- *   • the other 4 channel tools (send_card, send_interactive, send_file,
- *     push_to_agent) — they follow the same pattern as subcommands here.
+ *   • the other 3 channel tools (send_card, send_interactive, send_file) — they
+ *     follow the same pattern as subcommands here. (`push_to_agent`, part 6, is
+ *     added in this branch.)
  *   • live end-to-end parity verification against the MCP tool (requires a
  *     running PrimaryNode + Feishu credentials); this part verifies the CLI
  *     command surface, output contract, validation, and graceful-degradation
@@ -40,8 +46,9 @@
  *   node skills/channel/cli.mjs --help
  *   node skills/channel/cli.mjs send_text --chat oc_xxx --text "Hello"
  *   echo "long body" | node skills/channel/cli.mjs send_text --chat oc_xxx
+ *   node skills/channel/cli.mjs push_to_agent --chat oc_xxx --message "Summarize the thread"
  *
- * Part 3 of #4459 — does not auto-close the parent issue.
+ * Part 3 (+ part 6: push_to_agent) of #4459 — does not auto-close the parent issue.
  */
 
 import { performance } from "node:perf_hooks";
@@ -57,10 +64,12 @@ Usage:
   <large text> | node skills/channel/cli.mjs <command> --chat <id>
 
 Commands:
-  send_text   Send a plain text message to a chat (part 3; the other 4 channel
-              tools — send_card, send_interactive, send_file, push_to_agent —
-              are deferred to later parts of #4459).
-  help        Show this help message.
+  send_text       Send a plain text message to a chat (part 3).
+  push_to_agent   Push an instruction to the chat agent for a chat, creating the
+                  agent lazily if needed (part 6). The other 3 channel tools
+                  (send_card, send_interactive, send_file) are deferred to later
+                  parts of #4459.
+  help            Show this help message.
 
 send_text options:
   --chat <id>          Target chat ID (e.g. oc_xxx). Required.
@@ -70,10 +79,18 @@ send_text options:
   --mentions <json>    Optional JSON array of { "openId": string, "name"?: string }.
   --help, -h           Show this help message.
 
+push_to_agent options:
+  --chat <id>             Target chat ID (e.g. oc_xxx). Required.
+  --message <string>      Instruction text to push. Required unless --message-file
+                          or stdin is used.
+  --message-file <path>   Read instruction from a file (use "-" for stdin).
+  --help, -h              Show this help message.
+
 Output:
   Exactly one JSON object on stdout (exit 0 on success, 1 on failure):
     {"ok":true,"command":"send_text","chatId":"oc_xxx","result":"...","durationMs":12}
     {"ok":false,"command":"send_text","error":"...","hint":"..."}
+    {"ok":true,"command":"push_to_agent","chatId":"oc_xxx","result":"...","durationMs":12}
 
 Runtime:
   Reuses send_text from @disclaude/mcp-server, which needs a running disclaude
@@ -86,8 +103,10 @@ Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text-file ./msg.txt --parent om_parent
   node skills/channel/cli.mjs send_text --chat oc_abc --text "@owner pls review" \\
     --mentions '[{"openId":"ou_xxx","name":"owner"}]'
+  node skills/channel/cli.mjs push_to_agent --chat oc_abc --message "Summarize unread messages"
+  echo "long instruction" | node skills/channel/cli.mjs push_to_agent --chat oc_abc
 
-Version ${VERSION} — part 3 of #4459. This Skill does not auto-close the parent issue.`;
+Version ${VERSION} — parts 3 + 6 of #4459. This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
@@ -278,6 +297,105 @@ async function cmdSendText(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// push_to_agent command (part 6 of #4459)
+//
+// Mirrors cmdSendText: push_to_agent is a simple { chatId, message } send whose
+// MCP entry handler is the bare first-party function (no card/table/image
+// transforms), so the CLI calls push_to_agent() directly with no extra helpers.
+// The message body accepts --message, --message-file, or piped stdin, exactly as
+// send_text accepts --text/--text-file/stdin — per spec §2.1 (never require the
+// agent to embed a multi-KB instruction inline).
+// ---------------------------------------------------------------------------
+
+async function cmdPushToAgent(argv) {
+  const args = parseArgs(argv);
+  const start = performance.now();
+
+  // --- validate (before any import, so failures are cheap and deterministic) ---
+  const chatId = args.chat;
+  if (!chatId || typeof chatId !== "string") {
+    emitFail("push_to_agent", "Missing required option --chat <id>", "pass --chat oc_xxx");
+    return 1;
+  }
+
+  // Resolve message: --message, --message-file, or piped stdin (when not a TTY).
+  let message;
+  if (typeof args.message === "string") {
+    message = args.message;
+  } else if (typeof args["message-file"] === "string") {
+    const file = args["message-file"];
+    try {
+      message = file === "-" ? readStdinSync() : readFileSync(file, "utf8");
+    } catch (err) {
+      emitFail("push_to_agent", `Cannot read --message-file ${file}: ${err.message}`);
+      return 1;
+    }
+  } else if (!process.stdin.isTTY) {
+    message = readStdinSync();
+  }
+
+  if (!message || message.length === 0) {
+    emitFail(
+      "push_to_agent",
+      "Missing message content",
+      "pass --message <string>, --message-file <path>, or pipe content on stdin"
+    );
+    return 1;
+  }
+
+  // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
+  let mod;
+  try {
+    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+  } catch (err) {
+    emitFail(
+      "push_to_agent",
+      `Failed to load @disclaude/mcp-server: ${err.message}`,
+      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses push_to_agent from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  const pushToAgent = mod.push_to_agent;
+  if (typeof pushToAgent !== "function") {
+    emitFail("push_to_agent", "@disclaude/mcp-server does not export push_to_agent (unexpected build)");
+    return 1;
+  }
+
+  let result;
+  try {
+    result = await withStdoutToStderr(() => pushToAgent({ chatId, message }));
+  } catch (err) {
+    emitFail(
+      "push_to_agent",
+      `push_to_agent threw: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 1;
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  if (result && result.success) {
+    emitOk({
+      command: "push_to_agent",
+      chatId,
+      result: result.message ?? "pushed",
+      durationMs,
+    });
+    return 0;
+  }
+
+  emitFail(
+    "push_to_agent",
+    (result && (result.error || result.message)) || "push_to_agent returned without success",
+    result && /IPC|PrimaryNode/i.test(result.message || "")
+      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
+      : undefined
+  );
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -291,6 +409,10 @@ async function main(argv) {
 
   if (subcommand === "send_text") {
     return cmdSendText(argv.slice(1));
+  }
+
+  if (subcommand === "push_to_agent") {
+    return cmdPushToAgent(argv.slice(1));
   }
 
   process.stdout.write(HELP + "\n");

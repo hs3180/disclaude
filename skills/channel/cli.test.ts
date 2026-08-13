@@ -170,6 +170,72 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     );
   });
 
+  describe('push_to_agent validation failures — exactly one JSON, exit 1 (part 6)', () => {
+    it('missing --chat', async () => {
+      const r = await runCli(['push_to_agent', '--message', 'hi']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'push_to_agent' });
+      expect(String(obj.error)).toMatch(/--chat/i);
+    });
+
+    it('missing message content', async () => {
+      const r = await runCli(['push_to_agent', '--chat', 'oc_test']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'push_to_agent' });
+      expect(String(obj.error)).toMatch(/message/i);
+    });
+
+    it('unreadable --message-file', async () => {
+      const r = await runCli([
+        'push_to_agent',
+        '--chat',
+        'oc_test',
+        '--message-file',
+        '/no/such/path/xyz',
+      ]);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'push_to_agent' });
+      expect(String(obj.error)).toMatch(/message-file/i);
+    });
+  });
+
+  describe('push_to_agent pino->stderr redirect (part 6)', () => {
+    // Same rationale as the send_text redirect test above: valid args pass
+    // validation and reach the real import + push_to_agent call, which logs
+    // logger.info({ ... }, 'push_to_agent called') via pino — a write to stdout
+    // that the redirect must reroute to stderr. NODE_ENV=test makes pino
+    // synchronous (no pino-pretty transport); LOG_LEVEL=debug guarantees the
+    // info line emits regardless of inherited LOG_LEVEL. Requires `npm run build`
+    // so the import resolves to the real module (CI runs build before vitest).
+    //
+    // Exit code is intentionally NOT asserted: push_to_agent is non-blocking
+    // (issue #631) — against a live PrimaryNode it returns success (exit 0) by
+    // enqueuing the instruction, while without a PrimaryNode it fails fast
+    // (exit 1). Either way the pino line must be off stdout, which is what this
+    // test locks. oc_test is not a real chat, so no real delivery occurs.
+    it(
+      'keeps the pino "push_to_agent called" line off stdout (routed to stderr)',
+      async () => {
+        const r = await runCli(
+          ['push_to_agent', '--chat', 'oc_test', '--message', 'hi'],
+          { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
+        );
+        // stdout is still exactly one JSON object — the contract holds even on
+        // the import/push_to_agent path where pino is active.
+        const obj = parseSingleJson(r.stdout);
+        expect(obj).toMatchObject({ command: 'push_to_agent' });
+        // The pino line must NOT be on stdout…
+        expect(r.stdout).not.toContain('push_to_agent called');
+        // …and SHOULD be on stderr (proves the redirect routed it there).
+        expect(r.stderr).toContain('push_to_agent called');
+      },
+      30000,
+    );
+  });
+
   describe('help / unknown-command surface', () => {
     it('no args -> help text, exit 0', async () => {
       const r = await runCli([]);
