@@ -83,21 +83,20 @@ Save screenshots to the task workspace (never `/tmp` scratch that gets lost):
 
 ```bash
 browser-use <<'PY'
-import pathlib, shutil
-src = capture_screenshot()          # browser-harness helper; returns a screenshot file path
-dst = pathlib.Path("workspace/shot-home.png")
-dst.parent.mkdir(parents=True, exist_ok=True)
-shutil.copyfile(src, dst)           # copy/move the captured file into the task workspace
-print(f"saved {dst}")
+import pathlib
+dst = "workspace/shot-home.png"
+pathlib.Path(dst).parent.mkdir(parents=True, exist_ok=True)
+out = capture_screenshot(path=dst)   # writes the PNG to dst, returns the path
+print(f"saved {out}")
 PY
 ```
 
 Then report the artifact path in your reply (or send it to the chat via the channel skill).
 
-> ℹ️ `capture_screenshot()` is defined in the `browser-harness` dependency (not in the browser-use
-> wheel, which only names it). The MCP path treats its return as a **file path** (`open(path,'rb')`
-> in `cli_mcp.py`), so copy the file rather than assuming bytes; the exact return contract is
-> confirmed at live acceptance (part 2).
+> ℹ️ `capture_screenshot(path=None, full=False, max_dim=None)` is defined in the `browser-harness`
+> dependency (`helpers.py`). It writes the PNG to `path` (default a temp file) and **returns the
+> path string** — verified from source. Pass `path=` to write straight to your workspace; do **not**
+> treat the return as bytes.
 
 ## Environment
 
