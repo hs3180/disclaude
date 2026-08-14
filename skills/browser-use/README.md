@@ -11,9 +11,11 @@ the **Playwright MCP server** (disclaude's largest MCP dependency) per the reduc
   (navigate/click/type/snapshot) cannot serve.
 
 > **Status (part 1):** the Skill contract is defined — SKILL.md + this README document the command
-> surface, the Playwright-MCP capability mapping, and the artifact/output contract. All claims
-> about the CLI are evidenced from the upstream **browser-use 0.13.7 wheel** (`cli.py`,
-> `entry_points.txt`); nothing here is speculative. **Deferred:** host-side CLI install + live
+> surface, the Playwright-MCP capability mapping, and the artifact/output contract. The command
+> surface, console scripts, and helper names are evidenced from the upstream **browser-use 0.13.7
+> wheel** (`cli.py`, `entry_points.txt`); a few helper *return contracts* (notably
+> `capture_screenshot`) are inferred from the wheel + the `browser-harness` dep and are confirmed
+> at live acceptance (part 2). **Deferred:** host-side CLI install + live
 > round-trip acceptance (part 2, needs the runtime on the deployment host — see
 > [Runtime](#runtime)), parity sign-off vs Playwright MCP (part 2), and removal of the Playwright
 > MCP server (final part, only after parity is proven).
@@ -29,13 +31,13 @@ on stdin, prints on stdout), so it fits the "Skills replace MCP" philosophy with
 
 ## CLI surface (evidenced from browser-use 0.13.7 wheel)
 
-Console scripts: `browser-use`, `browser`, `bu` (→ `browser_use.cli:main`);
-`browser-use-tui` (deprecated shim).
+Console scripts (5, from `entry_points.txt`): `browser-use`, `browser`, `browseruse`, `bu`
+(→ `browser_use.cli:main`); `browser-use-tui` (deprecated shim, → `browser_use_tui_main`).
 
 | Invocation | Meaning |
 |---|---|
 | `browser-use <<'PY' ... PY` | **Core mode**: run piped Python in the persistent browser session |
-| `browser-use install` | Install Chromium + system deps (delegates to `uvx playwright install chromium --with-deps --no-shell`) |
+| `browser-use install` | Install Chromium + system deps (delegates to `uvx playwright install chromium --no-shell`, +`--with-deps` on Linux only) |
 | `browser-use init` / `--template` | Project init |
 | `browser-use skill show` / `skill install` | Show / install the upstream agent skill |
 | `browser-use doctor [--fix-snap]` | Health check (install, daemon, browser) |
@@ -50,10 +52,10 @@ Legacy pre-3.0 subcommands (`open`, `state`, `screenshot`, `eval`, `-c`, `--sess
 
 | Playwright MCP capability | browser-use helper | Notes |
 |---|---|---|
-| `navigate` | `new_tab(url)` / `goto_url(url)` | |
+| `navigate` | `new_tab(url)` / `goto_url(url)` | **first nav in a session must be `new_tab`**; `goto_url` re-navigates an already-open tab |
 | `click` | `click_at_xy(x, y)` | coordinate-based; derive coords from `page_info()` |
 | `type` | `type_text(text)` / `fill_input(selector, text)` | |
-| `screenshot` | `capture_screenshot()` | returns bytes; write to workspace path |
+| `screenshot` | `capture_screenshot()` | returns a screenshot **file path** (browser-harness helper; copy into workspace) |
 | accessibility snapshot | `print(page_info())` | page state incl. clickable elements |
 | extract content | `js(code)` + `print()` / `json.dumps` | |
 | **script injection / eval** (new, first-class) | `js(code)`, `cdp(method, ...)` | owner's core requirement — the reason for the direction change |

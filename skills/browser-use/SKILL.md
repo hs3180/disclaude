@@ -32,9 +32,9 @@ PY
 
 | Intent | Helper |
 |---|---|
-| open / navigate | `new_tab(url)`, `goto_url(url)` |
+| open / navigate | `new_tab(url)` (first nav), `goto_url(url)` (re-nav in an open tab) |
 | page state (a11y snapshot equivalent) | `print(page_info())` |
-| screenshot | `capture_screenshot()` |
+| screenshot | `capture_screenshot()` → path |
 | click at coordinates | `click_at_xy(x, y)` |
 | type / fill | `type_text(text)`, `fill_input(selector, text)` |
 | keys / scroll | `press_key(key)`, `scroll(x, y)` |
@@ -45,6 +45,10 @@ PY
 
 Legacy pre-3.0 subcommands (`open`/`state`/`screenshot`/`eval`/`-c`/`--session`/`--cdp-url` …)
 are **removed**; the CLI prints a migration hint if used. `--cdp-url` became the `BU_CDP_URL` env var.
+
+> ⚠️ **First navigation in a session is `new_tab(url)`, not `goto_url(url)`** (upstream SKILL.md is
+> emphatic about this). `goto_url` navigates an *already-open* tab; calling it before any tab exists
+> is a common first-call mistake.
 
 ## Patterns
 
@@ -79,13 +83,21 @@ Save screenshots to the task workspace (never `/tmp` scratch that gets lost):
 
 ```bash
 browser-use <<'PY'
-import pathlib
-pathlib.Path("workspace/shot-home.png").write_bytes(capture_screenshot())
-print("saved workspace/shot-home.png")
+import pathlib, shutil
+src = capture_screenshot()          # browser-harness helper; returns a screenshot file path
+dst = pathlib.Path("workspace/shot-home.png")
+dst.parent.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(src, dst)           # copy/move the captured file into the task workspace
+print(f"saved {dst}")
 PY
 ```
 
 Then report the artifact path in your reply (or send it to the chat via the channel skill).
+
+> ℹ️ `capture_screenshot()` is defined in the `browser-harness` dependency (not in the browser-use
+> wheel, which only names it). The MCP path treats its return as a **file path** (`open(path,'rb')`
+> in `cli_mcp.py`), so copy the file rather than assuming bytes; the exact return contract is
+> confirmed at live acceptance (part 2).
 
 ## Environment
 
