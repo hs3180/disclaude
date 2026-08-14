@@ -13,7 +13,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
@@ -298,6 +298,80 @@ async function ghGraphQL(query, owner, name) {
 }
 
 // ---------------------------------------------------------------------------
+// Phantom-filter reference extraction (pure — regression-tested in scan.test.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reference keywords that mark an OPEN PR as work-in-progress on an issue.
+ * "related" is included here: an open PR saying "Related #N" still covers #N.
+ */
+const OPEN_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
+
+const BRANCH_NUM = /(\d+)/g;
+
+/**
+ * Issue numbers covered by OPEN PRs (work in progress): any keyword-prefixed
+ * reference in body/title, plus loose number matching in the branch name
+ * (e.g. fix/issue-123). Pure — no I/O.
+ *
+ * @param {Array<{title?: string | null, body?: string | null, headRefName?: string | null}>} openPRs
+ * @returns {Set<number>}
+ */
+export function extractOpenPRRefs(openPRs) {
+  const nums = new Set();
+  for (const pr of openPRs) {
+    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(OPEN_KEYWORD)) {
+      nums.add(Number(m[1]));
+    }
+    for (const m of (pr.headRefName || "").matchAll(BRANCH_NUM)) {
+      nums.add(Number(m[1]));
+    }
+  }
+  return nums;
+}
+
+/**
+ * Issue numbers whose work already shipped, resolved per open issue via
+ * GitHub's authoritative closing-link table (#4375). Each open issue's
+ * CROSS_REFERENCED_EVENT entries carry `willCloseTarget` — GitHub's own link
+ * semantics for "this reference closes the issue when merged" (formal closing
+ * keywords + dev-panel links). A "part N" title or bare "#N" mention does NOT
+ * set it, so open epics referenced by merged part-series PRs purely as
+ * context/parent stay in the candidate pool (the #4376 regression guard,
+ * #4168/#4040/#4039). An issue whose will-close ref comes from a MERGED PR
+ * is already-shipped work: exclude it. Pure — no I/O.
+ *
+ * This replaced an earlier mergedPRs(first: 100) title/body regex scan, which
+ * only ever saw the 100 most-recently-updated merged PRs of a 1000+-merged
+ * repo — an issue whose covering merge fell outside that window leaked as a
+ * false candidate, and the cutoff marches forward with every new merge.
+ * Asking GitHub per open issue bounds the work to the (small) open-issue set
+ * instead of the ever-growing merged-PR set, with zero window truncation.
+ *
+ * @param {Array<{number: number, timelineItems?: {totalCount?: number, nodes?: Array<{willCloseTarget?: boolean, source?: {state?: string}}>}}>} allIssues
+ * @param {(msg: string) => void} [logFn] receives the truncation warning when present
+ * @returns {Set<number>}
+ */
+export function extractShippedIssueNums(allIssues, logFn = () => {}) {
+  const nums = new Set();
+  for (const issue of allIssues) {
+    const events = issue.timelineItems?.nodes || [];
+    // Guard: if an issue has more cross-referenced events than the window
+    // fetched, a will-close link could sit outside it (false negative →
+    // phantom leaks into candidates). Surface it instead of missing silently.
+    const tc = issue.timelineItems?.totalCount;
+    if (tc !== undefined && tc > events.length) {
+      logFn(`WARNING: #${issue.number} has ${tc} cross-ref events, only ${events.length} fetched — willCloseTarget link may be outside the window`);
+    }
+    const closedByMergedPR = events.some(
+      (e) => e.willCloseTarget && e.source?.state === "MERGED",
+    );
+    if (closedByMergedPR) nums.add(issue.number);
+  }
+  return nums;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -324,51 +398,8 @@ async function main() {
   // Merged PRs that closed an issue signal already-shipped work — the
   // phantom-pool filter (#4375: resolved per open issue via GitHub's
   // authoritative link table, not by scanning a capped window of merged PRs).
-  const OPEN_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
-  const BRANCH_NUM = /(\d+)/g;
-
-  const openPRIssueNums = new Set();
-  for (const pr of openPRs) {
-    // Any keyword-prefixed reference in body/title — work in progress, don't duplicate.
-    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(OPEN_KEYWORD)) {
-      openPRIssueNums.add(Number(m[1]));
-    }
-    // Loose number matching in branch name (e.g. fix/issue-123)
-    for (const m of (pr.headRefName || "").matchAll(BRANCH_NUM)) {
-      openPRIssueNums.add(Number(m[1]));
-    }
-  }
-
-  // Phantom-pool filter via per-issue closing links (#4375). Each open issue's
-  // CROSS_REFERENCED_EVENT entries carry `willCloseTarget` — GitHub's own
-  // link semantics for "this reference closes the issue when merged" (formal
-  // closing keywords + dev-panel links; a "part N" title or bare "#N" mention
-  // does NOT set it, so open epics referenced as parents stay in the pool —
-  // the #4376 regression guard, #4168/#4040/#4039). An issue whose
-  // will-close ref comes from a MERGED PR is already-shipped work: exclude it.
-  //
-  // This replaces the previous mergedPRs(first: 100) title/body regex scan,
-  // which only ever saw the 100 most-recently-updated merged PRs of a
-  // 1000+-merged repo — an issue whose covering merge fell outside that
-  // window leaked as a false candidate, and the cutoff marches forward with
-  // every new merge. Asking GitHub per open issue bounds the work to the
-  // (small) open-issue set instead of the ever-growing merged-PR set, with
-  // zero window truncation.
-  const mergedPRIssueNums = new Set();
-  for (const issue of allIssues) {
-    const events = issue.timelineItems?.nodes || [];
-    // Guard: if an issue has more cross-referenced events than the window
-    // fetched, a will-close link could sit outside it (false negative →
-    // phantom leaks into candidates). Surface it instead of missing silently.
-    const tc = issue.timelineItems?.totalCount;
-    if (tc !== undefined && tc > events.length) {
-      log(`WARNING: #${issue.number} has ${tc} cross-ref events, only ${events.length} fetched — willCloseTarget link may be outside the window`);
-    }
-    const closedByMergedPR = events.some(
-      (e) => e.willCloseTarget && e.source?.state === "MERGED",
-    );
-    if (closedByMergedPR) mergedPRIssueNums.add(issue.number);
-  }
+  const openPRIssueNums = extractOpenPRRefs(openPRs);
+  const mergedPRIssueNums = extractShippedIssueNums(allIssues, log);
 
   // Weak-ref phantom detection (#4373, direction #4 — caveat only, NOT auto-excluded).
   //
@@ -487,7 +518,23 @@ async function main() {
   console.log(md);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run main() only when executed directly as a CLI entry point — NOT when
+// imported (e.g. by scan.test.ts). Compared via realpath so a symlinked
+// invocation (e.g. deployed via schedules/ -> skills/) still matches.
+const isMainEntry = (() => {
+  try {
+    return (
+      process.argv[1] !== undefined &&
+      realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+})();
+
+if (isMainEntry) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
