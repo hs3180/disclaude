@@ -33,6 +33,7 @@ PY
 | Intent | Helper |
 |---|---|
 | open / navigate | `new_tab(url)` (first nav), `goto_url(url)` (re-nav in an open tab) |
+| ensure a real tab is active | `ensure_real_tab()` (recommended first call if a tab/session may already be open) |
 | page state (a11y snapshot equivalent) | `print(page_info())` |
 | screenshot | `capture_screenshot()` → path |
 | click at coordinates | `click_at_xy(x, y)` |
@@ -101,6 +102,11 @@ Then report the artifact path in your reply (or send it to the chat via the chan
 ## Environment
 
 - Requires Python 3.11+ and the `browser-use` package; Chromium install: `browser-use install`.
+- **First-run config dir**: `browser-harness` needs a writable home dir (default
+  `~/.config/browser-harness`). On a clean host whose parent doesn't exist — or where `~/.config`
+  isn't writable — even `browser-use --help` crashes (`ensure_private_dir` does `mkdir(parents=False)`).
+  Set `BH_HOME=<writable-dir>` (or `XDG_CONFIG_HOME`) to redirect it; on headless/CI hosts the
+  `BU_CDP_URL` path avoids this entirely.
 - **Headless hosts**: pulling Chromium directly is fragile (shared libs / sandbox). Prefer a
   stable external CDP endpoint — set `BU_CDP_URL=<ws://host:port>` and the CLI attaches to it
   instead of launching its own browser (Chromium container decision: #4496).
