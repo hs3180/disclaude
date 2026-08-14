@@ -53,6 +53,8 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     BaseAgent,
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
     StreamingReplyDriver: actual.StreamingReplyDriver,
+    // Issue #4391: real policy — the reset+replay bounding under test.
+    EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
     MessageBuilder: vi.fn().mockImplementation(() => ({
       buildEnhancedContent: vi.fn((input: any) => input.text),
     })),
@@ -1737,7 +1739,12 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn2',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): a real-user ID would now be granted
+        // the one-shot reset+replay, whose deferred session teardown interferes
+        // with the two-turn persistent-iterator premise of this test. The
+        // synthetic ID keeps this test about what it asserts — the #4194
+        // per-turn counter reset — while the retry path has its own tests below.
+        messageId: 'sched-empty-turn-2',
       });
 
       // The #4194 warn must fire on turn 2. Without the per-turn counter reset
@@ -1786,7 +1793,10 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn_notify',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): synthetic empty turns are never
+        // retried, so this test still exercises the ⚠️ notice fallback — the
+        // exact behavior a scheduled task sees (no reset, no replay, notify).
+        messageId: 'sched-empty-notify',
       });
 
       // The diagnostic notice must be sent via sendMessage so the user is told
@@ -1859,7 +1869,9 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn_system',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): keep this test on the
+        // non-retryable branch so the ⚠️ notice (the assertion) still fires.
+        messageId: 'sched-empty-system',
       });
 
       // The empty-turn diagnostic notice must fire despite the empty-content
@@ -1878,6 +1890,162 @@ describe('ChatAgent (primary-node)', () => {
         // as the sibling #4258 diagnostic-notice test.
         expect(diagnosticCall![2]).toBe('thread-root-123');
       }, { timeout: 1000, interval: 20 });
+    });
+  });
+
+  describe('Issue #4391: empty-turn session-reset + bounded replay', () => {
+    // Shared harness for the #4391 matrix (design doc §5). createQueryStream
+    // is stubbed per-test; the mock channel (in the @disclaude/core mock) has
+    // push() → true, so processMessage always accepts.
+    function makeRetryAgent(chatId: string, callbacks = createMockCallbacks()) {
+      const agent = new ChatAgent({
+        chatId,
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      return agent;
+    }
+
+    it('real-user empty turn → schedules one reset + replay (fresh session), suppresses the ⚠️ notice', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_ok', localCallbacks);
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        // Query 1 (the broken session): result-only — empty turn.
+        // Query 2 (the replay's fresh session): a real reply, then the marker
+        // — the retried turn recovers, so no ⚠️ notice may fire.
+        const recovered = queryCount >= 2;
+        return {
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            if (recovered) {
+              yield { parsed: { type: 'text', content: 'Recovered reply!' }, raw: {} };
+            }
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        };
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_ok',
+        payload: 'please answer',
+        messageId: 'om_real_user_1',
+      });
+
+      // The scheduling warn fires when the empty turn is granted its retry…
+      await vi.waitFor(() => {
+        const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+        expect(
+          warnSpy.mock.calls.some((c: unknown[]) =>
+            typeof c[1] === 'string' && (c[1] as string).includes('scheduling one-shot')
+          )
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      // …and after the deferred setTimeout(0) callback runs, the session was
+      // torn down (queryHandle closed) and processMessage replayed the original
+      // params — visible as a SECOND createQueryStream call (fresh session for
+      // the replay; startAgentLoop only fires when !isSessionActive).
+      await vi.waitFor(() => {
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000, interval: 20 });
+
+      // No ⚠️ empty-turn notice on the retrying attempt (suppressed while
+      // recovery is in flight — design §4.5).
+      const noticed = localCallbacks.sendMessage.mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+      );
+      expect(noticed).toBeUndefined();
+
+      // The empty turn was still accounted as a failure (circuit keeps
+      // counting chronic empty turns; retry is NOT success).
+      const rm = (agent as any).restartManager as { recordFailure: ReturnType<typeof vi.fn> };
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_retry_ok', 'empty-turn');
+    });
+
+    it('sched-* synthetic empty turn → no retry (no second query, notice still sent)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_sched', localCallbacks);
+
+      const createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield {
+            parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+            raw: {},
+          };
+        })(),
+      }));
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_sched',
+        payload: 'scheduled prompt',
+        messageId: 'sched-1800000000-issue-solver',
+      });
+
+      // The ⚠️ notice fires (fallback path — synthetic turns never retry)…
+      await vi.waitFor(() => {
+        const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
+          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+        );
+        expect(diagnosticCall).toBeDefined();
+      }, { timeout: 1000, interval: 20 });
+
+      // …and no replay is scheduled: the session was NOT torn down, so the
+      // persistent iterator keeps running (no second query).
+      await new Promise((r) => setTimeout(r, 50));
+      expect(createQueryStream).toHaveBeenCalledTimes(1);
+    });
+
+    it('retry bounded to 1: a second consecutive empty turn gets no reset+replay and notifies', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_bounded', localCallbacks);
+
+      const createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield {
+            parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+            raw: {},
+          };
+        })(),
+      }));
+      (agent as any).createQueryStream = createQueryStream;
+
+      // Turn 1: real-user empty turn — granted the one retry (session 1 → 2).
+      void agent.processMessage({
+        chatId: 'oc_retry_bounded',
+        payload: 'first attempt',
+        messageId: 'om_real_user_a',
+      });
+      await vi.waitFor(() => {
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000, interval: 20 });
+
+      // Turn 2 (the replay): ALSO empty. canRetry is now false (bounded to 1),
+      // so no third session — the ⚠️ notice fires instead.
+      await vi.waitFor(() => {
+        const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
+          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+        );
+        expect(diagnosticCall).toBeDefined();
+      }, { timeout: 1000, interval: 20 });
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(createQueryStream).toHaveBeenCalledTimes(2);
+      const rm = (agent as any).restartManager as { recordFailure: ReturnType<typeof vi.fn> };
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_retry_bounded', 'empty-turn');
+      expect((rm as unknown as { recordSuccess: ReturnType<typeof vi.fn> }).recordSuccess).not.toHaveBeenCalled();
     });
   });
 

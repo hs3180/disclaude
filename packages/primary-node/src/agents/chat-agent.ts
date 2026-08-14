@@ -41,6 +41,7 @@ import {
   MessageChannel,
   RestartManager,
   ConversationOrchestrator,
+  EmptyTurnRetryPolicy,
   getErrorStderr,
   isStartupFailure,
   forceCleanupLeakedListeners,
@@ -107,6 +108,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // terminated the stream. Checked at the iterator-end/restart decision point to
   // suppress the auto-restart (would immediately re-stall) while keeping context.
   private stalledTerminated = false;
+
+  // Issue #4391 (#4194 follow-up ②): empty-turn session-reset + bounded replay.
+  // The policy locks eligibility (real-user messages only — synthetic sched-*/push_*
+  // IDs are never replayed, they are not valid reply roots) and bounding (exactly
+  // one retry per chat until a successful turn resets it). See
+  // packages/core/src/agents/empty-turn-retry-policy.ts (part 1) and
+  // docs/designs/empty-turn-session-reset-design.md.
+  private readonly emptyTurnRetryPolicy = new EmptyTurnRetryPolicy();
+
+  // Issue #4391: the params of the most recent processMessage() call (the turn
+  // currently in flight once pushed). Stashed for EVERY message — synthetic
+  // included — because eligibility is decided from its messageId by the policy
+  // (a synthetic turn must not replay an older stashed real message either).
+  private lastTurnMessage?: UserMessageParams;
+
+  // Issue #4391: monotonically increasing sequence stamped on each
+  // processMessage() call. A scheduled replay captures the seq at schedule time
+  // and is dropped if a newer message arrived in between — the replay must
+  // never clobber or reorder behind the user's newer input.
+  private messageSeq = 0;
 
   // Issue #4302: inline (in-process) MCP server instances created for this
   // agent (e.g. channel-mcp), retained so dispose() can close them explicitly
@@ -582,6 +603,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (chatType) {
       this.chatType = chatType;
     }
+
+    // Issue #4391: stash the params of the message being processed so an empty
+    // turn can replay the exact original input against a fresh session.
+    // Stashed for synthetic messages too — eligibility is decided later from
+    // the messageId by EmptyTurnRetryPolicy (synthetic turns never replay).
+    this.messageSeq++;
+    this.lastTurnMessage = params;
 
     // Track thread root
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
@@ -1175,6 +1203,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // produced no reliable work product, so it must be reported as failed,
           // not masked as ✅ Complete.
           const upstreamApiError = parsed.upstreamApiError === true;
+          // Issue #4391 (#4194 follow-up ②): on a real-user empty turn, decide
+          // whether to consume this chat's single reset+replay attempt. The
+          // policy returns false for synthetic IDs (sched-*/push_* — not valid
+          // reply roots, #4259) and for chats that already used their one
+          // retry (bounded to 1, cannot loop). When retrying, the ⚠️ notice
+          // below is suppressed — we are actively recovering, not giving up
+          // (no double-notify, design §4.5). The turn is still counted by
+          // recordFailure('empty-turn') below so the restartManager circuit
+          // keeps accounting chronic empty turns. A turn whose emptiness comes
+          // from an upstream API error (#4322) is not retried here — that is
+          // transient upstream trouble, not a corrupted session, and already
+          // has its own ❌ notice + failure accounting.
+          const turnMessage = this.lastTurnMessage;
+          const willRetryEmptyTurn =
+            isEmptyTurn &&
+            !upstreamApiError &&
+            !!turnMessage &&
+            this.emptyTurnRetryPolicy.canRetry(chatId, turnMessage.messageId, true);
+          if (willRetryEmptyTurn) {
+            this.emptyTurnRetryPolicy.markRetried(chatId);
+          }
           // Issue #4322 edge case: when a turn is empty BECAUSE of an upstream
           // API error, the more specific ❌ upstream notice below (with the
           // upstream request_id and the correct "transient overload — retry
@@ -1182,7 +1231,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // notice here, whose "session may be invalid, try resetting" advice is
           // wrong for a transient upstream overload and would otherwise
           // double-notify. The upstream warn/notice still fires below.
-          if (isEmptyTurn && !upstreamApiError) {
+          // Issue #4391: also suppressed when the turn is being retried — the
+          // reset+replay below IS the "try again"; telling the user to resend
+          // would be wrong (and noisy) while recovery is already in flight.
+          if (isEmptyTurn && !upstreamApiError && !willRetryEmptyTurn) {
             this.logger.warn(
               {
                 chatId,
@@ -1223,6 +1275,68 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'Failed to send empty-turn diagnostic notice (Issue #4258)'
               );
             }
+          }
+
+          // Issue #4391 (#4194 follow-up ②): schedule the deferred reset+replay
+          // for a real-user empty turn that was granted its single retry. This
+          // is the self-heal: the empty turn's root cause is typically a stale
+          // / corrupted persistent session, so the replay runs against a FRESH
+          // session, not the broken one (that is what distinguishes this from
+          // #4314's in-place transient replay).
+          //
+          // Timing: processIterator is still unwinding this turn's result
+          // (resolveTurn / onDone run below), and resetting the session right
+          // here would close the very channel this iterator is consuming
+          // mid-loop. So the replay is deferred via setTimeout(0): after this
+          // iteration ends, the loop parks on the channel generator's wait,
+          // and only then does the scheduled callback tear the session down
+          // (endEmptyTurnSession) and re-invoke processMessage with the
+          // ORIGINAL params. processMessage sees !isSessionActive and calls
+          // startAgentLoop() — a fresh SDK query with a fresh channel — so the
+          // replay never re-enters this iterator. v1 replays only the single
+          // message (no history re-injection, design §4.1).
+          //
+          // Seq guard: if a NEWER message arrives before the timer fires (the
+          // user resend, or anything else), the replay is dropped — it must
+          // never clobber or run behind fresher input.
+          if (willRetryEmptyTurn && turnMessage) {
+            const replaySeq = this.messageSeq;
+            const replayParams = turnMessage;
+            this.logger.warn(
+              { chatId, messageId: turnMessage.messageId, replaySeq },
+              'Empty turn on a real-user message (Issue #4391): scheduling one-shot ' +
+                'session reset + replay of the original input'
+            );
+            setTimeout(() => {
+              try {
+                if (!this.initialized || this.messageSeq !== replaySeq) {
+                  this.logger.info(
+                    {
+                      chatId,
+                      replaySeq,
+                      currentSeq: this.messageSeq,
+                      initialized: this.initialized,
+                    },
+                    'Empty-turn replay skipped (agent disposed or a newer message arrived) (Issue #4391)'
+                  );
+                  return;
+                }
+                // Session-only teardown: close query+channel, keep this agent
+                // (history, restartManager accounting, thread roots) intact.
+                this.endEmptyTurnSession();
+                void this.processMessage(replayParams).catch((replayErr) => {
+                  this.logger.error(
+                    { err: replayErr, chatId },
+                    'Empty-turn replay processMessage failed (Issue #4391)'
+                  );
+                });
+              } catch (schedErr) {
+                this.logger.error(
+                  { err: schedErr, chatId },
+                  'Empty-turn replay scheduling callback failed (Issue #4391)'
+                );
+              }
+            }, 0);
           }
 
           // Issue #4322: a turn killed by an upstream API error (overloaded_error
@@ -1322,6 +1436,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           } else {
             // Record success to reset restart state
             this.restartManager.recordSuccess(chatId);
+            // Issue #4391: a non-empty turn means the session is healthy —
+            // re-arm the empty-turn retry for this chat (both when the retried
+            // replay succeeded and when an ordinary turn just produced output).
+            this.emptyTurnRetryPolicy.reset(chatId);
           }
 
           // Issue #3985: Mark as not processing after receiving result.
@@ -1572,6 +1690,39 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Restart the agent loop to preserve context for future messages
     this.startAgentLoop();
     this.logger.info({ chatId }, 'Agent loop restarted');
+  }
+
+  /**
+   * Issue #4391 (#4194 follow-up ②): session-only teardown for the empty-turn
+   * reset+replay. Closes the current query + channel and marks the session
+   * inactive so the NEXT processMessage() starts a fresh SDK session — the
+   * replay runs against a clean session instead of the corrupted one.
+   *
+   * Deliberately narrower than `reset()`: history context, the restartManager
+   * accounting, the thread root, and the inline MCP instances all survive, and
+   * the still-running processIterator is NOT aborted (its channel closes, so
+   * its generator drains and the iterator ends as an explicit close — the same
+   * park-and-drain semantics as the GLM-stall path, `stalledTerminated`).
+   * startAgentLoop() rebuilds everything it needs on the replay.
+   */
+  private endEmptyTurnSession(): void {
+    const chatId = this.boundChatId;
+    this.logger.info({ chatId }, 'Ending session for empty-turn reset+replay (Issue #4391)');
+
+    // Mark inactive BEFORE closing so the iterator end is read as an explicit
+    // close (wasExplicitClose), not an unexpected loop end that would trigger
+    // the auto-restart path below.
+    this.isSessionActive = false;
+    this.isProcessingMessage = false;
+
+    if (this.queryHandle) {
+      this.queryHandle.close();
+      this.queryHandle = undefined;
+    }
+    if (this.channel) {
+      this.channel.close();
+      this.channel = undefined;
+    }
   }
 
   /**
