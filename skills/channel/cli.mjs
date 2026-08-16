@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * channel Skill — CLI helper (Issue #4459, parts 3–4)
+ * channel Skill — CLI helper (Issue #4459, parts 3–4, 7)
  *
  * CLI-Skill replacement for the inline `channel-mcp` MCP server
  * (`packages/mcp-server/src/channel-mcp.ts`, surface S1 in
@@ -8,15 +8,23 @@
  * (#4383, owner decision 2026-08-07): disclaude unifies both backends on the
  * Skills (CLI + README) model defined in `docs/skill-format-spec.md`.
  *
- * What this implements — the `send_text` (part 3) and `send_file` (part 4)
- * subcommands:
+ * What this implements — the `send_text` (part 3), `send_file` (part 4), and
+ * `send_interactive` (part 7) subcommands:
  *   The agent shells out via Bash instead of calling the in-process MCP tool.
  *   The CLI reuses the SAME first-party implementations (`send_text` /
- *   `send_file` from `@disclaude/mcp-server`) — it does not re-implement the
- *   Feishu send path. Both reach the PrimaryNode over IPC (`getIpcClient()`),
- *   so this CLI is a one-shot process per call that connects, sends, and exits
- *   — the same transport the standalone `disclaude-mcp` server (S3) already
- *   uses from a separate process. No long-lived session is required per call.
+ *   `send_file` / `send_interactive` from `@disclaude/mcp-server`) — it does
+ *   not re-implement the Feishu send path. All reach the PrimaryNode over IPC
+ *   (`getIpcClient()`), so this CLI is a one-shot process per call that
+ *   connects, sends, and exits — the same transport the standalone
+ *   `disclaude-mcp` server (S3) already uses from a separate process. No
+ *   long-lived session is required per call.
+ *
+ *   `send_interactive` (part 7) forwards the RAW parameters (question, options,
+ *   title, context, actionPrompts) to the PrimaryNode via the `sendInteractive`
+ *   IPC; the PrimaryNode builds the interactive card, sends it, and registers
+ *   the button-click action prompts (#1571/#1572). Button handling lives on the
+ *   PrimaryNode side — this CLI is a one-shot *client*, exactly like `send_text`,
+ *   NOT the IPC server / button handler.
  *
  * Output contract — exactly ONE JSON object on stdout (see spec §2.2):
  *   success: { ok: true,  command: "send_text", chatId, result, durationMs }
@@ -32,8 +40,8 @@
  * file existence is NOT pre-validated here for that reason.
  *
  * Deferred (later parts of #4459) — out of scope here:
- *   • the remaining 3 channel tools (send_card, send_interactive,
- *     push_to_agent) — they follow the same pattern as subcommands here.
+ *   • the remaining 2 channel tools (send_card, push_to_agent) — they follow
+ *     the same pattern as subcommands here.
  *   • live end-to-end parity verification against the MCP tool (requires a
  *     running PrimaryNode + Feishu credentials); this part verifies the CLI
  *     command surface, output contract, validation, and graceful-degradation
@@ -48,7 +56,7 @@
  *   echo "long body" | node skills/channel/cli.mjs send_text --chat oc_xxx
  *   node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
  *
- * Part 4 of #4459 — does not auto-close the parent issue.
+ * Parts 3, 4 + 7 of #4459 — does not auto-close the parent issue.
  */
 
 import { performance } from "node:perf_hooks";
@@ -64,10 +72,12 @@ Usage:
   <large text> | node skills/channel/cli.mjs <command> --chat <id>
 
 Commands:
-  send_text   Send a plain text message to a chat (part 3).
-  send_file   Send a file to a chat (part 4). The remaining tools — send_card,
-              send_interactive, push_to_agent — are deferred to later parts.
-  help        Show this help message.
+  send_text        Send a plain text message to a chat (part 3).
+  send_file        Send a file to a chat (part 4).
+  send_interactive Send an interactive card with clickable buttons (part 7).
+                   The remaining 2 channel tools — send_card, push_to_agent —
+                   are deferred to later parts of #4459.
+  help             Show this help message.
 
 send_text options:
   --chat <id>          Target chat ID (e.g. oc_xxx). Required.
@@ -76,6 +86,22 @@ send_text options:
   --parent <id>        Optional parent message ID (thread reply).
   --mentions <json>    Optional JSON array of { "openId": string, "name"?: string }.
   --help, -h           Show this help message.
+
+send_interactive options:
+  --chat <id>            Target chat ID (e.g. oc_xxx). Required.
+  --question <string>    The question / main content to display. Required unless
+                         --question-file or stdin is used.
+  --question-file <path> Read question from a file (use "-" for stdin explicitly).
+  --options <json>       Required JSON array of button options, each
+                         { "text": string, "value": string, "type"?: "primary"
+                         | "default" | "danger" }. The PrimaryNode builds the
+                         card; button clicks are routed to the agent as prompts.
+  --title <string>       Optional card title (defaults to "交互消息").
+  --context <string>     Optional context shown above the question.
+  --action-prompts <json> Optional JSON object mapping option value -> prompt
+                         string (overrides the auto-generated default prompts).
+  --parent <id>          Optional parent message ID (thread reply).
+  --help, -h             Show this help message.
 
 send_file options:
   --chat <id>          Target chat ID (e.g. oc_xxx). Required.
@@ -103,7 +129,16 @@ Examples:
   node skills/channel/cli.mjs send_file --chat oc_abc --file ./report.pdf
   node skills/channel/cli.mjs send_file --chat oc_abc --file ./log.txt --parent om_parent
 
-Version ${VERSION} — part 4 of #4459. This Skill does not auto-close the parent issue.`;
+  node skills/channel/cli.mjs send_interactive --chat oc_abc \\
+    --question "Which option do you prefer?" \\
+    --options '[{"text":"Approve","value":"approve","type":"primary"},
+                {"text":"Reject","value":"reject","type":"danger"}]' \\
+    --title "Code Review"
+  echo "Deploy to prod?" | node skills/channel/cli.mjs send_interactive --chat oc_abc \\
+    --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \\
+    --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
+
+Version ${VERSION} — parts 3, 4 + 7 of #4459. This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
@@ -200,6 +235,80 @@ function parseMentions(raw) {
   } catch (err) {
     throw new Error(`Invalid --mentions JSON: ${err.message}`);
   }
+}
+
+/**
+ * Parse and validate the `--options` JSON array for send_interactive. Mirrors the
+ * first-party `send_interactive_message` validation (interactive-message.ts) so
+ * invalid options fail cheaply before importing @disclaude/mcp-server. Each
+ * option must be { text: non-empty string, value: non-empty string, type?:
+ * "primary" | "default" | "danger" }.
+ */
+function parseOptions(raw) {
+  if (!raw) {
+    throw new Error("Missing required option --options <json-array>");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Invalid --options JSON: ${err.message}`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("options must be a JSON array");
+  }
+  if (parsed.length === 0) {
+    throw new Error("options must be a non-empty array");
+  }
+  for (let i = 0; i < parsed.length; i++) {
+    const opt = parsed[i];
+    if (typeof opt !== "object" || opt === null) {
+      throw new Error(`options[${i}] must be an object`);
+    }
+    if (typeof opt.text !== "string" || opt.text.trim().length === 0) {
+      throw new Error(`options[${i}].text must be a non-empty string`);
+    }
+    if (typeof opt.value !== "string" || opt.value.trim().length === 0) {
+      throw new Error(`options[${i}].value must be a non-empty string`);
+    }
+    if (
+      opt.type !== undefined &&
+      !["primary", "default", "danger"].includes(opt.type)
+    ) {
+      throw new Error(`options[${i}].type must be one of: primary, default, danger`);
+    }
+  }
+  return parsed.map((opt) => ({
+    text: opt.text,
+    value: opt.value,
+    ...(opt.type !== undefined ? { type: opt.type } : {}),
+  }));
+}
+
+/**
+ * Parse the optional `--action-prompts` JSON object (value -> prompt string)
+ * for send_interactive. Returns undefined when not provided so the PrimaryNode
+ * uses its auto-generated default prompts.
+ */
+function parseActionPrompts(raw) {
+  if (!raw) return undefined;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Invalid --action-prompts JSON: ${err.message}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      "action-prompts must be a JSON object mapping option value -> prompt string"
+    );
+  }
+  for (const [key, val] of Object.entries(parsed)) {
+    if (typeof val !== "string" || val.length === 0) {
+      throw new Error(`action-prompts["${key}"] must be a non-empty string`);
+    }
+  }
+  return parsed;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +417,130 @@ async function cmdSendText(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// send_interactive command
+// ---------------------------------------------------------------------------
+
+async function cmdSendInteractive(argv) {
+  const args = parseArgs(argv);
+  const start = performance.now();
+
+  // --- validate (before any import, so failures are cheap and deterministic) ---
+  const chatId = args.chat;
+  if (!chatId || typeof chatId !== "string") {
+    emitFail("send_interactive", "Missing required option --chat <id>", "pass --chat oc_xxx");
+    return 1;
+  }
+
+  // Resolve question: --question, --question-file, or piped stdin (when stdin
+  // is not a TTY). Mirrors send_text's text resolution for large bodies.
+  let question;
+  if (typeof args.question === "string") {
+    question = args.question;
+  } else if (typeof args["question-file"] === "string") {
+    const file = args["question-file"];
+    try {
+      question = file === "-" ? readStdinSync() : readFileSync(file, "utf8");
+    } catch (err) {
+      emitFail("send_interactive", `Cannot read --question-file ${file}: ${err.message}`);
+      return 1;
+    }
+  } else if (!process.stdin.isTTY) {
+    question = readStdinSync();
+  }
+
+  if (!question || question.trim().length === 0) {
+    emitFail(
+      "send_interactive",
+      "Missing question content",
+      "pass --question <string>, --question-file <path>, or pipe content on stdin"
+    );
+    return 1;
+  }
+
+  let options;
+  try {
+    options = parseOptions(args.options);
+  } catch (err) {
+    emitFail("send_interactive", err.message);
+    return 1;
+  }
+
+  let actionPrompts;
+  try {
+    actionPrompts = parseActionPrompts(args["action-prompts"]);
+  } catch (err) {
+    emitFail("send_interactive", err.message);
+    return 1;
+  }
+
+  const title = typeof args.title === "string" ? args.title : undefined;
+  const context = typeof args.context === "string" ? args.context : undefined;
+  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+
+  // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
+  let mod;
+  try {
+    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+  } catch (err) {
+    emitFail(
+      "send_interactive",
+      `Failed to load @disclaude/mcp-server: ${err.message}`,
+      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_interactive from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  const sendInteractive = mod.send_interactive;
+  if (typeof sendInteractive !== "function") {
+    emitFail("send_interactive", "@disclaude/mcp-server does not export send_interactive (unexpected build)");
+    return 1;
+  }
+
+  let result;
+  try {
+    result = await withStdoutToStderr(() =>
+      sendInteractive({
+        question,
+        options,
+        chatId,
+        title,
+        context,
+        actionPrompts,
+        parentMessageId,
+      })
+    );
+  } catch (err) {
+    emitFail(
+      "send_interactive",
+      `send_interactive threw: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 1;
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  if (result && result.success) {
+    emitOk({
+      command: "send_interactive",
+      chatId,
+      result: result.message ?? "sent",
+      optionCount: options.length,
+      durationMs,
+    });
+    return 0;
+  }
+
+  emitFail(
+    "send_interactive",
+    (result && (result.error || result.message)) || "send_interactive returned without success",
+    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
+      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
+      : undefined
+  );
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 // send_file command
 // ---------------------------------------------------------------------------
 
@@ -403,6 +636,10 @@ async function main(argv) {
 
   if (subcommand === "send_text") {
     return cmdSendText(argv.slice(1));
+  }
+
+  if (subcommand === "send_interactive") {
+    return cmdSendInteractive(argv.slice(1));
   }
 
   if (subcommand === "send_file") {
