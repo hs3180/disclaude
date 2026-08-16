@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * channel Skill — CLI helper (Issue #4459, part 3)
+ * channel Skill — CLI helper (Issue #4459, parts 3–4, 7)
  *
  * CLI-Skill replacement for the inline `channel-mcp` MCP server
  * (`packages/mcp-server/src/channel-mcp.ts`, surface S1 in
@@ -8,15 +8,16 @@
  * (#4383, owner decision 2026-08-07): disclaude unifies both backends on the
  * Skills (CLI + README) model defined in `docs/skill-format-spec.md`.
  *
- * What this implements — the `send_text` (part 3) and `send_interactive`
- * (part 7) subcommands:
+ * What this implements — the `send_text` (part 3), `send_file` (part 4), and
+ * `send_interactive` (part 7) subcommands:
  *   The agent shells out via Bash instead of calling the in-process MCP tool.
- *   Each CLI reuses the SAME first-party implementation from
- *   `@disclaude/mcp-server` — it does not re-implement the Feishu send path.
- *   Both reach the PrimaryNode over IPC (`getIpcClient()`), so this CLI is a
- *   one-shot process per call that connects, sends, and exits — the same
- *   transport the standalone `disclaude-mcp` server (S3) already uses from a
- *   separate process. No long-lived session is required for a single send.
+ *   The CLI reuses the SAME first-party implementations (`send_text` /
+ *   `send_file` / `send_interactive` from `@disclaude/mcp-server`) — it does
+ *   not re-implement the Feishu send path. All reach the PrimaryNode over IPC
+ *   (`getIpcClient()`), so this CLI is a one-shot process per call that
+ *   connects, sends, and exits — the same transport the standalone
+ *   `disclaude-mcp` server (S3) already uses from a separate process. No
+ *   long-lived session is required per call.
  *
  *   `send_interactive` (part 7) forwards the RAW parameters (question, options,
  *   title, context, actionPrompts) to the PrimaryNode via the `sendInteractive`
@@ -33,9 +34,14 @@
  * redirects stdout → stderr for the duration of the IPC call to keep the result
  * object the only thing on stdout.
  *
+ * Part 4 (send_file) — same pattern, reusing `send_file` from
+ * `@disclaude/mcp-server` (uploads via IPC to the PrimaryNode). Relative paths
+ * are resolved against the configured workspace dir by the first-party impl;
+ * file existence is NOT pre-validated here for that reason.
+ *
  * Deferred (later parts of #4459) — out of scope here:
- *   • the other 3 channel tools (send_card, send_file, push_to_agent) — they
- *     follow the same pattern as subcommands here.
+ *   • the remaining 2 channel tools (send_card, push_to_agent) — they follow
+ *     the same pattern as subcommands here.
  *   • live end-to-end parity verification against the MCP tool (requires a
  *     running PrimaryNode + Feishu credentials); this part verifies the CLI
  *     command surface, output contract, validation, and graceful-degradation
@@ -48,8 +54,9 @@
  *   node skills/channel/cli.mjs --help
  *   node skills/channel/cli.mjs send_text --chat oc_xxx --text "Hello"
  *   echo "long body" | node skills/channel/cli.mjs send_text --chat oc_xxx
+ *   node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
  *
- * Parts 3 + 7 of #4459 — does not auto-close the parent issue.
+ * Parts 3, 4 + 7 of #4459 — does not auto-close the parent issue.
  */
 
 import { performance } from "node:perf_hooks";
@@ -66,9 +73,10 @@ Usage:
 
 Commands:
   send_text        Send a plain text message to a chat (part 3).
+  send_file        Send a file to a chat (part 4).
   send_interactive Send an interactive card with clickable buttons (part 7).
-                   The other 3 channel tools — send_card, send_file,
-                   push_to_agent — are deferred to later parts of #4459.
+                   The remaining 2 channel tools — send_card, push_to_agent —
+                   are deferred to later parts of #4459.
   help             Show this help message.
 
 send_text options:
@@ -95,6 +103,13 @@ send_interactive options:
   --parent <id>          Optional parent message ID (thread reply).
   --help, -h             Show this help message.
 
+send_file options:
+  --chat <id>          Target chat ID (e.g. oc_xxx). Required.
+  --file <path>        Path to the file to send. Required. Relative paths are
+                      resolved against the configured disclaude workspace dir.
+  --parent <id>        Optional parent message ID (thread reply).
+  --help, -h           Show this help message.
+
 Output:
   Exactly one JSON object on stdout (exit 0 on success, 1 on failure):
     {"ok":true,"command":"send_text","chatId":"oc_xxx","result":"...","durationMs":12}
@@ -111,6 +126,8 @@ Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text-file ./msg.txt --parent om_parent
   node skills/channel/cli.mjs send_text --chat oc_abc --text "@owner pls review" \\
     --mentions '[{"openId":"ou_xxx","name":"owner"}]'
+  node skills/channel/cli.mjs send_file --chat oc_abc --file ./report.pdf
+  node skills/channel/cli.mjs send_file --chat oc_abc --file ./log.txt --parent om_parent
 
   node skills/channel/cli.mjs send_interactive --chat oc_abc \\
     --question "Which option do you prefer?" \\
@@ -121,17 +138,31 @@ Examples:
     --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \\
     --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
 
-Version ${VERSION} — parts 3 + 7 of #4459. This Skill does not auto-close the parent issue.`;
+Version ${VERSION} — parts 3, 4 + 7 of #4459. This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
 // ---------------------------------------------------------------------------
 
+// Guards the single-JSON-object stdout contract. Each emit* sets this and
+// becomes a no-op once a result has already been written. This matters on
+// fast-failure paths: withStdoutToStderr's process.stdout.write redirect can
+// leave pino's SonicBoom stream "not ready", and process.exit() then triggers
+// its on-exit flushSync, which throws; that throw reaches the top-level
+// .catch() below, which would otherwise emitFail() a spurious second
+// "CLI crashed" line. With this guard the crash trace stays on stderr
+// (diagnostics, per spec §2.2) while stdout remains exactly one line.
+let stdoutResultEmitted = false;
+
 function emitOk(payload) {
+  if (stdoutResultEmitted) return;
+  stdoutResultEmitted = true;
   process.stdout.write(JSON.stringify({ ok: true, ...payload }) + "\n");
 }
 
 function emitFail(command, error, hint) {
+  if (stdoutResultEmitted) return;
+  stdoutResultEmitted = true;
   const body = { ok: false, command, error };
   if (hint) body.hint = hint;
   process.stdout.write(JSON.stringify(body) + "\n");
@@ -502,7 +533,89 @@ async function cmdSendInteractive(argv) {
   emitFail(
     "send_interactive",
     (result && (result.error || result.message)) || "send_interactive returned without success",
-    result && /IPC|PrimaryNode/i.test(result.message || "")
+    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
+      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
+      : undefined
+  );
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
+// send_file command
+// ---------------------------------------------------------------------------
+
+async function cmdSendFile(argv) {
+  const args = parseArgs(argv);
+  const start = performance.now();
+
+  // --- validate (before any import, so failures are cheap and deterministic) ---
+  const chatId = args.chat;
+  if (!chatId || typeof chatId !== "string") {
+    emitFail("send_file", "Missing required option --chat <id>", "pass --chat oc_xxx");
+    return 1;
+  }
+
+  // Path presence only: existence/resolution is delegated to the first-party
+  // send_file (relative paths resolve against the configured workspace dir, and
+  // fs.stat there produces the authoritative error).
+  const filePath = args.file;
+  if (!filePath || typeof filePath !== "string") {
+    emitFail("send_file", "Missing required option --file <path>", "pass --file <path> (relative paths resolve against the workspace dir)");
+    return 1;
+  }
+
+  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+
+  // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
+  let mod;
+  try {
+    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+  } catch (err) {
+    emitFail(
+      "send_file",
+      `Failed to load @disclaude/mcp-server: ${err.message}`,
+      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_file from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  const sendFile = mod.send_file;
+  if (typeof sendFile !== "function") {
+    emitFail("send_file", "@disclaude/mcp-server does not export send_file (unexpected build)");
+    return 1;
+  }
+
+  let result;
+  try {
+    result = await withStdoutToStderr(() =>
+      sendFile({ filePath, chatId, parentMessageId })
+    );
+  } catch (err) {
+    emitFail(
+      "send_file",
+      `send_file threw: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 1;
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  if (result && result.success) {
+    emitOk({
+      command: "send_file",
+      chatId,
+      result: result.message ?? "sent",
+      fileName: result.fileName,
+      fileSize: result.fileSize,
+      durationMs,
+    });
+    return 0;
+  }
+
+  emitFail(
+    "send_file",
+    (result && (result.error || result.message)) || "send_file returned without success",
+    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
       ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
       : undefined
   );
@@ -527,6 +640,10 @@ async function main(argv) {
 
   if (subcommand === "send_interactive") {
     return cmdSendInteractive(argv.slice(1));
+  }
+
+  if (subcommand === "send_file") {
+    return cmdSendFile(argv.slice(1));
   }
 
   process.stdout.write(HELP + "\n");
