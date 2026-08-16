@@ -142,6 +142,83 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
   });
 
+  describe('send_interactive validation failures — exactly one JSON, exit 1', () => {
+    // Issue #4459 part 7: send_interactive mirrors the send_text validation
+    // pattern. All failures are detected BEFORE importing @disclaude/mcp-server
+    // (cheap, deterministic, no IPC) and emit exactly one JSON object on stdout.
+    it('missing --chat', async () => {
+      const r = await runCli([
+        'send_interactive',
+        '--question', 'q',
+        '--options', '[{"text":"a","value":"a"}]',
+      ]);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
+      expect(String(obj.error)).toMatch(/--chat/i);
+    });
+
+    it('missing question content', async () => {
+      const r = await runCli([
+        'send_interactive',
+        '--chat', 'oc_test',
+        '--options', '[{"text":"a","value":"a"}]',
+      ]);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
+      expect(String(obj.error)).toMatch(/question/i);
+    });
+
+    it('missing --options', async () => {
+      const r = await runCli(['send_interactive', '--chat', 'oc_test', '--question', 'q']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
+      expect(String(obj.error)).toMatch(/--options/i);
+    });
+
+    it('invalid --options JSON', async () => {
+      const r = await runCli([
+        'send_interactive',
+        '--chat', 'oc_test',
+        '--question', 'q',
+        '--options', 'not-json',
+      ]);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
+      expect(String(obj.error)).toMatch(/--options JSON/i);
+    });
+
+    it('invalid option structure (missing value)', async () => {
+      const r = await runCli([
+        'send_interactive',
+        '--chat', 'oc_test',
+        '--question', 'q',
+        '--options', '[{"text":"a"}]',
+      ]);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
+      expect(String(obj.error)).toMatch(/options\[0\]\.value/i);
+    });
+
+    it('invalid --action-prompts (array, not object)', async () => {
+      const r = await runCli([
+        'send_interactive',
+        '--chat', 'oc_test',
+        '--question', 'q',
+        '--options', '[{"text":"a","value":"a"}]',
+        '--action-prompts', '["x"]',
+      ]);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
+      expect(String(obj.error)).toMatch(/action-prompts/i);
+    });
+  });
+
   describe('pino->stderr redirect hack (cli.mjs withStdoutToStderr)', () => {
     // Valid args pass validation and reach the real import + send_text call.
     // With no PrimaryNode, send_text fails FAST (isIpcAvailable -> existsSync
@@ -166,6 +243,36 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         expect(r.stdout).not.toContain('send_text called');
         // …and SHOULD be on stderr (proves the redirect routed it there).
         expect(r.stderr).toContain('send_text called');
+      },
+      30000,
+    );
+
+    // Issue #4459 part 7: same redirect guarantee for send_interactive. The
+    // first-party send_interactive_message logs 'send_interactive_message
+    // called' at the top of the fn (interactive-message.ts), before the
+    // isIpcAvailable check — so with no PrimaryNode it still emits the pino
+    // line and then fails fast. The CLI must keep that line off stdout.
+    it(
+      'keeps the pino "send_interactive_message called" line off stdout (routed to stderr)',
+      async () => {
+        const r = await runCli(
+          [
+            'send_interactive',
+            '--chat', 'oc_test',
+            '--question', 'Pick one',
+            '--options', '[{"text":"A","value":"a","type":"primary"}]',
+          ],
+          { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
+        );
+        expect(r.code).toBe(1);
+        // stdout is still exactly one JSON object — the contract holds even on
+        // the import/send_interactive path where pino is active.
+        const obj = parseSingleJson(r.stdout);
+        expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
+        // The pino line must NOT be on stdout…
+        expect(r.stdout).not.toContain('send_interactive_message called');
+        // …and SHOULD be on stderr (proves the redirect routed it there).
+        expect(r.stderr).toContain('send_interactive_message called');
       },
       30000,
     );
@@ -224,6 +331,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       expect(r.stdout).toContain('channel Skill');
       expect(r.stdout).toContain('send_text');
       expect(r.stdout).toContain('send_file');
+      expect(r.stdout).toContain('send_interactive');
       expect(r.stdout.toLowerCase()).toContain('usage');
     });
 
