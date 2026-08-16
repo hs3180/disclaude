@@ -3,7 +3,8 @@
  * Issue Scanner — configurable target repository via TARGET_REPO env var
  *
  * Lists open issues that don't have an associated open PR, or whose work already
- * landed in a merged PR (phantom-pool filter — formal closing keywords only).
+ * landed in a merged PR (phantom-pool filter — GitHub-authoritative will-close
+ * links resolved per open issue, #4375).
  * Outputs Markdown with full issue details + comments for each candidate.
  *
  * Usage:
@@ -212,14 +213,20 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
         comments(first: 30) {
           nodes { body author { login } }
         }
+        timelineItems(itemTypes: CROSS_REFERENCED_EVENT, first: 100) {
+          totalCount
+          nodes {
+            ... on CrossReferencedEvent {
+              willCloseTarget
+              source {
+                ... on PullRequest { number state }
+              }
+            }
+          }
+        }
       }
     }
     openPRs: pullRequests(first: 100, states: [OPEN]) {
-      totalCount
-      pageInfo { hasNextPage }
-      nodes { number title body headRefName }
-    }
-    mergedPRs: pullRequests(first: 100, states: [MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
       totalCount
       pageInfo { hasNextPage }
       nodes { number title body headRefName }
@@ -269,21 +276,18 @@ function main() {
   const repo = data.data.repository;
   const allIssues = repo.issues.nodes || [];
   const openPRs = repo.openPRs.nodes || [];
-  const mergedPRs = repo.mergedPRs.nodes || [];
 
-  if (repo.issues.pageInfo?.hasNextPage || repo.openPRs.pageInfo?.hasNextPage || repo.mergedPRs.pageInfo?.hasNextPage) {
-    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, open PRs: ${repo.openPRs.totalCount}, merged PRs: ${repo.mergedPRs.totalCount}. Only first 100 of each fetched.`);
+  if (repo.issues.pageInfo?.hasNextPage || repo.openPRs.pageInfo?.hasNextPage) {
+    log(`WARNING: Results truncated. Issues total: ${repo.issues.totalCount}, open PRs: ${repo.openPRs.totalCount}. Only first 100 of each fetched.`);
   }
 
-  log(`Found ${allIssues.length} open issues, ${openPRs.length} open PRs, ${mergedPRs.length} merged PRs (capped at 100)`);
+  log(`Found ${allIssues.length} open issues, ${openPRs.length} open PRs`);
 
   // Open PRs reference work-in-progress issues (any keyword match) — exclude them.
-  // Merged PRs that closed an issue (formal closing keyword) signal
-  // already-shipped work — the phantom-pool filter. Open and merged are fetched as
-  // separate connections so the (small) open-PR set is never crowded out of the
-  // capped window by the much larger merged-PR set.
+  // Merged PRs that closed an issue signal already-shipped work — the
+  // phantom-pool filter (#4375: resolved per open issue via GitHub's
+  // authoritative link table, not by scanning a capped window of merged PRs).
   const OPEN_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related)\s+#(\d+)/gi;
-  const CLOSING_KEYWORD = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
   const BRANCH_NUM = /(\d+)/g;
 
   const openPRIssueNums = new Set();
@@ -298,17 +302,35 @@ function main() {
     }
   }
 
+  // Phantom-pool filter via per-issue closing links (#4375). Each open issue's
+  // CROSS_REFERENCED_EVENT entries carry `willCloseTarget` — GitHub's own
+  // link semantics for "this reference closes the issue when merged" (formal
+  // closing keywords + dev-panel links; a "part N" title or bare "#N" mention
+  // does NOT set it, so open epics referenced as parents stay in the pool —
+  // the #4376 regression guard, #4168/#4040/#4039). An issue whose
+  // will-close ref comes from a MERGED PR is already-shipped work: exclude it.
+  //
+  // This replaces the previous mergedPRs(first: 100) title/body regex scan,
+  // which only ever saw the 100 most-recently-updated merged PRs of a
+  // 1000+-merged repo — an issue whose covering merge fell outside that
+  // window leaked as a false candidate, and the cutoff marches forward with
+  // every new merge. Asking GitHub per open issue bounds the work to the
+  // (small) open-issue set instead of the ever-growing merged-PR set, with
+  // zero window truncation.
   const mergedPRIssueNums = new Set();
-  for (const pr of mergedPRs) {
-    // Closing keywords only (no "related") — work already shipped. A "part N"
-    // title alone does not mean the referenced issue is still incomplete: the
-    // "(part N)" may be the author's own numbering, or the PR may fully resolve a
-    // different single-shot issue. GitHub's closing-keyword semantics (not the
-    // title) are the source of truth for "is this issue done", so part-N PRs are
-    // scanned like any other rather than skipped wholesale (#4374).
-    for (const m of `${pr.body || ""} ${pr.title || ""}`.matchAll(CLOSING_KEYWORD)) {
-      mergedPRIssueNums.add(Number(m[1]));
+  for (const issue of allIssues) {
+    const events = issue.timelineItems?.nodes || [];
+    // Guard: if an issue has more cross-referenced events than the window
+    // fetched, a will-close link could sit outside it (false negative →
+    // phantom leaks into candidates). Surface it instead of missing silently.
+    const tc = issue.timelineItems?.totalCount;
+    if (tc !== undefined && tc > events.length) {
+      log(`WARNING: #${issue.number} has ${tc} cross-ref events, only ${events.length} fetched — willCloseTarget link may be outside the window`);
     }
+    const closedByMergedPR = events.some(
+      (e) => e.willCloseTarget && e.source?.state === "MERGED",
+    );
+    if (closedByMergedPR) mergedPRIssueNums.add(issue.number);
   }
 
   // An issue is excluded if it has an in-progress (open) PR or its work already
@@ -318,23 +340,21 @@ function main() {
     excludedIssueNums.add(n);
   }
 
-  // GitHub auto-closes an issue when a merged PR uses a closing keyword for it,
-  // so a merged closing-keyword nearly always points at an already-CLOSED issue
+  // GitHub auto-closes an issue when a merged PR carries a closing link for it,
+  // so a will-close merge nearly always points at an already-CLOSED issue
   // (absent from the open pool above). The only OPEN issues this filter can
   // exclude are ones REOPENED after such a merge — which are real candidates —
-  // so on the open pool the filter is false-negative-only. Report the count that
-  // actually bites the open candidate set, not the raw ref total.
-  const openIssueNums = new Set(allIssues.map((i) => i.number));
+  // so on the open pool the filter is false-negative-only. mergedPRIssueNums is
+  // built from the open pool directly, so every entry bites the candidate set.
   let phantomFilteredOpenCount = 0;
   for (const n of mergedPRIssueNums) {
-    if (openIssueNums.has(n) && !openPRIssueNums.has(n)) phantomFilteredOpenCount++;
+    if (!openPRIssueNums.has(n)) phantomFilteredOpenCount++;
   }
 
   const openPRCount = openPRs.length;
-  const mergedPRCount = mergedPRs.length;
   log(`Issues with open PRs: ${[...openPRIssueNums].sort((a, b) => a - b).join(", ") || "none"}`);
-  log(`Merged closing-keyword refs: ${[...mergedPRIssueNums].sort((a, b) => a - b).join(", ") || "none"} — ${phantomFilteredOpenCount} actually excluded from the open pool (rest are auto-closed by merge; reopen-only)`);
-  log(`PRs scanned: ${openPRCount} open, ${mergedPRCount} merged`);
+  log(`Merged closing-link issues: ${[...mergedPRIssueNums].sort((a, b) => a - b).join(", ") || "none"} — ${phantomFilteredOpenCount} excluded from the open pool (resolved per-issue via willCloseTarget; #4375)`);
+  log(`PRs scanned: ${openPRCount} open (phantom filter resolved per open issue, no merged-PR window)`);
 
   // Filter: remove issues with open PRs or already-shipped merged-PR work
   const candidates = allIssues.filter((i) => !excludedIssueNums.has(i.number));
@@ -347,7 +367,7 @@ function main() {
 
   // Build Markdown output with full issue details
   let md = `# Issue Scan Results\n\n`;
-  md += `**Candidates:** ${candidates.length} | **Open PRs:** ${openPRCount} | **Merged PRs scanned:** ${mergedPRCount} | **Repo:** ${REPO}\n\n---\n\n`;
+  md += `**Candidates:** ${candidates.length} | **Open PRs:** ${openPRCount} | **Repo:** ${REPO}\n\n---\n\n`;
 
   for (const issue of candidates) {
     const labels = (issue.labels?.nodes || []).map((l) => l.name);

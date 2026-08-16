@@ -30,14 +30,14 @@
 //     redirect is deterministic with no flush race.
 //  3. help / unknown-command surface and exit codes.
 //
-// This file is the TEMPLATE for the remaining channel tools
-// (send_interactive, send_file, push_to_agent) deferred to later parts of
-// #4459: same spawn harness, same "exactly one JSON" assertions. send_card
-// (part 5) reuses this harness below for its validation tests; the card
-// preprocessing / send path needs a built PrimaryNode + creds and is covered
-// by the channel-mcp handler tests, not here.
+// Parts 4–5 of #4459 added the `send_file` and `send_card` tests below (same
+// harness, same contract). This file remains the TEMPLATE for the remaining
+// channel tools (send_interactive, push_to_agent) deferred to later parts of
+// #4459: same spawn harness, same "exactly one JSON" assertions. The send_card
+// preprocessing / send path needs a built PrimaryNode + creds and is covered by
+// the channel-mcp handler tests, not here.
 //
-// Part 3 of #4459 — does not auto-close the parent issue.
+// Parts 3–5 of #4459 — does not auto-close the parent issue.
 
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
@@ -226,12 +226,59 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     );
   });
 
+  describe('send_file validation failures — exactly one JSON, exit 1', () => {
+    it('missing --chat', async () => {
+      const r = await runCli(['send_file', '--file', '/tmp/x.txt']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_file' });
+      expect(String(obj.error)).toMatch(/--chat/i);
+    });
+
+    it('missing --file', async () => {
+      const r = await runCli(['send_file', '--chat', 'oc_test']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_file' });
+      expect(String(obj.error)).toMatch(/--file/i);
+    });
+  });
+
+  describe('send_file pino->stderr redirect (cli.mjs withStdoutToStderr)', () => {
+    // Valid args pass validation and reach the real import + send_file call.
+    // Without a PrimaryNode / credentials the call fails, but not before a pino
+    // write: with no creds send_file logs `logger.warn(..., 'File send skipped
+    // (platform not configured)')`; with creds it logs
+    // `logger.debug(..., 'send_file called')` then fails on fs.stat/IPC. Either
+    // way a pino line must land on stderr, never stdout.
+    it(
+      'keeps the pino send_file log line off stdout (routed to stderr)',
+      async () => {
+        const r = await runCli(
+          ['send_file', '--chat', 'oc_test', '--file', '/no/such/file/xyz'],
+          { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
+        );
+        expect(r.code).toBe(1);
+        // stdout is still exactly one JSON object — the contract holds even on
+        // the import/send_file path where pino is active.
+        const obj = parseSingleJson(r.stdout);
+        expect(obj).toMatchObject({ ok: false, command: 'send_file' });
+        // The pino line must NOT be on stdout…
+        expect(r.stdout).not.toMatch(/send_file called|File send skipped/);
+        // …and SHOULD be on stderr (proves the redirect routed it there).
+        expect(r.stderr).toMatch(/send_file called|File send skipped/);
+      },
+      30000,
+    );
+  });
+
   describe('help / unknown-command surface', () => {
     it('no args -> help text, exit 0', async () => {
       const r = await runCli([]);
       expect(r.code).toBe(0);
       expect(r.stdout).toContain('channel Skill');
       expect(r.stdout).toContain('send_text');
+      expect(r.stdout).toContain('send_file');
       expect(r.stdout.toLowerCase()).toContain('usage');
     });
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * channel Skill — CLI helper (Issue #4459, parts 3 & 5)
+ * channel Skill — CLI helper (Issue #4459, parts 3–5)
  *
  * CLI-Skill replacement for the inline `channel-mcp` MCP server
  * (`packages/mcp-server/src/channel-mcp.ts`, surface S1 in
@@ -10,9 +10,10 @@
  *
  * Subcommands implemented so far:
  *   • send_text  (part 3, PR #4467)
+ *   • send_file  (part 4, PR #4494)
  *   • send_card  (part 5, this change)
  * Each reuses the SAME first-party implementation from `@disclaude/mcp-server`
- * — the CLI does not re-implement the Feishu send path. Both reach the
+ * — the CLI does not re-implement the Feishu send path. All reach the
  * PrimaryNode over IPC (`getIpcClient()`), so this CLI is a one-shot process
  * per call that connects, sends, and exits — the same transport the standalone
  * `disclaude-mcp` server (S3) already uses from a separate process. No
@@ -33,10 +34,14 @@
  * redirects stdout → stderr for the duration of the IPC call to keep the result
  * object the only thing on stdout.
  *
+ * Part 4 (send_file) — same pattern, reusing `send_file` from
+ * `@disclaude/mcp-server` (uploads via IPC to the PrimaryNode). Relative paths
+ * are resolved against the configured workspace dir by the first-party impl;
+ * file existence is NOT pre-validated here for that reason.
+ *
  * Deferred (later parts of #4459) — out of scope here:
- *   • the other 3 channel tools (send_interactive, send_file,
- *     push_to_agent) — they follow the same subcommand pattern. (send_file is
- *     part 4, PR #4494, open.)
+ *   • the remaining 2 channel tools (send_interactive, push_to_agent) — they
+ *     follow the same pattern as subcommands here.
  *   • live end-to-end parity verification against the MCP tool (requires a
  *     running PrimaryNode + Feishu credentials); this CLI verifies the command
  *     surface, output contract, validation, and graceful-degradation paths
@@ -49,9 +54,10 @@
  *   node skills/channel/cli.mjs --help
  *   node skills/channel/cli.mjs send_text --chat oc_xxx --text "Hello"
  *   echo "long body" | node skills/channel/cli.mjs send_text --chat oc_xxx
+ *   node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
  *   node skills/channel/cli.mjs send_card --chat oc_xxx --card-file ./card.json
  *
- * Parts 3 & 5 of #4459 — does not auto-close the parent issue.
+ * Parts 3–5 of #4459 — does not auto-close the parent issue.
  */
 
 import { performance } from "node:perf_hooks";
@@ -68,12 +74,13 @@ Usage:
 
 Commands:
   send_text   Send a plain text message to a chat (part 3).
+  send_file   Send a file to a chat (part 4).
   send_card   Send a display-only Feishu card (part 5). GFM tables in markdown
               elements are auto-converted to column_set; local image paths are
               auto-uploaded — feature parity with the MCP tool.
   help        Show this help message.
 
-  (send_file = part 4 PR #4494; send_interactive / push_to_agent = later parts.)
+  (send_interactive / push_to_agent are deferred to later parts of #4459.)
 
 send_text options:
   --chat <id>          Target chat ID (e.g. oc_xxx). Required.
@@ -81,6 +88,13 @@ send_text options:
   --text-file <path>   Read text content from a file (use "-" for stdin explicitly).
   --parent <id>        Optional parent message ID (thread reply).
   --mentions <json>    Optional JSON array of { "openId": string, "name"?: string }.
+  --help, -h           Show this help message.
+
+send_file options:
+  --chat <id>          Target chat ID (e.g. oc_xxx). Required.
+  --file <path>        Path to the file to send. Required. Relative paths are
+                      resolved against the configured disclaude workspace dir.
+  --parent <id>        Optional parent message ID (thread reply).
   --help, -h           Show this help message.
 
 send_card options:
@@ -97,9 +111,9 @@ Output:
     {"ok":false,"command":"send_card","error":"...","hint":"..."}
 
 Runtime:
-  Reuses send_card (and card preprocessing helpers) from @disclaude/mcp-server,
-  which needs a running disclaude PrimaryNode (IPC) and Feishu credentials. Run
-  inside a disclaude workspace where the packages are built.
+  Reuses send_text / send_file / send_card (and card preprocessing helpers) from
+  @disclaude/mcp-server, which needs a running disclaude PrimaryNode (IPC) and
+  Feishu credentials. Run inside a disclaude workspace where the packages are built.
 
 Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text "Hello, world!"
@@ -107,28 +121,37 @@ Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text-file ./msg.txt --parent om_parent
   node skills/channel/cli.mjs send_text --chat oc_abc --text "@owner pls review" \\
     --mentions '[{"openId":"ou_xxx","name":"owner"}]'
+  node skills/channel/cli.mjs send_file --chat oc_abc --file ./report.pdf
+  node skills/channel/cli.mjs send_file --chat oc_abc --file ./log.txt --parent om_parent
   node skills/channel/cli.mjs send_card --chat oc_abc --card-file ./card.json
   echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \\
     | node skills/channel/cli.mjs send_card --chat oc_abc
 
-Version ${VERSION} — parts 3 & 5 of #4459. This Skill does not auto-close the parent issue.`;
+Version ${VERSION} — parts 3–5 of #4459. This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
 // ---------------------------------------------------------------------------
 
-// True once emitOk/emitFail has written the single result JSON. The crash guard
-// (main().catch) checks this so a teardown-time throw never emits a SECOND JSON
-// after the real result — preserving the "exactly one JSON" contract.
-let resultEmitted = false;
+// Guards the single-JSON-object stdout contract. Each emit* sets this and
+// becomes a no-op once a result has already been written. This matters on
+// fast-failure paths: withStdoutToStderr's process.stdout.write redirect can
+// leave pino's SonicBoom stream "not ready", and process.exit() then triggers
+// its on-exit flushSync, which throws; that throw reaches the top-level
+// .catch() below, which would otherwise emitFail() a spurious second
+// "CLI crashed" line. With this guard the crash trace stays on stderr
+// (diagnostics, per spec §2.2) while stdout remains exactly one line.
+let stdoutResultEmitted = false;
 
 function emitOk(payload) {
-  resultEmitted = true;
+  if (stdoutResultEmitted) return;
+  stdoutResultEmitted = true;
   process.stdout.write(JSON.stringify({ ok: true, ...payload }) + "\n");
 }
 
 function emitFail(command, error, hint) {
-  resultEmitted = true;
+  if (stdoutResultEmitted) return;
+  stdoutResultEmitted = true;
   const body = { ok: false, command, error };
   if (hint) body.hint = hint;
   process.stdout.write(JSON.stringify(body) + "\n");
@@ -328,6 +351,88 @@ async function cmdSendText(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// send_file command
+// ---------------------------------------------------------------------------
+
+async function cmdSendFile(argv) {
+  const args = parseArgs(argv);
+  const start = performance.now();
+
+  // --- validate (before any import, so failures are cheap and deterministic) ---
+  const chatId = args.chat;
+  if (!chatId || typeof chatId !== "string") {
+    emitFail("send_file", "Missing required option --chat <id>", "pass --chat oc_xxx");
+    return 1;
+  }
+
+  // Path presence only: existence/resolution is delegated to the first-party
+  // send_file (relative paths resolve against the configured workspace dir, and
+  // fs.stat there produces the authoritative error).
+  const filePath = args.file;
+  if (!filePath || typeof filePath !== "string") {
+    emitFail("send_file", "Missing required option --file <path>", "pass --file <path> (relative paths resolve against the workspace dir)");
+    return 1;
+  }
+
+  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+
+  // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
+  let mod;
+  try {
+    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+  } catch (err) {
+    emitFail(
+      "send_file",
+      `Failed to load @disclaude/mcp-server: ${err.message}`,
+      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_file from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  const sendFile = mod.send_file;
+  if (typeof sendFile !== "function") {
+    emitFail("send_file", "@disclaude/mcp-server does not export send_file (unexpected build)");
+    return 1;
+  }
+
+  let result;
+  try {
+    result = await withStdoutToStderr(() =>
+      sendFile({ filePath, chatId, parentMessageId })
+    );
+  } catch (err) {
+    emitFail(
+      "send_file",
+      `send_file threw: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 1;
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  if (result && result.success) {
+    emitOk({
+      command: "send_file",
+      chatId,
+      result: result.message ?? "sent",
+      fileName: result.fileName,
+      fileSize: result.fileSize,
+      durationMs,
+    });
+    return 0;
+  }
+
+  emitFail(
+    "send_file",
+    (result && (result.error || result.message)) || "send_file returned without success",
+    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
+      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
+      : undefined
+  );
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 // send_card command
 // ---------------------------------------------------------------------------
 
@@ -469,7 +574,9 @@ async function cmdSendCard(argv) {
     const imageResult = await resolveCardImages(processedCard);
     processedCard = imageResult.card;
 
-    result = await send_card({ card: processedCard, chatId, parentMessageId });
+    result = await withStdoutToStderr(() =>
+      send_card({ card: processedCard, chatId, parentMessageId })
+    );
 
     // #2340 / #2951: annotate the success message exactly like the handler.
     const tableWarnings = detectMarkdownTableWarnings(card);
@@ -532,6 +639,10 @@ async function main(argv) {
     return cmdSendText(argv.slice(1));
   }
 
+  if (subcommand === "send_file") {
+    return cmdSendFile(argv.slice(1));
+  }
+
   if (subcommand === "send_card") {
     return cmdSendCard(argv.slice(1));
   }
@@ -545,11 +656,9 @@ main(process.argv.slice(2))
   .then((code) => exitWithCode(code))
   .catch((err) => {
     // Last-resort guard: never let an unexpected error write a stack trace to
-    // stdout. Emit a single failure JSON — but only if no result was emitted
-    // yet (a pino teardown throw after a valid result must not duplicate it).
+    // stdout. The emit* no-op guard above keeps this to exactly one JSON line
+    // even if a pino teardown throw lands here after a valid result.
     process.stderr.write(`${COMMAND} CLI crashed: ${err.stack || err}\n`);
-    if (!resultEmitted) {
-      emitFail("channel", `CLI crashed: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    emitFail("channel", `CLI crashed: ${err instanceof Error ? err.message : String(err)}`);
     exitWithCode(1);
   });
