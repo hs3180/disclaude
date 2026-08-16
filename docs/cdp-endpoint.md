@@ -70,13 +70,19 @@ to native self-launch otherwise (#4460's default behavior stays available).
 **Configuration entry points** (checked in this priority order; at least the
 env var is required — recommended for containerized injection):
 
-1. `BU_CDP_URL` — env var, HTTP endpoint form (`http://host:port`). Preferred
-   entry point; compose/systemd can inject it without touching skill flags.
+1. `BU_CDP_URL` — env var. Accepts the HTTP endpoint form (`http://host:port`)
+   or a direct WebSocket debugger URL (`ws://host:port/...` — the form
+   `skills/browser-use/SKILL.md` currently shows). Preferred entry point;
+   compose/systemd can inject it without touching skill flags. Which form the
+   browser-use CLI accepts end-to-end is pinned by the Scope-6 smoke run.
 2. `BU_CDP_WS` — env var, direct WebSocket debugger URL
    (`ws://host:port/devtools/browser/<uuid>`), for clients that already hold a
    resolved `webSocketDebuggerUrl` from `/json/version`.
-3. `--cdp-url <url>` — CLI flag / Skill config field, same URL forms as above;
-   lowest priority so env injection wins in containers.
+3. Skill config field — same URL forms as above; lowest priority so env
+   injection wins in containers. The pre-3.0 `--cdp-url` CLI flag is **not**
+   a live entry point (removed upstream; it became the `BU_CDP_URL` env var —
+   see `skills/browser-use/SKILL.md`); the skill-side config field is what
+   fulfills this slot and is wired in #4460.
 
 **Behavioral semantics:**
 
