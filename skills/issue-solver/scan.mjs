@@ -327,7 +327,7 @@ function main() {
   // Instead surface each candidate's weak refs as a verification caveat so the
   // work is checked against main before a solver re-implements it. Auto-exclusion
   // (semantic-overlap, #4373 direction #3) is deferred to a design sign-off.
-  const WEAK_REF_PHRASE = /\b(?:refs?|follow-?ups?(?:\s+to)?|see|related\s+to)\s+#(\d+)/gi;
+  const WEAK_REF_PHRASE = /\b(?:refs?|follow[-\s]?ups?(?:\s+to)?|see|related(?:\s+to)?)\s+#(\d+)/gi;
   const BARE_NUM = /#(\d+)\b/g;
   const weakRefsByIssue = new Map(); // issueNum -> [{ pr, title }]
   for (const pr of mergedPRs) {
