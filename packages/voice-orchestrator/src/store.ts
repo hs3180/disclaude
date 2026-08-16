@@ -61,19 +61,19 @@ export class IntentSnapshotStore {
     this.guard(snap.phase, 'appendDraft');
     const seq = (this.draftSeq.get(sessionId) ?? 0) + 1;
     this.draftSeq.set(sessionId, seq);
-    const draft: Draft = { seq, text, fields, updatedAt: this.now() };
+    const draft: Draft = { seq, text, fields: structuredClone(fields), updatedAt: this.now() };
     snap.drafts.push(draft);
-    return draft;
+    return this.clone(draft);
   }
 
   /** Consolidate drafts into a candidate at a turn boundary. */
   promoteCandidate(sessionId: string, fields: IntentFields): Candidate {
     const snap = this.get(sessionId);
     this.guard(snap.phase, 'promoteCandidate');
-    const candidate: Candidate = { fields, createdAt: this.now() };
+    const candidate: Candidate = { fields: structuredClone(fields), createdAt: this.now() };
     snap.candidate = candidate;
     snap.phase = 'candidate';
-    return candidate;
+    return this.clone(candidate);
   }
 
   /**
@@ -85,12 +85,14 @@ export class IntentSnapshotStore {
     const snap = this.get(sessionId);
     this.guard(snap.phase, 'freeze');
     const canonical: Canonical = {
-      fields: fields ?? snap.candidate?.fields ?? { utterance: '' },
+      // Clone on the way in: the caller-owned `fields` (or the live candidate
+      // fields) must not stay aliased into the frozen canonical.
+      fields: structuredClone(fields ?? snap.candidate?.fields ?? { utterance: '' }),
       frozenAt: this.now(),
     };
     snap.canonical = canonical;
     snap.phase = 'frozen';
-    return canonical;
+    return this.clone(canonical);
   }
 
   /** Read the frozen canonical. Throws if not yet frozen. */
@@ -101,7 +103,7 @@ export class IntentSnapshotStore {
         `Canonical not frozen for session ${sessionId} (phase=${snap.phase})`,
       );
     }
-    return snap.canonical;
+    return this.clone(snap.canonical);
   }
 
   /**
@@ -129,7 +131,7 @@ export class IntentSnapshotStore {
         existing.error = error;
       }
       existing.updatedAt = ts;
-      return existing;
+      return this.clone(existing);
     }
     const result: AgentResult = {
       agentId,
@@ -140,7 +142,7 @@ export class IntentSnapshotStore {
       updatedAt: ts,
     };
     snap.results.push(result);
-    return result;
+    return this.clone(result);
   }
 
   /** Mark the snapshot delivered (terminal for this session). */
@@ -169,7 +171,7 @@ export class IntentSnapshotStore {
     assertAllowed(phase, event);
   }
 
-  private clone(snap: IntentSnapshot): IntentSnapshot {
+  private clone<T extends Draft | Candidate | Canonical | AgentResult | IntentSnapshot>(snap: T): T {
     return structuredClone(snap);
   }
 }

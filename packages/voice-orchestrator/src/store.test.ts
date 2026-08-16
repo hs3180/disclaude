@@ -70,6 +70,49 @@ describe('IntentSnapshotStore — single FREEZE point (design §4)', () => {
     expect(() => store.freeze('s1')).toThrow(InvalidTransitionError);
   });
 
+  it('returns copies, never internal references (frozen intent cannot be mutated via returns)', () => {
+    const store = new IntentSnapshotStore();
+    store.createSession('s1');
+    const draft = store.appendDraft('s1', 'draft text', { utterance: 'draft text' });
+    draft.fields!.utterance = 'hacked-draft';
+    const candidate = store.promoteCandidate('s1', { utterance: 'original' });
+    candidate.fields.utterance = 'hacked-candidate';
+
+    const frozen = store.freeze('s1');
+    frozen.fields.utterance = 'hacked-freeze-return';
+    const canonical = store.getCanonical('s1');
+    expect(canonical.fields.utterance).toBe('original');
+
+    canonical.fields.utterance = 'hacked-getCanonical';
+    expect(store.getCanonical('s1').fields.utterance).toBe('original');
+
+    // freeze(fields) must clone the caller-owned object too.
+    store.createSession('s2');
+    const callerFields = { utterance: 'caller-owned' };
+    store.promoteCandidate('s2', { utterance: 'placeholder' });
+    store.freeze('s2', callerFields);
+    callerFields.utterance = 'hacked-caller-fields';
+    expect(store.getCanonical('s2').fields.utterance).toBe('caller-owned');
+
+    // Drafts region is equally isolated.
+    expect(store.getSession('s1').drafts[0].fields?.utterance).toBe('draft text');
+  });
+
+  it('returns result copies; mutating a returned result does not touch the store', () => {
+    const store = new IntentSnapshotStore();
+    store.createSession('s1');
+    store.promoteCandidate('s1', { utterance: 'x' });
+    store.freeze('s1');
+    const r1 = store.appendResult('s1', 'a1', 'running');
+    r1.status = 'error';
+    r1.content = 'hacked';
+    const r2 = store.appendResult('s1', 'a1', 'done', 'final');
+    r2.content = 'hacked-merge';
+    const snap = store.getSession('s1');
+    expect(snap.results).toHaveLength(1);
+    expect(snap.results[0]).toMatchObject({ agentId: 'a1', status: 'done', content: 'final' });
+  });
+
   it('throws when reading canonical before freeze', () => {
     const store = new IntentSnapshotStore();
     store.createSession('s1');
