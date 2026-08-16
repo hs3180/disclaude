@@ -4,6 +4,7 @@
 > **This is part 1** — it delivers **C-Q1 (Claude gating baseline audit)** + **C-Q2 (pi-ecosystem permission status, re-verified on `pi-agent-core@0.83.0`)** + the **threat model** + a **preliminary candidate-paradigm map**. **C-Q3 (industry-paradigm benchmarking — Codex / Aider / Cursor / Claude Agent SDK hooks) and the final C1/C2/C3 recommendation are deferred to part 2** (they require web research against external SDK docs; this part stays strictly grounded in the repo + the installed pi tarball, no speculation).
 > **Part 2** (merged) corrected C-Q2.2 (pi-agent-core exposes a native `beforeToolCall` deny hook, C-Q2.5) and audited the `pi-coding-agent` CLI gating model (C-Q2.6).
 > **Part 3 (2026-08-08) revises the threat model + candidate map for the 2026-08-07 MCP-removal decision** — see the [Part 3 addendum](#part-3-addendum-2026-08-08-mcp-retired--gating-surface-shrinks-to-inline-only). Summary: the pi backend will **not** support MCP (#4417 closed won't-do), so the only tool path left to gate is **inline tools (#4387)**; the "MCP converter must not become a bypass" invariant is now moot. C-Q3 (industry benchmarking) remains web-deferred and is **not** touched by part 3.
+> **Part 6 (2026-08-16) completes C-Q3 (4/4 vendors)** with Cursor's Run-Modes×sandbox×allowlists×classifier model (C-Q3.4), sourced from the canonical `cursor.com/docs` domain — part 5's "SPA-only" sourcing blocker turned out to apply only to the legacy `docs.cursor.com` mirror. The remaining #4432 output is the owner-side C1/C2/C3 call + final C-Q4 scoring; the evidence base is complete.
 
 ---
 
@@ -283,9 +284,105 @@ The **per-call pre-tool approval** paradigm now has **two independent non-family
 
 ### What part 5 does *not* do (honest scope)
 
-- **Cursor is deferred to part 6.** `docs.cursor.com` is a client-rendered Next.js SPA — every path (incl. `/agent/auto-run`, `/llms-full.txt`) returns the same 489 KB shell with no server-side prose, so it cannot be sourced via HTTP the way Codex (`developers.openai.com` + `openai/codex` source) and Aider (`aider.chat`) can. It is also the **least analogous** vendor (GUI IDE agent, not an in-process TS CLI). Sourcing it would require JS rendering (e.g. a headless browser); deferred rather than asserted from memory.
-- **The final C-Q4 cost/invasiveness/bypassability matrix + final C1/C2/C3 recommendation are still not made** (depend on the remaining C-Q3 vendor + an explicit owner call).
+- ~~**Cursor is deferred to part 6.**~~ **✅ Answered in part 6 (C-Q3.4)** — and part 5's sourcing diagnosis is **half-corrected there**: `docs.cursor.com` *is* a JS-only SPA, but the canonical domain `cursor.com/docs` serves the same pages **server-rendered with full prose + a real `sitemap.xml`** (see part 6's "Sourcing correction"). No headless browser was ultimately needed.
+- **The final C-Q4 cost/invasiveness/bypassability matrix + final C1/C2/C3 recommendation are still not made** (now depend only on an explicit owner call — C-Q3 is complete).
 - **No claim about which paradigm disclaude *should* adopt** — only evidence gathering + a preliminary-lean update, consistent with parts 3–4.
+
+---
+
+## Part 6 addendum (2026-08-16): C-Q3.4 — Cursor's permission model (Run Modes × sandbox × allowlists, sourced)
+
+> **Scope:** completes C-Q3 — the last of the four benchmarked vendors (after Claude Agent SDK part 4, Codex + Aider part 5). **C-Q3 is now 4/4 answered**; the only remaining #4432 output is the owner-side C1/C2/C3 call (plus the final C-Q4 scoring matrix, which this part feeds but does not finalize). Every claim below cites a fetched `cursor.com/docs` page; config keys / enum values / filenames are quoted **verbatim** from those pages. Like part 5, this part makes **no final recommendation**.
+>
+> **Sourcing correction (part 5's deferral reason, half-wrong).** Part 5 probed `docs.cursor.com` and correctly found a client-rendered Next.js SPA (~489 KB shell, no server-side prose — re-verified this round: `docs.cursor.com/sitemap.xml` returns the same shell). But `docs.cursor.com` is a **legacy mirror**: the canonical domain `cursor.com/docs` serves the identical content **server-rendered** (29–31 KB of prose per page after tag-strip) *and* publishes a real machine-readable sitemap (`cursor.com/docs/sitemap.xml`, 297 URLs, all `lastmod` 2026-08-14). Part 5's "would require JS rendering" conclusion was therefore an artifact of probing the mirror host. No headless browser was needed — plain HTTP GETs suffice on the canonical domain. (Also: the part-5-era page `/agent/auto-run` no longer exists; the current page is `agent/security/run-modes`, and the docs themselves say "Ask Every Time" was deprecated in Cursor 3.5 (2026-05-22) and "Auto-review shipped as the recommended default" in 3.6 (2026-05-29) — so any memory-based assertion about Cursor's *current* naming would likely have described the pre-3.5 product.)
+
+### C-Q3.4.1 — Cursor's three-layer shape: Run Modes (front gate) + allowlists (policy) + sandbox (backstop)
+
+Cursor's model is **two orthogonal axes like Codex, plus one layer Codex doesn't have: an LLM classifier in the approval path**. The top-level surface is **Run Modes** — "Run Modes control how the Cursor agent runs tool calls, and when Cursor interrupts you for approval" ([cursor.com/docs/agent/security/run-modes](https://cursor.com/docs/agent/security/run-modes)). Exactly three modes exist today (verbatim table semantics):
+
+| Mode | What runs without asking | Sandbox? | Classifier? |
+|---|---|---|---|
+| **Auto-review** (recommended default) | Allowlisted calls run immediately; other shell commands run in the sandbox **when possible**; calls that do not use the sandbox go to the Auto-review classifier | Yes, for shell | Yes |
+| **Allowlist** | Actions in the allowlist run without approval; with sandboxing enabled, supported shell commands can run in the sandbox | Optional, for shell | No |
+| **Run Everything** | Every tool call runs automatically | No | No |
+
+The deprecated fourth mode ("Ask Every Time") was removed in 3.5 — "New users cannot choose it. Use Allowlist with an empty allowlist for the same behavior." The **approval decision order inside Auto-review** is a fixed pipeline — the docs say "Cursor checks each call in this order:" and then present allowlist → sandbox → classifier (order paraphrased from the page's ordered list): an allowlisted call runs immediately; a shell command that "can run in the sandbox" (i.e. "works under the sandbox's file and network limits") runs there without asking; anything else (e.g. "writes outside the workspace or privileged operations") goes to the classifier, which can block, allow, or escalate to a human approval prompt.
+
+### C-Q3.4.2 — The Auto-review classifier: natural-language policy + an honest "not a security boundary" disclaimer
+
+The distinctive piece is that Cursor's front gate is (partly) **an LLM, steered by natural-language policy files**:
+
+- The classifier runs on "a small Cursor-managed model. Today that is Claude 4.5 Haiku or GPT-5.4 Mini"; teams can disable it via model-access controls, which silently downgrades members to Allowlist.
+- Policy lives in **`permissions.json`** read from `~/.cursor/permissions.json` (per-user) and `<project-dir>/.cursor/permissions.json` (per-repo, committable); "If both files exist, Cursor merges them"; team-dashboard config takes priority over both. The `autoRun` object steers the classifier with **free-form sentences** (JSONC, verbatim schema):
+
+```json
+{
+  "autoRun": {
+    "allow_instructions": [],
+    "block_instructions": [
+      "Every AWS CLI command should go through approval first.",
+      "Every command that modifies Kubernetes resources should go through approval first."
+    ]
+  }
+}
+```
+
+- The docs are explicit about semantics and limits (verbatim): *"allow_instructions describe actions Auto-review should lean toward allowing. block_instructions describe actions Auto-review should lean toward blocking so the agent can choose another path or ask you to approve. … Treat both as steering, not enforcement."* And: *"Auto-review is not a security boundary. The classifier can make mistakes. It can allow a call you would have blocked, or block a call you would have allowed."*
+- The same file also carries deterministic allowlists (see C-Q3.4.3), and the two interact by design: *"permissions.json only takes effect when Run Mode is enabled"*; `autoRun` is "only consulted in Auto-review mode".
+
+For disclaude's purposes this is a **fourth paradigm variant** not seen in the other three vendors: an **LLM-as-judge front gate** with NL policy, sitting *on top of* deterministic allowlist + sandbox layers, and honestly labeled best-effort. No other benchmarked vendor puts a model in the approval path (Codex's classifier categories are config booleans; the Claude SDK's `canUseTool` callback and pi's `beforeToolCall` are host code).
+
+### C-Q3.4.3 — Deterministic policy: `permissions.json` allowlists (MCP + terminal)
+
+Independent of the classifier, `permissions.json` carries two deterministic allowlists (verbatim top-level fields): `mcpAllowlist: string[]` — "MCP tools that can run without approval" — and `terminalAllowlist: string[]` — "Terminal commands that can run without approval". Format rules (verbatim from the reference):
+
+- MCP entries are `server:tool`, matched case-insensitively; `*` wildcards: `my-server:*`, `*:my_tool`, `*:*`; glob inside names (`my-server:list_*`); "Entries that do not contain a `:` are ignored."
+- Terminal entries use **prefix semantics with a `:` args-glob split**: "`git` matches `git status` but not `gitk`"; "`npm:install*` matches `npm install`, `npm install express`". Matching is case-sensitive.
+- Precedence (strict order): **team admin (dashboard) > permissions.json (per-user ∪ per-repo) > IDE settings UI**; per-user and per-repo arrays concatenate; a present-but-empty array means empty (no fallback to IDE).
+- When the file defines a key, the in-app allowlist editor becomes read-only for that type.
+
+Note the structural parallel: Cursor's terminal allowlist is **arg-level via prefix patterns** — the same capability class as pi's `BeforeToolCallContext.args` inspection (part 2, deferred-item 4) and Codex's granular rules, i.e. all three non-Claude vendors ship arg-aware policy, not just tool-name matching.
+
+### C-Q3.4.4 — The sandbox backstop: `sandbox.json` (Seatbelt / Landlock / Bubblewrap)
+
+Like Codex's `sandbox_mode`, Cursor runs eligible shell commands in an **OS-enforced sandbox**, configured by **`sandbox.json`** (`~/.cursor/sandbox.json` per-user, `<workspace>/.cursor/sandbox.json` per-repo; "per-repo settings taking priority"; "Enterprise team-admin policies and Cursor's hardcoded security rules layer on top and cannot be weakened by either file"). Verbatim surface:
+
+- `type`: `"workspace_readwrite"` (default) | `"workspace_readonly"` | `"insecure_none"`.
+- `additionalReadwritePaths` / `additionalReadonlyPaths` (extra paths; the latter two only under `workspace_readwrite`), `disableTmpWrite`, `enableSharedBuildCache`.
+- `networkPolicy`: `default: "allow"|"deny"` (default **`"deny"`**), `allow`/`deny` arrays accepting exact domains, wildcards, and CIDR; "Deny always beats allow"; RFC 1918 + cloud-metadata endpoints "blocked by default to prevent SSRF"; URL paths ignored (domain/IP matching only). Merge order: per-user < per-repo < team-admin < hardcoded; deny lists always union; `"deny"` wins for `default`.
+- **Protected paths** (always write-protected regardless of config — the direct analog of Codex's `.git/hooks` hardening): `.cursor/*.json`, `.claude/*.json` and `.claude/**/*.json`, `.vscode/**`, `.code-workspace`, **`.git/hooks/**`, `.git/config`, `.git/info/attributes`**, `.cursorignore`. Writable `.cursor` subdirs: `rules/`, `commands/`, `worktrees/`, `skills/`, `agents/`.
+- **Platform implementation** (verbatim): macOS uses **Seatbelt** via `sandbox-exec` — "A generated sandbox profile limits file access, network access, and other process behavior for the full subprocess tree"; Linux uses **Landlock** with a **Bubblewrap fallback** (diagnostic env `CURSOR_SANDBOX_LANDLOCK_STATUS: fully_enforced | bubblewrap`), inside a user namespace remapped to UID 0 with `CURSOR_ORIG_UID`/`CURSOR_ORIG_GID` preserving the host identity. Cursor v2.0+ required, no extra setup.
+- Env vars injected into sandboxed children: `CURSOR_SANDBOX` (`"seatbelt"`/`"native"`), `CURSOR_ORIG_UID`, `CURSOR_ORIG_GID`.
+
+### C-Q3.4.5 — Baseline defaults + browser gating
+
+The security overview ([cursor.com/docs/agent/security](https://cursor.com/docs/agent/security)) states the out-of-box posture: file reads and code search never require approval (`.cursorignore` excludes paths); workspace-file edits run without approval **except configuration files**; **"By default, terminal commands need your approval"** (Run Modes relax this); every MCP connection needs approval *and* each tool call still needs individual approval unless allowlisted; network requests are limited to a fixed set (GitHub direct links, web-search providers) — "Agents cannot make arbitrary network requests with default settings". On top of Run Modes, three hard protections "can require approval even when a mode would otherwise run automatically": **Browser Protection** ("Prevents the agent from automatically running Browser tools"), **File-Deletion Protection**, and **External-File Protection**. That Cursor gates the browser as a distinct first-class protected class is directly relevant to disclaude, whose threat model spans bash **and** browser (#4460).
+
+### Takeaway
+
+Cursor = **Codex's two-axis shape (approval × OS sandbox) + a third, LLM-classifier layer in the approval path + NL-steerable policy**. Mapped onto #4432's candidate list: it is paradigm **(a) per-call front gate** (Run Modes' approval pipeline) **+ (c) allowlist policy** (deterministic `permissions.json`, arg-level via prefix patterns) **+ (d) OS sandbox backstop** (Seatbelt/Landlock/Bubblewrap with hardcoded protected paths — including `.git/hooks`, independently converging with Codex's hardening), with a novel **LLM-as-judge** variant layered into (a). Cursor's own docs insist the classifier layer is "steering, not enforcement" and "not a security boundary" — i.e. the deterministic layers (allowlist + sandbox) are where Cursor places its real trust, the same conclusion parts 2–5 reached for disclaude's pi path.
+
+### Cross-vendor implication (for the eventual C1/C2/C3 call)
+
+C-Q3 is now **complete (4/4 vendors)**. Final table:
+
+| Vendor | Primary gate paradigm | OS sandbox? | Bash front-gate? | Arg-level policy? | LLM in approval path? |
+|---|---|---|---|---|---|
+| Claude Agent SDK (part 4) | programmatic pre-tool-call deny (`canUseTool` / `PreToolUse.permissionDecision`) | no (delegated to embedder) | yes (hook) | yes (callback sees full input) | no |
+| OpenAI Codex (part 5) | **two-axis**: approval_policy × sandbox_mode | **yes** (read-only / workspace-write / danger) | yes (approval policy) | yes (granular per-category rules) | no |
+| Aider (part 5) | git-undo + edit-modes + explicit `/run` | no | **no** (shell user-initiated only) | n/a | no |
+| Cursor (part 6) | Run Modes (allowlist → sandbox → classifier) × `sandbox.json` | **yes** (Seatbelt / Landlock / Bubblewrap) | yes (Run Modes) | yes (`terminalAllowlist` prefix + `:` args-glob) | **yes** (Auto-review classifier, NL-steered, self-labeled "not a security boundary") |
+| *(in-family)* pi-agent-core (C-Q2.5) | `beforeToolCall` deny hook | no (pluggable `ExecutionEnv`) | yes (hook) | yes (`args` schema-validated) | no |
+| *(in-family)* pi-coding-agent CLI (C-Q2.6) | project trust + tool allow/deny list + `beforeToolCall` bridge | no | yes (TUI confirm) | yes | no |
+
+Convergences across **all** gated vendors (everything except Aider): (1) a **per-call front gate** is universal; (2) **arg-level policy** is universal (callback input, granular rules, or prefix globs); (3) every vendor with autonomous bash ships or delegates an **OS sandbox backstop** (Codex built-in, Cursor built-in, Claude SDK delegated to the embedder — which is exactly disclaude's #4389 gap); (4) Cursor is the **only** vendor putting an LLM in the approval path, and it itself downgrades that layer to "steering". This **completes the evidence base** for the preliminary lean from parts 2–5 — **(a) per-call hook as primary gate, (b)/(c) allowlist + arg-policy as the decision it consults, (d) OS-style sandbox as bash backstop** — now backed by 4 non-family + 2 in-family data points. The final C-Q4 cost/invasiveness/bypassability scoring and the C1/C2/C3 selection remain the owner's call; C-Q3 no longer blocks them.
+
+### What part 6 does *not* do (honest scope)
+
+- **No final C-Q4 matrix, no C1/C2/C3 recommendation.** All six data points are in; the selection is an owner decision by design (#4432 "Decision trigger": report → owner picks). This part only completes the evidence.
+- **Cursor CLI permissions** ([cursor.com/docs/cli/reference/permissions](https://cursor.com/docs/cli/reference/permissions)) were skimmed, not deep-profiled: its `permissions.allow/deny` model (`Shell(commandBase)` with `command:args` globs, `Read(pathOrGlob)`, `Write(pathOrGlob)`, `WebFetch(domainOrPattern)`, `Mcp(server:tool)`, `--force` override) is the same allowlist paradigm as the desktop `permissions.json` and adds no new paradigm class; it is cited here only where desktop-doc claims overlap. Deep-diving it would not change the candidate set.
+- **No behavior verification.** Claims reflect the fetched docs (2026-08-16; sitemap `lastmod` 2026-08-14), not a running Cursor install. The docs' own changelog notes the surface is recent and moving (3.5 deprecated Ask-Every-Time, 3.6 made Auto-review default, both May 2026); line-level stability should not be assumed.
+- **Cloud Agents excluded** ("Cloud Agents run inside their own dedicated machine, so the agent never asks you to approve an action" — different threat model, no local permissions to gate).
 
 ---
 
@@ -336,10 +433,10 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
 - [x] **C-Q1 answered with evidence** (C-Q1.1–C-Q1.5, every claim cites `file:line`).
 - [x] **C-Q2 answered with evidence** — re-verified on **0.83.0** (C-Q2.1–C-Q2.4); **C-Q2.2 corrected in part 2** (pi-agent-core *does* expose a `beforeToolCall` deny hook, C-Q2.5) and **C-Q2.6 adds the pi-coding-agent CLI gating model** (closes deferred #3).
-- [◐] **C-Q3 — industry-paradigm comparison** (Claude Agent SDK permission hooks / OpenAI Codex sandbox / Aider / Cursor) — **partial (3/4 vendors)**: **Claude Agent SDK** (part 4, C-Q3.1), **OpenAI Codex** sandbox+approval two-axis model (part 5, C-Q3.2, primary Rust source), and **Aider** git-undo/edit-mode model (part 5, C-Q3.3) are answered; plus the pi-family data points (C-Q2.5/C-Q2.6). **Cursor still web-deferred** (SPA-only docs → part 6).
-- [◐] **C-Q4 — candidate-paradigm comparison matrix** — *preliminary*, evidence-based map delivered; **final cost/invasiveness/bypassability scoring + final recommendation deferred to part 2** (depends on C-Q3).
+- [x] **C-Q3 — industry-paradigm comparison** (Claude Agent SDK permission hooks / OpenAI Codex sandbox / Aider / Cursor) — **complete (4/4 vendors)**: **Claude Agent SDK** (part 4, C-Q3.1), **OpenAI Codex** sandbox+approval two-axis model (part 5, C-Q3.2, primary Rust source), **Aider** git-undo/edit-mode model (part 5, C-Q3.3), and **Cursor** Run-Modes×sandbox×allowlists×classifier model (part 6, C-Q3.4, canonical-domain docs sourced); plus the pi-family data points (C-Q2.5/C-Q2.6).
+- [◐] **C-Q4 — candidate-paradigm comparison matrix** — *preliminary*, evidence-based map delivered; **final cost/invasiveness/bypassability scoring + final recommendation remain the owner call** (C-Q3 no longer blocks it — all six data points in).
 - [x] **Threat model written** (disclaude sole authority; tool injection point not bypassable). ⚠️ **(part 3)** revised for the 2026-08-07 MCP-removal decision: the injection point is now inline-only (#4387), not the MCP converter (#4417 closed) — see Part 3 addendum.
-- [◐] **Recommendation + #4389 mapping** — preliminary lean + #4389 acceptance map delivered; final C1/C2/C3 selection deferred (depends on C-Q3).
+- [◐] **Recommendation + #4389 mapping** — preliminary lean + #4389 acceptance map delivered; final C1/C2/C3 selection deferred (**owner decision**; evidence base complete).
 - [x] **Decision drift tracked honestly** — part 3 records that the 2026-08-07 owner decision (pi will not support MCP) supersedes the part-1/part-2 MCP-converter framing; the doc no longer presents a closed issue (#4417) as a live injection point.
 - [x] **Uncovered items marked honestly** (this section + "Deferred").
 
@@ -347,8 +444,8 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
 ## Deferred to part 2 (honest gaps)
 
-1. **C-Q3 — external/industry benchmarking.** How do OpenAI Codex's sandbox, Aider's yes-no/edit, and Cursor's permission flow actually work, and which is the closest analog for "in-process TS agent that must gate bash + browser"? **✅ Codex (C-Q3.2, part 5) and Aider (C-Q3.3, part 5)** are now answered from canonical external docs + primary source; **✅ Claude Agent SDK** in part 4 (C-Q3.1). **Only Cursor remains web-deferred** — its docs are a client-rendered SPA (no server-side prose), deferred to part 6 rather than asserted unsourced.
-2. **Final C1/C2/C3 recommendation.** Depends on C-Q3; the preliminary lean ((b)+(c) core, (d) backstop) is offered but not final.
+1. **C-Q3 — external/industry benchmarking.** How do OpenAI Codex's sandbox, Aider's yes-no/edit, and Cursor's permission flow actually work, and which is the closest analog for "in-process TS agent that must gate bash + browser"? **✅ Complete — all four vendors answered**: Codex (C-Q3.2, part 5), Aider (C-Q3.3, part 5), Claude Agent SDK (C-Q3.1, part 4), and **Cursor (C-Q3.4, part 6)** — the last sourced from the canonical `cursor.com/docs` domain (server-rendered; part 5's "SPA-only" finding applied to the legacy `docs.cursor.com` mirror).
+2. **Final C1/C2/C3 recommendation.** Evidence base complete (part 6 closes C-Q3); the preliminary lean ((a) hook primary, (b)/(c) policy layers, (d) backstop) is offered but the selection is an **owner decision** per #4432's decision trigger.
 3. **`pi-coding-agent` CLI behavior.** ✅ **Done in part 2** (C-Q2.6): audited `@earendil-works/pi-coding-agent@0.83.0` — project-trust + tool allowlist/denylist + extension `beforeToolCall` bridge + TUI-only confirm; no OS sandbox. It is out of disclaude's in-process scope (disclaude embeds `pi-agent-core`, not the CLI), but it confirms the `beforeToolCall` hook (C-Q2.5) is the surface pi's own tooling builds on.
 4. **Arg-level policy semantics.** ✅ **Answered in part 2**: feasible at the gate layer — `BeforeToolCallContext.args` (`types.d.ts:75-76`) exposes the **schema-validated arguments**, so a `beforeToolCall` gate can inspect a specific bash command / URL, not just the tool name. Whether to *require* arg-level inspection is still a #4389 design choice, but the capability is present.
 
@@ -362,3 +459,4 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 - Part 4 (2026-08-13) inspects the installed `@anthropic-ai/claude-agent-sdk@0.3.177` tarball (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` of a repo install; version pinned at `packages/core/package.json:19`) — `CanUseTool` `:186-230`, `canUseTool` Options field `:1349`, `PermissionResult` `:2075`, `hooks`/`HookEvent`/`HookPermissionDecision` `:1490`/`:821`/`:827`, `PreToolUseHookSpecificOutput.permissionDecision` `:2216-2218`, PreToolUse-bypasses-canUseTool JSDoc `:3758`, `PermissionMode` `:2053`. disclaude-side claims re-verified against current main: `options-adapter.ts:31-60`, `sdk/types.ts:226`, `base-agent.ts:136`, and `grep canUseTool|PreToolUse|hooks packages/core/src/sdk/providers/claude/` → 0 hits.
 - No web sources were used for any part; every claim is traceable to a file:line or a linked GitHub source above.
 - **Part 5 (2026-08-14)** answers C-Q3.2 (OpenAI Codex) + C-Q3.3 (Aider) from **external web sources** (all fetched & HTTP 200 on 2026-08-14) — the first part to use web: primary Rust source `openai/codex` `codex-rs/protocol/src/protocol.rs` at commit `9341b383` (2026-08-13) (`AskForApproval` `:912-935`, `GranularApprovalConfig` `:939`, `SandboxPolicy` `:999-1047`, `.git/hooks` privilege-escalation hardening `:1052` / `WritableRoot` `:1055`); OpenAI developer docs [config-reference](https://developers.openai.com/codex/config-reference) + [sandbox & approvals](https://developers.openai.com/codex/security); Aider canonical docs [aider.chat/docs/git](https://aider.chat/docs/git.html) + [aider.chat/docs/usage/commands](https://aider.chat/docs/usage/commands.html). Enum/config values are quoted **verbatim** from those sources. Cursor deferred: `docs.cursor.com` returns a 489 KB Next.js SPA shell for every path (incl. `/agent/auto-run`, `/llms-full.txt`) — no server-side prose — so it is deferred to part 6 rather than asserted from memory.
+- **Part 6 (2026-08-16)** answers C-Q3.4 (Cursor) from **external web sources** (all fetched & HTTP 200 on 2026-08-16): canonical docs domain **`cursor.com/docs`** — [agent/security](https://cursor.com/docs/agent/security), [agent/security/run-modes](https://cursor.com/docs/agent/security/run-modes), [reference/permissions](https://cursor.com/docs/reference/permissions), [reference/sandbox](https://cursor.com/docs/reference/sandbox), skimmed [cli/reference/permissions](https://cursor.com/docs/cli/reference/permissions); page inventory via the machine-readable [sitemap](https://cursor.com/docs/sitemap.xml) (297 URLs, `lastmod` 2026-08-14). Enum/config/filename values (`workspace_readwrite`, `networkPolicy.default: "deny"`, `mcpAllowlist`, `terminalAllowlist`, `allow_instructions`/`block_instructions`, protected-path list incl. `.git/hooks/**`) are quoted **verbatim** from those pages. Part 5's "Cursor docs are SPA-only" finding was re-verified for `docs.cursor.com` (still the 489 KB shell) and **localized to that mirror host**: the canonical `cursor.com/docs` serves the same content server-rendered, so plain HTTP sufficed — no JS rendering needed. A headless-browser session was opened during this part and confirmed the SPA behavior of the mirror, but **no quoted claim derives from browser-rendered content**; all quotes come from the plain-HTTP canonical-domain fetches.
