@@ -213,7 +213,8 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
         comments(first: 30) {
           nodes { body author { login } }
         }
-        timelineItems(itemTypes: CROSS_REFERENCED_EVENT, first: 50) {
+        timelineItems(itemTypes: CROSS_REFERENCED_EVENT, first: 100) {
+          totalCount
           nodes {
             ... on CrossReferencedEvent {
               willCloseTarget
@@ -319,6 +320,13 @@ function main() {
   const mergedPRIssueNums = new Set();
   for (const issue of allIssues) {
     const events = issue.timelineItems?.nodes || [];
+    // Guard: if an issue has more cross-referenced events than the window
+    // fetched, a will-close link could sit outside it (false negative →
+    // phantom leaks into candidates). Surface it instead of missing silently.
+    const tc = issue.timelineItems?.totalCount;
+    if (tc !== undefined && tc > events.length) {
+      log(`WARNING: #${issue.number} has ${tc} cross-ref events, only ${events.length} fetched — willCloseTarget link may be outside the window`);
+    }
     const closedByMergedPR = events.some(
       (e) => e.willCloseTarget && e.source?.state === "MERGED",
     );
