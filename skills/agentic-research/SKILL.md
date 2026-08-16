@@ -227,44 +227,34 @@ Choose the delivery format based on context:
 |--------|-------------|-----|
 | **Feishu doc** | Long reports (>500 words), user may want to share/edit | Create doc via `lark-cli docs +create`, paste rendered Markdown |
 | **Group message card** | Short summaries, Executive Summary format | Send as structured card via `send_card` |
-| **Markdown file** | Research loop output, archival | Write to `STATE.md` or `RESEARCH.md` in the loop workdir |
+| **Markdown file** | Multi-step research output, archival | Write to `STATE.md` or `RESEARCH.md` in the research workdir |
 
-For async research (loop execution), deliver via Feishu doc and post a summary card in both the research group and the source chat.
+For scheduled-task-driven research, deliver via Feishu doc and post a summary card in both the research group and the source chat.
 
-## Async Research Guidance (Scheduled-Task / Loop Driven)
+## Research Discipline (Scheduled-Task Driven)
 
-Research runs either **synchronously** (the user is present in the conversation and answers in real time) or **asynchronously** (a scheduled task or Ralph Loop drives each step via `pushToAgent`, with no user at the keyboard). Most of this skill applies to both; this section covers the extra discipline async requires (Issue #4006).
+Research runs in **one mode** (Issue #4006): every step is driven the same way — a scheduled task fires (per its `SCHEDULE.md` cron) and routes the step to the chat's persistent agent. Whether the user happens to be at the keyboard for a given step changes nothing: do not wait for them, do not branch behavior on their presence. Treat the guidance below as applying to **every** step.
 
-### Identify the mode
+### Key decision points (where research drifts)
 
-| Signal | Sync | Async |
-|--------|------|-------|
-| Who triggers each step | The user, in-conversation | A scheduled task / loop tick |
-| Can you ask a clarifying question mid-step? | ✅ Yes — expect a reply | ❌ No — the user is absent |
-| Where state lives | Conversation memory | `STATE.md` / `RESEARCH.md` in the workdir |
+No one is watching each step by default, so catch these explicitly and record the decision in `STATE.md`:
 
-If you cannot reach the user between steps, you are in async mode — apply the guidance below.
-
-### Key decision points (where async research drifts)
-
-In async mode no one is watching each step, so catch these explicitly and record the decision in `STATE.md`:
-
-| Decision point | What to check | If uncertain (async-safe default) |
+| Decision point | What to check | If uncertain (safe default) |
 |----------------|---------------|-----------------------------------|
 | **Goal clarification** | Does this step still serve the user's original question? | Keep the original goal; note the ambiguity. Do not silently redefine scope. |
 | **Data source selection** | Is the source authoritative, and the one the user asked for? | Prefer the user-specified source; only switch with a recorded reason. |
 | **Analysis direction** | Is the analysis drifting away from the core ask? | Re-anchor to the original question; flag the drift in `STATE.md`. |
 | **Conclusion validity** | Does the conclusion actually answer what was asked? | State explicitly what is answered vs. out-of-scope. |
 
-### Per-step async behavior
+### Per-step behavior
 
 At the **start of every step**, before doing anything else:
 
-1. **Read the latest state** — re-read `STATE.md` and `RESEARCH.md` from the workdir. Do not rely on memory from a previous tick; async steps run in fresh sessions and prior context is gone.
-2. **Check for user feedback** — the user (or the conversation Agent on their behalf) may have written corrections, intent changes, or new constraints into `STATE.md` / `RESEARCH.md` between ticks. Detect it and let it adjust this step's direction.
-3. **Carry the thread forward** — write the step's outcome, open questions, and intended next action back into `STATE.md` so the next tick picks up cleanly.
-4. **Be decisive, flag uncertainty** — because you cannot ask, make the most reasonable decision and proceed rather than stalling. Record what you decided and what you are unsure about (`⚠️ uncertain: …`) so the user can correct it later. Do **not** block the whole research on a question only the absent user can answer.
-5. **Deliver incrementally** — write the shared artifact to a Feishu doc and post a summary card in both the research group and the source chat, so the user sees progress when they return.
+1. **Read the latest state** — re-read `STATE.md` and `RESEARCH.md` from the workdir. Do not rely on memory of a previous step; state files are the source of truth and may have changed since your last turn.
+2. **Check for user feedback** — the user (or the conversation Agent on their behalf) may have written corrections, intent changes, or new constraints into `STATE.md` / `RESEARCH.md` between steps. Detect it and let it adjust this step's direction.
+3. **Carry the thread forward** — write the step's outcome, open questions, and intended next action back into `STATE.md` so the next step picks up cleanly.
+4. **Be decisive, flag uncertainty** — make the most reasonable decision and proceed rather than stalling. Record what you decided and what you are unsure about (`⚠️ uncertain: …`) so the user can correct it later. Do **not** block the whole research on a question the user has not answered yet.
+5. **Deliver incrementally** — write the shared artifact to a Feishu doc and post a summary card in both the research group and the source chat, so the user sees progress whenever they look.
 
 ## Related
 
