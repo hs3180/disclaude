@@ -171,8 +171,11 @@ export interface FeishuChannelConfig {
    * Enable native streaming replies (Card Kit). Issue #4400 / #4208.
    * Default false → supportsStreaming capability is false → ChatAgent uses
    * sendMessage (unchanged). When true, the channel reports supportsStreaming.
+   * Issue #4510: `'p2p'` scopes streaming to single chats (capabilities carry
+   * `streamingScope: 'p2p'`; the agent gate falls back to sendMessage for
+   * group/topic turns).
    */
-  streamingCard?: boolean;
+  streamingCard?: boolean | 'p2p';
   /**
    * Route card action to the local agent if applicable.
    * Issue #1629: Includes resolvedPrompt from InteractiveContextStore
@@ -765,7 +768,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // streamingCard flag (default off → capability false → ChatAgent
       // degrades to sendMessage). When on, the streaming callbacks below
       // implement the Card Kit two-step flow driven by StreamingReplyDriver.
-      supportsStreaming: this.config.streamingCard === true,
+      // Issue #4510: `streamingCard: 'p2p'` also advertises supportsStreaming
+      // but narrows it to single chats via streamingScope — the ChatAgent
+      // gate then only constructs the driver for chatType === 'p2p' turns.
+      supportsStreaming: this.config.streamingCard === true || this.config.streamingCard === 'p2p',
+      ...(this.config.streamingCard === 'p2p' ? { streamingScope: 'p2p' as const } : {}),
       supportedMcpTools: [
         'send_text',
         'send_card',
@@ -824,7 +831,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   async startStreaming(chatId: string, parentMessageId?: string): Promise<string | null> {
     // Defense-in-depth: the ChatAgent already gates on supportsStreaming, but a
     // misconfigured capability must never silently activate streaming.
-    if (this.config.streamingCard !== true) {
+    // Issue #4510: both `true` and `'p2p'` enable the channel-side flow here;
+    // the p2p narrowing itself lives in the agent-side chatType gate (this
+    // channel has no per-chat type state, and calling startStreaming at all
+    // already means the agent decided this turn is streamable).
+    if (this.config.streamingCard !== true && this.config.streamingCard !== 'p2p') {
       return null;
     }
     const cardKitClient = this.getCardKitClient();
