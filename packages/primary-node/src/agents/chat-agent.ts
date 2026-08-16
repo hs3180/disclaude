@@ -109,6 +109,19 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // suppress the auto-restart (would immediately re-stall) while keeping context.
   private stalledTerminated = false;
 
+  // Issue #4391 (part 2 review): ChatAgent's own disposed marker. BaseAgent's
+  // `initialized` is never set to true on any production path (only test mocks
+  // force it), so a `!this.initialized` disposed-check would be dead in
+  // production. Set synchronously at the top of dispose() so a replay timer
+  // racing an in-flight dispose sees it.
+  private disposed = false;
+
+  // Issue #4391 (part 2 review): bumped on every startAgentLoop() and reset().
+  // Lets a processIterator invocation detect that its session was torn down
+  // and superseded mid-flight (empty-turn reset+replay) — see the interception
+  // next to the stalledTerminated check in processIterator.
+  private sessionGeneration = 0;
+
   // Issue #4391 (#4194 follow-up ②): empty-turn session-reset + bounded replay.
   // The policy locks eligibility (real-user messages only — synthetic sched-*/push_*
   // IDs are never replayed, they are not valid reply roots) and bounding (exactly
@@ -846,6 +859,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.queryHandle = handle;
     this.isSessionActive = true;
+    // Issue #4391 (part 2 review): this query is a new session generation.
+    // Any still-draining processIterator from a previous generation reads the
+    // bump and exits as a superseded session instead of "unexpected end".
+    this.sessionGeneration++;
 
     // Issue #3378: Log process exit listener count for leak monitoring.
     // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
@@ -975,6 +992,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     iterator: AsyncGenerator<IteratorYieldResult>
   ): Promise<void> {
     const chatId = this.boundChatId;
+    // Issue #4391 (part 2 review): the session generation this invocation
+    // belongs to. If the bump happens while this iterator is still parked
+    // (endEmptyTurnSession → replay's startAgentLoop), this invocation was
+    // superseded mid-flight and must exit as an intercepted teardown below,
+    // not as an "unexpected end".
+    const myGeneration = this.sessionGeneration;
     let iteratorError: Error | null = null;
     let messageCount = 0;
     const startTime = Date.now(); // Issue #2920: 追踪启动时间
@@ -1309,13 +1332,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
             setTimeout(() => {
               try {
-                if (!this.initialized || this.messageSeq !== replaySeq) {
+                // Issue #4391 (part 2 review): the disposed check is
+                // ChatAgent's own `disposed` flag, NOT `!this.initialized` —
+                // BaseAgent.initialized has no production path setting it
+                // true, so that reading was always true in production (only
+                // test mocks force it), silently disabling the replay.
+                if (this.disposed || this.messageSeq !== replaySeq) {
                   this.logger.info(
                     {
                       chatId,
                       replaySeq,
                       currentSeq: this.messageSeq,
-                      initialized: this.initialized,
+                      disposed: this.disposed,
                     },
                     'Empty-turn replay skipped (agent disposed or a newer message arrived) (Issue #4391)'
                   );
@@ -1589,6 +1617,28 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return;
     }
 
+    // Issue #4391 (part 2 review): this invocation's session was torn down by
+    // the empty-turn reset+replay. Timing: endEmptyTurnSession() closes this
+    // iterator's query+channel, then the same timer callback synchronously
+    // runs the replay's processMessage → startAgentLoop(), which re-sets
+    // isSessionActive=true — BEFORE this parked iterator wakes from the close.
+    // So the wasExplicitClose read above races and can be false even though
+    // the teardown was deliberate; falling through would misroute this exit
+    // into the unexpected-end / auto-restart path (false ⚠️ reconnect or 🚫
+    // circuit-breaker notice per empty turn, plus clobbering the replay's
+    // fresh session). Detect it structurally — the generation bumped past
+    // myGeneration — and exit silently, the same interception shape as the
+    // GLM-stall stalledTerminated path above. Touch no session state: the
+    // replay's loop already owns it (isSessionActive, isProcessingMessage,
+    // queryHandle, channel).
+    if (this.sessionGeneration !== myGeneration && !wasExplicitClose) {
+      this.logger.info(
+        { chatId, messageCount, myGeneration, currentGeneration: this.sessionGeneration },
+        'Empty-turn reset+replay: superseded session iterator ended; suppressing unexpected-end path (Issue #4391)'
+      );
+      return;
+    }
+
     // Issue #3003: Log timing summary for the entire agent loop
     if (!wasExplicitClose) {
       const loopElapsedMs = Date.now() - startTime;
@@ -1701,8 +1751,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Deliberately narrower than `reset()`: history context, the restartManager
    * accounting, the thread root, and the inline MCP instances all survive, and
    * the still-running processIterator is NOT aborted (its channel closes, so
-   * its generator drains and the iterator ends as an explicit close — the same
-   * park-and-drain semantics as the GLM-stall path, `stalledTerminated`).
+   * its generator drains and the iterator ends as a superseded session —
+   * intercepted via the sessionGeneration check in processIterator, because
+   * the replay's startAgentLoop() re-sets isSessionActive=true before the
+   * parked iterator wakes, so the wasExplicitClose read alone would race;
+   * same interception shape as the GLM-stall path, `stalledTerminated`).
    * startAgentLoop() rebuilds everything it needs on the replay.
    */
   private endEmptyTurnSession(): void {
@@ -1780,6 +1833,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #3124: Clear once-mode and task completion state
     this.onceMode = false;
     this.stalledTerminated = false; // Issue #3706: clear stall flag
+    // Issue #4391 (part 2 review): a reset also supersedes any still-draining
+    // iterator from the previous session (defense-in-depth alongside the
+    // isSessionActive=false set above, which already reads as explicit close).
+    this.sessionGeneration++;
     this.clearTaskCompletion();
 
     // Issue #4063: Clear per-turn completion state
@@ -1877,6 +1934,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Implements Disposable interface (Issue #328).
    */
   dispose(): void {
+    // Issue #4391 (part 2 review): mark disposed synchronously first, so a
+    // replay timer firing mid-dispose (or right after) sees the flag.
+    this.disposed = true;
     // Issue #3745: Synchronously close queryHandle and channel to prevent
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
     // shutdown() without await) meant shutdown()'s `await Promise.resolve()`

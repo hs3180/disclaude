@@ -26,7 +26,11 @@ vi.mock('@disclaude/core', async (importOriginal) => {
         /* empty */
       })(),
     }));
-    this.initialized = true;
+    // Issue #4391 (part 2 review): deliberately NOT forcing
+    // `this.initialized = true` here — production BaseAgent never sets it
+    // true, and forcing it in this mock masked the dead `!this.initialized`
+    // disposed-guard in the empty-turn replay (the guard only ever worked
+    // under this mock).
     this.dispose = vi.fn();
     this.logger = {
       info: vi.fn(),
@@ -2046,6 +2050,173 @@ describe('ChatAgent (primary-node)', () => {
       const rm = (agent as any).restartManager as { recordFailure: ReturnType<typeof vi.fn> };
       expect(rm.recordFailure).toHaveBeenCalledWith('oc_retry_bounded', 'empty-turn');
       expect((rm as unknown as { recordSuccess: ReturnType<typeof vi.fn> }).recordSuccess).not.toHaveBeenCalled();
+    });
+
+    // Issue #4391 (part 2 review regression 1): real SDK persistent streams
+    // PARK after a turn's result (the iterator stays alive awaiting the next
+    // SDK message); the earlier matrix used naturally-ending generators, which
+    // hid the park-drain race on the superseded iterator.
+    it('parked old iterator: replay must not trip the unexpected-end / circuit-breaker path', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_parked', localCallbacks);
+
+      // A production-shaped iterator: yields its turn, then PARKS on a
+      // promise that only resolves when handle.close() is called — exactly
+      // how a persistent SDK stream behaves between turns and at teardown.
+      function parkedIterator(events: { type: string; content: string }[]) {
+        let release: () => void = () => {};
+        const parked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const handle = {
+          close: vi.fn(() => release()),
+          cancel: vi.fn(() => release()),
+        };
+        const iterator = (async function* () {
+          for (const event of events) {
+            yield { parsed: event, raw: {} };
+          }
+          await parked; // park like a real persistent stream
+        })();
+        return { handle, iterator };
+      }
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        if (queryCount === 1) {
+          // Session 1 (the broken one): empty turn, then parks.
+          return parkedIterator([
+            { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+          ]);
+        }
+        // Session 2 (the replay): a real reply + result, then also parks —
+        // the persistent session keeps running after a successful replay.
+        return parkedIterator([
+          { type: 'text', content: 'Recovered reply!' },
+          { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+        ]);
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_parked',
+        payload: 'please answer',
+        messageId: 'om_real_user_parked',
+      });
+
+      // The replay's fresh session ran and recovered…
+      const recoveredCall = await vi.waitFor(
+        () => {
+          const call = localCallbacks.sendMessage.mock.calls.find(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('Recovered reply!')
+          );
+          expect(call).toBeDefined();
+          return call;
+        },
+        { timeout: 1000, interval: 20 }
+      );
+      expect(recoveredCall).toBeDefined();
+
+      // …and give the drained OLD iterator (released by endEmptyTurnSession's
+      // close) a chance to run its post-loop path.
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Exactly two sessions: the broken one and the replay. A third would
+      // mean the old loop's exit ran the auto-restart path.
+      expect(createQueryStream).toHaveBeenCalledTimes(2);
+
+      // The superseded iterator's exit must be intercepted: no unexpected-end
+      // warn, no ⚠️ reconnect notice, no 🚫 circuit-breaker notice — the replay
+      // succeeded, so the user must not see any of them.
+      const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+      const unexpectedWarn = warnSpy.mock.calls.find(
+        (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('ended unexpectedly')
+      );
+      expect(unexpectedWarn).toBeUndefined();
+
+      const badNotice = localCallbacks.sendMessage.mock.calls.find(
+        (call: unknown[]) =>
+          typeof call[1] === 'string' &&
+          ((call[1] as string).includes('会话多次异常中断') ||
+            (call[1] as string).includes('会话已暂停') ||
+            (call[1] as string).includes('意外断开'))
+      );
+      expect(badNotice).toBeUndefined();
+
+      // The interception is visible as an info log, not silence.
+      const infoSpy = (agent as any).logger.info as ReturnType<typeof vi.fn>;
+      const interceptInfo = infoSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[1] === 'string' && (c[1] as string).includes('superseded session iterator ended')
+      );
+      expect(interceptInfo).toBeDefined();
+
+      // The replay recovered → healthy-turn accounting re-arms the retry.
+      const rm = (agent as any).restartManager as { recordSuccess: ReturnType<typeof vi.fn> };
+      expect(rm.recordSuccess).toHaveBeenCalledWith('oc_retry_parked');
+    });
+
+    // Issue #4391 (part 2 review regression 2): a disposed agent must never
+    // fire the replay. Uses the production-faithful BaseAgent mock (no forced
+    // initialized=true), so this only passes with a real disposed check.
+    it('agent disposed before the timer fires → replay skipped (no second query)', async () => {
+      vi.useFakeTimers();
+      try {
+        const localCallbacks = createMockCallbacks();
+        const agent = makeRetryAgent('oc_retry_disposed', localCallbacks);
+
+        const createQueryStream = vi.fn(() => ({
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        }));
+        (agent as any).createQueryStream = createQueryStream;
+
+        void agent.processMessage({
+          chatId: 'oc_retry_disposed',
+          payload: 'please answer',
+          messageId: 'om_real_user_dispose',
+        });
+
+        // Drain microtasks until the empty-turn retry is scheduled. With fake
+        // timers the setTimeout(0) callback stays pending, giving a
+        // deterministic window to dispose before it fires.
+        const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+        for (let i = 0; i < 10_000; i++) {
+          const scheduled = warnSpy.mock.calls.some(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('scheduling one-shot')
+          );
+          if (scheduled) {break;}
+          await Promise.resolve();
+        }
+
+        // Dispose inside the window: sync flag set, teardown fire-and-forget.
+        // The BaseAgent mock sets an instance `this.dispose = vi.fn()` that
+        // shadows ChatAgent.prototype.dispose, so invoke the real method.
+        (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(agent);
+
+        // Fire the pending replay timer.
+        await vi.advanceTimersByTimeAsync(0);
+        await Promise.resolve();
+
+        // The guard skipped the replay — no fresh session was created…
+        expect(createQueryStream).toHaveBeenCalledTimes(1);
+        // …and said so in the skip log.
+        const infoSpy = (agent as any).logger.info as ReturnType<typeof vi.fn>;
+        const skipInfo = infoSpy.mock.calls.find(
+          (c: unknown[]) =>
+            typeof c[1] === 'string' && (c[1] as string).includes('Empty-turn replay skipped')
+        );
+        expect(skipInfo).toBeDefined();
+        expect((skipInfo![0] as Record<string, unknown>).disposed).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
