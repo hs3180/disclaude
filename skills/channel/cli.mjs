@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * channel Skill — CLI helper (Issue #4459, part 3)
+ * channel Skill — CLI helper (Issue #4459, parts 3–4, 6)
  *
  * CLI-Skill replacement for the inline `channel-mcp` MCP server
  * (`packages/mcp-server/src/channel-mcp.ts`, surface S1 in
@@ -8,15 +8,19 @@
  * (#4383, owner decision 2026-08-07): disclaude unifies both backends on the
  * Skills (CLI + README) model defined in `docs/skill-format-spec.md`.
  *
- * What this part implements — the `send_text` (part 3) and `push_to_agent`
- * (part 6) subcommands:
+ * What this implements — the `send_text` (part 3), `send_file` (part 4), and
+ * `push_to_agent` (part 6) subcommands:
  *   The agent shells out via Bash instead of calling the in-process MCP tool.
- *   The CLI reuses the SAME first-party implementations (`send_text` and
- *   `push_to_agent` from `@disclaude/mcp-server`) — it does not re-implement the
- *   Feishu send path. Both reach the PrimaryNode over IPC (`getIpcClient()`), so
- *   this CLI is a one-shot process per call that connects, sends, and exits — the
- *   same transport the standalone `disclaude-mcp` server (S3) already uses from a
- *   separate process. No long-lived session is required for a single send.
+ *   The CLI reuses the SAME first-party implementations (`send_text` /
+ *   `send_file` / `push_to_agent` from `@disclaude/mcp-server`) — it does not
+ *   re-implement the Feishu send path. All three reach the PrimaryNode over IPC
+ *   (`getIpcClient()`), so this CLI is a one-shot process per call that
+ *   connects, sends, and exits — the same transport the standalone
+ *   `disclaude-mcp` server (S3) already uses from a separate process. No
+ *   long-lived session is required per call.
+ *   `send_file` uploads via IPC to the PrimaryNode; relative paths are resolved
+ *   against the configured workspace dir by the first-party impl (file
+ *   existence is NOT pre-validated here for that reason).
  *   `push_to_agent` follows the exact same shape as `send_text` (it is a simple
  *   { chatId, message } send whose MCP entry handler is the bare first-party
  *   function — no card/table/image transforms, so no extra helper exports are
@@ -31,9 +35,8 @@
  * object the only thing on stdout.
  *
  * Deferred (later parts of #4459) — out of scope here:
- *   • the other 3 channel tools (send_card, send_interactive, send_file) — they
- *     follow the same pattern as subcommands here. (`push_to_agent`, part 6, is
- *     added in this branch.)
+ *   • the remaining 2 channel tools (send_card, send_interactive) — they
+ *     follow the same pattern as subcommands here.
  *   • live end-to-end parity verification against the MCP tool (requires a
  *     running PrimaryNode + Feishu credentials); this part verifies the CLI
  *     command surface, output contract, validation, and graceful-degradation
@@ -46,9 +49,10 @@
  *   node skills/channel/cli.mjs --help
  *   node skills/channel/cli.mjs send_text --chat oc_xxx --text "Hello"
  *   echo "long body" | node skills/channel/cli.mjs send_text --chat oc_xxx
+ *   node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
  *   node skills/channel/cli.mjs push_to_agent --chat oc_xxx --message "Summarize the thread"
  *
- * Part 3 (+ part 6: push_to_agent) of #4459 — does not auto-close the parent issue.
+ * Parts 3 + 4 + 6 of #4459 — does not auto-close the parent issue.
  */
 
 import { performance } from "node:perf_hooks";
@@ -65,10 +69,11 @@ Usage:
 
 Commands:
   send_text       Send a plain text message to a chat (part 3).
+  send_file       Send a file to a chat (part 4).
   push_to_agent   Push an instruction to the chat agent for a chat, creating the
-                  agent lazily if needed (part 6). The other 3 channel tools
-                  (send_card, send_interactive, send_file) are deferred to later
-                  parts of #4459.
+                  agent lazily if needed (part 6). The remaining tools
+                  (send_card, send_interactive) are deferred to later parts
+                  of #4459.
   help            Show this help message.
 
 send_text options:
@@ -77,6 +82,13 @@ send_text options:
   --text-file <path>   Read text content from a file (use "-" for stdin explicitly).
   --parent <id>        Optional parent message ID (thread reply).
   --mentions <json>    Optional JSON array of { "openId": string, "name"?: string }.
+  --help, -h           Show this help message.
+
+send_file options:
+  --chat <id>          Target chat ID (e.g. oc_xxx). Required.
+  --file <path>        Path to the file to send. Required. Relative paths are
+                      resolved against the configured disclaude workspace dir.
+  --parent <id>        Optional parent message ID (thread reply).
   --help, -h           Show this help message.
 
 push_to_agent options:
@@ -103,20 +115,36 @@ Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text-file ./msg.txt --parent om_parent
   node skills/channel/cli.mjs send_text --chat oc_abc --text "@owner pls review" \\
     --mentions '[{"openId":"ou_xxx","name":"owner"}]'
+  node skills/channel/cli.mjs send_file --chat oc_abc --file ./report.pdf
+  node skills/channel/cli.mjs send_file --chat oc_abc --file ./log.txt --parent om_parent
   node skills/channel/cli.mjs push_to_agent --chat oc_abc --message "Summarize unread messages"
   echo "long instruction" | node skills/channel/cli.mjs push_to_agent --chat oc_abc
 
-Version ${VERSION} — parts 3 + 6 of #4459. This Skill does not auto-close the parent issue.`;
+Version ${VERSION} — parts 3 + 4 + 6 of #4459. This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
 // ---------------------------------------------------------------------------
 
+// Guards the single-JSON-object stdout contract. Each emit* sets this and
+// becomes a no-op once a result has already been written. This matters on
+// fast-failure paths: withStdoutToStderr's process.stdout.write redirect can
+// leave pino's SonicBoom stream "not ready", and process.exit() then triggers
+// its on-exit flushSync, which throws; that throw reaches the top-level
+// .catch() below, which would otherwise emitFail() a spurious second
+// "CLI crashed" line. With this guard the crash trace stays on stderr
+// (diagnostics, per spec §2.2) while stdout remains exactly one line.
+let stdoutResultEmitted = false;
+
 function emitOk(payload) {
+  if (stdoutResultEmitted) return;
+  stdoutResultEmitted = true;
   process.stdout.write(JSON.stringify({ ok: true, ...payload }) + "\n");
 }
 
 function emitFail(command, error, hint) {
+  if (stdoutResultEmitted) return;
+  stdoutResultEmitted = true;
   const body = { ok: false, command, error };
   if (hint) body.hint = hint;
   process.stdout.write(JSON.stringify(body) + "\n");
@@ -297,6 +325,88 @@ async function cmdSendText(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// send_file command
+// ---------------------------------------------------------------------------
+
+async function cmdSendFile(argv) {
+  const args = parseArgs(argv);
+  const start = performance.now();
+
+  // --- validate (before any import, so failures are cheap and deterministic) ---
+  const chatId = args.chat;
+  if (!chatId || typeof chatId !== "string") {
+    emitFail("send_file", "Missing required option --chat <id>", "pass --chat oc_xxx");
+    return 1;
+  }
+
+  // Path presence only: existence/resolution is delegated to the first-party
+  // send_file (relative paths resolve against the configured workspace dir, and
+  // fs.stat there produces the authoritative error).
+  const filePath = args.file;
+  if (!filePath || typeof filePath !== "string") {
+    emitFail("send_file", "Missing required option --file <path>", "pass --file <path> (relative paths resolve against the workspace dir)");
+    return 1;
+  }
+
+  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+
+  // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
+  let mod;
+  try {
+    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+  } catch (err) {
+    emitFail(
+      "send_file",
+      `Failed to load @disclaude/mcp-server: ${err.message}`,
+      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_file from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  const sendFile = mod.send_file;
+  if (typeof sendFile !== "function") {
+    emitFail("send_file", "@disclaude/mcp-server does not export send_file (unexpected build)");
+    return 1;
+  }
+
+  let result;
+  try {
+    result = await withStdoutToStderr(() =>
+      sendFile({ filePath, chatId, parentMessageId })
+    );
+  } catch (err) {
+    emitFail(
+      "send_file",
+      `send_file threw: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 1;
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  if (result && result.success) {
+    emitOk({
+      command: "send_file",
+      chatId,
+      result: result.message ?? "sent",
+      fileName: result.fileName,
+      fileSize: result.fileSize,
+      durationMs,
+    });
+    return 0;
+  }
+
+  emitFail(
+    "send_file",
+    (result && (result.error || result.message)) || "send_file returned without success",
+    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
+      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
+      : undefined
+  );
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 // push_to_agent command (part 6 of #4459)
 //
 // Mirrors cmdSendText: push_to_agent is a simple { chatId, message } send whose
@@ -388,7 +498,7 @@ async function cmdPushToAgent(argv) {
   emitFail(
     "push_to_agent",
     (result && (result.error || result.message)) || "push_to_agent returned without success",
-    result && /IPC|PrimaryNode/i.test(result.message || "")
+    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
       ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
       : undefined
   );
@@ -409,6 +519,10 @@ async function main(argv) {
 
   if (subcommand === "send_text") {
     return cmdSendText(argv.slice(1));
+  }
+
+  if (subcommand === "send_file") {
+    return cmdSendFile(argv.slice(1));
   }
 
   if (subcommand === "push_to_agent") {
