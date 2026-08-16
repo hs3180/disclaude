@@ -133,7 +133,8 @@ the driver-side matrix below is independent of that front (it binds to
 container).
 
 Versions under test: `browser-use` CLI 0.13.7 (`browser-harness` 0.1.8),
-Playwright-bundled Chromium 151.0.7922.34, Playwright (Python) 1.5x.
+Playwright-bundled Chromium 151.0.7922.34 (playwright pin `chromium-1234`),
+Playwright (Python) 1.62.0.
 
 | # | Case | Result | Evidence |
 |---|---|---|---|
