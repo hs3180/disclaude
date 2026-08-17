@@ -497,17 +497,6 @@ async function main(): Promise<void> {
         });
       }
 
-      // Issue #4063 (part 2): wire REST /api/loop/* to the shared LoopRunner so
-      // loops started via REST are visible to the IPC composite handlers and
-      // vice versa (builds on #4148, which wired the IPC path). The runner is
-      // lazy-initialized on first start from either entry point.
-      const loopRunner = primaryNode.getOrCreateLoopRunner();
-      httpApiServer.setLoopHandlers({
-        start: (params) => loopRunner.start(params),
-        stop: (loopId) => { loopRunner.stop(loopId); },
-        status: (loopId) => loopRunner.status(loopId),
-      });
-
       // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
       // capability (REST parity with the IPC method).
       httpApiServer.setUploadFileHandler(

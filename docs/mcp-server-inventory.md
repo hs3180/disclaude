@@ -65,19 +65,16 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
 > **re-exposing the same implementations as Skills (CLI + README)** rather than deleting any behavior. The IPC
 > plumbing underneath is unaffected.
 
-### Loop-runner tools (legacy, not in the active channel surface)
+### Loop-runner tools (removed with the loop system, #4430)
 
-`channel-mcp.ts` imports `loop_start` / `loop_stop` / `loop_status`
-([`channel-mcp.ts:24-26`](../packages/mcp-server/src/channel-mcp.ts), via `./tools/index.js`, issue #4075) and
-re-exports them ([`channel-mcp.ts:49-51`](../packages/mcp-server/src/channel-mcp.ts), from
-`./tools/loop-{start,stop,status}.js`). Their tool *definitions* still live in the legacy **`channelTools`**
-record ([`channel-mcp.ts:83`](../packages/mcp-server/src/channel-mcp.ts), loop entries `:204-247`) — a public
-package export ([`index.ts:75`](../packages/mcp-server/src/index.ts)) that has **no internal consumer**; only
-the active `channelToolDefinitions` array feeds `buildMcpServers()`. Accordingly, **none of them appear in
-`channelToolDefinitions`** (`channel-mcp.ts:250`) nor in the standalone server's `tool-definitions.ts` (see S3).
-They are tied to the **deprecated loop system** ([#4039](https://github.com/hs3180/disclaude/issues/4039) /
-[#4430](https://github.com/hs3180/disclaude/issues/4430)). The loop retirement (`#4430`) owns their removal;
-`#4459` does not need to touch them.
+The former `loop_start` / `loop_stop` / `loop_status` tools — along with their `tools/loop-{start,stop,status}.ts`
+implementations, their entries in the legacy `channelTools` record, the `LoopRunner` / `LoopFileWatcher`
+runtime (`packages/primary-node/src/loop/`), the `loop-md` parser (`packages/core/src/loop/`), the
+`skills/loop` skill, the `loopStart`/`loopStop`/`loopStatus` IPC methods, and the `/api/loop/*` REST
+endpoints — were removed by the loop-system deprecation
+([#4430](https://github.com/hs3180/disclaude/issues/4430)); recurring execution is unified on the
+**schedule** base (`skills/schedule` + `packages/core/src/scheduling`). This inventory section remains as a
+tombstone so the removal is explicit, not silent.
 
 ---
 
@@ -228,7 +225,7 @@ Mapping the inventory to `#4459`'s four scopes:
 
 - **Playwright** (the dominant S2 consumer) → sibling [#4460](https://github.com/hs3180/disclaude/issues/4460).
 - **S3 standalone server** (disclaude-as-server product) → owner decision (stay / Skill-host / remove).
-- **Loop tools** (`loop_start/stop/status`) → deprecated loop system [#4430](https://github.com/hs3180/disclaude/issues/4430).
+- **Loop tools** (`loop_start/stop/status`) → already removed with the loop system [#4430](https://github.com/hs3180/disclaude/issues/4430).
 - **pi backend MCP parity** → already settled (no MCP; inline handle only). No retirement work.
 
 ### Open questions this inventory raises for #4459 Scope 2+

@@ -22,9 +22,6 @@ import { createLogger } from '../utils/logger.js';
 import type { IpcRequestType, IpcRequestPayloads, IpcResponsePayloads } from './protocol.js';
 import {
   type IpcClientLike,
-  loopStart as facadeLoopStart,
-  loopStop as facadeLoopStop,
-  loopStatus as facadeLoopStatus,
 } from './ipc-client-facade.js';
 
 const logger = createLogger('RestIpcClient');
@@ -46,7 +43,7 @@ interface Route {
   method: 'GET' | 'POST';
   /** Static path (e.g. `/api/send-message`). */
   path?: string;
-  /** Dynamic path builder (e.g. for path-param routes like loopStatus). */
+  /** Dynamic path builder (e.g. for path-param routes). */
   pathBuilder?: (payload: Record<string, unknown>) => string;
   /**
    * Per-route success predicate (default: `res.ok && json.ok === true`).
@@ -65,10 +62,9 @@ const defaultSuccess = (json: Record<string, unknown>, res: Response): boolean =
   res.ok && json.ok === true;
 
 /**
- * Route table: IPC method → REST endpoint. Covers all 12 IPC methods:
+ * Route table: IPC method → REST endpoint. Covers the 9 IPC methods:
  * - 8 channel methods + ping → #4279 Phase 1 endpoints (strip-ok shaping).
  * - pushToAgent → /api/push (REST {ok,message} → IPC {success}).
- * - loopStart/loopStop/loopStatus → /api/loop/* (REST shapes adapted to IPC).
  */
 const ROUTES: Readonly<Record<string, Route>> = {
   // Channel methods (Issue #4279 Phase 1 endpoints). 6/8 are on `main`:
@@ -88,17 +84,6 @@ const ROUTES: Readonly<Record<string, Route>> = {
   markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
   // pushToAgent → /api/push (REST returns {ok, message}; IPC expects {success})
   pushToAgent: { method: 'POST', path: '/api/push', shape: (b) => ({ success: b.ok === true }) },
-  // Loop Runner → /api/loop/* (REST shapes adapted to IPC payloads)
-  loopStart: {
-    method: 'POST', path: '/api/loop/start',
-    shape: (b) => ({ success: b.ok === true, ...(b.loopId ? { loopId: b.loopId } : {}) }),
-  },
-  loopStop: { method: 'POST', path: '/api/loop/stop', shape: (b) => ({ success: b.ok === true }) },
-  loopStatus: {
-    method: 'GET',
-    pathBuilder: (p) => `/api/loop/status/${p.loopId}`,
-    shape: (b) => ({ success: b.ok === true, ...(b.status ? { status: b.status } : {}) }),
-  },
 };
 
 export interface RestIpcClientOptions {
@@ -242,21 +227,5 @@ export class RestIpcClient implements IpcClientLike {
   disconnect(): Promise<void> {
     this.close();
     return Promise.resolve();
-  }
-
-  // Convenience methods mirroring UnixSocketIpcClient (delegating to facade
-  // functions which call request<T> internally). This ensures full method
-  // parity so callers that use these directly work with either client.
-
-  async loopStart(params: Parameters<typeof facadeLoopStart>[1]) {
-    return await facadeLoopStart(this, params);
-  }
-
-  async loopStop(loopId: string) {
-    return await facadeLoopStop(this, loopId);
-  }
-
-  async loopStatus(loopId: string) {
-    return await facadeLoopStatus(this, loopId);
   }
 }
