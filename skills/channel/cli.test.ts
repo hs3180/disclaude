@@ -30,13 +30,13 @@
 //     redirect is deterministic with no flush race.
 //  3. help / unknown-command surface and exit codes.
 //
-// Part 4 of #4459 adds the `send_file` tests below, part 6 the `push_to_agent`
-// tests, part 7 the `send_interactive` tests (same harness, same contract). The
-// file remains the TEMPLATE for the remaining channel tool (`send_card`)
-// deferred to a later part of #4459: same spawn harness, same "exactly one
-// JSON" assertions.
+// Parts 4–7 of #4459 added the `send_file`, `send_card`, `push_to_agent`, and
+// `send_interactive` tests below (same harness, same contract). All five
+// channel tools are now CLI subcommands. The send_card preprocessing / send
+// path needs a built PrimaryNode + creds and is covered by the channel-mcp
+// handler tests, not here.
 //
-// Parts 3–4, 6–7 of #4459 — does not auto-close the parent issue.
+// Parts 3–7 of #4459 — does not auto-close the parent issue.
 
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
@@ -140,6 +140,59 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
       expect(String(obj.error)).toMatch(/text-file/i);
+    });
+  });
+
+  describe('send_card validation failures — exactly one JSON, exit 1 (part 5)', () => {
+    // These all fail in the cheap, pre-import validation path, so they need no
+    // PrimaryNode, no creds, and no built @disclaude/mcp-server — they lock the
+    // send_card command surface and output contract the agent depends on.
+    it('missing --chat', async () => {
+      const r = await runCli(['send_card', '--card', '{"elements":[]}']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/--chat/i);
+    });
+
+    it('missing card content (no --card / --card-file / stdin)', async () => {
+      // stdin is a closed pipe (EOF) in runCli, so the stdin fallback yields ''
+      // and the CLI reports missing card content rather than blocking.
+      const r = await runCli(['send_card', '--chat', 'oc_test']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/card content|missing/i);
+    });
+
+    it('invalid --card JSON', async () => {
+      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', 'not-json']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/invalid card json/i);
+    });
+
+    it('card is not an object (array rejected — mirrors handler guard)', async () => {
+      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', '[1,2,3]']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/must be an object/i);
+    });
+
+    // Post-import validation path: an object card that fails isValidFeishuCard
+    // (missing config/header). This imports @disclaude/mcp-server (so it needs
+    // `npm run build`, like the redirect test below) but never reaches a pino
+    // write — it locks the one-JSON teardown contract (cli.mjs exitWithCode /
+    // resultEmitted): the failure JSON is the ONLY object on stdout even though
+    // process.exit trips pino's sonic-boom "not ready" flush.
+    it('invalid card structure (object missing config/header) — exactly one JSON', async () => {
+      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', '{"elements":[]}']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout); // asserts stdout is exactly ONE JSON line
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/invalid card structure/i);
     });
   });
 

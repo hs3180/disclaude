@@ -61,6 +61,19 @@ export {
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
+// Utils - Card send preprocessing helpers.
+// These transforms live in the channel-mcp ENTRY handler (not inside the
+// first-party `send_card` fn — see tools/send-card.ts), so a CLI that reuses
+// `send_card` directly would silently drop them. Exporting them lets the
+// channel CLI Skill (skills/channel/cli.mjs, Issue #4459) replicate the exact
+// MCP handler pipeline and reach feature parity: GFM-table → column_set
+// auto-conversion (#2340), local-image auto-upload (#2951), chatId-format and
+// card-structure validation. No behavior change for existing callers.
+export { transformCardTables } from './utils/table-converter.js';
+export { resolveCardImages } from './utils/card-image-resolver.js';
+export { getChatIdValidationError } from './utils/chat-id-validator.js';
+export { detectMarkdownTableWarnings } from './utils/card-validator.js';
+
 // IPC Client (re-exported from @disclaude/core for convenience)
 export {
   UnixSocketIpcClient,
