@@ -98,7 +98,20 @@ export class PiAgentProvider implements IAgentSDKProvider {
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
     // cancel() maps onto it (spike §4 — AbortController pass-through applies
     // to the bare agentLoop API; the Agent class owns its own controller).
+    // The bridge constructs the Agent only after `await loadPiRuntime()`
+    // resolves, so cancel()/close() can fire BEFORE the agent exists (the
+    // handle is returned synchronously). `cancelRequested` latches that early
+    // call; the iterator applies it as soon as the agent is constructed, and
+    // skips starting the run entirely — an early cancel is never dropped.
     let agent: import('./pi-runtime.js').PiAgent | null = null;
+    let cancelRequested = false;
+    const requestAbort = (): void => {
+      if (agent) {
+        agent.abort();
+      } else {
+        cancelRequested = true;
+      }
+    };
 
     const { streamFn } = this;
     const adaptIterator = async function* (this: void): AsyncGenerator<AgentMessage> {
@@ -135,6 +148,17 @@ export class PiAgentProvider implements IAgentSDKProvider {
           systemPrompt: adaptedOptions.systemPrompt ?? '',
         },
       } satisfies PiAgentOptions);
+      if (cancelRequested) {
+        // cancel()/close() arrived while loadPiRuntime() was still pending.
+        // Abort immediately and end the bridge without starting a run. No
+        // subscribe/prompt/pumpInput was set up, so the early-return path has
+        // nothing to clean up (the finally block below belongs to the main
+        // try that starts after this guard).
+        agent.abort();
+        finished = true;
+        wakeAll();
+        return;
+      }
 
       const unsubscribe = agent.subscribe((event) => {
         enqueue(event as PiAgentEvent);
@@ -194,10 +218,10 @@ export class PiAgentProvider implements IAgentSDKProvider {
     return {
       handle: {
         close: () => {
-          agent?.abort();
+          requestAbort();
         },
         cancel: () => {
-          agent?.abort();
+          requestAbort();
         },
         sessionId: undefined,
       },

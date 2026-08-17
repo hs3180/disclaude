@@ -229,7 +229,32 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     // Give the bridge a tick to start the run (prompt in flight), then cancel.
     await new Promise((resolve) => setTimeout(resolve, 0));
     result.handle.cancel();
-    expect(fakeState.aborted).toBe(true);
+    // Deterministic on both sides of the loadPiRuntime race: when the agent
+    // already exists abort() is synchronous; when cancel() landed during the
+    // lazy import the latch aborts at construction (a microtask later).
+    await vi.waitFor(() => {
+      expect(fakeState.aborted).toBe(true);
+    });
     await consuming; // must resolve, not hang
+  });
+
+  it('handle.cancel() before the runtime finishes loading is latched, not dropped', async () => {
+    // Regression (CI flake): queryStream() returns the handle synchronously,
+    // but the Agent is only constructed after `await loadPiRuntime()` inside
+    // the iterator. A cancel() landing in that window used to no-op against
+    // `agent === null` and be silently dropped — the run then started anyway.
+    // The latch must abort the agent once it exists and never start the run.
+    fakeState.scripts = [
+      [{ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'x' } }],
+    ];
+    const result = provider.queryStream(inputs(userInput('hi')), baseOptions());
+    const consuming = collect(result.iterator);
+    // Cancel immediately — synchronously after queryStream, before yielding
+    // control: the iterator has not run at all yet, so agent is still null.
+    result.handle.cancel();
+    const messages = await consuming;
+    expect(messages).toEqual([]); // nothing streamed: the run never started
+    expect(fakeState.aborted).toBe(true); // the latch reached the agent
+    expect(fakeState.prompts).toEqual([]); // prompt() was never called
   });
 });
