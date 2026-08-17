@@ -1,20 +1,22 @@
 # channel Skill — CLI replacement for `channel-mcp` (#4459)
 
-> **Status (parts 3–7 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
+> **Status (parts 3–8 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
 > `send_text` (part 3, [#4467](https://github.com/hs3180/disclaude/pull/4467)),
 > `send_file` (part 4, [#4494](https://github.com/hs3180/disclaude/pull/4494)),
 > `send_card` (part 5), `push_to_agent` (part 6,
 > [#4501](https://github.com/hs3180/disclaude/pull/4501)), and
 > `send_interactive` (part 7) — **all 5 channel tools** migrated as CLI
-> subcommands. All reuse the first-party implementations from
-> `@disclaude/mcp-server` over IPC; `send_card` additionally replicates the MCP
-> entry handler's card preprocessing (GFM-table conversion, local-image
-> auto-upload) for feature parity. **Live end-to-end parity** against the inline
-> MCP tool is **deferred** (requires a running PrimaryNode + Feishu credentials) —
-> these parts verify the command surface, validation, and graceful-degradation
-> paths, mirroring how [#4464](https://github.com/hs3180/disclaude/pull/4464) part
-> 1 deferred live browser parity. This README does **not** auto-close the parent
-> issue.
+> subcommands. **Part 8** closed the last code parity delta: the chatId
+> *format* pre-check every MCP entry handler runs (#1641) now runs in every
+> subcommand too, before any module import. All reuse the first-party
+> implementations from `@disclaude/mcp-server` over IPC; `send_card`
+> additionally replicates the MCP entry handler's card preprocessing
+> (GFM-table conversion, local-image auto-upload) for feature parity. **Live
+> end-to-end parity** against the inline MCP tool is **deferred** (requires a
+> running PrimaryNode + Feishu credentials) — these parts verify the command
+> surface, validation, and graceful-degradation paths, mirroring how
+> [#4464](https://github.com/hs3180/disclaude/pull/4464) part 1 deferred live
+> browser parity. This README does **not** auto-close the parent issue.
 
 A **CLI Skill** under disclaude's "reduce MCP" direction
 ([#4383](https://github.com/hs3180/disclaude/issues/4383), owner decision
@@ -141,7 +143,8 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 Failure modes covered: missing/invalid args, unreadable `--text-file` /
 `--card-file` / `--question-file` / `--message-file`, malformed `--mentions` / `--card` /
 `--options` / `--action-prompts` JSON, non-object card, invalid card structure,
-invalid chatId format, invalid option structure (empty `text`/`value`, bad
+invalid chatId format (**every** subcommand, part 8 — same check as the MCP
+entry handlers), invalid option structure (empty `text`/`value`, bad
 `type`), `@disclaude/mcp-server` not built/resolvable, IPC unreachable, and IPC
 send failure (the underlying first-party tools map these to `SendMessageResult` /
 `SendInteractiveResult` / `{ success:false, error, message }` results).
@@ -180,6 +183,7 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | `send_text` parameters | `text`, `chatId`, `parentMessageId`, `mentions` | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions` | text gains `--text-file`/stdin for large bodies |
 | `send_file` parameters | `filePath`, `chatId`, `parentMessageId` | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool) | none |
 | `push_to_agent` parameters | `chatId`, `message` | identical, via `--chat`/`--message`/`--message-file` | message gains `--message-file`/stdin for long instructions |
+| chatId format pre-check | `getChatIdValidationError(chatId)` in every entry handler (#1641) | identical check in every subcommand (part 8) — `send_card` via the exported helper post-import, the other four via a pre-import twin in `cli.mjs` | none |
 | Capability gating | MCP layer gates on `supportedMcpTools` per chat | **not** gated here — the agent invokes the CLI at its own discretion | see open item below |
 | Logging | pino → stdout (in-process, acceptable) | pino → **stderr** for the call's duration (stdout reserved for the result JSON) | none functionally |
 
@@ -206,13 +210,14 @@ left to a later part of #4459 once the full surface is migrated.
 **`push_to_agent` (part 6) parity** — its MCP entry handler
 (`packages/mcp-server/src/channel-mcp.ts`) is the bare first-party
 `push_to_agent` function preceded only by a `getChatIdValidationError(chatId)`
-format check. This CLI calls `push_to_agent()` directly and, like `send_text`
-above, **defers** the chatId *format* check to a presence-only validation; an
-ill-formed id is still rejected, but by the IPC layer rather than up front. This
-is the same deferred-parity item `send_text` carries (resolving it once, across
-all subcommands, is left to a later part of #4459). No card/table/image
-transforms apply to `push_to_agent`, so unlike `send_card` it needs no extra
-helper exports from `@disclaude/mcp-server`.
+format check. Parts 3–6 initially **deferred** the chatId *format* check to a
+presence-only validation (an ill-formed id was still rejected, but by the IPC
+layer rather than up front) — the deferred-parity item `send_text` carried.
+**Part 8 closed that delta**: every subcommand now runs the same format
+pre-check as the handlers before any import (`parseChatId` in `cli.mjs`;
+`send_card` keeps the exported helper post-import from part 5). No card/table/
+image transforms apply to `push_to_agent`, so unlike `send_card` it needs no
+extra helper exports from `@disclaude/mcp-server`.
 
 **`send_card` parity (part 5) — preprocessing is replicated, not dropped.** The
 first-party `send_card` fn does **not** itself apply GFM-table conversion
