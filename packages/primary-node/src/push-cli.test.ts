@@ -9,9 +9,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // vi.hoisted runs before vi.mock factories, so mockPushToAgent is available.
-const { mockPushToAgent, mockDisconnect } = vi.hoisted(() => ({
+const { mockPushToAgent, mockDisconnect, mockGetIpcClient } = vi.hoisted(() => ({
   mockPushToAgent: vi.fn(),
   mockDisconnect: vi.fn().mockResolvedValue(undefined),
+  // Issue #4280 (part 1): push-cli now resolves its client via getIpcClient() by
+  // default (REST-transport compatible). The returned client only needs disconnect
+  // for the finally cleanup — pushToAgent is module-mocked above.
+  mockGetIpcClient: vi.fn(() => ({
+    pushToAgent: mockPushToAgent,
+    disconnect: mockDisconnect,
+  })),
 }));
 
 vi.mock('@disclaude/core', () => ({
@@ -22,6 +29,7 @@ vi.mock('@disclaude/core', () => ({
   // Issue #4129: pushToAgent is now also a standalone function re-exported from ipc-client-facade.
   // The production code imports it directly, so the mock must provide it too.
   pushToAgent: mockPushToAgent,
+  getIpcClient: mockGetIpcClient,
   getIpcSocketPath: vi.fn(({ override }: { override?: string }) => override ?? '/tmp/test.ipc'),
 }));
 
@@ -30,7 +38,7 @@ vi.mock('node:fs', () => ({
 }));
 
 import { parseArgs, main } from './push-cli.js';
-import { getIpcSocketPath } from '@disclaude/core';
+import { getIpcSocketPath, getIpcClient } from '@disclaude/core';
 import { existsSync } from 'node:fs';
 
 describe('push-cli', () => {
@@ -43,6 +51,8 @@ describe('push-cli', () => {
     // Clear call history without resetting implementations
     mockPushToAgent.mockClear();
     mockDisconnect.mockClear();
+    mockGetIpcClient.mockClear();
+    vi.mocked(getIpcSocketPath).mockClear();
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); }) as any;
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -51,6 +61,9 @@ describe('push-cli', () => {
     vi.mocked(existsSync).mockReturnValue(true);
     mockDisconnect.mockResolvedValue(undefined);
     mockPushToAgent.mockResolvedValue({ success: true });
+    // Default: Unix-socket transport (REST IPC disabled). Tests that need REST
+    // set the env var themselves and clean it up in afterEach.
+    delete process.env.DISCLAUDE_REST_IPC_ENABLED;
   });
 
   afterEach(() => {
@@ -122,6 +135,38 @@ describe('push-cli', () => {
     it('should use --socket override when provided', async () => {
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello', '-s', '/custom.ipc'];
       await main();
+      expect(getIpcSocketPath).toHaveBeenCalledWith({ override: '/custom.ipc' });
+    });
+
+    // Issue #4280 (part 1): by default push-cli resolves its client via the
+    // central getIpcClient() facade instead of constructing a UnixSocketIpcClient
+    // directly, so it stays in sync with the configured transport.
+    it('should resolve the client via getIpcClient() by default', async () => {
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      await main();
+      expect(getIpcClient).toHaveBeenCalledTimes(1);
+      expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
+    });
+
+    // Issue #4280 (part 1): under REST IPC mode there is no socket file, so the
+    // Unix-socket fast-fail check must be skipped and the push proceed.
+    it('should proceed under REST IPC mode even when socket file is absent', async () => {
+      process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
+      vi.mocked(existsSync).mockReturnValue(false);
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      // main() resolves normally on success (socket check skipped under REST)
+      await main();
+      expect(getIpcClient).toHaveBeenCalledTimes(1);
+      expect(getIpcSocketPath).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
+    });
+
+    it('should bypass getIpcClient() when --socket override forces a Unix socket', async () => {
+      process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello', '-s', '/custom.ipc'];
+      await main();
+      // Explicit --socket always constructs a Unix-socket client directly.
+      expect(getIpcClient).not.toHaveBeenCalled();
       expect(getIpcSocketPath).toHaveBeenCalledWith({ override: '/custom.ipc' });
     });
 
