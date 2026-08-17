@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * channel Skill — CLI helper (Issue #4459, parts 3–5, 7)
+ * channel Skill — CLI helper (Issue #4459, parts 3–7)
  *
  * CLI-Skill replacement for the inline `channel-mcp` MCP server
  * (`packages/mcp-server/src/channel-mcp.ts`, surface S1 in
@@ -12,6 +12,7 @@
  *   • send_text       (part 3, PR #4467)
  *   • send_file       (part 4, PR #4494)
  *   • send_card       (part 5, this change)
+ *   • push_to_agent  (part 6, PR #4501)
  *   • send_interactive (part 7, PR #4502)
  * Each reuses the SAME first-party implementation from `@disclaude/mcp-server`
  * — the CLI does not re-implement the Feishu send path. All reach the
@@ -48,8 +49,8 @@
  * file existence is NOT pre-validated here for that reason.
  *
  * Deferred (later parts of #4459) — out of scope here:
- *   • the remaining channel tool (push_to_agent) — it follows the same
- *     pattern as the subcommands here.
+ *   • the S2 external-MCP-loader removal and live end-to-end delivery
+ *     verification (tracked on the parent issue).
  *   • live end-to-end parity verification against the MCP tool (requires a
  *     running PrimaryNode + Feishu credentials); this CLI verifies the command
  *     surface, output contract, validation, and graceful-degradation paths
@@ -64,8 +65,9 @@
  *   echo "long body" | node skills/channel/cli.mjs send_text --chat oc_xxx
  *   node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
  *   node skills/channel/cli.mjs send_card --chat oc_xxx --card-file ./card.json
+ *   node skills/channel/cli.mjs push_to_agent --chat oc_xxx --message "Summarize the thread"
  *
- * Parts 3–5 + 7 of #4459 — does not auto-close the parent issue.
+ * Parts 3–7 of #4459 — does not auto-close the parent issue.
  */
 
 import { performance } from "node:perf_hooks";
@@ -87,10 +89,10 @@ Commands:
                    markdown elements are auto-converted to column_set; local
                    image paths are auto-uploaded — feature parity with the MCP
                    tool.
+  push_to_agent    Push an instruction to the chat agent for a chat, creating
+                   the agent lazily if needed (part 6).
   send_interactive Send an interactive card with clickable buttons (part 7).
   help             Show this help message.
-
-  (push_to_agent is deferred to a later part of #4459.)
 
 send_text options:
   --chat <id>          Target chat ID (e.g. oc_xxx). Required.
@@ -130,11 +132,19 @@ send_card options:
   --parent <id>        Optional parent message ID (thread reply).
   --help, -h           Show this help message.
 
+push_to_agent options:
+  --chat <id>             Target chat ID (e.g. oc_xxx). Required.
+  --message <string>      Instruction text to push. Required unless --message-file
+                          or stdin is used.
+  --message-file <path>   Read instruction from a file (use "-" for stdin).
+  --help, -h              Show this help message.
+
 Output:
   Exactly one JSON object on stdout (exit 0 on success, 1 on failure):
     {"ok":true,"command":"send_text","chatId":"oc_xxx","result":"...","durationMs":12}
     {"ok":true,"command":"send_card","chatId":"oc_xxx","result":"...","durationMs":42}
     {"ok":false,"command":"send_card","error":"...","hint":"..."}
+    {"ok":true,"command":"push_to_agent","chatId":"oc_xxx","result":"...","durationMs":12}
 
 Runtime:
   Reuses send_text / send_file / send_card (and card preprocessing helpers) from
@@ -149,6 +159,8 @@ Examples:
     --mentions '[{"openId":"ou_xxx","name":"owner"}]'
   node skills/channel/cli.mjs send_file --chat oc_abc --file ./report.pdf
   node skills/channel/cli.mjs send_file --chat oc_abc --file ./log.txt --parent om_parent
+  node skills/channel/cli.mjs push_to_agent --chat oc_abc --message "Summarize unread messages"
+  echo "long instruction" | node skills/channel/cli.mjs push_to_agent --chat oc_abc
   node skills/channel/cli.mjs send_card --chat oc_abc --card-file ./card.json
   echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \\
     | node skills/channel/cli.mjs send_card --chat oc_abc
@@ -162,7 +174,7 @@ Examples:
     --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \
     --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
 
-Version ${VERSION} — parts 3–5 + 7 of #4459. This Skill does not auto-close the parent issue.`;
+Version ${VERSION} — parts 3–7 of #4459. This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
@@ -857,6 +869,105 @@ async function cmdSendCard(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// push_to_agent command (part 6 of #4459)
+//
+// Mirrors cmdSendText: push_to_agent is a simple { chatId, message } send whose
+// MCP entry handler is the bare first-party function (no card/table/image
+// transforms), so the CLI calls push_to_agent() directly with no extra helpers.
+// The message body accepts --message, --message-file, or piped stdin, exactly as
+// send_text accepts --text/--text-file/stdin — per spec §2.1 (never require the
+// agent to embed a multi-KB instruction inline).
+// ---------------------------------------------------------------------------
+
+async function cmdPushToAgent(argv) {
+  const args = parseArgs(argv);
+  const start = performance.now();
+
+  // --- validate (before any import, so failures are cheap and deterministic) ---
+  const chatId = args.chat;
+  if (!chatId || typeof chatId !== "string") {
+    emitFail("push_to_agent", "Missing required option --chat <id>", "pass --chat oc_xxx");
+    return 1;
+  }
+
+  // Resolve message: --message, --message-file, or piped stdin (when not a TTY).
+  let message;
+  if (typeof args.message === "string") {
+    message = args.message;
+  } else if (typeof args["message-file"] === "string") {
+    const file = args["message-file"];
+    try {
+      message = file === "-" ? readStdinSync() : readFileSync(file, "utf8");
+    } catch (err) {
+      emitFail("push_to_agent", `Cannot read --message-file ${file}: ${err.message}`);
+      return 1;
+    }
+  } else if (!process.stdin.isTTY) {
+    message = readStdinSync();
+  }
+
+  if (!message || message.length === 0) {
+    emitFail(
+      "push_to_agent",
+      "Missing message content",
+      "pass --message <string>, --message-file <path>, or pipe content on stdin"
+    );
+    return 1;
+  }
+
+  // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
+  let mod;
+  try {
+    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+  } catch (err) {
+    emitFail(
+      "push_to_agent",
+      `Failed to load @disclaude/mcp-server: ${err.message}`,
+      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses push_to_agent from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  const pushToAgent = mod.push_to_agent;
+  if (typeof pushToAgent !== "function") {
+    emitFail("push_to_agent", "@disclaude/mcp-server does not export push_to_agent (unexpected build)");
+    return 1;
+  }
+
+  let result;
+  try {
+    result = await withStdoutToStderr(() => pushToAgent({ chatId, message }));
+  } catch (err) {
+    emitFail(
+      "push_to_agent",
+      `push_to_agent threw: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 1;
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  if (result && result.success) {
+    emitOk({
+      command: "push_to_agent",
+      chatId,
+      result: result.message ?? "pushed",
+      durationMs,
+    });
+    return 0;
+  }
+
+  emitFail(
+    "push_to_agent",
+    (result && (result.error || result.message)) || "push_to_agent returned without success",
+    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
+      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
+      : undefined
+  );
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -882,6 +993,10 @@ async function main(argv) {
 
   if (subcommand === "send_card") {
     return cmdSendCard(argv.slice(1));
+  }
+
+  if (subcommand === "push_to_agent") {
+    return cmdPushToAgent(argv.slice(1));
   }
 
   process.stdout.write(HELP + "\n");
