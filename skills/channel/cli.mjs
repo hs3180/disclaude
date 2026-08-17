@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * channel Skill — CLI helper (Issue #4459, parts 3–4, 6–7)
+ * channel Skill — CLI helper (Issue #4459, parts 3–7)
  *
  * CLI-Skill replacement for the inline `channel-mcp` MCP server
  * (`packages/mcp-server/src/channel-mcp.ts`, surface S1 in
@@ -8,31 +8,32 @@
  * (#4383, owner decision 2026-08-07): disclaude unifies both backends on the
  * Skills (CLI + README) model defined in `docs/skill-format-spec.md`.
  *
- * What this implements — the `send_text` (part 3), `send_file` (part 4),
- * `push_to_agent` (part 6), and `send_interactive` (part 7) subcommands:
- *   The agent shells out via Bash instead of calling the in-process MCP tool.
- *   The CLI reuses the SAME first-party implementations (`send_text` /
- *   `send_file` / `push_to_agent` / `send_interactive` from
- *   `@disclaude/mcp-server`) — it does not re-implement the Feishu send path.
- *   All four reach the PrimaryNode over IPC
- *   (`getIpcClient()`), so this CLI is a one-shot process per call that
- *   connects, sends, and exits — the same transport the standalone
- *   `disclaude-mcp` server (S3) already uses from a separate process. No
- *   long-lived session is required per call.
- *   `send_file` uploads via IPC to the PrimaryNode; relative paths are resolved
- *   against the configured workspace dir by the first-party impl (file
- *   existence is NOT pre-validated here for that reason).
- *   `push_to_agent` follows the exact same shape as `send_text` (it is a simple
- *   { chatId, message } send whose MCP entry handler is the bare first-party
- *   function — no card/table/image transforms, so no extra helper exports are
- *   needed; see README §Parity).
+ * Subcommands implemented so far:
+ *   • send_text       (part 3, PR #4467)
+ *   • send_file       (part 4, PR #4494)
+ *   • send_card       (part 5, this change)
+ *   • push_to_agent  (part 6, PR #4501)
+ *   • send_interactive (part 7, PR #4502)
+ * Each reuses the SAME first-party implementation from `@disclaude/mcp-server`
+ * — the CLI does not re-implement the Feishu send path. All reach the
+ * PrimaryNode over IPC (`getIpcClient()`), so this CLI is a one-shot process
+ * per call that connects, sends, and exits — the same transport the standalone
+ * `disclaude-mcp` server (S3) already uses from a separate process. No
+ * long-lived session is required for a single send.
  *
- *   `send_interactive` (part 7) forwards the RAW parameters (question, options,
- *   title, context, actionPrompts) to the PrimaryNode via the `sendInteractive`
- *   IPC; the PrimaryNode builds the interactive card, sends it, and registers
- *   the button-click action prompts (#1571/#1572). Button handling lives on the
- *   PrimaryNode side — this CLI is a one-shot *client*, exactly like `send_text`,
- *   NOT the IPC server / button handler.
+ * send_card parity note: the first-party `send_card` fn does NOT apply the
+ * GFM-table conversion (#2340) or local-image auto-upload (#2951) — those live
+ * in the channel-mcp ENTRY handler. So `cmdSendCard` replicates that handler's
+ * pipeline (validate → transformCardTables → resolveCardImages → send_card →
+ * annotate) using helpers now exported from `@disclaude/mcp-server`, so the CLI
+ * matches the inline MCP tool instead of silently dropping those features.
+ *
+ * send_interactive note (part 7): it forwards the RAW parameters (question,
+ * options, title, context, actionPrompts) to the PrimaryNode via the
+ * `sendInteractive` IPC; the PrimaryNode builds the interactive card, sends it,
+ * and registers the button-click action prompts (#1571/#1572). Button handling
+ * lives on the PrimaryNode side — this CLI is a one-shot *client*, exactly like
+ * `send_text`, NOT the IPC server / button handler.
  *
  * Output contract — exactly ONE JSON object on stdout (see spec §2.2):
  *   success: { ok: true,  command: "send_text", chatId, result, durationMs }
@@ -42,13 +43,18 @@
  * redirects stdout → stderr for the duration of the IPC call to keep the result
  * object the only thing on stdout.
  *
+ * Part 4 (send_file) — same pattern, reusing `send_file` from
+ * `@disclaude/mcp-server` (uploads via IPC to the PrimaryNode). Relative paths
+ * are resolved against the configured workspace dir by the first-party impl;
+ * file existence is NOT pre-validated here for that reason.
+ *
  * Deferred (later parts of #4459) — out of scope here:
- *   • the remaining channel tool (send_card) — it follows the same pattern
- *     as a subcommand here.
+ *   • the S2 external-MCP-loader removal and live end-to-end delivery
+ *     verification (tracked on the parent issue).
  *   • live end-to-end parity verification against the MCP tool (requires a
- *     running PrimaryNode + Feishu credentials); this part verifies the CLI
- *     command surface, output contract, validation, and graceful-degradation
- *     paths only — mirroring how #4464 part 1 deferred live-browser parity.
+ *     running PrimaryNode + Feishu credentials); this CLI verifies the command
+ *     surface, output contract, validation, and graceful-degradation paths
+ *     only — mirroring how #4464 part 1 deferred live-browser parity.
  *   • per-chat capability gating parity (the MCP layer gates on
  *     `supportedMcpTools`; a CLI is invoked at the agent's discretion) — see
  *     README §Parity.
@@ -58,9 +64,10 @@
  *   node skills/channel/cli.mjs send_text --chat oc_xxx --text "Hello"
  *   echo "long body" | node skills/channel/cli.mjs send_text --chat oc_xxx
  *   node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
+ *   node skills/channel/cli.mjs send_card --chat oc_xxx --card-file ./card.json
  *   node skills/channel/cli.mjs push_to_agent --chat oc_xxx --message "Summarize the thread"
  *
- * Parts 3 + 4 + 6 + 7 of #4459 — does not auto-close the parent issue.
+ * Parts 3–7 of #4459 — does not auto-close the parent issue.
  */
 
 import { performance } from "node:perf_hooks";
@@ -78,11 +85,13 @@ Usage:
 Commands:
   send_text        Send a plain text message to a chat (part 3).
   send_file        Send a file to a chat (part 4).
+  send_card        Send a display-only Feishu card (part 5). GFM tables in
+                   markdown elements are auto-converted to column_set; local
+                   image paths are auto-uploaded — feature parity with the MCP
+                   tool.
   push_to_agent    Push an instruction to the chat agent for a chat, creating
                    the agent lazily if needed (part 6).
   send_interactive Send an interactive card with clickable buttons (part 7).
-                   The remaining channel tool — send_card — is deferred to a
-                   later part of #4459.
   help             Show this help message.
 
 send_text options:
@@ -116,6 +125,13 @@ send_file options:
   --parent <id>        Optional parent message ID (thread reply).
   --help, -h           Show this help message.
 
+send_card options:
+  --chat <id>          Target chat ID (e.g. oc_xxx). Required.
+  --card <json>        Card JSON object. Required unless --card-file or stdin is used.
+  --card-file <path>   Read card JSON from a file (use "-" for stdin explicitly).
+  --parent <id>        Optional parent message ID (thread reply).
+  --help, -h           Show this help message.
+
 push_to_agent options:
   --chat <id>             Target chat ID (e.g. oc_xxx). Required.
   --message <string>      Instruction text to push. Required unless --message-file
@@ -126,13 +142,14 @@ push_to_agent options:
 Output:
   Exactly one JSON object on stdout (exit 0 on success, 1 on failure):
     {"ok":true,"command":"send_text","chatId":"oc_xxx","result":"...","durationMs":12}
-    {"ok":false,"command":"send_text","error":"...","hint":"..."}
+    {"ok":true,"command":"send_card","chatId":"oc_xxx","result":"...","durationMs":42}
+    {"ok":false,"command":"send_card","error":"...","hint":"..."}
     {"ok":true,"command":"push_to_agent","chatId":"oc_xxx","result":"...","durationMs":12}
 
 Runtime:
-  Reuses send_text from @disclaude/mcp-server, which needs a running disclaude
-  PrimaryNode (IPC) and Feishu credentials. Run inside a disclaude workspace
-  where the packages are built.
+  Reuses send_text / send_file / send_card (and card preprocessing helpers) from
+  @disclaude/mcp-server, which needs a running disclaude PrimaryNode (IPC) and
+  Feishu credentials. Run inside a disclaude workspace where the packages are built.
 
 Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text "Hello, world!"
@@ -144,16 +161,20 @@ Examples:
   node skills/channel/cli.mjs send_file --chat oc_abc --file ./log.txt --parent om_parent
   node skills/channel/cli.mjs push_to_agent --chat oc_abc --message "Summarize unread messages"
   echo "long instruction" | node skills/channel/cli.mjs push_to_agent --chat oc_abc
-  node skills/channel/cli.mjs send_interactive --chat oc_abc \\
-    --question "Which option do you prefer?" \\
+  node skills/channel/cli.mjs send_card --chat oc_abc --card-file ./card.json
+  echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \\
+    | node skills/channel/cli.mjs send_card --chat oc_abc
+
+  node skills/channel/cli.mjs send_interactive --chat oc_abc \
+    --question "Which option do you prefer?" \
     --options '[{"text":"Approve","value":"approve","type":"primary"},
-                {"text":"Reject","value":"reject","type":"danger"}]' \\
+                {"text":"Reject","value":"reject","type":"danger"}]' \
     --title "Code Review"
-  echo "Deploy to prod?" | node skills/channel/cli.mjs send_interactive --chat oc_abc \\
-    --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \\
+  echo "Deploy to prod?" | node skills/channel/cli.mjs send_interactive --chat oc_abc \
+    --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \
     --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
 
-Version ${VERSION} — parts 3, 4, 6 + 7 of #4459. This Skill does not auto-close the parent issue.`;
+Version ${VERSION} — parts 3–7 of #4459. This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
@@ -181,6 +202,25 @@ function emitFail(command, error, hint) {
   const body = { ok: false, command, error };
   if (hint) body.hint = hint;
   process.stdout.write(JSON.stringify(body) + "\n");
+}
+
+/**
+ * Exit with `code`, tolerating pino's process-exit teardown artifact.
+ *
+ * The `@disclaude/mcp-server` pino loggers register a process `onExit` handler
+ * (via on-exit-leak-free) that calls `SonicBoom.flushSync`. When a logger was
+ * created (module imported) but never written to — e.g. send_card rejects an
+ * invalid card BEFORE send_card logs its first line — the sonic-boom stream is
+ * "not ready" and flushSync throws during `process.exit`. The result JSON has
+ * already been emitted by then, so we swallow this teardown artifact and force
+ * the exit code rather than letting it surface as a duplicate crash JSON.
+ */
+function exitWithCode(code) {
+  try {
+    process.exit(code);
+  } catch {
+    process.exitCode = code;
+  }
 }
 
 /**
@@ -638,6 +678,197 @@ async function cmdSendFile(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// send_card command
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a card JSON object from --card, --card-file, or piped stdin (mirrors
+ * how cmdSendText resolves text). Inline --card for small cards; --card-file
+ * (or "-") / stdin for larger card JSON, per spec §2.1 (never require the agent
+ * to embed multi-KB inline). All failures here are cheap and pre-import.
+ *
+ * Returns { card } on success, or { error, hint? } on failure.
+ */
+function resolveCardJson(args) {
+  let raw;
+  if (typeof args.card === "string") {
+    raw = args.card;
+  } else if (typeof args["card-file"] === "string") {
+    const file = args["card-file"];
+    try {
+      raw = file === "-" ? readStdinSync() : readFileSync(file, "utf8");
+    } catch (err) {
+      return { error: `Cannot read --card-file ${file}: ${err.message}` };
+    }
+  } else if (!process.stdin.isTTY) {
+    // isTTY is `undefined` (not false) when stdin is a pipe/redirect.
+    raw = readStdinSync();
+  }
+
+  if (!raw || raw.length === 0) {
+    return {
+      error: "Missing card content",
+      hint: "pass --card <json>, --card-file <path>, or pipe card JSON on stdin",
+    };
+  }
+
+  let card;
+  try {
+    card = JSON.parse(raw);
+  } catch (err) {
+    return { error: `Invalid card JSON: ${err.message}` };
+  }
+
+  // Mirror the channel-mcp entry handler's first guard: a Feishu card is a
+  // plain object, never an array or scalar.
+  if (!card || typeof card !== "object" || Array.isArray(card)) {
+    return {
+      error: `Invalid card: must be an object, got ${Array.isArray(card) ? "array" : typeof card}`,
+    };
+  }
+
+  return { card };
+}
+
+async function cmdSendCard(argv) {
+  const args = parseArgs(argv);
+  const start = performance.now();
+
+  // --- validate (before any import, so failures are cheap and deterministic) ---
+  const chatId = args.chat;
+  if (!chatId || typeof chatId !== "string") {
+    emitFail("send_card", "Missing required option --chat <id>", "pass --chat oc_xxx");
+    return 1;
+  }
+
+  const resolved = resolveCardJson(args);
+  if (resolved.error) {
+    emitFail("send_card", resolved.error, resolved.hint);
+    return 1;
+  }
+  const card = resolved.card;
+  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+
+  // --- execute: replicate the channel-mcp send_card handler pipeline so the
+  //     CLI reaches feature parity with the inline MCP tool — GFM-table →
+  //     column_set conversion (#2340) and local-image auto-upload (#2951) live
+  //     in the entry handler, not in the first-party send_card fn, so we apply
+  //     them here. stdout is redirected → stderr for the import + call so pino
+  //     logger noise stays off stdout. ---
+  let mod;
+  try {
+    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+  } catch (err) {
+    emitFail(
+      "send_card",
+      `Failed to load @disclaude/mcp-server: ${err.message}`,
+      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_card from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  const {
+    send_card,
+    isValidFeishuCard,
+    getCardValidationError,
+    getChatIdValidationError,
+    transformCardTables,
+    resolveCardImages,
+    detectMarkdownTableWarnings,
+  } = mod;
+
+  if (typeof send_card !== "function") {
+    emitFail("send_card", "@disclaude/mcp-server does not export send_card (unexpected build)");
+    return 1;
+  }
+  if (
+    typeof isValidFeishuCard !== "function" ||
+    typeof getCardValidationError !== "function" ||
+    typeof getChatIdValidationError !== "function" ||
+    typeof transformCardTables !== "function" ||
+    typeof resolveCardImages !== "function" ||
+    typeof detectMarkdownTableWarnings !== "function"
+  ) {
+    emitFail(
+      "send_card",
+      "@disclaude/mcp-server is missing card preprocessing exports (unexpected build)",
+      "run npm run build; the CLI reuses card helpers exported from @disclaude/mcp-server"
+    );
+    return 1;
+  }
+
+  // Card-structure + chatId-format validation (mirrors the handler pre-checks,
+  // before any transform / upload / IPC).
+  if (!isValidFeishuCard(card)) {
+    emitFail("send_card", `Invalid card structure: ${getCardValidationError(card)}`);
+    return 1;
+  }
+  const chatIdError = getChatIdValidationError(chatId);
+  if (chatIdError) {
+    emitFail("send_card", `Invalid chatId: ${chatIdError}`);
+    return 1;
+  }
+
+  let result;
+  let message;
+  try {
+    // #2340: GFM tables in markdown elements → column_set.
+    let processedCard = transformCardTables(card);
+    // #2951: auto-upload local image paths → Feishu image_keys (a no-op clone
+    // when the card has no local images — no IPC, no creds needed for the walk).
+    const imageResult = await resolveCardImages(processedCard);
+    processedCard = imageResult.card;
+
+    result = await withStdoutToStderr(() =>
+      send_card({ card: processedCard, chatId, parentMessageId })
+    );
+
+    // #2340 / #2951: annotate the success message exactly like the handler.
+    const tableWarnings = detectMarkdownTableWarnings(card);
+    message = result && result.message;
+    if (result && result.success) {
+      if (tableWarnings.length > 0) {
+        message = `${result.message}\n\nℹ️ Auto-converted ${tableWarnings.length === 1 ? "a GFM table" : `${tableWarnings.length} GFM tables`} to column_set layout. The table renders correctly now.`;
+        if (imageResult.uploadedCount > 0) {
+          message += `\n🖼️ Auto-uploaded ${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? "image" : "images"}.`;
+        }
+      } else if (imageResult.uploadedCount > 0) {
+        message = `${result.message} (${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? "image" : "images"} auto-uploaded)`;
+      } else if (imageResult.failedCount > 0) {
+        message = `${result.message} (⚠️ ${imageResult.failedCount} ${imageResult.failedCount === 1 ? "image" : "images"} failed to upload)`;
+      }
+    }
+  } catch (err) {
+    emitFail(
+      "send_card",
+      `Card send failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return 1;
+  }
+
+  const durationMs = Math.round(performance.now() - start);
+
+  if (result && result.success) {
+    emitOk({
+      command: "send_card",
+      chatId,
+      result: message ?? "sent",
+      durationMs,
+    });
+    return 0;
+  }
+
+  emitFail(
+    "send_card",
+    (result && (result.error || result.message)) || "send_card returned without success",
+    result && /IPC|PrimaryNode/i.test(result.message || "")
+      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
+      : undefined
+  );
+  return 1;
+}
+
+// ---------------------------------------------------------------------------
 // push_to_agent command (part 6 of #4459)
 //
 // Mirrors cmdSendText: push_to_agent is a simple { chatId, message } send whose
@@ -760,6 +991,10 @@ async function main(argv) {
     return cmdSendFile(argv.slice(1));
   }
 
+  if (subcommand === "send_card") {
+    return cmdSendCard(argv.slice(1));
+  }
+
   if (subcommand === "push_to_agent") {
     return cmdPushToAgent(argv.slice(1));
   }
@@ -770,11 +1005,12 @@ async function main(argv) {
 }
 
 main(process.argv.slice(2))
-  .then((code) => process.exit(code))
+  .then((code) => exitWithCode(code))
   .catch((err) => {
     // Last-resort guard: never let an unexpected error write a stack trace to
-    // stdout. Emit a single failure JSON instead.
+    // stdout. The emit* no-op guard above keeps this to exactly one JSON line
+    // even if a pino teardown throw lands here after a valid result.
     process.stderr.write(`${COMMAND} CLI crashed: ${err.stack || err}\n`);
     emitFail("channel", `CLI crashed: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    exitWithCode(1);
   });
