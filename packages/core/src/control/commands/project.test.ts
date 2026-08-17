@@ -69,7 +69,7 @@ function createTestContext(overrides?: Partial<ControlHandlerContext>): ControlH
 function makeCommand(
   chatId: string,
   subcommand: string,
-  data?: Record<string, unknown>,
+  data?: Record<string, unknown>
 ): ControlCommand<'project'> {
   return {
     type: 'project',
@@ -81,7 +81,7 @@ function makeCommand(
 /** Resolve the possibly-async handler result */
 async function invoke(
   cmd: ControlCommand<'project'>,
-  ctx: ControlHandlerContext,
+  ctx: ControlHandlerContext
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   return await handleProject(cmd, ctx);
 }
@@ -134,6 +134,37 @@ describe('handleProject', () => {
       expect(result.message).toContain('my-project');
     });
 
+    it('should warn when the bound directory does not exist (Issue #4448)', async () => {
+      const ctx = createTestContext();
+      const workspaceDir = ctx.projectManager!.getWorkspaceDir();
+      // Bind to a directory that does NOT exist on disk
+      ctx.projectManager!.use('chat-1', '/nonexistent/project-dir-4448');
+
+      const result = await invoke(makeCommand('chat-1', 'info'), ctx);
+
+      // The command ran; the warning is delivered via `message` (the chat
+      // command router only relays `message`, never `error`).
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('绑定目录不存在');
+      expect(result.message).toContain('/nonexistent/project-dir-4448');
+      // Surface the workspace fallback so the mismatch is visible
+      expect(result.message).toContain(workspaceDir);
+      expect(result.message).toContain('回退');
+    });
+
+    it('should show effective cwd confirmation when bound dir exists', async () => {
+      const ctx = createTestContext();
+      const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+      ctx.projectManager!.use('chat-1', projectDir);
+
+      const result = await invoke(makeCommand('chat-1', 'info'), ctx);
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('实际运行');
+      expect(result.message).toContain(projectDir);
+    });
+
     it('should include state summary when project state exists', async () => {
       const ctx = createTestContext();
       const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
@@ -143,18 +174,21 @@ describe('handleProject', () => {
       // Create a project state file
       const stateDir = join(projectDir, '.disclaude');
       mkdirSync(stateDir, { recursive: true });
-      writeFileSync(join(stateDir, 'project-state.json'), JSON.stringify({
-        version: 1,
-        projectKey: 'test/repo',
-        lastActive: '2026-05-10T10:00:00Z',
-        sync: { issues: '2026-05-10T09:00:00Z' },
-        issues: {
-          '42': { title: 'Bug', state: 'open', triageStatus: 'triaged', labels: ['bug'] },
-        },
-        prs: {
-          '15': { title: 'Fix', reviewStatus: 'pending' },
-        },
-      }));
+      writeFileSync(
+        join(stateDir, 'project-state.json'),
+        JSON.stringify({
+          version: 1,
+          projectKey: 'test/repo',
+          lastActive: '2026-05-10T10:00:00Z',
+          sync: { issues: '2026-05-10T09:00:00Z' },
+          issues: {
+            '42': { title: 'Bug', state: 'open', triageStatus: 'triaged', labels: ['bug'] },
+          },
+          prs: {
+            '15': { title: 'Fix', reviewStatus: 'pending' },
+          },
+        })
+      );
 
       const result = await invoke(makeCommand('chat-1', 'info'), ctx);
 
@@ -179,7 +213,9 @@ describe('handleProject', () => {
       const resetCalls: string[] = [];
       const ctx = createTestContext({
         agentPool: {
-          reset: (chatId: string) => { resetCalls.push(chatId); },
+          reset: (chatId: string) => {
+            resetCalls.push(chatId);
+          },
           stop: () => false,
         },
       });
@@ -187,10 +223,7 @@ describe('handleProject', () => {
       const projectDir = join(ctx.projectManager!.getWorkspaceDir(), 'my-project');
       mkdirSync(projectDir, { recursive: true });
 
-      const result = await invoke(
-        makeCommand('chat-1', 'use', { workingDir: projectDir }),
-        ctx,
-      );
+      const result = await invoke(makeCommand('chat-1', 'use', { workingDir: projectDir }), ctx);
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('my-project');
@@ -205,7 +238,7 @@ describe('handleProject', () => {
 
       const result = await invoke(
         makeCommand('chat-1', 'use', { workingDir: 'projects/my-app' }),
-        ctx,
+        ctx
       );
 
       expect(result.success).toBe(true);
@@ -224,7 +257,7 @@ describe('handleProject', () => {
       const ctx = createTestContext();
       const result = await invoke(
         makeCommand('chat-1', 'use', { workingDir: '../etc/passwd' }),
-        ctx,
+        ctx
       );
 
       expect(result.success).toBe(false);
@@ -239,10 +272,7 @@ describe('handleProject', () => {
       // After Issue #3529: data is normalized before reaching the handler.
       // message-handler sends { args: ['use', 'my-project'] },
       // normalizeCommandData converts to { subcommand: 'use', workingDir: 'my-project' }
-      const result = await invoke(
-        makeCommand('chat-1', 'use', { workingDir: 'my-project' }),
-        ctx,
-      );
+      const result = await invoke(makeCommand('chat-1', 'use', { workingDir: 'my-project' }), ctx);
 
       expect(result.success).toBe(true);
       expect(result.message).toContain('my-project');
@@ -256,7 +286,7 @@ describe('handleProject', () => {
 
       const result = await invoke(
         makeCommand('chat-1', 'use', { workingDir: 'projects/my-app' }),
-        ctx,
+        ctx
       );
 
       expect(result.success).toBe(true);
@@ -269,7 +299,9 @@ describe('handleProject', () => {
       const resetCalls: string[] = [];
       const ctx = createTestContext({
         agentPool: {
-          reset: (chatId: string) => { resetCalls.push(chatId); },
+          reset: (chatId: string) => {
+            resetCalls.push(chatId);
+          },
           stop: () => false,
         },
       });

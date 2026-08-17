@@ -11,11 +11,19 @@
  * @see Issue #1916 (parent — unified ProjectContext system)
  */
 
-import { writeFileSync, renameSync, unlinkSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import {
+  writeFileSync,
+  renameSync,
+  unlinkSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+} from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { createLogger } from '../utils/logger.js';
 import type {
   CwdProvider,
+  CwdResolution,
   ProjectContextConfig,
   ProjectManagerOptions,
   ProjectResult,
@@ -203,32 +211,65 @@ export class ProjectManager {
   // ───────────────────────────────────────────
 
   /**
+   * Resolve the effective cwd for a chat session, structured so callers can
+   * tell *why* it differs from the bound target.
+   *
+   * `createCwdProvider` only returns the cwd (or `undefined`), so a
+   * bound-but-missing directory was indistinguishable from "unbound" — the
+   * silent fallback to workspace went unnoticed (Issue #4448). `resolveCwd`
+   * exposes the bound target, the effective cwd, and the reason, so callers
+   * like `/project info` (and future user-visible warnings) can surface the
+   * mismatch instead of hiding behind a single `undefined`.
+   *
+   * Issue #3977: still validates that the bound directory exists; the only
+   * change is that the outcome is now introspectable.
+   *
+   * @returns CwdResolution with effective cwd + reason
+   */
+  resolveCwd(chatId: string): CwdResolution {
+    const active = this.getActive(chatId);
+    // default → unbound; SDK falls back to getWorkspaceDir()
+    if (active.name === 'default') {
+      return {
+        effectiveCwd: undefined,
+        boundWorkingDir: undefined,
+        reason: 'unbound',
+      };
+    }
+    // Issue #3977: validate the bound directory exists before trusting it
+    if (!existsSync(active.workingDir)) {
+      return {
+        effectiveCwd: undefined,
+        boundWorkingDir: active.workingDir,
+        reason: 'bound-missing',
+      };
+    }
+    return {
+      effectiveCwd: active.workingDir,
+      boundWorkingDir: active.workingDir,
+      reason: 'bound',
+    };
+  }
+
+  /**
    * Create a CwdProvider closure bound to this ProjectManager.
    *
-   * Injected into ChatAgent for dynamic cwd resolution.
-   * Validates that the bound directory exists before returning it;
-   * returns undefined (fallback to workspace) if the directory is missing.
-   * Issue #3977: Prevents silent spawn failure when project binding
-   * directory no longer exists (e.g., after container restart).
+   * Injected into ChatAgent for dynamic cwd resolution. Delegates to
+   * `resolveCwd()` so the reason logic lives in one place; preserves the
+   * Issue #3977 `logger.warn` on the bound-but-missing fallback.
    *
    * @returns CwdProvider function
    */
   createCwdProvider(): CwdProvider {
     return (chatId: string): string | undefined => {
-      const active = this.getActive(chatId);
-      // Return undefined for default → SDK falls back to getWorkspaceDir()
-      if (active.name === 'default') {
-        return undefined;
-      }
-      // Issue #3977: Validate directory exists before returning
-      if (!existsSync(active.workingDir)) {
+      const resolution = this.resolveCwd(chatId);
+      if (resolution.reason === 'bound-missing') {
         logger.warn(
-          { chatId, workingDir: active.workingDir },
-          'Bound project directory does not exist, falling back to workspace',
+          { chatId, workingDir: resolution.boundWorkingDir },
+          'Bound project directory does not exist, falling back to workspace'
         );
-        return undefined;
       }
-      return active.workingDir;
+      return resolution.effectiveCwd;
     };
   }
 
