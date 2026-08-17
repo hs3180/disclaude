@@ -227,9 +227,34 @@ Choose the delivery format based on context:
 |--------|-------------|-----|
 | **Feishu doc** | Long reports (>500 words), user may want to share/edit | Create doc via `lark-cli docs +create`, paste rendered Markdown |
 | **Group message card** | Short summaries, Executive Summary format | Send as structured card via `send_card` |
-| **Markdown file** | Research loop output, archival | Write to `STATE.md` or `RESEARCH.md` in the loop workdir |
+| **Markdown file** | Multi-step research output, archival | Write to `STATE.md` or `RESEARCH.md` in the research workdir |
 
-For async research (loop execution), deliver via Feishu doc and post a summary card in both the research group and the source chat.
+For scheduled-task-driven research, deliver via Feishu doc and post a summary card in both the research group and the source chat.
+
+## Research Discipline (Scheduled-Task Driven)
+
+Research runs in **one mode** (Issue #4006): every step is driven the same way — a scheduled task fires (per its `SCHEDULE.md` cron) and routes the step to the chat's persistent agent. Whether the user happens to be at the keyboard for a given step changes nothing: do not wait for them, do not branch behavior on their presence. Treat the guidance below as applying to **every** step.
+
+### Key decision points (where research drifts)
+
+No one is watching each step by default, so catch these explicitly and record the decision in `STATE.md`:
+
+| Decision point | What to check | If uncertain (safe default) |
+|----------------|---------------|-----------------------------------|
+| **Goal clarification** | Does this step still serve the user's original question? | Keep the original goal; note the ambiguity. Do not silently redefine scope. |
+| **Data source selection** | Is the source authoritative, and the one the user asked for? | Prefer the user-specified source; only switch with a recorded reason. |
+| **Analysis direction** | Is the analysis drifting away from the core ask? | Re-anchor to the original question; flag the drift in `STATE.md`. |
+| **Conclusion validity** | Does the conclusion actually answer what was asked? | State explicitly what is answered vs. out-of-scope. |
+
+### Per-step behavior
+
+At the **start of every step**, before doing anything else:
+
+1. **Read the latest state** — re-read `STATE.md` and `RESEARCH.md` from the workdir. Do not rely on memory of a previous step; state files are the source of truth and may have changed since your last turn.
+2. **Check for user feedback** — the user (or the conversation Agent on their behalf) may have written corrections, intent changes, or new constraints into `STATE.md` / `RESEARCH.md` between steps. Detect it and let it adjust this step's direction.
+3. **Carry the thread forward** — write the step's outcome, open questions, and intended next action back into `STATE.md` so the next step picks up cleanly.
+4. **Be decisive, flag uncertainty** — make the most reasonable decision and proceed rather than stalling. Record what you decided and what you are unsure about (`⚠️ uncertain: …`) so the user can correct it later. Do **not** block the whole research on a question the user has not answered yet.
+5. **Deliver incrementally** — write the shared artifact to a Feishu doc and post a summary card in both the research group and the source chat, so the user sees progress whenever they look.
 
 ## Related
 
