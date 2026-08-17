@@ -80,15 +80,16 @@ describe('LoopRunner', () => {
         expect(mockPush).toHaveBeenCalled();
       }, { timeout: 1000 });
 
-      const callCount = mockPush.mock.calls.length;
       runner.stop(loopId);
+      const callCount = mockPush.mock.calls.length;
+      expect(runner.status(loopId)?.state).toBe('stopped');
 
-      // Wait a bit and verify no more calls
-      await new Promise((r) => setTimeout(r, 150));
+      // stop() aborts the loop's AbortSignal synchronously; the runLoop for-loop
+      // breaks at the next iteration boundary and invokes pushCallback no
+      // further. An aborted loop cannot resume, so capping at callCount is a
+      // structural guarantee — not a timing race — and needs no fixed wall-clock
+      // wait (Issue #4394).
       expect(mockPush.mock.calls.length).toBe(callCount);
-
-      const status = runner.status(loopId);
-      expect(status?.state).toBe('stopped');
     });
 
     it('should handle stopping an unknown loop gracefully', () => {
@@ -252,7 +253,20 @@ describe('LoopRunner', () => {
         maxSteps: 100,
         stepIntervalMs: 50,
       });
-      await new Promise((r) => setTimeout(r, 120)); // > cleanupInterval, sweep has fired
+
+      // Sentinel: a fresh finished loop evicted by a later sweep PROVES a sweep
+      // has fired AFTER `running` started, so `running` had its chance to be
+      // pruned yet survived (cleanup only removes non-running loops). Replaces a
+      // fixed 120ms wall-clock wait (Issue #4394).
+      const sentinel = sweeper.start({
+        chatId: 'oc_test',
+        prompt: 'sentinel',
+        maxSteps: 1,
+        stepIntervalMs: 5,
+      });
+      await vi.waitFor(() => {
+        expect(sweeper.status(sentinel.loopId)).toBeNull();
+      }, { timeout: 2000 });
       expect(sweeper.status(running.loopId)?.state).toBe('running');
 
       sweeper.stop(running.loopId);
@@ -277,14 +291,18 @@ describe('LoopRunner', () => {
       await vi.waitFor(() => {
         expect(mockPush).toHaveBeenCalledTimes(5);
       }, { timeout: 2000 });
-      // Let the final timer's removeEventListener flush.
-      await new Promise((r) => setTimeout(r, 20));
 
+      // Each of the 4 inter-step waits removes its abort listener on the timeout
+      // path (loop-runner.ts waitForInterval); the 4th removal completes right
+      // before push 5 is invoked. waitFor the exact count instead of a fixed
+      // 20ms wall-clock wait so the assertion is deterministic (Issue #4394).
       const abortAdds = addSpy.mock.calls.filter(([event]) => event === 'abort').length;
-      const abortRemoves = removeSpy.mock.calls.filter(([event]) => event === 'abort').length;
+      await vi.waitFor(() => {
+        const abortRemoves = removeSpy.mock.calls.filter(([event]) => event === 'abort').length;
+        expect(abortRemoves).toBe(4); // one removed per inter-step wait
+      }, { timeout: 2000 });
 
       expect(abortAdds).toBe(4); // one per inter-step wait
-      expect(abortRemoves).toBe(4); // each removed on its timeout path
 
       addSpy.mockRestore();
       removeSpy.mockRestore();

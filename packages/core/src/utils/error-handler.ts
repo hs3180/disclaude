@@ -289,11 +289,27 @@ function isTransientFor(category: ErrorCategory, message: string): boolean {
     return true;
   }
 
+  // Rate-limit / overload API errors are transient — they clear on backoff.
+  // Issue #4442: `classifyError` already buckets "429" / "rate limit" into
+  // ErrorCategory.API and `isRetryable` already treats them (plus 503/502) as
+  // retryable, but this transient predicate only matched the literal "rate
+  // limit" wording. So a thrown 429 surfacing as "429" / "Too Many Requests" /
+  // "rate_limit_error" (e.g. litellm account-quota 1308 → HTTP 429) was
+  // classified transient=false, and the Claude provider's L1 in-request retry
+  // (provider.ts, which keys off `tagErrorCategory().transient`) silently did
+  // NOT fire — exactly the "0 retries" symptom in #4442. Align this predicate
+  // with classifyError/isRetryable so the existing exponential-backoff retry
+  // actually engages for rate-limit / overload responses.
   return (
     message.includes('timeout') ||
     message.includes('etimedout') ||
     message.includes('econnreset') ||
-    message.includes('rate limit')
+    message.includes('rate limit') ||
+    message.includes('rate_limit') || // rate_limit_error / RateLimitError-ish
+    message.includes('429') || // HTTP 429
+    message.includes('too many requests') || // HTTP 429 reason phrase
+    message.includes('503') || // service unavailable (overloaded)
+    message.includes('502') // bad gateway (transient upstream)
   );
 }
 
