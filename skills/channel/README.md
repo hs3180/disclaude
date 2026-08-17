@@ -1,19 +1,18 @@
 # channel Skill — CLI replacement for `channel-mcp` (#4459)
 
-> **Status (parts 3–5 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
+> **Status (parts 3–5 + 7 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
 > `send_text` (part 3, [#4467](https://github.com/hs3180/disclaude/pull/4467)),
-> `send_file` (part 4, [#4494](https://github.com/hs3180/disclaude/pull/4494)) and
-> `send_card` (part 5) command surfaces + output contracts are implemented. All
-> reuse the first-party implementations from `@disclaude/mcp-server` over IPC;
-> `send_card` additionally replicates the MCP entry handler's card preprocessing
-> (GFM-table conversion, local-image auto-upload) for feature parity. **Live
-> end-to-end parity** against the inline MCP tool is **deferred** (requires a
-> running PrimaryNode + Feishu credentials) — these parts verify the command
-> surface, validation, and graceful-degradation paths, mirroring how
-> [#4464](https://github.com/hs3180/disclaude/pull/4464) part 1 deferred live
-> browser parity. The remaining 2 channel tools (`send_interactive`,
-> `push_to_agent`) are deferred to later parts. This README does **not**
-> auto-close the parent issue.
+> `send_file` (part 4, [#4494](https://github.com/hs3180/disclaude/pull/4494)),
+> `send_card` (part 5), and `send_interactive` (part 7) command surfaces + output
+> contracts are implemented. All reuse the first-party implementations from
+> `@disclaude/mcp-server` over IPC; `send_card` additionally replicates the MCP
+> entry handler's card preprocessing (GFM-table conversion, local-image
+> auto-upload) for feature parity. **Live end-to-end parity** against the inline
+> MCP tool is **deferred** (requires a running PrimaryNode + Feishu credentials) —
+> these parts verify the command surface, validation, and graceful-degradation
+> paths, mirroring how [#4464](https://github.com/hs3180/disclaude/pull/4464) part
+> 1 deferred live browser parity. The remaining channel tool (`push_to_agent`) is
+> deferred to a later part. This README does **not** auto-close the parent issue.
 
 A **CLI Skill** under disclaude's "reduce MCP" direction
 ([#4383](https://github.com/hs3180/disclaude/issues/4383), owner decision
@@ -45,6 +44,19 @@ node skills/channel/cli.mjs send_text --chat oc_xxx --text-file ./msg.md --paren
 node skills/channel/cli.mjs send_text --chat oc_xxx --text "pls review" \
   --mentions '[{"openId":"ou_yyy","name":"owner"}]'
 
+# Send an interactive card with buttons (PrimaryNode builds the card; button
+# clicks are routed back to the agent as prompts)
+node skills/channel/cli.mjs send_interactive --chat oc_xxx \
+  --question "Which option do you prefer?" \
+  --options '[{"text":"Approve","value":"approve","type":"primary"},
+              {"text":"Reject","value":"reject","type":"danger"}]' \
+  --title "Code Review"
+
+# Pipe a longer question on stdin + custom action prompts
+echo "Deploy to prod?" | node skills/channel/cli.mjs send_interactive --chat oc_xxx \
+  --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \
+  --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
+
 # Send a file (relative paths resolve against the workspace dir)
 node skills/channel/cli.mjs send_file --chat oc_xxx --file ./report.pdf
 
@@ -60,10 +72,10 @@ echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
 ```
 
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
-`send_card` (and the card preprocessing helpers) from `@disclaude/mcp-server`,
-which talk to the PrimaryNode over IPC and need Feishu credentials. Run inside a
-disclaude workspace where the packages are built (`npm run build`). No browser or
-extra binaries required.
+`send_card` (and the card preprocessing helpers) / `send_interactive` from
+`@disclaude/mcp-server`, which talk to the PrimaryNode over IPC and need Feishu
+credentials. Run inside a disclaude workspace where the packages are built
+(`npm run build`). No browser or extra binaries required.
 
 ## Commands
 
@@ -71,7 +83,7 @@ extra binaries required.
 |---|---|---|---|
 | `send_text` | — | `--chat <id>` *(req)*, `--text <string>`, `--text-file <path>`, `--parent <id>`, `--mentions <json>` | ✅ part 3 |
 | `send_card` | — | `--chat <id>` *(req)*, `--card <json>`, `--card-file <path>`, `--parent <id>` | ✅ part 5 |
-| `send_interactive` | — | — | ⏳ deferred (#4459 later part) |
+| `send_interactive` | — | `--chat <id>` *(req)*, `--question <string>` *(req)*, `--options <json>` *(req)*, `--title <string>`, `--context <string>`, `--action-prompts <json>`, `--parent <id>` | ✅ part 7 |
 | `send_file` | — | `--chat <id>` *(req)*, `--file <path>` *(req)*, `--parent <id>` | ✅ part 4 |
 | `push_to_agent` | — | — | ⏳ deferred (#4459 later part) |
 | `help` | — | — | ✅ |
@@ -80,7 +92,9 @@ extra binaries required.
 `--text-file -` to read stdin explicitly) for larger bodies; or pipe on stdin
 when no `--text`/`--text-file` is given and stdin is not a TTY. This follows the
 Skill format spec §2.1 rule: never require the agent to embed multi-KB text
-inline.
+inline. `send_interactive` follows the same rule for its `--question`
+(`--question` / `--question-file` / piped stdin); its `--options` is always a
+JSON array flag (structured, not free text).
 
 **Card input** — `--card "<json>"` for small cards; `--card-file <path>` (or
 `--card-file -` to read stdin explicitly) for larger card JSON; or pipe on stdin
@@ -98,11 +112,14 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 ```jsonc
 // success — exit 0
 {"ok":true,"command":"send_text","chatId":"oc_xxx","result":"✅ Text message sent","durationMs":42}
+{"ok":true,"command":"send_interactive","chatId":"oc_xxx","result":"✅ Interactive message sent with 2 action(s)","optionCount":2,"durationMs":58}
 {"ok":true,"command":"send_file","chatId":"oc_xxx","result":"✅ File sent: report.pdf (0.12 MB)","fileName":"report.pdf","fileSize":125952,"durationMs":310}
 {"ok":true,"command":"send_card","chatId":"oc_xxx","result":"✅ Card message sent","durationMs":58}
 
 // failure — exit 1
 {"ok":false,"command":"send_text","error":"Missing required option --chat <id>","hint":"pass --chat oc_xxx"}
+{"ok":false,"command":"send_interactive","error":"options must be a non-empty array"}
+{"ok":false,"command":"send_interactive","error":"Invalid --options JSON: ..."}
 {"ok":false,"command":"send_file","error":"Missing required option --file <path>","hint":"pass --file <path> (relative paths resolve against the workspace dir)"}
 {"ok":false,"command":"send_card","error":"Invalid card JSON: Unexpected token ...","hint":"pass --card <json>, --card-file <path>, or pipe card JSON on stdin"}
 {"ok":false,"command":"send_card","error":"Invalid card structure: ..."}
@@ -111,30 +128,33 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 ```
 
 Failure modes covered: missing/invalid args, unreadable `--text-file` /
-`--card-file`, malformed `--mentions` / `--card` JSON, non-object card, invalid
-card structure, invalid chatId format, `@disclaude/mcp-server` not
-built/resolvable, IPC unreachable, and IPC send failure (the underlying
-`send_text` / `send_file` / `send_card` map these to `SendMessageResult
-{ success:false, error, message }`).
+`--card-file` / `--question-file`, malformed `--mentions` / `--card` /
+`--options` / `--action-prompts` JSON, non-object card, invalid card structure,
+invalid chatId format, invalid option structure (empty `text`/`value`, bad
+`type`), `@disclaude/mcp-server` not built/resolvable, IPC unreachable, and IPC
+send failure (the underlying first-party tools map these to `SendMessageResult` /
+`SendInteractiveResult` / `{ success:false, error, message }` results).
 
 ## Artifacts
 
-None. `send_text` is side-effect-free on the local filesystem — it sends a
-message over IPC and returns. `send_file` **reads** the local file at `--file`
-(uploaded over IPC) and writes nothing. No files are written by either command.
+None. `send_text` and `send_interactive` are side-effect-free on the local
+filesystem — they send a message over IPC and return. `send_file` **reads** the
+local file at `--file` (uploaded over IPC) and writes nothing. No files are
+written by any command.
 
 ## Runtime
 
 | Dependency | Source | How to satisfy |
 |---|---|---|
-| `@disclaude/mcp-server` (exports `send_text`, `send_file`, `send_card`, + card helpers) | workspace package | build the monorepo (`npm run build`) |
+| `@disclaude/mcp-server` (exports `send_text`, `send_file`, `send_card`, `send_interactive`, + card helpers) | workspace package | build the monorepo (`npm run build`) |
 | disclaude PrimaryNode (IPC) | runtime | run disclaude; the CLI reaches `getIpcClient()` over the Unix/REST IPC transport |
-| Feishu credentials | `disclaude.config.yaml` / env | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` (validated inside `send_text` / `send_file` / `send_card`) |
+| Feishu credentials | `disclaude.config.yaml` / env | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` (validated inside `send_text` / `send_file` / `send_card` / `send_interactive`) |
 
 If `@disclaude/mcp-server` cannot be imported, the CLI emits a failure JSON with
 a build hint rather than crashing (analogous to #4464's missing-`playwright`
 hint). If the PrimaryNode / IPC is unavailable, `send_text` / `send_file` /
-`send_card` surface that and the CLI relays it as a failure JSON.
+`send_card` / `send_interactive` surface that and the CLI relays it as a
+failure JSON.
 
 ## Parity / migration notes
 
@@ -148,6 +168,17 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | `send_file` parameters | `filePath`, `chatId`, `parentMessageId` | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool) | none |
 | Capability gating | MCP layer gates on `supportedMcpTools` per chat | **not** gated here — the agent invokes the CLI at its own discretion | see open item below |
 | Logging | pino → stdout (in-process, acceptable) | pino → **stderr** for the call's duration (stdout reserved for the result JSON) | none functionally |
+
+`send_interactive` (part 7) parity is the same shape, with one extra note worth
+recording explicitly: the first-party `send_interactive_message` is a **pure
+forwarding client** — it passes the raw `question`/`options`/`title`/`context`/
+`actionPrompts` to the PrimaryNode via the `sendInteractive` IPC, and the
+**PrimaryNode** builds the card, sends it, and registers the button-click action
+prompts (`packages/mcp-server/src/tools/interactive-message.ts`, #1571/#1572).
+Button handling therefore lives on the PrimaryNode side and is **not** part of
+this one-shot CLI — the CLI never starts an IPC server or owns a button handler,
+exactly like `send_text`. Parameters map 1:1 via `--chat`/`--question`/
+`--question-file`/`--options`/`--title`/`--context`/`--action-prompts`/`--parent`.
 
 **Open item deferred to a later part / owner input (not resolved here):** the MCP
 `channel-mcp` surface is gated per-chat on `supportedMcpTools`
@@ -176,7 +207,7 @@ exported from `@disclaude/mcp-server` (`transformCardTables`,
 | Card / chatId validation | `isValidFeishuCard`, `getChatIdValidationError` in handler | identical checks, same helpers, before any IPC | none |
 | Parameters | `card`, `chatId`, `parentMessageId` | identical, via `--chat`/`--card`/`--card-file`/`--parent` | card gains `--card-file`/stdin for large bodies |
 
-**Out of scope for this part:** `send_interactive`, `push_to_agent` (follow the
-same subcommand pattern here); live end-to-end delivery verification (needs
-PrimaryNode + creds); the S2 external-MCP-loader removal (#4459 scope 4, gated
-on the Playwright migration #4460).
+**Out of scope for these parts:** `push_to_agent` (follows the same subcommand
+pattern here); live end-to-end delivery verification (needs PrimaryNode + creds);
+the S2 external-MCP-loader removal (#4459 scope 4, gated on the Playwright
+migration #4460).

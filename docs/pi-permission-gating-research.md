@@ -233,6 +233,62 @@ With this data point, the "programmatic pre-tool-call deny callback" paradigm no
 
 ---
 
+## Part 5 addendum (2026-08-14): C-Q3.2 + C-Q3.3 — OpenAI Codex CLI & Aider permission models (sourced)
+
+> **Scope:** advances C-Q3 from 1/4 vendors (Claude Agent SDK, part 4) to **3/4** by adding the two CLI-style agents most analogous to disclaude ("in-process TS agent that must gate bash + browser"): **OpenAI Codex CLI** (C-Q3.2) and **Aider** (C-Q3.3). **Cursor is deferred** (see "What part 5 does not do"). No final C1/C2/C3 recommendation is made — this part only gathers cross-vendor evidence and updates the preliminary lean, exactly as parts 3–4 did. **Every claim is sourced**: Codex claims cite either the `openai/codex` Rust source (`codex-rs/protocol/src/protocol.rs`, primary) or OpenAI developer docs; Aider claims cite `aider.chat` docs. Unlike parts 1–4 (repo + installed tarball, no web), this part necessarily uses external web sources — all reachable & fetched 2026-08-14 (see Evidence provenance); nothing is asserted from memory.
+
+### C-Q3.2 — OpenAI Codex CLI: two orthogonal axes (approval policy × sandbox policy)
+
+Codex's defining design choice is that **when to prompt** and **what the OS allows** are **two independent config axes**, composable:
+
+1. **`approval_policy`** (`AskForApproval`, `openai/codex` `codex-rs/protocol/src/protocol.rs:912` at commit `9341b383` (2026-08-13, the file state fetched 2026-08-14; the file has since drifted — always resolve line refs against the pinned commit), kebab-case serialized) — controls when Codex pauses to ask before executing a command:
+   - `untrusted` → `UnlessTrusted` (`protocol.rs:918`): only commands `is_safe_command()` deems safe **and read-only** auto-run; everything else prompts.
+   - `on-request` → `OnRequest` (`#[default]`, `protocol.rs:923`): the model decides when to ask; `on-failure` is a serde alias.
+   - `granular` → `Granular(GranularApprovalConfig)` (`protocol.rs:931`, struct at `:939`): per-category booleans — `sandbox_approval`, `rules`, `skill_approval`, `request_permissions`, `mcp_elicitations` — where `false` **auto-rejects** that category instead of prompting.
+   - `never` (`protocol.rs:935`): never prompt; command failures return straight to the model.
+   - Canonical config key (verbatim): `approval_policy: untrusted | on-request | never | { granular = { sandbox_approval = bool, rules = bool, mcp_elicitations = bool, request_permissions = bool, skill_approval = bool } }` — "Controls when Codex pauses for approval before executing commands." ([developers.openai.com/codex/config-reference](https://developers.openai.com/codex/config-reference)).
+
+2. **`sandbox_mode`** (`SandboxPolicy`, `protocol.rs:999`, tagged union) — OS-level **filesystem + network** restriction *during command execution*:
+   - `read-only` (`ReadOnly`, `protocol.rs:1006`): read-only FS; outbound **network off by default** (`network_access: bool`, default `false`).
+   - `workspace-write` (`WorkspaceWrite`, `protocol.rs:1025`): read-only **plus** write to cwd/workspace (+ extra `writable_roots`) with `exclude_tmpdir_env_var` / `exclude_slash_tmp` knobs.
+   - `external-sandbox` (`ExternalSandbox`, `protocol.rs:1016`): the process is *already* sandboxed by an outer harness; Codex honors only the network setting.
+   - `danger-full-access` (`DangerFullAccess`, `protocol.rs:1002`): no restrictions.
+   - Canonical config key (verbatim): `sandbox_mode: read-only | workspace-write | danger-full-access` — "Sandbox policy for filesystem and network access during command execution." ([config-reference](https://developers.openai.com/codex/config-reference)); built-in permission profiles `:read-only` / `:workspace` / `:danger-full-access`.
+   - **Privilege-escalation hardening**: writable roots carry an explicit list of subpaths kept **read-only even under a writable root** — `.codex`, `.git`, **notably `.git/hooks`** — i.e. the very paths that could escalate the agent's privileges are pinned read-only (`protocol.rs:1052`, `WritableRoot` `:1055`). [Sandbox and approvals](https://developers.openai.com/codex/security) is the canonical doc pointer.
+
+**Takeaway.** Codex's answer to "gate the agent" is **defense-in-depth on two independent planes**: an OS-enforced FS/network sandbox (the *backstop*) **and** a per-command approval policy (the *front gate*), with `untrusted`/`read-only` as a safe pairing and `never`/`danger-full-access` as full autonomy. The two are orthogonal — e.g. `on-request` + `workspace-write` prompts only for actions outside the workspace. This is paradigm **(d) OS-level sandbox** (Codex) **plus** paradigm **(a) per-call approval** on the same axis pi's `beforeToolCall` (C-Q2.5) and the Claude SDK's `canUseTool` (part 4) occupy.
+
+### C-Q3.3 — Aider: no gate, no sandbox — version-control-as-safety-net
+
+Aider is the structural opposite of Codex: it has **no OS sandbox and no command-approval gate at all**. Its safety model is *recoverability + opt-in edit control*, not *prevention*:
+
+1. **Every edit is auto-committed** with a descriptive message, so any change is one `/undo` away — "Whenever aider edits a file, it commits those changes with a descriptive commit message… easy to undo or review aider's changes." ([aider.chat/docs/git](https://aider.chat/docs/git.html)). `--no-auto-commits` turns this off.
+2. **Dirty-file protection**: before editing a file that already has uncommitted changes, Aider *first* commits the preexisting ("dirty") changes separately, so the user's in-flight work is never tangled with the model's edit; toggle with `--no-dirty-commits`. (Same source.)
+3. **Mode-based edit control** (in-session, no shell): `/ask` = answer questions **without editing any files**; `/code` = apply edits; `/architect` = enter architect/editor mode using two different models (one proposes, another applies); `/editor` = open an editor to write a prompt; `/chat-mode` = switch chat mode. Commands enumerated at [aider.chat/docs/usage/commands](https://aider.chat/docs/usage/commands.html).
+4. **Shell is explicit, never sandboxed**: `/run <cmd>` executes a shell command and shares its output with the model; `/test` runs the configured test command. There is **no pre-execution approval prompt and no FS/network confinement** — the model never invokes shell autonomously; the user types `/run`.
+
+**Takeaway.** Aider's paradigm is: **(i) git as the undo/safety net** (auto-commit + dirty-file isolation), **(ii) edit-mode gating** (`/ask` denies edits structurally), **(iii) explicit user-initiated shell**. It deliberately does **not** gate or sandbox bash — it removes the model's ability to run shell *autonomously* and makes every file change trivially reversible instead. This is a third distinct paradigm — neither Codex's sandbox+approval nor the pi/Claude-SDK per-call hook — and it is the **least transferable** to disclaude's "model can run bash + drive a browser" model: disclaude *wants* autonomous tool use, which Aider structurally avoids.
+
+### Cross-vendor implication (for the eventual C1/C2/C3 call)
+
+Across the now-**three** non-pi-family vendors benchmarked, three distinct paradigms appear — all **in addition to** the two in-family confirmations (`pi-agent-core` `beforeToolCall` C-Q2.5, `pi-coding-agent` CLI C-Q2.6):
+
+| Vendor | Primary gate paradigm | OS sandbox? | Bash front-gate? |
+|---|---|---|---|
+| Claude Agent SDK (part 4) | programmatic pre-tool-call deny (`canUseTool` / `PreToolUse.permissionDecision`) | no (delegated to embedder) | yes (hook) |
+| OpenAI Codex (part 5) | **two-axis**: approval_policy × sandbox_mode | **yes** (read-only / workspace-write / danger) | yes (approval policy) |
+| Aider (part 5) | git-undo + edit-modes + explicit `/run` | no | **no** (shell is user-initiated only) |
+
+The **per-call pre-tool approval** paradigm now has **two independent non-family confirmations** (Claude SDK `canUseTool`/`PreToolUse`, Codex `approval_policy`); the **OS-sandbox backstop** has one strong non-family confirmation (Codex `sandbox_mode`, with explicit privilege-escalation hardening on `.git/hooks`). This **modestly reinforces the preliminary lean** from parts 2–4: paradigm **(a) a per-call pre-tool hook as the primary gate** (now four data points: pi×2, Claude SDK, Codex), with **(b)/(c) allowlist/arg-policy as the decision that hook consults**, and **(d) an OS-style sandbox as the defense-in-depth backstop** for bash — exactly Codex's two-axis shape. **It does not finalize C1/C2/C3**: Aider shows a viable-but-different "reversibility over prevention" paradigm the owner may still weigh, and the full cost/invasiveness/bypassability scoring (C-Q4) plus Cursor's data point remain open.
+
+### What part 5 does *not* do (honest scope)
+
+- **Cursor is deferred to part 6.** `docs.cursor.com` is a client-rendered Next.js SPA — every path (incl. `/agent/auto-run`, `/llms-full.txt`) returns the same 489 KB shell with no server-side prose, so it cannot be sourced via HTTP the way Codex (`developers.openai.com` + `openai/codex` source) and Aider (`aider.chat`) can. It is also the **least analogous** vendor (GUI IDE agent, not an in-process TS CLI). Sourcing it would require JS rendering (e.g. a headless browser); deferred rather than asserted from memory.
+- **The final C-Q4 cost/invasiveness/bypassability matrix + final C1/C2/C3 recommendation are still not made** (depend on the remaining C-Q3 vendor + an explicit owner call).
+- **No claim about which paradigm disclaude *should* adopt** — only evidence gathering + a preliminary-lean update, consistent with parts 3–4.
+
+---
+
 ## Threat model (disclaude-owned gating)
 
 > ⚠️ **Part 3 (2026-08-08) revises invariants #2 and #3 below** — see the [Part 3 addendum](#part-3-addendum-2026-08-08-mcp-retired--gating-surface-shrinks-to-inline-only) above. The MCP→pi converter (#4417) is closed won't-do; the only tool injection point on the pi path is now the inline-tool adapter (#4387), and the browser surface migrates to a Playwright Skill (#4460). The framing below is retained as the historical part-1/part-2 reasoning.
@@ -280,7 +336,7 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
 - [x] **C-Q1 answered with evidence** (C-Q1.1–C-Q1.5, every claim cites `file:line`).
 - [x] **C-Q2 answered with evidence** — re-verified on **0.83.0** (C-Q2.1–C-Q2.4); **C-Q2.2 corrected in part 2** (pi-agent-core *does* expose a `beforeToolCall` deny hook, C-Q2.5) and **C-Q2.6 adds the pi-coding-agent CLI gating model** (closes deferred #3).
-- [◐] **C-Q3 — industry-paradigm comparison** (Claude Agent SDK permission hooks / OpenAI Codex sandbox / Aider / Cursor) — **partial**: the **Claude Agent SDK** sub-question is answered from the installed tarball (part 4, C-Q3.1 — the SDK's two programmatic embedder-settable gates, `canUseTool` + `PreToolUse` `permissionDecision`, both unused by disclaude). Part 2 added one **ecosystem** data point (pi-coding-agent CLI, C-Q2.6), but that is the same pi family; part 4 adds the first **non-pi-family** vendor. **Codex / Aider / Cursor still web-deferred.**
+- [◐] **C-Q3 — industry-paradigm comparison** (Claude Agent SDK permission hooks / OpenAI Codex sandbox / Aider / Cursor) — **partial (3/4 vendors)**: **Claude Agent SDK** (part 4, C-Q3.1), **OpenAI Codex** sandbox+approval two-axis model (part 5, C-Q3.2, primary Rust source), and **Aider** git-undo/edit-mode model (part 5, C-Q3.3) are answered; plus the pi-family data points (C-Q2.5/C-Q2.6). **Cursor still web-deferred** (SPA-only docs → part 6).
 - [◐] **C-Q4 — candidate-paradigm comparison matrix** — *preliminary*, evidence-based map delivered; **final cost/invasiveness/bypassability scoring + final recommendation deferred to part 2** (depends on C-Q3).
 - [x] **Threat model written** (disclaude sole authority; tool injection point not bypassable). ⚠️ **(part 3)** revised for the 2026-08-07 MCP-removal decision: the injection point is now inline-only (#4387), not the MCP converter (#4417 closed) — see Part 3 addendum.
 - [◐] **Recommendation + #4389 mapping** — preliminary lean + #4389 acceptance map delivered; final C1/C2/C3 selection deferred (depends on C-Q3).
@@ -291,7 +347,7 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 
 ## Deferred to part 2 (honest gaps)
 
-1. **C-Q3 — external/industry benchmarking.** How do OpenAI Codex's sandbox, Aider's yes-no/edit, and Cursor's permission flow actually work, and which is the closest analog for "in-process TS agent that must gate bash + browser"? This needs reading external SDK docs (web) and was **not** attempted here to avoid unsourced claims. **✅ The Claude Agent SDK slice is answered in part 4 (C-Q3.1)** — it was inspectable locally (installed dependency, no web needed); the remaining three vendors stay web-deferred.
+1. **C-Q3 — external/industry benchmarking.** How do OpenAI Codex's sandbox, Aider's yes-no/edit, and Cursor's permission flow actually work, and which is the closest analog for "in-process TS agent that must gate bash + browser"? **✅ Codex (C-Q3.2, part 5) and Aider (C-Q3.3, part 5)** are now answered from canonical external docs + primary source; **✅ Claude Agent SDK** in part 4 (C-Q3.1). **Only Cursor remains web-deferred** — its docs are a client-rendered SPA (no server-side prose), deferred to part 6 rather than asserted unsourced.
 2. **Final C1/C2/C3 recommendation.** Depends on C-Q3; the preliminary lean ((b)+(c) core, (d) backstop) is offered but not final.
 3. **`pi-coding-agent` CLI behavior.** ✅ **Done in part 2** (C-Q2.6): audited `@earendil-works/pi-coding-agent@0.83.0` — project-trust + tool allowlist/denylist + extension `beforeToolCall` bridge + TUI-only confirm; no OS sandbox. It is out of disclaude's in-process scope (disclaude embeds `pi-agent-core`, not the CLI), but it confirms the `beforeToolCall` hook (C-Q2.5) is the surface pi's own tooling builds on.
 4. **Arg-level policy semantics.** ✅ **Answered in part 2**: feasible at the gate layer — `BeforeToolCallContext.args` (`types.d.ts:75-76`) exposes the **schema-validated arguments**, so a `beforeToolCall` gate can inspect a specific bash command / URL, not just the tool name. Whether to *require* arg-level inspection is still a #4389 design choice, but the capability is present.
@@ -305,3 +361,4 @@ The threat model from #4383 §5 / #4389, made concrete by C-Q1+C-Q2:
 - Part 3 (2026-08-08) adds no new code/tarball claims; it records a decision and re-points existing claims to current main. Sources: owner decision comment [hs3180/disclaude#4383 (comment 5208309432)](https://github.com/hs3180/disclaude/issues/4383#issuecomment-5208309432) (2026-08-07); issue states re-verified via the GitHub API on 2026-08-08 — #4417 `closed`/`not_planned`, #4387 open (adapter at `packages/core/src/sdk/providers/pi/inline-tool-adapter.ts:158`), #4386 open (`provider.ts:74` still `NOT_IMPLEMENTED`); #4459 / #4460 open (Skills migration).
 - Part 4 (2026-08-13) inspects the installed `@anthropic-ai/claude-agent-sdk@0.3.177` tarball (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` of a repo install; version pinned at `packages/core/package.json:19`) — `CanUseTool` `:186-230`, `canUseTool` Options field `:1349`, `PermissionResult` `:2075`, `hooks`/`HookEvent`/`HookPermissionDecision` `:1490`/`:821`/`:827`, `PreToolUseHookSpecificOutput.permissionDecision` `:2216-2218`, PreToolUse-bypasses-canUseTool JSDoc `:3758`, `PermissionMode` `:2053`. disclaude-side claims re-verified against current main: `options-adapter.ts:31-60`, `sdk/types.ts:226`, `base-agent.ts:136`, and `grep canUseTool|PreToolUse|hooks packages/core/src/sdk/providers/claude/` → 0 hits.
 - No web sources were used for any part; every claim is traceable to a file:line or a linked GitHub source above.
+- **Part 5 (2026-08-14)** answers C-Q3.2 (OpenAI Codex) + C-Q3.3 (Aider) from **external web sources** (all fetched & HTTP 200 on 2026-08-14) — the first part to use web: primary Rust source `openai/codex` `codex-rs/protocol/src/protocol.rs` at commit `9341b383` (2026-08-13) (`AskForApproval` `:912-935`, `GranularApprovalConfig` `:939`, `SandboxPolicy` `:999-1047`, `.git/hooks` privilege-escalation hardening `:1052` / `WritableRoot` `:1055`); OpenAI developer docs [config-reference](https://developers.openai.com/codex/config-reference) + [sandbox & approvals](https://developers.openai.com/codex/security); Aider canonical docs [aider.chat/docs/git](https://aider.chat/docs/git.html) + [aider.chat/docs/usage/commands](https://aider.chat/docs/usage/commands.html). Enum/config values are quoted **verbatim** from those sources. Cursor deferred: `docs.cursor.com` returns a 489 KB Next.js SPA shell for every path (incl. `/agent/auto-run`, `/llms-full.txt`) — no server-side prose — so it is deferred to part 6 rather than asserted from memory.

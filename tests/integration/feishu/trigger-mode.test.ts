@@ -14,7 +14,7 @@
  * @see Issue #1626 — P3: 被动模式消息过滤
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   UnixSocketIpcServer,
   UnixSocketIpcClient,
@@ -380,11 +380,13 @@ describe('MessageHandler trigger mode filtering via IPC pipeline', () => {
       }),
     );
 
-    // Give IPC a moment to deliver
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Wait deterministically for the IPC transport to deliver the command
+    // response — poll the captured buffer instead of a fixed wall-clock wait
+    // (test-hygiene #4394: real setTimeout waits are host-load-dependent).
+    await vi.waitFor(() => {
+      expect(ipcCapturedMessages.length).toBeGreaterThanOrEqual(1);
+    });
 
-    // The /status command should have triggered sendMessage through IPC
-    expect(ipcCapturedMessages.length).toBeGreaterThanOrEqual(1);
     expect(ipcCapturedMessages[0].chatId).toBe('oc_group_ipc');
   });
 });
