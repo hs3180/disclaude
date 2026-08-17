@@ -112,6 +112,14 @@ export interface CadenceResult {
   rejected: number;
   /** Network failure / 5xx. */
   errors: number;
+  /**
+   * First business rejection's Feishu `code` (set when `rejected > 0`). Feishu
+   * often rate-limits as 200 + non-zero code — the code/msg is what lets an
+   * operator tell a rate limit from a bench bug (e.g. 300317 sequence misuse).
+   */
+  firstRejectedCode?: number;
+  /** First business rejection's Feishu `msg` (set alongside `firstRejectedCode`). */
+  firstRejectedMsg?: string;
   /** ms from the cadence's first PUT to its first throttle. */
   firstThrottleAtMs?: number;
   /** `Retry-After` observed on the first throttle (ms). */
@@ -154,9 +162,10 @@ export interface BenchResult {
  * - `throttled` — HTTP 429 (the unambiguous rate-limit signal; triggers cooldown
  *   probing and `Retry-After` capture).
  * - `rejected` — HTTP 200 but a non-zero business code. Feishu rate-limits this
- *   way often, but so do sequence (300317) / permission errors — the bench logs
- *   the code+msg so an operator can tell a repeating rate-limit code from a bench
- *   bug. `rejected` does NOT by itself drive the cooldown probe.
+ *   way often, but so do sequence (300317) / permission errors — the bench
+ *   records the first code+msg per cadence (`firstRejectedCode`/`firstRejectedMsg`)
+ *   so an operator can tell a repeating rate-limit code from a bench bug.
+ *   `rejected` does NOT by itself drive the cooldown probe.
  * - `error` — no response (0) or 5xx.
  */
 export function classifyOutcome(res: BenchResponse): ResponseOutcome {
@@ -248,6 +257,13 @@ export async function runRateLimitBench(deps: BenchDeps): Promise<BenchResult> {
       const res = await deps.caller(nextReq(contentFor(sequence)));
       tally(result, res);
       const outcome = classifyOutcome(res);
+
+      if (outcome === 'rejected' && result.rejected === 1) {
+        // First business rejection of this cadence — record code+msg so the
+        // findings table can distinguish a rate-limit code from a bench bug.
+        result.firstRejectedCode = res.code;
+        result.firstRejectedMsg = res.msg;
+      }
 
       if (outcome === 'throttled' && !throttled) {
         throttled = true;
@@ -441,7 +457,13 @@ function roundUpBackoff(ms: number): number {
 export function formatFindingsTable(result: BenchResult): string {
   const rows = result.cadences.map((r) => {
     const clean = r.throttled === 0 && r.rejected === 0 && r.errors === 0 ? '✅ clean' : '⛔ pushed back';
-    return `| ${r.cadencePerSec} | ${r.sent} | ${r.successes} | ${r.throttled} | ${r.rejected} | ${r.errors} | ${r.firstThrottleAtMs ?? '—'} | ${r.firstRetryAfterMs ?? '—'} | ${r.cooldownMs ?? '—'} | ${clean} |`;
+    const rejectDetail =
+      r.rejected > 0
+        ? typeof r.firstRejectedCode === 'number'
+          ? `${r.firstRejectedCode}${r.firstRejectedMsg ? ` (${r.firstRejectedMsg})` : ''}`
+          : '(no code)'
+        : '—';
+    return `| ${r.cadencePerSec} | ${r.sent} | ${r.successes} | ${r.throttled} | ${r.rejected} | ${rejectDetail} | ${r.errors} | ${r.firstThrottleAtMs ?? '—'} | ${r.firstRetryAfterMs ?? '—'} | ${r.cooldownMs ?? '—'} | ${clean} |`;
   });
 
   const { burst } = result;
@@ -453,8 +475,8 @@ export function formatFindingsTable(result: BenchResult): string {
     '',
     '### Sustained sweep',
     '',
-    '| cadence (PUT/s) | sent | ok | 429 | biz-reject | errors | first 429 @ms | Retry-After ms | cooldown ms | verdict |',
-    '|---|---|---|---|---|---|---|---|---|---|',
+    '| cadence (PUT/s) | sent | ok | 429 | biz-reject | first reject code | errors | first 429 @ms | Retry-After ms | cooldown ms | verdict |',
+    '|---|---|---|---|---|---|---|---|---|---|---|',
     ...rows,
     '',
     `**Max sustained without push-back:** ${result.maxSustainedPerSec}/s → ` +

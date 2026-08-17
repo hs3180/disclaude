@@ -213,11 +213,29 @@ describe('runRateLimitBench — business-code rejection (no cooldown probe)', ()
     const c = result.cadences[0]!;
     expect(c.rejected).toBeGreaterThan(0);
     expect(c.throttled).toBe(0);
+    // First rejection's code+msg are captured for the findings table.
+    expect(c.firstRejectedCode).toBe(99991663);
+    expect(c.firstRejectedMsg).toBe('code 99991663');
     // Rejected does not set throttle/cooldown fields.
     expect(c.firstThrottleAtMs).toBeUndefined();
     expect(c.cooldownMs).toBeUndefined();
     // Not clean (rejected > 0) → excluded from maxSustained.
     expect(result.maxSustainedPerSec).toBe(0);
+  });
+
+  it('records only the FIRST rejection code (later codes do not overwrite)', async () => {
+    const caller = scriptedCaller((idx) =>
+      idx === 0 ? SUCCESS : bizReject(idx === 1 ? 300317 : 99991663)
+    );
+    const { now, sleep } = fakeClock();
+    const config = smallConfig({
+      cadencesPerSec: [2],
+      cadenceDurationMs: 1_000,
+      probeIntervalMs: 1_000,
+    });
+    const result = await runRateLimitBench({ caller, config, now, sleep });
+    expect(result.cadences[0]!.firstRejectedCode).toBe(300317);
+    expect(result.cadences[0]!.firstRejectedMsg).toBe('code 300317');
   });
 });
 
@@ -256,6 +274,7 @@ describe('formatFindingsTable', () => {
     expect(md).toContain('| cadence (PUT/s) |');
     expect(md).toContain('| 2 |');
     expect(md).toContain('| 10 |');
+    expect(md).toContain('first reject code'); // biz-reject detail column present
     expect(md).toContain('`StreamingThrottle.minIntervalMs`');
     expect(md).toContain('`StreamingThrottle.maxBackoffMs`');
     expect(md).toContain('Max sustained'); // derived line present
