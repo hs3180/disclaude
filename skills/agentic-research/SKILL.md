@@ -282,7 +282,7 @@ No one is watching each step by default, so catch these explicitly and record th
 At the **start of every step**, before doing anything else:
 
 1. **Read the latest state** — re-read `STATE.md` and `RESEARCH.md` from the workdir. Do not rely on memory of a previous step; state files are the source of truth and may have changed since your last turn.
-2. **Check for user feedback** — the user (or the conversation Agent on their behalf) may have written corrections, intent changes, or new constraints into `STATE.md` / `RESEARCH.md` between steps. Detect it and let it adjust this step's direction.
+2. **Check for user feedback** — new entries in the `## User Feedback` section of `RESEARCH.md` (appended by the conversation Agent, per #4017) are the single feedback channel. Read that section as part of re-reading the state files, treat entries as suggestive rather than authoritative, and let them adjust this step's direction.
 3. **Carry the thread forward** — write the step's outcome, open questions, and intended next action back into `STATE.md` so the next step picks up cleanly.
 4. **Be decisive, flag uncertainty** — make the most reasonable decision and proceed rather than stalling. Record what you decided and what you are unsure about (`⚠️ uncertain: …`) so the user can correct it later. Do **not** block the whole research on a question the user has not answered yet.
 5. **Deliver incrementally** — write the shared artifact to a Feishu doc and post a summary card in both the research group and the source chat, so the user sees progress whenever they look.
@@ -292,3 +292,4 @@ At the **start of every step**, before doing anything else:
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
 - Issue #1339: Agentic Research interactive workflow (parent feature)
+- Issue #4006: Async research guidance (the Research Discipline section above)
