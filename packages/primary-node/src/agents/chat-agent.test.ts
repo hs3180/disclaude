@@ -549,6 +549,61 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  describe('Empty-stream termination (Issue #4442 part 3)', () => {
+    it('should deliver the ❌ notice, recordFailure, resolve the turn, and not auto-restart', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_empty_stream',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Provider-level synthesized terminal result: the SDK query ended cleanly
+      // with zero messages and the in-request retries were exhausted
+      // (terminatedReason 'empty-stream' hoisted to top-level parsed field by
+      // convertToLegacyFormat, same shape as the stall path).
+      async function* emptyStreamResultIterator() {
+        yield {
+          parsed: {
+            type: 'result',
+            content: '❌ 上游返回了空响应（200 但零内容事件），本次会话未产生任何输出。请稍后重试。',
+            terminatedReason: 'empty-stream',
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: emptyStreamResultIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_empty_stream', payload: 'hello', messageId: 'msg_1' });
+
+      // The ❌ notice is delivered through the generic content-send path.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (c: any[]) => typeof c[1] === 'string' && c[1].includes('空响应')
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+      // recordFailure called with the empty-stream reason (not recordSuccess).
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_empty_stream', 'empty-stream');
+      expect(rm.shouldRestart).not.toHaveBeenCalled();
+      // Session inactive (restart suppressed)
+      expect(agent.hasActiveSession()).toBe(false);
+      // Context preserved (deleteThreadRoot NOT called).
+      expect((agent as any).conversationOrchestrator.deleteThreadRoot).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Issue #4322: upstream-API-error turn reported as failed, not ✅ Complete', () => {
     it('should send ❌ Failed notice (with request_id) and recordFailure when provider tags the result', async () => {
       const localCallbacks = createMockCallbacks();
