@@ -9,7 +9,7 @@
  * callbacks that satisfy this interface.
  */
 
-import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, CwdProvider } from '@disclaude/core';
+import type { FeishuCard, ChannelCapabilities, BaseAgentConfig, MessageBuilderOptions, CwdProvider, CwdResolution } from '@disclaude/core';
 
 // ============================================================================
 // ChatAgentCallbacks
@@ -169,6 +169,22 @@ export interface ChatAgentConfig extends BaseAgentConfig {
    * @see Issue #1916 (unified ProjectContext system)
    */
   cwdProvider?: CwdProvider;
+
+  /**
+   * Structured cwd resolver — same inputs as `cwdProvider` but returns *why*
+   * the cwd resolved the way it did (bound / unbound / bound-missing).
+   *
+   * Issue #4448 (direction #1): when the chat is bound to a directory that
+   * does not exist, the agent silently falls back to the workspace while
+   * `/project info` still shows the (stale) target. `cwdProvider` alone can't
+   * distinguish that from "unbound" (both return `undefined`), so the ChatAgent
+   * uses this resolver — when present — to push a user-visible warning to the
+   * chat on the `bound-missing` fallback. Optional: without it the agent keeps
+   * the plain `cwdProvider` behavior.
+   *
+   * @see ProjectManager.resolveCwd
+   */
+  cwdResolver?: (chatId: string) => CwdResolution;
 
   /**
    * Skip loading persisted and first-message history on agent startup.

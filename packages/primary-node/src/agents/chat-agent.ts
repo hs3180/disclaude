@@ -53,6 +53,7 @@ import {
   type AgentMessage,
   type IteratorYieldResult,
   type UserMessageParams,
+  type CwdResolution,
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
@@ -90,6 +91,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
   // Issue #1916: Dynamic cwd resolution for project-scoped Agent context switching
   private readonly cwdProvider?: (chatId: string) => string | undefined;
+
+  // Issue #4448 (direction #1): structured cwd resolution — same inputs as
+  // cwdProvider but distinguishes unbound from bound-missing, so the workspace
+  // fallback can be surfaced to the user instead of only logger.warn.
+  private readonly cwdResolver?: (chatId: string) => CwdResolution;
 
   // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
   private queryHandle?: QueryHandle;
@@ -153,6 +159,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
     this.cwdProvider = config.cwdProvider;
+    // Issue #4448 (direction #1)
+    this.cwdResolver = config.cwdResolver;
 
     // Initialize history manager (Issue #955, #1230, #3996)
     this.historyManager = new HistoryManager({
@@ -778,6 +786,36 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
     const projectCwd = this.cwdProvider?.(chatId);
+
+    // Issue #4448 (direction #1): when the structured resolver is available and
+    // reports the bound directory as missing, the agent silently falls back to
+    // the workspace below (`cwd: undefined` → BaseAgent uses workspaceDir) while
+    // `/project info` still shows the stale target. Push a user-visible warning
+    // to the chat so the mismatch is no longer silent — the plain cwdProvider
+    // can't distinguish this from "unbound" (both yield undefined).
+    if (this.cwdResolver) {
+      const resolution = this.cwdResolver(chatId);
+      if (resolution.reason === 'bound-missing' && resolution.boundWorkingDir) {
+        this.callbacks
+          .sendMessage(
+            chatId,
+            [
+              `⚠️ **项目绑定目录不存在**: \`${resolution.boundWorkingDir}\``,
+              '',
+              '本次会话将**回退到工作空间根目录**运行（而非绑定的项目目录）。',
+              '可能原因：容器重启时 volume 尚未就绪 / 目录被移动或卸载 / 路径大小写或规范化差异。',
+              '可用 `/project reset` 回到默认，或 `/project use <dir>` 重新绑定。',
+            ].join('\n')
+          )
+          .catch((err) => {
+            this.logger.error(
+              { err, chatId },
+              'Failed to send bound-missing cwd fallback warning'
+            );
+          });
+      }
+    }
+
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
       // Issue #4181: the built-in (session-only) cron/loop tools are disallowed

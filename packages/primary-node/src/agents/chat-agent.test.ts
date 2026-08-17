@@ -389,6 +389,89 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  // Issue #4448 (direction #1): a chat bound to a directory that does not
+  // exist silently falls back to the workspace cwd. The structured cwdResolver
+  // must turn that into a user-visible warning pushed to the chat — the plain
+  // cwdProvider can't distinguish bound-missing from unbound.
+  describe('bound-missing cwd fallback warning (Issue #4448 direction #1)', () => {
+    const mkAgent = (reason: 'unbound' | 'bound' | 'bound-missing') =>
+      new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdProvider: (chatId: string) =>
+          chatId === 'oc_test_chat' && reason === 'bound' ? '/bound/project/dir' : undefined,
+        cwdResolver: (_chatId: string) => ({
+          effectiveCwd: reason === 'bound' ? '/bound/project/dir' : undefined,
+          boundWorkingDir: reason === 'unbound' ? undefined : '/gone/project/dir',
+          reason,
+        }),
+      });
+
+    it('pushes a user-visible warning when the bound directory is missing', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('bound-missing');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+      const [chatId, text] = callbacks.sendMessage.mock.calls[0] as unknown as [
+        string,
+        string,
+      ];
+      expect(chatId).toBe('oc_test_chat');
+      expect(text).toContain('/gone/project/dir');
+      expect(text).toContain('回退');
+    });
+
+    it('does not warn when the binding resolves cleanly (bound)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('bound');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when the chat is unbound (workspace is expected)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('unbound');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('a rejecting sendMessage does not break the agent loop start', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+      const sendErr = callbacks.sendMessage as unknown as ReturnType<typeof vi.fn>;
+      sendErr.mockRejectedValueOnce(new Error('channel down'));
+
+      const agent = mkAgent('bound-missing');
+      // Must not throw despite the rejected warning send (fire-and-forget).
+      expect(() => (agent as any).startAgentLoop()).not.toThrow();
+    });
+  });
+
   describe('shutdown', () => {
     it('should complete shutdown without throwing', async () => {
       await expect(chatAgent.shutdown()).resolves.toBeUndefined();
