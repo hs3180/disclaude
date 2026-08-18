@@ -11,7 +11,9 @@
  * - getInfo() available/unavailable shaping.
  * - Lifecycle: dispose() flips disposed state, is idempotent, and forces
  *   validateConfig() to false.
- * - Stubbed queryStream throws the not-implemented error pointing at #4386.
+ * - queryStream (implemented in #4386 part 3) throws the no-streamFn guard
+ *   error when no stream function is injected (full behavior in
+ *   provider.querystream.test.ts).
  * - createInlineTool (#4387) is implemented; createMcpServer inline path
  *   (#4417 part 1) is implemented and stdio throws "not supported".
  *
@@ -39,11 +41,6 @@ const { mockCreateRequire, mockResolve } = vi.hoisted(() => ({
 vi.mock('node:module', () => ({
   createRequire: mockCreateRequire,
 }));
-
-// The exact not-implemented message the stubs must surface (embeds the
-// follow-up issue pointers #4386 / #4387).
-const NOT_IMPLEMENTED_MSG =
-  'PiAgentProvider: this method is not implemented yet — agent loop tracked in #4386 (S3), tools/MCP in #4387 (S4).';
 
 describe('PiAgentProvider (skeleton, Issue #4385)', () => {
   let provider: PiAgentProvider;
@@ -208,18 +205,20 @@ describe('PiAgentProvider (skeleton, Issue #4385)', () => {
   });
 
   // --------------------------------------------------------------------------
-  // Stubbed methods — must surface actionable not-implemented errors
+  // Query — implemented in #4386 part 3; the streaming behavior itself is
+  // covered in provider.querystream.test.ts (mocked pi-agent-core module).
+  // Here: the configuration guard visible from the skeleton suite.
   // --------------------------------------------------------------------------
 
-  describe('stubbed methods (agent loop #4386 / tools+MCP #4387)', () => {
-    it('queryStream throws not-implemented pointing at #4386 / #4387', () => {
+  describe('queryStream guards (agent loop #4386 part 3)', () => {
+    it('queryStream without a streamFn throws pointing at the wiring slice', () => {
       async function* input(): AsyncGenerator<UserInput> {
         yield { role: 'user', content: 'hi' };
       }
       const options = { settingSources: ['user'] } as AgentQueryOptions;
 
       expect(() => provider.queryStream(input(), options)).toThrow(
-        NOT_IMPLEMENTED_MSG,
+        /no stream function configured/,
       );
     });
 
