@@ -8,6 +8,16 @@
 export { IntentSnapshotStore } from './store.js';
 export type { IntentSnapshotStoreOptions } from './store.js';
 export {
+  DelegateRouter,
+  EmptyTaskError,
+  NotFreezableError,
+} from './delegate-router.js';
+export type {
+  DelegateRequest,
+  DelegatedTask,
+  DelegateRouterOptions,
+} from './delegate-router.js';
+export {
   InvalidTransitionError,
   assertAllowed,
   isAllowed,
