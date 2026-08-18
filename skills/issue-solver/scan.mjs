@@ -101,7 +101,39 @@ function selectInstallation(installations, targetOwner) {
   return installations[0].id;
 }
 
-function refreshGitHubToken() {
+/**
+ * Call a GitHub App-auth endpoint (`/app/installations...`) with a raw App JWT
+ * as a Bearer token. The `gh` CLI does not authenticate an App JWT passed via
+ * GH_TOKEN (HTTP 401), so these endpoints bypass `gh` entirely.
+ * Returns { ok: true, data } with the parsed JSON, or { ok: false, message }
+ * with the failure detail. The detail is always printed to stderr too — a dead
+ * mint is the primary diagnostic for a failed tick, so it must not hide behind
+ * --debug (the pre-#4513 code passed gh's stderr through the same way).
+ */
+async function appApi(jwt, method, apiPath) {
+  try {
+    const resp = await fetch(`https://api.github.com/${apiPath.replace(/^\//, "")}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!resp.ok) {
+      const detail = `HTTP ${resp.status} ${(await resp.text()).slice(0, 200)}`;
+      console.error(`appApi ${method} ${apiPath} failed: ${detail}`);
+      return { ok: false, message: detail };
+    }
+    return { ok: true, data: await resp.json() };
+  } catch (err) {
+    console.error(`appApi ${method} ${apiPath} failed: ${err.message}`);
+    return { ok: false, message: err.message };
+  }
+}
+
+async function refreshGitHubToken() {
   const APP_ID = process.env.GITHUB_APP_ID;
   const KEY_PATH = process.env.GITHUB_APP_PRIVATE_KEY_PATH;
   const INSTALL_ID = process.env.GITHUB_APP_INSTALLATION_ID;
@@ -123,26 +155,31 @@ function refreshGitHubToken() {
   const jwt = `${sigInput}.${sign.sign(privateKey, "base64url")}`;
 
   try {
+    // NOTE: App-auth endpoints (/app/installations*) require the App JWT as a
+    // raw `Authorization: Bearer` credential. The `gh` CLI cannot authenticate
+    // an App JWT passed through GH_TOKEN (GitHub returns 401 "Bad credentials"
+    // / "A JSON web token could not be decoded"), so these calls use fetch
+    // directly — same pattern as skills/github-jwt-auth/SKILL.md. GraphQL and
+    // other REST calls below still go through `gh` with the installation
+    // token, which `gh` handles fine.
     let iid = INSTALL_ID;
     if (!iid) {
-      const listResult = spawnSync("gh", ["api", "app/installations", "-H", "Accept: application/vnd.github+json"], {
-        env: { ...process.env, GH_TOKEN: jwt }, encoding: "utf-8", timeout: 30000,
-      });
-      if (listResult.status !== 0 || !listResult.stdout) {
-        return { ok: false, error: "INSTALLATIONS_FETCH_FAILED", message: `gh api failed: ${listResult.stderr || "unknown"}` };
+      const installs = await appApi(jwt, "GET", "app/installations");
+      if (!installs.ok) {
+        return { ok: false, error: "INSTALLATIONS_FETCH_FAILED", message: `appApi GET app/installations: ${installs.message}` };
       }
-      const installs = JSON.parse(listResult.stdout);
-      if (!installs.length) return { ok: false, error: "NO_INSTALLATIONS", message: "No installations found" };
-      iid = selectInstallation(installs, REPO_OWNER);
+      if (!Array.isArray(installs.data) || !installs.data.length) {
+        return { ok: false, error: "NO_INSTALLATIONS", message: `No installations found (${Array.isArray(installs.data) ? installs.data.length : "non-array response"})` };
+      }
+      iid = selectInstallation(installs.data, REPO_OWNER);
     }
 
-    const tokenResult = spawnSync("gh", [
-      "api", "-X", "POST", `app/installations/${iid}/access_tokens`, "-H", "Accept: application/vnd.github+json",
-    ], { env: { ...process.env, GH_TOKEN: jwt }, encoding: "utf-8", timeout: 30000 });
-    if (tokenResult.status !== 0 || !tokenResult.stdout) {
-      return { ok: false, error: "TOKEN_FETCH_FAILED", message: `gh api failed: ${tokenResult.stderr || "unknown"}` };
+    const minted = await appApi(jwt, "POST", `app/installations/${iid}/access_tokens`);
+    if (!minted.ok || !minted.data.token) {
+      const detail = minted.ok ? `missing token field (${minted.data.message || JSON.stringify(minted.data).slice(0, 200)})` : minted.message;
+      return { ok: false, error: "TOKEN_FETCH_FAILED", message: `appApi POST app/installations/${iid}/access_tokens: ${detail}` };
     }
-    const data = JSON.parse(tokenResult.stdout);
+    const data = minted.data;
 
     const env = loadRuntimeEnv();
     env.GH_TOKEN = data.token;
@@ -160,7 +197,7 @@ function refreshGitHubToken() {
 let cachedToken = null;
 let cachedTokenExpiry = 0;
 
-function ensureToken() {
+async function ensureToken() {
   if (cachedToken && Date.now() < cachedTokenExpiry - 3 * 60 * 1000) return cachedToken;
   cachedToken = null;
   const env = loadRuntimeEnv();
@@ -170,7 +207,7 @@ function ensureToken() {
     return cachedToken;
   }
   log("Refreshing GH_TOKEN...");
-  const result = refreshGitHubToken();
+  const result = await refreshGitHubToken();
   if (!result.ok) {
     console.log(`# Auth Error\n\n${result.error}: ${result.message}\n`);
     process.exit(1);
@@ -184,8 +221,8 @@ function ensureToken() {
 // GitHub CLI helper
 // ---------------------------------------------------------------------------
 
-function gh(...args) {
-  const token = ensureToken();
+async function gh(...args) {
+  const token = await ensureToken();
   const result = spawnSync("gh", args, {
     env: { ...process.env, GH_TOKEN: token }, encoding: "utf-8", timeout: 30000,
   });
@@ -234,9 +271,9 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
   }
 }`;
 
-function ghGraphQL(query, owner, name) {
+async function ghGraphQL(query, owner, name) {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const token = ensureToken();
+    const token = await ensureToken();
     const result = spawnSync("gh", [
       "api", "graphql",
       "-f", `query=${query}`,
@@ -264,10 +301,10 @@ function ghGraphQL(query, owner, name) {
 // Main
 // ---------------------------------------------------------------------------
 
-function main() {
+async function main() {
   log(`Scanning ${REPO} via GraphQL ...`);
 
-  const data = ghGraphQL(GRAPHQL_QUERY, REPO_OWNER, REPO.split("/")[1]);
+  const data = await ghGraphQL(GRAPHQL_QUERY, REPO_OWNER, REPO.split("/")[1]);
   if (!data || !data.data || !data.data.repository) {
     console.log("# Auth Error\n\nGitHub GraphQL API failed.\n");
     process.exit(1);
@@ -398,4 +435,7 @@ function main() {
   console.log(md);
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
