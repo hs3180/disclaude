@@ -965,9 +965,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // dispatch below is bit-identical to today (sendMessage per chunk). The
     // driver owns the reply-never-lost guarantee (start-decline / flush-failure
     // → sendMessage fallback) and is finalized on every turn-exit path below.
+    // Issue #4510: a `streamingScope: 'p2p'` capability narrows streaming to
+    // single chats — group/topic turns skip the driver entirely and keep the
+    // per-chunk sendMessage path, so the p2p-first gray rollout never changes
+    // group behavior. `this.chatType` is set by processMessage (#3641, with
+    // #4401/#4428 topic normalization), so an unset value degrades to
+    // non-streaming under a p2p scope (fail-safe: unknown type → no card).
     const streamCapabilities = this.callbacks.getCapabilities?.(chatId);
+    const scopeAllowsStreaming =
+      !streamCapabilities?.streamingScope || streamCapabilities.streamingScope === 'all'
+        ? true
+        : this.chatType === 'p2p';
     const streamDriver =
       !!streamCapabilities?.supportsStreaming &&
+      scopeAllowsStreaming &&
       !!this.callbacks.startStreaming &&
       !!this.callbacks.streamText &&
       !!this.callbacks.finalizeStreaming
