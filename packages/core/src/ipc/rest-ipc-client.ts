@@ -6,9 +6,10 @@
  * Phase 2 part 1: the channel-method surface (ping/sendMessage/sendCard/
  * uploadFile/uploadImage/sendInteractive/listTempChats/markChatResponded).
  *
- * The full IpcClientLike drop-in (adding pushToAgent → /api/push and loop
- * methods → /api/loop/* with their distinct response shapes) is a follow-up —
- * the mcp-server currently calls those via the Unix-socket IPC client.
+ * The full IpcClientLike drop-in (adding pushToAgent → /api/push) is a
+ * follow-up — the mcp-server currently calls that via the Unix-socket IPC
+ * client. (The former loop methods → /api/loop/* were removed with the loop
+ * system, #4430.)
  *
  * Routing is table-driven and response shaping is a generic strip-`ok` envelope
  * (REST responses are `{ ok: true, ...IpcResponsePayload }`; IPC payloads are

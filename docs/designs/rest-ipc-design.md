@@ -74,12 +74,12 @@ All endpoints return `{ ok: true, ...IPC_PAYLOAD }`. The `ok` envelope is stripp
 ### 4.1 RestIpcClient (`packages/core/src/ipc/rest-ipc-client.ts`)
 
 - `implements IpcClientLike` — true drop-in for `UnixSocketIpcClient`.
-- Table-driven routing: 12 IPC methods → REST endpoints.
+- Table-driven routing: 9 IPC methods → REST endpoints. (Was 12 before the loop
+  system removal, #4430 — `loopStart/loopStop/loopStatus` → `/api/loop/*` and
+  their shape adaptations / `pathBuilder` route are gone with it.)
 - Per-route response shaping (`Route.shape`):
   - Channel methods: default `stripOk`.
   - `pushToAgent` → `/api/push`: `{ ok, message }` → `{ success: ok }`.
-  - `loopStart/loopStop/loopStatus` → `/api/loop/*`: per-method shape adaptation.
-- Dynamic path builder (`Route.pathBuilder`): for `loopStatus` (`/api/loop/status/:loopId`).
 - `isAvailable()`: GET `/api/ping` health probe.
 - `disconnect()`: no-op (stateless HTTP), matching `UnixSocketIpcClient.disconnect()` signature.
 - 15 tests (mocked fetch).
