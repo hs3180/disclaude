@@ -7,6 +7,8 @@
 
 export { IntentSnapshotStore } from './store.js';
 export type { IntentSnapshotStoreOptions } from './store.js';
+export { CorruptSnapshotError, FileIntentSnapshotStore } from './file-store.js';
+export type { FileIntentSnapshotStoreOptions } from './file-store.js';
 export {
   InvalidTransitionError,
   assertAllowed,

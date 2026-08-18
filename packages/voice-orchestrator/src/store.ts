@@ -38,6 +38,21 @@ export class IntentSnapshotStore {
     this.now = opts.now ?? (() => Date.now());
   }
 
+  /**
+   * Seed a session that was persisted by a backing store (file/DB), restoring
+   * its phase, regions and draft sequence counter. Only for subclasses that
+   * layer persistence on top of the in-memory implementation — plain callers
+   * must go through {@link createSession}.
+   */
+  protected restoreSession(snapshot: IntentSnapshot): void {
+    if (this.sessions.has(snapshot.sessionId)) {
+      throw new Error(`Session already exists: ${snapshot.sessionId}`);
+    }
+    this.sessions.set(snapshot.sessionId, structuredClone(snapshot));
+    const lastSeq = snapshot.drafts.at(-1)?.seq ?? 0;
+    this.draftSeq.set(snapshot.sessionId, lastSeq);
+  }
+
   /** Create a fresh session in the drafting phase. */
   createSession(sessionId: string = randomUUID()): IntentSnapshot {
     if (this.sessions.has(sessionId)) {
