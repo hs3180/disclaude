@@ -25,6 +25,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { z } from 'zod';
 
 // --- Fake pi-agent-core module ------------------------------------------------
 // vi.mock is hoisted; the state it closes over must be hoisted too.
@@ -203,6 +204,91 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
     const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
     expect(ctorOptions.beforeToolCall).toBeUndefined();
+  });
+
+  // Issue #4386 (part 4): inline tools from options.mcpServers are injected
+  // into the pi Agent's initialState.tools — the session's live tool registry
+  // (pi 0.82.1: createMutableAgentState seeds state.tools from it at
+  // construction). This is the "tool passed directly, not via MCP" acceptance
+  // item; stdio servers are skipped (pi does not support MCP, #4461 decision).
+  describe('inline-tool injection (Issue #4386, part 4)', () => {
+    /** A real-Zod inline tool (the adapter's zodToJsonSchema needs a real schema). */
+    const makeTool = (name: string) => ({
+      name,
+      description: `${name} tool`,
+      parameters: z.object({ x: z.number() }),
+      handler: (p: { x: number }) => Promise.resolve({ doubled: p.x * 2 }),
+    });
+
+    it('seeds initialState.tools with adapted inline tools from mcpServers', async () => {
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          mcpServers: {
+            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('echo')] },
+          },
+        }).iterator,
+      );
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: unknown[] } };
+      const tools = ctor?.initialState?.tools ?? [];
+      expect(tools).toHaveLength(1);
+      // The AgentHarnessTool shape produced by adaptInlineTool (#4387).
+      const tool = tools[0] as { name: string; label: string; parameters: { type: string } };
+      expect(tool.name).toBe('echo');
+      expect(tool.label).toBe('echo');
+      expect(tool.parameters.type).toBe('object');
+      expect(typeof (tools[0] as { execute: unknown }).execute).toBe('function');
+    });
+
+    it('injects an empty tool array when no inline servers are configured', async () => {
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: unknown[] } };
+      expect(ctor?.initialState?.tools).toEqual([]);
+    });
+
+    it('skips stdio servers (pi does not support MCP) but still injects inline ones', async () => {
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          mcpServers: {
+            playwright: { type: 'stdio', name: 'playwright', command: 'npx', args: ['-y', '@playwright/mcp'] },
+            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('send')] },
+          },
+        }).iterator,
+      );
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string }> } };
+      expect((ctor?.initialState?.tools ?? []).map((t) => t.name)).toEqual(['send']);
+    });
+
+    it('injected tools execute through the inline-tool adapter round-trip', async () => {
+      // The full acceptance item: the tool handed to the Agent is the SAME
+      // wrapper createInlineTool produces — its execute validates params via
+      // Zod, calls the disclaude handler, and shapes an AgentToolResult.
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      await collect(
+        provider.queryStream(inputs(userInput('go')), {
+          ...baseOptions(),
+          mcpServers: {
+            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('echo')] },
+          },
+        }).iterator,
+      );
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ execute: Function }> } };
+      const tool = ctor?.initialState?.tools?.[0];
+      expect(tool).toBeDefined();
+      const result = (await tool!.execute('call-1', { x: 21 }, undefined, undefined, undefined)) as {
+        content: Array<{ type: string; text: string }>;
+        details: unknown;
+      };
+      expect(result.details).toEqual({ doubled: 42 });
+      expect(result.content[0]?.type).toBe('text');
+      // Invalid params throw (pi converts a thrown execute error into an
+      // isError tool result — the adapter contract, #4387).
+      await expect(tool!.execute('call-2', { x: 'not-a-number' }, undefined, undefined, undefined)).rejects.toThrow();
+    });
   });
 
   it('streams a plain-text turn: text deltas then result', async () => {

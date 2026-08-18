@@ -38,11 +38,21 @@ export interface PiAgent {
   waitForIdle(): Promise<void>;
 }
 
-/** Structural mirror of `new Agent(options)`'s relevant option surface. */
+/**
+ * Structural mirror of `new Agent(options)`'s relevant option surface.
+ *
+ * `initialState.tools` (Issue #4386 part 4, inline-tool injection): the Agent
+ * constructor passes `initialState` to `createMutableAgentState()` (agent.js:26),
+ * which seeds the state's tool registry from `initialState.tools` — verified
+ * against the published 0.82.1 tarball. Tools passed here are live for every
+ * run of the session; the Agent class itself has no separate registry call
+ * (`setTools` lives on AgentHarness, a different entrypoint this provider
+ * does not use).
+ */
 export interface PiAgentOptions {
   /** Required by pi — the LLM stream function the loop calls each turn. */
   streamFn: (model: unknown, context: unknown, options?: unknown) => unknown;
-  /** Initial transcript (the first user turn). */
+  /** Initial transcript (the first user turn) + the session's tool registry. */
   initialState?: {
     systemPrompt?: string;
     messages?: unknown[];

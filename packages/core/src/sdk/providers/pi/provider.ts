@@ -165,6 +165,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
         streamFn: streamFn as PiAgentOptions['streamFn'],
         initialState: {
           systemPrompt: adaptedOptions.systemPrompt ?? '',
+          tools: collectInlineTools(options),
         },
         ...(toolPermissionGate
           ? { beforeToolCall: toolPermissionGate satisfies PiAgentOptions['beforeToolCall'] }
@@ -377,4 +378,35 @@ function userInputText(input: UserInput): string {
   return input.content
     .map((block) => (block.type === 'text' ? block.text : JSON.stringify(block)))
     .join('\n');
+}
+
+/**
+ * Extract the session's live tool registry from `AgentQueryOptions.mcpServers`
+ * (Issue #4386 part 4 — the inline-tool round-trip acceptance item).
+ *
+ * Per the 2026-08-07 decision (pi backend does NOT support MCP, #4461), the
+ * inline `channel-mcp` server is the pi backend's ONLY tool source: each of
+ * its `InlineToolDefinition`s is adapted into a pi `AgentHarnessTool` via
+ * `createInlineTool` (#4387 — Zod→JSON-Schema parameters + execute wrapper)
+ * and seeded into the Agent's `initialState.tools`, where it is live for
+ * every run of the session (pi 0.82.1: `createMutableAgentState` copies
+ * `initialState.tools` into the state registry at construction).
+ *
+ * stdio servers are skipped here: pi rejects them at `createMcpServer`, and
+ * a stdio entry in `mcpServers` on the pi backend is a config error surfaced
+ * there (throwing in the iterator would instead surface as a hung/dead
+ * stream — worse). The return is always an array (possibly empty) so
+ * `initialState.tools` stays a stable shape.
+ */
+function collectInlineTools(options: AgentQueryOptions): unknown[] {
+  const tools: unknown[] = [];
+  for (const server of Object.values(options.mcpServers ?? {})) {
+    if (server.type !== 'inline') {
+      continue;
+    }
+    for (const tool of server.tools ?? []) {
+      tools.push(adaptInlineTool(tool));
+    }
+  }
+  return tools;
 }
