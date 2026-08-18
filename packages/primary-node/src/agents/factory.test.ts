@@ -226,6 +226,23 @@ describe('AgentFactory', () => {
 
       expect(mockLoggerWarn).not.toHaveBeenCalled();
     });
+
+    // Issue #4448 (direction #1): the structured cwdResolver travels through
+    // both factory paths alongside cwdProvider so ChatAgent can warn the chat
+    // on the bound-missing workspace fallback.
+    it('passes cwdResolver through to the ChatAgent config (Issue #4448 direction #1)', () => {
+      const callbacks = createMockCallbacks();
+      const cwdResolver = (_chatId: string) => ({
+        effectiveCwd: undefined,
+        boundWorkingDir: '/gone/project/dir',
+        reason: 'bound-missing' as const,
+      });
+
+      AgentFactory.createAgent('chat-resolver', callbacks, { cwdResolver });
+
+      const config = getLastConfig();
+      expect(config.cwdResolver).toBe(cwdResolver);
+    });
   });
 
   // ==========================================================================
@@ -315,6 +332,20 @@ describe('AgentFactory', () => {
       AgentFactory.createChatAgent('pilot', 'pilot-with-cwd', callbacks, { cwdProvider });
 
       expect(mockLoggerWarn).not.toHaveBeenCalled();
+    });
+
+    it('passes cwdResolver through to the ChatAgent config (Issue #4448 direction #1, observation B)', () => {
+      const callbacks = createMockCallbacks();
+      const cwdResolver = (_chatId: string) => ({
+        effectiveCwd: '/bound/project/dir',
+        boundWorkingDir: '/bound/project/dir',
+        reason: 'bound' as const,
+      });
+
+      AgentFactory.createChatAgent('pilot', 'pilot-resolver', callbacks, { cwdResolver });
+
+      const config = getLastConfig();
+      expect(config.cwdResolver).toBe(cwdResolver);
     });
   });
 

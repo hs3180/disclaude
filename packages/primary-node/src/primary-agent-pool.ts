@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider, createLogger } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, createLogger } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -43,6 +43,13 @@ export interface PrimaryAgentPoolOptions {
    * @see Issue #1916 (unified ProjectContext system)
    */
   cwdProvider?: CwdProvider;
+
+  /**
+   * Structured cwd resolver, injected alongside `cwdProvider` so ChatAgent can
+   * surface the bound-missing workspace fallback to the user (Issue #4448
+   * direction #1). See ChatAgentConfig.cwdResolver.
+   */
+  cwdResolver?: (chatId: string) => CwdResolution;
 
   /**
    * Issue #4169: Idle timeout in ms. Agents inactive for longer than this are
@@ -158,6 +165,7 @@ export class PrimaryAgentPool {
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
         cwdProvider: this.options.cwdProvider,
+        cwdResolver: this.options.cwdResolver,
         skipHistory,
       });
       this.agents.set(chatId, agent);

@@ -336,6 +336,8 @@ export { InternalEventBus, eventBus, type InternalEventMap } from './event-bus.j
 // Project module — simplified per-chatId working directory binding (Issue #3519)
 export type {
   CwdProvider,
+  CwdResolution,
+  CwdResolutionReason,
   IssueTriageStatus,
   ProjectContextConfig,
   ProjectManagerOptions,

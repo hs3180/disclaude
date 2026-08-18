@@ -389,6 +389,170 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  // Issue #4448 (direction #1): a chat bound to a directory that does not
+  // exist silently falls back to the workspace cwd. The structured cwdResolver
+  // must turn that into a user-visible warning pushed to the chat — the plain
+  // cwdProvider can't distinguish bound-missing from unbound.
+  describe('bound-missing cwd fallback warning (Issue #4448 direction #1)', () => {
+    // `resolverStates` lets the mutating tests flip the resolution between
+    // startAgentLoop() calls (restart cycles) — the closures read the current
+    // state on each call, like ProjectManager.resolveCwd re-checking the disk.
+    const mkAgent = (
+      reason: 'unbound' | 'bound' | 'bound-missing',
+      resolverStates?: Array<'unbound' | 'bound' | 'bound-missing'>
+    ) => {
+      const states = resolverStates ?? [reason];
+      let call = 0;
+      const stateAt = () => states[Math.min(call, states.length - 1)];
+      return new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdProvider: (chatId: string) =>
+          chatId === 'oc_test_chat' && stateAt() === 'bound' ? '/bound/project/dir' : undefined,
+        cwdResolver: (_chatId: string) => {
+          const current = stateAt();
+          call += 1;
+          return {
+            effectiveCwd: current === 'bound' ? '/bound/project/dir' : undefined,
+            boundWorkingDir: current === 'unbound' ? undefined : '/gone/project/dir',
+            reason: current,
+          };
+        },
+      });
+    };
+
+    it('pushes a user-visible warning when the bound directory is missing', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('bound-missing');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+      const [chatId, text] = callbacks.sendMessage.mock.calls[0] as unknown as [
+        string,
+        string,
+      ];
+      expect(chatId).toBe('oc_test_chat');
+      expect(text).toContain('/gone/project/dir');
+      expect(text).toContain('回退');
+    });
+
+    it('does not warn when the binding resolves cleanly (bound)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('bound');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when the chat is unbound (workspace is expected)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('unbound');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('a rejecting sendMessage does not break the agent loop start', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+      const sendErr = callbacks.sendMessage as unknown as ReturnType<typeof vi.fn>;
+      sendErr.mockRejectedValueOnce(new Error('channel down'));
+
+      const agent = mkAgent('bound-missing');
+      // Must not throw despite the rejected warning send (fire-and-forget).
+      expect(() => (agent as any).startAgentLoop()).not.toThrow();
+    });
+
+    // Nit (restart re-announce): startAgentLoop() re-runs on restart cycles —
+    // the same missing target must not warn the chat twice per agent instance.
+    it('does not re-warn the same missing directory on a restart cycle', () => {
+      const mockServer = () =>
+        vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+          type: 'sdk',
+          name: 'channel-mcp',
+          instance: { close: vi.fn().mockResolvedValue(undefined) },
+        });
+      mockServer();
+      mockServer();
+
+      const agent = mkAgent('bound-missing', ['bound-missing', 'bound-missing']);
+      (agent as any).startAgentLoop(); // first spawn → warns
+      (agent as any).startAgentLoop(); // restart cycle → same target, stays quiet
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns again after the binding recovers and the target goes missing again', () => {
+      const mockServer = () =>
+        vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+          type: 'sdk',
+          name: 'channel-mcp',
+          instance: { close: vi.fn().mockResolvedValue(undefined) },
+        });
+      mockServer();
+      mockServer();
+      mockServer();
+
+      const agent = mkAgent('bound-missing', ['bound-missing', 'bound', 'bound-missing']);
+      (agent as any).startAgentLoop(); // missing → warns
+      (agent as any).startAgentLoop(); // recovered (bound) → no warn, fingerprint cleared
+      (agent as any).startAgentLoop(); // missing again → warns again
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    // Nit (double resolveCwd): when cwdResolver is present it subsumes
+    // cwdProvider — the provider must not be consulted at all.
+    it('uses cwdResolver alone and does not call cwdProvider (no double resolveCwd)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const cwdProvider = vi.fn(() => '/bound/project/dir');
+      const agent = new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdProvider,
+        cwdResolver: () => ({
+          effectiveCwd: '/bound/project/dir',
+          boundWorkingDir: '/bound/project/dir',
+          reason: 'bound',
+        }),
+      });
+      (agent as any).startAgentLoop();
+
+      expect(cwdProvider).not.toHaveBeenCalled();
+    });
+  });
+
   describe('shutdown', () => {
     it('should complete shutdown without throwing', async () => {
       await expect(chatAgent.shutdown()).resolves.toBeUndefined();

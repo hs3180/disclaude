@@ -7,6 +7,8 @@
 
 export type {
   CwdProvider,
+  CwdResolution,
+  CwdResolutionReason,
   IssueTriageStatus,
   ProjectContextConfig,
   ProjectManagerOptions,
