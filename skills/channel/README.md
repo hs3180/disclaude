@@ -1,5 +1,21 @@
 # channel Skill — CLI replacement for `channel-mcp` (#4459)
 
+> **Transport switch ([#4532](https://github.com/hs3180/disclaude/issues/4532)
+> part 1, owner ruling 2026-08-18):** the CLI now reaches the PrimaryNode over
+> the **REST API** (HttpApiServer `/api/send-message`, `/api/send-card`,
+> `/api/upload-file`, `/api/send-interactive`, `/api/push`) — it no longer opens
+> a Unix socket, and there is **no IPC fallback** on the CLI path. The CLI sets
+> `DISCLAUDE_REST_IPC_ENABLED=true` internally before the first
+> `@disclaude/mcp-server` import, so every send path — including `send_card`'s
+> local-image upload (`resolveCardImages` → `getIpcClient()`) — selects
+> `RestIpcClient`. Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
+> `http://localhost:9200`. Bearer token: `DISCLAUDE_REST_IPC_API_TOKEN` (unset
+> is fine when the PrimaryNode runs without `--api-token`). When the REST face
+> is unreachable, the CLI emits an actionable "start the main service" hint
+> instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
+> pre-check ruling is recorded in §Parity. The Unix-socket IPC face itself is
+> deprecated for this consumer and will be removed in #4280 (Phase 3).
+
 > **Status (parts 3–7 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
 > `send_text` (part 3, [#4467](https://github.com/hs3180/disclaude/pull/4467)),
 > `send_file` (part 4, [#4494](https://github.com/hs3180/disclaude/pull/4494)),
@@ -82,8 +98,9 @@ echo '{"elements":[{"tag":"markdown","content":"hi"}]}' \
 **Runtime (host deps, not bundled):** reuses `send_text` / `send_file` /
 `send_card` (and the card preprocessing helpers) / `push_to_agent` /
 `send_interactive` from `@disclaude/mcp-server`, which talk to the PrimaryNode
-over IPC and need Feishu credentials. Run inside a disclaude workspace where the
-packages are built (`npm run build`). No browser or extra binaries required.
+over its REST API (#4532 — no Unix socket) and need Feishu credentials. Run
+inside a disclaude workspace where the packages are built (`npm run build`), and
+start the PrimaryNode with `--api-port`. No browser or extra binaries required.
 
 ## Commands
 
@@ -134,7 +151,7 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 {"ok":false,"command":"send_card","error":"Invalid card JSON: Unexpected token ...","hint":"pass --card <json>, --card-file <path>, or pipe card JSON on stdin"}
 {"ok":false,"command":"send_card","error":"Invalid card structure: ..."}
 {"ok":false,"command":"push_to_agent","error":"Missing message content","hint":"pass --message <string>, --message-file <path>, or pipe content on stdin"}
-{"ok":false,"command":"send_text","error":"IPC service unavailable. Please ensure Primary Node is running.","hint":"ensure the disclaude PrimaryNode is running and IPC is reachable"}
+{"ok":false,"command":"send_text","error":"IPC service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://localhost:9200 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL"}
 {"ok":false,"command":"send_text","error":"Failed to load @disclaude/mcp-server: ...","hint":"run inside a disclaude workspace with packages built (npm run build); ..."}
 ```
 
@@ -142,15 +159,17 @@ Failure modes covered: missing/invalid args, unreadable `--text-file` /
 `--card-file` / `--question-file` / `--message-file`, malformed `--mentions` / `--card` /
 `--options` / `--action-prompts` JSON, non-object card, invalid card structure,
 invalid chatId format, invalid option structure (empty `text`/`value`, bad
-`type`), `@disclaude/mcp-server` not built/resolvable, IPC unreachable, and IPC
-send failure (the underlying first-party tools map these to `SendMessageResult` /
+`type`), `@disclaude/mcp-server` not built/resolvable, REST face unreachable
+(PrimaryNode not started / port not open — reported with an actionable hint),
+and REST send failure (the underlying first-party tools map these to `SendMessageResult` /
 `SendInteractiveResult` / `{ success:false, error, message }` results).
 
 ## Artifacts
 
 None. `send_text`, `push_to_agent`, and `send_interactive` are side-effect-free
-on the local filesystem — they reach the PrimaryNode over IPC and return.
-`send_file` **reads** the local file at `--file` (uploaded over IPC) and writes
+on the local filesystem — they reach the PrimaryNode over its REST API and
+return. `send_file` **reads** the local file at `--file` (uploaded over REST)
+and writes
 nothing. No files are written by any command. (`push_to_agent` does have an
 intended *remote* side effect — it pushes an instruction that may
 create/lazily-resume the target chat's agent.)
@@ -160,14 +179,18 @@ create/lazily-resume the target chat's agent.)
 | Dependency | Source | How to satisfy |
 |---|---|---|
 | `@disclaude/mcp-server` (exports `send_text`, `send_file`, `send_card`, `push_to_agent`, `send_interactive`, + card helpers) | workspace package | build the monorepo (`npm run build`) |
-| disclaude PrimaryNode (IPC) | runtime | run disclaude; the CLI reaches `getIpcClient()` over the Unix/REST IPC transport |
+| disclaude PrimaryNode (**REST API**, #4532) | runtime | start it with `--api-port` (e.g. `9200`); the CLI POSTs to `/api/*` — no Unix socket involved |
+| REST base URL | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:9200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361) |
+| REST bearer token | `DISCLAUDE_REST_IPC_API_TOKEN` env | required only when the PrimaryNode was started with `--api-token` (pass the same secret) |
 | Feishu credentials | `disclaude.config.yaml` / env | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` (validated inside `send_text` / `send_file` / `send_card` / `push_to_agent` / `send_interactive`) |
 
 If `@disclaude/mcp-server` cannot be imported, the CLI emits a failure JSON with
 a build hint rather than crashing (analogous to #4464's missing-`playwright`
-hint). If the PrimaryNode / IPC is unavailable, `send_text` / `send_file` /
-`send_card` / `push_to_agent` / `send_interactive` surface that and the CLI
-relays it as a failure JSON.
+hint). If the PrimaryNode REST face is unavailable (service not started / port
+not open), `send_text` / `send_file` / `send_card` / `push_to_agent` /
+`send_interactive` surface that, and the CLI relays it as a failure JSON with
+the actionable hint `PrimaryNode REST <url> unreachable — start the main service
+…` (#4532 scope 3) instead of a bare `fetch` ECONNREFUSED.
 
 ## Parity / migration notes
 
@@ -176,7 +199,7 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | Aspect | MCP tool (S1) | This CLI Skill | Delta |
 |---|---|---|---|
 | Transport | in-process MCP tool dispatch | one-shot process, shells out via `Bash` | different transport, same first-party impl |
-| IPC reach-back | in-process `getIpcClient()` | same `getIpcClient()`, from a separate process (as the S3 standalone server already does) | none at the impl layer |
+| IPC reach-back | in-process `getIpcClient()` (Unix socket by default) | `getIpcClient()` with `DISCLAUDE_REST_IPC_ENABLED=true` forced → `RestIpcClient` → HttpApiServer `/api/*` (#4532) | REST only — no Unix socket, no IPC fallback |
 | `send_text` parameters | `text`, `chatId`, `parentMessageId`, `mentions` | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions` | text gains `--text-file`/stdin for large bodies |
 | `send_file` parameters | `filePath`, `chatId`, `parentMessageId` | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool) | none |
 | `push_to_agent` parameters | `chatId`, `message` | identical, via `--chat`/`--message`/`--message-file` | message gains `--message-file`/stdin for long instructions |
@@ -213,6 +236,18 @@ is the same deferred-parity item `send_text` carries (resolving it once, across
 all subcommands, is left to a later part of #4459). No card/table/image
 transforms apply to `push_to_agent`, so unlike `send_card` it needs no extra
 helper exports from `@disclaude/mcp-server`.
+
+**#4521 chatId pre-check ruling (#4532 acceptance, explicit — migration is not
+silent):** PR #4521 (chatId-format pre-checks on all 5 subcommands) was
+direction-rejected because it was built on the IPC foundation; its substance is
+transport-independent. On the REST CLI: `send_card` **keeps** its existing
+`getChatIdValidationError` pre-check (part 5 already shipped it), and the other
+four subcommands **intentionally defer** the format check — an ill-formed id is
+rejected by the REST layer (`/api/send-message` validates `chatId` as a
+non-empty string server-side) rather than up front. Re-landing the up-front
+pre-check on the REST CLI (rejected PR #4521's substance) remains deferred to a
+later part of #4459, exactly as before the transport switch — nothing was
+silently dropped or adopted.
 
 **`send_card` parity (part 5) — preprocessing is replicated, not dropped.** The
 first-party `send_card` fn does **not** itself apply GFM-table conversion
