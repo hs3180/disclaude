@@ -475,20 +475,15 @@ describe('FeishuChannel getCapabilities', () => {
     expect(channel.getCapabilities().supportsStreaming).toBe(true);
   });
 
-  // Issue #4510: 'p2p' scope advertises streaming (so p2p turns can stream)
-  // but narrows it via streamingScope for the agent-side chatType gate.
-  it('reports streamingScope=p2p when streamingCard is p2p (Issue #4510)', () => {
-    const channel = new FeishuChannel({ appId: 'test', appSecret: 'test', streamingCard: 'p2p' });
-    const caps = channel.getCapabilities();
-    expect(caps.supportsStreaming).toBe(true);
-    expect(caps.streamingScope).toBe('p2p');
-  });
-
-  it('does not set streamingScope when streamingCard is true or off (Issue #4510)', () => {
+  // Issue #4510 (part 2): p2p-first is built into the ChatAgent chatType gate,
+  // not a scope capability — the channel only reports the raw boolean flag and
+  // no streamingScope field exists.
+  it('exposes no streamingScope capability (Issue #4510 part 2: zero-config gate)', () => {
     const on = new FeishuChannel({ appId: 'test', appSecret: 'test', streamingCard: true });
-    expect(on.getCapabilities().streamingScope).toBeUndefined();
+    expect(on.getCapabilities().supportsStreaming).toBe(true);
+    expect('streamingScope' in on.getCapabilities()).toBe(false);
     const off = new FeishuChannel({ appId: 'test', appSecret: 'test' });
-    expect(off.getCapabilities().streamingScope).toBeUndefined();
+    expect('streamingScope' in off.getCapabilities()).toBe(false);
     expect(off.getCapabilities().supportsStreaming).toBe(false);
   });
 });
