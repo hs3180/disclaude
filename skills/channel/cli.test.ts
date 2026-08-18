@@ -176,6 +176,8 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         expect(obj).toMatchObject({ ok: false, command });
         expect(String(obj.error)).toMatch(/invalid chatid format/i);
         expect(String(obj.error)).toMatch(/oc_|ou_|cli-/);
+        // Labels keep the twin's message identical to getChatIdValidationError's.
+        expect(String(obj.error)).toMatch(/Feishu group chat/);
       },
     );
 

@@ -389,9 +389,9 @@ function parseActionPrompts(raw) {
  * whitespace edges.
  */
 const CHAT_ID_PATTERNS = [
-  { prefix: "oc_", minLength: 35 },
-  { prefix: "ou_", minLength: 35 },
-  { prefix: "cli-", minLength: 5 },
+  { prefix: "oc_", label: "Feishu group chat", minLength: 35 },
+  { prefix: "ou_", label: "Feishu user (p2p chat)", minLength: 35 },
+  { prefix: "cli-", label: "CLI session", minLength: 5 },
 ];
 
 function isValidChatIdFormat(chatId) {
@@ -404,7 +404,7 @@ function isValidChatIdFormat(chatId) {
 function getChatIdFormatError(chatId) {
   if (isValidChatIdFormat(chatId)) return null;
   const formatList = CHAT_ID_PATTERNS.map(
-    ({ prefix }) => `- \`${prefix}...\``
+    ({ prefix, label }) => `- \`${prefix}...\` (${label})`
   ).join("\n");
   const shown = chatId.length > 20 ? `${chatId.slice(0, 20)}...` : chatId;
   return (
