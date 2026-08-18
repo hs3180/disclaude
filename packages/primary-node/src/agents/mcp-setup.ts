@@ -58,9 +58,17 @@ export function buildMcpServers(
     }
   }
 
-  // Merge configured external MCP servers from config file
+  // Merge configured external MCP servers from config file.
+  // Deprecated (#4459 scope 4): external stdio MCP servers are slated for removal in favor of
+  // Skills (CLI + README). Configured servers keep working until the loader is removed, but every
+  // use is logged — the migration is never silent.
   const configuredMcpServers = Config.getMcpServersConfig();
   if (configuredMcpServers) {
+    logger.warn(
+      { servers: Object.keys(configuredMcpServers) },
+      'External MCP servers are deprecated (#4459) — migrate each server to a Skill ' +
+      '(CLI + README, see docs/skill-format-spec.md); the stdio loader will be removed',
+    );
     for (const [name, config] of Object.entries(configuredMcpServers)) {
       mcpServers[name] = {
         type: 'stdio',

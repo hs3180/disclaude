@@ -120,6 +120,35 @@ describe('buildMcpServers', () => {
     });
   });
 
+  it('should log a deprecation warning when external MCP servers are configured (#4459)', () => {
+    (Config as any).getMcpServersConfig.mockReturnValueOnce({
+      'my-server': { command: 'node', args: ['./server.js'] },
+      'another': { command: 'python', args: ['-m', 'server'] },
+    });
+
+    const callbacks = {
+      getCapabilities: vi.fn(() => ({ supportedMcpTools: [] })),
+    };
+    const result = buildMcpServers('test-chat', callbacks, false, logger);
+
+    // Servers still work (removal is a later part) — but the use is never silent
+    expect(Object.keys(result)).toEqual(['my-server', 'another']);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { servers: ['my-server', 'another'] },
+      expect.stringContaining('deprecated'),
+    );
+  });
+
+  it('should not log a deprecation warning when no external MCP servers are configured', () => {
+    const callbacks = {
+      getCapabilities: vi.fn(() => ({ supportedMcpTools: ['send_text'] })),
+    };
+    buildMcpServers('test-chat', callbacks, false, logger);
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it('should merge external MCP servers with defaults when env is missing', () => {
     (Config as any).getMcpServersConfig.mockReturnValueOnce({
       'minimal-server': { command: 'python', args: ['-m', 'server'] },

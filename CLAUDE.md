@@ -101,7 +101,7 @@ logging:
   level: debug
   rotate: true
 tools:
-  mcpServers:
+  mcpServers:          # ⚠️ deprecated (#4459) — migrate to a Skill (CLI + README)
     my-server:
       command: node
       args: ["./my-mcp-server.js"]
@@ -664,6 +664,9 @@ logging:
   rotate: false        # Enable log rotation
 
 # MCP external servers configuration
+# ⚠️ DEPRECATED (#4459): external stdio MCP servers are slated for removal in favor of
+# Skills (CLI + README, docs/skill-format-spec.md). Configured servers keep working (with a
+# deprecation warning logged per use) until the loader is removed.
 tools:
   mcpServers:
     my-server:
