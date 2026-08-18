@@ -13,6 +13,13 @@ export {
   isAllowed,
 } from './state-machine.js';
 export type { SnapshotEvent } from './state-machine.js';
+export { DeliveryGate } from './delivery-gate.js';
+export type {
+  DeliveryDecision,
+  DeliveryGateOptions,
+  DeliveryHints,
+  DeliveryReason,
+} from './delivery-gate.js';
 export type {
   AgentResult,
   Canonical,
