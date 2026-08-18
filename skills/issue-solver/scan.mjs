@@ -256,7 +256,7 @@ const GRAPHQL_QUERY = `query($owner: String!, $name: String!) {
             ... on CrossReferencedEvent {
               willCloseTarget
               source {
-                ... on PullRequest { number state }
+                ... on PullRequest { number state title }
               }
             }
           }
@@ -370,6 +370,41 @@ async function main() {
     if (closedByMergedPR) mergedPRIssueNums.add(issue.number);
   }
 
+  // Weak-ref phantom detection (#4373, direction #4 — caveat only, NOT auto-excluded).
+  //
+  // The will-close filter above honours GitHub-authoritative closing links
+  // (formal closing keywords + dev-panel links), and GitHub auto-closes on
+  // those too — so on the OPEN pool that filter is essentially
+  // false-negative-only (see comment below). The leak that actually bites is
+  // the *weak* ref: a merged PR that shipped the work for #N via a bare "#N"
+  // mention or a title/body phrase, with no closing link. GitHub did not
+  // auto-close #N and the filter did not exclude it, so #N re-enters the
+  // candidate pool as a phantom (e.g. "#4410 fix ... (#4402)" leaves #4402
+  // looking open).
+  //
+  // Direction #4 (lowest-risk, no precision/recall tradeoff): do NOT auto-exclude
+  // — a weak ref can be mere context ("part of #N", "unlike #N"; see #4376).
+  // Instead surface each candidate's weak refs as a verification caveat so the
+  // work is checked against main before a solver re-implements it. Auto-exclusion
+  // (semantic-overlap, #4373 direction #3) is deferred to a design sign-off.
+  //
+  // Signal source: the same per-issue CROSS_REFERENCED_EVENT table the #4375
+  // filter uses. Every merged PR that referenced #N — closing link or mere
+  // mention — created a cross-ref event on #N, so `willCloseTarget === false`
+  // + `source.state === "MERGED"` is exactly "a merged PR referenced this
+  // issue without a closing link". This keeps the detection on the
+  // #4375 per-issue base (no merged-PR window, no truncation blind spot)
+  // instead of resurrecting the mergedPRs(first: 100) scan that #4375 removed;
+  // a bare "#N" in a PR title/body is itself what creates the cross-ref.
+  const weakRefsByIssue = new Map(); // issueNum -> [{ pr, title }]
+  for (const issue of allIssues) {
+    for (const e of issue.timelineItems?.nodes || []) {
+      if (e.willCloseTarget || e.source?.state !== "MERGED") continue;
+      if (!weakRefsByIssue.has(issue.number)) weakRefsByIssue.set(issue.number, []);
+      weakRefsByIssue.get(issue.number).push({ pr: e.source.number, title: (e.source.title || "").trim() });
+    }
+  }
+
   // An issue is excluded if it has an in-progress (open) PR or its work already
   // shipped in a merged PR (phantom).
   const excludedIssueNums = new Set(openPRIssueNums);
@@ -430,6 +465,23 @@ async function main() {
     }
 
     md += `---\n\n`;
+  }
+
+  // Weak-ref verification caveat (#4373 direction #4). Advisory only — it never
+  // auto-excludes, so the candidate pool shape above is unchanged. Appended after
+  // the candidate bodies to prompt a solver/reviewer to verify flagged issues
+  // against main before implementing.
+  const flagged = candidates
+    .map((i) => ({ issue: i, refs: (weakRefsByIssue.get(i.number) || []).slice(0, 3) }))
+    .filter((x) => x.refs.length);
+  if (flagged.length) {
+    md += `## ⚠️ Weak-ref phantoms — verify before implementing (advisory, NOT auto-excluded)\n\n`;
+    md += `These candidates are referenced by an already-**merged** PR via a weak link — a mention without a \`fixes/closes/resolves\` closing link (bare \`#N\` in title/body, dev-panel-free). GitHub did not auto-close them and the phantom filter did not exclude them, so the work **may already be shipped**. Check each against \`main\` (code grep + merged-PR list) before implementing.\n\n`;
+    for (const { issue, refs } of flagged) {
+      md += `- **#${issue.number}** ${issue.title}\n`;
+      for (const r of refs) md += `  - ← merged #${r.pr}${r.title ? ` _"${r.title}"_` : ""}\n`;
+    }
+    md += `\n_Auto-excluding on weak refs is intentionally deferred: a bare \`#N\` can be mere context ("part of #N"), so aggressive matching would drop legitimately-open epics (#4376). This advisory caveat is direction #4 of #4373; semantic-overlap auto-exclusion (direction #3) is a future design call._\n\n---\n\n`;
   }
 
   console.log(md);
