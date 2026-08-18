@@ -97,6 +97,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // fallback can be surfaced to the user instead of only logger.warn.
   private readonly cwdResolver?: (chatId: string) => CwdResolution;
 
+  // Issue #4448 (nit): the bound-missing target already warned to this chat
+  // (per agent instance), so restart cycles don't re-announce the same missing
+  // directory. Cleared when the binding resolves cleanly again.
+  private warnedMissingWorkingDir?: string;
+
   // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
   private queryHandle?: QueryHandle;
   private channel?: MessageChannel;
@@ -785,17 +790,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
-    const projectCwd = this.cwdProvider?.(chatId);
-
-    // Issue #4448 (direction #1): when the structured resolver is available and
-    // reports the bound directory as missing, the agent silently falls back to
-    // the workspace below (`cwd: undefined` → BaseAgent uses workspaceDir) while
-    // `/project info` still shows the stale target. Push a user-visible warning
-    // to the chat so the mismatch is no longer silent — the plain cwdProvider
-    // can't distinguish this from "unbound" (both yield undefined).
-    if (this.cwdResolver) {
-      const resolution = this.cwdResolver(chatId);
-      if (resolution.reason === 'bound-missing' && resolution.boundWorkingDir) {
+    // Issue #4448 (direction #1): when the structured resolver reports the
+    // bound directory as missing, the agent silently falls back to the workspace
+    // below (`cwd: undefined` → BaseAgent uses workspaceDir) while `/project info`
+    // still shows the stale target. Push a user-visible warning to the chat so
+    // the mismatch is no longer silent — the plain cwdProvider can't distinguish
+    // this from "unbound" (both yield undefined).
+    // Nit: the resolver subsumes cwdProvider (same resolveCwd() underneath,
+    // effectiveCwd is the plain provider's return value) — call it once and use
+    // the result for both the cwd and the warning check, instead of running
+    // resolveCwd() (existsSync + map lookup) twice per spawn.
+    const resolution = this.cwdResolver?.(chatId);
+    if (resolution?.reason === 'bound-missing' && resolution.boundWorkingDir) {
+      // Nit: startAgentLoop() re-runs on restart cycles (processIterator →
+      // startAgentLoop once the previous query ends), which would re-announce
+      // the same missing directory to a chat that already saw the warning.
+      // Warn once per missing target per agent instance; a rebind (or the
+      // directory reappearing then vanishing again) clears the fingerprint
+      // and warns again, matching the "re-resolve on restart" semantics.
+      if (this.warnedMissingWorkingDir !== resolution.boundWorkingDir) {
+        this.warnedMissingWorkingDir = resolution.boundWorkingDir;
         this.callbacks
           .sendMessage(
             chatId,
@@ -814,7 +828,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             );
           });
       }
+    } else if (this.warnedMissingWorkingDir !== undefined) {
+      // Binding recovered (bound or unbound now) — allow a future
+      // bound-missing for a different (or re-vanished) target to warn again.
+      this.warnedMissingWorkingDir = undefined;
     }
+    const projectCwd = resolution?.effectiveCwd ?? this.cwdProvider?.(chatId);
 
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
