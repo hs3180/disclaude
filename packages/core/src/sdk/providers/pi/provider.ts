@@ -105,12 +105,16 @@ export class PiAgentProvider implements IAgentSDKProvider {
     // skips starting the run entirely — an early cancel is never dropped.
     let agent: import('./pi-runtime.js').PiAgent | null = null;
     let cancelRequested = false;
+    // Armed by the iterator once its wake machinery exists, so a cancel()
+    // landing mid-stream both aborts the run and unblocks the consumer loop.
+    let onAbort: (() => void) | null = null;
     const requestAbort = (): void => {
       if (agent) {
         agent.abort();
       } else {
         cancelRequested = true;
       }
+      onAbort?.();
     };
 
     const { streamFn } = this;
@@ -123,7 +127,15 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // await-points of the consumer's for-await.
       const queue: PiAgentEvent[] = [];
       const notify: (() => void)[] = [];
-      let finished = false;
+      // Bridge lifecycle: the stream ends only when the input generator is
+      // exhausted AND no run is in flight, or when cancel()/close() aborts.
+      // A settled run alone does NOT end the stream — the session stays
+      // alive between turns (the ClaudeSDKProvider contract: one long-lived
+      // query per chat; chat-agent keeps its MessageChannel open across
+      // turns and closes it to end the query).
+      let inputDone = false;
+      let runActive = false;
+      let aborted = false;
       const wakeAll = (): void => {
         for (const wake of notify.splice(0)) {
           wake();
@@ -133,13 +145,12 @@ export class PiAgentProvider implements IAgentSDKProvider {
         queue.push(event);
         wakeAll();
       };
+      onAbort = (): void => {
+        aborted = true;
+        wakeAll();
+      };
 
-      // First turn: prompt() seeds the transcript; subsequent inputs from the
-      // multi-turn generator arrive while the agent is running (pi queues
-      // follow-ups until the current run would otherwise stop) — matching the
-      // ClaudeSDKProvider contract of a single long-lived query per chat.
       const inputIterator = input[Symbol.asyncIterator]();
-      const first = await inputIterator.next();
 
       const adaptedOptions = adaptPiOptions(options);
       agent = new Agent({
@@ -148,55 +159,81 @@ export class PiAgentProvider implements IAgentSDKProvider {
           systemPrompt: adaptedOptions.systemPrompt ?? '',
         },
       } satisfies PiAgentOptions);
+      const piAgent = agent;
       if (cancelRequested) {
         // cancel()/close() arrived while loadPiRuntime() was still pending.
         // Abort immediately and end the bridge without starting a run. No
-        // subscribe/prompt/pumpInput was set up, so the early-return path has
+        // subscribe/pumpInput was set up, so the early-return path has
         // nothing to clean up (the finally block below belongs to the main
         // try that starts after this guard).
-        agent.abort();
-        finished = true;
-        wakeAll();
+        piAgent.abort();
         return;
       }
 
-      const unsubscribe = agent.subscribe((event) => {
+      const unsubscribe = piAgent.subscribe((event) => {
         enqueue(event as PiAgentEvent);
-        if (event.type === 'agent_end') {
-          finished = true;
+      });
+
+      // Turn runner. The first input seeds the transcript via prompt();
+      // later inputs go through pi's follow-up queue. followUp() only
+      // ENQUEUES — the queue is drained at a run's stop checkpoint, so a
+      // follow-up arriving after the previous run settled would strand in
+      // the queue forever. waitForIdle() + continue() drains it into a new
+      // run (continue() throws when the active run already consumed the
+      // message at its checkpoint, or when there is nothing to continue
+      // from — expected, swallowed below).
+      const runInput = async (message: unknown, first: boolean): Promise<void> => {
+        runActive = true;
+        try {
+          if (first) {
+            await piAgent.prompt(message);
+          } else {
+            void piAgent.followUp(message);
+            await piAgent.waitForIdle();
+            await piAgent.continue();
+          }
+        } catch {
+          // Run failures surface through the event stream (error / aborted
+          // stopReason → error message); the bridge, not this pump, owns
+          // stream termination.
+        } finally {
+          runActive = false;
           wakeAll();
         }
-      });
+      };
 
-      // prompt() resolves when the whole run settles (agent_end + listeners).
-      // Run failures normally surface through the event stream (error /
-      // aborted stopReason → error message); the catch below additionally
-      // ends the bridge if the run rejected WITHOUT emitting agent_end, so a
-      // crashed loop can never hang the consumer's for-await.
-      const runPromise = (
-        first.done ? Promise.resolve() : agent.prompt(toPiUserMessage(userInputText(first.value)))
-      ).finally(() => {
-        finished = true;
-        wakeAll();
-      });
-
-      // Feed later inputs as follow-ups while the consumer iterates.
-      const pumpInput = (async () => {
-        while (true) {
-          const { value, done } = await inputIterator.next();
-          if (done) {
-            return;
+      // Input pump: pulls user inputs as they arrive; each becomes a run.
+      // Between turns it parks in inputIterator.next() — NOT in aborting the
+      // agent: an idle agent stays alive for the next turn. The input
+      // generator is the session's lifetime; it ending (chat-agent closes
+      // its MessageChannel on /reset, retry, and once-mode completion) is
+      // what winds the bridge down.
+      let terminated = false;
+      void (async () => {
+        let first = true;
+        try {
+          while (true) {
+            const { value, done } = await inputIterator.next();
+            if (done || terminated) {
+              return;
+            }
+            await runInput(toPiUserMessage(userInputText(value)), first);
+            first = false;
           }
-          await agent?.followUp(toPiUserMessage(userInputText(value))).catch(() => {
-            // followUp rejections mirror the prompt() policy above.
-          });
+        } finally {
+          inputDone = true;
+          wakeAll();
         }
-      })();
+      })().catch(() => {
+        // The input generator may reject (producer error). The session ends
+        // the same way (inputDone); swallow so this detached pump never
+        // surfaces an unhandled rejection — teardown no longer awaits it.
+      });
 
       try {
         while (true) {
           if (queue.length === 0) {
-            if (finished) {
+            if (aborted || (inputDone && !runActive)) {
               break;
             }
             await new Promise<void>((resolve) => notify.push(resolve));
@@ -209,9 +246,19 @@ export class PiAgentProvider implements IAgentSDKProvider {
           }
         }
       } finally {
+        // Teardown — the session is over (input exhausted, the consumer
+        // broke out of its for-await, or cancel()/close() aborted). Unlike
+        // the between-turns park, aborting here is correct: it kills any
+        // in-flight run and releases the agent. pumpInput is deliberately
+        // NOT awaited: with the input generator still open (chat-agent keeps
+        // its MessageChannel open for the whole session) it parks inside
+        // inputIterator.next() indefinitely — awaiting it here would hang
+        // the consumer's own break (its for-await awaits this generator's
+        // return(), Bug A). `terminated` makes any input that arrives later
+        // a no-op, so no zombie run starts on the aborted agent.
+        terminated = true;
         unsubscribe();
-        agent?.abort();
-        await Promise.allSettled([runPromise, pumpInput]);
+        piAgent.abort();
       }
     };
 

@@ -49,6 +49,7 @@ const { fakeState } = vi.hoisted(() => {
 });
 
 class FakeAgent {
+  private followUpQueue: unknown[] = [];
   constructor(options: unknown) {
     fakeState.ctorOptions = options;
   }
@@ -69,7 +70,26 @@ class FakeAgent {
   }
   followUp(message: unknown): Promise<void> {
     fakeState.prompts.push(message);
+    // Real pi semantics (0.82.1 agent.js:175): followUp only ENQUEUES — it
+    // does not start a run. The queue is drained at a run's stop checkpoint
+    // (agent-loop.js:163), or by continue() on an idle agent.
+    this.followUpQueue.push(message);
     return Promise.resolve();
+  }
+  /** Real pi semantics: drains the queued follow-ups into a new run. */
+  async continue(): Promise<void> {
+    if (this.followUpQueue.length === 0) {
+      // Real Agent.continue() throws when there is nothing to continue from.
+      throw new Error('Cannot continue from message role: assistant');
+    }
+    const batch = this.followUpQueue.splice(0);
+    const events = fakeState.scripts.shift() ?? [{ type: 'agent_end', messages: [] }];
+    for (const event of events) {
+      for (const listener of [...fakeState.listeners]) {
+        await listener(event);
+      }
+    }
+    void batch;
   }
   abort(): void {
     fakeState.aborted = true;
@@ -203,14 +223,80 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     expect(fakeState.prompts).toEqual([]);
   });
 
-  it('ends the stream when the run settles without emitting agent_end (hang guard)', async () => {
+  it('ends the stream when the input generator is exhausted after a silent run (hang guard)', async () => {
     // Scripted run that resolves prompt() WITHOUT any events (e.g. a crashed
     // or aborted loop). The naive bridge would wait for agent_end forever;
     // queryStream's run-settlement guard must wake the consumer and end the
-    // stream.
+    // stream once the input is also exhausted.
     fakeState.scripts = [[]];
     const messages = await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
     expect(messages).toEqual([]);
+  });
+
+  it('does not hang when the input generator stays open after the run settles (Bug A)', async () => {
+    // Regression (review round 1/2, Bug A): the bridge used to abort() the
+    // agent in the consumer loop's finally-equivalent path as soon as a run
+    // settled. The production input is chat-agent's MessageChannel generator
+    // (message-channel.ts), which stays open for the WHOLE session — the
+    // abort made the bridge's own input pump park forever inside
+    // inputIterator.next() (the generator never ends), and the consumer's
+    // teardown await on that pump hung the next user turn. The bridge must
+    // instead park with the input still open, waiting for a possible next
+    // turn, and only end when the input generator ends.
+    fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+    let releaseInput: (() => void) | undefined;
+    const scriptedInput = (async function* (): AsyncGenerator<UserInput> {
+      yield userInput('first');
+      // Park like MessageChannel.generator(): never yield again until the
+      // channel closes (here: until the test releases the generator).
+      await new Promise<void>((resolve) => {
+        releaseInput = resolve;
+      });
+    })();
+    const result = provider.queryStream(scriptedInput, baseOptions());
+    const consuming = collect(result.iterator);
+    // Give the bridge time to (wrongly) end early / hang: a couple of macrotasks
+    // past run settlement. The iterator must still be open (no early return).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // ... and must NOT have aborted the agent between turns.
+    expect(fakeState.aborted).toBe(false);
+    // End the input (the session-lifetime signal) → the bridge must settle
+    // promptly; this is the await that used to hang forever.
+    releaseInput?.();
+    const messages = await consuming;
+    expect(messages.map((m) => m.type)).toContain('result');
+  });
+
+  it('keeps the session alive between turns: a second input after the first run settles runs as a follow-up', async () => {
+    // The ClaudeSDKProvider contract this bridge must match: one long-lived
+    // query per chat. Turn 2 arrives on chat-agent's still-open
+    // MessageChannel AFTER run 1 settled — the bridge must not have torn
+    // anything down between turns (no abort), and the queued follow-up must
+    // actually run (followUp() only enqueues; an idle agent needs
+    // continue() to drain the queue into a new run — real pi-agent-core
+    // 0.82.1 semantics: agent-loop.js drains the follow-up queue only at a
+    // run's stop checkpoint).
+    fakeState.scripts = [
+      [{ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'one' } }, { type: 'agent_end', messages: [] }],
+      [{ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'two' } }, { type: 'agent_end', messages: [] }],
+    ];
+    let releaseSecond: (() => void) | undefined;
+    const scriptedInput = (async function* (): AsyncGenerator<UserInput> {
+      yield userInput('first');
+      await new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+      yield userInput('second');
+    })();
+    const result = provider.queryStream(scriptedInput, baseOptions());
+    const consuming = collect(result.iterator);
+    await new Promise((resolve) => setTimeout(resolve, 10)); // run 1 settles
+    expect(fakeState.aborted).toBe(false); // session kept alive
+    releaseSecond?.(); // user sends turn 2
+    const messages = await consuming;
+    const texts = messages.filter((m) => m.type === 'text').map((m) => m.content);
+    expect(texts).toEqual(['one', 'two']); // turn 2 actually ran
+    expect(fakeState.prompts).toHaveLength(2); // prompt() then followUp()+continue()
   });
 
   it('handle.cancel() aborts the pi agent and the consumer does not hang', async () => {
@@ -236,6 +322,39 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
       expect(fakeState.aborted).toBe(true);
     });
     await consuming; // must resolve, not hang
+  });
+
+  it('consumer breaking out of the for-await mid-stream settles without hanging (Bug A)', async () => {
+    // Regression (review rounds 1/2, Bug A — the exact production shape):
+    // chat-agent.ts:987 breaks out of its for-await on /stop (abort signal),
+    // while the MessageChannel input generator stays OPEN for the session.
+    // The consumer's break awaits this generator's return(); the old teardown
+    // awaited the input pump, which parks forever inside
+    // inputIterator.next() when the generator never ends — so the break (and
+    // with it the whole turn) hung. Teardown must not wait on the pump, and
+    // the agent must be aborted so the in-flight run ends.
+    fakeState.scripts = [
+      [{ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'partial' } }],
+      // No agent_end: the run is still in flight when the consumer breaks.
+    ];
+    const scriptedInput = (async function* (): AsyncGenerator<UserInput> {
+      yield userInput('hi');
+      await new Promise<void>(() => {}); // channel never closes
+    })();
+    const result = provider.queryStream(scriptedInput, baseOptions());
+    let iterations = 0;
+    try {
+      for await (const _message of result.iterator) {
+        iterations++;
+        break; // chat-agent's abort-signal break
+      }
+    } finally {
+      result.handle.close(); // chat-agent's teardown equivalent
+    }
+    expect(iterations).toBe(1);
+    await vi.waitFor(() => {
+      expect(fakeState.aborted).toBe(true); // in-flight run released
+    });
   });
 
   it('handle.cancel() before the runtime finishes loading is latched, not dropped', async () => {

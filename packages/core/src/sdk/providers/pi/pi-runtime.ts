@@ -32,6 +32,8 @@ export interface PiAgent {
   subscribe(listener: (event: PiAgentEvent) => Promise<void> | void): () => void;
   prompt(message: unknown): Promise<void>;
   followUp(message: unknown): Promise<void>;
+  /** Continue from the current transcript, draining queued follow-ups into a new run. */
+  continue(): Promise<void>;
   abort(): void;
   waitForIdle(): Promise<void>;
 }
