@@ -231,6 +231,15 @@ export interface ChannelCapabilities {
    */
   supportsStreaming: boolean;
   /**
+   * Chat-type scope applied on top of `supportsStreaming` (Issue #4510,
+   * p2p-first gray rollout). `'p2p'` means the channel only wants streaming
+   * in single chats — the ChatAgent gate additionally requires
+   * `chatType === 'p2p'` before constructing the StreamingReplyDriver;
+   * group/topic turns keep the per-chunk `sendMessage` path. Undefined (or
+   * `'all'`) means no chat-type narrowing.
+   */
+  streamingScope?: 'all' | 'p2p';
+  /**
    * Supported MCP tools for this channel.
    * Issue #590 Phase 3: Agent Prompt 动态适配
    * Used to filter available tools in the prompt based on channel capabilities.

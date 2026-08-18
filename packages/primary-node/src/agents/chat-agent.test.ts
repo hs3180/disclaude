@@ -2138,4 +2138,95 @@ describe('ChatAgent (primary-node)', () => {
       expect(localCallbacks.finalizeStreaming).not.toHaveBeenCalled();
     });
   });
+
+  // Issue #4510: `streamingScope: 'p2p'` narrows streaming to single chats.
+  // The chatType × scope matrix (group/topic turns fall back to sendMessage
+  // bit-identically; p2p turns stream; no scope keeps #4399 behavior).
+  describe('Issue #4510: p2p-scoped streaming (streamingScope)', () => {
+    const capsWithScope = (streamingScope?: 'all' | 'p2p') => ({
+      supportsCard: true,
+      supportsThread: true,
+      supportsFile: true,
+      supportsMarkdown: true,
+      supportsMention: true,
+      supportsUpdate: true,
+      supportsStreaming: true,
+      ...(streamingScope ? { streamingScope } : {}),
+    });
+
+    async function runTurn(chatType?: string, streamingScope?: 'all' | 'p2p') {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        getCapabilities: vi.fn(() => capsWithScope(streamingScope)),
+        startStreaming: vi.fn(() => Promise.resolve('card-99')),
+        streamText: vi.fn(() => Promise.resolve()),
+        finalizeStreaming: vi.fn(() => Promise.resolve()),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_scope',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* scopedIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'Chunk' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 3' }, raw: {} };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: scopedIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_scope', payload: 'hi', messageId: 'msg_1', chatType });
+      await vi.waitFor(() => {
+        expect(localCallbacks.sendMessage.mock.calls.some(
+          (c: any[]) => typeof c[1] === 'string' && c[1].startsWith('✅ Complete')
+        )).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+      return localCallbacks;
+    }
+
+    it('streams for a p2p chat when scope is p2p', async () => {
+      const cb = await runTurn('p2p', 'p2p');
+      expect(cb.startStreaming).toHaveBeenCalledTimes(1);
+      expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-99');
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(false);
+    });
+
+    it('falls back to sendMessage for a group chat when scope is p2p', async () => {
+      const cb = await runTurn('group', 'p2p');
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.streamText).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    it('falls back to sendMessage for a topic chat when scope is p2p (thread groups stay non-streaming)', async () => {
+      const cb = await runTurn('topic', 'p2p');
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    it('streams for a group chat when scope is absent (legacy full rollout)', async () => {
+      const cb = await runTurn('group', undefined);
+      expect(cb.startStreaming).toHaveBeenCalledTimes(1);
+      expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-99');
+    });
+
+    it('streams for a group chat when scope is all (explicit full rollout)', async () => {
+      const cb = await runTurn('group', 'all');
+      expect(cb.startStreaming).toHaveBeenCalledTimes(1);
+    });
+
+    it('degrades to sendMessage when scope is p2p and chatType is unknown (fail-safe)', async () => {
+      const cb = await runTurn(undefined, 'p2p');
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+  });
 });
