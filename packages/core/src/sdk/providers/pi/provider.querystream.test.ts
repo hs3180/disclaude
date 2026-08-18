@@ -289,6 +289,40 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
       // isError tool result — the adapter contract, #4387).
       await expect(tool!.execute('call-2', { x: 'not-a-number' }, undefined, undefined, undefined)).rejects.toThrow();
     });
+
+    it('recognizes the createMcpServer handle shape (the production wiring) without re-adapting', async () => {
+      // The production path: chat-agent's buildMcpServers() puts
+      // createChannelMcpServer() = getProvider().createMcpServer({...type:'inline'...})
+      // into mcpServers — a `{ name, version, tools }` handle with NO `type`
+      // field whose tools are ALREADY AgentHarnessTools. collectInlineTools
+      // must pass those through as-is (re-adapting would double-wrap execute
+      // and Zod-parse a JSON-Schema object). Cf. ClaudeSDKProvider's
+      // isSdkInlineMcpServer duck-typing for the same production flow.
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      const handle = provider.createMcpServer({
+        type: 'inline',
+        name: 'channel-mcp',
+        version: '1.0.0',
+        tools: [makeTool('send_text')],
+      });
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          // base-agent.ts:202 casts the built handle record into the options
+          // the same way — the handle shape is not statically a McpServerConfig.
+          mcpServers: { 'channel-mcp': handle } as unknown as AgentQueryOptions['mcpServers'],
+        }).iterator,
+      );
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string; execute: Function }> } };
+      const tools = ctor?.initialState?.tools ?? [];
+      expect(tools.map((t) => t.name)).toEqual(['send_text']);
+      // The SAME adapted instance, not a re-wrapped one: executing it runs the
+      // original handler round-trip.
+      const result = (await tools[0]!.execute('call-h', { x: 5 }, undefined, undefined, undefined)) as {
+        details: unknown;
+      };
+      expect(result.details).toEqual({ doubled: 10 });
+    });
   });
 
   it('streams a plain-text turn: text deltas then result', async () => {

@@ -305,13 +305,13 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // provider.ts). Each tool is wrapped via createInlineTool, which produces
       // a pi AgentHarnessTool shape (inline-tool-adapter.ts). The returned
       // handle carries the AgentHarnessTool[] that the pi queryStream path
-      // (#4386 part 3) will inject into the agentLoop via setTools.
+      // (#4386 part 4) seeds into the Agent via initialState.tools —
+      // collectInlineTools duck-types this handle shape (see below).
       //
       // Part-1 scope: inline handle construction + stdio decision. Deferred to
       // later parts of #4417: external stdio MCP servers (e.g. Playwright MCP),
       // which need the @modelcontextprotocol/sdk client → AgentHarnessTool
-      // converter (S4b), and the live tool injection (needs the running
-      // agentLoop, #4386).
+      // converter (S4b).
       const tools = (config.tools?.map((tool) => this.createInlineTool(tool)) ?? []);
       return {
         name: config.name,
@@ -392,6 +392,23 @@ function userInputText(input: UserInput): string {
  * every run of the session (pi 0.82.1: `createMutableAgentState` copies
  * `initialState.tools` into the state registry at construction).
  *
+ * TWO server shapes reach `mcpServers` on this path (matching what
+ * ClaudeSDKProvider's `adaptMcpServers` handles):
+ *
+ * 1. **config shape** — `{ type: 'inline', tools: InlineToolDefinition[] }`
+ *    (types.ts `InlineMcpServerConfig`): raw Zod definitions; each tool is
+ *    adapted here via `adaptInlineTool`.
+ * 2. **handle shape** — the object `PiAgentProvider.createMcpServer` returns
+ *    (`{ name, version, tools }` with NO `type` field, tools ALREADY adapted
+ *    to AgentHarnessTool shapes). This is the PRODUCTION shape: chat-agent's
+ *    `buildMcpServers()` populates `mcpServers['channel-mcp']` with
+ *    `createChannelMcpServer()` = `getProvider().createMcpServer(...)`, which
+ *    flows into `AgentQueryOptions.mcpServers` verbatim (base-agent.ts:202).
+ *    Duck-typed on `Array.isArray(tools) && tools.every(t => typeof t?.execute
+ *    === 'function')` (cf. Claude's `isSdkInlineMcpServer`) and passed through
+ *    WITHOUT re-adapting — re-adapting an AgentHarnessTool would wrap an
+ *    already-wrapped execute and Zod-parse a JSON-Schema object.
+ *
  * stdio servers are skipped here: pi rejects them at `createMcpServer`, and
  * a stdio entry in `mcpServers` on the pi backend is a config error surfaced
  * there (throwing in the iterator would instead surface as a hung/dead
@@ -401,12 +418,31 @@ function userInputText(input: UserInput): string {
 function collectInlineTools(options: AgentQueryOptions): unknown[] {
   const tools: unknown[] = [];
   for (const server of Object.values(options.mcpServers ?? {})) {
-    if (server.type !== 'inline') {
-      continue;
-    }
-    for (const tool of server.tools ?? []) {
-      tools.push(adaptInlineTool(tool));
+    if (server.type === 'inline') {
+      // Config shape: adapt each raw InlineToolDefinition for pi.
+      for (const tool of server.tools ?? []) {
+        tools.push(adaptInlineTool(tool));
+      }
+    } else if (isAdaptedToolHandle((server as unknown as { tools?: unknown }).tools)) {
+      // Handle shape from createMcpServer (the production path) — no `type`
+      // field, tools ALREADY AgentHarnessTools; pass them through as-is.
+      // (The production mcpServers record is cast into McpServerConfig by
+      // base-agent.ts:202 without a real conversion, hence the unknown hop.)
+      tools.push(...((server as unknown as { tools: Array<{ execute: unknown }> }).tools));
     }
   }
   return tools;
+}
+
+/**
+ * Duck-type a `createMcpServer` inline handle's tool list: every entry must
+ * already be an adapted `AgentHarnessTool` (has an `execute` function).
+ * Mirrors ClaudeSDKProvider's `isSdkInlineMcpServer` approach — the handle
+ * carries no `type` field, so shape detection is the only signal.
+ */
+function isAdaptedToolHandle(tools: unknown): tools is Array<{ execute: unknown }> {
+  return (
+    Array.isArray(tools) &&
+    tools.every((tool) => typeof (tool as { execute?: unknown })?.execute === 'function')
+  );
 }
