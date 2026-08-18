@@ -105,7 +105,10 @@ function selectInstallation(installations, targetOwner) {
  * Call a GitHub App-auth endpoint (`/app/installations...`) with a raw App JWT
  * as a Bearer token. The `gh` CLI does not authenticate an App JWT passed via
  * GH_TOKEN (HTTP 401), so these endpoints bypass `gh` entirely.
- * Returns the parsed JSON response, or null on failure.
+ * Returns { ok: true, data } with the parsed JSON, or { ok: false, message }
+ * with the failure detail. The detail is always printed to stderr too — a dead
+ * mint is the primary diagnostic for a failed tick, so it must not hide behind
+ * --debug (the pre-#4513 code passed gh's stderr through the same way).
  */
 async function appApi(jwt, method, apiPath) {
   try {
@@ -119,13 +122,14 @@ async function appApi(jwt, method, apiPath) {
       signal: AbortSignal.timeout(30000),
     });
     if (!resp.ok) {
-      log(`appApi ${method} ${apiPath} failed: HTTP ${resp.status} ${(await resp.text()).slice(0, 200)}`);
-      return null;
+      const detail = `HTTP ${resp.status} ${(await resp.text()).slice(0, 200)}`;
+      console.error(`appApi ${method} ${apiPath} failed: ${detail}`);
+      return { ok: false, message: detail };
     }
-    return await resp.json();
+    return { ok: true, data: await resp.json() };
   } catch (err) {
-    log(`appApi ${method} ${apiPath} failed: ${err.message}`);
-    return null;
+    console.error(`appApi ${method} ${apiPath} failed: ${err.message}`);
+    return { ok: false, message: err.message };
   }
 }
 
@@ -161,16 +165,21 @@ async function refreshGitHubToken() {
     let iid = INSTALL_ID;
     if (!iid) {
       const installs = await appApi(jwt, "GET", "app/installations");
-      if (!Array.isArray(installs) || !installs.length) {
-        return { ok: false, error: "NO_INSTALLATIONS", message: `No installations found (${installs ? installs.length : "request failed"})` };
+      if (!installs.ok) {
+        return { ok: false, error: "INSTALLATIONS_FETCH_FAILED", message: `appApi GET app/installations: ${installs.message}` };
       }
-      iid = selectInstallation(installs, REPO_OWNER);
+      if (!Array.isArray(installs.data) || !installs.data.length) {
+        return { ok: false, error: "NO_INSTALLATIONS", message: `No installations found (${Array.isArray(installs.data) ? installs.data.length : "non-array response"})` };
+      }
+      iid = selectInstallation(installs.data, REPO_OWNER);
     }
 
-    const data = await appApi(jwt, "POST", `app/installations/${iid}/access_tokens`);
-    if (!data || !data.token) {
-      return { ok: false, error: "TOKEN_FETCH_FAILED", message: `access_tokens failed: ${data ? data.message || JSON.stringify(data) : "no response" }` };
+    const minted = await appApi(jwt, "POST", `app/installations/${iid}/access_tokens`);
+    if (!minted.ok || !minted.data.token) {
+      const detail = minted.ok ? `missing token field (${minted.data.message || JSON.stringify(minted.data).slice(0, 200)})` : minted.message;
+      return { ok: false, error: "TOKEN_FETCH_FAILED", message: `appApi POST app/installations/${iid}/access_tokens: ${detail}` };
     }
+    const data = minted.data;
 
     const env = loadRuntimeEnv();
     env.GH_TOKEN = data.token;
