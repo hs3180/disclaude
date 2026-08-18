@@ -517,7 +517,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         const baseUrl = `http://127.0.0.1:${port}`;
         const r = await runCli(
           ['send_text', '--chat', 'oc_test', '--text', 'hi', '--base-url', baseUrl],
-          { NODE_ENV: 'test' },
+          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' },
         );
         expect(r.code).toBe(1);
         // stdout stays exactly one JSON object — the transport switch does not
@@ -541,7 +541,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         const baseUrl = `http://127.0.0.1:${port}`;
         const r = await runCli(
           ['send_text', '--chat', 'oc_test', '--text', 'hi'],
-          { NODE_ENV: 'test', DISCLAUDE_REST_IPC_BASE_URL: baseUrl },
+          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532', DISCLAUDE_REST_IPC_BASE_URL: baseUrl },
         );
         expect(r.code).toBe(1);
         const obj = parseSingleJson(r.stdout);
@@ -560,7 +560,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         const baseUrl = `http://127.0.0.1:${port}`;
         const r = await runCli(
           ['push_to_agent', '--chat', 'oc_test', '--message', 'hi', '--base-url', baseUrl],
-          { NODE_ENV: 'test' },
+          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' },
         );
         const obj = parseSingleJson(r.stdout);
         expect(obj).toMatchObject({ ok: false, command: 'push_to_agent' });

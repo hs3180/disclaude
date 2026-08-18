@@ -321,6 +321,46 @@ function restUnavailableHint(baseUrl) {
 }
 
 /**
+ * Probe GET /api/ping directly from the CLI (no @disclaude/mcp-server import
+ * needed — plain fetch). Used on the failure path to decide whether the
+ * actionable "REST unreachable" hint applies.
+ *
+ * Why a CLI-side probe instead of string-matching alone: the first-party tools
+ * gate in an order the CLI does not control — e.g. send_text checks Feishu
+ * credentials BEFORE the IPC availability probe, so on a credential-less host
+ * a down REST face surfaces as "Feishu credentials not configured", which no
+ * transport-flavored regex can distinguish from a real credentials problem.
+ * Probing here makes the hint conditional on the ACTUAL reachability of the
+ * REST face, independent of which first-party gate fired first. The probe is
+ * token-exempt (GET route) and short-timeout; it only runs after a send has
+ * already failed, so the happy path pays nothing.
+ */
+async function isRestFaceReachable(baseUrl) {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/ping`, {
+      method: "GET",
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return false;
+    const json = await res.json();
+    return json && json.pong === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide the failure hint for a send that already failed: if the REST face is
+ * verifiably down (probe fails), the root cause is reachability — return the
+ * actionable hint; otherwise the failure is genuinely something else (creds,
+ * card validation, Feishu API error) and no transport hint is added.
+ */
+async function failureHintForSend(baseUrl) {
+  const reachable = await isRestFaceReachable(baseUrl);
+  return reachable ? undefined : restUnavailableHint(baseUrl);
+}
+
+/**
  * Detect a REST-unreachable style failure. Two layers produce it: the IPC error
  * contract prefixes (`IPC_NOT_AVAILABLE` / `IPC_TIMEOUT` from RestIpcClient /
  * the facade) and the first-party tools' friendly availability-gate messages
@@ -561,9 +601,7 @@ async function cmdSendText(argv) {
   emitFail(
     "send_text",
     (result && (result.error || result.message)) || "send_text returned without success",
-    result && isRestUnreachable(result.message || result.error || "")
-      ? restUnavailableHint(baseUrl)
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -692,9 +730,7 @@ async function cmdSendInteractive(argv) {
   emitFail(
     "send_interactive",
     (result && (result.error || result.message)) || "send_interactive returned without success",
-    result && isRestUnreachable(result.message || result.error || "")
-      ? restUnavailableHint(baseUrl)
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -781,9 +817,7 @@ async function cmdSendFile(argv) {
   emitFail(
     "send_file",
     (result && (result.error || result.message)) || "send_file returned without success",
-    result && isRestUnreachable(result.message || result.error || "")
-      ? restUnavailableHint(baseUrl)
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -981,9 +1015,7 @@ async function cmdSendCard(argv) {
   emitFail(
     "send_card",
     (result && (result.error || result.message)) || "send_card returned without success",
-    result && isRestUnreachable(result.message || result.error || "")
-      ? restUnavailableHint(baseUrl)
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -1087,9 +1119,7 @@ async function cmdPushToAgent(argv) {
   emitFail(
     "push_to_agent",
     (result && (result.error || result.message)) || "push_to_agent returned without success",
-    result && isRestUnreachable(result.message || result.error || "")
-      ? restUnavailableHint(baseUrl)
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
