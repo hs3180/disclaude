@@ -58,6 +58,27 @@ const testJobFactory = (
   timezone: string,
 ) => new CronJob(cron, onTick, null, false, timezone);
 
+/**
+ * Issue #4394 (part 3): deterministic event-loop drain, replacing fixed
+ * `await new Promise(r => setTimeout(r, N))` wall-clock waits.
+ *
+ * Why this is safe for the "tick should have been SKIPPED" assertions below:
+ * `executeTask` makes every skip decision (blocking-already-running,
+ * same-chatId blocking, isChatBusy) SYNCHRONOUSLY, before its first `await`
+ * (`scheduleManager.get`, whose mock resolves on the microtask queue), and the
+ * route mock also resolves on the microtask queue. A few `setImmediate`
+ * (macrotask) boundaries therefore let all pending microtasks settle —
+ * including any `route` call from a tick that was NOT skipped. So after this
+ * resolves, a regression that routes a meant-to-be-skipped tick is already
+ * observable (the assertion fails), with no fixed ms wait and no load sensitivity.
+ * For assertions that expect a route to LAND, prefer `vi.waitFor` instead.
+ */
+const flushPending = async (rounds = 4) => {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+};
+
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
@@ -880,7 +901,8 @@ describe('Scheduler', () => {
 
       // Second trigger while still running should be skipped
       void jobs[0].job.fireOnTick();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Deterministic drain instead of a fixed 100ms wait (Issue #4394 part 3).
+      await flushPending();
 
       // Router should only be called once (second trigger was skipped)
       expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
@@ -901,10 +923,13 @@ describe('Scheduler', () => {
 
       // Second trigger while running - should start since blocking=false
       void jobs[0].job.fireOnTick();
-      await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Both executions should have been initiated
-      expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
+      // Both executions should have been initiated. The second route lands
+      // after executeTask's first await, so wait for it deterministically
+      // instead of a fixed 100ms wall-clock wait (Issue #4394 part 3).
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000 });
     });
 
     it('should allow execution after previous blocking task completes', async () => {
@@ -944,7 +969,10 @@ describe('Scheduler', () => {
       busyScheduler.addTask(createTask({ id: 'blocking-busy', blocking: true, chatId: 'oc_busy' }));
 
       void busyScheduler.getActiveJobs()[0].job.fireOnTick();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Deterministic drain instead of a fixed 100ms wait (Issue #4394 part 3):
+      // the busy-skip is decided synchronously, so a would-be route would have
+      // fired by here if the gate had failed.
+      await flushPending();
 
       // Skipped this tick because the chat is busy
       expect(mockRouterAsMock.route).not.toHaveBeenCalled();
@@ -1227,7 +1255,9 @@ describe('Scheduler', () => {
       // Fire task2 — should be skipped because task1 is blocking and same chatId
       void jobs[1].job.fireOnTick();
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Deterministic drain instead of a fixed 200ms wait (Issue #4394 part 3):
+      // the same-chatId blocking skip is decided synchronously in executeTask.
+      await flushPending();
 
       // Task2 should not have been routed
       expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
