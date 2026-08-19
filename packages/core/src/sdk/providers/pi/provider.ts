@@ -35,6 +35,7 @@ import {
   type PiPermissionGate,
 } from './permission-gate.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
+import { createPiToolPermissionGate } from './tool-permission-gate.js';
 
 /**
  * Stream-function injection seam for `queryStream` (Issue #4386 part 3).
@@ -194,11 +195,21 @@ export class PiAgentProvider implements IAgentSDKProvider {
       const inputIterator = input[Symbol.asyncIterator]();
 
       const adaptedOptions = adaptPiOptions(options);
+      // Issue #4389 (S6, part 1): disclaude is the sole permission authority
+      // on the pi path (pi has no built-in perms). The gate rides pi's native
+      // pre-tool-call deny hook — invoked in-loop after argument validation,
+      // before EVERY tool execution — so no tool (inline is the only path
+      // since MCP was dropped) reaches its handler ungated. `null` when
+      // `disallowedTools` is absent/empty → hook omitted, behavior unchanged.
+      const toolPermissionGate = createPiToolPermissionGate(options);
       agent = new Agent({
         streamFn: streamFn as PiAgentOptions['streamFn'],
         initialState: {
           systemPrompt: adaptedOptions.systemPrompt ?? '',
         },
+        ...(toolPermissionGate
+          ? { beforeToolCall: toolPermissionGate satisfies PiAgentOptions['beforeToolCall'] }
+          : {}),
       } satisfies PiAgentOptions);
       const piAgent = agent;
       if (cancelRequested) {

@@ -48,8 +48,53 @@ export interface PiAgentOptions {
     messages?: unknown[];
     tools?: unknown[];
   };
+  /**
+   * Pre-tool-call deny hook (Issue #4389). Optional on pi's side too; the
+   * loop invokes it after argument validation and BEFORE execution
+   * (`agent-loop.js:405-422`) and converts `{ block: true }` into an error
+   * tool result carrying `reason`. Set by the provider from
+   * `createPiToolPermissionGate()` when there is anything to deny.
+   */
+  beforeToolCall?: PiBeforeToolCallHook;
   [key: string]: unknown;
 }
+
+/**
+ * Structural mirror of pi's `AgentToolCall` content block (pi-ai
+ * `ToolCall`, `types.d.ts:244-250`) — only the fields the permission gate
+ * reads (`name`).
+ */
+export interface PiAgentToolCall {
+  type: 'toolCall';
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/**
+ * Structural mirror of pi's `BeforeToolCallContext` (`types.d.ts:69-79`).
+ * `args` carries the schema-validated tool arguments (the seam for a future
+ * arg-level policy layer, #4389 later parts); `toolCall.name` is the
+ * deny-list key.
+ */
+export interface PiBeforeToolCallContext {
+  assistantMessage: unknown;
+  toolCall: PiAgentToolCall;
+  args: unknown;
+  context: unknown;
+}
+
+/** Structural mirror of pi's `BeforeToolCallResult` (`types.d.ts:40-43`). */
+export interface PiBeforeToolCallResult {
+  block?: boolean;
+  reason?: string;
+}
+
+/** Structural mirror of pi's `AgentOptions.beforeToolCall` signature. */
+export type PiBeforeToolCallHook = (
+  context: PiBeforeToolCallContext,
+  signal?: AbortSignal,
+) => Promise<PiBeforeToolCallResult | undefined>;
 
 /** Type of the `Agent` constructor as exported by pi-agent-core. */
 type PiAgentConstructor = new (options: PiAgentOptions) => PiAgent;
