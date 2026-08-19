@@ -29,6 +29,11 @@ import type {
 import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
 import { adaptInlineTool } from './inline-tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
+import {
+  ALLOW_ALL_GATE,
+  createDenylistGate,
+  type PiPermissionGate,
+} from './permission-gate.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
 
 /**
@@ -81,6 +86,18 @@ export class PiAgentProvider implements IAgentSDKProvider {
    */
   streamFn: PiStreamFn | null = null;
 
+  /**
+   * Permission gate consulted by every inline tool this provider adapts
+   * (#4389, S6 part 1). pi has no built-in permission system, so disclaude
+   * must be the sole permission authority on the pi path — `createInlineTool`
+   * wraps every tool's `execute` through this gate. Defaults to allow-all
+   * (pre-#4389 behavior); `queryStream` installs a denylist gate per query
+   * from `options.disallowedTools` so each session's tools are enforced. A
+   * future policy paradigm (the C1/C2/C3 selection of #4432) replaces the
+   * installed gate here — the enforcement seam stays stable.
+   */
+  permissionGate: PiPermissionGate = ALLOW_ALL_GATE;
+
   queryStream(
     input: AsyncGenerator<UserInput>,
     options: AgentQueryOptions,
@@ -94,6 +111,15 @@ export class PiAgentProvider implements IAgentSDKProvider {
           '(model/credential wiring tracked in #4386 / #4383 §6; see docs/pi-backend.md).',
       );
     }
+
+    // #4389: enforce this query's disallowedTools at execution time. The
+    // options-adapter's activeToolNames filters which tools the model is
+    // OFFERED; this gate is the defense-in-depth layer at `execute` — a tool
+    // that reaches execution anyway (e.g. adapted before this query via
+    // createInlineTool) is denied here, before its handler runs.
+    this.permissionGate = options.disallowedTools?.length
+      ? createDenylistGate(options.disallowedTools)
+      : ALLOW_ALL_GATE;
 
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
     // cancel() maps onto it (spike §4 — AbortController pass-through applies
@@ -280,7 +306,9 @@ export class PiAgentProvider implements IAgentSDKProvider {
     // Issue #4387 (S4): wrap the disclaude tool for pi's tool dispatch.
     // Zod→JSON-Schema parameter translation lives in the adapter —
     // see inline-tool-adapter.ts.
-    return adaptInlineTool(definition);
+    // Issue #4389 (S6): the provider's current permissionGate rides along —
+    // every adapted tool consults it before its handler runs.
+    return adaptInlineTool(definition, this.permissionGate);
   }
 
   createMcpServer(config: McpServerConfig): unknown {
