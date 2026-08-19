@@ -11,25 +11,26 @@
  * messages to chat agents via the IPC server, without needing the full
  * disclaude agent stack running in the caller process.
  *
- * The socket path is discovered via getIpcSocketPath() from @disclaude/core,
- * with --socket CLI argument taking highest priority.
+ * The transport is resolved by the central getIpcClient() facade in
+ * @disclaude/core (REST when DISCLAUDE_REST_IPC_ENABLED=true, Unix socket
+ * otherwise). Issue #4280 (Phase 3) removed the --socket override that
+ * constructed a UnixSocketIpcClient directly — the facade is now the only
+ * client construction path.
  *
  * @module primary-node/push-cli
  */
 
-import { UnixSocketIpcClient, getIpcClient, getIpcSocketPath, pushToAgent } from '@disclaude/core';
+import { getIpcClient, getIpcSocketPath, pushToAgent } from '@disclaude/core';
 import { existsSync } from 'node:fs';
 
 interface PushCliOptions {
   chatId: string;
   message: string;
-  socketPath?: string;
 }
 
 export function parseArgs(args: string[]): PushCliOptions | null {
   let chatId = '';
   let message = '';
-  let socketPath = '';
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -37,8 +38,6 @@ export function parseArgs(args: string[]): PushCliOptions | null {
       chatId = args[++i] || '';
     } else if (arg === '--message' || arg === '-m') {
       message = args[++i] || '';
-    } else if (arg === '--socket' || arg === '-s') {
-      socketPath = args[++i] || '';
     } else if (arg === '--help' || arg === '-h') {
       printUsage();
       process.exit(0);
@@ -51,7 +50,7 @@ export function parseArgs(args: string[]): PushCliOptions | null {
     process.exit(1);
   }
 
-  return { chatId, message, socketPath: socketPath || undefined };
+  return { chatId, message };
 }
 
 function printUsage(): void {
@@ -68,14 +67,13 @@ Required:
                             Use "-" to read message from stdin
 
 Options:
-  --socket, -s <path>      IPC socket path (auto-detected if omitted)
   --help, -h               Show this help message
 
-Socket Discovery (handled by getIpcSocketPath() in @disclaude/core):
-  1. --socket CLI argument (highest priority)
-  2. DISCLAUDE_WORKER_IPC_SOCKET / DISCLAUDE_IPC_SOCKET_PATH env vars
-  3. Socket path discovery file (written by Primary Node)
-  4. Default fallback
+Transport (resolved by getIpcClient() in @disclaude/core):
+  DISCLAUDE_REST_IPC_ENABLED=true → REST IPC
+    (base url via DISCLAUDE_REST_IPC_BASE_URL, default http://localhost:9200)
+  otherwise → Unix socket (path via DISCLAUDE_WORKER_IPC_SOCKET /
+    DISCLAUDE_IPC_SOCKET_PATH env vars, discovery file, or default)
 
 Examples:
   # Push a message to a Feishu chat
@@ -83,9 +81,6 @@ Examples:
 
   # Read message from stdin (useful for piping)
   echo "New messages found" | disclaude-push -c "oc_xxx" -m -
-
-  # Push with explicit socket path
-  disclaude-push -c "oc_xxx" -m "继续执行步骤 2" -s /tmp/custom.ipc
 
   # In a cron script
   if check_for_new_messages; then
@@ -135,22 +130,18 @@ export async function main(): Promise<void> {
 
   const restEnabled = process.env.DISCLAUDE_REST_IPC_ENABLED === 'true';
 
-  // Issue #4280 (part 1): use the central getIpcClient() facade so disclaude-push
-  // works under the REST IPC transport (DISCLAUDE_REST_IPC_ENABLED=true, selected
-  // in getIpcClient under #4279 Phase 2), not only the Unix socket. The --socket
-  // override forces a Unix-socket client at that exact path (legacy explicit-path
-  // usage), bypassing the facade. The full Unix-socket removal is tracked in #4280.
-  const client = options.socketPath
-    ? new UnixSocketIpcClient({ socketPath: options.socketPath })
-    : getIpcClient();
+  // Issue #4280 (Phase 3): the --socket override (direct UnixSocketIpcClient
+  // construction, bypassing the facade) is removed — getIpcClient() is the
+  // only client construction path, so the CLI always follows the configured
+  // transport (REST when DISCLAUDE_REST_IPC_ENABLED=true, Unix socket
+  // otherwise; selected in getIpcClient under #4279 Phase 2).
+  const client = getIpcClient();
 
-  // Fast-fail with a clear message only when actually using a Unix socket — i.e.
-  // the --socket override (explicit path) or the default transport (REST off).
-  // Under REST mode without --socket there is no socket file, so pushToAgent
-  // itself reports reachability.
-  const usingUnixSocket = !!options.socketPath || !restEnabled;
-  if (usingUnixSocket) {
-    const socketPath = getIpcSocketPath({ override: options.socketPath });
+  // Fast-fail with a clear message only when actually using a Unix socket —
+  // i.e. the default transport (REST off). Under REST mode there is no socket
+  // file, so pushToAgent itself reports reachability.
+  if (!restEnabled) {
+    const socketPath = getIpcSocketPath();
     if (!existsSync(socketPath)) {
       console.error(`Error: IPC socket not found at ${socketPath}`);
       console.error('Make sure disclaude Primary Node is running.');
