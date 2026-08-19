@@ -108,7 +108,7 @@ function createMockLarkClient() {
   };
 }
 
-function createTestChannel(opts: { streamingCard?: boolean | 'p2p'; client?: any } = {}) {
+function createTestChannel(opts: { streamingCard?: boolean; client?: any } = {}) {
   const channel = new FeishuChannel({
     appId: 'test-app',
     appSecret: 'test-secret',
@@ -137,12 +137,12 @@ describe('FeishuChannel.startStreaming — Issue #4400', () => {
     expect(mockCardKit.createCard).not.toHaveBeenCalled();
   });
 
-  // Issue #4510: the p2p scope enables the channel-side flow too — the
-  // chat-type narrowing happens in the agent gate (which never calls
-  // startStreaming for group turns), not by declining here.
-  it('does not decline when streamingCard is p2p (Issue #4510)', async () => {
+  // Issue #4510 (part 2): the p2p narrowing lives in the agent-side chatType
+  // gate (which never calls startStreaming for group turns), not by declining
+  // here — a plain `true` flag enables the channel-side flow for p2p turns.
+  it('does not decline when streamingCard is on (Issue #4510: narrowing is agent-side)', async () => {
     const { client, createMock } = createMockLarkClient();
-    const channel = createTestChannel({ streamingCard: 'p2p', client });
+    const channel = createTestChannel({ streamingCard: true, client });
     await expect(channel.startStreaming('oc_chat1')).resolves.toBe('card_123');
     expect(mockCardKit.createCard).toHaveBeenCalledTimes(1);
     expect(createMock).toHaveBeenCalledTimes(1);

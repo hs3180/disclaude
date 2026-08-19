@@ -2578,7 +2578,7 @@ describe('ChatAgent (primary-node)', () => {
       });
       (agent as any).isAgentTeamsEnabled = () => false;
 
-      void agent.processMessage({ chatId: 'oc_stream', payload: 'hi', messageId: 'msg_1' });
+      void agent.processMessage({ chatId: 'oc_stream', payload: 'hi', messageId: 'msg_1', chatType: 'p2p' });
 
       // The streaming callbacks fire once the turn flows.
       await vi.waitFor(() => {
@@ -2642,25 +2642,26 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
-  // Issue #4510: `streamingScope: 'p2p'` narrows streaming to single chats.
-  // The chatType × scope matrix (group/topic turns fall back to sendMessage
-  // bit-identically; p2p turns stream; no scope keeps #4399 behavior).
-  describe('Issue #4510: p2p-scoped streaming (streamingScope)', () => {
-    const capsWithScope = (streamingScope?: 'all' | 'p2p') => ({
+  // Issue #4510 (part 2, 2026-08-16 revision): the p2p-first gray rollout is
+  // built-in, not a config scope — streaming cards are only constructed for
+  // single chats; group/topic turns always keep the per-chunk sendMessage
+  // path bit-identically, regardless of how the channel advertises
+  // supportsStreaming.
+  describe('Issue #4510: p2p-only streaming (built-in chat-type gate)', () => {
+    const capsStreaming = (supportsStreaming: boolean) => ({
       supportsCard: true,
       supportsThread: true,
       supportsFile: true,
       supportsMarkdown: true,
       supportsMention: true,
       supportsUpdate: true,
-      supportsStreaming: true,
-      ...(streamingScope ? { streamingScope } : {}),
+      supportsStreaming,
     });
 
-    async function runTurn(chatType?: string, streamingScope?: 'all' | 'p2p') {
+    async function runTurn(chatType: string | undefined, supportsStreaming: boolean) {
       const localCallbacks = {
         ...createMockCallbacks(),
-        getCapabilities: vi.fn(() => capsWithScope(streamingScope)),
+        getCapabilities: vi.fn(() => capsStreaming(supportsStreaming)),
         startStreaming: vi.fn(() => Promise.resolve('card-99')),
         streamText: vi.fn(() => Promise.resolve()),
         finalizeStreaming: vi.fn(() => Promise.resolve()),
@@ -2693,41 +2694,51 @@ describe('ChatAgent (primary-node)', () => {
       return localCallbacks;
     }
 
-    it('streams for a p2p chat when scope is p2p', async () => {
-      const cb = await runTurn('p2p', 'p2p');
+    it('streams for a p2p chat when the flag is on', async () => {
+      const cb = await runTurn('p2p', true);
       expect(cb.startStreaming).toHaveBeenCalledTimes(1);
       expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-99');
       expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(false);
     });
 
-    it('falls back to sendMessage for a group chat when scope is p2p', async () => {
-      const cb = await runTurn('group', 'p2p');
+    it('falls back to sendMessage for a group chat even when the flag is on (built-in p2p narrowing)', async () => {
+      const cb = await runTurn('group', true);
       expect(cb.startStreaming).not.toHaveBeenCalled();
       expect(cb.streamText).not.toHaveBeenCalled();
       expect(cb.finalizeStreaming).not.toHaveBeenCalled();
       expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
     });
 
-    it('falls back to sendMessage for a topic chat when scope is p2p (thread groups stay non-streaming)', async () => {
-      const cb = await runTurn('topic', 'p2p');
+    it('falls back to sendMessage for a topic chat even when the flag is on (thread groups stay non-streaming)', async () => {
+      const cb = await runTurn('topic', true);
       expect(cb.startStreaming).not.toHaveBeenCalled();
       expect(cb.finalizeStreaming).not.toHaveBeenCalled();
       expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
     });
 
-    it('streams for a group chat when scope is absent (legacy full rollout)', async () => {
-      const cb = await runTurn('group', undefined);
-      expect(cb.startStreaming).toHaveBeenCalledTimes(1);
-      expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-99');
+    it('does not stream for a p2p chat when the flag is off (default-off unchanged)', async () => {
+      const cb = await runTurn('p2p', false);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
     });
 
-    it('streams for a group chat when scope is all (explicit full rollout)', async () => {
-      const cb = await runTurn('group', 'all');
-      expect(cb.startStreaming).toHaveBeenCalledTimes(1);
+    // Issue #4510 acceptance #5: the full 3 chatType × 2 flag matrix. The two
+    // flag-off cells below are logically short-circuited before the chatType
+    // check (supportsStreaming=false → no driver), but pin them so the matrix
+    // is explicitly covered against future gate reordering.
+    it.each([
+      ['group', 'group chat'],
+      ['topic', 'topic chat'],
+    ])('does not stream for a %s when the flag is off', async (chatType) => {
+      const cb = await runTurn(chatType, false);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.streamText).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
     });
 
-    it('degrades to sendMessage when scope is p2p and chatType is unknown (fail-safe)', async () => {
-      const cb = await runTurn(undefined, 'p2p');
+    it('degrades to sendMessage when the flag is on and chatType is unknown (fail-safe)', async () => {
+      const cb = await runTurn(undefined, true);
       expect(cb.startStreaming).not.toHaveBeenCalled();
       expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
     });
