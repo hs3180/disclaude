@@ -171,6 +171,10 @@ Two operational notes confirmed during the run:
   confirmation pending a Docker host)
 - [x] Optional: Playwright attaching to the same endpoint as a second driver
   (case 6 — cross-driver reuse confirmed, config-only as designed)
+- [x] README records the endpoint: driver/skill attach URLs (①), skill CDP
+  config entry + attach/fallback semantics (②), sandbox tradeoff (③) —
+  `README.md` → "Browser on Headless Hosts (CDP Endpoint)" (part 3), linking
+  here for the full contract
 
 ## Related
 
