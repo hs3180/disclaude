@@ -102,12 +102,14 @@ export interface FeishuConfig {
    * exposes the startStreaming/streamText/finalizeStreaming callbacks (Card
    * Kit two-step flow) which the ChatAgent's StreamingReplyDriver drives.
    *
-   * Issue #4510: gray rollout is p2p-first. `'p2p'` scopes streaming to
-   * single chats only — group/topic conversations keep today's per-chunk
-   * `sendMessage` path bit-identical (the agent-side gate reads
-   * `streamingScope` from the capabilities). `true` remains full rollout.
+   * Issue #4510 (part 2, 2026-08-16 revision): the p2p-first gray rollout is
+   * built-in, not a config option — `true` means streaming in single chats
+   * only; group/topic conversations always keep today's per-chunk
+   * `sendMessage` path bit-identical (the ChatAgent gate checks chatType
+   * directly). No scope enum exists; a future group rollout changes the
+   * agent-side gate condition, not the config schema.
    */
-  streamingCard?: boolean | 'p2p';
+  streamingCard?: boolean;
   /** Message deduplication settings */
   deduplication?: {
     /** Maximum number of message IDs to track */
