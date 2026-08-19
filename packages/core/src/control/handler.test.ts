@@ -3,7 +3,7 @@
  *
  * Verifies that:
  * - Recognized commands are dispatched to their handlers
- * - Unrecognized commands (e.g. skill names like /site-miner) return
+ * - Unrecognized commands (e.g. skill names like /browser-use) return
  *   { success: false } with no message, allowing fallthrough to agent/skill processing
  */
 
@@ -73,13 +73,13 @@ describe('createControlHandler', () => {
     expect(result.success).toBe(true);
   });
 
-  it('should return failure with no message for unrecognized skill-only command "site-miner"', async () => {
+  it('should return failure with no message for unrecognized skill-only command "browser-use"', async () => {
     const context = createMockContext();
     const handler = createControlHandler(context);
 
-    // site-miner is a skill, not a system command — should fall through to skill processing
+    // browser-use is a skill, not a system command — should fall through to skill processing
     const command: ControlCommand = {
-      type: 'site-miner' as ControlCommandType,
+      type: 'browser-use' as ControlCommandType,
       chatId: 'test-chat',
     };
 
@@ -153,7 +153,7 @@ describe('getHandler', () => {
     const { getHandler } = await import('./commands/index.js');
 
     // Skill-only commands should not have registered handlers
-    expect(getHandler('site-miner' as ControlCommandType)).toBeUndefined();
+    expect(getHandler('browser-use' as ControlCommandType)).toBeUndefined();
     expect(getHandler('skill-creator' as ControlCommandType)).toBeUndefined();
     // switch-node is a valid type but handler not yet implemented
     expect(getHandler('switch-node' as ControlCommandType)).toBeUndefined();

@@ -71,7 +71,7 @@ RUN ./node_modules/.bin/tsc -b
 COPY skills ./skills
 # Issue #4224: local-plugin manifest so the SDK loads builtins in place from /app
 COPY .claude-plugin .claude-plugin
-# Issue #4224: builtin agents (mac-screen-control, site-miner) — peer of skills/,
+# Issue #4224: builtin agents (mac-screen-control) — peer of skills/,
 # shipped so the local plugin discovers them in place from /app/agents
 COPY agents ./agents
 
