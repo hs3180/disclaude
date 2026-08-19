@@ -18,15 +18,23 @@
 import type { IntentSnapshotStore } from './store.js';
 import type { AgentResult, Canonical, ResultStatus } from './types.js';
 
-/** Thrown when a settled result row is written again. */
+/**
+ * Thrown when a result row is written again in the status it already holds:
+ * a second `start()` on a claimed (running) row, or any write after the row
+ * settled (done/error). `running` is not settled, but both mean "do not write".
+ */
 export class ResultAlreadySettledError extends Error {
   constructor(
     public readonly sessionId: string,
     public readonly agentId: string,
+    public readonly status: ResultStatus,
   ) {
     super(
-      `Result for agent "${agentId}" in session "${sessionId}" is already settled; ` +
-        'results do not flip status after done/error',
+      `Result for agent "${agentId}" in session "${sessionId}" is ${
+        status === 'running'
+          ? 'already claimed (running); settle it with complete() or fail()'
+          : `already settled (${status}); results do not flip status after done/error`
+      }`,
     );
     this.name = 'ResultAlreadySettledError';
   }
@@ -119,7 +127,7 @@ export class ResultSink {
     if (existing) {
       if (!ALLOWED_TRANSITIONS[existing.status].has(status)) {
         throw existing.status === status
-          ? new ResultAlreadySettledError(this.sessionId, this.agentId)
+          ? new ResultAlreadySettledError(this.sessionId, this.agentId, existing.status)
           : new InvalidResultStatusError(existing.status, status);
       }
     } else if (status !== 'running') {

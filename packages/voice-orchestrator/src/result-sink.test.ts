@@ -129,6 +129,55 @@ describe('ResultSink — settlement is one-way', () => {
     sink.complete('done once');
     expect(() => sink.start()).toThrow(InvalidResultStatusError);
   });
+
+  it('a second start() reports "already claimed", not "settled" (running ≠ settled)', () => {
+    const store = frozenStore('s1', { utterance: 'x' });
+    const sink = new ResultSink(store, 's1', 'a1');
+    sink.start();
+    expect(() => sink.start()).toThrow(ResultAlreadySettledError);
+    expect(() => sink.start()).toThrow(/already claimed \(running\)/);
+  });
+});
+
+describe('ResultSink — pre-reserved rows (part 3 DelegateRouter)', () => {
+  // The sink itself never writes `pending` — a delegate router will reserve a
+  // row before the worker starts emitting (design §3). These tests pin the
+  // pending → running|error transitions so part 3 lands on a stable contract.
+
+  it('claims a router-reserved pending row via start()', () => {
+    const store = frozenStore('s1', { utterance: 'x' });
+    store.appendResult('s1', 'a1', 'pending');
+    const sink = new ResultSink(store, 's1', 'a1');
+    expect(sink.getResult()).toMatchObject({ agentId: 'a1', status: 'pending' });
+
+    const started = sink.start();
+    expect(started).toMatchObject({ agentId: 'a1', status: 'running' });
+    expect(sink.getResult()?.status).toBe('running');
+
+    sink.complete('reserved then done');
+    expect(sink.getResult()).toMatchObject({ status: 'done', content: 'reserved then done' });
+  });
+
+  it('a pending row settles directly to error when the worker never starts', () => {
+    const store = frozenStore('s1', { utterance: 'x' });
+    store.appendResult('s1', 'a1', 'pending');
+    const sink = new ResultSink(store, 's1', 'a1');
+
+    const failed = sink.fail('worker never claimed the row');
+    expect(failed).toMatchObject({
+      agentId: 'a1',
+      status: 'error',
+      error: 'worker never claimed the row',
+    });
+  });
+
+  it('complete on a pending row is still out of order — claim first', () => {
+    const store = frozenStore('s1', { utterance: 'x' });
+    store.appendResult('s1', 'a1', 'pending');
+    const sink = new ResultSink(store, 's1', 'a1');
+    expect(() => sink.complete('skipped start')).toThrow(InvalidResultStatusError);
+    expect(sink.getResult()?.status).toBe('pending');
+  });
 });
 
 describe('ResultSink — store guards pass through', () => {
