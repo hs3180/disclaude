@@ -184,6 +184,19 @@ create/lazily-resume the target chat's agent.)
 | REST bearer token | `DISCLAUDE_REST_IPC_API_TOKEN` env | required only when the PrimaryNode was started with `--api-token` (pass the same secret) |
 | Feishu credentials | `disclaude.config.yaml` / env | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` (validated inside `send_text` / `send_file` / `send_card` / `push_to_agent` / `send_interactive`) |
 
+**Same-host constraint of the file-carrying routes (#4532 review note):** the
+REST file contract is path-based, not content-based — `send_file` and
+`send_card`'s local-image auto-upload send a **file path** to
+`/api/upload-file` / `/api/upload-image`, and the PrimaryNode reads that path
+from **its own filesystem** (exact IPC parity; see the server-side "local
+filePath" contract in `http-api-server.ts`). Pointing `--base-url` at a
+PrimaryNode on another host therefore works for `send_text` /
+`send_interactive` / `push_to_agent` but makes `send_file` fail server-side
+(ENOENT) and degrades card local images to placeholders. This is a limitation
+of the current endpoint contract (inherited from IPC, where same-host was
+implicit), not of the transport switch; relaxing it (multipart / base64 upload)
+is deferred with the endpoint work, not the CLI.
+
 If `@disclaude/mcp-server` cannot be imported, the CLI emits a failure JSON with
 a build hint rather than crashing (analogous to #4464's missing-`playwright`
 hint). If the PrimaryNode REST face is unavailable (service not started / port
