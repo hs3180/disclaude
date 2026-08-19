@@ -262,6 +262,28 @@ Choose the delivery format based on context:
 
 For scheduled-task-driven research, deliver via Feishu doc and post a summary card in both the research group and the source chat.
 
+## Research Canvas (Human-AI Shared Outline)
+
+Issue #4016 (Sub-E). For research spanning multiple steps, create a Feishu doc as
+the **Research Canvas** — a shared space where the user can edit the research
+outline (add/remove questions, adjust priorities, annotate) and the Agent
+publishes progress. It complements the `RESEARCH.md` feedback channel: feedback
+is *captured* in `RESEARCH.md`, while the outline is *co-edited* on the Canvas.
+
+The full template, lark-cli commands, and sync/failure rules live in the
+[canvas template reference](./canvas-template.md). In short:
+
+- **Create** on the first scheduled run (`lark-cli docs +create` from the
+  template), store the URL as `canvasUrl` in `RESEARCH.md`, and post the link
+  to the user (grant access — bot docs are not user-visible by default).
+- **Sync at the start of every run** (`docs +fetch`): merge user Canvas edits
+  into `RESEARCH.md` first (user edits win on conflict; annotations append to
+  the `## User Feedback` section), then push progress to the Canvas
+  (`docs +update` targeted edits — never whole-doc overwrites).
+- **Never block a run on the Canvas** — a sync failure is logged in `STATE.md`
+  and the research continues.
+- **RESEARCH.md stays the state source**; the Canvas is its editable projection.
+
 ## Research Discipline (Scheduled-Task Driven)
 
 Research runs in **one mode** (Issue #4006): every step is driven the same way — a scheduled task fires (per its `SCHEDULE.md` cron) and routes the step to the chat's persistent agent. Whether the user happens to be at the keyboard for a given step changes nothing: do not wait for them, do not branch behavior on their presence. Treat the guidance below as applying to **every** step.
@@ -283,9 +305,10 @@ At the **start of every step**, before doing anything else:
 
 1. **Read the latest state** — re-read `STATE.md` and `RESEARCH.md` from the workdir. Do not rely on memory of a previous step; state files are the source of truth and may have changed since your last turn.
 2. **Check for user feedback** — new entries in the `## User Feedback` section of `RESEARCH.md` (appended by the conversation Agent, per #4017) are the single feedback channel. Read that section as part of re-reading the state files, treat entries as suggestive rather than authoritative, and let them adjust this step's direction.
-3. **Carry the thread forward** — write the step's outcome, open questions, and intended next action back into `STATE.md` so the next step picks up cleanly.
-4. **Be decisive, flag uncertainty** — make the most reasonable decision and proceed rather than stalling. Record what you decided and what you are unsure about (`⚠️ uncertain: …`) so the user can correct it later. Do **not** block the whole research on a question the user has not answered yet.
-5. **Deliver incrementally** — write the shared artifact to a Feishu doc and post a summary card in both the research group and the source chat, so the user sees progress whenever they look.
+3. **Sync the Research Canvas** — if a `canvasUrl` exists in `RESEARCH.md`, follow the [canvas template](./canvas-template.md) sync flow: fetch the doc, merge user edits back into `RESEARCH.md` (user edits win), then publish this step's progress to the Canvas. A sync failure never blocks the step.
+4. **Carry the thread forward** — write the step's outcome, open questions, and intended next action back into `STATE.md` so the next step picks up cleanly.
+5. **Be decisive, flag uncertainty** — make the most reasonable decision and proceed rather than stalling. Record what you decided and what you are unsure about (`⚠️ uncertain: …`) so the user can correct it later. Do **not** block the whole research on a question the user has not answered yet.
+6. **Deliver incrementally** — write the shared artifact to a Feishu doc and post a summary card in both the research group and the source chat, so the user sees progress whenever they look.
 
 ## Related
 
@@ -293,3 +316,4 @@ At the **start of every step**, before doing anything else:
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
 - Issue #1339: Agentic Research interactive workflow (parent feature)
 - Issue #4006: Async research guidance (the Research Discipline section above)
+- Issue #4016: Research Canvas (the Research Canvas section above)
