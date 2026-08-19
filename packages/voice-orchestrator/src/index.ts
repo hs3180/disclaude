@@ -13,6 +13,12 @@ export {
   isAllowed,
 } from './state-machine.js';
 export type { SnapshotEvent } from './state-machine.js';
+export {
+  InvalidResultStatusError,
+  ResultAlreadySettledError,
+  ResultSink,
+} from './result-sink.js';
+export type { ResultSinkOptions } from './result-sink.js';
 export type {
   AgentResult,
   Canonical,
