@@ -1219,10 +1219,14 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Iterator that yields messages before throwing (runtime error)
+      // Iterator that yields messages before throwing (runtime error).
+      // Issue #4394: no real 20ms setTimeout — the gap between the yielded
+      // message and the throw is irrelevant to the assertion (messageCount > 0
+      // is what classifies this as a runtime error, not a startup failure), so
+      // the iterator throws immediately after yielding. Deterministic, zero
+      // wall-clock dependency.
       async function* runtimeErrorIterator() {
         yield { parsed: { type: 'text', content: 'Hello from agent' } };
-        await new Promise<void>((r) => setTimeout(r, 20));
         throw new Error('Runtime crash after messages');
       }
 
@@ -1278,18 +1282,29 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Create an iterator that yields messages with a delay
-      async function* slowIterator() {
+      // Iterator that parks after the first yield until close() is called.
+      // Issue #4394: no real 10ms setTimeout gaps — the production iterator is
+      // interrupted by the abort check at the TOP of the next for-await
+      // iteration (chat-agent.ts:1057), which only runs once the pending
+      // next() settles. A real-timer gap made "when does next() settle" a
+      // host-load race; parking on a promise that the mock handle's close()
+      // resolves makes it deterministic: reset() calls queryHandle.close()
+      // synchronously → next() settles → the abort check breaks the loop.
+      let releaseIterator!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        releaseIterator = resolve;
+      });
+      async function* parkingIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>((r) => setTimeout(r, 10));
+          await parked; // park until close(); no real timer
         }
       }
 
       // Override createQueryStream on the instance
       (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: slowIterator(),
+        handle: { close: vi.fn(() => releaseIterator()), cancel: vi.fn() },
+        iterator: parkingIterator(),
       });
 
       // Start the session by sending a message
@@ -1327,16 +1342,24 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      async function* slowIterator() {
+      // Issue #4394: same parking-iterator shape as the reset() test above —
+      // next() parks on a promise that close() resolves, so stop()'s abort is
+      // observed at the very next (settled) iteration boundary instead of
+      // racing a real 10ms setTimeout gap.
+      let releaseIterator!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        releaseIterator = resolve;
+      });
+      async function* parkingIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>((r) => setTimeout(r, 10));
+          await parked; // park until close(); no real timer
         }
       }
 
       (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: slowIterator(),
+        handle: { close: vi.fn(() => releaseIterator()), cancel: vi.fn() },
+        iterator: parkingIterator(),
       });
 
       void agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });
