@@ -2219,6 +2219,21 @@ describe('ChatAgent (primary-node)', () => {
       expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
     });
 
+    // Issue #4510 acceptance #5: the full 3 chatType × 2 flag matrix. The two
+    // flag-off cells below are logically short-circuited before the chatType
+    // check (supportsStreaming=false → no driver), but pin them so the matrix
+    // is explicitly covered against future gate reordering.
+    it.each([
+      ['group', 'group chat'],
+      ['topic', 'topic chat'],
+    ])('does not stream for a %s when the flag is off', async (chatType) => {
+      const cb = await runTurn(chatType, false);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.streamText).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
     it('degrades to sendMessage when the flag is on and chatType is unknown (fail-safe)', async () => {
       const cb = await runTurn(undefined, true);
       expect(cb.startStreaming).not.toHaveBeenCalled();
