@@ -43,6 +43,12 @@ const logger = createLogger('ClaudeSDKProvider');
 const STALL_TERMINATE_NOTICE =
   '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
 
+// Issue #4442 (part 3): empty-stream terminal notice. Synthesized when the SDK
+// query ends cleanly with ZERO messages (200-OK-zero-content) and the in-request
+// retries (below) are exhausted. Mirrors the stall terminate notice's shape.
+const EMPTY_STREAM_TERMINATE_NOTICE =
+  '❌ 上游返回了空响应（200 但零内容事件），本次会话未产生任何输出。请稍后重试。';
+
 // ============================================================================
 // Upstream API error detection (Issue #4322)
 // ============================================================================
@@ -730,10 +736,39 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
         // stall watchdog (#3706 — which needs stream_event partials that GLM/litellm may
         // not forward, leaving it blind), this pathology is detectable from messageCount
         // alone. Elevate to a structured ERROR so the failure is observable in logs
-        // instead of silent (the #4442 ask: 判错/上报 rather than 静默完成). Recovery
-        // (retry on empty stream / synthetic error result) is a riskier follow-up tracked
-        // separately in #4442 (ask 1, the 429 classifier, lands via #4451).
+        // instead of silent (the #4442 ask: 判错/上报 rather than 静默完成).
+        //
+        // Issue #4442 (part 3): recovery — an empty stream is safe to retry in-request
+        // for exactly the same reason a pre-first-message transient error is (the #4192
+        // L1 gate below): messageCount === 0 ⇒ NOTHING was yielded to the consumer, so
+        // replaying the buffered input can't duplicate output or re-run tool side
+        // effects. Retry within the SAME loop/attempts budget (MAX_QUERY_RETRIES,
+        // DISCLAUDE_QUERY_MAX_RETRIES); when the budget is exhausted, synthesize a
+        // terminal result (terminatedReason 'empty-stream') instead of letting the
+        // generator return cleanly — the turn then surfaces ❌ to the user and
+        // recordFailure('empty-stream') in ChatAgent instead of silently completing.
         if (messageCount === 0) {
+          if (queryAttempt < MAX_QUERY_RETRIES) {
+            // Best-effort cleanup of the empty attempt's handle before reassigning
+            // queryResult — same rationale as the transient-error retry in the catch
+            // (the SDK iterator's clean return doesn't guarantee subprocess/transport
+            // teardown either).
+            try { queryResult.close?.(); } catch { /* best-effort */ }
+            logger.warn(
+              {
+                queryAttempt: queryAttempt + 1,
+                totalMs,
+                model: options.model,
+                apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
+                partialsObserved,
+              },
+              'Issue #4442: SDK query completed with zero messages (empty stream / '
+                + '200-OK-zero-content) — retrying query before first SDK message '
+                + '(Issue #4192 L1 budget)',
+            );
+            await delayMs(computeBackoffDelay(queryAttempt, QUERY_RETRY_TIMING));
+            continue;
+          }
           logger.error(
             {
               totalMs,
@@ -742,9 +777,18 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
               partialsObserved,
             },
             'Issue #4442: SDK query completed with zero messages (empty stream / '
-              + '200-OK-zero-content) — turn produced no content; the SDK layer treats this '
-              + 'as a clean completion so no retry fires (silent turn death)',
+              + '200-OK-zero-content) and retries are exhausted — turn produced no content; '
+              + 'yielding terminal empty-stream result (silent turn death → surfaced)',
           );
+          clearContentWatchdog();
+          clearForceClose();
+          yield {
+            type: 'result',
+            content: EMPTY_STREAM_TERMINATE_NOTICE,
+            role: 'system',
+            metadata: { terminatedReason: 'empty-stream' },
+          };
+          return;
         }
         logger.info(
           { totalMs, messageCount, ttftMs: firstMessageMs ? firstMessageMs - queryStartMs : undefined },
