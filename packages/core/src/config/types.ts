@@ -101,6 +101,13 @@ export interface FeishuConfig {
    * the traditional `sendMessage` path (unchanged). When on, the channel
    * exposes the startStreaming/streamText/finalizeStreaming callbacks (Card
    * Kit two-step flow) which the ChatAgent's StreamingReplyDriver drives.
+   *
+   * Issue #4510 (part 2, 2026-08-16 revision): the p2p-first gray rollout is
+   * built-in, not a config option — `true` means streaming in single chats
+   * only; group/topic conversations always keep today's per-chunk
+   * `sendMessage` path bit-identical (the ChatAgent gate checks chatType
+   * directly). No scope enum exists; a future group rollout changes the
+   * agent-side gate condition, not the config schema.
    */
   streamingCard?: boolean;
   /** Message deduplication settings */

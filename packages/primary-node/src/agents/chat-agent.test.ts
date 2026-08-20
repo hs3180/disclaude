@@ -26,7 +26,11 @@ vi.mock('@disclaude/core', async (importOriginal) => {
         /* empty */
       })(),
     }));
-    this.initialized = true;
+    // Issue #4391 (part 2 review): deliberately NOT forcing
+    // `this.initialized = true` here — production BaseAgent never sets it
+    // true, and forcing it in this mock masked the dead `!this.initialized`
+    // disposed-guard in the empty-turn replay (the guard only ever worked
+    // under this mock).
     this.dispose = vi.fn();
     this.logger = {
       info: vi.fn(),
@@ -53,6 +57,8 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     BaseAgent,
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
     StreamingReplyDriver: actual.StreamingReplyDriver,
+    // Issue #4391: real policy — the reset+replay bounding under test.
+    EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
     MessageBuilder: vi.fn().mockImplementation(() => ({
       buildEnhancedContent: vi.fn((input: any) => input.text),
     })),
@@ -386,6 +392,170 @@ describe('ChatAgent (primary-node)', () => {
       retained = (chatAgent as any).mcpInlineInstances as unknown[];
       expect(retained).toHaveLength(1);
       expect((retained[0] as { close: unknown }).close).toBe(closeB);
+    });
+  });
+
+  // Issue #4448 (direction #1): a chat bound to a directory that does not
+  // exist silently falls back to the workspace cwd. The structured cwdResolver
+  // must turn that into a user-visible warning pushed to the chat — the plain
+  // cwdProvider can't distinguish bound-missing from unbound.
+  describe('bound-missing cwd fallback warning (Issue #4448 direction #1)', () => {
+    // `resolverStates` lets the mutating tests flip the resolution between
+    // startAgentLoop() calls (restart cycles) — the closures read the current
+    // state on each call, like ProjectManager.resolveCwd re-checking the disk.
+    const mkAgent = (
+      reason: 'unbound' | 'bound' | 'bound-missing',
+      resolverStates?: Array<'unbound' | 'bound' | 'bound-missing'>
+    ) => {
+      const states = resolverStates ?? [reason];
+      let call = 0;
+      const stateAt = () => states[Math.min(call, states.length - 1)];
+      return new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdProvider: (chatId: string) =>
+          chatId === 'oc_test_chat' && stateAt() === 'bound' ? '/bound/project/dir' : undefined,
+        cwdResolver: (_chatId: string) => {
+          const current = stateAt();
+          call += 1;
+          return {
+            effectiveCwd: current === 'bound' ? '/bound/project/dir' : undefined,
+            boundWorkingDir: current === 'unbound' ? undefined : '/gone/project/dir',
+            reason: current,
+          };
+        },
+      });
+    };
+
+    it('pushes a user-visible warning when the bound directory is missing', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('bound-missing');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+      const [chatId, text] = callbacks.sendMessage.mock.calls[0] as unknown as [
+        string,
+        string,
+      ];
+      expect(chatId).toBe('oc_test_chat');
+      expect(text).toContain('/gone/project/dir');
+      expect(text).toContain('回退');
+    });
+
+    it('does not warn when the binding resolves cleanly (bound)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('bound');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when the chat is unbound (workspace is expected)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('unbound');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('a rejecting sendMessage does not break the agent loop start', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+      const sendErr = callbacks.sendMessage as unknown as ReturnType<typeof vi.fn>;
+      sendErr.mockRejectedValueOnce(new Error('channel down'));
+
+      const agent = mkAgent('bound-missing');
+      // Must not throw despite the rejected warning send (fire-and-forget).
+      expect(() => (agent as any).startAgentLoop()).not.toThrow();
+    });
+
+    // Nit (restart re-announce): startAgentLoop() re-runs on restart cycles —
+    // the same missing target must not warn the chat twice per agent instance.
+    it('does not re-warn the same missing directory on a restart cycle', () => {
+      const mockServer = () =>
+        vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+          type: 'sdk',
+          name: 'channel-mcp',
+          instance: { close: vi.fn().mockResolvedValue(undefined) },
+        });
+      mockServer();
+      mockServer();
+
+      const agent = mkAgent('bound-missing', ['bound-missing', 'bound-missing']);
+      (agent as any).startAgentLoop(); // first spawn → warns
+      (agent as any).startAgentLoop(); // restart cycle → same target, stays quiet
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns again after the binding recovers and the target goes missing again', () => {
+      const mockServer = () =>
+        vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+          type: 'sdk',
+          name: 'channel-mcp',
+          instance: { close: vi.fn().mockResolvedValue(undefined) },
+        });
+      mockServer();
+      mockServer();
+      mockServer();
+
+      const agent = mkAgent('bound-missing', ['bound-missing', 'bound', 'bound-missing']);
+      (agent as any).startAgentLoop(); // missing → warns
+      (agent as any).startAgentLoop(); // recovered (bound) → no warn, fingerprint cleared
+      (agent as any).startAgentLoop(); // missing again → warns again
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    // Nit (double resolveCwd): when cwdResolver is present it subsumes
+    // cwdProvider — the provider must not be consulted at all.
+    it('uses cwdResolver alone and does not call cwdProvider (no double resolveCwd)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const cwdProvider = vi.fn(() => '/bound/project/dir');
+      const agent = new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdProvider,
+        cwdResolver: () => ({
+          effectiveCwd: '/bound/project/dir',
+          boundWorkingDir: '/bound/project/dir',
+          reason: 'bound',
+        }),
+      });
+      (agent as any).startAgentLoop();
+
+      expect(cwdProvider).not.toHaveBeenCalled();
     });
   });
 
@@ -1792,7 +1962,12 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn2',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): a real-user ID would now be granted
+        // the one-shot reset+replay, whose deferred session teardown interferes
+        // with the two-turn persistent-iterator premise of this test. The
+        // synthetic ID keeps this test about what it asserts — the #4194
+        // per-turn counter reset — while the retry path has its own tests below.
+        messageId: 'sched-empty-turn-2',
       });
 
       // The #4194 warn must fire on turn 2. Without the per-turn counter reset
@@ -1841,7 +2016,10 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn_notify',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): synthetic empty turns are never
+        // retried, so this test still exercises the ⚠️ notice fallback — the
+        // exact behavior a scheduled task sees (no reset, no replay, notify).
+        messageId: 'sched-empty-notify',
       });
 
       // The diagnostic notice must be sent via sendMessage so the user is told
@@ -1914,7 +2092,9 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn_system',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): keep this test on the
+        // non-retryable branch so the ⚠️ notice (the assertion) still fires.
+        messageId: 'sched-empty-system',
       });
 
       // The empty-turn diagnostic notice must fire despite the empty-content
@@ -1933,6 +2113,329 @@ describe('ChatAgent (primary-node)', () => {
         // as the sibling #4258 diagnostic-notice test.
         expect(diagnosticCall![2]).toBe('thread-root-123');
       }, { timeout: 1000, interval: 20 });
+    });
+  });
+
+  describe('Issue #4391: empty-turn session-reset + bounded replay', () => {
+    // Shared harness for the #4391 matrix (design doc §5). createQueryStream
+    // is stubbed per-test; the mock channel (in the @disclaude/core mock) has
+    // push() → true, so processMessage always accepts.
+    function makeRetryAgent(chatId: string, callbacks = createMockCallbacks()) {
+      const agent = new ChatAgent({
+        chatId,
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      return agent;
+    }
+
+    it('real-user empty turn → schedules one reset + replay (fresh session), suppresses the ⚠️ notice', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_ok', localCallbacks);
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        // Query 1 (the broken session): result-only — empty turn.
+        // Query 2 (the replay's fresh session): a real reply, then the marker
+        // — the retried turn recovers, so no ⚠️ notice may fire.
+        const recovered = queryCount >= 2;
+        return {
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            if (recovered) {
+              yield { parsed: { type: 'text', content: 'Recovered reply!' }, raw: {} };
+            }
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        };
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_ok',
+        payload: 'please answer',
+        messageId: 'om_real_user_1',
+      });
+
+      // The scheduling warn fires when the empty turn is granted its retry…
+      await vi.waitFor(() => {
+        const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+        expect(
+          warnSpy.mock.calls.some((c: unknown[]) =>
+            typeof c[1] === 'string' && (c[1] as string).includes('scheduling one-shot')
+          )
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      // …and after the deferred setTimeout(0) callback runs, the session was
+      // torn down (queryHandle closed) and processMessage replayed the original
+      // params — visible as a SECOND createQueryStream call (fresh session for
+      // the replay; startAgentLoop only fires when !isSessionActive).
+      await vi.waitFor(() => {
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000, interval: 20 });
+
+      // No ⚠️ empty-turn notice on the retrying attempt (suppressed while
+      // recovery is in flight — design §4.5).
+      const noticed = localCallbacks.sendMessage.mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+      );
+      expect(noticed).toBeUndefined();
+
+      // The empty turn was still accounted as a failure (circuit keeps
+      // counting chronic empty turns; retry is NOT success).
+      const rm = (agent as any).restartManager as { recordFailure: ReturnType<typeof vi.fn> };
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_retry_ok', 'empty-turn');
+    });
+
+    it('sched-* synthetic empty turn → no retry (no second query, notice still sent)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_sched', localCallbacks);
+
+      const createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield {
+            parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+            raw: {},
+          };
+        })(),
+      }));
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_sched',
+        payload: 'scheduled prompt',
+        messageId: 'sched-1800000000-issue-solver',
+      });
+
+      // The ⚠️ notice fires (fallback path — synthetic turns never retry)…
+      await vi.waitFor(() => {
+        const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
+          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+        );
+        expect(diagnosticCall).toBeDefined();
+      }, { timeout: 1000, interval: 20 });
+
+      // …and no replay is scheduled: the session was NOT torn down, so the
+      // persistent iterator keeps running (no second query).
+      await new Promise((r) => setTimeout(r, 50));
+      expect(createQueryStream).toHaveBeenCalledTimes(1);
+    });
+
+    it('retry bounded to 1: a second consecutive empty turn gets no reset+replay and notifies', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_bounded', localCallbacks);
+
+      const createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield {
+            parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+            raw: {},
+          };
+        })(),
+      }));
+      (agent as any).createQueryStream = createQueryStream;
+
+      // Turn 1: real-user empty turn — granted the one retry (session 1 → 2).
+      void agent.processMessage({
+        chatId: 'oc_retry_bounded',
+        payload: 'first attempt',
+        messageId: 'om_real_user_a',
+      });
+      await vi.waitFor(() => {
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000, interval: 20 });
+
+      // Turn 2 (the replay): ALSO empty. canRetry is now false (bounded to 1),
+      // so no third session — the ⚠️ notice fires instead.
+      await vi.waitFor(() => {
+        const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
+          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+        );
+        expect(diagnosticCall).toBeDefined();
+      }, { timeout: 1000, interval: 20 });
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(createQueryStream).toHaveBeenCalledTimes(2);
+      const rm = (agent as any).restartManager as { recordFailure: ReturnType<typeof vi.fn> };
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_retry_bounded', 'empty-turn');
+      expect((rm as unknown as { recordSuccess: ReturnType<typeof vi.fn> }).recordSuccess).not.toHaveBeenCalled();
+    });
+
+    // Issue #4391 (part 2 review regression 1): real SDK persistent streams
+    // PARK after a turn's result (the iterator stays alive awaiting the next
+    // SDK message); the earlier matrix used naturally-ending generators, which
+    // hid the park-drain race on the superseded iterator.
+    it('parked old iterator: replay must not trip the unexpected-end / circuit-breaker path', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_parked', localCallbacks);
+
+      // A production-shaped iterator: yields its turn, then PARKS on a
+      // promise that only resolves when handle.close() is called — exactly
+      // how a persistent SDK stream behaves between turns and at teardown.
+      function parkedIterator(events: { type: string; content: string }[]) {
+        let release: () => void = () => {};
+        const parked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const handle = {
+          close: vi.fn(() => release()),
+          cancel: vi.fn(() => release()),
+        };
+        const iterator = (async function* () {
+          for (const event of events) {
+            yield { parsed: event, raw: {} };
+          }
+          await parked; // park like a real persistent stream
+        })();
+        return { handle, iterator };
+      }
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        if (queryCount === 1) {
+          // Session 1 (the broken one): empty turn, then parks.
+          return parkedIterator([
+            { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+          ]);
+        }
+        // Session 2 (the replay): a real reply + result, then also parks —
+        // the persistent session keeps running after a successful replay.
+        return parkedIterator([
+          { type: 'text', content: 'Recovered reply!' },
+          { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+        ]);
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_parked',
+        payload: 'please answer',
+        messageId: 'om_real_user_parked',
+      });
+
+      // The replay's fresh session ran and recovered…
+      const recoveredCall = await vi.waitFor(
+        () => {
+          const call = localCallbacks.sendMessage.mock.calls.find(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('Recovered reply!')
+          );
+          expect(call).toBeDefined();
+          return call;
+        },
+        { timeout: 1000, interval: 20 }
+      );
+      expect(recoveredCall).toBeDefined();
+
+      // …and give the drained OLD iterator (released by endEmptyTurnSession's
+      // close) a chance to run its post-loop path.
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Exactly two sessions: the broken one and the replay. A third would
+      // mean the old loop's exit ran the auto-restart path.
+      expect(createQueryStream).toHaveBeenCalledTimes(2);
+
+      // The superseded iterator's exit must be intercepted: no unexpected-end
+      // warn, no ⚠️ reconnect notice, no 🚫 circuit-breaker notice — the replay
+      // succeeded, so the user must not see any of them.
+      const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+      const unexpectedWarn = warnSpy.mock.calls.find(
+        (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('ended unexpectedly')
+      );
+      expect(unexpectedWarn).toBeUndefined();
+
+      const badNotice = localCallbacks.sendMessage.mock.calls.find(
+        (call: unknown[]) =>
+          typeof call[1] === 'string' &&
+          ((call[1] as string).includes('会话多次异常中断') ||
+            (call[1] as string).includes('会话已暂停') ||
+            (call[1] as string).includes('意外断开'))
+      );
+      expect(badNotice).toBeUndefined();
+
+      // The interception is visible as an info log, not silence.
+      const infoSpy = (agent as any).logger.info as ReturnType<typeof vi.fn>;
+      const interceptInfo = infoSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[1] === 'string' && (c[1] as string).includes('superseded session iterator ended')
+      );
+      expect(interceptInfo).toBeDefined();
+
+      // The replay recovered → healthy-turn accounting re-arms the retry.
+      const rm = (agent as any).restartManager as { recordSuccess: ReturnType<typeof vi.fn> };
+      expect(rm.recordSuccess).toHaveBeenCalledWith('oc_retry_parked');
+    });
+
+    // Issue #4391 (part 2 review regression 2): a disposed agent must never
+    // fire the replay. Uses the production-faithful BaseAgent mock (no forced
+    // initialized=true), so this only passes with a real disposed check.
+    it('agent disposed before the timer fires → replay skipped (no second query)', async () => {
+      vi.useFakeTimers();
+      try {
+        const localCallbacks = createMockCallbacks();
+        const agent = makeRetryAgent('oc_retry_disposed', localCallbacks);
+
+        const createQueryStream = vi.fn(() => ({
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        }));
+        (agent as any).createQueryStream = createQueryStream;
+
+        void agent.processMessage({
+          chatId: 'oc_retry_disposed',
+          payload: 'please answer',
+          messageId: 'om_real_user_dispose',
+        });
+
+        // Drain microtasks until the empty-turn retry is scheduled. With fake
+        // timers the setTimeout(0) callback stays pending, giving a
+        // deterministic window to dispose before it fires.
+        const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+        for (let i = 0; i < 10_000; i++) {
+          const scheduled = warnSpy.mock.calls.some(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('scheduling one-shot')
+          );
+          if (scheduled) {break;}
+          await Promise.resolve();
+        }
+
+        // Dispose inside the window: sync flag set, teardown fire-and-forget.
+        // The BaseAgent mock sets an instance `this.dispose = vi.fn()` that
+        // shadows ChatAgent.prototype.dispose, so invoke the real method.
+        (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(agent);
+
+        // Fire the pending replay timer.
+        await vi.advanceTimersByTimeAsync(0);
+        await Promise.resolve();
+
+        // The guard skipped the replay — no fresh session was created…
+        expect(createQueryStream).toHaveBeenCalledTimes(1);
+        // …and said so in the skip log.
+        const infoSpy = (agent as any).logger.info as ReturnType<typeof vi.fn>;
+        const skipInfo = infoSpy.mock.calls.find(
+          (c: unknown[]) =>
+            typeof c[1] === 'string' && (c[1] as string).includes('Empty-turn replay skipped')
+        );
+        expect(skipInfo).toBeDefined();
+        expect((skipInfo![0] as Record<string, unknown>).disposed).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -2130,7 +2633,7 @@ describe('ChatAgent (primary-node)', () => {
       });
       (agent as any).isAgentTeamsEnabled = () => false;
 
-      void agent.processMessage({ chatId: 'oc_stream', payload: 'hi', messageId: 'msg_1' });
+      void agent.processMessage({ chatId: 'oc_stream', payload: 'hi', messageId: 'msg_1', chatType: 'p2p' });
 
       // The streaming callbacks fire once the turn flows.
       await vi.waitFor(() => {
@@ -2191,6 +2694,108 @@ describe('ChatAgent (primary-node)', () => {
       expect(localCallbacks.startStreaming).not.toHaveBeenCalled();
       expect(localCallbacks.streamText).not.toHaveBeenCalled();
       expect(localCallbacks.finalizeStreaming).not.toHaveBeenCalled();
+    });
+  });
+
+  // Issue #4510 (part 2, 2026-08-16 revision): the p2p-first gray rollout is
+  // built-in, not a config scope — streaming cards are only constructed for
+  // single chats; group/topic turns always keep the per-chunk sendMessage
+  // path bit-identically, regardless of how the channel advertises
+  // supportsStreaming.
+  describe('Issue #4510: p2p-only streaming (built-in chat-type gate)', () => {
+    const capsStreaming = (supportsStreaming: boolean) => ({
+      supportsCard: true,
+      supportsThread: true,
+      supportsFile: true,
+      supportsMarkdown: true,
+      supportsMention: true,
+      supportsUpdate: true,
+      supportsStreaming,
+    });
+
+    async function runTurn(chatType: string | undefined, supportsStreaming: boolean) {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        getCapabilities: vi.fn(() => capsStreaming(supportsStreaming)),
+        startStreaming: vi.fn(() => Promise.resolve('card-99')),
+        streamText: vi.fn(() => Promise.resolve()),
+        finalizeStreaming: vi.fn(() => Promise.resolve()),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_scope',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* scopedIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'Chunk' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 3' }, raw: {} };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: scopedIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_scope', payload: 'hi', messageId: 'msg_1', chatType });
+      await vi.waitFor(() => {
+        expect(localCallbacks.sendMessage.mock.calls.some(
+          (c: any[]) => typeof c[1] === 'string' && c[1].startsWith('✅ Complete')
+        )).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+      return localCallbacks;
+    }
+
+    it('streams for a p2p chat when the flag is on', async () => {
+      const cb = await runTurn('p2p', true);
+      expect(cb.startStreaming).toHaveBeenCalledTimes(1);
+      expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-99');
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(false);
+    });
+
+    it('falls back to sendMessage for a group chat even when the flag is on (built-in p2p narrowing)', async () => {
+      const cb = await runTurn('group', true);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.streamText).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    it('falls back to sendMessage for a topic chat even when the flag is on (thread groups stay non-streaming)', async () => {
+      const cb = await runTurn('topic', true);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    it('does not stream for a p2p chat when the flag is off (default-off unchanged)', async () => {
+      const cb = await runTurn('p2p', false);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    // Issue #4510 acceptance #5: the full 3 chatType × 2 flag matrix. The two
+    // flag-off cells below are logically short-circuited before the chatType
+    // check (supportsStreaming=false → no driver), but pin them so the matrix
+    // is explicitly covered against future gate reordering.
+    it.each([
+      ['group', 'group chat'],
+      ['topic', 'topic chat'],
+    ])('does not stream for a %s when the flag is off', async (chatType) => {
+      const cb = await runTurn(chatType, false);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.streamText).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    it('degrades to sendMessage when the flag is on and chatType is unknown (fail-safe)', async () => {
+      const cb = await runTurn(undefined, true);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
     });
   });
 });

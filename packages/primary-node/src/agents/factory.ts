@@ -36,6 +36,7 @@ import {
   type MessageBuilderOptions,
   type ModelTier,
   type CwdProvider,
+  type CwdResolution,
 } from '@disclaude/core';
 import { ChatAgent } from './chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
@@ -111,6 +112,11 @@ export interface AgentCreateOptions {
    * @see Issue #1916
    */
   cwdProvider?: CwdProvider;
+  /**
+   * Structured cwd resolver for surfacing the bound-missing fallback
+   * (Issue #4448 direction #1). See ChatAgentConfig.cwdResolver.
+   */
+  cwdResolver?: (chatId: string) => CwdResolution;
   /**
    * Skip history loading on agent startup (Issue #3696).
    * Used by /reset --no-context to create a truly fresh agent.
@@ -231,6 +237,7 @@ export class AgentFactory {
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
         cwdProvider: options.cwdProvider,
+        cwdResolver: options.cwdResolver,
         skipHistory: options.skipHistory,
       };
 
@@ -290,6 +297,7 @@ export class AgentFactory {
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
       cwdProvider: options.cwdProvider,
+      cwdResolver: options.cwdResolver,
       skipHistory: options.skipHistory,
     };
 

@@ -171,6 +171,9 @@ export interface FeishuChannelConfig {
    * Enable native streaming replies (Card Kit). Issue #4400 / #4208.
    * Default false → supportsStreaming capability is false → ChatAgent uses
    * sendMessage (unchanged). When true, the channel reports supportsStreaming.
+   * Issue #4510 (part 2): the p2p-first narrowing is built-in (agent-side
+   * chatType gate), not a config value — `true` means streaming in single
+   * chats only; group/topic turns keep sendMessage.
    */
   streamingCard?: boolean;
   /**
@@ -765,6 +768,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // streamingCard flag (default off → capability false → ChatAgent
       // degrades to sendMessage). When on, the streaming callbacks below
       // implement the Card Kit two-step flow driven by StreamingReplyDriver.
+      // Issue #4510 (part 2): the p2p narrowing is built into the ChatAgent
+      // gate (chatType === 'p2p'), not a scope capability — this channel has
+      // no per-chat type state, so it only reports the raw flag.
       supportsStreaming: this.config.streamingCard === true,
       supportedMcpTools: [
         'send_text',
@@ -824,6 +830,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   async startStreaming(chatId: string, parentMessageId?: string): Promise<string | null> {
     // Defense-in-depth: the ChatAgent already gates on supportsStreaming, but a
     // misconfigured capability must never silently activate streaming.
+    // Issue #4510 (part 2): the p2p narrowing lives in the agent-side chatType
+    // gate (this channel has no per-chat type state, and calling startStreaming
+    // at all already means the agent decided this turn is streamable).
     if (this.config.streamingCard !== true) {
       return null;
     }

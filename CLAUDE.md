@@ -528,7 +528,9 @@ Disclaude bundles preset agent definitions that are automatically copied to `.cl
 
 | Agent | Description | Tools |
 |-------|-------------|-------|
-| `site-miner` | Website information mining via Playwright | Read, Write, Bash, Glob, Grep, mcp__playwright__* |
+| `mac-screen-control` | macOS screen/keyboard/mouse control via Accessibility API and CGEvent | Read, Write, Bash, Glob, Grep |
+
+> Browser automation is not a preset agent. It is the [`browser-use`](skills/browser-use/SKILL.md) skill (piped-Python CLI, no MCP grants) — invoke it directly from the conversation.
 
 ### Agent Definition Format
 
