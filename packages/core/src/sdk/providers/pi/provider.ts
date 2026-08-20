@@ -26,6 +26,7 @@ import type {
   StreamQueryResult,
   UserInput,
 } from '../../types.js';
+import { createLogger } from '../../../utils/logger.js';
 import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
 import { adaptInlineTool } from './inline-tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
@@ -35,6 +36,14 @@ import {
   type PiPermissionGate,
 } from './permission-gate.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
+
+const logger = createLogger('PiAgentProvider');
+
+// Issue #4386 (part 5): terminal notice synthesized when the no-content-progress
+// watchdog fires — same shape/wording as the Claude provider's #3706 notice so
+// the two backends read identically in chat and in logs.
+const STALL_TERMINATE_NOTICE =
+  '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
 
 /**
  * Stream-function injection seam for `queryStream` (Issue #4386 part 3).
@@ -184,11 +193,97 @@ export class PiAgentProvider implements IAgentSDKProvider {
       };
       const enqueue = (event: PiAgentEvent): void => {
         queue.push(event);
+        // Issue #4386 (part 5): any enqueued event is progress — advance the
+        // stall deadline (a no-op re-arm when the run is not active).
+        touchStallWatchdog();
         wakeAll();
       };
       onAbort = (): void => {
         aborted = true;
         wakeAll();
+      };
+
+      // ── Issue #4386 (part 5): no-content-progress stall watchdog ──
+      // The pi bridge gets the same protection the Claude provider has
+      // (#3706): a run that stops producing events while still active is a
+      // stall (pi keeps the run pending on a hung upstream streamFn — the
+      // symmetric case of GLM's zero-content_block_delta SSE stall). The
+      // watchdog is armed when a run starts and re-armed on EVERY enqueued
+      // event (any progress — text, thinking, tool — counts; only a fully
+      // silent run fires), disarmed when the run settles. Firing aborts the
+      // agent, wakes the consumer, and synthesizes a terminal result with
+      // terminatedReason 'stall' so ChatAgent recordFailure('stall')s like
+      // it does for Claude. Timeout is env-tunable per-call
+      // (DISCLAUDE_STALL_TIMEOUT_MS) — the same knob #3706 uses — so tests
+      // drive it deterministically. Between-turn idle (runActive === false,
+      // the input generator parked) is excluded: the watchdog only covers
+      // in-flight runs, mirroring #3706's message_start→message_stop arming.
+      const STALL_TIMEOUT_MS = (() => {
+        const env = Number.parseInt(process.env.DISCLAUDE_STALL_TIMEOUT_MS ?? '', 10);
+        return Number.isFinite(env) && env > 0 ? env : 180_000;
+      })();
+      // Grace after abort() before force-closing the consumer loop, in case
+      // abort() alone cannot settle a run parked on a never-resolving
+      // streamFn promise (#3706 review — same rationale as force-close there).
+      const STALL_FORCE_CLOSE_GRACE_MS = (() => {
+        const env = Number.parseInt(process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS ?? '', 10);
+        return Number.isFinite(env) && env > 0 ? env : 5_000;
+      })();
+      let stalled = false;
+      let stallWatchdog: ReturnType<typeof setTimeout> | null = null;
+      let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;
+      const armStallTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
+        const t = setTimeout(fn, ms);
+        (t as unknown as { unref?: () => void }).unref?.();
+        return t;
+      };
+      const clearStallWatchdog = (): void => {
+        if (stallWatchdog) {
+          clearTimeout(stallWatchdog);
+          stallWatchdog = null;
+        }
+      };
+      const clearStallTimers = (): void => {
+        clearStallWatchdog();
+        if (stallForceCloseTimer) {
+          clearTimeout(stallForceCloseTimer);
+          stallForceCloseTimer = null;
+        }
+      };
+      // Abort through the closure-level `agent` so the watchdog also works
+      // in the (impossible-today but structural) window where `piAgent` is
+      // not yet assigned to it.
+      const piAgentSafeAbort = (): void => {
+        agent?.abort();
+      };
+      const fireStallWatchdog = (): void => {
+        stallWatchdog = null;
+        if (!runActive || stalled) {
+          return;
+        }
+        stalled = true;
+        logger.error(
+          { stallTimeoutMs: STALL_TIMEOUT_MS },
+          `pi stall: no agent events for ${STALL_TIMEOUT_MS}ms during an active run; ` +
+            'aborting the agent (Issue #4386, cf. #3706)',
+        );
+        // Same escalation order as #3706: abort first; if the run still does
+        // not settle (a hung streamFn promise never resolves, so runInput's
+        // finally never runs), the bridge's own session-lifetime wait would
+        // park forever — force the consumer loop closed after a grace by
+        // flipping the abort flag directly.
+        piAgentSafeAbort();
+        stallForceCloseTimer = armStallTimer(() => {
+          stallForceCloseTimer = null;
+          onAbort?.();
+        }, STALL_FORCE_CLOSE_GRACE_MS);
+      };
+      const touchStallWatchdog = (): void => {
+        if (!runActive || stalled) {
+          return;
+        }
+        clearStallWatchdog();
+        stallWatchdog = armStallTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
       };
 
       const inputIterator = input[Symbol.asyncIterator]();
@@ -225,6 +320,9 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // from — expected, swallowed below).
       const runInput = async (message: unknown, first: boolean): Promise<void> => {
         runActive = true;
+        // Issue #4386 (part 5): arm the stall watchdog for the run's whole
+        // lifetime (prompt/continue settle = disarm in the finally below).
+        touchStallWatchdog();
         try {
           if (first) {
             await piAgent.prompt(message);
@@ -239,6 +337,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
           // stream termination.
         } finally {
           runActive = false;
+          clearStallTimers();
           wakeAll();
         }
       };
@@ -286,6 +385,21 @@ export class PiAgentProvider implements IAgentSDKProvider {
             yield adapted;
           }
         }
+        // Issue #4386 (part 5): watchdog fired during the session → the
+        // stream would otherwise end without a terminator. Synthesize the
+        // same terminal result the Claude provider's #3706 stall path yields
+        // (terminatedReason 'stall'), so ChatAgent's result branch surfaces
+        // ⚠️ to the user and recordFailure('stall') runs — instead of the
+        // turn completing as if nothing happened.
+        if (stalled) {
+          yield {
+            type: 'result',
+            content: STALL_TERMINATE_NOTICE,
+            role: 'system',
+            metadata: { terminatedReason: 'stall' },
+          };
+          return;
+        }
       } finally {
         // Teardown — the session is over (input exhausted, the consumer
         // broke out of its for-await, or cancel()/close() aborted). Unlike
@@ -299,6 +413,7 @@ export class PiAgentProvider implements IAgentSDKProvider {
         // a no-op, so no zombie run starts on the aborted agent.
         terminated = true;
         unsubscribe();
+        clearStallTimers();
         piAgent.abort();
       }
     };
