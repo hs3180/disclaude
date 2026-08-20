@@ -834,6 +834,115 @@ describe('ClaudeSDKProvider', () => {
       );
     });
 
+    // Issue #4442 (part 4): first-message blind-window watchdog. The #3706
+    // content watchdog arms only on a message_start partial — when the provider
+    // forwards no partials (GLM/LiteLLM) and the upstream stalls BEFORE the
+    // first message, the for-await used to hang forever (no watchdog armed, and
+    // #4442 part 3's empty-stream recovery only runs when the stream ends).
+    // The blind window is armed per query attempt, cancelled by ANY first
+    // message, and escalates through the same stall path (interrupt →
+    // force-close → terminal 'stall' → recordFailure('stall') in ChatAgent).
+    it('should interrupt a stall before the first message when no partials flow (Issue #4442 part 4)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+      vi.useFakeTimers();
+      try {
+        let resumeStream!: () => void;
+        const streamResumes = new Promise<void>((resolve) => { resumeStream = resolve; });
+        const interruptSpy = vi.fn(() => { resumeStream(); return Promise.resolve(); });
+        const gen = (async function* () {
+          // NO stream_event partials at all (provider doesn't forward them) and
+          // no message arrives — the exact #4442 blind spot.
+          await streamResumes; // hang until the blind window interrupts
+        })();
+        mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+        async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+        const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+        const messages: AgentMessage[] = [];
+        const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
+        await vi.advanceTimersByTimeAsync(80); // blind window fires → interrupt() → stream resumes
+        await drained;
+        expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
+        expect(interruptSpy).toHaveBeenCalledTimes(1);
+        expect(loggerMock.error).toHaveBeenCalledWith(
+          expect.objectContaining({ partialsObserved: false, messageCount: 0 }),
+          expect.stringContaining('blind window'),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should NOT fire the blind window when the first message arrives in time (Issue #4442 part 4)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+      vi.useFakeTimers();
+      try {
+        const interruptSpy = vi.fn();
+        let firstMessageDelivered!: () => void;
+        const firstMessageSeen = new Promise<void>((resolve) => { firstMessageDelivered = resolve; });
+        const gen = (async function* () {
+          // First message arrives at t=0 (no partials — provider doesn't forward
+          // them): the blind window is cancelled immediately, so advancing well
+          // past the timeout must NOT interrupt a healthy mid-stream gap.
+          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'hello' }] } };
+          firstMessageDelivered();
+          await new Promise<void>(r => setTimeout(r, 250)); // quiet but alive stream
+          yield { type: 'result', subtype: 'success' };
+        })();
+        mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+        async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+        const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+        const messages: AgentMessage[] = [];
+        const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
+        await firstMessageSeen; // t=0: first message cancels the blind window
+        await vi.advanceTimersByTimeAsync(250); // >> 80ms timeout, but window is spent
+        await drained;
+        expect(interruptSpy).not.toHaveBeenCalled();
+        expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should force-close a blind-window stall that ignores interrupt(), yielding the stall terminal (Issue #4442 part 4)', async () => {
+      // The blind window escalates exactly like the partials watchdog: when
+      // interrupt() cannot tear the stalled stream down, the force-close grace
+      // (STALL_FORCE_CLOSE_GRACE_MS) ends it, and the turn terminates with the
+      // 'stall' terminal result (ChatAgent records recordFailure('stall')).
+      // A stall is terminal, NOT retried in-request — same contract as the
+      // #3706 partials watchdog.
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+      process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '20';
+      vi.useFakeTimers();
+      try {
+        let endAttempt1!: () => void;
+        const attempt1Ends = new Promise<void>((resolve) => { endAttempt1 = resolve; });
+        const interruptSpy = vi.fn(() => Promise.resolve()); // no teardown
+        const closeSpy = vi.fn(() => { endAttempt1(); });
+        const gen = (async function* () {
+          // Hangs with zero partials and zero messages; only close() ends it.
+          await attempt1Ends;
+        })();
+        mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: closeSpy }));
+        async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+        const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+        const messages: AgentMessage[] = [];
+        const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
+        // 50ms blind window fires (interrupt no-op) → 20ms grace → close() ends the stream
+        await vi.advanceTimersByTimeAsync(50);
+        await vi.advanceTimersByTimeAsync(20);
+        await drained;
+        expect(mockQuery).toHaveBeenCalledTimes(1); // stall is terminal, no in-request retry
+        expect(interruptSpy).toHaveBeenCalledTimes(1);
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+        expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     // 根因记录(D2):Agent Teams 并发触发上游限流(GLM 1302)时,卡住的 teammate 会
     // 产出海量空 system 消息(实测以 thinking_tokens 为主)。flood 检测必须 warn-only
     // —— 不终止流(范围不含 D3 终止防护),否则会改变行为。此处用任意未识别 subtype 验证。
