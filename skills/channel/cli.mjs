@@ -335,6 +335,10 @@ function restUnavailableHint(baseUrl) {
  * REST face, independent of which first-party gate fired first. The probe is
  * token-exempt (GET route) and short-timeout; it only runs after a send has
  * already failed, so the happy path pays nothing.
+ *
+ * Timeout is 3s vs mcp-server isIpcAvailable()'s 2000ms: intentional — this
+ * probe runs only on the failure path (never latency-critical), so it can
+ * afford to be more patient before declaring the REST face unreachable.
  */
 async function isRestFaceReachable(baseUrl) {
   try {
