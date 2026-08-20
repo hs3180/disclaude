@@ -1283,13 +1283,17 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       // Iterator that parks after the first yield until close() is called.
-      // Issue #4394: no real 10ms setTimeout gaps — the production iterator is
-      // interrupted by the abort check at the TOP of the next for-await
-      // iteration (chat-agent.ts:1057), which only runs once the pending
-      // next() settles. A real-timer gap made "when does next() settle" a
-      // host-load race; parking on a promise that the mock handle's close()
-      // resolves makes it deterministic: reset() calls queryHandle.close()
-      // synchronously → next() settles → the abort check breaks the loop.
+      // Issue #4394: no real 10ms setTimeout gaps — a real-timer gap made
+      // "when does the pending next() settle" a host-load race; parking on a
+      // promise that the mock handle's close() resolves makes it
+      // deterministic: reset() calls queryHandle.close() synchronously →
+      // every remaining next() settles immediately.
+      // NOTE: the loop-head abort check (chat-agent.ts:1059) does NOT fire on
+      // the reset() path — reset() nulls this.abortController after aborting
+      // (chat-agent.ts:1670), so the check reads null and stays false. The
+      // iterator therefore drains all 20 messages and the loop exits via the
+      // explicit-close path (isSessionActive=false set before close). The
+      // assertion only checks session-inactive, which that path satisfies.
       let releaseIterator!: () => void;
       const parked = new Promise<void>((resolve) => {
         releaseIterator = resolve;
@@ -1342,10 +1346,11 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Issue #4394: same parking-iterator shape as the reset() test above —
-      // next() parks on a promise that close() resolves, so stop()'s abort is
-      // observed at the very next (settled) iteration boundary instead of
-      // racing a real 10ms setTimeout gap.
+      // Issue #4394: same parking-iterator shape as the reset() test above.
+      // Unlike reset(), stop() does NOT null abortController — the loop-head
+      // abort check (chat-agent.ts:1059) fires on the first settled next(),
+      // so this exercises the real abort-break path (verified: the abort log
+      // fires and only msg-1 is processed before the break).
       let releaseIterator!: () => void;
       const parked = new Promise<void>((resolve) => {
         releaseIterator = resolve;

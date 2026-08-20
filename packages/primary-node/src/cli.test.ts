@@ -384,13 +384,22 @@ describe('waitForPortAvailable', () => {
     // Issue #4394: close the server only after waitForPortAvailable has
     // actually observed the port as occupied ("Port is in use, waiting..."
     // fires between retries), instead of racing a real 50ms setTimeout.
-    // The first occupied-observation lands on the first isPortAvailable()
-    // probe, so the close happens while the retry loop is parked in
-    // sleep(intervalMs) — deterministic on any host load.
+    // The call is started first and the handshake filters on this test's own
+    // occupiedPort (a fresh random port) so stale log entries from earlier
+    // tests can't satisfy the wait — the close then lands while the retry
+    // loop is parked in sleep(intervalMs), deterministic on any host load.
+    const resultPromise = waitForPortAvailable(occupiedPort, '127.0.0.1', {
+      maxRetries: 10,
+      intervalMs: 30,
+    });
     await vi.waitFor(
       () => {
         expect(
-          loggerInfoCalls.some((c) => c.msg === 'Port is in use, waiting for old process to release...')
+          loggerInfoCalls.some(
+            (c) =>
+              (c.fields as { port?: number } | undefined)?.port === occupiedPort &&
+              c.msg === 'Port is in use, waiting for old process to release...'
+          )
         ).toBe(true);
       },
       { timeout: 1000, interval: 5 }
@@ -400,10 +409,7 @@ describe('waitForPortAvailable', () => {
     });
 
     try {
-      const result = await waitForPortAvailable(occupiedPort, '127.0.0.1', {
-        maxRetries: 10,
-        intervalMs: 30,
-      });
+      const result = await resultPromise;
       expect(result).toBe(true);
     } finally {
       // Ensure server is closed
