@@ -223,16 +223,28 @@ describe('Scheduler', () => {
       const task = createTask({ id: 'graceful-stop-1' });
       scheduler.addTask(task);
 
-      // Start a task execution that takes 200ms
-      mockRouterAsMock.route.mockImplementationOnce(() => new Promise(resolve => setTimeout(resolve, 200)));
+      // Start a task execution the test resolves on demand. Issue #4394
+      // (part 25): this used to be a real 200ms wall-clock setTimeout, making
+      // the drain wait load-sensitive on a busy CI host. A deferred promise
+      // keeps exactly the semantics the test asserts — task still running
+      // while stop() pends, stop() resolves once the task completes — with
+      // the test controlling the completion instant and zero real timers.
+      let finishExecution!: () => void;
+      mockRouterAsMock.route.mockImplementationOnce(
+        () => new Promise<void>(resolve => { finishExecution = resolve; }),
+      );
 
       // Fire the cron job to start execution
       const jobs = scheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
 
-      // Wait for execution to start
+      // Wait for execution to start. Waiting on the route CALL (not just
+      // isTaskRunning) is what synchronizes `finishExecution` being assigned:
+      // executeTask marks the task running before its first await, then only
+      // reaches route() after the get/sendMessage microtasks settle.
       await vi.waitFor(() => {
         expect(scheduler.isTaskRunning('graceful-stop-1')).toBe(true);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 1000 });
 
       // Stop should wait for the running task to complete
@@ -242,7 +254,9 @@ describe('Scheduler', () => {
       expect(scheduler.isRunning()).toBe(false);
       expect(scheduler.getActiveJobs()).toHaveLength(0);
 
-      // Stop should eventually resolve after task completes
+      // Let the in-flight execution complete; stop() should then resolve
+      // without hitting its 2000ms grace timeout.
+      finishExecution();
       await stopPromise;
 
       // Running task should be cleared after completion
@@ -909,7 +923,14 @@ describe('Scheduler', () => {
     });
 
     it('should allow execution when blocking=false even if previous still running', async () => {
-      mockRouterAsMock.route.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 200)));
+      // Issue #4394 (part 25): this used `new Promise(r => setTimeout(r, 200))`
+      // for every route call, but the test only asserts that both executions
+      // are *initiated* (route called twice) — it never awaits completion, so
+      // the two real timers just leaked past the test boundary. A
+      // never-resolving promise provides the same "previous still running"
+      // state with zero real timers; the shared afterEach teardown uses
+      // stop(0), which skips the drain and so is not blocked by it.
+      mockRouterAsMock.route.mockImplementation(() => new Promise<void>(() => {}));
 
       const task = createTask({ id: 'non-blocking', blocking: false });
       scheduler.addTask(task);
