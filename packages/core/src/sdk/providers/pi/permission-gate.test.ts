@@ -104,8 +104,8 @@ describe('composeGates (Issue #4389)', () => {
   it('later gates are not consulted after a deny', () => {
     const later = vi.fn(() => ({ allowed: true }) as const);
     const gate = composeGates(createDenylistGate(['a']), {
-      decide: later as unknown as PiPermissionGate['decide'],
-    } as PiPermissionGate);
+      decide: later,
+    } as unknown as PiPermissionGate);
     gate.decide({ toolName: 'a', args: {} });
     expect(later).not.toHaveBeenCalled();
   });
@@ -235,5 +235,82 @@ describe('PiAgentProvider permissionGate wiring (Issue #4389)', () => {
     expect(
       provider.permissionGate.decide({ toolName: 'stale_tool', args: {} }),
     ).toEqual({ allowed: true });
+  });
+
+  // The PRODUCTION ordering is adapt-BEFORE-install: channelSdkTools is
+  // adapted at module load (channel-mcp.ts), and buildMcpServers() adapts
+  // during processMessage — both BEFORE queryStream installs the query's
+  // denylist. The gate must be resolved at execute time, never captured at
+  // adapt time (review R1 on #4538: a value capture froze such tools on
+  // ALLOW_ALL_GATE and the deny never fired).
+  it('tools adapted BEFORE queryStream pick up the denylist it installs', async () => {
+    provider.streamFn = () => undefined;
+    const handler = vi.fn(() => Promise.resolve('should not reach'));
+    const tool = provider.createInlineTool(makeTool(handler)) as ReturnType<
+      typeof adaptInlineTool
+    >;
+
+    provider.queryStream(
+      (async function* () {
+        /* never consumed — queryStream returns synchronously */
+      })(),
+      { settingSources: [], disallowedTools: ['search'] },
+    );
+
+    await expect(
+      tool.execute('call_1', { q: 'x' }, undefined, undefined, undefined)
+    ).rejects.toThrow(/permission denied.*search/);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('tools adapted before a gate REPLACE also follow the new gate (no frozen capture)', async () => {
+    provider.streamFn = () => undefined;
+    const handler = vi.fn(({ q }: { q: string }) => Promise.resolve(`ok ${q}`));
+    const tool = provider.createInlineTool(makeTool(handler)) as ReturnType<
+      typeof adaptInlineTool
+    >;
+
+    provider.permissionGate = createDenylistGate(['search']);
+    // A later query without disallowedTools resets to allow-all — the
+    // previously-adapted tool must follow the reset, not the stale deny.
+    provider.queryStream((async function* () {})(), {
+      settingSources: [],
+      disallowedTools: [],
+    });
+
+    const res = await tool.execute('call_1', { q: 'x' }, undefined, undefined, undefined);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith({ q: 'x' });
+    expect(res.details).toBe('ok x');
+  });
+
+  // Documents the single-active-query assumption (review R2 on #4538): the
+  // provider is a process-wide cached instance (factory.ts providerCache) and
+  // queryStream REPLACES the gate — a second interleaved query with different
+  // disallowedTools overwrites the first's denylist. This is accepted for now
+  // (the ClaudeSDKProvider contract is one long-lived query per chat, and pi
+  // queryStream injects no tools yet — no production execution path); proper
+  // per-query scoping belongs to the beforeToolCall-hook layer (#4542), which
+  // installs the gate on the per-query Agent constructor. If that layer
+  // lands, DELETE this test together with the instance-field seam.
+  it('WARNING-SEMANTICS: a later queryStream overwrites an earlier query\'s gate (single-active-query assumption)', () => {
+    provider.streamFn = () => undefined;
+    provider.queryStream((async function* () {})(), {
+      settingSources: [],
+      disallowedTools: ['bash'],
+    });
+    expect(provider.permissionGate.decide({ toolName: 'bash', args: {} }).allowed).toBe(
+      false,
+    );
+    // Second query with no disallowedTools resets the shared field...
+    provider.queryStream((async function* () {})(), {
+      settingSources: [],
+      disallowedTools: [],
+    });
+    // ...so the first query's deny no longer holds. Known limitation, see
+    // the comment above and #4542 for the per-query fix.
+    expect(provider.permissionGate.decide({ toolName: 'bash', args: {} })).toEqual({
+      allowed: true,
+    });
   });
 });
