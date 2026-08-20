@@ -1280,10 +1280,14 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Iterator that yields messages before throwing (runtime error)
+      // Iterator that yields messages before throwing (runtime error).
+      // Issue #4394: no real 20ms setTimeout — the gap between the yielded
+      // message and the throw is irrelevant to the assertion (messageCount > 0
+      // is what classifies this as a runtime error, not a startup failure), so
+      // the iterator throws immediately after yielding. Deterministic, zero
+      // wall-clock dependency.
       async function* runtimeErrorIterator() {
         yield { parsed: { type: 'text', content: 'Hello from agent' } };
-        await new Promise<void>((r) => setTimeout(r, 20));
         throw new Error('Runtime crash after messages');
       }
 
@@ -1339,18 +1343,33 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Create an iterator that yields messages with a delay
-      async function* slowIterator() {
+      // Iterator that parks after the first yield until close() is called.
+      // Issue #4394: no real 10ms setTimeout gaps — a real-timer gap made
+      // "when does the pending next() settle" a host-load race; parking on a
+      // promise that the mock handle's close() resolves makes it
+      // deterministic: reset() calls queryHandle.close() synchronously →
+      // every remaining next() settles immediately.
+      // NOTE: the loop-head abort check (chat-agent.ts:1059) does NOT fire on
+      // the reset() path — reset() nulls this.abortController after aborting
+      // (chat-agent.ts:1670), so the check reads null and stays false. The
+      // iterator therefore drains all 20 messages and the loop exits via the
+      // explicit-close path (isSessionActive=false set before close). The
+      // assertion only checks session-inactive, which that path satisfies.
+      let releaseIterator!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        releaseIterator = resolve;
+      });
+      async function* parkingIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>((r) => setTimeout(r, 10));
+          await parked; // park until close(); no real timer
         }
       }
 
       // Override createQueryStream on the instance
       (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: slowIterator(),
+        handle: { close: vi.fn(() => releaseIterator()), cancel: vi.fn() },
+        iterator: parkingIterator(),
       });
 
       // Start the session by sending a message
@@ -1388,16 +1407,25 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      async function* slowIterator() {
+      // Issue #4394: same parking-iterator shape as the reset() test above.
+      // Unlike reset(), stop() does NOT null abortController — the loop-head
+      // abort check (chat-agent.ts:1059) fires on the first settled next(),
+      // so this exercises the real abort-break path (verified: the abort log
+      // fires and only msg-1 is processed before the break).
+      let releaseIterator!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        releaseIterator = resolve;
+      });
+      async function* parkingIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>((r) => setTimeout(r, 10));
+          await parked; // park until close(); no real timer
         }
       }
 
       (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: slowIterator(),
+        handle: { close: vi.fn(() => releaseIterator()), cancel: vi.fn() },
+        iterator: parkingIterator(),
       });
 
       void agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });
