@@ -11,10 +11,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Issue #4129: uploadFile is now a standalone function exported from @disclaude/core.
 // Production calls uploadFile(client, ...). Mock it to drop the client arg and delegate
 // to the same spy as the legacy client.uploadFile(...) instance method.
-const { mockIpcClient, mockUploadFile } = vi.hoisted(() => {
+const { mockIpcClient, mockUploadFile, mockGetRestIpcClient } = vi.hoisted(() => {
   const mockUploadFile = vi.fn();
   const mockIpcClient = { uploadFile: mockUploadFile };
-  return { mockIpcClient, mockUploadFile };
+  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
+  return { mockIpcClient, mockUploadFile, mockGetRestIpcClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -24,7 +25,6 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  getIpcClient: vi.fn(),
   uploadFile: (...args: unknown[]) => mockUploadFile(...args.slice(1)),
 }));
 
@@ -34,6 +34,8 @@ vi.mock('./credentials.js', () => ({
 }));
 
 vi.mock('./ipc-utils.js', () => ({
+  // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
+  getRestIpcClient: () => mockGetRestIpcClient(),
   isIpcAvailable: vi.fn(),
 }));
 
@@ -42,14 +44,13 @@ vi.mock('fs/promises', () => ({
 }));
 
 import { send_file } from './send-file.js';
-import { getIpcClient } from '@disclaude/core';
 import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 
 describe('send_file', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: 'test-secret' });
     vi.mocked(getWorkspaceDir).mockReturnValue('/workspace');
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
