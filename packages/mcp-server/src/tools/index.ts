@@ -35,15 +35,13 @@ export { send_file } from './send-file.js';
 export { push_to_agent } from './push-to-agent.js';
 
 // Interactive Message
+// Issue #4280 (part 4): the mcp-server's own UnixSocketIpcServer lifecycle
+// exports (startIpcServer/stopIpcServer/isIpcServerRunning/
+// getIpcServerSocketPath/registerFeishuHandlers/unregisterFeishuHandlers)
+// are removed — dead code since part 3 made every tool a REST client.
 export {
   send_interactive_message,
   send_interactive,
-  startIpcServer,
-  stopIpcServer,
-  isIpcServerRunning,
-  getIpcServerSocketPath,
-  registerFeishuHandlers,
-  unregisterFeishuHandlers,
 } from './interactive-message.js';
 
 // Tool definitions and dispatch (Issue #4128)
