@@ -30,7 +30,7 @@ research Agent maintains in `RESEARCH.md`, so a reader can cross-check both.
 ```xml
 <title>Research Canvas: {topic}</title>
 
-<callout emoji="🧭" background-color="light-blue">
+<callout emoji="📌" background-color="light-blue">
 <p>这是研究 <b>{topic}</b> 的协作画布。你可以直接编辑本页：调整大纲、添加批注、标注优先级。Agent 在每轮运行开始时读取你的修改并同步回 RESEARCH.md。<b>用户编辑优先</b>。</p>
 </callout>
 
@@ -51,13 +51,13 @@ research Agent maintains in `RESEARCH.md`, so a reader can cross-check both.
 <p><em>状态用 pending / in-progress / done。</em></p>
 
 <h1>🔍 分析发现</h1>
-<p><!-- Agent 每轮运行后追加/更新本节 --></p>
+<p>（Agent 在每轮运行后更新本节）</p>
 
 <h1>📝 用户批注（优先级 / 方向调整）</h1>
-<p><!-- 用户自由编辑；Agent 读取后合并回 RESEARCH.md 的 User Feedback 节 --></p>
+<p>（在此写下你的批注：优先级、方向调整、疑问。Agent 读取后合并回 RESEARCH.md。）</p>
 
 <h1>📚 Sources</h1>
-<p><!-- 引用列表，[N] 记法对应报告引用 --></p>
+<p>（引用列表，[N] 记法对应报告引用）</p>
 ```
 
 Rules when instantiating the template:
@@ -68,6 +68,11 @@ Rules when instantiating the template:
 - Text content must be XML-escaped (`<` → `&lt;`, `>` → `&gt;`, `&` → `&amp;`).
 - Heading levels stay consecutive (`<title>` then `<h1>`s); body headings use
   `<h2>`+ only when nesting under an `<h1>` section.
+- HTML comments are not a DocxXML feature: `<!-- … -->` inside `<p>` is
+  imported as literal text (`&lt;!-- … --&gt;`) and lands in the doc verbatim.
+  Section placeholders above are plain parenthesized text for that reason.
+- The callout `emoji` attribute only accepts a small fixed emoji set — other
+  emoji (e.g. 🧭) are silently replaced with 💡 on import. 📌 round-trips fine.
 
 ---
 
@@ -81,17 +86,24 @@ lark-cli docs +create --content @canvas.xml --as bot
 # → note the doc token from the JSON output
 ```
 
-The XML already carries the `<title>` tag — do **not** also pass `--title`, or
-the doc gets a duplicated title heading. `--content @file` must be a
-**relative path** (run from the workdir where `canvas.xml` was written); all
-flags below follow the same rule.
+The XML already carries the `<title>` tag — do **not** also pass `--title`: the
+CLI prepends it to `--content`, so the CLI title wins and the XML one is
+ignored (no error, the intended title just silently loses). `--content @file`
+must be a **relative path** (run from the workdir where `canvas.xml` was
+written); all flags below follow the same rule.
+
+Also note `+create` in bot mode **auto-grants the current CLI user
+`full_access`** on the new doc (`permission_grant` in the output), so for the
+common case the manual `permission.members create` step in the `lark-docs`
+skill is already covered — verify the user can open the link, and only fall
+back to the manual grant if they cannot.
 
 1. Store the doc URL in `RESEARCH.md` frontmatter as `canvasUrl` (it is part of
    the research state, so it survives across runs and agents).
 2. Post the Canvas link in the research group (and the source chat, if they
    differ) so the user can open and edit it.
-3. Grant the user access — bot-created docs are not user-visible by default
-   (see the permission snippet in the [`lark-docs` skill](../lark-docs/SKILL.md)).
+3. Grant the user access if needed — see the auto-grant note above; the manual
+   fallback lives in the [`lark-docs` skill](../lark-docs/SKILL.md).
 
 ## Sync (start of every scheduled run)
 
@@ -118,12 +130,22 @@ Then:
 lark-cli docs +update --doc "$CANVAS_URL" --command str_replace \
   --pattern "{old_text}" --content "{new_text}" --as bot
 
-# block-level replace for a section: locate the heading block first
-# (--scope keyword + --detail with-ids returns the block ids), then replace
+# to append findings under a section heading: locate the heading block, then
+# insert after it (new content goes directly under the heading; existing
+# section content is untouched — no block-id churn, safe to repeat per run)
 lark-cli docs +fetch --doc "$CANVAS_URL" --scope keyword --keyword "分析发现" --detail with-ids --as bot
+lark-cli docs +update --doc "$CANVAS_URL" --command block_insert_after \
+  --block-id "{heading_block_id}" --content @finding.xml --as bot
+
+# to rewrite a whole section in place: fetch the section's block ids, then
+# replace the sibling range from the heading to the block before the next heading
 lark-cli docs +update --doc "$CANVAS_URL" --command block_replace \
-  --block-id "{block_id}" --content @section.xml --as bot
+  --start-block-id "{first_block_id}" --end-block-id "{last_block_id}" --content @section.xml --as bot
 ```
+
+Notes: `--scope keyword` matches the heading *text*, so keep the emoji prefix
+in the keyword string. Refetch block ids after any structural change (append,
+replace, delete) — stale ids from an earlier fetch fail.
 
 Images/attachments surfaced during research can be inserted with
 `docs +media-insert` (see [`lark-docs` skill](../lark-docs/SKILL.md) for the
