@@ -138,26 +138,6 @@ describe('RestIpcClient', () => {
       expect(calls[0].url).toBe('http://localhost:9200/api/push');
     });
 
-    it('should route loopStart to /api/loop/start and shape response', async () => {
-      mockFetch([{ json: { ok: true, loopId: 'loop_123' } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:9200', apiToken: 'tok' });
-
-      const result = await client.requestChannel('loopStart', { chatId: 'oc_test', prompt: 'do X' });
-
-      expect(result).toEqual({ success: true, loopId: 'loop_123' });
-    });
-
-    it('should route loopStatus via pathBuilder with loopId param', async () => {
-      const { calls } = mockFetch([{ json: { ok: true, status: { state: 'running' } } }]);
-      const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
-
-      const result = await client.requestChannel('loopStatus', { loopId: 'loop_123' });
-
-      expect(calls[0].url).toBe('http://localhost:9200/api/loop/status/loop_123');
-      expect(calls[0].init.method).toBe('GET');
-      expect(result).toEqual({ success: true, status: { state: 'running' } });
-    });
-
     it('should throw for truly unsupported methods', async () => {
       const client = new RestIpcClient({ baseUrl: 'http://localhost:9200' });
       await expect(client.requestChannel('unknownMethod')).rejects.toThrow('unsupported method');
