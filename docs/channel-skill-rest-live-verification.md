@@ -24,7 +24,7 @@
 
 The one-shot CLI invocations used `--base-url` (flag path). The env-var path
 (`DISCLAUDE_REST_IPC_BASE_URL`) is covered by part 1's unit tests; both resolve
-identically in `resolveRestBaseUrl()`.
+identically in `wireRestTransport()` (named `resolveRestBaseUrl()` at the verified repo state `f207ba04`; renamed by post-run review fix `97820fe`).
 
 ## 2. Results — all 5 subcommands
 
