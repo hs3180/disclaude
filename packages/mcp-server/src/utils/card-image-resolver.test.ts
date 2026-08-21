@@ -11,7 +11,16 @@ import { isLocalImagePath, resolveCardImages } from './card-image-resolver.js';
 // Mock @disclaude/core
 // Issue #4129: uploadImage is now a standalone function exported from @disclaude/core.
 // Production calls uploadImage(client, ...). Delegate to the current test's mock client.
-const { ipcClientRef } = vi.hoisted(() => ({ ipcClientRef: { current: null as unknown as { uploadImage: (...args: unknown[]) => unknown } } }));
+const { ipcClientRef, mockGetRestIpcClient } = vi.hoisted(() => ({
+  ipcClientRef: { current: null as unknown as { uploadImage: (...args: unknown[]) => unknown } },
+  mockGetRestIpcClient: vi.fn(),
+}));
+// Issue #4280 (Phase 3, part 3): production constructs the REST client via
+// tools/ipc-utils.getRestIpcClient — mock it to return the per-test client.
+vi.mock('../tools/ipc-utils.js', () => ({
+  getRestIpcClient: () => mockGetRestIpcClient(),
+}));
+
 vi.mock('@disclaude/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -19,11 +28,8 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  getIpcClient: vi.fn(),
   uploadImage: (...args: unknown[]) => ipcClientRef.current.uploadImage(...args.slice(1)),
 }));
-
-import { getIpcClient } from '@disclaude/core';
 
 // Helper to access elements from the result card with proper typing
 function getElements(result: { card: Record<string, unknown> }): any[] {
@@ -130,7 +136,7 @@ describe('resolveCardImages', () => {
     mockIpcClient = {
       uploadImage: vi.fn(),
     };
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     // Issue #4129: wire the per-test mock client into the standalone uploadImage mock.
     ipcClientRef.current = mockIpcClient;
   });

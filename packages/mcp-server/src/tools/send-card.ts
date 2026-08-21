@@ -7,9 +7,9 @@
  * @module mcp-server/tools/send-card
  */
 
-import { createLogger, getIpcClient, sendCard, type FeishuCard, type IpcMethodResult } from '@disclaude/core';
+import { createLogger, sendCard, type FeishuCard, type IpcMethodResult } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
-import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
 import type { SendMessageResult } from './types.js';
@@ -25,7 +25,8 @@ async function sendCardViaIpc(
   threadId?: string,
   description?: string
 ): Promise<IpcMethodResult & { messageId?: string }> {
-  const ipcClient = getIpcClient();
+  // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
+  const ipcClient = getRestIpcClient();
   // Card has been validated by isValidFeishuCard() before this call
   return await sendCard(ipcClient, chatId, card as FeishuCard, threadId, description);
 }
