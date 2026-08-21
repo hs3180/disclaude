@@ -25,6 +25,18 @@
  * arg-level inspection — `BeforeToolCallContext.args` already carries the
  * schema-validated arguments, so the hook seam does not change.
  *
+ * This hook is the SINGLE permission gate on the pi path. An earlier
+ * execute-level gate (#4538: `PiPermissionGate` consulted inside
+ * `adaptInlineTool`, installed as provider-instance state) was removed in
+ * favor of this one seam: the two enforced the SAME denylist with the same
+ * semantics, and the hook alone gets both properties the execute gate
+ * lacked — per-query scoping (the hook rides each query's own Agent
+ * instance; the provider is a process-wide cached singleton whose mutable
+ * gate field let interleaved queries overwrite each other's denylist) and
+ * full coverage (every tool call the loop makes, not only inline-adapted
+ * ones). A direct call to a tool's `execute` bypassing the loop — the one
+ * path the execute gate additionally covered — does not exist in disclaude.
+ *
  * Pure module: no I/O, injectable, fully unit-testable (the deny path —
  * #4389 acceptance item 2 — is asserted in `tool-permission-gate.test.ts`).
  */

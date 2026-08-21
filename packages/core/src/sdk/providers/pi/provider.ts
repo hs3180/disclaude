@@ -29,11 +29,6 @@ import type {
 import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
 import { adaptInlineTool } from './inline-tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
-import {
-  ALLOW_ALL_GATE,
-  createDenylistGate,
-  type PiPermissionGate,
-} from './permission-gate.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
 import { createPiToolPermissionGate } from './tool-permission-gate.js';
 
@@ -87,32 +82,6 @@ export class PiAgentProvider implements IAgentSDKProvider {
    */
   streamFn: PiStreamFn | null = null;
 
-  /**
-   * Permission gate consulted by every inline tool this provider adapts
-   * (#4389, S6 part 1). pi has no built-in permission system, so disclaude
-   * must be the sole permission authority on the pi path — `createInlineTool`
-   * wraps every tool's `execute` through this gate. Defaults to allow-all
-   * (pre-#4389 behavior); `queryStream` installs a denylist gate per query
-   * from `options.disallowedTools` so each session's tools are enforced. A
-   * future policy paradigm (the C1/C2/C3 selection of #4432) replaces the
-   * installed gate here — the enforcement seam stays stable.
-   *
-   * `createInlineTool` consults this field INDIRECTLY (it forwards to
-   * `this.permissionGate` at execute time, not the value present at adapt
-   * time) — tools adapted before a queryStream (channelSdkTools at module
-   * load, buildMcpServers() during processMessage) must pick up the gate the
-   * query installs, not the allow-all default they were adapted under.
-   *
-   * ⚠️ Single-active-query assumption: the provider is a process-wide cached
-   * instance (factory.ts providerCache), so a queryStream call REPLACES the
-   * previous gate — two interleaved queries on the same provider would
-   * overwrite each other's denylist. The ClaudeSDKProvider contract is one
-   * long-lived query per chat, but nothing here enforces that; per-query
-   * gate scoping is deferred to the p1 beforeToolCall-hook layer (#4542),
-   * which installs the gate on the per-query Agent constructor instead.
-   */
-  permissionGate: PiPermissionGate = ALLOW_ALL_GATE;
-
   queryStream(
     input: AsyncGenerator<UserInput>,
     options: AgentQueryOptions,
@@ -126,16 +95,6 @@ export class PiAgentProvider implements IAgentSDKProvider {
           '(model/credential wiring tracked in #4386 / #4383 §6; see docs/pi-backend.md).',
       );
     }
-
-    // #4389: enforce this query's disallowedTools at execution time. The
-    // options-adapter's activeToolNames filters which tools the model is
-    // OFFERED; this gate is the defense-in-depth layer at `execute` — a tool
-    // that reaches execution anyway (e.g. adapted before this query via
-    // createInlineTool) is denied here, before its handler runs (the
-    // indirection in createInlineTool guarantees the fresh gate is seen).
-    this.permissionGate = options.disallowedTools?.length
-      ? createDenylistGate(options.disallowedTools)
-      : ALLOW_ALL_GATE;
 
     // Abort plumbing: pi's Agent.abort() cancels the active run; the handle's
     // cancel() maps onto it (spike §4 — AbortController pass-through applies
@@ -331,17 +290,11 @@ export class PiAgentProvider implements IAgentSDKProvider {
   createInlineTool(definition: InlineToolDefinition): unknown {
     // Issue #4387 (S4): wrap the disclaude tool for pi's tool dispatch.
     // Zod→JSON-Schema parameter translation lives in the adapter —
-    // see inline-tool-adapter.ts.
-    // Issue #4389 (S6): every adapted tool consults the provider's
-    // permissionGate before its handler runs. The gate is forwarded
-    // INDIRECTLY (resolved at execute time, not captured at adapt time):
-    // tools are routinely adapted BEFORE queryStream installs the query's
-    // denylist (channelSdkTools at module load; buildMcpServers() during
-    // processMessage), and capturing the then-current value would freeze
-    // them on ALLOW_ALL_GATE forever.
-    return adaptInlineTool(definition, {
-      decide: (request) => this.permissionGate.decide(request),
-    });
+    // see inline-tool-adapter.ts. Permission enforcement is NOT here:
+    // #4389 lives in queryStream's beforeToolCall hook (per-query Agent
+    // instance), which gates every tool call the loop makes — inline tools
+    // included — without per-provider mutable state.
+    return adaptInlineTool(definition);
   }
 
   createMcpServer(config: McpServerConfig): unknown {
