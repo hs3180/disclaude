@@ -95,16 +95,21 @@ describe('WeChatMessageListener', () => {
 
   describe('start / stop lifecycle', () => {
     it('should start and stop cleanly', async () => {
-      // Make getUpdates return empty to exit the loop quickly
-      mockClient.getUpdates = vi.fn().mockResolvedValue([]);
+      // Park getUpdates pending-until-aborted (Issue #4555): a busy
+      // mockResolvedValue([]) mock makes pollLoop re-poll every setImmediate
+      // yield, so a concurrent advanceTimersByTimeAsync can interleave with
+      // the raw stop() path and hang on an unscheduled macrotask.
+      mockClient.getUpdates = vi
+        .fn()
+        .mockImplementation(getUpdatesPendingUntilAborted);
 
       listener.start();
       expect(listener.isListening()).toBe(true);
 
-      // Let one poll cycle complete
+      // Let one poll cycle settle
       await vi.advanceTimersByTimeAsync(100);
 
-      await listener.stop();
+      await stopAndFlush(listener);
       expect(listener.isListening()).toBe(false);
     });
 
@@ -505,7 +510,12 @@ describe('WeChatMessageListener', () => {
     });
 
     it('should return false after stop', async () => {
-      mockClient.getUpdates = vi.fn().mockResolvedValue([]);
+      // Pending-until-aborted mock (Issue #4555): avoid busy re-polling
+      // while fake timers advance — the interleaving is what starved the
+      // setImmediate yield inside pollLoop and timed this test out.
+      mockClient.getUpdates = vi
+        .fn()
+        .mockImplementation(getUpdatesPendingUntilAborted);
       listener.start();
       await vi.advanceTimersByTimeAsync(100);
       await stopAndFlush(listener);
