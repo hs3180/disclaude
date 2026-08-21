@@ -26,11 +26,7 @@ export type IpcRequestType =
   | 'listTempChats'
   | 'markChatResponded'
   // Push instruction to a chat agent (Issue #631)
-  | 'pushToAgent'
-  // Loop Runner operations (Issue #4075)
-  | 'loopStart'
-  | 'loopStop'
-  | 'loopStatus';
+  | 'pushToAgent';
 
 /**
  * IPC request payload types.
@@ -92,20 +88,6 @@ export interface IpcRequestPayloads {
     /** If true, IPC response waits for agent turn to complete before returning. */
     waitForCompletion?: boolean;
   };
-  // Loop Runner operations (Issue #4075)
-  loopStart: {
-    chatId: string;
-    prompt: string;
-    maxSteps?: number;
-    maxDurationMs?: number;
-    stepIntervalMs?: number;
-  };
-  loopStop: {
-    loopId: string;
-  };
-  loopStatus: {
-    loopId: string;
-  };
 }
 
 /**
@@ -154,27 +136,6 @@ export interface IpcResponsePayloads {
   // Push instruction to a chat agent (Issue #631)
   pushToAgent: {
     success: boolean;
-  };
-  // Loop Runner operations (Issue #4075)
-  loopStart: {
-    success: boolean;
-    loopId?: string;
-    error?: string;
-  };
-  loopStop: {
-    success: boolean;
-    error?: string;
-  };
-  loopStatus: {
-    success: boolean;
-    status?: {
-      loopId: string;
-      state: 'running' | 'completed' | 'stopped' | 'error';
-      currentStep: number;
-      totalSteps: number;
-      startedAt: string;
-    };
-    error?: string;
   };
 }
 

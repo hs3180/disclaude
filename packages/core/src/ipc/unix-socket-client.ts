@@ -36,9 +36,6 @@ import {
   listTempChats as facadeListTempChats,
   markChatResponded as facadeMarkChatResponded,
   pushToAgent as facadePushToAgent,
-  loopStart as facadeLoopStart,
-  loopStop as facadeLoopStop,
-  loopStatus as facadeLoopStatus,
 } from './ipc-client-facade.js';
 
 const logger = createLogger('IpcClient');
@@ -549,29 +546,6 @@ export class UnixSocketIpcClient {
 
   async pushToAgent(chatId: string, message: string, options?: { waitForCompletion?: boolean; timeoutMs?: number }) {
     return await facadePushToAgent(this, chatId, message, options);
-  }
-
-  // ─── Loop Runner operations (Issue #4075) — delegate to facade ───
-  // Issue #4129 review nit#1: keep the same facade pattern as the 8 protocol
-  // methods above; the inline impl + private classifyIpcError were folded into
-  // ipc-client-facade's classifyError to remove the duplicated error logic.
-
-  async loopStart(params: {
-    chatId: string;
-    prompt: string;
-    maxSteps?: number;
-    maxDurationMs?: number;
-    stepIntervalMs?: number;
-  }) {
-    return await facadeLoopStart(this, params);
-  }
-
-  async loopStop(loopId: string) {
-    return await facadeLoopStop(this, loopId);
-  }
-
-  async loopStatus(loopId: string) {
-    return await facadeLoopStatus(this, loopId);
   }
 
   /**

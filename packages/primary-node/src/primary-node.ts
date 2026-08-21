@@ -58,8 +58,6 @@ import {
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
-  // Issue #4283: LOOP.md file watcher consumer bridge
-  LOOP_MD_DIR,
   // Issue #4279: FeishuCard type for REST sendCard parity.
   type FeishuCard,
 } from '@disclaude/core';
@@ -68,8 +66,6 @@ import { DebugGroupService, getDebugGroupService } from './services/debug-group-
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
-import { LoopRunner } from './loop/loop-runner.js';
-import { LoopFileWatcher } from './loop/loop-file-watcher.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -181,11 +177,6 @@ export class PrimaryNode extends EventEmitter {
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
-
-  // Loop Runner (Issue #4075: lazy-initialized on first loopStart)
-  protected loopRunner?: LoopRunner;
-  /** Issue #4283: LOOP.md file watcher — starts loops from skill-written LOOP.md files. */
-  protected loopFileWatcher?: LoopFileWatcher;
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -460,38 +451,6 @@ export class PrimaryNode extends EventEmitter {
         }
         return h.markChatResponded(chatId, response);
       },
-
-      // Issue #4075/#4063: Loop Runner IPC handlers. The runner is shared with
-      // the REST /api/loop/* endpoints (see cli.ts) via getOrCreateLoopRunner().
-      loopStart: (params) => {
-        try {
-          const result = this.getOrCreateLoopRunner().start(params);
-          return Promise.resolve({ success: true, loopId: result.loopId });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          return Promise.resolve({ success: false, error: errorMessage });
-        }
-      },
-      loopStop: (loopId) => {
-        if (!this.loopRunner) {
-          return Promise.resolve({ success: false, error: 'No loops have been started' });
-        }
-        const found = this.loopRunner.stop(loopId);
-        if (!found) {
-          return Promise.resolve({ success: false, error: 'Loop not found' });
-        }
-        return Promise.resolve({ success: true });
-      },
-      loopStatus: (loopId) => {
-        if (!this.loopRunner) {
-          return Promise.resolve({ success: false, error: 'No loops have been started' });
-        }
-        const status = this.loopRunner.status(loopId);
-        if (!status) {
-          return Promise.resolve({ success: false, error: 'Loop not found' });
-        }
-        return Promise.resolve({ success: true, status });
-      },
     };
 
     return container;
@@ -679,36 +638,6 @@ export class PrimaryNode extends EventEmitter {
       { schedulesDir, activeJobCount },
       'Scheduler fully initialized'
     );
-
-    // Issue #4283: Start LOOP.md file watcher — the consumer bridge that
-    // starts loops from skill-written LOOP.md files (mirrors SCHEDULE.md →
-    // ScheduleFileWatcher → SchedulerService). On LOOP.md create/change, read
-    // it, call startFromLoopMd, and surface the loopId to the chat.
-    const loopDir = path.join(workspaceDir, LOOP_MD_DIR);
-    this.loopFileWatcher = new LoopFileWatcher({
-      loopDir,
-      onLoopMd: (filePath: string) => {
-        try {
-          // startFromLoopMd dedups by loopMdPath (one loop per LOOP.md) and
-          // reads the file once internally, returning chatId + a `started`
-          // flag so we only announce genuinely new loops — not duplicate
-          // events for an already-running LOOP.md, whose prompt is re-read
-          // each iteration by the runner itself.
-          const { loopId, chatId, started } = this.getOrCreateLoopRunner().startFromLoopMd(filePath);
-          if (!started) {
-            logger.debug({ loopId, filePath }, 'LoopFileWatcher: LOOP.md already running, skipped');
-            return;
-          }
-          const h = this.resolveApiHandlers(chatId);
-          void h?.pushToAgent?.(chatId, `🔧 Loop started: ${loopId} (from LOOP.md). Use loop_stop/loop_status with this ID.`);
-          logger.info({ loopId, chatId, filePath }, 'LoopFileWatcher: started loop from LOOP.md');
-        } catch (err) {
-          logger.error({ err, filePath }, 'LoopFileWatcher: failed to start loop from LOOP.md');
-        }
-      },
-    });
-    await this.loopFileWatcher.start();
-    logger.info({ loopDir }, 'LoopFileWatcher started');
   }
 
   /**
@@ -717,7 +646,6 @@ export class PrimaryNode extends EventEmitter {
    */
   protected async stopScheduler(): Promise<void> {
     this.scheduleFileWatcher?.stop();
-    this.loopFileWatcher?.stop();
     await this.scheduler?.stop();
     logger.info('Scheduler stopped');
   }
@@ -891,7 +819,7 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Resolve the channel API handlers for a chatId.
    *
-   * Shared by the composite IPC handlers and the LoopRunner push callback.
+   * Shared by the composite IPC handlers and the scheduler push callbacks.
    * 1. Check registered channel handlers (channelHandlersMap) for chatId ownership
    * 2. Fall back to feishuHandlersContainer for backward compatibility
    */
@@ -904,29 +832,6 @@ export class PrimaryNode extends EventEmitter {
       }
     }
     return this.feishuHandlersContainer.handlers;
-  }
-
-  /**
-   * Get the shared LoopRunner, lazily creating it on first use.
-   *
-   * Issue #4063 (part 2): shared between the IPC composite handlers (loopStart)
-   * and the REST API (cli.ts /api/loop/*) so a loop started from either entry
-   * point is visible to both. Each step pushes the instruction to the owning
-   * channel's pushToAgent *without* waitForCompletion — by design
-   * (fire-and-forget cadence), so stepIntervalMs paces dispatch, not
-   * agent-turn completion.
-   */
-  getOrCreateLoopRunner(): LoopRunner {
-    if (!this.loopRunner) {
-      this.loopRunner = new LoopRunner(async (chatId, message) => {
-        const h = this.resolveApiHandlers(chatId);
-        if (!h?.pushToAgent) {
-          throw new Error('pushToAgent not supported by this channel');
-        }
-        await h.pushToAgent(chatId, message);
-      });
-    }
-    return this.loopRunner;
   }
 
   /**
