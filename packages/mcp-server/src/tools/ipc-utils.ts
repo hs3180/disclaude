@@ -30,7 +30,8 @@ const logger = createLogger('IpcUtils');
  * (`DISCLAUDE_REST_IPC_ENABLED=true`, selected in `getIpcClient` under #4279
  * Phase 2), probe the REST `/api/ping` endpoint instead of the Unix socket.
  * Without this branch every MCP tool that gates on `isIpcAvailable()`
- * (loop-start/status/stop, send-card, interactive-message, push-to-agent)
+ * (send-card, interactive-message, push-to-agent; the former loop tools were
+ * removed with the loop system, #4430)
  * reports "IPC service unavailable" under REST mode, even though the REST
  * server is live. The Unix-socket probe below is the default transport and is
  * retained unchanged; removing it is the actual Phase 3 IPC deletion (#4280).
