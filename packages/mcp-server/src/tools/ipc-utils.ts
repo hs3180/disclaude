@@ -18,6 +18,19 @@ import { createLogger, RestIpcClient } from '@disclaude/core';
 const logger = createLogger('IpcUtils');
 
 /**
+ * Resolve the PrimaryNode REST base URL from the standard env wiring.
+ *
+ * `DISCLAUDE_REST_IPC_BASE_URL` (default `http://localhost:9200`), with a
+ * trailing slash stripped — shared by `getRestIpcClient` and the
+ * `isIpcAvailable` probe so the two can't drift apart on env handling.
+ * (`RestIpcClient`'s constructor also strips; that one stays as defense for
+ * direct constructions elsewhere.)
+ */
+function resolveRestBaseUrl(): string {
+  return (process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:9200').replace(/\/$/, '');
+}
+
+/**
  * Build a REST IPC client from the standard env wiring.
  *
  * - `DISCLAUDE_REST_IPC_BASE_URL` — PrimaryNode HTTP API server URL
@@ -30,7 +43,7 @@ const logger = createLogger('IpcUtils');
  * `RestIpcClient` directly here. No transport toggle remains.
  */
 export function getRestIpcClient(): RestIpcClient {
-  const baseUrl = (process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:9200').replace(/\/$/, '');
+  const baseUrl = resolveRestBaseUrl();
   const apiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
   return new RestIpcClient({ baseUrl, apiToken });
 }
@@ -50,7 +63,7 @@ export function getRestIpcClient(): RestIpcClient {
  * @returns Promise resolving to true if the PrimaryNode REST API is reachable
  */
 export async function isIpcAvailable(): Promise<boolean> {
-  const baseUrl = (process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:9200').replace(/\/$/, '');
+  const baseUrl = resolveRestBaseUrl();
   try {
     const res = await fetch(`${baseUrl}/api/ping`, {
       method: 'GET',
