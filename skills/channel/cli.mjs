@@ -278,18 +278,6 @@ async function withStdoutToStderr(fn) {
 const DEFAULT_REST_BASE_URL = "http://localhost:9200";
 
 /**
- * Resolve the REST base URL: --base-url flag > DISCLAUDE_REST_IPC_BASE_URL env
- * > default. Called with the parsed args BEFORE the first
- * `@disclaude/mcp-server` import so the env the import sees is final.
- */
-function resolveRestBaseUrl(args) {
-  if (args && typeof args["base-url"] === "string" && args["base-url"].length > 0) {
-    return args["base-url"];
-  }
-  return process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
-}
-
-/**
  * Force the REST IPC transport for this one-shot process (#4532 scope 1: the
  * CLI must work with no Unix socket at all — no default IPC fallback).
  *
@@ -300,13 +288,26 @@ function resolveRestBaseUrl(args) {
  * local-image upload) funnels through them. Setting the env here — in a
  * process that starts with no disclaude env at all — selects `RestIpcClient`
  * for the whole process lifetime.
+ *
+ * Called ONCE from main() before command dispatch — not per command — so any
+ * future subcommand inherits the REST wiring by construction; a forgotten
+ * call site can no longer silently fall back to the Unix socket.
+ *
+ * Returns the resolved base URL (flag > env > default) for failure hints.
  */
-function forceRestTransport(baseUrl) {
+function wireRestTransport(args) {
+  let baseUrl;
+  if (args && typeof args["base-url"] === "string" && args["base-url"].length > 0) {
+    baseUrl = args["base-url"];
+  } else {
+    baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
+  }
   process.env.DISCLAUDE_REST_IPC_ENABLED = "true";
   process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
   // DISCLAUDE_REST_IPC_API_TOKEN passes through from the ambient env when set
   // (injected into the agent runtime env via .runtime-env, Issue #1361); the
   // CLI never needs to know its value.
+  return baseUrl;
 }
 
 /**
@@ -334,6 +335,10 @@ function restUnavailableHint(baseUrl) {
  * REST face, independent of which first-party gate fired first. The probe is
  * token-exempt (GET route) and short-timeout; it only runs after a send has
  * already failed, so the happy path pays nothing.
+ *
+ * Timeout is 3s vs mcp-server isIpcAvailable()'s 2000ms: intentional — this
+ * probe runs only on the failure path (never latency-critical), so it can
+ * afford to be more patient before declaring the REST face unreachable.
  */
 async function isRestFaceReachable(baseUrl) {
   try {
@@ -547,9 +552,10 @@ async function cmdSendText(argv) {
 
   const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
 
-  // --- transport wiring: force REST before the first mcp-server import (#4532) ---
-  const baseUrl = resolveRestBaseUrl(args);
-  forceRestTransport(baseUrl);
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
 
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
@@ -667,9 +673,10 @@ async function cmdSendInteractive(argv) {
   const context = typeof args.context === "string" ? args.context : undefined;
   const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
 
-  // --- transport wiring: force REST before the first mcp-server import (#4532) ---
-  const baseUrl = resolveRestBaseUrl(args);
-  forceRestTransport(baseUrl);
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
 
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
@@ -761,9 +768,10 @@ async function cmdSendFile(argv) {
 
   const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
 
-  // --- transport wiring: force REST before the first mcp-server import (#4532) ---
-  const baseUrl = resolveRestBaseUrl(args);
-  forceRestTransport(baseUrl);
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
 
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
@@ -894,11 +902,13 @@ async function cmdSendCard(argv) {
   const card = resolved.card;
   const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
 
-  // --- transport wiring: force REST before the first mcp-server import (#4532).
-  //     This also covers resolveCardImages below — its local-image upload calls
-  //     getIpcClient() internally, which selects RestIpcClient under the same env. ---
-  const baseUrl = resolveRestBaseUrl(args);
-  forceRestTransport(baseUrl);
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. The single
+  //     wiring also covers resolveCardImages below — its local-image upload
+  //     calls getIpcClient() internally, which selects RestIpcClient under the
+  //     same env. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
 
   // --- execute: replicate the channel-mcp send_card handler pipeline so the
   //     CLI reaches feature parity with the inline MCP tool — GFM-table →
@@ -1067,9 +1077,10 @@ async function cmdPushToAgent(argv) {
     return 1;
   }
 
-  // --- transport wiring: force REST before the first mcp-server import (#4532) ---
-  const baseUrl = resolveRestBaseUrl(args);
-  forceRestTransport(baseUrl);
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
 
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
@@ -1135,6 +1146,13 @@ async function main(argv) {
     process.stdout.write(HELP + "\n");
     return 0;
   }
+
+  // --- transport wiring (#4532): force REST ONCE, before any command dispatch
+  //     and thus before any `@disclaude/mcp-server` import. Every subcommand —
+  //     current and future — inherits the REST selection by construction; the
+  //     env vars are written before the first import so `getIpcClient()` and
+  //     `isIpcAvailable()` both see them. ---
+  wireRestTransport(parseArgs(argv.slice(1)));
 
   if (subcommand === "send_text") {
     return cmdSendText(argv.slice(1));

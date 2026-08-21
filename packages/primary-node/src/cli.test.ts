@@ -14,13 +14,20 @@ import path from 'node:path';
 import os from 'node:os';
 
 // Mock core dependencies used at module level by cli.ts (createLogger, etc.)
+// Issue #4394: the mocked logger's calls are exposed on a module-level array
+// so tests can await a specific log line (deterministic handoff) instead of
+// racing a real setTimeout. pino's call signature is (fields, msg) — capture
+// both.
+const loggerInfoCalls: Array<{ fields: unknown; msg: unknown }> = [];
 vi.mock('@disclaude/core', () => ({
   loadConfigFile: vi.fn(),
   setLoadedConfig: vi.fn(),
   applyGlobalEnv: vi.fn(),
   createDefaultRuntimeContext: vi.fn(),
   createLogger: () => ({
-    info: vi.fn(),
+    info: vi.fn((...args: unknown[]) => {
+      loggerInfoCalls.push({ fields: args[0], msg: args[1] });
+    }),
     warn: vi.fn(),
     error: vi.fn(),
     debug: vi.fn(),
@@ -374,16 +381,35 @@ describe('waitForPortAvailable', () => {
     const addr = server.address() as { port: number };
     const occupiedPort = addr.port;
 
-    // Close the server after a short delay so port becomes available
-    setTimeout(() => {
-      server.close();
-    }, 50);
+    // Issue #4394: close the server only after waitForPortAvailable has
+    // actually observed the port as occupied ("Port is in use, waiting..."
+    // fires between retries), instead of racing a real 50ms setTimeout.
+    // The call is started first and the handshake filters on this test's own
+    // occupiedPort (a fresh random port) so stale log entries from earlier
+    // tests can't satisfy the wait — the close then lands while the retry
+    // loop is parked in sleep(intervalMs), deterministic on any host load.
+    const resultPromise = waitForPortAvailable(occupiedPort, '127.0.0.1', {
+      maxRetries: 10,
+      intervalMs: 30,
+    });
+    await vi.waitFor(
+      () => {
+        expect(
+          loggerInfoCalls.some(
+            (c) =>
+              (c.fields as { port?: number } | undefined)?.port === occupiedPort &&
+              c.msg === 'Port is in use, waiting for old process to release...'
+          )
+        ).toBe(true);
+      },
+      { timeout: 1000, interval: 5 }
+    );
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
 
     try {
-      const result = await waitForPortAvailable(occupiedPort, '127.0.0.1', {
-        maxRetries: 10,
-        intervalMs: 30,
-      });
+      const result = await resultPromise;
       expect(result).toBe(true);
     } finally {
       // Ensure server is closed

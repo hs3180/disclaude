@@ -27,7 +27,7 @@ Two distinct "skill" concepts coexist in disclaude. This spec defines **one** of
 | Invoked by | SDK dispatch — the agent loads `SKILL.md`, acts via `allowed-tools` | a **process** the agent shells out to: `node skills/<name>/cli.mjs <command> …` |
 | Tool surface | whatever `allowed-tools` grants (incl. MCP tools today) | its own `cli.mjs` subcommands |
 | Replaces | nothing — disclaude's native skill-dispatch mechanism | an **MCP server** (stdio *or* inline) |
-| Examples | `skills/skill-creator/SKILL.md`, `skills/issue-solver/SKILL.md` | `skills/playwright-agent/` (CLI form: PR #4464, reference implementation) |
+| Examples | `skills/skill-creator/SKILL.md`, `skills/issue-solver/SKILL.md` | `skills/channel/` (reference implementation) |
 
 A **CLI Skill** is a deterministic command-line program. The agent runs it through the shell
 (`Bash`), reads its output, and acts on it — instead of the runtime calling an MCP tool in-process.
@@ -49,8 +49,8 @@ an in-process RPC.
 ## 2. CLI invocation contract
 
 This is the core contract a `cli.mjs` must honor. It generalizes the concrete pattern already
-implemented by the Playwright reference skill (PR #4464) so every migrating tool looks the same to
-the agent.
+implemented by the channel reference skill (`skills/channel/cli.mjs`) so every migrating tool looks
+the same to the agent.
 
 ### 2.1 Command line
 
@@ -126,8 +126,8 @@ the agent (and with humans) — the agent reads it to learn the command surface,
 an MCP tool's schema. Required sections:
 
 1. **Header + status** — one-line purpose; a `Status` note stating parity with the MCP tool it
-   replaces and what (if anything) is deferred (see #4464's README for the pattern: *"CLI command
-   surface + artifact contract implemented; live parity deferred to part 2"*).
+   replaces and what (if anything) is deferred (see the channel README for the pattern: *"command
+   surfaces + output contracts implemented; live parity deferred"*, with per-part PR links).
 2. **Quick start** — copy-pasteable `node skills/<name>/cli.mjs …` invocations that work end-to-end,
    plus a one-time runtime-install line if the Skill needs host deps.
 3. **Commands** — a table of every subcommand: name, positional args, options (`--flag`/`--opt`).
@@ -141,7 +141,8 @@ an MCP tool's schema. Required sections:
    (required by #4459 / #4460 acceptance: *"迁移/下线不静默"*).
 
 The README may cross-link to a sibling `SKILL.md` if the Skill also has an agent-dispatch wrapper
-(the Playwright case: `SKILL.md` is the background agent, `cli.mjs`+`README.md` is the CLI Skill).
+(the browser-use case: `SKILL.md` is the agent-facing skill text, the piped-Python `browser-use` CLI
+is what it drives).
 
 ---
 
@@ -155,13 +156,13 @@ path.
   `./lark-im-resources/` (the convention already used by the `lark-cli im` resource downloads). The
   README declares the exact path.
 - **Result references** — stdout JSON carries an `artifact` (single path) or `artifacts` (array)
-  field; the agent then `Read`s the path. The Playwright skill uses `artifact:"shot.png"`
-  (PR #4464).
+  field; the agent then `Read`s the path.
 - **Session / state continuity** — long-lived state (cookies, `storageState`, a browser profile) is
   persisted to a named file and threaded between invocations via an option such as
-  `--session <file>` (PR #4464). This is the CLI-Skill equivalent of an MCP "live session": a
-  *single* `script --steps` run owns one session; cross-call continuity is by passing the session
-  file back in.
+  `--session <file>`. This is the CLI-Skill equivalent of an MCP "live session": a *single* run owns
+  one session; cross-call continuity is by passing the session file back in. (No in-repo Skill needs
+  this yet — the browser-use CLI keeps its daemon session internally — so the option is a
+  convention to adopt when a Skill first needs it, not an existing example.)
 - **Lifecycle** — the README states whether artifacts are overwritten, accumulated, or
   caller-managed. Skills should default to **non-destructive** (don't delete files the agent may
   still want) unless documented otherwise.
@@ -177,7 +178,7 @@ surface maps to which target is a per-tool decision (scope 3), sketched here onl
 | Surface | Transport | Lives in | Migration target (scope 3 decides) |
 |---|---|---|---|
 | **S1** `channel-mcp` — disclaude's own messaging tools (`send_text`/`send_card`/`send_interactive`/`send_file`/`push_to_agent` + loop tools) | inline / in-process | [`packages/mcp-server/src/channel-mcp.ts`](../packages/mcp-server/src/channel-mcp.ts) | **Open.** These are in-process functions, not stdio servers — per [pi-mcp-landing-research.md](./pi-mcp-landing-research.md) §B-Q4 they are "just in-process functions" already covered by the **inline-tool adapter** (#4387). Whether they additionally surface as CLI Skills is a scope-3 call. |
-| **S2** External stdio MCP servers (Playwright + user-configured) | stdio subprocess | config `tools.mcpServers` ([`disclaude.config.example.yaml:249`](../disclaude.config.example.yaml)); loader `mcp-setup.ts` | **CLI Skills.** This is the primary target — Playwright is the reference migration ([#4460](https://github.com/hs3180/disclaude/issues/4460), PR #4464). |
+| **S2** External stdio MCP servers (Playwright + user-configured) | stdio subprocess | config `tools.mcpServers` ([`disclaude.config.example.yaml:249`](../disclaude.config.example.yaml)); loader `mcp-setup.ts` | **CLI Skills / Skills.** This is the primary target — Playwright consumers are retired in favor of the [`browser-use` skill](../skills/browser-use/SKILL.md) ([#4460](https://github.com/hs3180/disclaude/issues/4460)). |
 | **S3** `@disclaude/mcp-server` exported as a standalone stdio server | stdio | [`packages/mcp-server/src/cli.ts`](../packages/mcp-server/src/cli.ts) (`disclaude-mcp`) | **Open.** Exported surface for external MCP clients (e.g. Claude Code). Deprecate, or expose the same tools as CLI Skills. Scope 3/4 decides. |
 
 **What this spec fixes** (so scope 3 doesn't have to): for any surface that migrates to a CLI Skill
@@ -190,17 +191,24 @@ surface maps to which target is a per-tool decision (scope 3), sketched here onl
 
 ## 6. Reference implementation
 
-`skills/playwright-agent/` (PR #4464) is the canonical CLI Skill:
+`skills/channel/` is the canonical CLI Skill:
 
-- `cli.mjs` — subcommands (`screenshot` / `snapshot` / `extract` / `eval` one-shot, `script` multi-step),
-  `--steps '<JSON>' | @FILE` for large input, `--session <file>` for state continuity.
-- emits exactly one JSON object: `{"ok":true,"command":…,"artifact":…,"durationMs":…}` /
+- `cli.mjs` — subcommands (`send_text` / `send_interactive` / `send_file`), long inputs accepted as
+  `--<opt> '<JSON>'` / `--<opt> @FILE` / stdin, so multi-KB payloads never go inline.
+- emits exactly one JSON object: `{"ok":true,"command":…,"result":…,"durationMs":…}` /
   `{"ok":false,"command":…,"error":…,"hint":…}`.
-- writes screenshots / snapshot JSON / `storageState` to disk artifacts; references them by path.
-- `README.md` — Quick start, Commands table, Output contract, Artifacts, Runtime (host Playwright
-  install + OS libs), Status (parity deferred to part 2).
+- reuses the first-party implementations from `@disclaude/mcp-server` over IPC — same impl as the
+  MCP tool it replaces, different transport (see its Parity / migration notes table).
+- `README.md` — Quick start, Commands table, Output contract, Artifacts, Runtime, Parity /
+  migration notes, Status (per-part PR links; live parity deferred where noted).
 
-New Skills should copy this structure and diverge only where their domain demands it.
+For browser automation the corresponding surface is the **`browser-use` skill**
+([`skills/browser-use/SKILL.md`](../skills/browser-use/SKILL.md)) — an agent-skill whose tool is an
+*external* piped-Python CLI rather than an in-repo `cli.mjs`. It follows the same output philosophy
+(stdout is the result channel, one JSON blob per invocation, binary artifacts on disk) and is the
+S2/Playwright replacement; it just isn't the in-repo `cli.mjs` reference.
+
+New Skills should copy the `channel` structure and diverge only where their domain demands it.
 
 ---
 
