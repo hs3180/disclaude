@@ -127,6 +127,25 @@ async function collect(iterator: AsyncGenerator<AgentMessage>): Promise<AgentMes
 /** A streamFn stub — queryStream only requires it to be set (see PR scope). */
 const stubStreamFn = (): unknown => ({});
 
+/**
+ * Issue #4394: deterministic macrotask drain, replacing fixed
+ * `await new Promise((resolve) => setTimeout(resolve, N))` wall-clock waits.
+ *
+ * The bridge settles entirely on microtasks and `setImmediate` macrotasks —
+ * the FakeAgent's prompt()/continue() chains resolve without any timer. A few
+ * `setImmediate` boundaries therefore let the dispatched run's remaining work
+ * (scripted events → adapter queue → consumer iteration, and the input pump's
+ * park at the next `inputIterator.next()`) settle before the next assertion,
+ * with no fixed ms and no load sensitivity. Use AFTER a `vi.waitFor` (or
+ * equivalent) that proves the interesting event already dispatched — a drain
+ * alone does not push a lazy iterator forward if nothing has started yet.
+ */
+const flushPending = async (rounds = 3): Promise<void> => {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+};
+
 /** Minimal valid AgentQueryOptions (settingSources is required by the type). */
 const baseOptions = (): AgentQueryOptions & { systemPrompt?: string } =>
   ({ settingSources: [] }) as AgentQueryOptions & { systemPrompt?: string };
@@ -410,9 +429,15 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     })();
     const result = provider.queryStream(scriptedInput, baseOptions());
     const consuming = collect(result.iterator);
-    // Give the bridge time to (wrongly) end early / hang: a couple of macrotasks
-    // past run settlement. The iterator must still be open (no early return).
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Give the bridge time to (wrongly) end early / hang: past run settlement,
+    // deterministically (Issue #4394). vi.waitFor proves the run dispatched
+    // (prompt() was called — the input generator started and turn 1 ran); the
+    // macrotask drain then lets the scripted events flow and the bridge park
+    // at the next input. The iterator must still be open (no early return).
+    await vi.waitFor(() => {
+      expect(fakeState.prompts).toHaveLength(1);
+    });
+    await flushPending();
     // ... and must NOT have aborted the agent between turns.
     expect(fakeState.aborted).toBe(false);
     // End the input (the session-lifetime signal) → the bridge must settle
@@ -445,7 +470,14 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     })();
     const result = provider.queryStream(scriptedInput, baseOptions());
     const consuming = collect(result.iterator);
-    await new Promise((resolve) => setTimeout(resolve, 10)); // run 1 settles
+    // Run 1 settles, deterministically (Issue #4394): vi.waitFor proves turn 1
+    // dispatched (prompt() called, its scripted events emitted), and the drain
+    // lets the bridge finish the turn and park at the input generator — the
+    // exact pre-turn-2 state the fixed 10ms wait used to approximate.
+    await vi.waitFor(() => {
+      expect(fakeState.prompts).toHaveLength(1);
+    });
+    await flushPending();
     expect(fakeState.aborted).toBe(false); // session kept alive
     releaseSecond?.(); // user sends turn 2
     const messages = await consuming;
@@ -468,7 +500,9 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     const result = provider.queryStream(inputs(userInput('hi')), baseOptions());
     const consuming = collect(result.iterator);
     // Give the bridge a tick to start the run (prompt in flight), then cancel.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // A single setImmediate boundary is the deterministic form of the old
+    // `setTimeout(resolve, 0)` wait (Issue #4394).
+    await new Promise<void>((resolve) => setImmediate(resolve));
     result.handle.cancel();
     // Deterministic on both sides of the loadPiRuntime race: when the agent
     // already exists abort() is synchronous; when cancel() landed during the
