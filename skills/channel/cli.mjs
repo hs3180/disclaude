@@ -16,10 +16,21 @@
  *   • send_interactive (part 7, PR #4502)
  * Each reuses the SAME first-party implementation from `@disclaude/mcp-server`
  * — the CLI does not re-implement the Feishu send path. All reach the
- * PrimaryNode over IPC (`getIpcClient()`), so this CLI is a one-shot process
- * per call that connects, sends, and exits — the same transport the standalone
- * `disclaude-mcp` server (S3) already uses from a separate process. No
- * long-lived session is required for a single send.
+ * PrimaryNode over the REST IPC face (`DISCLAUDE_REST_IPC_ENABLED=true` is set
+ * below BEFORE the first `@disclaude/mcp-server` import, so the core
+ * `getIpcClient()` singleton and the `isIpcAvailable()` probe both select
+ * `RestIpcClient` — Issue #4532: the channel CLI must work with no Unix socket
+ * at all). This CLI is a one-shot process per call that POSTs to the
+ * PrimaryNode's HttpApiServer and exits. No long-lived session is required for
+ * a single send.
+ *
+ * Transport wiring (#4532 scope 1+2): base URL from --base-url >
+ * DISCLAUDE_REST_IPC_BASE_URL > http://localhost:9200; bearer token from
+ * DISCLAUDE_REST_IPC_API_TOKEN (passed through to POST routes; the PrimaryNode
+ * started without --api-token accepts any request). One-shot CLI processes
+ * inherit these env vars from the agent's runtime env (.runtime-env is merged
+ * into the SDK env by base-agent createSdkOptions, Issue #1361) — no socket
+ * path discovery file is consulted on this path.
  *
  * send_card parity note: the first-party `send_card` fn does NOT apply the
  * GFM-table conversion (#2340) or local-image auto-upload (#2951) — those live
@@ -48,6 +59,12 @@
  * are resolved against the configured workspace dir by the first-party impl;
  * file existence is NOT pre-validated here for that reason.
  *
+ * #4532 part 1 — REST transport switch. When the REST face is unreachable
+ * (PrimaryNode not started / port not open), the underlying fetch fails with
+ * ECONNREFUSED / ENOTFOUND-style errors; `failureHint` below turns those into
+ * the actionable "PrimaryNode REST <url> unreachable, start the main service
+ * first" hint instead of surfacing the raw fetch error (#4532 scope 3).
+ *
  * Deferred (later parts of #4459) — out of scope here:
  *   • the S2 external-MCP-loader removal and live end-to-end delivery
  *     verification (tracked on the parent issue).
@@ -67,7 +84,8 @@
  *   node skills/channel/cli.mjs send_card --chat oc_xxx --card-file ./card.json
  *   node skills/channel/cli.mjs push_to_agent --chat oc_xxx --message "Summarize the thread"
  *
- * Parts 3–7 of #4459 — does not auto-close the parent issue.
+ * Parts 3–7 of #4459, REST transport switch from #4532 part 1 — does not
+ * auto-close the parent issues.
  */
 
 import { performance } from "node:perf_hooks";
@@ -146,10 +164,19 @@ Output:
     {"ok":false,"command":"send_card","error":"...","hint":"..."}
     {"ok":true,"command":"push_to_agent","chatId":"oc_xxx","result":"...","durationMs":12}
 
+Transport (all subcommands):
+  The CLI talks to the PrimaryNode's REST API — no Unix-socket IPC (#4532).
+  --base-url <url>            Base URL of the PrimaryNode REST API. Default:
+                              $DISCLAUDE_REST_IPC_BASE_URL or
+                              http://localhost:9200.
+  The bearer token for POST routes comes from DISCLAUDE_REST_IPC_API_TOKEN
+  (unset is fine when the PrimaryNode runs without --api-token).
+
 Runtime:
   Reuses send_text / send_file / send_card (and card preprocessing helpers) from
-  @disclaude/mcp-server, which needs a running disclaude PrimaryNode (IPC) and
-  Feishu credentials. Run inside a disclaude workspace where the packages are built.
+  @disclaude/mcp-server, which needs a running disclaude PrimaryNode (REST API
+  on the --base-url port) and Feishu credentials. Run inside a disclaude
+  workspace where the packages are built.
 
 Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text "Hello, world!"
@@ -174,7 +201,7 @@ Examples:
     --options '[{"text":"yes","value":"yes"},{"text":"no","value":"no"}]' \
     --action-prompts '{"yes":"[user] approved deploy","no":"[user] rejected deploy"}'
 
-Version ${VERSION} — parts 3–7 of #4459. This Skill does not auto-close the parent issue.`;
+Version ${VERSION} — parts 3–7 of #4459 + REST transport (#4532 part 1). This Skill does not auto-close the parent issue.`;
 
 // ---------------------------------------------------------------------------
 // Output helpers — every command result is ONE JSON object on stdout.
@@ -244,8 +271,116 @@ async function withStdoutToStderr(fn) {
 }
 
 // ---------------------------------------------------------------------------
-// Argument parsing
+// REST transport wiring (Issue #4532 part 1)
 // ---------------------------------------------------------------------------
+
+/** Default REST base URL of the PrimaryNode HttpApiServer (#4168 decision 3). */
+const DEFAULT_REST_BASE_URL = "http://localhost:9200";
+
+/**
+ * Force the REST IPC transport for this one-shot process (#4532 scope 1: the
+ * CLI must work with no Unix socket at all — no default IPC fallback).
+ *
+ * Must run BEFORE the first `import("@disclaude/mcp-server")`: the core
+ * `getIpcClient()` singleton and the mcp-server `isIpcAvailable()` probe both
+ * branch on `DISCLAUDE_REST_IPC_ENABLED === 'true'` at call time, and every
+ * send path (including `resolveCardImages`' internal `getIpcClient()` for
+ * local-image upload) funnels through them. Setting the env here — in a
+ * process that starts with no disclaude env at all — selects `RestIpcClient`
+ * for the whole process lifetime.
+ *
+ * Called ONCE from main() before command dispatch — not per command — so any
+ * future subcommand inherits the REST wiring by construction; a forgotten
+ * call site can no longer silently fall back to the Unix socket.
+ *
+ * Returns the resolved base URL (flag > env > default) for failure hints.
+ */
+function wireRestTransport(args) {
+  let baseUrl;
+  if (args && typeof args["base-url"] === "string" && args["base-url"].length > 0) {
+    baseUrl = args["base-url"];
+  } else {
+    baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
+  }
+  process.env.DISCLAUDE_REST_IPC_ENABLED = "true";
+  process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
+  // DISCLAUDE_REST_IPC_API_TOKEN passes through from the ambient env when set
+  // (injected into the agent runtime env via .runtime-env, Issue #1361); the
+  // CLI never needs to know its value.
+  return baseUrl;
+}
+
+/**
+ * Actionable hint for REST-reachability failures (#4532 scope 3): when the
+ * underlying fetch fails to connect (ECONNREFUSED / ENOTFOUND / timeout —
+ * surfaced through the IPC error contract as IPC_NOT_AVAILABLE / IPC_TIMEOUT)
+ * or the availability probe itself reported down, tell the operator to start
+ * the PrimaryNode instead of leaving a raw socket error on the table.
+ */
+function restUnavailableHint(baseUrl) {
+  return `PrimaryNode REST ${baseUrl} unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL`;
+}
+
+/**
+ * Probe GET /api/ping directly from the CLI (no @disclaude/mcp-server import
+ * needed — plain fetch). Used on the failure path to decide whether the
+ * actionable "REST unreachable" hint applies.
+ *
+ * Why a CLI-side probe instead of string-matching alone: the first-party tools
+ * gate in an order the CLI does not control — e.g. send_text checks Feishu
+ * credentials BEFORE the IPC availability probe, so on a credential-less host
+ * a down REST face surfaces as "Feishu credentials not configured", which no
+ * transport-flavored regex can distinguish from a real credentials problem.
+ * Probing here makes the hint conditional on the ACTUAL reachability of the
+ * REST face, independent of which first-party gate fired first. The probe is
+ * token-exempt (GET route) and short-timeout; it only runs after a send has
+ * already failed, so the happy path pays nothing.
+ *
+ * Timeout is 3s vs mcp-server isIpcAvailable()'s 2000ms: intentional — this
+ * probe runs only on the failure path (never latency-critical), so it can
+ * afford to be more patient before declaring the REST face unreachable.
+ */
+async function isRestFaceReachable(baseUrl) {
+  try {
+    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/ping`, {
+      method: "GET",
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return false;
+    const json = await res.json();
+    return json && json.pong === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide the failure hint for a send that already failed: if the REST face is
+ * verifiably down (probe fails), the root cause is reachability — return the
+ * actionable hint; otherwise the failure is genuinely something else (creds,
+ * card validation, Feishu API error) and no transport hint is added.
+ */
+async function failureHintForSend(baseUrl) {
+  const reachable = await isRestFaceReachable(baseUrl);
+  return reachable ? undefined : restUnavailableHint(baseUrl);
+}
+
+/**
+ * Detect a REST-unreachable style failure. Two layers produce it: the IPC error
+ * contract prefixes (`IPC_NOT_AVAILABLE` / `IPC_TIMEOUT` from RestIpcClient /
+ * the facade) and the first-party tools' friendly availability-gate messages
+ * (`IPC service unavailable…` / `IPC not available` / `❌ IPC 服务不可用…`,
+ * emitted when the `/api/ping` probe fails). Raw fetch causes (ECONNREFUSED /
+ * ENOTFOUND) are matched too, in case a future call site lets one through.
+ */
+function isRestUnreachable(message) {
+  return (
+    typeof message === "string" &&
+    /IPC_NOT_AVAILABLE|IPC_TIMEOUT|IPC service unavailable|IPC not available|IPC 服务不可用|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(
+      message
+    )
+  );
+}
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -417,6 +552,11 @@ async function cmdSendText(argv) {
 
   const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
 
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
   try {
@@ -444,7 +584,10 @@ async function cmdSendText(argv) {
   } catch (err) {
     emitFail(
       "send_text",
-      `send_text threw: ${err instanceof Error ? err.message : String(err)}`
+      `send_text threw: ${err instanceof Error ? err.message : String(err)}`,
+      isRestUnreachable(err instanceof Error ? err.message : String(err))
+        ? restUnavailableHint(baseUrl)
+        : undefined
     );
     return 1;
   }
@@ -464,9 +607,7 @@ async function cmdSendText(argv) {
   emitFail(
     "send_text",
     (result && (result.error || result.message)) || "send_text returned without success",
-    result && /IPC|PrimaryNode/i.test(result.message || "")
-      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -532,6 +673,11 @@ async function cmdSendInteractive(argv) {
   const context = typeof args.context === "string" ? args.context : undefined;
   const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
 
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
   try {
@@ -567,7 +713,10 @@ async function cmdSendInteractive(argv) {
   } catch (err) {
     emitFail(
       "send_interactive",
-      `send_interactive threw: ${err instanceof Error ? err.message : String(err)}`
+      `send_interactive threw: ${err instanceof Error ? err.message : String(err)}`,
+      isRestUnreachable(err instanceof Error ? err.message : String(err))
+        ? restUnavailableHint(baseUrl)
+        : undefined
     );
     return 1;
   }
@@ -588,9 +737,7 @@ async function cmdSendInteractive(argv) {
   emitFail(
     "send_interactive",
     (result && (result.error || result.message)) || "send_interactive returned without success",
-    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
-      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -621,6 +768,11 @@ async function cmdSendFile(argv) {
 
   const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
 
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
   try {
@@ -648,7 +800,10 @@ async function cmdSendFile(argv) {
   } catch (err) {
     emitFail(
       "send_file",
-      `send_file threw: ${err instanceof Error ? err.message : String(err)}`
+      `send_file threw: ${err instanceof Error ? err.message : String(err)}`,
+      isRestUnreachable(err instanceof Error ? err.message : String(err))
+        ? restUnavailableHint(baseUrl)
+        : undefined
     );
     return 1;
   }
@@ -670,9 +825,7 @@ async function cmdSendFile(argv) {
   emitFail(
     "send_file",
     (result && (result.error || result.message)) || "send_file returned without success",
-    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
-      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -748,6 +901,14 @@ async function cmdSendCard(argv) {
   }
   const card = resolved.card;
   const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. The single
+  //     wiring also covers resolveCardImages below — its local-image upload
+  //     calls getIpcClient() internally, which selects RestIpcClient under the
+  //     same env. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
 
   // --- execute: replicate the channel-mcp send_card handler pipeline so the
   //     CLI reaches feature parity with the inline MCP tool — GFM-table →
@@ -841,7 +1002,10 @@ async function cmdSendCard(argv) {
   } catch (err) {
     emitFail(
       "send_card",
-      `Card send failed: ${err instanceof Error ? err.message : String(err)}`
+      `Card send failed: ${err instanceof Error ? err.message : String(err)}`,
+      isRestUnreachable(err instanceof Error ? err.message : String(err))
+        ? restUnavailableHint(baseUrl)
+        : undefined
     );
     return 1;
   }
@@ -861,9 +1025,7 @@ async function cmdSendCard(argv) {
   emitFail(
     "send_card",
     (result && (result.error || result.message)) || "send_card returned without success",
-    result && /IPC|PrimaryNode/i.test(result.message || "")
-      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -915,6 +1077,11 @@ async function cmdPushToAgent(argv) {
     return 1;
   }
 
+  // --- transport wiring happens ONCE in main() before dispatch (#4532); the
+  //     resolved base URL is re-derived here (same flag > env > default order)
+  //     purely for failure hints — no env is mutated at this point. ---
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
   try {
@@ -940,7 +1107,10 @@ async function cmdPushToAgent(argv) {
   } catch (err) {
     emitFail(
       "push_to_agent",
-      `push_to_agent threw: ${err instanceof Error ? err.message : String(err)}`
+      `push_to_agent threw: ${err instanceof Error ? err.message : String(err)}`,
+      isRestUnreachable(err instanceof Error ? err.message : String(err))
+        ? restUnavailableHint(baseUrl)
+        : undefined
     );
     return 1;
   }
@@ -960,9 +1130,7 @@ async function cmdPushToAgent(argv) {
   emitFail(
     "push_to_agent",
     (result && (result.error || result.message)) || "push_to_agent returned without success",
-    result && /IPC|PrimaryNode/i.test(result.message || result.error || "")
-      ? "ensure the disclaude PrimaryNode is running and IPC is reachable"
-      : undefined
+    await failureHintForSend(baseUrl)
   );
   return 1;
 }
@@ -978,6 +1146,13 @@ async function main(argv) {
     process.stdout.write(HELP + "\n");
     return 0;
   }
+
+  // --- transport wiring (#4532): force REST ONCE, before any command dispatch
+  //     and thus before any `@disclaude/mcp-server` import. Every subcommand —
+  //     current and future — inherits the REST selection by construction; the
+  //     env vars are written before the first import so `getIpcClient()` and
+  //     `isIpcAvailable()` both see them. ---
+  wireRestTransport(parseArgs(argv.slice(1)));
 
   if (subcommand === "send_text") {
     return cmdSendText(argv.slice(1));
