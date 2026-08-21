@@ -9,10 +9,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // The production code calls sendInteractive(client, ...) — mock it to delegate to the
 // same spy as the legacy client.sendInteractive(...) instance method so existing
 // test assertions (mockIpcClient.sendInteractive) keep working unchanged.
-const { mockIpcClient, mockSendInteractive } = vi.hoisted(() => {
+const { mockIpcClient, mockSendInteractive, mockGetRestIpcClient } = vi.hoisted(() => {
   const mockSendInteractive = vi.fn();
   const mockIpcClient = { sendInteractive: mockSendInteractive };
-  return { mockIpcClient, mockSendInteractive };
+  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
+  return { mockIpcClient, mockSendInteractive, mockGetRestIpcClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -22,7 +23,6 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  getIpcClient: vi.fn(),
   // Standalone facade function (Issue #4129). Production calls sendInteractive(client, chatId, params).
   // Drop the leading client arg so the spy sees (chatId, params), matching the
   // legacy client.sendInteractive(chatId, params) assertions in this suite.
@@ -37,6 +37,8 @@ vi.mock('@disclaude/core', () => ({
 }));
 
 vi.mock('./ipc-utils.js', () => ({
+  // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
+  getRestIpcClient: () => mockGetRestIpcClient(),
   isIpcAvailable: vi.fn(),
   getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
     if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
@@ -58,14 +60,14 @@ import {
   startIpcServer,
   stopIpcServer,
 } from './interactive-message.js';
-import { getIpcClient, UnixSocketIpcServer, createInteractiveMessageHandler } from '@disclaude/core';
+import { UnixSocketIpcServer, createInteractiveMessageHandler } from '@disclaude/core';
 import { isIpcAvailable } from './ipc-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
 
 describe('send_interactive_message', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
     vi.mocked(getMessageSentCallback).mockReturnValue(null);
   });
@@ -263,7 +265,7 @@ describe('send_interactive_message', () => {
 
   describe('error handling', () => {
     it('should catch unexpected errors and return error result', async () => {
-      vi.mocked(getIpcClient).mockImplementation(() => { throw new Error('Unexpected'); });
+      mockGetRestIpcClient.mockImplementation(() => { throw new Error('Unexpected'); });
       const result = await send_interactive_message({
         question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
       });
@@ -422,7 +424,7 @@ describe('IPC server lifecycle', () => {
 describe('send_interactive_message edge cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
     vi.mocked(getMessageSentCallback).mockReturnValue(null);
   });
