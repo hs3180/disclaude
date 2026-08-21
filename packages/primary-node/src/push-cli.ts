@@ -8,20 +8,22 @@
  *   disclaude-push --help
  *
  * Issue #3808: Allows external scripts (cron jobs, shell loops) to push
- * messages to chat agents via the IPC server, without needing the full
- * disclaude agent stack running in the caller process.
+ * messages to chat agents, without needing the full disclaude agent stack
+ * running in the caller process.
  *
- * The transport is resolved by the central getIpcClient() facade in
- * @disclaude/core (REST when DISCLAUDE_REST_IPC_ENABLED=true, Unix socket
- * otherwise). Issue #4280 (Phase 3) removed the --socket override that
- * constructed a UnixSocketIpcClient directly — the facade is now the only
- * client construction path.
+ * Issue #4543: the transport is REST only — this CLI constructs a
+ * RestIpcClient directly (POST /api/push on the PrimaryNode HttpApiServer)
+ * and never reads DISCLAUDE_REST_IPC_ENABLED or touches a Unix socket. The
+ * PrimaryNode must be started with --api-port (and, if it uses --api-token,
+ * DISCLAUDE_REST_IPC_API_TOKEN must be set for the caller).
  *
  * @module primary-node/push-cli
  */
 
-import { getIpcClient, getIpcSocketPath, pushToAgent } from '@disclaude/core';
-import { existsSync } from 'node:fs';
+import { RestIpcClient, pushToAgent } from '@disclaude/core';
+
+/** Default REST base URL (mirrors core's getIpcClient decision-3 default). */
+const DEFAULT_REST_BASE_URL = 'http://localhost:9200';
 
 interface PushCliOptions {
   chatId: string;
@@ -55,7 +57,7 @@ export function parseArgs(args: string[]): PushCliOptions | null {
 
 function printUsage(): void {
   console.log(`
-disclaude-push - Push a message to a chat agent via IPC
+disclaude-push - Push a message to a chat agent via REST
 
 Usage:
   disclaude-push --chat-id <chatId> --message <message> [options]
@@ -69,11 +71,11 @@ Required:
 Options:
   --help, -h               Show this help message
 
-Transport (resolved by getIpcClient() in @disclaude/core):
-  DISCLAUDE_REST_IPC_ENABLED=true → REST IPC
-    (base url via DISCLAUDE_REST_IPC_BASE_URL, default http://localhost:9200)
-  otherwise → Unix socket (path via DISCLAUDE_WORKER_IPC_SOCKET /
-    DISCLAUDE_IPC_SOCKET_PATH env vars, discovery file, or default)
+Transport (REST only, Issue #4543 — no Unix socket fallback):
+  The PrimaryNode must be started with --api-port (default base url
+  http://localhost:9200, override via DISCLAUDE_REST_IPC_BASE_URL).
+  When the PrimaryNode enforces --api-token, callers must set
+  DISCLAUDE_REST_IPC_API_TOKEN to the same secret.
 
 Examples:
   # Push a message to a Feishu chat
@@ -102,6 +104,24 @@ function readMessageFromStdin(): Promise<string> {
   });
 }
 
+/**
+ * Construct the REST client directly (Issue #4543 scope 1).
+ *
+ * Deliberately NOT the core getIpcClient() facade: that singleton still
+ * branches on DISCLAUDE_REST_IPC_ENABLED and would construct a
+ * UnixSocketIpcClient when the env is unset (the old default). push-cli must
+ * be REST unconditionally — no env switch, no socket fallback — so it builds
+ * a RestIpcClient from DISCLAUDE_REST_IPC_BASE_URL (default
+ * http://localhost:9200) + DISCLAUDE_REST_IPC_API_TOKEN (optional bearer for
+ * POST routes). The env names are shared with the channel Skill CLI (#4532)
+ * so a deployment only defines them once.
+ */
+export function createRestClient(): RestIpcClient {
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
+  const apiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+  return new RestIpcClient({ baseUrl, apiToken });
+}
+
 export async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.length === 0) {
@@ -128,26 +148,11 @@ export async function main(): Promise<void> {
     }
   }
 
-  const restEnabled = process.env.DISCLAUDE_REST_IPC_ENABLED === 'true';
-
-  // Issue #4280 (Phase 3): the --socket override (direct UnixSocketIpcClient
-  // construction, bypassing the facade) is removed — getIpcClient() is the
-  // only client construction path, so the CLI always follows the configured
-  // transport (REST when DISCLAUDE_REST_IPC_ENABLED=true, Unix socket
-  // otherwise; selected in getIpcClient under #4279 Phase 2).
-  const client = getIpcClient();
-
-  // Fast-fail with a clear message only when actually using a Unix socket —
-  // i.e. the default transport (REST off). Under REST mode there is no socket
-  // file, so pushToAgent itself reports reachability.
-  if (!restEnabled) {
-    const socketPath = getIpcSocketPath();
-    if (!existsSync(socketPath)) {
-      console.error(`Error: IPC socket not found at ${socketPath}`);
-      console.error('Make sure disclaude Primary Node is running.');
-      process.exit(1);
-    }
-  }
+  // Issue #4543: REST only — no DISCLAUDE_REST_IPC_ENABLED read, no Unix
+  // socket fast-fail. Reachability problems surface through the push result
+  // (ipc_unavailable) with the actionable hint below.
+  const client = createRestClient();
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
 
   try {
     const result = await pushToAgent(client, options.chatId, message);
@@ -159,7 +164,11 @@ export async function main(): Promise<void> {
       const errorDetail = result.error || 'No details available';
       console.error(`Error: push_to_agent failed [${errorType}]: ${errorDetail}`);
       if (result.errorType === 'ipc_unavailable') {
-        console.error('The Primary Node may not be running or IPC is not available.');
+        // Issue #4543 scope 3: actionable REST guidance instead of a raw
+        // ECONNREFUSED — name the base URL and the startup flag.
+        console.error(`PrimaryNode REST ${baseUrl} is unreachable.`);
+        console.error('Start the main service with --api-port (e.g. disclaude-primary start --api-port 9200)');
+        console.error('or point DISCLAUDE_REST_IPC_BASE_URL at the right address.');
       } else if (result.errorType === 'ipc_timeout') {
         console.error('The request timed out. The agent may be busy or unresponsive.');
       }
