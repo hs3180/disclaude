@@ -25,6 +25,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { z } from 'zod';
 
 // --- Fake pi-agent-core module ------------------------------------------------
 // vi.mock is hoisted; the state it closes over must be hoisted too.
@@ -126,6 +127,25 @@ async function collect(iterator: AsyncGenerator<AgentMessage>): Promise<AgentMes
 /** A streamFn stub — queryStream only requires it to be set (see PR scope). */
 const stubStreamFn = (): unknown => ({});
 
+/**
+ * Issue #4394: deterministic macrotask drain, replacing fixed
+ * `await new Promise((resolve) => setTimeout(resolve, N))` wall-clock waits.
+ *
+ * The bridge settles entirely on microtasks and `setImmediate` macrotasks —
+ * the FakeAgent's prompt()/continue() chains resolve without any timer. A few
+ * `setImmediate` boundaries therefore let the dispatched run's remaining work
+ * (scripted events → adapter queue → consumer iteration, and the input pump's
+ * park at the next `inputIterator.next()`) settle before the next assertion,
+ * with no fixed ms and no load sensitivity. Use AFTER a `vi.waitFor` (or
+ * equivalent) that proves the interesting event already dispatched — a drain
+ * alone does not push a lazy iterator forward if nothing has started yet.
+ */
+const flushPending = async (rounds = 3): Promise<void> => {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+};
+
 /** Minimal valid AgentQueryOptions (settingSources is required by the type). */
 const baseOptions = (): AgentQueryOptions & { systemPrompt?: string } =>
   ({ settingSources: [] }) as AgentQueryOptions & { systemPrompt?: string };
@@ -168,6 +188,160 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     });
     // agent_end maps to the result message (see event-adapter).
     expect(messages.map((m) => m.type)).toContain('result');
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #4389 (S6, part 1): tool permission gate on the beforeToolCall hook
+  // -------------------------------------------------------------------------
+
+  it('installs the beforeToolCall deny hook when disallowedTools is non-empty (#4389)', async () => {
+    fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+    await collect(
+      provider
+        .queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          disallowedTools: ['CronCreate'],
+        })
+        .iterator,
+    );
+    const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
+    expect(typeof ctorOptions.beforeToolCall).toBe('function');
+    // And the installed hook actually denies the disallowed tool (#4389
+    // acceptance: a disallowed call does not execute — `{block:true}` is
+    // what pi's loop converts into an error tool result pre-execution).
+    const verdict = (await (ctorOptions.beforeToolCall as (ctx: unknown) => Promise<unknown>)({
+      assistantMessage: { role: 'assistant', content: [] },
+      toolCall: { type: 'toolCall', id: 't1', name: 'CronCreate', arguments: {} },
+      args: {},
+      context: {},
+    })) as { block?: boolean; reason?: string } | undefined;
+    expect(verdict).toEqual({ block: true, reason: expect.stringContaining('CronCreate') });
+  });
+
+  it('omits the beforeToolCall hook when disallowedTools is absent (#4389 — behavior unchanged)', async () => {
+    fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+    await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
+    const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
+    expect(ctorOptions.beforeToolCall).toBeUndefined();
+  });
+
+  // Issue #4386 (part 4): inline tools from options.mcpServers are injected
+  // into the pi Agent's initialState.tools — the session's live tool registry
+  // (pi 0.82.1: createMutableAgentState seeds state.tools from it at
+  // construction). This is the "tool passed directly, not via MCP" acceptance
+  // item; stdio servers are skipped (pi does not support MCP, #4461 decision).
+  describe('inline-tool injection (Issue #4386, part 4)', () => {
+    /** A real-Zod inline tool (the adapter's zodToJsonSchema needs a real schema). */
+    const makeTool = (name: string) => ({
+      name,
+      description: `${name} tool`,
+      parameters: z.object({ x: z.number() }),
+      handler: (p: { x: number }) => Promise.resolve({ doubled: p.x * 2 }),
+    });
+
+    it('seeds initialState.tools with adapted inline tools from mcpServers', async () => {
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          mcpServers: {
+            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('echo')] },
+          },
+        }).iterator,
+      );
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: unknown[] } };
+      const tools = ctor?.initialState?.tools ?? [];
+      expect(tools).toHaveLength(1);
+      // The AgentHarnessTool shape produced by adaptInlineTool (#4387).
+      const tool = tools[0] as { name: string; label: string; parameters: { type: string } };
+      expect(tool.name).toBe('echo');
+      expect(tool.label).toBe('echo');
+      expect(tool.parameters.type).toBe('object');
+      expect(typeof (tools[0] as { execute: unknown }).execute).toBe('function');
+    });
+
+    it('injects an empty tool array when no inline servers are configured', async () => {
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: unknown[] } };
+      expect(ctor?.initialState?.tools).toEqual([]);
+    });
+
+    it('skips stdio servers (pi does not support MCP) but still injects inline ones', async () => {
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          mcpServers: {
+            playwright: { type: 'stdio', name: 'playwright', command: 'npx', args: ['-y', '@playwright/mcp'] },
+            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('send')] },
+          },
+        }).iterator,
+      );
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string }> } };
+      expect((ctor?.initialState?.tools ?? []).map((t) => t.name)).toEqual(['send']);
+    });
+
+    it('injected tools execute through the inline-tool adapter round-trip', async () => {
+      // The full acceptance item: the tool handed to the Agent is the SAME
+      // wrapper createInlineTool produces — its execute validates params via
+      // Zod, calls the disclaude handler, and shapes an AgentToolResult.
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      await collect(
+        provider.queryStream(inputs(userInput('go')), {
+          ...baseOptions(),
+          mcpServers: {
+            'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('echo')] },
+          },
+        }).iterator,
+      );
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ execute: Function }> } };
+      const tool = ctor?.initialState?.tools?.[0];
+      expect(tool).toBeDefined();
+      const result = (await tool!.execute('call-1', { x: 21 }, undefined, undefined, undefined)) as {
+        content: Array<{ type: string; text: string }>;
+        details: unknown;
+      };
+      expect(result.details).toEqual({ doubled: 42 });
+      expect(result.content[0]?.type).toBe('text');
+      // Invalid params throw (pi converts a thrown execute error into an
+      // isError tool result — the adapter contract, #4387).
+      await expect(tool!.execute('call-2', { x: 'not-a-number' }, undefined, undefined, undefined)).rejects.toThrow();
+    });
+
+    it('recognizes the createMcpServer handle shape (the production wiring) without re-adapting', async () => {
+      // The production path: chat-agent's buildMcpServers() puts
+      // createChannelMcpServer() = getProvider().createMcpServer({...type:'inline'...})
+      // into mcpServers — a `{ name, version, tools }` handle with NO `type`
+      // field whose tools are ALREADY AgentHarnessTools. collectInlineTools
+      // must pass those through as-is (re-adapting would double-wrap execute
+      // and Zod-parse a JSON-Schema object). Cf. ClaudeSDKProvider's
+      // isSdkInlineMcpServer duck-typing for the same production flow.
+      fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+      const handle = provider.createMcpServer({
+        type: 'inline',
+        name: 'channel-mcp',
+        version: '1.0.0',
+        tools: [makeTool('send_text')],
+      });
+      await collect(
+        provider.queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          // base-agent.ts:202 casts the built handle record into the options
+          // the same way — the handle shape is not statically a McpServerConfig.
+          mcpServers: { 'channel-mcp': handle } as unknown as AgentQueryOptions['mcpServers'],
+        }).iterator,
+      );
+      const ctor = fakeState.ctorOptions as { initialState?: { tools?: Array<{ name: string; execute: Function }> } };
+      const tools = ctor?.initialState?.tools ?? [];
+      expect(tools.map((t) => t.name)).toEqual(['send_text']);
+      // The SAME adapted instance, not a re-wrapped one: executing it runs the
+      // original handler round-trip.
+      const result = (await tools[0]!.execute('call-h', { x: 5 }, undefined, undefined, undefined)) as {
+        details: unknown;
+      };
+      expect(result.details).toEqual({ doubled: 10 });
+    });
   });
 
   it('streams a plain-text turn: text deltas then result', async () => {
@@ -255,9 +429,15 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     })();
     const result = provider.queryStream(scriptedInput, baseOptions());
     const consuming = collect(result.iterator);
-    // Give the bridge time to (wrongly) end early / hang: a couple of macrotasks
-    // past run settlement. The iterator must still be open (no early return).
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Give the bridge time to (wrongly) end early / hang: past run settlement,
+    // deterministically (Issue #4394). vi.waitFor proves the run dispatched
+    // (prompt() was called — the input generator started and turn 1 ran); the
+    // macrotask drain then lets the scripted events flow and the bridge park
+    // at the next input. The iterator must still be open (no early return).
+    await vi.waitFor(() => {
+      expect(fakeState.prompts).toHaveLength(1);
+    });
+    await flushPending();
     // ... and must NOT have aborted the agent between turns.
     expect(fakeState.aborted).toBe(false);
     // End the input (the session-lifetime signal) → the bridge must settle
@@ -290,7 +470,14 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     })();
     const result = provider.queryStream(scriptedInput, baseOptions());
     const consuming = collect(result.iterator);
-    await new Promise((resolve) => setTimeout(resolve, 10)); // run 1 settles
+    // Run 1 settles, deterministically (Issue #4394): vi.waitFor proves turn 1
+    // dispatched (prompt() called, its scripted events emitted), and the drain
+    // lets the bridge finish the turn and park at the input generator — the
+    // exact pre-turn-2 state the fixed 10ms wait used to approximate.
+    await vi.waitFor(() => {
+      expect(fakeState.prompts).toHaveLength(1);
+    });
+    await flushPending();
     expect(fakeState.aborted).toBe(false); // session kept alive
     releaseSecond?.(); // user sends turn 2
     const messages = await consuming;
@@ -313,7 +500,9 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     const result = provider.queryStream(inputs(userInput('hi')), baseOptions());
     const consuming = collect(result.iterator);
     // Give the bridge a tick to start the run (prompt in flight), then cancel.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // A single setImmediate boundary is the deterministic form of the old
+    // `setTimeout(resolve, 0)` wait (Issue #4394).
+    await new Promise<void>((resolve) => setImmediate(resolve));
     result.handle.cancel();
     // Deterministic on both sides of the loadPiRuntime race: when the agent
     // already exists abort() is synchronous; when cancel() landed during the

@@ -719,6 +719,61 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  describe('Empty-stream termination (Issue #4442 part 3)', () => {
+    it('should deliver the ❌ notice, recordFailure, resolve the turn, and not auto-restart', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_empty_stream',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Provider-level synthesized terminal result: the SDK query ended cleanly
+      // with zero messages and the in-request retries were exhausted
+      // (terminatedReason 'empty-stream' hoisted to top-level parsed field by
+      // convertToLegacyFormat, same shape as the stall path).
+      async function* emptyStreamResultIterator() {
+        yield {
+          parsed: {
+            type: 'result',
+            content: '❌ 上游返回了空响应（200 但零内容事件），本次会话未产生任何输出。请稍后重试。',
+            terminatedReason: 'empty-stream',
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: emptyStreamResultIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_empty_stream', payload: 'hello', messageId: 'msg_1' });
+
+      // The ❌ notice is delivered through the generic content-send path.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (c: any[]) => typeof c[1] === 'string' && c[1].includes('空响应')
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+      // recordFailure called with the empty-stream reason (not recordSuccess).
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_empty_stream', 'empty-stream');
+      expect(rm.shouldRestart).not.toHaveBeenCalled();
+      // Session inactive (restart suppressed)
+      expect(agent.hasActiveSession()).toBe(false);
+      // Context preserved (deleteThreadRoot NOT called).
+      expect((agent as any).conversationOrchestrator.deleteThreadRoot).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Issue #4322: upstream-API-error turn reported as failed, not ✅ Complete', () => {
     it('should send ❌ Failed notice (with request_id) and recordFailure when provider tags the result', async () => {
       const localCallbacks = createMockCallbacks();
@@ -1225,10 +1280,14 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Iterator that yields messages before throwing (runtime error)
+      // Iterator that yields messages before throwing (runtime error).
+      // Issue #4394: no real 20ms setTimeout — the gap between the yielded
+      // message and the throw is irrelevant to the assertion (messageCount > 0
+      // is what classifies this as a runtime error, not a startup failure), so
+      // the iterator throws immediately after yielding. Deterministic, zero
+      // wall-clock dependency.
       async function* runtimeErrorIterator() {
         yield { parsed: { type: 'text', content: 'Hello from agent' } };
-        await new Promise<void>((r) => setTimeout(r, 20));
         throw new Error('Runtime crash after messages');
       }
 
@@ -1284,18 +1343,33 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Create an iterator that yields messages with a delay
-      async function* slowIterator() {
+      // Iterator that parks after the first yield until close() is called.
+      // Issue #4394: no real 10ms setTimeout gaps — a real-timer gap made
+      // "when does the pending next() settle" a host-load race; parking on a
+      // promise that the mock handle's close() resolves makes it
+      // deterministic: reset() calls queryHandle.close() synchronously →
+      // every remaining next() settles immediately.
+      // NOTE: the loop-head abort check (chat-agent.ts:1059) does NOT fire on
+      // the reset() path — reset() nulls this.abortController after aborting
+      // (chat-agent.ts:1670), so the check reads null and stays false. The
+      // iterator therefore drains all 20 messages and the loop exits via the
+      // explicit-close path (isSessionActive=false set before close). The
+      // assertion only checks session-inactive, which that path satisfies.
+      let releaseIterator!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        releaseIterator = resolve;
+      });
+      async function* parkingIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>((r) => setTimeout(r, 10));
+          await parked; // park until close(); no real timer
         }
       }
 
       // Override createQueryStream on the instance
       (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: slowIterator(),
+        handle: { close: vi.fn(() => releaseIterator()), cancel: vi.fn() },
+        iterator: parkingIterator(),
       });
 
       // Start the session by sending a message
@@ -1333,16 +1407,25 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      async function* slowIterator() {
+      // Issue #4394: same parking-iterator shape as the reset() test above.
+      // Unlike reset(), stop() does NOT null abortController — the loop-head
+      // abort check (chat-agent.ts:1059) fires on the first settled next(),
+      // so this exercises the real abort-break path (verified: the abort log
+      // fires and only msg-1 is processed before the break).
+      let releaseIterator!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        releaseIterator = resolve;
+      });
+      async function* parkingIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>((r) => setTimeout(r, 10));
+          await parked; // park until close(); no real timer
         }
       }
 
       (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: slowIterator(),
+        handle: { close: vi.fn(() => releaseIterator()), cancel: vi.fn() },
+        iterator: parkingIterator(),
       });
 
       void agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });

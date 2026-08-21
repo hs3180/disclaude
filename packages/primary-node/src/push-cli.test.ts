@@ -87,6 +87,15 @@ describe('push-cli', () => {
       expect(result).toEqual({ chatId: 'oc_abc', message: 'world' });
     });
 
+    // Issue #4280 (Phase 3): --socket/-s is removed along with the direct
+    // UnixSocketIpcClient construction. Unknown flags are ignored by the
+    // parser (pre-existing behaviour), so the flag no longer changes the
+    // result — the options carry no socketPath at all.
+    it('should ignore the removed --socket flag without a socketPath field', () => {
+      const result = parseArgs(['-c', 'oc_abc', '-m', 'world', '-s', '/tmp/x.ipc']);
+      expect(result).toEqual({ chatId: 'oc_abc', message: 'world' });
+    });
+
     it('should call process.exit(1) when --chat-id is missing', () => {
       expect(() => parseArgs(['--message', 'hello'])).toThrow('process.exit');
       expect(exitSpy).toHaveBeenCalledWith(1);
@@ -210,6 +219,18 @@ describe('push-cli', () => {
       await expect(main()).rejects.toThrow('process.exit');
       const calls = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
       expect(calls.some(c => c.includes('http://primary.internal:9300'))).toBe(true);
+    });
+
+    // Issue #4280 (Phase 3) kept on #4543's REST-only ground: even when a
+    // removed --socket flag is passed, the client is still the direct REST
+    // client — no facade, no Unix socket, no socket fast-fail probe.
+    it('routes through the direct REST client even when a removed --socket flag is passed', async () => {
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello', '-s', '/custom.ipc'];
+      await main();
+      expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
+      expect(getIpcClient).not.toHaveBeenCalled();
+      expect(UnixSocketIpcClient).not.toHaveBeenCalled();
+      expect(getIpcSocketPath).not.toHaveBeenCalled();
     });
 
     it('should exit(1) on pushToAgent failure with error details', async () => {

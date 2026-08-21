@@ -28,7 +28,7 @@ Companion docs:
 | **B-Q1** Did upstream add MCP after 0.82.1? | **No.** `pi-agent-core`, `pi-ai`, `pi-coding-agent` **all @0.83.0** have **0** `mcp` symbols in `dist/**/*.d.ts`. "Wait for upstream" (a B1.5 option) is **not viable as of 0.83.0**. |
 | **B-Q2** Is the MCP→`AgentHarnessTool` converter feasible? | **Yes, and lighter than the spike implied.** `AgentHarnessTool` = TypeBox `TParameters` + 5-param `execute`. pi uses `typebox@1.3.7` (unscoped, same author as `@sinclair/typebox`); TypeBox schemas **are JSON-Schema**, so an MCP `inputSchema` maps near-free. `@modelcontextprotocol/sdk@1.29.0` is already in disclaude's lockfile. |
 | **B-Q3** Is there a lighter bridge than per-tool wrapping? | **No shortcut, but a clean injection point exists.** `AgentHarness.setTools(tools, activeToolNames?)` (agent-harness.d.ts:76) is the dynamic tool registry — wrap each MCP tool, then `setTools`. Zero MCP-specific plugin/registry symbols exist. |
-| **B-Q4** Which MCP servers must the converter cover? | **Two classes.** (a) `channel-mcp` — **inline, in-process** (`send_text`/`send_card`/`send_interactive`/`send_file` + `push-to-agent` + loop tools); (b) **Playwright MCP + any user-configured stdio server** (`disclaude.config.example.yaml:249`). Class (a) overlaps the inline-tool work in #4387; class (b) needs the MCP client converter. |
+| **B-Q4** Which MCP servers must the converter cover? | **Two classes.** (a) `channel-mcp` — **inline, in-process** (`send_text`/`send_card`/`send_interactive`/`send_file` + `push-to-agent`; loop tools removed, #4430); (b) **Playwright MCP + any user-configured stdio server** (`disclaude.config.example.yaml:249`). Class (a) overlaps the inline-tool work in #4387; class (b) needs the MCP client converter. |
 
 > **✅ DECISION (owner, 2026-08-06, discussion chat): B1.** pi backend writes the MCP→`AgentHarnessTool` converter (#4417), full parity. The part-2 PoC is **B1's first slice** (it resolves R1), not a gate on the decision — so the destination is now fixed at B1; the decision table below governs the *execution* (full converter now vs B3-now→B1-later) based on the PoC outcome.
 
@@ -287,8 +287,8 @@ mcpServers['channel-mcp'] = createChannelMcpServer();   // inline transport
 
 Tools surfaced (from the `contextTools` allow-list at `mcp-setup.ts:47` and the tool modules in
 `packages/mcp-server/src/tools/`): `send_text`, `send_card`, `send_interactive`, `send_file`,
-`push_to_agent`, plus the loop tools (`loop-start`/`loop-stop`/`loop-status`,
-`packages/mcp-server/src/tools/loop-*.ts`). These are **inline MCP** — the server object lives
+and `push_to_agent` (the loop tools were removed with the loop system, #4430).
+These are **inline MCP** — the server object lives
 in-process; the Claude adapter passes it straight through via `adaptInlineMcpServer`
 (`packages/core/src/sdk/providers/claude/options-adapter.ts` — `adaptMcpServers:124` dispatches by
 server type, `adaptInlineMcpServer:157` wraps inline servers).

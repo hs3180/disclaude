@@ -120,6 +120,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // suppress the auto-restart (would immediately re-stall) while keeping context.
   private stalledTerminated = false;
 
+  // Issue #4442 (part 3): set when the provider terminated the stream with the
+  // synthetic empty-stream result (200-OK-zero-content after in-request retries
+  // exhausted). Same interception role as stalledTerminated: suppress the
+  // unexpected-end auto-restart while keeping context — the failure is already
+  // accounted via recordFailure('empty-stream') in the result branch.
+  private emptyStreamTerminated = false;
+
   // Issue #4391 (part 2 review): ChatAgent's own disposed marker. BaseAgent's
   // `initialized` is never set to true on any production path (only test mocks
   // force it), so a `!this.initialized` disposed-check would be dead in
@@ -1232,6 +1239,40 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             continue;
           }
 
+          // Issue #4442 (part 3): provider exhausted the in-request retries on
+          // an empty stream (200-OK-zero-content) and synthesized a terminal
+          // result. Same interception shape as the GLM-stall branch above: the
+          // generic content-send block already delivered the ❌ notice
+          // (parsed.content carries EMPTY_STREAM_TERMINATE_NOTICE), so here we
+          // only do control flow — record failure (chronic empty streams trip
+          // the circuit), resolve the turn, and skip the normal recordSuccess
+          // path. The session is NOT torn down here: the ChatAgent-level
+          // one-shot empty-turn reset+replay (#4391) and the session-reset
+          // advice in the ⚠️ #4258 notice remain the recovery levers above
+          // this provider-level retry.
+          if (parsed.terminatedReason === 'empty-stream') {
+            this.emptyStreamTerminated = true;
+            this.logger.warn(
+              { chatId, messageCount },
+              'Empty stream: turn terminated by provider after in-request retries exhausted '
+                + '(Issue #4442); recording failure, resolving turn'
+            );
+            this.restartManager.recordFailure(chatId, 'empty-stream');
+            this.isProcessingMessage = false;
+            this.resolveTurn();
+            if (this.callbacks.onDone) {
+              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              await this.callbacks.onDone(chatId, threadRoot);
+            }
+            if (this.onceMode) {
+              this.isSessionActive = false;
+              this.channel?.close();
+              this.taskCompletionResolve?.();
+              this.clearTaskCompletion();
+            }
+            continue;
+          }
+
           // Issue #3003: Log timing summary on completion
           const completionMs = Date.now() - startTime;
           this.logger.info(
@@ -1682,6 +1723,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       return;
     }
 
+    // Issue #4442 (part 3): the provider's synthetic empty-stream result ended
+    // the turn — same interception as the stall path above. recordFailure was
+    // already recorded in the result branch; an auto-restart here would just
+    // re-run the turn without a user prompt. Flip isSessionActive so the next
+    // user message starts a fresh turn, context preserved.
+    if (this.emptyStreamTerminated) {
+      this.emptyStreamTerminated = false;
+      this.isSessionActive = false;
+      this.isProcessingMessage = false;
+      this.logger.info(
+        { chatId, messageCount },
+        'Empty stream: terminated turn ended; suppressing auto-restart, context preserved (Issue #4442)'
+      );
+      return;
+    }
+
     // Issue #4391 (part 2 review): this invocation's session was torn down by
     // the empty-turn reset+replay. Timing: endEmptyTurnSession() closes this
     // iterator's query+channel, then the same timer callback synchronously
@@ -1898,6 +1955,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #3124: Clear once-mode and task completion state
     this.onceMode = false;
     this.stalledTerminated = false; // Issue #3706: clear stall flag
+    this.emptyStreamTerminated = false; // Issue #4442: clear empty-stream flag
     // Issue #4391 (part 2 review): a reset also supersedes any still-draining
     // iterator from the previous session (defense-in-depth alongside the
     // isSessionActive=false set above, which already reads as explicit close).

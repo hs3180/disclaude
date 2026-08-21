@@ -133,15 +133,15 @@ Bad: "I'll use some sample data to demonstrate..."
 2. **Verify accuracy**: Are sources cited correctly?
 3. **Get feedback**: Does the output meet user needs?
 
-## Handling User Feedback During Async Research
+## Handling User Feedback During Research
 
-> Issue #4017. When research runs asynchronously (a separate execution chat driven by scheduled runs on the schedule base — cron + chatId; the loop system is deprecated, see #4430), user feedback — corrections, intent changes, scope or source-preference adjustments — originates in the **initial conversation** with the user, *not* in the research execution chat. The execution chat carries progress updates and delivery; it is not a feedback channel. Feedback reaches the async research **only through the shared state file** — never by reading the initial conversation's messages.
+> Issue #4017. Research runs in a separate execution chat driven by scheduled runs on the schedule base (cron + chatId; the loop system is deprecated, see #4430). User feedback — corrections, intent changes, scope or source-preference adjustments — originates in the **initial conversation** with the user, *not* in the research execution chat. The execution chat carries progress updates and delivery; it is not a feedback channel. Feedback reaches the running research **only through the shared state file** — never by reading the initial conversation's messages.
 
 The mechanism is a safe, append-only write to `RESEARCH.md`: the conversation Agent captures feedback there, and the research Agent re-reads it at the start of each run. There is **no cross-conversation message reading and no `sourceChatId` wiring** — the earlier cross-conversation approach was reviewed and rejected (see closed PR #4030); the agreed direction is direct, safe `RESEARCH.md` modification.
 
 ### Write side — capture feedback into RESEARCH.md (conversation Agent)
 
-When the user gives feedback in the initial conversation while async research is running, **directly modify `RESEARCH.md`** in the research workdir:
+When the user gives feedback in the initial conversation while research is running, **directly modify `RESEARCH.md`** in the research workdir:
 
 1. Append a timestamped entry to a dedicated `## User Feedback` section (create the section if it does not yet exist). Keep it **append-only** — never rewrite or delete prior entries.
 2. One feedback point per entry. In 1–3 lines state **what** the user wants changed (intent / correction / new constraint / source preference) and, if given, **why**. Quote the user's words where it removes ambiguity.
@@ -161,8 +161,8 @@ When writing `RESEARCH.md` back at the end of a run, carry the `## User Feedback
 
 ### Properties
 
-- **Async and non-blocking.** Writing feedback never interrupts the running execution; it takes effect at the next run's read. Never block a run waiting for feedback.
-- **Single channel.** The `## User Feedback` section of `RESEARCH.md` is the only feedback path into the async research — the user should not need to repeat themselves in the execution chat.
+- **Non-blocking.** Writing feedback never interrupts the running execution; it takes effect at the next run's read. Never block a run waiting for feedback.
+- **Single channel.** The `## User Feedback` section of `RESEARCH.md` is the only feedback path into the running research — the user should not need to repeat themselves in the execution chat.
 
 ## Quality Checklist
 
@@ -292,4 +292,4 @@ At the **start of every step**, before doing anything else:
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
 - Issue #1339: Agentic Research interactive workflow (parent feature)
-- Issue #4006: Async research guidance (the Research Discipline section above)
+- Issue #4006: Research discipline guidance for scheduled runs (the Research Discipline section above)

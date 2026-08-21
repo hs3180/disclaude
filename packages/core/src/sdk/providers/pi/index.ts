@@ -19,14 +19,9 @@ export {
   type PiAdaptedOptions,
   type PiAgentContextInput,
 } from './options-adapter.js';
-// Issue #4389 (S6): disclaude-owned permission gate for pi-path tool calls.
-// Exported so the wiring layer can stack policies (composeGates) and install
-// alternatives on the provider's gate seam.
+// Issue #4389 (S6): disclaude-owned permission gate for pi-path tool calls —
+// the beforeToolCall deny hook installed per query by queryStream.
 export {
-  ALLOW_ALL_GATE,
-  composeGates,
-  createDenylistGate,
-  type PiPermissionDecision,
-  type PiPermissionGate,
-  type PiToolCallRequest,
-} from './permission-gate.js';
+  createPiToolPermissionGate,
+  type PiToolPermissionGate,
+} from './tool-permission-gate.js';

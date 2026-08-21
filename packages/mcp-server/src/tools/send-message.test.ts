@@ -9,10 +9,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Production calls sendMessage(client, ...). Mock it to drop the client arg and delegate
 // to the same spy as the legacy client.sendMessage(...) instance method so existing
 // test assertions (mockIpcClient.sendMessage) keep working unchanged.
-const { mockIpcClient, mockSendMessage } = vi.hoisted(() => {
+const { mockIpcClient, mockSendMessage, mockGetRestIpcClient } = vi.hoisted(() => {
   const mockSendMessage = vi.fn();
   const mockIpcClient = { sendMessage: mockSendMessage };
-  return { mockIpcClient, mockSendMessage };
+  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
+  return { mockIpcClient, mockSendMessage, mockGetRestIpcClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -22,7 +23,6 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  getIpcClient: vi.fn(),
   sendMessage: (...args: unknown[]) => mockSendMessage(...args.slice(1)),
 }));
 
@@ -31,6 +31,9 @@ vi.mock('./credentials.js', () => ({
 }));
 
 vi.mock('./ipc-utils.js', () => ({
+  // Issue #4280 (Phase 3, part 3): tools construct the REST client via this
+  // factory — mock it to return the shared mockIpcClient.
+  getRestIpcClient: () => mockGetRestIpcClient(),
   isIpcAvailable: vi.fn(),
   getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
     if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
@@ -45,7 +48,6 @@ vi.mock('./callback-manager.js', () => ({
 }));
 
 import { send_text } from './send-message.js';
-import { getIpcClient } from '@disclaude/core';
 import { getFeishuCredentials } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
@@ -53,7 +55,7 @@ import { invokeMessageSentCallback } from './callback-manager.js';
 describe('send_text', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: 'test-secret' });
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
   });
@@ -137,7 +139,7 @@ describe('send_text', () => {
 
   describe('error handling', () => {
     it('should catch unexpected errors and return error result', async () => {
-      vi.mocked(getIpcClient).mockImplementation(() => { throw new Error('Unexpected error'); });
+      mockGetRestIpcClient.mockImplementation(() => { throw new Error('Unexpected error'); });
       const result = await send_text({ text: 'hello', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Unexpected error');
@@ -145,7 +147,7 @@ describe('send_text', () => {
 
     it('should handle non-Error objects in catch', async () => {
       // eslint-disable-next-line no-throw-literal
-      vi.mocked(getIpcClient).mockImplementation(() => { throw 'string error'; });
+      mockGetRestIpcClient.mockImplementation(() => { throw 'string error'; });
       const result = await send_text({ text: 'hello', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Unknown error');

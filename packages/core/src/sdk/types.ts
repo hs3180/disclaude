@@ -116,9 +116,12 @@ export interface AgentMessageMetadata {
    *    使 chat-agent 的 result 分支正常触发(turn-complete 日志带 num_turns /
    *    duration、turn 正常 resolve、不触发虚假重启)。follow-up 可像 stall 检查
    *    一样在此标记上 recordFailure(如 'max-turns')而不触发实际重启。
+   *  - `'empty-stream'`:provider 在 SDK query 零消息干净结束(200-OK-zero-content)
+   *    且 in-request 重试耗尽后合成此 result(Issue #4442 ask 2)。见 provider.ts。
    */
   terminatedReason?:
     | 'stall'
+    | 'empty-stream'
     | 'max_turns'
     | 'max_budget_usd'
     | 'max_structured_output_retries';
