@@ -58,6 +58,27 @@ const testJobFactory = (
   timezone: string,
 ) => new CronJob(cron, onTick, null, false, timezone);
 
+/**
+ * Issue #4394 (part 3): deterministic event-loop drain, replacing fixed
+ * `await new Promise(r => setTimeout(r, N))` wall-clock waits.
+ *
+ * Why this is safe for the "tick should have been SKIPPED" assertions below:
+ * `executeTask` makes every skip decision (blocking-already-running,
+ * same-chatId blocking, isChatBusy) SYNCHRONOUSLY, before its first `await`
+ * (`scheduleManager.get`, whose mock resolves on the microtask queue), and the
+ * route mock also resolves on the microtask queue. A few `setImmediate`
+ * (macrotask) boundaries therefore let all pending microtasks settle —
+ * including any `route` call from a tick that was NOT skipped. So after this
+ * resolves, a regression that routes a meant-to-be-skipped tick is already
+ * observable (the assertion fails), with no fixed ms wait and no load sensitivity.
+ * For assertions that expect a route to LAND, prefer `vi.waitFor` instead.
+ */
+const flushPending = async (rounds = 4) => {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+};
+
 describe('Scheduler', () => {
   let mockScheduleManager: ScheduleManager;
   let mockCallbacks: SchedulerCallbacks;
@@ -202,16 +223,28 @@ describe('Scheduler', () => {
       const task = createTask({ id: 'graceful-stop-1' });
       scheduler.addTask(task);
 
-      // Start a task execution that takes 200ms
-      mockRouterAsMock.route.mockImplementationOnce(() => new Promise(resolve => setTimeout(resolve, 200)));
+      // Start a task execution the test resolves on demand. Issue #4394
+      // (part 25): this used to be a real 200ms wall-clock setTimeout, making
+      // the drain wait load-sensitive on a busy CI host. A deferred promise
+      // keeps exactly the semantics the test asserts — task still running
+      // while stop() pends, stop() resolves once the task completes — with
+      // the test controlling the completion instant and zero real timers.
+      let finishExecution!: () => void;
+      mockRouterAsMock.route.mockImplementationOnce(
+        () => new Promise<void>(resolve => { finishExecution = resolve; }),
+      );
 
       // Fire the cron job to start execution
       const jobs = scheduler.getActiveJobs();
       void jobs[0].job.fireOnTick();
 
-      // Wait for execution to start
+      // Wait for execution to start. Waiting on the route CALL (not just
+      // isTaskRunning) is what synchronizes `finishExecution` being assigned:
+      // executeTask marks the task running before its first await, then only
+      // reaches route() after the get/sendMessage microtasks settle.
       await vi.waitFor(() => {
         expect(scheduler.isTaskRunning('graceful-stop-1')).toBe(true);
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
       }, { timeout: 1000 });
 
       // Stop should wait for the running task to complete
@@ -221,7 +254,9 @@ describe('Scheduler', () => {
       expect(scheduler.isRunning()).toBe(false);
       expect(scheduler.getActiveJobs()).toHaveLength(0);
 
-      // Stop should eventually resolve after task completes
+      // Let the in-flight execution complete; stop() should then resolve
+      // without hitting its 2000ms grace timeout.
+      finishExecution();
       await stopPromise;
 
       // Running task should be cleared after completion
@@ -880,14 +915,22 @@ describe('Scheduler', () => {
 
       // Second trigger while still running should be skipped
       void jobs[0].job.fireOnTick();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Deterministic drain instead of a fixed 100ms wait (Issue #4394 part 3).
+      await flushPending();
 
       // Router should only be called once (second trigger was skipped)
       expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
     });
 
     it('should allow execution when blocking=false even if previous still running', async () => {
-      mockRouterAsMock.route.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 200)));
+      // Issue #4394 (part 25): this used `new Promise(r => setTimeout(r, 200))`
+      // for every route call, but the test only asserts that both executions
+      // are *initiated* (route called twice) — it never awaits completion, so
+      // the two real timers just leaked past the test boundary. A
+      // never-resolving promise provides the same "previous still running"
+      // state with zero real timers; the shared afterEach teardown uses
+      // stop(0), which skips the drain and so is not blocked by it.
+      mockRouterAsMock.route.mockImplementation(() => new Promise<void>(() => {}));
 
       const task = createTask({ id: 'non-blocking', blocking: false });
       scheduler.addTask(task);
@@ -901,10 +944,13 @@ describe('Scheduler', () => {
 
       // Second trigger while running - should start since blocking=false
       void jobs[0].job.fireOnTick();
-      await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Both executions should have been initiated
-      expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
+      // Both executions should have been initiated. The second route lands
+      // after executeTask's first await, so wait for it deterministically
+      // instead of a fixed 100ms wall-clock wait (Issue #4394 part 3).
+      await vi.waitFor(() => {
+        expect(mockRouterAsMock.route).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000 });
     });
 
     it('should allow execution after previous blocking task completes', async () => {
@@ -944,7 +990,10 @@ describe('Scheduler', () => {
       busyScheduler.addTask(createTask({ id: 'blocking-busy', blocking: true, chatId: 'oc_busy' }));
 
       void busyScheduler.getActiveJobs()[0].job.fireOnTick();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Deterministic drain instead of a fixed 100ms wait (Issue #4394 part 3):
+      // the busy-skip is decided synchronously, so a would-be route would have
+      // fired by here if the gate had failed.
+      await flushPending();
 
       // Skipped this tick because the chat is busy
       expect(mockRouterAsMock.route).not.toHaveBeenCalled();
@@ -1227,7 +1276,9 @@ describe('Scheduler', () => {
       // Fire task2 — should be skipped because task1 is blocking and same chatId
       void jobs[1].job.fireOnTick();
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Deterministic drain instead of a fixed 200ms wait (Issue #4394 part 3):
+      // the same-chatId blocking skip is decided synchronously in executeTask.
+      await flushPending();
 
       // Task2 should not have been routed
       expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);

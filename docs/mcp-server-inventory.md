@@ -113,8 +113,11 @@ agent. This is the surface the "reduce MCP" direction most directly targets, and
   Dependency pinned at [`packages/core/package.json`](../packages/core/package.json):
   `"@playwright/mcp": "^0.0.61"` (lockfile `playwright 1.59.0-alpha`). README advertises "Playwright MCP
   (15+ tools)" ([`README.md:40`](../README.md), [`:270`](../README.md), [`:535`](../README.md)). Tool-name
-  convention `mcp__playwright__browser_*` documented at [`SKILL_SPEC.md:625-628`](../SKILL_SPEC.md) and granted
-  to the `site-miner` agent at [`CLAUDE.md:531`](../CLAUDE.md).
+  convention `mcp__playwright__browser_*` documented at [`SKILL_SPEC.md:625-626`](../SKILL_SPEC.md).
+  **Consumers retired (browser-use skill PR)**: the former grantees — the `site-miner` preset agent and
+  the `site-miner` / `playwright-agent` skills — are deleted; browser automation goes through the
+  [`browser-use`](../skills/browser-use/SKILL.md) skill (`Bash`, no MCP grants). Only the
+  server/loader/package surface below remains.
 - **Custom servers**: the example shows a generic custom-stdio template
   ([`disclaude.config.example.yaml:263-268`](../disclaude.config.example.yaml)).
 
@@ -192,8 +195,9 @@ The path every MCP server config takes from `buildMcpServers()` → agent SDK.
 
 > **Migration note:** health tracking is **tool-name keyed**, not MCP-protocol keyed. Migrating Playwright to a
 > Skill preserves the tool names (`browser_navigate` etc. → Skill subcommands) only if the Skill deliberately
-> keeps them; otherwise health-tracking coverage and the `site-miner` permission grants (`CLAUDE.md:531`) need
-> coordinated updates. `#4460` owns that coordination.
+> keeps them; otherwise health-tracking coverage needs coordinated updates (the permission-grant side is
+> settled: the former `site-miner` grantee is deleted, and `browser-use` needs no MCP grants). `#4460` owns
+> that coordination.
 
 ---
 
@@ -203,8 +207,9 @@ Files that reference MCP and will need editing as the retirement lands (so docs 
 
 - `disclaude.config.example.yaml:249-268` — the `mcpServers` block (Playwright + custom example).
 - `README.md:24,40,270,504,506,535` — "Browser automation - Playwright MCP tools", "Playwright MCP (15+ tools)".
-- `SKILL_SPEC.md:625-628` — `mcp__playwright__*` tool-name convention.
-- `CLAUDE.md:531` — `site-miner` agent permissions include `mcp__playwright__*`.
+- `SKILL_SPEC.md:625-626` — `mcp__playwright__*` tool-name convention.
+- ~~`CLAUDE.md:531` — `site-miner` agent permissions include `mcp__playwright__*`~~ — retired: the
+  `site-miner` preset agent is deleted; browser automation is the `browser-use` skill (no MCP grants).
 - `packages/core/src/config/types.ts:218-239` — `McpServerConfig` (`:221`) / `ToolsConfig.mcpServers` (`:239`) types.
 - `packages/core/src/config/index.ts:521` — `getMcpServersConfig()` reader.
 

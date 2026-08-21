@@ -89,7 +89,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-1',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
       );
     });
 
@@ -126,7 +126,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-opts',
         callbacks,
-        { messageBuilderOptions, cwdProvider: undefined, skipHistory: false },
+        { messageBuilderOptions, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
       );
     });
 
@@ -141,7 +141,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-cwd',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider, cwdResolver: undefined, skipHistory: false },
       );
     });
 
@@ -157,7 +157,30 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-both',
         callbacks,
-        { messageBuilderOptions, cwdProvider, skipHistory: false },
+        { messageBuilderOptions, cwdProvider, cwdResolver: undefined, skipHistory: false },
+      );
+    });
+
+    // Issue #4448 (direction #1): the structured resolver travels with
+    // cwdProvider so ChatAgent can warn the chat on the bound-missing
+    // workspace fallback.
+    it('should pass cwdResolver to factory when provided (Issue #4448 direction #1)', () => {
+      const cwdProvider: CwdProvider = () => '/project';
+      const cwdResolver = (_chatId: string) => ({
+        effectiveCwd: '/project',
+        boundWorkingDir: '/project',
+        reason: 'bound' as const,
+      });
+      const pool = new PrimaryAgentPool({ cwdProvider, cwdResolver });
+      const callbacks = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('chat-resolver', callbacks);
+
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
+        'pilot',
+        'chat-resolver',
+        callbacks,
+        { messageBuilderOptions: undefined, cwdProvider, cwdResolver, skipHistory: false },
       );
     });
 
@@ -292,7 +315,7 @@ describe('PrimaryAgentPool', () => {
         'pilot',
         'chat-stale',
         callbacks,
-        { messageBuilderOptions: undefined, cwdProvider: undefined, skipHistory: false },
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
       );
     });
   });

@@ -61,9 +61,11 @@ export interface IteratorYieldResult {
      *  - `'stall'`:provider 的 no-content-progress 看门狗合成(Issue #3706)。
      *  - `'max_turns'` / `'max_budget_usd'` / `'max_structured_output_retries'`:
      *    SDK 的 `error_max_*` 上限终止,由 message-adapter 映射(Issue #4378)。
+     *  - `'empty-stream'`:provider 在零消息干净结束且重试耗尽后合成(Issue #4442)。
      */
     terminatedReason?:
       | 'stall'
+      | 'empty-stream'
       | 'max_turns'
       | 'max_budget_usd'
       | 'max_structured_output_retries';

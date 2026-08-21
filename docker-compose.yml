@@ -174,7 +174,10 @@ services:
   #         args: ["-y", "@playwright/mcp@latest",
   #                "--cdp-endpoint", "http://disclaude-playwright:9222"]
   playwright:
-    image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.60.0-noble}
+    # Pinned to the version the #4496 Scope-6 smoke matrix was executed against
+    # (Playwright 1.62.0 / chromium-1234 / Chromium 151.0.7922.34) so compose-fronted
+    # runs match the driver-side matrix. Override via PLAYWRIGHT_IMAGE_TAG if needed (#4528).
+    image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.62.0-noble}
     container_name: disclaude-playwright
     restart: unless-stopped
 

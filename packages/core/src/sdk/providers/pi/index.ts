@@ -19,3 +19,9 @@ export {
   type PiAdaptedOptions,
   type PiAgentContextInput,
 } from './options-adapter.js';
+// Issue #4389 (S6): disclaude-owned permission gate for pi-path tool calls —
+// the beforeToolCall deny hook installed per query by queryStream.
+export {
+  createPiToolPermissionGate,
+  type PiToolPermissionGate,
+} from './tool-permission-gate.js';

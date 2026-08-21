@@ -22,6 +22,10 @@ const { mockPushToAgent, mockDisconnect, mockGetIpcClient } = vi.hoisted(() => (
 }));
 
 vi.mock('@disclaude/core', () => ({
+  // Issue #4280 (Phase 3): push-cli no longer constructs UnixSocketIpcClient
+  // directly (the --socket override is removed); getIpcClient() is the only
+  // construction path. Mock kept so an accidental re-introduction fails the
+  // "does not construct UnixSocketIpcClient" assertion below.
   UnixSocketIpcClient: vi.fn().mockImplementation(() => ({
     pushToAgent: mockPushToAgent,
     disconnect: mockDisconnect,
@@ -30,7 +34,7 @@ vi.mock('@disclaude/core', () => ({
   // The production code imports it directly, so the mock must provide it too.
   pushToAgent: mockPushToAgent,
   getIpcClient: mockGetIpcClient,
-  getIpcSocketPath: vi.fn(({ override }: { override?: string }) => override ?? '/tmp/test.ipc'),
+  getIpcSocketPath: vi.fn(() => '/tmp/test.ipc'),
 }));
 
 vi.mock('node:fs', () => ({
@@ -38,7 +42,7 @@ vi.mock('node:fs', () => ({
 }));
 
 import { parseArgs, main } from './push-cli.js';
-import { getIpcSocketPath, getIpcClient } from '@disclaude/core';
+import { getIpcSocketPath, getIpcClient, UnixSocketIpcClient } from '@disclaude/core';
 import { existsSync } from 'node:fs';
 
 describe('push-cli', () => {
@@ -76,12 +80,21 @@ describe('push-cli', () => {
   describe('parseArgs', () => {
     it('should parse long-form args', () => {
       const result = parseArgs(['--chat-id', 'oc_123', '--message', 'hello']);
-      expect(result).toEqual({ chatId: 'oc_123', message: 'hello', socketPath: undefined });
+      expect(result).toEqual({ chatId: 'oc_123', message: 'hello' });
     });
 
     it('should parse short-form args', () => {
+      const result = parseArgs(['-c', 'oc_abc', '-m', 'world']);
+      expect(result).toEqual({ chatId: 'oc_abc', message: 'world' });
+    });
+
+    // Issue #4280 (Phase 3): --socket/-s is removed along with the direct
+    // UnixSocketIpcClient construction. Unknown flags are ignored by the
+    // parser (pre-existing behaviour), so the flag no longer changes the
+    // result — the options carry no socketPath at all.
+    it('should ignore the removed --socket flag without a socketPath field', () => {
       const result = parseArgs(['-c', 'oc_abc', '-m', 'world', '-s', '/tmp/x.ipc']);
-      expect(result).toEqual({ chatId: 'oc_abc', message: 'world', socketPath: '/tmp/x.ipc' });
+      expect(result).toEqual({ chatId: 'oc_abc', message: 'world' });
     });
 
     it('should call process.exit(1) when --chat-id is missing', () => {
@@ -132,12 +145,6 @@ describe('push-cli', () => {
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('IPC socket not found'));
     });
 
-    it('should use --socket override when provided', async () => {
-      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello', '-s', '/custom.ipc'];
-      await main();
-      expect(getIpcSocketPath).toHaveBeenCalledWith({ override: '/custom.ipc' });
-    });
-
     // Issue #4280 (part 1): by default push-cli resolves its client via the
     // central getIpcClient() facade instead of constructing a UnixSocketIpcClient
     // directly, so it stays in sync with the configured transport.
@@ -146,6 +153,25 @@ describe('push-cli', () => {
       await main();
       expect(getIpcClient).toHaveBeenCalledTimes(1);
       expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
+    });
+
+    // Issue #4280 (Phase 3): --socket no longer forces a Unix-socket client —
+    // the facade resolves the transport and UnixSocketIpcClient is never
+    // constructed directly by this CLI.
+    it('should route through getIpcClient() even when a removed --socket flag is passed', async () => {
+      process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello', '-s', '/custom.ipc'];
+      await main();
+      expect(getIpcClient).toHaveBeenCalledTimes(1);
+      expect(UnixSocketIpcClient).not.toHaveBeenCalled();
+      // REST mode skips the socket fast-fail entirely (no override path).
+      expect(getIpcSocketPath).not.toHaveBeenCalled();
+    });
+
+    it('should never construct UnixSocketIpcClient directly', async () => {
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      await main();
+      expect(UnixSocketIpcClient).not.toHaveBeenCalled();
     });
 
     // Issue #4280 (part 1): under REST IPC mode there is no socket file, so the
@@ -159,15 +185,6 @@ describe('push-cli', () => {
       expect(getIpcClient).toHaveBeenCalledTimes(1);
       expect(getIpcSocketPath).not.toHaveBeenCalled();
       expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
-    });
-
-    it('should bypass getIpcClient() when --socket override forces a Unix socket', async () => {
-      process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
-      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello', '-s', '/custom.ipc'];
-      await main();
-      // Explicit --socket always constructs a Unix-socket client directly.
-      expect(getIpcClient).not.toHaveBeenCalled();
-      expect(getIpcSocketPath).toHaveBeenCalledWith({ override: '/custom.ipc' });
     });
 
     it('should log success on successful push and call disconnect', async () => {

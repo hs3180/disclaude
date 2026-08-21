@@ -309,6 +309,10 @@ async function main(): Promise<void> {
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
+    // Issue #4448 (direction #1): structured resolver alongside the plain
+    // provider, so ChatAgent can warn the chat when the bound directory is
+    // missing and the agent falls back to the workspace.
+    cwdResolver: (chatId: string) => projectManager.resolveCwd(chatId),
   });
   // Issue #4169: Reclaim inactive agents (releasing their query handle, channel,
   // MCP connections, listeners) so the per-chatId pool doesn't grow unbounded.
