@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Config } from '@disclaude/core';
 import type { Logger } from 'pino';
-import { buildMcpServers, collectInlineMcpInstances } from './mcp-setup.js';
+import { buildMcpServers, collectInlineMcpInstances, resetExternalMcpDeprecationWarning } from './mcp-setup.js';
 
 vi.mock('@disclaude/core', () => ({
   Config: {
@@ -26,6 +26,7 @@ describe('buildMcpServers', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetExternalMcpDeprecationWarning();
     logger = createMockLogger();
   });
 
@@ -138,6 +139,17 @@ describe('buildMcpServers', () => {
       { servers: ['my-server', 'another'] },
       expect.stringContaining('deprecated'),
     );
+
+    // The warning is process-level: a second agent-loop start (fresh logger)
+    // keeps the servers but does not repeat the migration guidance.
+    const logger2 = createMockLogger();
+    (Config as any).getMcpServersConfig.mockReturnValueOnce({
+      'my-server': { command: 'node', args: ['./server.js'] },
+      'another': { command: 'python', args: ['-m', 'server'] },
+    });
+    const result2 = buildMcpServers('test-chat', callbacks, false, logger2);
+    expect(Object.keys(result2)).toEqual(['my-server', 'another']);
+    expect(logger2.warn).not.toHaveBeenCalled();
   });
 
   it('should not log a deprecation warning when no external MCP servers are configured', () => {
@@ -146,6 +158,19 @@ describe('buildMcpServers', () => {
     };
     buildMcpServers('test-chat', callbacks, false, logger);
 
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('should not log a deprecation warning when mcpServers config is an empty object', () => {
+    (Config as any).getMcpServersConfig.mockReturnValueOnce({});
+
+    const callbacks = {
+      getCapabilities: vi.fn(() => ({ supportedMcpTools: ['send_text'] })),
+    };
+    const result = buildMcpServers('test-chat', callbacks, false, logger);
+
+    // `{}` means "nothing configured" — no servers to merge, no warning to fire
+    expect(result).toEqual({ 'channel-mcp': { type: 'inline' } });
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
