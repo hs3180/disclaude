@@ -89,8 +89,15 @@ Legacy pre-3.0 subcommands (`open`, `state`, `screenshot`, `eval`, `-c`, `--sess
 
 ## Remaining parts (issue #4460)
 
-1. ✅ **part 1 (this PR)**: Skill contract — SKILL.md + README + capability mapping (wheel-evidenced)
-2. ⬜ **part 2**: host-side runtime bring-up (`browser-use install` or `BU_CDP_URL` per #4496) +
-   live acceptance: screenshot/snapshot round-trip, eval round-trip, end-to-end browser task
-3. ⬜ **final part**: remove the Playwright MCP server from disclaude; record parity deltas
-   explicitly (no silent gaps); migrate `skills/playwright-agent` / `skills/site-miner` consumers
+1. ✅ **part 1**: Skill contract — SKILL.md + README + capability mapping (wheel-evidenced)
+2. ✅ **part 2** (live acceptance, recorded in [#4496](https://github.com/hs3180/disclaude/issues/4496) /
+   `docs/cdp-endpoint.md` Scope-6, PR #4515): `BU_CDP_URL` attach, screenshot round-trip, script-injection
+   round-trip, tab management, cross-driver CDP sharing — all exercised against browser-use CLI 0.13.7
+3. ✅ **consumer retirement** (this PR): the two former Playwright-MCP consumer surfaces — the
+   `site-miner` preset agent (`agents/site-miner.md` + `skills/site-miner/`) and
+   `skills/playwright-agent/` — are **deleted** rather than migrated: site-mining is a plain
+   "invoke the browser-use skill from the conversation" flow (its wrapper added no dispatch value),
+   and playwright-agent's background-`/skill`-runtime never shipped. Browser automation now has one
+   surface: this skill (Bash + browser-use CLI, no MCP grants)
+4. ⬜ **final part**: remove the Playwright MCP server from disclaude (config example, package dep,
+   `@playwright/mcp` install surface); record parity deltas explicitly (no silent gaps)

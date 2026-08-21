@@ -475,4 +475,99 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       expect(r.stderr).toContain('Unknown command: bogus-command');
     });
   });
+
+  // ==========================================================================
+  // REST transport switch (Issue #4532 part 1)
+  //
+  // The CLI must reach the PrimaryNode over the REST API with NO Unix socket
+  // and no IPC fallback. It does so by setting DISCLAUDE_REST_IPC_ENABLED=true
+  // (plus the resolved base URL) BEFORE the first @disclaude/mcp-server import;
+  // core getIpcClient() and the mcp-server isIpcAvailable() probe then select
+  // the REST branch (RestIpcClient / GET /api/ping).
+  //
+  // These tests run WITHOUT a PrimaryNode: the REST face at the base URL is
+  // simply down (nothing listens on the loopback ports used below), which is
+  // exactly the #4532 scope-3 scenario — the CLI must report an actionable
+  // "start the main service" hint, not a raw fetch ECONNREFUSED.
+  //
+  // Port strategy: bind a listener on 127.0.0.1:0 to reserve an ephemeral
+  // port, close it, and use it as the base URL. The reservation makes an
+  // accidental collision with a real service vanishingly unlikely within the
+  // test's lifetime.
+  // ==========================================================================
+  describe('REST transport switch (#4532)', () => {
+    /** Reserve an ephemeral loopback port, release it, and return it. */
+    async function reserveEphemeralPort(): Promise<number> {
+      const net = await import('node:net');
+      return new Promise((resolve, reject) => {
+        const srv = net.createServer();
+        srv.listen(0, '127.0.0.1', () => {
+          const addr = srv.address();
+          const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+          srv.close(() => resolve(port));
+        });
+        srv.on('error', reject);
+      });
+    }
+
+    it(
+      'send_text against a down REST face -> actionable hint with the base URL, exit 1',
+      async () => {
+        const port = await reserveEphemeralPort();
+        const baseUrl = `http://127.0.0.1:${port}`;
+        const r = await runCli(
+          ['send_text', '--chat', 'oc_test', '--text', 'hi', '--base-url', baseUrl],
+          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' },
+        );
+        expect(r.code).toBe(1);
+        // stdout stays exactly one JSON object — the transport switch does not
+        // break the output contract even when the REST face is down.
+        const obj = parseSingleJson(r.stdout);
+        expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+        // The actionable hint names the base URL and how to fix it (#4532 scope 3)…
+        expect(String(obj.hint)).toContain(baseUrl);
+        expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
+        // …and the error is NOT a bare fetch stack: the CLI surfaced the mapped
+        // IPC-contract message (IPC service unavailable), not ENOTFOUND noise.
+        expect(String(obj.error)).not.toMatch(/ENOTFOUND|at /);
+      },
+      30000,
+    );
+
+    it(
+      'send_text honors DISCLAUDE_REST_IPC_BASE_URL when --base-url is absent (#4532 scope 2)',
+      async () => {
+        const port = await reserveEphemeralPort();
+        const baseUrl = `http://127.0.0.1:${port}`;
+        const r = await runCli(
+          ['send_text', '--chat', 'oc_test', '--text', 'hi'],
+          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532', DISCLAUDE_REST_IPC_BASE_URL: baseUrl },
+        );
+        expect(r.code).toBe(1);
+        const obj = parseSingleJson(r.stdout);
+        expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+        // The hint reflects the env-var base URL — proving the env wiring
+        // reached the transport, not just the flag path.
+        expect(String(obj.hint)).toContain(baseUrl);
+      },
+      30000,
+    );
+
+    it(
+      'push_to_agent against a down REST face -> actionable hint, exit contract intact',
+      async () => {
+        const port = await reserveEphemeralPort();
+        const baseUrl = `http://127.0.0.1:${port}`;
+        const r = await runCli(
+          ['push_to_agent', '--chat', 'oc_test', '--message', 'hi', '--base-url', baseUrl],
+          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' },
+        );
+        const obj = parseSingleJson(r.stdout);
+        expect(obj).toMatchObject({ ok: false, command: 'push_to_agent' });
+        expect(String(obj.hint)).toContain(baseUrl);
+        expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
+      },
+      30000,
+    );
+  });
 });

@@ -77,8 +77,9 @@ feishu:
   # Native streaming replies (Card Kit typewriter + breathing cursor).
   # Issue #4400 / #4208: gray-rollout flag. Default false — when off, the
   # channel reports supportsStreaming=false and the agent uses sendMessage.
-  # Issue #4510: 'p2p' scopes streaming to single chats only (groups/topics
-  # keep per-chunk sendMessage); true enables it everywhere.
+  # Issue #4510: p2p-first is built-in, not configured — when on, streaming
+  # applies to single chats only; groups/topics always keep per-chunk
+  # sendMessage.
   # streamingCard: false
 
   # Message deduplication settings

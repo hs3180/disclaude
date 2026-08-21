@@ -13,6 +13,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 | [5 分钟接入飞书](docs/quickstart.md) | 极简快速上手指南 |
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
 | [GitHub App 配置指南](docs/github-app-guide.md) | GitHub App 认证配置教程 |
+| [CDP Endpoint（无头主机浏览器）](docs/cdp-endpoint.md) | 无头主机的容器化 Chromium / CDP endpoint 契约与接入 |
 
 ## Features
 
@@ -274,6 +275,38 @@ Browser automation capabilities:
 - Interaction: `browser_click`, `browser_type`, `browser_fill_form`
 - Information: `browser_snapshot`, `browser_take_screenshot`
 - Advanced: `browser_evaluate`, `browser_drag`, `browser_wait_for`
+
+### Browser on Headless Hosts (CDP Endpoint)
+
+Pulling Chromium on a headless host is fragile (missing shared libs,
+sandbox/seccomp friction). The supported path is an **external CDP endpoint** —
+the containerized `playwright` compose service that any browser driver
+(browser-use CLI / Skill, Playwright, Playwright MCP) attaches to over
+[CDP](https://chromedevtools.org/docs/chrome-devtools-protocol/). Full contract:
+[`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) (#4496).
+
+**① Point drivers/skills at the endpoint:**
+
+```bash
+docker compose --profile playwright up -d   # optional profile; loopback-only publish
+# from a peer container:
+http://disclaude-playwright:${CDP_PORT:-9222}
+# from the host:
+http://localhost:${CDP_PORT:-9222}
+```
+
+**② Skill CDP config + attach/fallback semantics:** set `BU_CDP_URL` (or
+`BU_CDP_WS`) — the browser-use Skill/CLI then **attaches** to the external
+Chromium instead of self-launching. With neither set, it falls back to native
+self-launch (portable default). Attach failure is a **hard error**, never a
+silent fallback to self-launch — a silent fallback would mask a dead container.
+Priority: `BU_CDP_URL` > `BU_CDP_WS` > skill config field (details in
+[`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) Scope-3).
+
+**③ Sandbox tradeoff:** Chrome runs `--no-sandbox` inside the container,
+compensated by loopback-only port publishing, an opt-in compose profile, and
+1 CPU / 2 GB resource ceilings — reasoning and hardening path in
+[`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) Scope-4.
 
 ### Custom Skills
 

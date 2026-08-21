@@ -8,8 +8,8 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createLogger, getIpcClient, uploadFile } from '@disclaude/core';
-import { isIpcAvailable } from './ipc-utils.js';
+import { createLogger, uploadFile } from '@disclaude/core';
+import { isIpcAvailable, getRestIpcClient } from './ipc-utils.js';
 import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import type { SendFileResult } from './types.js';
 
@@ -26,7 +26,8 @@ async function uploadFileViaIpc(
   filePath: string,
   threadId?: string
 ): Promise<{ fileKey: string; fileType: string; fileName: string; fileSize: number }> {
-  const ipcClient = getIpcClient();
+  // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
+  const ipcClient = getRestIpcClient();
   const result = await uploadFile(ipcClient, chatId, filePath, threadId);
   if (!result.success) {
     const errorDetail = result.error ? `: ${result.error}` : '';

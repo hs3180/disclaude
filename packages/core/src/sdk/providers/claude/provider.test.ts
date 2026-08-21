@@ -418,18 +418,27 @@ describe('ClaudeSDKProvider', () => {
       expect(mockQuery).toHaveBeenCalled();
     });
 
-    // Issue #4442 (part 2): empty stream — the SDK yields zero messages
-    // (200-OK-zero-content / silent turn death). The provider must NOT let this
-    // complete silently: it elevates the case to a structured ERROR so the failure
-    // is observable in logs (the #4442 ask: 判错/上报 rather than 静默完成).
-    it('Issue #4442 (part 2): logs a structured ERROR when the SDK query yields zero messages (empty stream)', async () => {
+    // Issue #4442 (part 2 + part 3): empty stream — the SDK yields zero messages
+    // (200-OK-zero-content / silent turn death). Part 2 elevated the case to a
+    // structured ERROR; part 3 adds recovery — retry within the L1 budget, and
+    // when exhausted synthesize a terminal result (terminatedReason
+    // 'empty-stream') so the turn surfaces ❌ instead of silently completing.
+    // Retries disabled (DISCLAUDE_QUERY_MAX_RETRIES=0) isolates the exhaustion
+    // path: exactly one attempt, then the terminal result.
+    it('Issue #4442 (part 3): retries exhausted on empty stream → structured ERROR + terminal empty-stream result', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_QUERY_MAX_RETRIES = '0';
       loggerMock.error.mockClear();
 
       // Mock SDK query to return an empty async iterable (yields nothing).
-      mockQuery.mockReturnValue((async function* () {
-        /* empty stream — 200-OK but zero content events */
-      })());
+      mockQuery.mockImplementation(() =>
+        Object.assign(
+          (async function* () {
+            /* empty stream — 200-OK but zero content events */
+          })(),
+          { interrupt: vi.fn(), close: vi.fn() },
+        ),
+      );
 
       async function* testInput(): AsyncGenerator<UserInput> {
         yield { role: 'user', content: 'Hi' };
@@ -446,13 +455,73 @@ describe('ClaudeSDKProvider', () => {
         messages.push(msg);
       }
 
-      // Empty stream → zero messages yielded to the consumer (silent completion).
-      expect(messages.length).toBe(0);
-      // The silent completion is elevated to a structured ERROR referencing #4442.
+      // No retries (env=0) → exactly one query attempt.
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      // Part 3: the empty stream no longer ends silently — the consumer gets a
+      // terminal result tagged terminatedReason 'empty-stream'.
+      expect(messages.length).toBe(1);
+      expect(messages[0].type).toBe('result');
+      expect(messages[0].metadata?.terminatedReason).toBe('empty-stream');
+      // Part 2's structured ERROR still fires (observability preserved).
       expect(loggerMock.error).toHaveBeenCalledWith(
         expect.objectContaining({ totalMs: expect.any(Number), partialsObserved: false }),
         expect.stringMatching(/Issue #4442[\s\S]*zero messages/),
       );
+      delete process.env.DISCLAUDE_QUERY_MAX_RETRIES;
+    });
+
+    // Issue #4442 (part 3): recovery — an empty stream is retried within the L1
+    // budget with replayed (buffered) input, and a recovered attempt streams
+    // through normally. Same safety argument as the transient-error retry: zero
+    // messages were yielded, so the replay can't duplicate output.
+    it('Issue #4442 (part 3): retries an empty stream with replayed input and recovers', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+
+      const consumedPerAttempt: unknown[][] = [];
+      let callCount = 0;
+      mockQuery.mockImplementation((arg: { prompt?: AsyncIterable<unknown> }) => {
+        callCount++;
+        const consumed: unknown[] = [];
+        consumedPerAttempt.push(consumed);
+        const close = vi.fn();
+        if (callCount === 1) {
+          // First attempt: consumes the prompt but yields NOTHING (empty stream).
+          return Object.assign(
+            (async function* () {
+              for await (const msg of arg.prompt ?? []) { consumed.push(msg); }
+              /* 200-OK but zero content events */
+            })(),
+            { interrupt: vi.fn(), close },
+          );
+        }
+        // Retry: consumes the replayed prompt and yields a real message.
+        return Object.assign(
+          (async function* () {
+            for await (const msg of arg.prompt ?? []) { consumed.push(msg); }
+            yield { type: 'assistant', message: { content: [{ type: 'text', text: 'recovered from empty stream' }] } };
+          })(),
+          { interrupt: vi.fn(), close },
+        );
+      });
+
+      async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+
+      const result = provider.queryStream(testInput(), {
+        settingSources: ['user', 'project', 'local'], cwd: '/workspace',
+        env: { ANTHROPIC_API_KEY: 'sk-test-key' },
+      });
+
+      const messages: AgentMessage[] = [];
+      for await (const msg of result.iterator) { messages.push(msg); }
+
+      // The empty first attempt was retried (2 query calls) and the recovered
+      // message came through — no terminal result, no silent completion.
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(messages.some((m) => m.role === 'assistant')).toBe(true);
+      expect(messages.some((m) => m.metadata?.terminatedReason === 'empty-stream')).toBe(false);
+      // Input replay: both attempts consumed the SAME prompt.
+      expect(consumedPerAttempt[0]).toHaveLength(1);
+      expect(consumedPerAttempt[1]).toEqual(consumedPerAttempt[0]);
     });
 
     // Issue #4192 (L1): provider in-request retry on transient error before the

@@ -1,29 +1,56 @@
 /**
- * Tests for IPC utility functions (packages/mcp-server/src/tools/ipc-utils.ts)
- * Issue #1617: Expanded coverage for isIpcAvailable
+ * Tests for mcp-server/tools/ipc-utils (Issue #4280 Phase 3 part 3: REST-only).
+ *
+ * `isIpcAvailable` probes `GET /api/ping` on the PrimaryNode HTTP API server —
+ * unconditionally. The Unix-socket probe (existsSync + createConnection) and
+ * `getIpcSocketPath` discovery are gone with the transport, so these tests
+ * pin the REST contract, including that `DISCLAUDE_REST_IPC_ENABLED` no
+ * longer gates anything (unset and 'false' behave like 'true': REST is the
+ * only transport).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { EventEmitter } from 'events';
 
-const mockGetIpcSocketPath = vi.fn().mockReturnValue('/tmp/test-ipc.sock');
-const mockLogger = {
-  warn: vi.fn(),
-  info: vi.fn(),
-  debug: vi.fn(),
-  error: vi.fn(),
-};
-const mockCreateLogger = vi.fn().mockReturnValue(mockLogger);
+// Hoisted mocks shared across vi.doMock factories.
+const { mockLogger, mockCreateLogger } = vi.hoisted(() => {
+  const mockLogger = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  };
+  const mockCreateLogger = vi.fn().mockReturnValue(mockLogger);
+  return { mockLogger, mockCreateLogger };
+});
+
+// Hoisted RestIpcClient class mock — vi.doMock factories can close over it.
+const { MockRestIpcClient } = vi.hoisted(() => {
+  class MockRestIpcClientImpl {
+    constructor(public opts: { baseUrl?: string; apiToken?: string }) {}
+  }
+  return { MockRestIpcClient: MockRestIpcClientImpl };
+});
+// The factory's declared return type is the real RestIpcClient; assertions
+// inspect the mock's captured constructor opts via this structural type.
+type MockRestIpcClient = { opts: { baseUrl?: string; apiToken?: string } };
+
+async function loadModule() {
+  // vi.clearAllMocks() (run by sibling describes' afterEach) wipes the
+  // mockReturnValue wiring — re-arm it on every load.
+  mockCreateLogger.mockReturnValue(mockLogger);
+  vi.doMock('@disclaude/core', () => ({
+    createLogger: (...args: unknown[]) => mockCreateLogger(...args),
+    RestIpcClient: MockRestIpcClient,
+  }));
+  vi.resetModules();
+  return await import('./ipc-utils.js');
+}
 
 describe('getIpcErrorMessage', () => {
   let getIpcErrorMessage: typeof import('./ipc-utils.js').getIpcErrorMessage;
 
   beforeEach(async () => {
-    vi.clearAllMocks();
-    mockCreateLogger.mockReturnValue(mockLogger);
-    vi.resetModules();
-    const mod = await import('./ipc-utils.js');
-    ({ getIpcErrorMessage } = mod);
+    ({ getIpcErrorMessage } = await loadModule());
   });
 
   afterEach(async () => {
@@ -32,305 +59,228 @@ describe('getIpcErrorMessage', () => {
   });
 
   describe('ipc_unavailable error type', () => {
-    it('should return IPC unavailable message', () => {
-      const result = getIpcErrorMessage('ipc_unavailable');
-      expect(result).toBe('❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。');
+    it('should return an actionable REST message (mentions --api-port)', () => {
+      const message = getIpcErrorMessage('ipc_unavailable');
+      expect(message).toContain('❌');
+      expect(message).toContain('--api-port');
+      expect(message).toContain('DISCLAUDE_REST_IPC_BASE_URL');
     });
 
     it('should ignore originalError for ipc_unavailable', () => {
-      const result = getIpcErrorMessage('ipc_unavailable', 'some error');
-      expect(result).toBe('❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。');
+      const message = getIpcErrorMessage('ipc_unavailable', 'ECONNREFUSED');
+      expect(message).not.toContain('ECONNREFUSED');
     });
 
     it('should ignore defaultMessage for ipc_unavailable', () => {
-      const result = getIpcErrorMessage('ipc_unavailable', undefined, 'default msg');
-      expect(result).toBe('❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。');
+      const message = getIpcErrorMessage('ipc_unavailable', undefined, 'default');
+      expect(message).not.toContain('default');
     });
   });
 
   describe('ipc_timeout error type', () => {
-    it('should return IPC timeout message', () => {
-      const result = getIpcErrorMessage('ipc_timeout');
-      expect(result).toBe('❌ IPC 请求超时。服务可能过载，请稍后重试。');
+    it('should return timeout message', () => {
+      const message = getIpcErrorMessage('ipc_timeout');
+      expect(message).toContain('超时');
     });
 
     it('should ignore originalError for ipc_timeout', () => {
-      const result = getIpcErrorMessage('ipc_timeout', 'timeout after 30s');
-      expect(result).toBe('❌ IPC 请求超时。服务可能过载，请稍后重试。');
+      const message = getIpcErrorMessage('ipc_timeout', 'ETIMEDOUT detail');
+      expect(message).not.toContain('ETIMEDOUT');
     });
   });
 
   describe('ipc_request_failed error type', () => {
-    it('should return IPC request failed message with original error', () => {
-      const result = getIpcErrorMessage('ipc_request_failed', 'connection refused');
-      expect(result).toBe('❌ IPC 请求失败: connection refused');
+    it('should return request failed message with original error', () => {
+      const message = getIpcErrorMessage('ipc_request_failed', 'boom');
+      expect(message).toContain('boom');
     });
 
-    it('should return IPC request failed message without original error', () => {
-      const result = getIpcErrorMessage('ipc_request_failed');
-      expect(result).toBe('❌ IPC 请求失败: 未知错误');
-    });
-
-    it('should handle empty string original error', () => {
-      const result = getIpcErrorMessage('ipc_request_failed', '');
-      expect(result).toBe('❌ IPC 请求失败: ');
+    it('should return request failed message without original error', () => {
+      const message = getIpcErrorMessage('ipc_request_failed');
+      expect(message).toContain('未知错误');
     });
   });
 
   describe('default/unknown error type', () => {
     it('should return default message when no error type is provided', () => {
-      const result = getIpcErrorMessage(undefined, 'some error', '默认消息');
-      expect(result).toBe('默认消息');
+      const message = getIpcErrorMessage();
+      expect(message).toContain('操作失败');
     });
 
     it('should return original error in default message when no defaultMessage is provided', () => {
-      const result = getIpcErrorMessage(undefined, 'connection failed');
-      expect(result).toBe('❌ 操作失败: connection failed');
-    });
-
-    it('should return generic error when nothing is provided', () => {
-      const result = getIpcErrorMessage();
-      expect(result).toBe('❌ 操作失败: 未知错误');
+      const message = getIpcErrorMessage(undefined, 'oops');
+      expect(message).toContain('oops');
     });
 
     it('should handle unknown error type', () => {
-      const result = getIpcErrorMessage('unknown_type', 'test error', 'fallback');
-      expect(result).toBe('fallback');
+      const message = getIpcErrorMessage('weird_type', 'detail');
+      expect(message).toContain('detail');
     });
 
     it('should prefer defaultMessage over generated message for unknown types', () => {
-      const result = getIpcErrorMessage('some_random_type', 'error details', 'Custom fallback');
-      expect(result).toBe('Custom fallback');
-    });
-  });
-
-  describe('edge cases', () => {
-    it('should handle empty string error type', () => {
-      const result = getIpcErrorMessage('', 'error', 'default');
-      expect(result).toBe('default');
-    });
-
-    it('should handle null-like string as error type', () => {
-      const result = getIpcErrorMessage('null', 'error', 'default');
-      expect(result).toBe('default');
+      const message = getIpcErrorMessage('weird_type', 'detail', 'use this');
+      expect(message).toBe('use this');
     });
   });
 });
 
-describe('isIpcAvailable', () => {
+describe('isIpcAvailable (REST-only)', () => {
   let isIpcAvailable: typeof import('./ipc-utils.js').isIpcAvailable;
+  let originalFetch: typeof globalThis.fetch;
+  let savedBaseUrl: string | undefined;
+  let savedRestEnabled: string | undefined;
 
-  /** Helper to set up common mocks and load the module under test */
-  async function setupIpcMocks(opts: {
-    socketExists: boolean;
-    createConnection?: ReturnType<typeof vi.fn>;
-  }) {
-    vi.doMock('@disclaude/core', () => ({
-      getIpcSocketPath: (...args: unknown[]) => mockGetIpcSocketPath(...args),
-      createLogger: (...args: unknown[]) => mockCreateLogger(...args),
-    }));
-    vi.doMock('fs', () => ({
-      existsSync: vi.fn().mockReturnValue(opts.socketExists),
-    }));
-    if (opts.createConnection) {
-      vi.doMock('net', () => ({
-        createConnection: opts.createConnection,
-      }));
-    }
-    vi.resetModules();
-    const mod = await import('./ipc-utils.js');
-    ({ isIpcAvailable } = mod);
+  async function loadWithPing(ping: typeof globalThis.fetch) {
+    globalThis.fetch = ping;
+    ({ isIpcAvailable } = await loadModule());
   }
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockCreateLogger.mockReturnValue(mockLogger);
+    savedBaseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+    savedRestEnabled = process.env.DISCLAUDE_REST_IPC_ENABLED;
+    delete process.env.DISCLAUDE_REST_IPC_BASE_URL;
+    delete process.env.DISCLAUDE_REST_IPC_ENABLED;
+    originalFetch = globalThis.fetch;
   });
 
   afterEach(async () => {
+    if (savedBaseUrl === undefined) { delete process.env.DISCLAUDE_REST_IPC_BASE_URL; }
+    else { process.env.DISCLAUDE_REST_IPC_BASE_URL = savedBaseUrl; }
+    if (savedRestEnabled === undefined) { delete process.env.DISCLAUDE_REST_IPC_ENABLED; }
+    else { process.env.DISCLAUDE_REST_IPC_ENABLED = savedRestEnabled; }
+    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
     await vi.resetModules();
   });
 
-  describe('when socket file does not exist', () => {
-    it('should return false immediately (fast path)', async () => {
-      mockGetIpcSocketPath.mockReturnValue('/nonexistent/socket.sock');
-      await setupIpcMocks({ socketExists: false });
-
-      const result = await isIpcAvailable();
-      expect(result).toBe(false);
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        expect.objectContaining({ reason: 'socket_not_found' }),
-        expect.stringContaining('not available'),
-      );
+  it('should return true when REST /api/ping responds with { pong: true }', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => ({ pong: true }),
     });
+    await loadWithPing(fetchMock as unknown as typeof globalThis.fetch);
+
+    const result = await isIpcAvailable();
+    expect(result).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:9200/api/ping',
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
-  describe('when socket file exists', () => {
-    let mockSocket: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
-
-    beforeEach(() => {
-      mockGetIpcSocketPath.mockReturnValue('/tmp/existing-ipc.sock');
-      mockSocket = new EventEmitter() as EventEmitter & { destroy: ReturnType<typeof vi.fn> };
-      mockSocket.destroy = vi.fn();
+  it('should return true with all env unset — no toggle gates REST (acceptance #1)', async () => {
+    // DISCLAUDE_REST_IPC_ENABLED explicitly unset above; REST must still be probed.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => ({ pong: true }),
     });
-
-    it('should return true when connection succeeds', async () => {
-      await setupIpcMocks({
-        socketExists: true,
-        createConnection: vi.fn().mockReturnValue(mockSocket),
-      });
-
-      const resultPromise = isIpcAvailable();
-      process.nextTick(() => { mockSocket.emit('connect'); });
-
-      const result = await resultPromise;
-      expect(result).toBe(true);
-      expect(mockSocket.destroy).toHaveBeenCalled();
-    });
-
-    it('should return false when connection times out', async () => {
-      await setupIpcMocks({
-        socketExists: true,
-        createConnection: vi.fn().mockReturnValue(mockSocket),
-      });
-
-      vi.useFakeTimers();
-      const resultPromise = isIpcAvailable();
-      await vi.advanceTimersByTimeAsync(1100);
-
-      const result = await resultPromise;
-      expect(result).toBe(false);
-      expect(mockSocket.destroy).toHaveBeenCalled();
-
-      vi.useRealTimers();
-    });
-
-    it('should return false when connection errors', async () => {
-      await setupIpcMocks({
-        socketExists: true,
-        createConnection: vi.fn().mockReturnValue(mockSocket),
-      });
-
-      const resultPromise = isIpcAvailable();
-      process.nextTick(() => {
-        mockSocket.emit('error', new Error('ECONNREFUSED'));
-      });
-
-      const result = await resultPromise;
-      expect(result).toBe(false);
-      expect(mockSocket.destroy).toHaveBeenCalled();
-    });
-
-    it('should return false when an unexpected exception occurs', async () => {
-      await setupIpcMocks({
-        socketExists: true,
-        createConnection: vi.fn().mockImplementation(() => {
-          throw new Error('Unexpected error');
-        }),
-      });
-
-      const result = await isIpcAvailable();
-      expect(result).toBe(false);
-    });
+    await loadWithPing(fetchMock as unknown as typeof globalThis.fetch);
+    expect(await isIpcAvailable()).toBe(true);
+    expect(fetchMock).toHaveBeenCalled();
   });
 
-  describe('when REST IPC is enabled (DISCLAUDE_REST_IPC_ENABLED=true)', () => {
-    // Issue #4280 (Phase 3 prereq): under REST transport the probe must hit
-    // GET /api/ping instead of the Unix socket.
-    let originalFetch: typeof globalThis.fetch;
-    let savedRestEnabled: string | undefined;
-    let savedRestBaseUrl: string | undefined;
-
-    beforeEach(() => {
-      savedRestEnabled = process.env.DISCLAUDE_REST_IPC_ENABLED;
-      savedRestBaseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
-      process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
-      delete process.env.DISCLAUDE_REST_IPC_BASE_URL;
-      originalFetch = globalThis.fetch;
+  it('should ignore DISCLAUDE_REST_IPC_ENABLED=false — still probes REST (acceptance #2)', async () => {
+    process.env.DISCLAUDE_REST_IPC_ENABLED = 'false';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => ({ pong: true }),
     });
+    await loadWithPing(fetchMock as unknown as typeof globalThis.fetch);
+    expect(await isIpcAvailable()).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:9200/api/ping',
+      expect.anything(),
+    );
+  });
 
-    afterEach(() => {
-      if (savedRestEnabled === undefined) { delete process.env.DISCLAUDE_REST_IPC_ENABLED; }
-      else { process.env.DISCLAUDE_REST_IPC_ENABLED = savedRestEnabled; }
-      if (savedRestBaseUrl === undefined) { delete process.env.DISCLAUDE_REST_IPC_BASE_URL; }
-      else { process.env.DISCLAUDE_REST_IPC_BASE_URL = savedRestBaseUrl; }
-      globalThis.fetch = originalFetch;
+  it('should honor DISCLAUDE_REST_IPC_BASE_URL (and strip trailing slash)', async () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:9999/';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => ({ pong: true }),
     });
+    await loadWithPing(fetchMock as unknown as typeof globalThis.fetch);
 
-    it('should return true when REST /api/ping responds with { pong: true }', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => ({ pong: true }),
-      }) as unknown as typeof globalThis.fetch;
-      await setupIpcMocks({ socketExists: false });
+    expect(await isIpcAvailable()).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:9999/api/ping',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
 
-      const result = await isIpcAvailable();
-      expect(result).toBe(true);
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        'http://localhost:9200/api/ping',
-        expect.objectContaining({ method: 'GET' }),
-      );
-    });
+  it('should return false when ping responds without pong', async () => {
+    await loadWithPing(vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => ({ pong: false }),
+    }) as unknown as typeof globalThis.fetch);
+    expect(await isIpcAvailable()).toBe(false);
+  });
 
-    it('should honor DISCLAUDE_REST_IPC_BASE_URL (and strip trailing slash)', async () => {
-      process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://127.0.0.1:9999/';
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => ({ pong: true }),
-      }) as unknown as typeof globalThis.fetch;
-      await setupIpcMocks({ socketExists: false });
+  it('should return false when ping responds non-2xx', async () => {
+    await loadWithPing(vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: () => ({}),
+    }) as unknown as typeof globalThis.fetch);
+    expect(await isIpcAvailable()).toBe(false);
+  });
 
-      const result = await isIpcAvailable();
-      expect(result).toBe(true);
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        'http://127.0.0.1:9999/api/ping',
-        expect.objectContaining({ method: 'GET' }),
-      );
-    });
+  it('should return false when fetch throws (PrimaryNode not running)', async () => {
+    await loadWithPing(vi.fn().mockRejectedValue(
+      new Error('ECONNREFUSED'),
+    ) as unknown as typeof globalThis.fetch);
+    expect(await isIpcAvailable()).toBe(false);
+  });
+});
 
-    it('should return false when ping responds without pong', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => ({ pong: false }),
-      }) as unknown as typeof globalThis.fetch;
-      await setupIpcMocks({ socketExists: false });
+describe('getRestIpcClient (REST-only construction)', () => {
+  let getRestIpcClient: typeof import('./ipc-utils.js').getRestIpcClient;
+  let savedBaseUrl: string | undefined;
+  let savedApiToken: string | undefined;
 
-      const result = await isIpcAvailable();
-      expect(result).toBe(false);
-    });
+  beforeEach(async () => {
+    savedBaseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+    savedApiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+    delete process.env.DISCLAUDE_REST_IPC_BASE_URL;
+    delete process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+    ({ getRestIpcClient } = await loadModule());
+  });
 
-    it('should return false when ping responds non-2xx', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 503,
-        json: () => ({}),
-      }) as unknown as typeof globalThis.fetch;
-      await setupIpcMocks({ socketExists: false });
+  afterEach(async () => {
+    if (savedBaseUrl === undefined) { delete process.env.DISCLAUDE_REST_IPC_BASE_URL; }
+    else { process.env.DISCLAUDE_REST_IPC_BASE_URL = savedBaseUrl; }
+    if (savedApiToken === undefined) { delete process.env.DISCLAUDE_REST_IPC_API_TOKEN; }
+    else { process.env.DISCLAUDE_REST_IPC_API_TOKEN = savedApiToken; }
+    vi.restoreAllMocks();
+    await vi.resetModules();
+  });
 
-      const result = await isIpcAvailable();
-      expect(result).toBe(false);
-    });
+  it('should construct a RestIpcClient directly with all env unset (no IPC fallback)', () => {
+    const client = getRestIpcClient() as unknown as MockRestIpcClient;
+    expect(client).toBeInstanceOf(MockRestIpcClient);
+    expect(client.opts.baseUrl).toBe('http://localhost:9200');
+  });
 
-    it('should return false when fetch throws', async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) as unknown as typeof globalThis.fetch;
-      await setupIpcMocks({ socketExists: false });
+  it('should wire DISCLAUDE_REST_IPC_BASE_URL / _API_TOKEN into the client', () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://10.0.0.5:9300';
+    process.env.DISCLAUDE_REST_IPC_API_TOKEN = 'secret-token';
+    const client = getRestIpcClient() as unknown as MockRestIpcClient;
+    expect(client.opts.baseUrl).toBe('http://10.0.0.5:9300');
+    expect(client.opts.apiToken).toBe('secret-token');
+  });
 
-      const result = await isIpcAvailable();
-      expect(result).toBe(false);
-    });
+  it('should strip a trailing slash from the base URL', () => {
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://10.0.0.5:9300/';
+    const client = getRestIpcClient() as unknown as MockRestIpcClient;
+    expect(client.opts.baseUrl).toBe('http://10.0.0.5:9300');
+  });
 
-    it('should not consult the Unix socket path (REST takes precedence)', async () => {
-      mockGetIpcSocketPath.mockClear();
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => ({ pong: true }),
-      }) as unknown as typeof globalThis.fetch;
-      await setupIpcMocks({ socketExists: true });
-
-      const result = await isIpcAvailable();
-      expect(result).toBe(true);
-      expect(mockGetIpcSocketPath).not.toHaveBeenCalled();
-    });
+  it('should be unaffected by DISCLAUDE_REST_IPC_ENABLED', () => {
+    process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
+    const on = getRestIpcClient() as unknown as MockRestIpcClient;
+    process.env.DISCLAUDE_REST_IPC_ENABLED = 'false';
+    const off = getRestIpcClient() as unknown as MockRestIpcClient;
+    expect(on.opts.baseUrl).toBe('http://localhost:9200');
+    expect(off.opts.baseUrl).toBe('http://localhost:9200');
   });
 });

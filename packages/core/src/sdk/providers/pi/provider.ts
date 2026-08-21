@@ -30,6 +30,7 @@ import { adaptPiEvent, type PiAgentEvent } from './event-adapter.js';
 import { adaptInlineTool } from './inline-tool-adapter.js';
 import { adaptPiOptions } from './options-adapter.js';
 import { loadPiRuntime, toPiUserMessage, type PiAgentOptions } from './pi-runtime.js';
+import { createPiToolPermissionGate } from './tool-permission-gate.js';
 
 /**
  * Stream-function injection seam for `queryStream` (Issue #4386 part 3).
@@ -153,11 +154,21 @@ export class PiAgentProvider implements IAgentSDKProvider {
       const inputIterator = input[Symbol.asyncIterator]();
 
       const adaptedOptions = adaptPiOptions(options);
+      // Issue #4389 (S6, part 1): disclaude is the sole permission authority
+      // on the pi path (pi has no built-in perms). The gate rides pi's native
+      // pre-tool-call deny hook — invoked in-loop after argument validation,
+      // before EVERY tool execution — so no tool (inline is the only path
+      // since MCP was dropped) reaches its handler ungated. `null` when
+      // `disallowedTools` is absent/empty → hook omitted, behavior unchanged.
+      const toolPermissionGate = createPiToolPermissionGate(options);
       agent = new Agent({
         streamFn: streamFn as PiAgentOptions['streamFn'],
         initialState: {
           systemPrompt: adaptedOptions.systemPrompt ?? '',
         },
+        ...(toolPermissionGate
+          ? { beforeToolCall: toolPermissionGate satisfies PiAgentOptions['beforeToolCall'] }
+          : {}),
       } satisfies PiAgentOptions);
       const piAgent = agent;
       if (cancelRequested) {
@@ -279,7 +290,10 @@ export class PiAgentProvider implements IAgentSDKProvider {
   createInlineTool(definition: InlineToolDefinition): unknown {
     // Issue #4387 (S4): wrap the disclaude tool for pi's tool dispatch.
     // Zod→JSON-Schema parameter translation lives in the adapter —
-    // see inline-tool-adapter.ts.
+    // see inline-tool-adapter.ts. Permission enforcement is NOT here:
+    // #4389 lives in queryStream's beforeToolCall hook (per-query Agent
+    // instance), which gates every tool call the loop makes — inline tools
+    // included — without per-provider mutable state.
     return adaptInlineTool(definition);
   }
 

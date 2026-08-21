@@ -16,7 +16,7 @@ Rationale (all verifiable in this repo today):
 
 | #4496 requirement | Satisfied by existing infra |
 |---|---|
-| Dockerized headless Chromium, deps baked into image, no host packages | `mcr.microsoft.com/playwright:v1.60.0-noble` — the official image bundles Chromium + all shared libs (`docker-compose.yml`, `playwright` service) |
+| Dockerized headless Chromium, deps baked into image, no host packages | `mcr.microsoft.com/playwright:v1.62.0-noble` — the official image bundles Chromium + all shared libs (`docker-compose.yml`, `playwright` service); pinned to the Scope-6 smoke-tested version (Playwright 1.62.0 / chromium-1234 / Chromium 151.0.7922.34, #4528) |
 | Stable, cross-driver CDP endpoint | nginx-fronted endpoint at `CDP_PORT` (#4151 rationale), source-aware Host rewriting for container vs host clients (#4164) |
 | Liveness signal | compose healthcheck probing `GET /json/version` **through nginx** (#4099), so it catches both Chrome dying and proxy failure |
 
@@ -171,6 +171,10 @@ Two operational notes confirmed during the run:
   confirmation pending a Docker host)
 - [x] Optional: Playwright attaching to the same endpoint as a second driver
   (case 6 — cross-driver reuse confirmed, config-only as designed)
+- [x] README records the endpoint: driver/skill attach URLs (①), skill CDP
+  config entry + attach/fallback semantics (②), sandbox tradeoff (③) —
+  `README.md` → "Browser on Headless Hosts (CDP Endpoint)" (part 3), linking
+  here for the full contract
 
 ## Related
 

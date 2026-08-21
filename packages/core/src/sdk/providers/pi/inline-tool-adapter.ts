@@ -22,6 +22,12 @@
  * the structural-mirror approach used for the rest of pi's types here. The
  * model now sees the real parameter shape; execute still validates inputs
  * authoritatively through Zod at runtime.
+ *
+ * #4389 (permission gating) is NOT enforced here: it lives one level up, in
+ * queryStream's `beforeToolCall` hook (tool-permission-gate.ts), which the
+ * pi loop consults after argument validation and before EVERY tool
+ * execution — inline tools included — with per-query scoping. An earlier
+ * execute-level gate (#4538) was removed in favor of that single seam.
  */
 
 import { z } from 'zod';
@@ -152,8 +158,14 @@ function zodToJsonSchema(parameters: z.ZodType): PiToolParameters {
  * errors, handler errors) are THROWN rather than encoded in `content`: pi's
  * agent loop catches a thrown execute error and synthesizes an `isError` tool
  * result from the message (see `executePreparedToolCall` in pi-agent-core).
- * Keeping the success return always in the `{ content, details }` shape is what
- * lets the model consume tool output correctly.
+ * Keeping the success return always in the `{ content, details }` shape is
+ * what lets the model consume tool output correctly.
+ *
+ * Permission enforcement (#4389) is NOT in this adapter — see the module
+ * header: the `beforeToolCall` hook in queryStream gates every tool call
+ * before any `execute` is reached.
+ *
+ * @param definition - the disclaude tool to wrap.
  */
 export function adaptInlineTool(definition: InlineToolDefinition): PiAgentHarnessTool {
   return {

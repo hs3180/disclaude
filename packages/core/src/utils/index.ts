@@ -73,6 +73,9 @@ export {
 // Timing (Issue #3292)
 export { withTiming } from './timing.js';
 
+// Synthetic message-id registry (Issue #4166; re-exported for the #4391 replay wiring)
+export { isSyntheticMessageId } from './message-id.js';
+
 // File Utils (Issue #1637)
 export {
   detectFileExtension,
