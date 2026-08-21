@@ -7,8 +7,8 @@
  * @module mcp-server/tools/send-message
  */
 
-import { createLogger, getIpcClient, sendMessage, type IpcMethodResult } from '@disclaude/core';
-import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import { createLogger, sendMessage, type IpcMethodResult } from '@disclaude/core';
+import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback, setMessageSentCallback, getMessageSentCallback } from './callback-manager.js';
 import type { SendMessageResult } from './types.js';
@@ -29,7 +29,9 @@ async function sendMessageViaIpc(
   threadId?: string,
   mentions?: Array<{ openId: string; name?: string }>
 ): Promise<IpcMethodResult & { messageId?: string }> {
-  const ipcClient = getIpcClient();
+  // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient, no
+  // dual-path facade (default Unix socket removed).
+  const ipcClient = getRestIpcClient();
   return await sendMessage(ipcClient, chatId, text, threadId, mentions);
 }
 

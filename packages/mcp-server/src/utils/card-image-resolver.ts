@@ -15,7 +15,8 @@
 
 import { promises as fsp } from 'fs';
 import { resolve, extname } from 'path';
-import { createLogger, getIpcClient, uploadImage } from '@disclaude/core';
+import { createLogger, uploadImage } from '@disclaude/core';
+import { getRestIpcClient } from '../tools/ipc-utils.js';
 
 const logger = createLogger('CardImageResolver');
 
@@ -94,7 +95,8 @@ async function uploadAndGetImageKey(filePath: string): Promise<string | undefine
       return undefined;
     }
 
-    const ipcClient = getIpcClient();
+    // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
+    const ipcClient = getRestIpcClient();
     const result = await uploadImage(ipcClient, absolutePath);
 
     if (result.success && result.imageKey) {

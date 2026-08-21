@@ -14,14 +14,13 @@
 
 import {
   createLogger,
-  getIpcClient,
   sendInteractive,
   UnixSocketIpcServer,
   createInteractiveMessageHandler,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
 } from '@disclaude/core';
-import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient } from './ipc-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveOption } from './types.js';
 
@@ -138,7 +137,8 @@ export async function send_interactive_message(params: {
     // Issue #1571: Forward raw params via sendInteractive IPC.
     // Primary Node builds the card, sends it, and registers action prompts.
     logger.debug({ chatId, parentMessageId }, 'Forwarding raw params via sendInteractive IPC');
-    const ipcClient = getIpcClient();
+    // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
+    const ipcClient = getRestIpcClient();
     const result = await sendInteractive(ipcClient, chatId, {
       question,
       options,
@@ -218,8 +218,8 @@ export function unregisterFeishuHandlers(): void {
  * Start the IPC server for cross-process communication.
  *
  * IMPORTANT: This function should only be called by the Primary Node,
- * NOT by MCP Server child processes. MCP Server processes should connect
- * as clients using getIpcClient().
+ * NOT by MCP Server child processes. MCP Server processes connect as
+ * REST clients (Issue #4280 Phase 3 — getRestIpcClient).
  *
  * Issue #1572: Interactive context handlers are now no-op stubs since
  * context management has moved to Primary Node's InteractiveContextStore.

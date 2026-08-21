@@ -21,12 +21,6 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     warn: vi.fn(),
   }),
-  getIpcClient: () => ({
-    pushToAgent: mockPushToAgent,
-    connect: mockConnect,
-    isConnected: mockIsConnected,
-    disconnect: mockDisconnect,
-  }),
   // Issue #4129: pushToAgent is now also a standalone function exported from @disclaude/core.
   // Production calls pushToAgent(client, chatId, message). Drop the client arg so the
   // existing assertions (mockPushToAgent called with chatId, message) keep working.
@@ -38,6 +32,13 @@ const mockIsIpcAvailable = vi.fn().mockResolvedValue(true);
 vi.mock('./ipc-utils.js', () => ({
   isIpcAvailable: () => mockIsIpcAvailable(),
   getIpcErrorMessage: vi.fn((_type, err) => `Error: ${err}`),
+  // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
+  getRestIpcClient: () => ({
+    pushToAgent: mockPushToAgent,
+    connect: mockConnect,
+    isConnected: mockIsConnected,
+    disconnect: mockDisconnect,
+  }),
 }));
 
 import { push_to_agent } from './push-to-agent.js';
