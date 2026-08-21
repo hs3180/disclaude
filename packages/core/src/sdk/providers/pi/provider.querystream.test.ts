@@ -170,6 +170,41 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     expect(messages.map((m) => m.type)).toContain('result');
   });
 
+  // -------------------------------------------------------------------------
+  // Issue #4389 (S6, part 1): tool permission gate on the beforeToolCall hook
+  // -------------------------------------------------------------------------
+
+  it('installs the beforeToolCall deny hook when disallowedTools is non-empty (#4389)', async () => {
+    fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+    await collect(
+      provider
+        .queryStream(inputs(userInput('hi')), {
+          ...baseOptions(),
+          disallowedTools: ['CronCreate'],
+        })
+        .iterator,
+    );
+    const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
+    expect(typeof ctorOptions.beforeToolCall).toBe('function');
+    // And the installed hook actually denies the disallowed tool (#4389
+    // acceptance: a disallowed call does not execute — `{block:true}` is
+    // what pi's loop converts into an error tool result pre-execution).
+    const verdict = (await (ctorOptions.beforeToolCall as (ctx: unknown) => Promise<unknown>)({
+      assistantMessage: { role: 'assistant', content: [] },
+      toolCall: { type: 'toolCall', id: 't1', name: 'CronCreate', arguments: {} },
+      args: {},
+      context: {},
+    })) as { block?: boolean; reason?: string } | undefined;
+    expect(verdict).toEqual({ block: true, reason: expect.stringContaining('CronCreate') });
+  });
+
+  it('omits the beforeToolCall hook when disallowedTools is absent (#4389 — behavior unchanged)', async () => {
+    fakeState.scripts = [[{ type: 'agent_end', messages: [] }]];
+    await collect(provider.queryStream(inputs(userInput('hi')), baseOptions()).iterator);
+    const ctorOptions = fakeState.ctorOptions as { beforeToolCall?: unknown };
+    expect(ctorOptions.beforeToolCall).toBeUndefined();
+  });
+
   it('streams a plain-text turn: text deltas then result', async () => {
     fakeState.scripts = [
       [

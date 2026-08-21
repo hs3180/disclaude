@@ -23,17 +23,15 @@
  * model now sees the real parameter shape; execute still validates inputs
  * authoritatively through Zod at runtime.
  *
- * #4389 scope (S6, part 1): the permission gate. pi has no built-in permission
- * system, and this adapter is the pi backend's ONLY tool injection point (the
- * 2026-08-07 MCP-removal decision) — so `adaptInlineTool` routes every
- * `execute` through a disclaude-owned `PiPermissionGate` BEFORE the tool
- * handler runs (permission-gate.ts). A deny throws with the gate's reason; pi
- * converts the throw into an isError tool result the model can react to.
+ * #4389 (permission gating) is NOT enforced here: it lives one level up, in
+ * queryStream's `beforeToolCall` hook (tool-permission-gate.ts), which the
+ * pi loop consults after argument validation and before EVERY tool
+ * execution — inline tools included — with per-query scoping. An earlier
+ * execute-level gate (#4538) was removed in favor of that single seam.
  */
 
 import { z } from 'zod';
 import type { InlineToolDefinition } from '../../types.js';
-import { ALLOW_ALL_GATE, type PiPermissionGate } from './permission-gate.js';
 
 /** Mirror of pi's `TextContent` (`{ type: 'text', text }`). */
 export interface PiTextContent {
@@ -151,30 +149,25 @@ function zodToJsonSchema(parameters: z.ZodType): PiToolParameters {
  *
  * The execute wrapper:
  * 1. Honors an already-aborted signal (throws).
- * 2. Asks the permission gate (#4389) — a deny throws with the gate's reason
- *    BEFORE the handler runs (the deny path is the threat-model invariant:
- *    a disallowed tool call does not execute).
- * 3. Validates `params` through the disclaude Zod schema (authoritative).
- * 4. Invokes the disclaude handler with the parsed params.
- * 5. Shapes the success value as a pi `AgentToolResult` (`content` +
+ * 2. Validates `params` through the disclaude Zod schema (authoritative).
+ * 3. Invokes the disclaude handler with the parsed params.
+ * 4. Shapes the success value as a pi `AgentToolResult` (`content` +
  *    `details`).
  *
- * Per pi's `AgentTool.execute` contract, failures (abort, permission denies,
- * param-validation errors, handler errors) are THROWN rather than encoded in
- * `content`: pi's agent loop catches a thrown execute error and synthesizes an
- * `isError` tool result from the message (see `executePreparedToolCall` in
- * pi-agent-core). Keeping the success return always in the `{ content, details }`
- * shape is what lets the model consume tool output correctly.
+ * Per pi's `AgentTool.execute` contract, failures (abort, param-validation
+ * errors, handler errors) are THROWN rather than encoded in `content`: pi's
+ * agent loop catches a thrown execute error and synthesizes an `isError` tool
+ * result from the message (see `executePreparedToolCall` in pi-agent-core).
+ * Keeping the success return always in the `{ content, details }` shape is
+ * what lets the model consume tool output correctly.
+ *
+ * Permission enforcement (#4389) is NOT in this adapter — see the module
+ * header: the `beforeToolCall` hook in queryStream gates every tool call
+ * before any `execute` is reached.
  *
  * @param definition - the disclaude tool to wrap.
- * @param gate - disclaude-owned permission gate consulted before every
- *   execution (#4389). Defaults to allow-all (pre-#4389 behavior) so callers
- *   that have not installed a policy are unaffected.
  */
-export function adaptInlineTool(
-  definition: InlineToolDefinition,
-  gate: PiPermissionGate = ALLOW_ALL_GATE,
-): PiAgentHarnessTool {
+export function adaptInlineTool(definition: InlineToolDefinition): PiAgentHarnessTool {
   return {
     name: definition.name,
     label: definition.name,
@@ -184,13 +177,6 @@ export function adaptInlineTool(
     execute: async (_toolCallId, params, signal, _onUpdate, _context) => {
       if (signal?.aborted) {
         throw new Error('aborted before execution');
-      }
-      // #4389: disclaude is the sole permission authority on the pi path —
-      // consult the gate before anything else touches the handler. The deny
-      // reason becomes the isError text the model sees.
-      const decision = gate.decide({ toolName: definition.name, args: params });
-      if (!decision.allowed) {
-        throw new Error(`permission denied: ${decision.reason}`);
       }
       // Authoritative param validation via the disclaude Zod schema.
       // Throws on invalid input — pi converts to an isError tool result.
