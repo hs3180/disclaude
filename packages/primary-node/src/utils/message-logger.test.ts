@@ -128,10 +128,7 @@ describe('MessageLogger.getChatHistory', () => {
 
     // Files are appended oldest→newest, so the newest messages are at the END.
     // (Replaces the old all-'A' case which could not tell head from tail.)
-    await fs.writeFile(
-      path.join(dateDir, 'chat-trunc.md'),
-      'OLD'.repeat(50) + 'NEW'.repeat(50),
-    );
+    await fs.writeFile(path.join(dateDir, 'chat-trunc.md'), 'OLD'.repeat(50) + 'NEW'.repeat(50));
 
     const result = await logger.getChatHistory('chat-trunc');
 
@@ -155,15 +152,15 @@ describe('MessageLogger.getChatHistory', () => {
     }
     await fs.writeFile(
       path.join(tmpDir, 'chat-logs', '2026-04-04', 'chat-4171.md'),
-      `${'X'.repeat(100)}RECENT_NEWEST`,
+      `${'X'.repeat(100)}RECENT_NEWEST`
     );
     await fs.writeFile(
       path.join(tmpDir, 'chat-logs', '2026-04-03', 'chat-4171.md'),
-      `${'Y'.repeat(100)}MID_TAIL`,
+      `${'Y'.repeat(100)}MID_TAIL`
     );
     await fs.writeFile(
       path.join(tmpDir, 'chat-logs', '2026-04-02', 'chat-4171.md'),
-      `${'Z'.repeat(100)}OLD_TAIL`,
+      `${'Z'.repeat(100)}OLD_TAIL`
     );
 
     const result = await logger.getChatHistory('chat-4171');
@@ -296,7 +293,7 @@ describe('MessageLogger.logIncomingMessage', () => {
     // Find today's log directory
     const chatDir = path.join(tmpDir, 'chat-logs');
     const dirs = await fs.readdir(chatDir);
-    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const dateDir = dirs.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     expect(dateDir).toBeDefined();
 
     const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat_xyz.md'), 'utf-8');
@@ -313,12 +310,17 @@ describe('MessageLogger.logIncomingMessage', () => {
 
   it('should use provided timestamp in log entry', async () => {
     await logger.logIncomingMessage(
-      'msg_003', 'user1', 'chat1', 'Timed message', 'text', '2026-01-15T10:30:00.000Z',
+      'msg_003',
+      'user1',
+      'chat1',
+      'Timed message',
+      'text',
+      '2026-01-15T10:30:00.000Z'
     );
 
     const chatDir = path.join(tmpDir, 'chat-logs');
     const dirs = await fs.readdir(chatDir);
-    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const dateDir = dirs.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
     expect(logContent).toContain('2026-01-15T10:30:00.000Z');
   });
@@ -329,7 +331,7 @@ describe('MessageLogger.logIncomingMessage', () => {
 
     const chatDir = path.join(tmpDir, 'chat-logs');
     const dirs = await fs.readdir(chatDir);
-    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const dateDir = dirs.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
     // Numeric timestamp should be converted to ISO string
     expect(logContent).toContain('2024-01-15');
@@ -341,7 +343,7 @@ describe('MessageLogger.logIncomingMessage', () => {
 
     const chatDir = path.join(tmpDir, 'chat-logs');
     const dirs = await fs.readdir(chatDir);
-    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const dateDir = dirs.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat_multi.md'), 'utf-8');
 
     expect(logContent).toContain('First');
@@ -374,7 +376,7 @@ describe('MessageLogger.logCardInteraction', () => {
 
     const chatDir = path.join(tmpDir, 'chat-logs');
     const dirs = await fs.readdir(chatDir);
-    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const dateDir = dirs.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     expect(dateDir).toBeDefined();
 
     const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat_xyz.md'), 'utf-8');
@@ -422,7 +424,7 @@ describe('MessageLogger.logOutgoingMessage', () => {
 
     const chatDir = path.join(tmpDir, 'chat-logs');
     const dirs = await fs.readdir(chatDir);
-    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const dateDir = dirs.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
 
     expect(logContent).toContain('🤖');
@@ -435,7 +437,7 @@ describe('MessageLogger.logOutgoingMessage', () => {
 
     const chatDir = path.join(tmpDir, 'chat-logs');
     const dirs = await fs.readdir(chatDir);
-    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const dateDir = dirs.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
 
     expect(logContent).toContain('Default type');
@@ -450,12 +452,16 @@ describe('MessageLogger.logOutgoingMessage', () => {
 
   it('should use provided timestamp for outgoing message', async () => {
     await logger.logOutgoingMessage(
-      'msg_bot4', 'chat1', 'Timed bot', 'text', '2026-06-01T12:00:00.000Z',
+      'msg_bot4',
+      'chat1',
+      'Timed bot',
+      'text',
+      '2026-06-01T12:00:00.000Z'
     );
 
     const chatDir = path.join(tmpDir, 'chat-logs');
     const dirs = await fs.readdir(chatDir);
-    const dateDir = dirs.find(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    const dateDir = dirs.find((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
     const logContent = await fs.readFile(path.join(chatDir, dateDir!, 'chat1.md'), 'utf-8');
     expect(logContent).toContain('2026-06-01T12:00:00.000Z');
   });
@@ -501,6 +507,77 @@ describe('MessageLogger.isMessageProcessed / clearCache', () => {
     expect(logger.isMessageProcessed('msg_a')).toBe(true);
     expect(logger.isMessageProcessed('msg_b')).toBe(true);
     expect(logger.isMessageProcessed('msg_c')).toBe(false);
+  });
+});
+
+describe('MessageLogger.processedMessageIds bound (#4544)', () => {
+  let tmpDir: string;
+  let logger: MessageLogger;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'message-logger-test-'));
+    mockState.workspaceDir = tmpDir;
+    mockState.sessionConfig = { historyDays: 7, maxContextLength: 10000 };
+    logger = new MessageLogger();
+    await logger.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('should evict oldest entries (FIFO) when the cache exceeds 10k', () => {
+    // Filling via the real registration path would need 10k log writes, so
+    // seed the Set directly (same approach as message-listener.test.ts) and
+    // exercise the eviction through rememberProcessedId.
+    const ids = (logger as any).processedMessageIds as Set<string>;
+    const MAX_SIZE = 10_000;
+
+    for (let i = 0; i < MAX_SIZE + 100; i++) {
+      ids.add(`msg-${i}`);
+    }
+    expect(ids.size).toBe(MAX_SIZE + 100);
+
+    (logger as any).rememberProcessedId('msg_new');
+
+    // 10_100 + 1 - 5_000 evicted = 5_101 remaining
+    expect(ids.size).toBe(5_101);
+    // Oldest are gone, the insertion-recent tail and the new id survive.
+    expect(ids.has('msg-0')).toBe(false);
+    expect(ids.has('msg-4999')).toBe(false);
+    expect(ids.has('msg-5000')).toBe(true);
+    expect(ids.has('msg_new')).toBe(true);
+    // The public dedup surface reflects the eviction.
+    expect(logger.isMessageProcessed('msg-0')).toBe(false);
+    expect(logger.isMessageProcessed('msg-5000')).toBe(true);
+  });
+
+  it('should never exceed the bound across successive eviction rounds', () => {
+    const ids = (logger as any).processedMessageIds as Set<string>;
+
+    for (let i = 0; i < 10_000; i++) {
+      ids.add(`msg-${i}`);
+    }
+    for (let i = 0; i < 20_000; i++) {
+      (logger as any).rememberProcessedId(`extra-${i}`);
+    }
+
+    expect(ids.size).toBeLessThanOrEqual(10_001);
+    expect(ids.has('extra-19999')).toBe(true);
+    expect(ids.has('msg-0')).toBe(false);
+  });
+
+  it('should not evict when at or below the bound', () => {
+    const ids = (logger as any).processedMessageIds as Set<string>;
+
+    for (let i = 0; i < 10_000; i++) {
+      (logger as any).rememberProcessedId(`msg-${i}`);
+    }
+
+    // Exactly at the bound: no eviction, nothing lost.
+    expect(ids.size).toBe(10_000);
+    expect(ids.has('msg-0')).toBe(true);
+    expect(logger.isMessageProcessed('msg-0')).toBe(true);
   });
 });
 
