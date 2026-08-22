@@ -18,6 +18,11 @@
 // A future broadening PR either updates these expectations deliberately or
 // fails CI loudly.
 //
+// #4373 part 2 adds titleMentionsIssue — the tiering heuristic behind the
+// weak-ref advisory caveat's "likely shipped" vs "context-only" split. It is
+// deliberately still advisory (no auto-exclusion), but the tier assignment is
+// load-bearing for reader attention, so the boundary cases are pinned too.
+//
 // Scope notes (why adding this file is safe — mirrors skills/channel/cli.test.ts,
 // the precedent set by #4467):
 //  - `npm run lint` only targets the packages source dirs, so this file is NOT
@@ -33,7 +38,7 @@
 import { describe, it, expect } from "vitest";
 // The extractors are pure functions exported from scan.mjs.
 // @ts-expect-error — .mjs module has no type declarations; skills/ is not type-checked.
-import { extractOpenPRRefs, extractShippedIssueNums } from "./scan.mjs";
+import { extractOpenPRRefs, extractShippedIssueNums, titleMentionsIssue } from "./scan.mjs";
 
 /** Cross-referenced event as shaped by GRAPHQL_QUERY's timelineItems nodes. */
 const xref = (sourceNumber: number, state: string, willCloseTarget: boolean) => ({
@@ -171,5 +176,43 @@ describe("scan.mjs extractShippedIssueNums (#4499 per-issue willCloseTarget filt
     const warnings: string[] = [];
     extractShippedIssueNums(EPIC_CONTEXT_XREFS, (msg: string) => warnings.push(msg));
     expect(warnings).toHaveLength(0);
+  });
+});
+
+describe("scan.mjs titleMentionsIssue (#4373 part 2 advisory tiering)", () => {
+  // Real titles, verbatim from the repo's merged-PR history. Tier 1 ("likely
+  // shipped") is a weak-ref merged PR whose title carries the issue's own #N —
+  // this repo's covering-PR convention. Tier 2 ("context-only") is epic
+  // lineage: the title names a DIFFERENT issue's number.
+  it("tier 1: covering-PR title conventions match their own issue number", () => {
+    // "fix(message-builder): inject lark-cli self-service guidance by isTopicThread (#4402)"
+    expect(titleMentionsIssue("fix(message-builder): inject lark-cli self-service guidance by isTopicThread (#4402)", 4402)).toBe(true);
+    // "feat(config): agentBackend selector for agent SDK runtime (claude|pi), default claude (#4388 part 1)"
+    expect(titleMentionsIssue("feat(config): agentBackend selector for agent SDK runtime (claude|pi), default claude (#4388 part 1)", 4388)).toBe(true);
+    // "docs #4388 (part 2): pi backend (agentBackend) guide page"
+    expect(titleMentionsIssue("docs #4388 (part 2): pi backend (agentBackend) guide page", 4388)).toBe(true);
+  });
+
+  it("tier 2: epic-lineage titles name a different issue's number, not the epic's", () => {
+    // #4168's #4376-proof refs: part-series PRs titled after sub-issue #4279.
+    expect(titleMentionsIssue("feat #4279 (part 1): add GET /api/ping REST health endpoint", 4168)).toBe(false);
+    expect(titleMentionsIssue("feat #4280 (part 1): make isIpcAvailable REST-aware (probe REST /api/ping)", 4168)).toBe(false);
+    // #4039's refs: loop PRs titled after #4193.
+    expect(titleMentionsIssue("feat #4193 (part A): LOOP.md loop definition file — spec, parser, runner startFromLoopMd", 4039)).toBe(false);
+  });
+
+  it("does not prefix-match a longer number sharing the digits (#44 vs #440)", () => {
+    expect(titleMentionsIssue("fix #4402: something", 44)).toBe(false);
+    expect(titleMentionsIssue("fix #4402: something", 4402)).toBe(true);
+  });
+
+  it("does not match the number without a # prefix", () => {
+    expect(titleMentionsIssue("fix 4402: plain digits are not refs", 4402)).toBe(false);
+  });
+
+  it("tolerates null/undefined/empty titles", () => {
+    expect(titleMentionsIssue(undefined, 4402)).toBe(false);
+    expect(titleMentionsIssue(null, 4402)).toBe(false);
+    expect(titleMentionsIssue("", 4402)).toBe(false);
   });
 });
