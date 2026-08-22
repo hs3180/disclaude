@@ -22,7 +22,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 - **Persistent conversations** - Per-user session management (in-memory)
 - **Slash commands** - `/reset`, `/status`, `/help` for quick actions
 - **Multi-model support** - Anthropic Claude or GLM (Zhipu AI)
-- **Browser automation** - Playwright MCP tools for web interaction
+- **Browser automation** - browser-use Skill (CLI + shared CDP endpoint; the Playwright MCP server is retired)
 - **Custom skills** - Extensible workflow system (`.claude/skills/`)
 - **Message deduplication** - Prevents duplicate responses in WebSocket mode
 - **PM2 production ready** - Background service with log management
@@ -38,7 +38,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 | Code reading/editing/writing | ✅ Full support via chat |
 | Bash command execution | ✅ Real-time feedback |
 | File system operations | ✅ Glob, grep, read, write |
-| Browser automation | ✅ Playwright MCP (15+ tools) |
+| Browser automation | ✅ browser-use Skill (CDP attach, script injection) |
 | Custom skills | ✅ `implement-feature`, `deep-search` |
 | Session management | ✅ In-memory per user |
 | Message deduplication | ✅ WebSocket event handling |
@@ -268,20 +268,21 @@ Ruliu (Baidu InfoFlow) is supported via HTTP Webhook. Configuration:
 
 > **Note**: Web tools (`WebSearch`, `WebFetch`) are disabled by default for security. To enable, modify `allowedTools` in `src/agent/client.ts`.
 
-### MCP Tools (Playwright)
+### Browser Automation (browser-use Skill)
 
-Browser automation capabilities:
-- Navigation: `browser_navigate`, `browser_navigate_back`
-- Interaction: `browser_click`, `browser_type`, `browser_fill_form`
-- Information: `browser_snapshot`, `browser_take_screenshot`
-- Advanced: `browser_evaluate`, `browser_drag`, `browser_wait_for`
+The Playwright MCP server is **removed** (#4460). Browser automation goes through the
+[browser-use Skill](skills/browser-use/SKILL.md) — pipe Python on stdin to the
+`browser-use` CLI; first-class `js()` / `cdp()` for script injection:
+- Navigation / interaction: `new_tab(url)`, `goto_url(url)`, `click_at_xy(x, y)`, `type_text`, `fill_input`
+- Information: `print(page_info())` (a11y snapshot), `capture_screenshot()` → path
+- Advanced: `js(code)` (eval), `cdp(method, …)` (raw CDP), tab management
 
 ### Browser on Headless Hosts (CDP Endpoint)
 
 Pulling Chromium on a headless host is fragile (missing shared libs,
 sandbox/seccomp friction). The supported path is an **external CDP endpoint** —
 the containerized `playwright` compose service that any browser driver
-(browser-use CLI / Skill, Playwright, Playwright MCP) attaches to over
+(browser-use CLI / Skill, Playwright library) attaches to over
 [CDP](https://chromedevtools.org/docs/chrome-devtools-protocol/). Full contract:
 [`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) (#4496).
 
@@ -530,13 +531,13 @@ This architecture enables:
 | Model not found | Verify model name in `disclaude.config.yaml` |
 | Rate limited | Check API quota/billing |
 
-### MCP tools not working
+### Browser automation not working
 
 | Symptom | Solution |
 |---------|----------|
-| Tool not found | Ensure `@playwright/mcp` is installed |
-| Access denied | Check tool is in `allowedTools` list in `src/agent/client.ts` |
-| Browser errors | Run `npm install playwright` (if standalone) |
+| `browser-use: command not found` | Install the browser-use CLI (see `skills/browser-use/README.md` → Runtime) |
+| CDP attach fails | Start the endpoint (`docker compose --profile playwright up -d`) and set `BU_CDP_URL` — see `docs/cdp-endpoint.md` |
+| Browser errors | Check the CDP endpoint is reachable: `curl http://disclaude-playwright:9222/json/version` |
 
 ### PM2 issues
 
@@ -565,7 +566,7 @@ npm run pm2:stop && npm run pm2:start
 ### Current Status
 
 - ✅ Feishu/Lark integration (WebSocket bot)
-- ✅ MCP tool support (Playwright)
+- ✅ Browser automation via browser-use Skill (Playwright MCP retired)
 - ✅ Custom skills system
 - ✅ Session management (in-memory)
 - 🔜 Working toward autonomous task completion milestones
