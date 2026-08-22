@@ -356,6 +356,65 @@ export function titleMentionsIssue(title, issueNum) {
 }
 
 /**
+ * Split the tier-1 ("likely shipped") weak-ref list into ready-to-verify work
+ * items, one per issue (#4373 part 3).
+ *
+ * Part 2 tiers weak refs by title-mention but renders them as flat Markdown
+ * lines — a solver tick then re-derives the verification step by hand each
+ * round (exactly what this repo's issue-solver ticks have been doing). Part 3
+ * shapes the same advisory data as a per-issue record so the caveat section
+ * can be consumed programmatically: each entry carries the issue and its
+ * title-hit merged refs as PR numbers sorted descending (newest merge first —
+ * the natural order to grep a clone for the anchor). Pure — no I/O.
+ *
+ * @param {Array<{number: number, title?: string | null}>} candidates the scan's candidate issues
+ * @param {Map<number, {titleHit: Array<{pr: number, title?: string}>, contextOnly: Array<unknown>}>} weakRefsByIssue
+ * @returns {Array<{number: number, title: string, mergedPRs: number[]}>}
+ */
+export function buildVerificationQueue(candidates, weakRefsByIssue) {
+  const queue = [];
+  for (const issue of candidates) {
+    const refs = weakRefsByIssue.get(issue.number);
+    if (!refs || !refs.titleHit.length) continue;
+    queue.push({
+      number: issue.number,
+      title: (issue.title || "").trim(),
+      mergedPRs: refs.titleHit.map((r) => r.pr).sort((a, b) => b - a),
+    });
+  }
+  // Newest likely-shipped issue first — cheap, stable tie-break on number.
+  return queue.sort((a, b) => b.number - a.number);
+}
+
+/**
+ * Render the part-3 batch-verification block (#4373 part 3).
+ *
+ * One `git log --grep` line per tier-1 issue against a clone of `main`: if
+ * every listed merge is present, the anchor landed and the issue is a
+ * close-hygiene candidate, not a development opportunity. Pure — no I/O.
+ *
+ * @param {Array<{number: number, title: string, mergedPRs: number[]}>} queue output of buildVerificationQueue
+ * @returns {string} Markdown block (empty string for an empty queue)
+ */
+export function renderVerificationBlock(queue) {
+  if (!queue.length) return "";
+  const lines = [
+    `#### Batch verification (#4373 part 3)`,
+    ``,
+    `Run these in a clone of \`main\` — every listed merge present means the issue's work already shipped (close-hygiene, not a dev opportunity):`,
+    ``,
+  ];
+  for (const item of queue) {
+    const greps = item.mergedPRs
+      .slice(0, 3)
+      .map((n) => `git log --oneline --grep="#${n}[^0-9]" | head -1`)
+      .join(" && ");
+    lines.push(`- **#${item.number}** (merged: ${item.mergedPRs.join(", ")}): ${greps}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+/**
  * Issue numbers whose work already shipped, resolved per open issue via
  * GitHub's authoritative closing-link table (#4375). Each open issue's
  * CROSS_REFERENCED_EVENT entries carry `willCloseTarget` — GitHub's own link
@@ -556,6 +615,10 @@ async function main() {
         md += `- **#${issue.number}** ${issue.title}\n`;
         for (const r of refs.titleHit.slice(0, 3)) md += `  - ← merged #${r.pr}${r.title ? ` _"${r.title}"_` : ""}\n`;
       }
+      md += `\n`;
+      // #4373 part 3: the same tier-1 data as a batch-verification checklist —
+      // copy-paste grep commands instead of a hand-derived per-issue routine.
+      md += renderVerificationBlock(buildVerificationQueue(candidates, weakRefsByIssue));
       md += `\n`;
     }
     if (contextOnlyList.length) {
