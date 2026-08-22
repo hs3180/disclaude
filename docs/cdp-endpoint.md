@@ -55,12 +55,14 @@ The endpoint is then reachable at:
 # Playwright (library)
 chromium.connectOverCDP("http://disclaude-playwright:9222")
 
-# Playwright MCP (config in disclaude.config.yaml → tools.mcpServers.playwright)
-args: ["-y", "@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
-
 # browser-use CLI / Skill — see config contract below
 BU_CDP_URL=http://disclaude-playwright:9222 browser-use ...
 ```
+
+> The Playwright MCP driver entry (`tools.mcpServers.playwright`) was **removed** in
+> #4460's final part — disclaude no longer consumes the endpoint over MCP; the
+> browser-use Skill (`BU_CDP_URL`) is the in-repo consumer. The endpoint itself is
+> unchanged and any external CDP client (Playwright library included) still attaches.
 
 ## Skill ↔ CDP configuration contract (Scope-3, the #4460 interface face)
 
