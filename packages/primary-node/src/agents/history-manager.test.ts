@@ -47,10 +47,10 @@ function makeCallbacks(
   } as any;
 }
 
-function makeManager(callbacks = makeCallbacks()) {
+function makeManager(callbacks = makeCallbacks(), logger = makeLogger()) {
   return new HistoryManager({
     chatId: 'oc_test',
-    logger: makeLogger() as any,
+    logger: logger as any,
     callbacks,
   });
 }
@@ -262,6 +262,59 @@ describe('HistoryManager (Issue #4125 part 2)', () => {
       await mgr.loadPersistedHistory();
       expect(mgr.persistedHistoryContext).toBe('second');
       expect(getChatHistory).toHaveBeenCalledTimes(3); // persisted x2 + firstMessage x1
+    });
+  });
+
+  describe('reloadFirstMessageHistory (Issue #4391 §6 history re-injection)', () => {
+    it('force-refetches and re-stashes context even after first-message load already ran', async () => {
+      const getChatHistory = vi
+        .fn()
+        .mockResolvedValueOnce('initial history') // original first-message load (consumed by the broken turn)
+        .mockResolvedValueOnce('refreshed history'); // re-injection fetch
+      const callbacks = makeCallbacks({ getChatHistory });
+      const mgr = makeManager(callbacks);
+
+      // The original turn: first-message load + consume-once take.
+      await mgr.loadFirstMessageHistory();
+      expect(mgr.consumeFirstMessageContext()).toBe('initial history');
+      expect(mgr.consumeFirstMessageContext()).toBeUndefined(); // consumed
+
+      // The replay path: reload must bypass the load-once cache…
+      const ok = await mgr.reloadFirstMessageHistory();
+      expect(ok).toBe(true);
+      // …and the stash is consumable by the replayed message.
+      expect(mgr.consumeFirstMessageContext()).toBe('refreshed history');
+      expect(getChatHistory).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns false when there is no history to re-inject', async () => {
+      const getChatHistory = vi.fn().mockResolvedValue(undefined);
+      const mgr = makeManager(makeCallbacks({ getChatHistory }));
+      expect(await mgr.reloadFirstMessageHistory()).toBe(false);
+      expect(mgr.firstMessageHistoryContext).toBeUndefined();
+    });
+
+    it('returns false when the getChatHistory callback is absent', async () => {
+      const mgr = makeManager(makeCallbacks({}));
+      expect(await mgr.reloadFirstMessageHistory()).toBe(false);
+    });
+
+    it('returns false (non-fatal) when the fetch rejects — replay proceeds context-less', async () => {
+      const getChatHistory = vi.fn().mockRejectedValue(new Error('log read failed'));
+      const logger = makeLogger();
+      const mgr = makeManager(makeCallbacks({ getChatHistory }), logger);
+      expect(await mgr.reloadFirstMessageHistory()).toBe(false);
+      expect(mgr.firstMessageHistoryContext).toBeUndefined();
+      expect(logger.warn).toHaveBeenCalled();
+    });
+
+    it('never re-injects for a --no-context agent (markSkipped, Issue #3696)', async () => {
+      const getChatHistory = vi.fn().mockResolvedValue('some history');
+      const mgr = makeManager(makeCallbacks({ getChatHistory }));
+      mgr.markSkipped();
+      expect(await mgr.reloadFirstMessageHistory()).toBe(false);
+      expect(getChatHistory).not.toHaveBeenCalled();
+      expect(mgr.firstMessageHistoryContext).toBeUndefined();
     });
   });
 });
