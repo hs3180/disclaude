@@ -23,7 +23,7 @@ export * from './utils/index.js';
 // IPC Protocol (shared between Primary Node and MCP Server)
 export * from './ipc/index.js';
 
-// Config (exports McpServerConfig for config)
+// Config
 export * from './config/index.js';
 
 // Agent SDK abstraction layer (Issue #1040)

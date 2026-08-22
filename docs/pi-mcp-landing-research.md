@@ -301,7 +301,12 @@ server type, `adaptInlineMcpServer:157` wraps inline servers).
 
 ### Class (b) — external stdio servers (Playwright MCP + user-defined)
 
-From the shipped config template:
+> **Update (`#4459` Scope 4):** this class has since been **removed from main** — the
+> `tools.mcpServers` config type/reader and the stdio merge loop in `buildMcpServers()` are
+> deleted. What follows is the historical survey (accurate as of the research date); the
+> pi-backend "gap" it describes no longer needs a converter because there is nothing left to convert.
+
+From the shipped config template (historical):
 
 ```yaml
 # disclaude.config.example.yaml:249-261

@@ -100,11 +100,6 @@ agent:
 logging:
   level: debug
   rotate: true
-tools:
-  mcpServers:
-    my-server:
-      command: node
-      args: ["./my-mcp-server.js"]
 ```
 
 #### `src/agents/` - Agent System
@@ -665,14 +660,8 @@ logging:
   pretty: true         # Pretty print console output
   rotate: false        # Enable log rotation
 
-# MCP external servers configuration
-tools:
-  mcpServers:
-    my-server:
-      command: node
-      args: ["./my-mcp-server.js"]
-      env:  # Optional environment variables for the MCP server
-        MY_VAR: "value"
+# External MCP servers (tools.mcpServers) were REMOVED (#4459 Scope 4).
+# Migrate external tools to a CLI Skill — see docs/skill-format-spec.md.
 
 # Global environment variables (passed to all agent processes)
 env:

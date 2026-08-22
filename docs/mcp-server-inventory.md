@@ -27,7 +27,7 @@ disclaude touches MCP in **three distinct places**. They have different transpor
 | # | Surface | Transport | Lives in | Tools exposed | Spawned/managed by | Retirement profile |
 |---|---|---|---|---|---|---|
 | **S1** | **`channel-mcp`** — disclaude's own messaging/IPC tools | **inline / in-process** (SDK `createSdkMcpServer`) | `packages/mcp-server/src/channel-mcp.ts` | `send_text`, `send_card`, `send_interactive`, `send_file`, `push_to_agent` (5) | the agent SDK, in-process; disclaude holds the `instance` for teardown | **Migrate → Skill** (these are first-party disclaude tools, the `#4459` Scope 3 "non-Playwright" targets) |
-| **S2** | **External stdio MCP servers** (user-configured) | **stdio subprocess** | config `tools.mcpServers`; loader `packages/primary-node/src/agents/mcp-setup.ts` | whatever the server exports (canonical: **Playwright MCP**, ~15 tools) | the agent SDK spawns the subprocess; disclaude has **no handle** on it | **Retire the loader** (`#4459` Scope 4); Playwright migrates separately via `#4460` |
+| **S2** | **External stdio MCP servers** (user-configured) | **stdio subprocess** | ~~config `tools.mcpServers`; loader `packages/primary-node/src/agents/mcp-setup.ts`~~ | whatever the server exports (canonical: **Playwright MCP**, ~15 tools) | the agent SDK spawns the subprocess; disclaude has **no handle** on it | ✅ **Loader REMOVED** (`#4459` Scope 4 removal half, part 10): config type/reader/loader deleted; Playwright migrated via `#4460` |
 | **S3** | **`@disclaude/mcp-server` as a standalone stdio server** | **stdio** (disclaude *exported* as an MCP server for external clients) | `packages/mcp-server/src/cli.ts` + `stdio-server.ts` (`disclaude-mcp` bin) | `send_text`, `send_card`, `send_interactive`, `send_file`, `push_to_agent` (5, same as S1) | external MCP client (e.g. Claude Code) spawns it | **Out of `#4459` scope** — this is disclaude *as* a server, not disclaude *consuming* one; flagged for owner decision |
 
 Plus the **adapter/transport plumbing** that all three flow through (S4 below), and the **config + health**
@@ -83,14 +83,16 @@ tombstone so the removal is explicit, not silent.
 disclaude spawns arbitrary user-configured MCP servers as stdio subprocesses and surfaces their tools to the
 agent. This is the surface the "reduce MCP" direction most directly targets, and where Playwright lives.
 
-- **Config type**: `McpServerConfig { command; args?; env? }` at
-  [`packages/core/src/config/types.ts:221`](../packages/core/src/config/types.ts) (doc comment `:218`), nested
-  under `ToolsConfig.mcpServers` (`types.ts:239`).
-- **Config reader**: `Config.getMcpServersConfig()` at
-  [`packages/core/src/config/index.ts:521`](../packages/core/src/config/index.ts) (returns
+> **REMOVED (2026, `#4459` Scope 4 removal half — part 10)**: the config type (`McpServerConfig` /
+  `ToolsConfig.mcpServers`), the reader (`Config.getMcpServersConfig()`), and the loader loop in
+  `buildMcpServers()` are deleted from main. Historical anchors, for the record:
+
+- **Config type**: `McpServerConfig { command; args?; env? }` (was
+  `packages/core/src/config/types.ts:221`, nested under `ToolsConfig.mcpServers` `types.ts:239`).
+- **Config reader**: `Config.getMcpServersConfig()` (was `packages/core/src/config/index.ts:521`; returned
   `fileConfigOnly.tools?.mcpServers`).
-- **Loader**: `buildMcpServers()` reads the config and emits one stdio entry per server at
-  [`packages/primary-node/src/agents/mcp-setup.ts:62-73`](../packages/primary-node/src/agents/mcp-setup.ts):
+- **Loader**: `buildMcpServers()` read the config and emitted one stdio entry per server (was
+  `packages/primary-node/src/agents/mcp-setup.ts:62-73`):
   ```ts
   const configuredMcpServers = Config.getMcpServersConfig();
   if (configuredMcpServers) {
@@ -102,8 +104,7 @@ agent. This is the surface the "reduce MCP" direction most directly targets, and
 - **Transport / spawning**: stdio. disclaude **does not** spawn the subprocess itself and holds **no handle** on
   it — the agent SDK spawns it inside the CLI child. This is why `collectInlineMcpInstances()` skips stdio
   entries (only inline `{instance}` wrappers are closeable; see `mcp-setup.ts:96` doc).
-- **Canonical consumer — Playwright MCP**: declared in
-  [`disclaude.config.example.yaml:257-261`](../disclaude.config.example.yaml):
+- **Canonical consumer — Playwright MCP** (historical; entry removed from the example yaml):
   ```yaml
   playwright:
     type: "stdio"
@@ -118,14 +119,15 @@ agent. This is the surface the "reduce MCP" direction most directly targets, and
   the `site-miner` / `playwright-agent` skills — are deleted; browser automation goes through the
   [`browser-use`](../skills/browser-use/SKILL.md) skill (`Bash`, no MCP grants). Only the
   server/loader/package surface below remains.
-- **Custom servers**: the example shows a generic custom-stdio template
-  ([`disclaude.config.example.yaml:263-268`](../disclaude.config.example.yaml)).
+- **Custom servers**: the generic custom-stdio template was removed from
+  `disclaude.config.example.yaml` together with the loader.
 
-> **Migration note (`#4459` Scope 4 + `#4460`):** this is the "external MCP-server loader" `#4459` Scope 4
-> deprecates/removes. Playwright (the dominant consumer) migrates to a Skill via sibling
-> [#4460](https://github.com/hs3180/disclaude/issues/4460); arbitrary user stdio servers have **no automatic
+> **Migration note (`#4459` Scope 4 + `#4460`):** the loader is now **removed**. Playwright (the dominant
+> consumer) migrated to a Skill via sibling [#4460](https://github.com/hs3180/disclaude/issues/4460).
+> **Accepted capability loss, recorded explicitly**: arbitrary user stdio servers have **no automatic
 > migration path** (a generic stdio→Skill converter would be the closed #4417 "bridge", which the 2026-08-07
-> decision dropped) — `#4459` must record this capability loss explicitly rather than silently.
+> decision dropped). Users should wrap their tool as a CLI Skill per
+> [`docs/skill-format-spec.md`](skill-format-spec.md).
 
 ---
 
@@ -205,13 +207,13 @@ The path every MCP server config takes from `buildMcpServers()` → agent SDK.
 
 Files that reference MCP and will need editing as the retirement lands (so docs do not silently drift):
 
-- `disclaude.config.example.yaml:249-268` — the `mcpServers` block (Playwright + custom example).
+- ~~`disclaude.config.example.yaml:249-268` — the `mcpServers` block (Playwright + custom example)~~ — removed (`#4459` Scope 4).
 - `README.md:24,40,270,504,506,535` — "Browser automation - Playwright MCP tools", "Playwright MCP (15+ tools)".
 - `SKILL_SPEC.md:625-626` — `mcp__playwright__*` tool-name convention.
 - ~~`CLAUDE.md:531` — `site-miner` agent permissions include `mcp__playwright__*`~~ — retired: the
   `site-miner` preset agent is deleted; browser automation is the `browser-use` skill (no MCP grants).
-- `packages/core/src/config/types.ts:218-239` — `McpServerConfig` (`:221`) / `ToolsConfig.mcpServers` (`:239`) types.
-- `packages/core/src/config/index.ts:521` — `getMcpServersConfig()` reader.
+- ~~`packages/core/src/config/types.ts:218-239` — `McpServerConfig` (`:221`) / `ToolsConfig.mcpServers` (`:239`) types~~ — removed (`#4459` Scope 4).
+- ~~`packages/core/src/config/index.ts:521` — `getMcpServersConfig()` reader~~ — removed (`#4459` Scope 4).
 
 ---
 
@@ -224,7 +226,7 @@ Mapping the inventory to `#4459`'s four scopes:
 | **1. Inventory** ✅ (this doc) | all | `docs/mcp-server-inventory.md` (new) |
 | **2. Skill format spec** | n/a (defines the target) | new `docs/...` spec (deferred — independent of this inventory) |
 | **3. Migrate non-Playwright MCP tools → Skill** | **S1** (channel-mcp, 5 tools) | re-expose `send_text`/`send_card`/`send_interactive`/`send_file`/`push_to_agent` as Skills; the in-process implementations + IPC backing stay |
-| **4. Remove external MCP-server loader** | **S2** (stdio loader) | delete the `mcp-setup.ts:62-73` config loop + `getMcpServersConfig()` + `McpServerConfig`/`ToolsConfig.mcpServers` types + yaml example; record the user-stdio capability loss |
+| **4. Remove external MCP-server loader** | **S2** (stdio loader) | ✅ done — deleted the `mcp-setup.ts` config loop + `getMcpServersConfig()` + `McpServerConfig`/`ToolsConfig.mcpServers` types + yaml/CLAUDE.md example blocks; user-stdio capability loss recorded above |
 
 **Not owned by #4459** (called out so nothing is silently dropped):
 
