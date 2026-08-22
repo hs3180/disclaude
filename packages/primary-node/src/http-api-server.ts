@@ -16,6 +16,7 @@
  * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with IPC sendCard; #4279)
  * - `POST /api/send-interactive` — Send an interactive card (buttons) to a chat (REST parity with IPC sendInteractive; #4279)
  * - `POST /api/upload-image` — Upload a local image by filePath, returns image_key for card embedding (REST parity with IPC uploadImage; #4279)
+ * - `POST /api/mark-chat-responded` — Mark a temp chat as responded (REST parity with IPC markChatResponded; #4281)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -180,6 +181,23 @@ export type UploadImageResponse = { success: boolean; imageKey?: string };
 export type UploadImageHandler = (filePath: string) => Promise<UploadImageResponse>;
 
 /**
+ * Response payload for markChatResponded (mirrors IPC IpcResponsePayloads).
+ */
+export type ChatRespondedResponse = { success: boolean };
+
+/**
+ * Handler for markChatResponded requests. Delegates to the channel's
+ * markChatResponded capability — REST parity with the IPC method (#4281;
+ * originally #4279 part 2, blueprint PR #4342 closed unmerged).
+ *
+ * `response` matches the IPC payload: `{ selectedValue, responder, repliedAt }`.
+ */
+export type MarkChatRespondedHandler = (
+  chatId: string,
+  response: { selectedValue: string; responder: string; repliedAt: string },
+) => Promise<ChatRespondedResponse>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -224,6 +242,7 @@ export class HttpApiServer {
   private sendInteractiveHandler?: SendInteractiveHandler;
   private listTempChatsHandler?: ListTempChatsHandler;
   private uploadImageHandler?: UploadImageHandler;
+  private markChatRespondedHandler?: MarkChatRespondedHandler;
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
   /** Heartbeat interval timer for SSE keepalive */
@@ -291,6 +310,13 @@ export class HttpApiServer {
    */
   setUploadImageHandler(handler: UploadImageHandler): void {
     this.uploadImageHandler = handler;
+  }
+
+  /**
+   * Set the handler for POST /api/mark-chat-responded (#4281).
+   */
+  setMarkChatRespondedHandler(handler: MarkChatRespondedHandler): void {
+    this.markChatRespondedHandler = handler;
   }
 
   /**
@@ -482,6 +508,9 @@ export class HttpApiServer {
 
     // Issue #4279: REST parity with IPC uploadImage.
     this.addRoute('POST', '/api/upload-image', this.handleUploadImage.bind(this));
+    // #4281: REST parity with IPC markChatResponded (the last IPC method
+    // without a REST endpoint; RestIpcClient already maps it here).
+    this.addRoute('POST', '/api/mark-chat-responded', this.handleMarkChatResponded.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
@@ -1024,6 +1053,68 @@ export class HttpApiServer {
     } catch (err) {
       logger.error({ err }, 'uploadImage handler error');
       const msg = err instanceof Error ? err.message : 'uploadImage failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
+  }
+
+  /**
+   * POST /api/mark-chat-responded handler (#4281).
+   *
+   * Accepts `{ chatId, response: { selectedValue, responder, repliedAt } }` and
+   * delegates to the channel's markChatResponded capability. Mirrors the IPC
+   * markChatResponded method (payload aligned with IpcRequestPayloads).
+   */
+  private async handleMarkChatResponded(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.markChatRespondedHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'markChatResponded handler not configured' });
+      return;
+    }
+
+    let body: string;
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    const response = (parsed as Record<string, unknown> | null)?.response;
+    if (
+      typeof parsed !== 'object' || parsed === null ||
+      typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
+      typeof response !== 'object' || response === null ||
+      typeof (response as Record<string, unknown>).selectedValue !== 'string' ||
+      typeof (response as Record<string, unknown>).responder !== 'string' ||
+      typeof (response as Record<string, unknown>).repliedAt !== 'string'
+    ) {
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'Required: chatId (string), response: { selectedValue, responder, repliedAt } (strings)',
+      });
+      return;
+    }
+
+    const { chatId } = parsed as { chatId: string };
+    const resp = response as { selectedValue: string; responder: string; repliedAt: string };
+
+    try {
+      const result = await this.markChatRespondedHandler(chatId, resp);
+      this.sendJson(res, 200, { ok: true, success: result.success });
+    } catch (err) {
+      logger.error({ err, chatId }, 'markChatResponded handler error');
+      const msg = err instanceof Error ? err.message : 'markChatResponded failed';
       this.sendJson(res, 500, { ok: false, message: msg });
     }
   }

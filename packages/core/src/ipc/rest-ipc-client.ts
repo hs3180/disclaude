@@ -68,12 +68,11 @@ const defaultSuccess = (json: Record<string, unknown>, res: Response): boolean =
  * - pushToAgent → /api/push (REST {ok,message} → IPC {success}).
  */
 const ROUTES: Readonly<Record<string, Route>> = {
-  // Channel methods (Issue #4279 Phase 1 endpoints). 6/8 are on `main`:
-  // ping/sendMessage/sendCard/uploadFile/sendInteractive/tempChats (PRs
-  // #4341/#4343/#4344/#4346/#4345/#4348). The two below are still pending:
-  //   - uploadImage: PR #4347 (OPEN) — endpoint not yet on `main`.
-  //   - markChatResponded: PR #4342 (CLOSED w/o merge) — endpoint not on `main`.
-  // Routes are kept for IPC-method parity; they 404 only until those land.
+  // Channel methods (Issue #4279 Phase 1 endpoints). All 8 channel methods +
+  // ping are on `main`: ping/sendMessage/sendCard/uploadFile/sendInteractive/
+  // tempChats (PRs #4341/#4343/#4344/#4346/#4345/#4348), uploadImage, and
+  // markChatResponded (ported from the closed-unmerged #4342 blueprint; #4281
+  // full-integration slice).
   // ping returns `{ pong: true }` (no `ok` envelope) — see handlePing server-side.
   ping: { method: 'GET', path: '/api/ping', success: (json, res) => res.ok && json.pong === true },
   sendMessage: { method: 'POST', path: '/api/send-message' },

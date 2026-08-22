@@ -817,6 +817,25 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Mark a chat as responded — delegates to the channel's markChatResponded
+   * capability. REST parity with the IPC markChatResponded method (#4281).
+   *
+   * @param chatId - Chat to mark
+   * @param response - { selectedValue, responder, repliedAt }
+   * @returns { success: boolean } (mirrors IPC IpcResponsePayloads)
+   */
+  async markChatResponded(
+    chatId: string,
+    response: { selectedValue: string; responder: string; repliedAt: string },
+  ): Promise<{ success: boolean }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h?.markChatResponded) {
+      throw new Error('markChatResponded not supported by this channel');
+    }
+    return await h.markChatResponded(chatId, response);
+  }
+
+  /**
    * Resolve the channel API handlers for a chatId.
    *
    * Shared by the composite IPC handlers and the scheduler push callbacks.
