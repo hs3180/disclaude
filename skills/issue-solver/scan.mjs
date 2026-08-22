@@ -331,6 +331,31 @@ export function extractOpenPRRefs(openPRs) {
 }
 
 /**
+ * Whether a merged PR's title mentions the issue number itself — the
+ * high-confidence half of the weak-ref signal (#4373 part 2, direction #4
+ * refinement — still advisory, NOT auto-exclusion).
+ *
+ * This repo's covering-PR convention puts the target issue number in the
+ * title ("fix #4402: ...", "feat #4388 (part 1): ...", "... by isTopicThread
+ * (#4402)"), while a context-only mention of an open epic puts a DIFFERENT
+ * number there ("feat #4279 (part 1): ..." on epic #4168 — the sub-issue).
+ * Splitting the advisory caveat on this line keeps the "likely shipped"
+ * short-list short: epics referenced only as context (#4376 guard,
+ * #4168/#4040/#4039) land in the context-only tier instead of diluting it.
+ *
+ * A `willCloseTarget === false` cross-ref exists precisely because some `#N`
+ * mention in the PR title/body created it, so a title hit means the PR is
+ * *about* #N in the author's own words. Pure — no I/O.
+ *
+ * @param {string} title merged PR title
+ * @param {number} issueNum candidate issue number
+ * @returns {boolean}
+ */
+export function titleMentionsIssue(title, issueNum) {
+  return new RegExp(`(^|[^0-9])#${issueNum}([^0-9]|$)`).test(title || "");
+}
+
+/**
  * Issue numbers whose work already shipped, resolved per open issue via
  * GitHub's authoritative closing-link table (#4375). Each open issue's
  * CROSS_REFERENCED_EVENT entries carry `willCloseTarget` — GitHub's own link
@@ -427,12 +452,21 @@ async function main() {
   // #4375 per-issue base (no merged-PR window, no truncation blind spot)
   // instead of resurrecting the mergedPRs(first: 100) scan that #4375 removed;
   // a bare "#N" in a PR title/body is itself what creates the cross-ref.
-  const weakRefsByIssue = new Map(); // issueNum -> [{ pr, title }]
+  //
+  // #4373 part 2 tiers each weak ref by whether the PR title mentions the
+  // issue number itself (titleMentionsIssue): a title hit is the repo's
+  // covering-PR convention ("fix #N ..."), a title miss is a context-only
+  // mention (epic lineage — see #4376). Still advisory only.
+  const weakRefsByIssue = new Map(); // issueNum -> { titleHit: [{pr,title}], contextOnly: [{pr,title}] }
   for (const issue of allIssues) {
     for (const e of issue.timelineItems?.nodes || []) {
       if (e.willCloseTarget || e.source?.state !== "MERGED") continue;
-      if (!weakRefsByIssue.has(issue.number)) weakRefsByIssue.set(issue.number, []);
-      weakRefsByIssue.get(issue.number).push({ pr: e.source.number, title: (e.source.title || "").trim() });
+      if (!weakRefsByIssue.has(issue.number)) {
+        weakRefsByIssue.set(issue.number, { titleHit: [], contextOnly: [] });
+      }
+      const entry = { pr: e.source.number, title: (e.source.title || "").trim() };
+      const tier = titleMentionsIssue(entry.title, issue.number) ? "titleHit" : "contextOnly";
+      weakRefsByIssue.get(issue.number)[tier].push(entry);
     }
   }
 
@@ -502,17 +536,37 @@ async function main() {
   // auto-excludes, so the candidate pool shape above is unchanged. Appended after
   // the candidate bodies to prompt a solver/reviewer to verify flagged issues
   // against main before implementing.
+  //
+  // #4373 part 2 tiers the list: "likely shipped" (a merged weak-ref PR whose
+  // TITLE names the issue — this repo's covering-PR convention) first, then
+  // "context-only" mentions (epic lineage) at lower priority. Both remain
+  // advisory; the split only spends the reader's attention where a phantom is
+  // most likely.
   const flagged = candidates
-    .map((i) => ({ issue: i, refs: (weakRefsByIssue.get(i.number) || []).slice(0, 3) }))
-    .filter((x) => x.refs.length);
+    .map((i) => ({ issue: i, refs: weakRefsByIssue.get(i.number) }))
+    .filter((x) => x.refs && (x.refs.titleHit.length || x.refs.contextOnly.length));
+  const titleHitList = flagged.filter((x) => x.refs.titleHit.length);
+  const contextOnlyList = flagged.filter((x) => !x.refs.titleHit.length && x.refs.contextOnly.length);
   if (flagged.length) {
     md += `## ⚠️ Weak-ref phantoms — verify before implementing (advisory, NOT auto-excluded)\n\n`;
     md += `These candidates are referenced by an already-**merged** PR via a weak link — a mention without a \`fixes/closes/resolves\` closing link (bare \`#N\` in title/body, dev-panel-free). GitHub did not auto-close them and the phantom filter did not exclude them, so the work **may already be shipped**. Check each against \`main\` (code grep + merged-PR list) before implementing.\n\n`;
-    for (const { issue, refs } of flagged) {
-      md += `- **#${issue.number}** ${issue.title}\n`;
-      for (const r of refs) md += `  - ← merged #${r.pr}${r.title ? ` _"${r.title}"_` : ""}\n`;
+    if (titleHitList.length) {
+      md += `### Likely shipped — merged PR title names the issue (#4373 part 2 tier 1)\n\n`;
+      for (const { issue, refs } of titleHitList) {
+        md += `- **#${issue.number}** ${issue.title}\n`;
+        for (const r of refs.titleHit.slice(0, 3)) md += `  - ← merged #${r.pr}${r.title ? ` _"${r.title}"_` : ""}\n`;
+      }
+      md += `\n`;
     }
-    md += `\n_Auto-excluding on weak refs is intentionally deferred: a bare \`#N\` can be mere context ("part of #N"), so aggressive matching would drop legitimately-open epics (#4376). This advisory caveat is direction #4 of #4373; semantic-overlap auto-exclusion (direction #3) is a future design call._\n\n---\n\n`;
+    if (contextOnlyList.length) {
+      md += `### Context-only mentions — epic lineage, lower priority (tier 2)\n\n`;
+      for (const { issue, refs } of contextOnlyList) {
+        md += `- **#${issue.number}** ${issue.title}\n`;
+        for (const r of refs.contextOnly.slice(0, 3)) md += `  - ← merged #${r.pr}${r.title ? ` _"${r.title}"_` : ""}\n`;
+      }
+      md += `\n`;
+    }
+    md += `_Tiering heuristic: a merged PR whose title contains the issue's own \`#N\` (this repo's covering-PR convention) is tier 1; every other weak ref is context-only lineage (e.g. open epics referenced by part-series PRs, #4376). Auto-excluding on weak refs is intentionally deferred: a bare \`#N\` can be mere context ("part of #N"), so aggressive matching would drop legitimately-open epics (#4376). This advisory caveat is direction #4 of #4373; semantic-overlap auto-exclusion (direction #3) is a future design call._\n\n---\n\n`;
   }
 
   console.log(md);
