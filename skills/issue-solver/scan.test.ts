@@ -23,6 +23,11 @@
 // deliberately still advisory (no auto-exclusion), but the tier assignment is
 // load-bearing for reader attention, so the boundary cases are pinned too.
 //
+// #4373 part 3 adds buildVerificationQueue + renderVerificationBlock — the
+// same tier-1 data reshaped as a copy-paste batch-verification checklist
+// (git log --grep per issue). Still advisory; the queue shape and grep lines
+// are pinned so a solver tick can rely on them.
+//
 // Scope notes (why adding this file is safe — mirrors skills/channel/cli.test.ts,
 // the precedent set by #4467):
 //  - `npm run lint` only targets the packages source dirs, so this file is NOT
@@ -38,7 +43,7 @@
 import { describe, it, expect } from "vitest";
 // The extractors are pure functions exported from scan.mjs.
 // @ts-expect-error — .mjs module has no type declarations; skills/ is not type-checked.
-import { extractOpenPRRefs, extractShippedIssueNums, titleMentionsIssue } from "./scan.mjs";
+import { extractOpenPRRefs, extractShippedIssueNums, titleMentionsIssue, buildVerificationQueue, renderVerificationBlock } from "./scan.mjs";
 
 /** Cross-referenced event as shaped by GRAPHQL_QUERY's timelineItems nodes. */
 const xref = (sourceNumber: number, state: string, willCloseTarget: boolean) => ({
@@ -214,5 +219,80 @@ describe("scan.mjs titleMentionsIssue (#4373 part 2 advisory tiering)", () => {
     expect(titleMentionsIssue(undefined, 4402)).toBe(false);
     expect(titleMentionsIssue(null, 4402)).toBe(false);
     expect(titleMentionsIssue("", 4402)).toBe(false);
+  });
+});
+
+describe("scan.mjs buildVerificationQueue (#4373 part 3 batch checklist)", () => {
+  // Mirrors the weakRefsByIssue shape main() builds from the per-issue
+  // cross-ref table: titleHit refs are the tier-1 ("likely shipped") signal.
+  const weakRefs = (entries: Array<[number, Array<{ pr: number; title?: string }>, unknown[]]>) =>
+    new Map(entries.map(([n, titleHit, contextOnly]) => [n, { titleHit, contextOnly }]));
+
+  it("collects only candidates with title-hit refs, merged PRs newest-first", () => {
+    const candidates = [
+      { number: 4448, title: "cwd bug" },
+      { number: 4399, title: "streaming state machine" },
+      { number: 4001, title: "no weak refs at all" },
+    ];
+    const map = weakRefs([
+      [4448, [{ pr: 4450, title: "fix #4448 (part 1)" }, { pr: 4475, title: "feat #4448 (part 3)" }], []],
+      [4399, [{ pr: 4438, title: "feat #4399 (part 2)" }], []],
+    ]);
+    const queue = buildVerificationQueue(candidates, map);
+    expect(queue).toEqual([
+      { number: 4448, title: "cwd bug", mergedPRs: [4475, 4450] },
+      { number: 4399, title: "streaming state machine", mergedPRs: [4438] },
+    ]);
+  });
+
+  it("REGRESSION (#4376): context-only refs stay out of the queue", () => {
+    // #4168-style epic: only context-only lineage, no title-hit ref.
+    const map = weakRefs([[4168, [], [{ pr: 4341 }, { pr: 4343 }]]]);
+    const queue = buildVerificationQueue([{ number: 4168, title: "REST epic" }], map);
+    expect(queue).toEqual([]);
+  });
+
+  it("skips issues absent from the map entirely", () => {
+    expect(buildVerificationQueue([{ number: 4001, title: "x" }], new Map())).toEqual([]);
+  });
+
+  it("sorts the queue newest issue first (stable work order for a tick)", () => {
+    const map = weakRefs([
+      [4306, [{ pr: 4335 }], []],
+      [4528, [{ pr: 4529 }], []],
+      [4374, [{ pr: 4495 }], []],
+    ]);
+    const queue = buildVerificationQueue(
+      [{ number: 4306, title: "a" }, { number: 4374, title: "b" }, { number: 4528, title: "c" }],
+      map,
+    );
+    expect(queue.map((q) => q.number)).toEqual([4528, 4374, 4306]);
+  });
+});
+
+describe("scan.mjs renderVerificationBlock (#4373 part 3 batch checklist)", () => {
+  it("renders one copy-paste grep line per issue, capped at 3 greps", () => {
+    const md = renderVerificationBlock([
+      { number: 4510, title: "p2p-only", mergedPRs: [4527, 4511] },
+      { number: 4496, title: "CDP container", mergedPRs: [4530, 4515, 4506, 4490] },
+    ]);
+    expect(md).toContain("#### Batch verification (#4373 part 3)");
+    expect(md).toContain("- **#4510** (merged: 4527, 4511):");
+    // 4 merged PRs — the grep chain caps at the newest 3.
+    expect(md).toContain("(merged: 4530, 4515, 4506, 4490): git log --oneline --grep=\"#4530[^0-9]\" | head -1 && git log --oneline --grep=\"#4515[^0-9]\" | head -1 && git log --oneline --grep=\"#4506[^0-9]\" | head -1");
+    // The 4th (oldest) PR is not in the grep chain.
+    expect(md).not.toContain("--grep=\"#4490");
+  });
+
+  it("anchors each grep to its PR number, not the issue number", () => {
+    // The grep targets the merged PR (e.g. #99); the issue number (#44) only
+    // labels the line — a suffix-digits issue number must not leak into greps.
+    const md = renderVerificationBlock([{ number: 44, title: "x", mergedPRs: [99] }]);
+    expect(md).toContain("--grep=\"#99[^0-9]\"");
+    expect(md).not.toContain("--grep=\"#44");
+  });
+
+  it("returns an empty string for an empty queue (no stray header)", () => {
+    expect(renderVerificationBlock([])).toBe("");
   });
 });
