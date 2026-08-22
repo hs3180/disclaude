@@ -45,6 +45,18 @@ const { fakeState } = vi.hoisted(() => {
       ctorOptions: null as unknown,
       /** Live listeners registered via subscribe(). */
       listeners: [] as Array<(event: FakeEvent) => Promise<void> | void>,
+      /** Issue #4386 (part 5): prompt() parks forever AFTER emitting its scripted events. */
+      hangPrompt: false,
+      /**
+       * Review (part 5): when true, abort() resolves the parked hang-promise
+       * AND emits the aborted-run debris events real pi emits (agent.js
+       * handleRunFailure: message_end/turn_end/agent_end) — the DEFAULT
+       * behavior of real AbortController.abort(). The flag-only variant
+       * models a streamFn that ignores the abort signal (force-close path).
+       */
+      abortResolvesHang: false,
+      /** Issue #4386 (part 5): delay between scripted events (0 = synchronous). */
+      eventDelayMs: 0,
     },
   };
 });
@@ -60,12 +72,38 @@ class FakeAgent {
       fakeState.listeners = fakeState.listeners.filter((l) => l !== listener);
     };
   }
+  async emitScripted(events: FakeEvent[]): Promise<void> {
+    for (const event of events) {
+      if (fakeState.eventDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, fakeState.eventDelayMs));
+      }
+      for (const listener of [...fakeState.listeners]) {
+        await listener(event);
+      }
+    }
+  }
   async prompt(message: unknown): Promise<void> {
     fakeState.prompts.push(message);
     const events = fakeState.scripts.shift() ?? [{ type: 'agent_end', messages: [] }];
-    for (const event of events) {
-      for (const listener of [...fakeState.listeners]) {
-        await listener(event);
+    await this.emitScripted(events);
+    if (fakeState.hangPrompt) {
+      // Park until aborted. Real semantics: the parked promise resolves on
+      // abort() (the AbortController unblocks the stalled streamFn await);
+      // only a signal-ignoring streamFn parks forever.
+      await new Promise<void>((resolve) => {
+        this.abortResolver = resolve;
+      });
+      // Real pi emits run-failure debris on abort (handleRunFailure): the
+      // bridge must drop it after a stall, not forward it.
+      if (fakeState.abortResolvesHang) {
+        for (const event of [
+          { type: 'message_update', assistantMessageEvent: { type: 'done' } },
+          { type: 'agent_end', messages: [] },
+        ]) {
+          for (const listener of [...fakeState.listeners]) {
+            await listener(event);
+          }
+        }
       }
     }
   }
@@ -85,16 +123,24 @@ class FakeAgent {
     }
     const batch = this.followUpQueue.splice(0);
     const events = fakeState.scripts.shift() ?? [{ type: 'agent_end', messages: [] }];
-    for (const event of events) {
-      for (const listener of [...fakeState.listeners]) {
-        await listener(event);
-      }
-    }
+    await this.emitScripted(events);
     void batch;
   }
   abort(): void {
     fakeState.aborted = true;
+    // Real pi semantics (0.82.1 agent.js:200 + agent-loop.js): abort() trips
+    // the run's AbortController → the parked streamFn await unblocks → the
+    // run settles and prompt() resolves. hangPrompt's park releases on abort
+    // by default; a signal-ignoring streamFn (force-close path) overrides via
+    // abortResolvesHang = false.
+    if (this.abortResolver && fakeState.abortResolvesHang) {
+      const resolve = this.abortResolver;
+      this.abortResolver = null;
+      resolve();
+    }
   }
+  /** Set while hangPrompt parks prompt(); abort() resolves it (real semantics). */
+  private abortResolver: (() => void) | null = null;
   async waitForIdle(): Promise<void> {}
 }
 
@@ -161,6 +207,9 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     fakeState.scripts = [];
     fakeState.ctorOptions = null;
     fakeState.listeners = [];
+    fakeState.hangPrompt = false;
+    fakeState.abortResolvesHang = false;
+    fakeState.eventDelayMs = 0;
     provider = new PiAgentProvider();
     provider.streamFn = stubStreamFn;
   });
@@ -564,5 +613,151 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     expect(messages).toEqual([]); // nothing streamed: the run never started
     expect(fakeState.aborted).toBe(true); // the latch reached the agent
     expect(fakeState.prompts).toEqual([]); // prompt() was never called
+  });
+
+  // ── Issue #4386 (part 5): no-content-progress stall watchdog ──────────────
+  // Mirrors the Claude provider's #3706 coverage: a run that stays active but
+  // stops producing events is a stall — abort the agent and synthesize a
+  // terminal result with terminatedReason 'stall'. A healthy run never fires
+  // (every event re-arms the deadline). Driven with fake timers + a scripted
+  // hung prompt() (never resolves, no events) — no wall-clock dependency
+  // (#4394 test hygiene).
+  //
+  // The hung-run shape needs per-test FakeAgent knobs: the module-level
+  // FakeAgent drains `scripts` synchronously inside prompt(). `hangPrompt`
+  // makes prompt() park on a never-resolving promise AFTER emitting its
+  // scripted events — the exact upstream pathology (streamFn keeps the run
+  // pending, no agent_end ever arrives). `eventDelayMs` spaces events out
+  // for the healthy-run case.
+
+  it('stall watchdog: hung run (no events for STALL_TIMEOUT_MS) aborts the agent and yields a stall result', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+    process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '10';
+    fakeState.scripts = [
+      [{ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'partial' } }],
+    ];
+    fakeState.hangPrompt = true;
+    try {
+      const result = provider.queryStream(
+        (async function* (): AsyncGenerator<UserInput> {
+          yield userInput('hi');
+          // Channel never closes — the session-lifetime signal stays open so
+          // ONLY the watchdog (not input exhaustion) can end the stream.
+          await new Promise<void>(() => {});
+        })(),
+        baseOptions(),
+      );
+      const messages: AgentMessage[] = [];
+      const drained = (async () => {
+        for await (const message of result.iterator) {
+          messages.push(message);
+        }
+      })();
+      // Wait for the run to be in flight: the partial text has been consumed
+      // and prompt() is now parked on its never-resolving promise. A real
+      // 60ms wait (not fake timers — the hung promise never settles, so
+      // advanceTimersByTimeAsync alone would deadlock the drain) comfortably
+      // under the 80ms deadline.
+      await vi.waitFor(() => {
+        expect(messages.map((m) => m.type)).toContain('text');
+      }, { timeout: 500, interval: 10 });
+      await new Promise((resolve) => setTimeout(resolve, 120)); // > 80ms stall deadline
+      const settled = await Promise.race([
+        drained.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(settled).toBe(true);
+      expect(fakeState.aborted).toBe(true); // watchdog aborted the agent
+      const stallResult = messages.find((m) => m.metadata?.terminatedReason === 'stall');
+      expect(stallResult).toBeDefined();
+      expect(stallResult?.type).toBe('result');
+      expect(stallResult?.content).toContain('stall');
+    } finally {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+      delete process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
+      fakeState.hangPrompt = false;
+    }
+  });
+
+  // Review regression: the fake's abort() must model REAL pi 0.82.1
+  // semantics (agent.js:200 → AbortController.abort() → runLoop exits with
+  // stopReason 'aborted' → handleRunFailure emits message_start/message_end/
+  // turn_end/agent_end → prompt() RESOLVES), not just set a flag. The original
+  // flag-only fake silently masked a main-path bug: when abort() settles the
+  // run, runInput's finally clears the force-close timer, so nothing ever
+  // flips `aborted` and the consumer loop parks forever — the stall result is
+  // never synthesized and the stream hangs harder than before the watchdog.
+  // abortOnHang (default true) keeps that realism; the hung-run test above
+  // opts out via the same knob to exercise the force-close fallback path.
+  it('stall watchdog: abort() settles the run (real pi semantics) — stall result still terminates the stream', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+    process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '10';
+    fakeState.scripts = [
+      [{ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'partial' } }],
+    ];
+    fakeState.hangPrompt = true;
+    fakeState.abortResolvesHang = true;
+    try {
+      const result = provider.queryStream(
+        (async function* (): AsyncGenerator<UserInput> {
+          yield userInput('hi');
+          // Channel never closes — only the watchdog can end the stream.
+          await new Promise<void>(() => {});
+        })(),
+        baseOptions(),
+      );
+      const messages: AgentMessage[] = [];
+      const drained = (async () => {
+        for await (const message of result.iterator) {
+          messages.push(message);
+        }
+      })();
+      await vi.waitFor(() => {
+        expect(messages.map((m) => m.type)).toContain('text');
+      }, { timeout: 500, interval: 10 });
+      await new Promise((resolve) => setTimeout(resolve, 120)); // > 80ms deadline
+      const settled = await Promise.race([
+        drained.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(settled).toBe(true); // the stream ENDED (regression: parked forever before the fix)
+      expect(fakeState.aborted).toBe(true);
+      const stallResult = messages.find((m) => m.metadata?.terminatedReason === 'stall');
+      expect(stallResult).toBeDefined();
+      expect(stallResult?.type).toBe('result');
+      // The aborting run's debris (real pi emits message_end/turn_end/agent_end
+      // on abort) must not reach the consumer ahead of the stall terminator —
+      // a plain agent_end maps to an empty `result` and would read as a
+      // normal turn completion in ChatAgent.
+      expect(messages.filter((m) => m.type === 'result').length).toBe(1);
+    } finally {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+      delete process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
+      fakeState.hangPrompt = false;
+      fakeState.abortResolvesHang = false;
+    }
+  });
+
+  it('stall watchdog: a healthy run (events keep flowing) never fires', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '50';
+    fakeState.scripts = [
+      [
+        { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'a' } },
+        { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'b' } },
+        { type: 'agent_end', messages: [] },
+      ],
+    ];
+    // Slow-run harness: each scripted event is emitted 30ms apart (well under
+    // the 50ms deadline), so progress continuously re-arms the watchdog.
+    fakeState.eventDelayMs = 30;
+    try {
+      const result = provider.queryStream(inputs(userInput('hi')), baseOptions());
+      const messages = await collect(result.iterator);
+      expect(messages.map((m) => m.type)).toEqual(['text', 'text', 'result']);
+      expect(messages.some((m) => m.metadata?.terminatedReason === 'stall')).toBe(false);
+    } finally {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+      fakeState.eventDelayMs = 0;
+    }
   });
 });
