@@ -372,6 +372,17 @@ export class PiAgentProvider implements IAgentSDKProvider {
 
       try {
         while (true) {
+          // Issue #4386 (part 5, review): the watchdog fired and the run has
+          // settled — abort() WORKED (real pi 0.82.1 semantics: abort() trips
+          // the run's AbortController, runLoop exits with stopReason
+          // 'aborted', prompt() resolves, runInput's finally clears the
+          // force-close timer). Without this break the loop parks forever:
+          // `aborted` is still false (only the force-close path flips it) and
+          // ChatAgent keeps the input channel open (inputDone false) — the
+          // stall result below would never be synthesized.
+          if (stalled && (aborted || !runActive)) {
+            break;
+          }
           if (queue.length === 0) {
             if (aborted || (inputDone && !runActive)) {
               break;
@@ -380,6 +391,17 @@ export class PiAgentProvider implements IAgentSDKProvider {
             continue;
           }
           const event = queue.shift() as PiAgentEvent;
+          // Issue #4386 (part 5, review): once the watchdog has fired, events
+          // emitted by the aborting run (real pi synthesizes message_start /
+          // message_end / turn_end / agent_end for an aborted run) must not
+          // reach the consumer — ChatAgent would treat the empty agent_end
+          // `result` as a normal turn completion (recordSuccess / ✅ Complete /
+          // empty-turn retry) ahead of the stall terminator. Drop everything
+          // after the stall; the synthesized result below is the sole
+          // terminator.
+          if (stalled) {
+            continue;
+          }
           const adapted = adaptPiEvent(event);
           if (adapted) {
             yield adapted;
