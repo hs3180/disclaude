@@ -834,14 +834,21 @@ describe('ClaudeSDKProvider', () => {
       );
     });
 
-    // Issue #4442 (part 4): first-message blind-window watchdog. The #3706
-    // content watchdog arms only on a message_start partial — when the provider
-    // forwards no partials (GLM/LiteLLM) and the upstream stalls BEFORE the
-    // first message, the for-await used to hang forever (no watchdog armed, and
-    // #4442 part 3's empty-stream recovery only runs when the stream ends).
-    // The blind window is armed per query attempt, cancelled by ANY first
-    // message, and escalates through the same stall path (interrupt →
+    // Issue #4442 (part 4): first-upstream-response blind-window watchdog. The
+    // #3706 content watchdog arms only on a message_start partial — when the
+    // provider forwards no partials (GLM/LiteLLM) and the upstream stalls BEFORE
+    // the first assistant message, the for-await used to hang forever (no
+    // watchdog armed, and #4442 part 3's empty-stream recovery only runs when
+    // the stream ends). The blind window is armed per query attempt, cancelled
+    // by any UPSTREAM evidence of life (stream_event partials, or an assistant
+    // message), and escalates through the same stall path (interrupt →
     // force-close → terminal 'stall' → recordFailure('stall') in ChatAgent).
+    // ⚠️ Not cancelled by system messages: the real SDK emits system/init +
+    // system/status LOCALLY (CLI subprocess startup handshake, before the
+    // upstream POST is even sent — verified 2026-08-22 against a fake
+    // 200-OK-zero-event upstream). Cancelling on any first message would spend
+    // the window within ~200ms and leave the actual incident pathology
+    // (upstream hangs AFTER init) unprotected.
     it('should interrupt a stall before the first message when no partials flow (Issue #4442 part 4)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
@@ -873,6 +880,47 @@ describe('ClaudeSDKProvider', () => {
       }
     });
 
+    // Real-stream regression (review 2026-08-22): the SDK's first complete
+    // messages are the subprocess's LOCAL system/init + system/status — the
+    // upstream POST is still in flight when they arrive. The blind window must
+    // IGNORE them and keep counting toward the timeout while the upstream is
+    // hung (the exact #4442 incident: litellm 200-OK-zero-content after init).
+    it('should fire the blind window despite local system/init messages when the upstream hangs (Issue #4442 part 4, real-stream shape)', async () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+      vi.useFakeTimers();
+      try {
+        let resumeStream!: () => void;
+        const streamResumes = new Promise<void>((resolve) => { resumeStream = resolve; });
+        const interruptSpy = vi.fn(() => { resumeStream(); return Promise.resolve(); });
+        const gen = (async function* () {
+          // Subprocess startup handshake arrives at t=0 (locally generated, no
+          // upstream involvement) — then the upstream hangs with zero partials
+          // and zero assistant messages.
+          yield { type: 'system', subtype: 'init', model: 'glm-test', tools: [], mcp_servers: [] };
+          yield { type: 'system', subtype: 'status', status: 'requesting' };
+          await streamResumes; // upstream hung — only the blind window rescues
+        })();
+        mockQuery.mockReturnValue(Object.assign(gen, { interrupt: interruptSpy, close: vi.fn() }));
+        async function* testInput(): AsyncGenerator<UserInput> { yield { role: 'user', content: 'Hi' }; }
+        const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
+        const messages: AgentMessage[] = [];
+        const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
+        // Local system messages land well inside the window; the upstream stays
+        // hung past it → blind window fires from t=0 (query start), NOT from init.
+        await vi.advanceTimersByTimeAsync(80);
+        await drained;
+        expect(messages.find(m => m.metadata?.terminatedReason === 'stall')).toBeDefined();
+        expect(interruptSpy).toHaveBeenCalledTimes(1);
+        expect(loggerMock.error).toHaveBeenCalledWith(
+          expect.objectContaining({ partialsObserved: false }),
+          expect.stringContaining('local system/init messages do not count'),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should NOT fire the blind window when the first message arrives in time (Issue #4442 part 4)', async () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
@@ -882,9 +930,12 @@ describe('ClaudeSDKProvider', () => {
         let firstMessageDelivered!: () => void;
         const firstMessageSeen = new Promise<void>((resolve) => { firstMessageDelivered = resolve; });
         const gen = (async function* () {
-          // First message arrives at t=0 (no partials — provider doesn't forward
-          // them): the blind window is cancelled immediately, so advancing well
-          // past the timeout must NOT interrupt a healthy mid-stream gap.
+          // Real-stream shape: local system/init + system/status first (ignored by
+          // the blind window), then the upstream's first assistant message at t=0
+          // — the window is cancelled only by THAT, so advancing well past the
+          // timeout must NOT interrupt a healthy mid-stream gap.
+          yield { type: 'system', subtype: 'init', model: 'glm-test', tools: [], mcp_servers: [] };
+          yield { type: 'system', subtype: 'status', status: 'requesting' };
           yield { type: 'assistant', message: { content: [{ type: 'text', text: 'hello' }] } };
           firstMessageDelivered();
           await new Promise<void>(r => setTimeout(r, 250)); // quiet but alive stream
@@ -895,7 +946,7 @@ describe('ClaudeSDKProvider', () => {
         const result = provider.queryStream(testInput(), { settingSources: ['user', 'project', 'local'], cwd: '/workspace', env: { ANTHROPIC_API_KEY: 'sk-test-key' } });
         const messages: AgentMessage[] = [];
         const drained = (async () => { for await (const msg of result.iterator) { messages.push(msg); } })();
-        await firstMessageSeen; // t=0: first message cancels the blind window
+        await firstMessageSeen; // t=0: first ASSISTANT message cancels the blind window
         await vi.advanceTimersByTimeAsync(250); // >> 80ms timeout, but window is spent
         await drained;
         expect(interruptSpy).not.toHaveBeenCalled();

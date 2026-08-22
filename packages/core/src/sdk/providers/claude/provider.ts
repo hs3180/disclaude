@@ -488,8 +488,9 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
               apiBaseUrl: options.env?.ANTHROPIC_BASE_URL,
               partialsObserved,
             },
-            `Issue #4442: zero messages and no stream_event partials within ${STALL_TIMEOUT_MS}ms of query start `
-              + '(blind window — provider does not forward partials or stalled before first message); '
+            `Issue #4442: no upstream response within ${STALL_TIMEOUT_MS}ms of query start `
+              + '(blind window — no stream_event partials and no assistant message; '
+              + 'local system/init messages do not count); '
               + 'interrupting via the stall path (watchdog is now resident for this case)',
           );
         }
@@ -645,10 +646,18 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
           }
           const now = Date.now();
           messageCount++;
-          // Issue #4442 (part 4): first complete message arrived without any
+          // Issue #4442 (part 4): first UPSTREAM message arrived without any
           // partials (provider doesn't forward them) — the stream is alive, so
           // the blind window stands down for the rest of this attempt.
-          if (messageCount === 1) { clearBlindWindow(); }
+          // ⚠️ assistant-only: verified against the real SDK (2026-08-22, fake
+          // 200-OK-zero-event upstream) that a query's first complete messages are
+          // `system/init` + `system/status` — emitted LOCALLY by the CLI subprocess
+          // at startup, BEFORE the upstream POST is even sent. Cancelling on the
+          // first message of ANY type would spend the blind window within ~200ms of
+          // query start and leave the actual incident pathology (upstream hangs
+          // AFTER init, e.g. litellm 200-OK-zero-content) unprotected. Only an
+          // assistant message is proof the upstream responded.
+          if (message.type === 'assistant') { clearBlindWindow(); }
           // 提前适配,使日志与检测均能复用(D1:保留 system subtype 到 metadata 供诊断)
           // Issue #4200 part 2: thread the per-query task registry so status-only
           // TaskUpdate calls can recall a label seen on an earlier update.
