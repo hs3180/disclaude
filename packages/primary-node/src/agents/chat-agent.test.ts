@@ -52,7 +52,6 @@ vi.mock('@disclaude/core', async (importOriginal) => {
         historyDays: 1,
         maxContextLength: 50000,
       })),
-      getMcpServersConfig: vi.fn(() => null),
     },
     BaseAgent,
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.

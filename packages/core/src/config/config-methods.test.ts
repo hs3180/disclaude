@@ -41,7 +41,7 @@ const { mockGetConfigFromFile, mockGetPreloadedConfig } = vi.hoisted(() => ({
     feishu: { appId: 'test-app-id', appSecret: 'test-secret' },
     workspace: { dir: '/test/workspace' },
     messaging: { debug: { forwardPatterns: ['error.*'] } },
-    tools: { mcpServers: { test: { command: 'node' } } },
+    tools: { disabled: ['WebSearch'] },
     projectTemplates: {
       research: {
         displayName: '研究模式',
@@ -107,16 +107,14 @@ describe('Config', () => {
   describe('getToolConfig', () => {
     it('should return tools config', () => {
       const tools = Config.getToolConfig();
-      expect(tools?.mcpServers).toBeDefined();
-      expect(tools?.mcpServers?.test).toEqual({ command: 'node' });
+      expect(tools?.disabled).toEqual(['WebSearch']);
     });
-  });
 
-  describe('getMcpServersConfig', () => {
-    it('should return MCP servers config', () => {
-      const servers = Config.getMcpServersConfig();
-      expect(servers).toBeDefined();
-      expect(servers?.test).toEqual({ command: 'node' });
+    // Issue #4459 (part 10): getMcpServersConfig() was removed together with
+    // the external stdio MCP-server loader. Pin the removal so it cannot be
+    // silently reintroduced.
+    it('should no longer expose getMcpServersConfig (loader removed, #4459 part 10)', () => {
+      expect((Config as unknown as Record<string, unknown>).getMcpServersConfig).toBeUndefined();
     });
   });
 

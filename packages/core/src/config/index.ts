@@ -20,7 +20,6 @@ import type {
   DisclaudeConfig,
   ConfigValidationError,
   TransportConfig,
-  McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
@@ -526,15 +525,6 @@ export class Config {
    */
   static getToolConfig(): DisclaudeConfig['tools'] {
     return fileConfigOnly.tools;
-  }
-
-  /**
-   * Get MCP servers configuration from config file.
-   *
-   * @returns MCP servers configuration or undefined
-   */
-  static getMcpServersConfig(): Record<string, McpServerConfig> | undefined {
-    return fileConfigOnly.tools?.mcpServers;
   }
 
   /**
