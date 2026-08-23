@@ -58,10 +58,10 @@ describe('WeChatMessageListener', () => {
    * Helper: stop listener and flush pending setImmediate callbacks.
    *
    * Issue #3911: pollLoop() uses setImmediate (L157) for macrotask yielding
-   * between cycles, but vi.useFakeTimers() does not mock setImmediate.
-   * After stop() awaits pollPromise, a pending setImmediate may still be
-   * in the macrotask queue. This helper ensures pollLoop has fully exited
-   * before the test makes assertions.
+   * between cycles, and vi.useFakeTimers() routes that setImmediate through
+   * the fake-timer queue. After stop() awaits pollPromise, a pending faked
+   * setImmediate may still be queued rather than run. This helper ensures
+   * pollLoop has fully exited before the test makes assertions.
    */
   async function stopAndFlush(listener: WeChatMessageListener): Promise<void> {
     await listener.stop();
@@ -95,16 +95,22 @@ describe('WeChatMessageListener', () => {
 
   describe('start / stop lifecycle', () => {
     it('should start and stop cleanly', async () => {
-      // Make getUpdates return empty to exit the loop quickly
-      mockClient.getUpdates = vi.fn().mockResolvedValue([]);
+      // Park getUpdates pending-until-aborted (Issue #4555): a busy
+      // mockResolvedValue([]) mock lets pollLoop re-poll on every macrotask
+      // yield, and that churn interleaving with advanceTimersByTimeAsync
+      // could leave the raw stop() path parked on a yield that only further
+      // timer advancement would release — hanging until the vitest timeout.
+      mockClient.getUpdates = vi
+        .fn()
+        .mockImplementation(getUpdatesPendingUntilAborted);
 
       listener.start();
       expect(listener.isListening()).toBe(true);
 
-      // Let one poll cycle complete
+      // Let one poll cycle settle
       await vi.advanceTimersByTimeAsync(100);
 
-      await listener.stop();
+      await stopAndFlush(listener);
       expect(listener.isListening()).toBe(false);
     });
 
@@ -505,7 +511,12 @@ describe('WeChatMessageListener', () => {
     });
 
     it('should return false after stop', async () => {
-      mockClient.getUpdates = vi.fn().mockResolvedValue([]);
+      // Pending-until-aborted mock (Issue #4555): avoid busy re-polling
+      // while fake timers advance — the interleaving is what could starve
+      // the loop's exit path under load and time this test out.
+      mockClient.getUpdates = vi
+        .fn()
+        .mockImplementation(getUpdatesPendingUntilAborted);
       listener.start();
       await vi.advanceTimersByTimeAsync(100);
       await stopAndFlush(listener);
