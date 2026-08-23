@@ -108,13 +108,14 @@ export class HistoryManager {
    *
    * Issue #4391 (design doc §6 follow-up — history re-injection): the empty-turn
    * reset+replay tears down the SDK session and replays the original input into
-   * a FRESH session. v1 replayed only the single message, so the fresh session
-   * started blind — every prior turn of the conversation was lost exactly when
-   * recovering from a stale-session empty turn. This re-fetches the recent chat
-   * history (same source as the first-message load: `getChatHistory`) and
-   * re-stashes it, so the replayed message — the fresh session's first message —
-   * carries the recent context via the existing consume-once path
-   * (`consumeFirstMessageContext`).
+   * a FRESH session. v1's replay still carried `persistedHistoryContext` (the
+   * session-start snapshot attached to every message), but NOT the recent
+   * first-message history — the fresh session's first message lost the turns
+   * logged after that snapshot, exactly while recovering from a stale-session
+   * empty turn. This re-fetches the recent chat history (same source as the
+   * first-message load: `getChatHistory`) and re-stashes it, so the replayed
+   * message — the fresh session's first message — carries a FRESH snapshot via
+   * the existing consume-once path (`consumeFirstMessageContext`).
    *
    * Distinct from `loadFirstMessageHistory()`: that method is a load-once cache
    * fill (no-op once `firstMessageHistoryLoaded`); by the time an empty turn
