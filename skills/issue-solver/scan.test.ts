@@ -22,6 +22,8 @@
 // the same describe block: #4495 (direction 1) dropped #4350's PART_PATTERN
 // title skip, and the four rows lock in both edges — a part-N title must not
 // suppress a formal will-close link, and part-N weak refs must stay advisory.
+// (Provenance note: the true-row is synthetic, not live state — GitHub's
+// willCloseTarget flips false once the source PR merges; see PART_N_XREFS.)
 //
 // #4373 part 2 adds titleMentionsIssue — the tiering heuristic behind the
 // weak-ref advisory caveat's "likely shipped" vs "context-only" split. It is
@@ -128,14 +130,27 @@ describe("scan.mjs extractShippedIssueNums (#4499 per-issue willCloseTarget filt
   // extraction, so even an explicit `fix #N` body keyword was discarded and
   // the covered issue leaked back as a false candidate. #4495 (direction 1)
   // dropped the skip; these cases pin that it stays dropped under the current
-  // per-issue willCloseTarget filter (#4499). Live-state honesty: only #4227
-  // carried a formal closing keyword (`fix #4192` — GitHub set the will-close
-  // link); #4292/#4178/#4303 referenced their targets via `Related #N` weak
-  // refs (willCloseTarget false — surfaced by the #4373 advisory caveat, not
-  // auto-excluded), and all four target issues were eventually closed by
-  // their part-series completing, not by a single keyword.
+  // per-issue willCloseTarget filter (#4499).
+  //
+  // Live-state honesty (re-verified 2026-08-24): the issue-side timeline reads
+  // willCloseTarget=false for ALL FOUR rows today, and a full-repo sweep (998
+  // issues) found zero MERGED-source true events — the flag is future-tense
+  // and flips false once the source merges (even #4281 ← PR 4563, whose body
+  // carries a real `close #4281`, reads false; the only true events live on
+  // still-OPEN sources). The `true` on the 4227 row below is therefore
+  // synthetic by design: it pins the extractor's contract (a part-N title
+  // must not suppress a formal link), not a reproducible live state — do not
+  // "fix" it to false to match a live query. The weak-ref half IS
+  // live-accurate: 4292/4178/4303 bodies carry only `Related #N`, and 4227's
+  // current body explicitly negates a closing keyword ("Related #4192. Not a
+  // `fix #4192`") — all four targets closed via their series completing, not
+  // by a single keyword.
   const PART_N_XREFS = [
-    // #4192 ← PR 4227 "refactor #4192 (part 2)" with `fix #4192` in body.
+    // #4192 ← PR 4227 "refactor #4192 (part 2)". The #4374 table (filed
+    // 2026-07-22) recorded a closing keyword in its body; today the body ends
+    // "Related #4192. Not a `fix #4192`" and GitHub holds no closing link
+    // (closingIssuesReferences: 0). willCloseTarget=true below is the
+    // synthetic contract row — see the block comment above.
     { number: 4192, timelineItems: { totalCount: 1, nodes: [xref(4227, "MERGED", true)] } },
     // #4256 ← PR 4292 "fix #4256 (part 2)", body says `Related #4256` only.
     { number: 4256, timelineItems: { totalCount: 1, nodes: [xref(4292, "MERGED", false)] } },
@@ -148,7 +163,8 @@ describe("scan.mjs extractShippedIssueNums (#4499 per-issue willCloseTarget filt
   it("REGRESSION (#4374): a part-N merged PR with a will-close link marks its issue shipped", () => {
     // The PART_PATTERN skip used to discard this closing ref wholesale — the
     // exact over-pruning #4374 filed. A "part 2" title must not suppress a
-    // formal will-close link.
+    // formal will-close link. (Synthetic row: no MERGED-source true event is
+    // observable live — flag semantics per the PART_N_XREFS block comment.)
     const refs = extractShippedIssueNums(PART_N_XREFS);
     expect(refs.has(4192)).toBe(true);
   });
