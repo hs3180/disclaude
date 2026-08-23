@@ -47,15 +47,11 @@ export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
 
 // Tools - Interactive Message
+// Issue #4280 (part 4): the mcp-server's UnixSocketIpcServer lifecycle
+// exports are removed — dead code since part 3 made every tool a REST client.
 export {
   send_interactive_message,
   send_interactive,
-  startIpcServer,
-  stopIpcServer,
-  isIpcServerRunning,
-  getIpcServerSocketPath,
-  registerFeishuHandlers,
-  unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 
 // Utils - Card Validator
