@@ -249,6 +249,10 @@ tools:
   disabled: []
 
   # MCP server configurations
+  # ⚠️ DEPRECATED (#4459): external stdio MCP servers are slated for removal in favor of
+  # Skills (CLI + README — see docs/skill-format-spec.md). Configured servers keep working
+  # (a deprecation warning is logged per use), but new integrations should be a Skill.
+  # The Playwright entry below is itself being replaced by the browser-use Skill (#4460).
   mcpServers:
     # Playwright browser automation via CDP (Chrome DevTools Protocol)
     # Option 1 (Docker): Run `docker compose --profile playwright up -d` to start CDP container

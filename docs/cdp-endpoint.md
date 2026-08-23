@@ -56,6 +56,8 @@ The endpoint is then reachable at:
 chromium.connectOverCDP("http://disclaude-playwright:9222")
 
 # Playwright MCP (config in disclaude.config.yaml → tools.mcpServers.playwright)
+# ⚠️ DEPRECATED (#4459): external stdio mcpServers config is deprecated — migrate to
+# a Skill (see CLAUDE.md / docs/skill-format-spec.md). Kept as the pre-#4460 reference.
 args: ["-y", "@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
 
 # browser-use CLI / Skill — see config contract below
