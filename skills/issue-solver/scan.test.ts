@@ -18,6 +18,11 @@
 // A future broadening PR either updates these expectations deliberately or
 // fails CI loudly.
 //
+// #4374's repro table (part-N merged PRs vs their closing refs) is pinned in
+// the same describe block: #4495 (direction 1) dropped #4350's PART_PATTERN
+// title skip, and the four rows lock in both edges — a part-N title must not
+// suppress a formal will-close link, and part-N weak refs must stay advisory.
+//
 // #4373 part 2 adds titleMentionsIssue — the tiering heuristic behind the
 // weak-ref advisory caveat's "likely shipped" vs "context-only" split. It is
 // deliberately still advisory (no auto-exclusion), but the tier assignment is
@@ -116,6 +121,47 @@ describe("scan.mjs extractShippedIssueNums (#4499 per-issue willCloseTarget filt
     expect(refs.has(4168)).toBe(false);
     expect(refs.has(4040)).toBe(false);
     expect(refs.has(4039)).toBe(false);
+  });
+
+  // The four part-N PRs named in #4374's repro table (real refs, verbatim
+  // shape). #4350's PART_PATTERN used to skip such PRs before closing-ref
+  // extraction, so even an explicit `fix #N` body keyword was discarded and
+  // the covered issue leaked back as a false candidate. #4495 (direction 1)
+  // dropped the skip; these cases pin that it stays dropped under the current
+  // per-issue willCloseTarget filter (#4499). Live-state honesty: only #4227
+  // carried a formal closing keyword (`fix #4192` — GitHub set the will-close
+  // link); #4292/#4178/#4303 referenced their targets via `Related #N` weak
+  // refs (willCloseTarget false — surfaced by the #4373 advisory caveat, not
+  // auto-excluded), and all four target issues were eventually closed by
+  // their part-series completing, not by a single keyword.
+  const PART_N_XREFS = [
+    // #4192 ← PR 4227 "refactor #4192 (part 2)" with `fix #4192` in body.
+    { number: 4192, timelineItems: { totalCount: 1, nodes: [xref(4227, "MERGED", true)] } },
+    // #4256 ← PR 4292 "fix #4256 (part 2)", body says `Related #4256` only.
+    { number: 4256, timelineItems: { totalCount: 1, nodes: [xref(4292, "MERGED", false)] } },
+    // #4169 ← PR 4178 "fix #4169 (part 1)", body says `Related #4169` only.
+    { number: 4169, timelineItems: { totalCount: 1, nodes: [xref(4178, "MERGED", false)] } },
+    // #4302 ← PR 4303 "fix #4302 (part 1)", body says `Related #4302` only.
+    { number: 4302, timelineItems: { totalCount: 1, nodes: [xref(4303, "MERGED", false)] } },
+  ];
+
+  it("REGRESSION (#4374): a part-N merged PR with a will-close link marks its issue shipped", () => {
+    // The PART_PATTERN skip used to discard this closing ref wholesale — the
+    // exact over-pruning #4374 filed. A "part 2" title must not suppress a
+    // formal will-close link.
+    const refs = extractShippedIssueNums(PART_N_XREFS);
+    expect(refs.has(4192)).toBe(true);
+  });
+
+  it("REGRESSION (#4374): part-N refs without a will-close link stay weak (not shipped)", () => {
+    // The other three repro rows referenced their targets as `Related #N` —
+    // context-only under the current filter, surfaced by the #4373 caveat
+    // rather than excluded. A future re-introduction of title-based skipping
+    // (or a broadening to any-#N) must flip these deliberately, not silently.
+    const refs = extractShippedIssueNums(PART_N_XREFS);
+    expect(refs.has(4256)).toBe(false);
+    expect(refs.has(4169)).toBe(false);
+    expect(refs.has(4302)).toBe(false);
   });
 
   it("marks an issue shipped only when a MERGED PR carries a will-close link", () => {
