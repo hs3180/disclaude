@@ -978,7 +978,10 @@ export class ClaudeSDKProvider implements IAgentSDKProvider {
       definition.name,
       definition.description,
       definition.parameters as unknown as Parameters<typeof tool>[2],
-      definition.handler
+      // #4568: drop the handler's optional onProgress second argument — the
+      // Claude SDK tool() channel has no progress plumbing (it passes its own
+      // `extra` context there). Progress reporting is pi-backend-only.
+      (params) => definition.handler(params)
     );
   }
 
