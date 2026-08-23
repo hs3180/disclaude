@@ -601,6 +601,90 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('POST /api/mark-chat-responded (Issue #4281)', () => {
+    const validBody = JSON.stringify({
+      chatId: 'oc_t1',
+      response: { selectedValue: 'approve', responder: 'ou_user', repliedAt: '2026-08-23T00:00:00Z' },
+    });
+
+    it('should delegate to the handler and return success', async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ success: true });
+      server.setMarkChatRespondedHandler(mockHandler);
+
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/mark-chat-responded',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+
+      expect(statusCode).toBe(200);
+      const data = JSON.parse(body) as { ok?: boolean; success?: boolean };
+      expect(data.ok).toBe(true);
+      expect(data.success).toBe(true);
+      expect(mockHandler).toHaveBeenCalledTimes(1);
+      expect(mockHandler.mock.calls[0]![0]).toBe('oc_t1');
+      expect(mockHandler.mock.calls[0]![1]).toEqual({
+        selectedValue: 'approve',
+        responder: 'ou_user',
+        repliedAt: '2026-08-23T00:00:00Z',
+      });
+    });
+
+    it('should return 503 when handler is not configured', async () => {
+      const { statusCode } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/mark-chat-responded',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(503);
+    });
+
+    it('should return 400 when response payload is malformed (missing field)', async () => {
+      server.setMarkChatRespondedHandler(vi.fn());
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/mark-chat-responded',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: 'oc_t1', response: { selectedValue: 'x', responder: 'y' } }),
+      });
+      expect(statusCode).toBe(400);
+      expect(JSON.parse(body).message).toContain('repliedAt');
+    });
+
+    it('should return 400 when chatId is missing or empty', async () => {
+      server.setMarkChatRespondedHandler(vi.fn());
+      const missing = await dispatch(server, {
+        method: 'POST',
+        url: '/api/mark-chat-responded',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ response: { selectedValue: 'x', responder: 'y', repliedAt: 'z' } }),
+      });
+      expect(missing.statusCode).toBe(400);
+
+      const empty = await dispatch(server, {
+        method: 'POST',
+        url: '/api/mark-chat-responded',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId: '', response: { selectedValue: 'x', responder: 'y', repliedAt: 'z' } }),
+      });
+      expect(empty.statusCode).toBe(400);
+    });
+
+    it('should return 500 when the handler throws', async () => {
+      server.setMarkChatRespondedHandler(vi.fn().mockRejectedValue(new Error('not supported by this channel')));
+      const { statusCode, body } = await dispatch(server, {
+        method: 'POST',
+        url: '/api/mark-chat-responded',
+        headers: { 'content-type': 'application/json' },
+        body: validBody,
+      });
+      expect(statusCode).toBe(500);
+      expect(JSON.parse(body).message).toContain('not supported');
+    });
+  });
+
   describe('unknown routes', () => {
     it('should return 404 for unknown paths', async () => {
       const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/unknown' });

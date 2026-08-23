@@ -817,6 +817,26 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Mark a tracked temporary chat as responded — delegates to the channel's
+   * markChatResponded capability (temp-chat lifecycle, Issue #1703). REST
+   * parity with the IPC markChatResponded method (Issue #4281); throws the
+   * same "not supported by this channel" error as the IPC composite handler
+   * when the active channel lacks the capability.
+   *
+   * @returns { success: boolean }
+   */
+  async markChatResponded(
+    chatId: string,
+    response: { selectedValue: string; responder: string; repliedAt: string },
+  ): Promise<{ success: boolean }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h?.markChatResponded) {
+      throw new Error('markChatResponded not supported by this channel');
+    }
+    return await h.markChatResponded(chatId, response);
+  }
+
+  /**
    * Resolve the channel API handlers for a chatId.
    *
    * Shared by the composite IPC handlers and the scheduler push callbacks.
