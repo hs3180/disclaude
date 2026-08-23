@@ -533,6 +533,13 @@ async function main(): Promise<void> {
       // capability (REST parity with the IPC method).
       httpApiServer.setUploadImageHandler((filePath) => primaryNode.uploadImage(filePath));
 
+      // Issue #4281: wire REST /api/mark-chat-responded to the channel's
+      // markChatResponded capability (temp-chat lifecycle; REST parity with
+      // the IPC method).
+      httpApiServer.setMarkChatRespondedHandler(
+        (chatId, response) => primaryNode.markChatResponded(chatId, response),
+      );
+
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);
 
