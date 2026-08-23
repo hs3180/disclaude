@@ -44,8 +44,9 @@ export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
 // Issue #4280 (part 4): the IPC-server lifecycle re-exports
 // (startIpcServer/stopIpcServer/isIpcServerRunning/
-// registerFeishuHandlers/unregisterFeishuHandlers) are removed with the
-// mcp-server's own UnixSocketIpcServer — dead code since part 3.
+// getIpcServerSocketPath/registerFeishuHandlers/unregisterFeishuHandlers)
+// are removed with the mcp-server's own UnixSocketIpcServer — dead code
+// since part 3.
 export {
   send_interactive,
   send_interactive_message,
