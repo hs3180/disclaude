@@ -51,7 +51,11 @@ const { fakeState } = vi.hoisted(() => {
        * AND emits the aborted-run debris events real pi emits (agent.js
        * handleRunFailure: message_end/turn_end/agent_end) — the DEFAULT
        * behavior of real AbortController.abort(). The flag-only variant
-       * models a streamFn that ignores the abort signal (force-close path).
+       * (this field's default, false) models a streamFn that ignores the
+       * abort signal (force-close path) — the hung-run test relies on that
+       * default, so it must stay explicit here: flipping the default to true
+       * to match real semantics would silently repoint that test from the
+       * force-close path to the abort-settle path and lose its coverage.
        */
       abortResolvesHang: false,
       /** Issue #4386 (part 5): delay between scripted events (0 = synchronous). */
@@ -129,9 +133,11 @@ class FakeAgent {
     fakeState.aborted = true;
     // Real pi semantics (0.82.1 agent.js:200 + agent-loop.js): abort() trips
     // the run's AbortController → the parked streamFn await unblocks → the
-    // run settles and prompt() resolves. hangPrompt's park releases on abort
-    // by default; a signal-ignoring streamFn (force-close path) overrides via
-    // abortResolvesHang = false.
+    // run settles and prompt() resolves. The knob models BOTH variants:
+    // abortResolvesHang=true is the real default (park releases on abort);
+    // the fake's own default false keeps the park held — a signal-ignoring
+    // streamFn (force-close path) — because the hung-run test below relies
+    // on that variant without setting the knob.
     if (this.abortResolver && fakeState.abortResolvesHang) {
       const resolve = this.abortResolver;
       this.abortResolver = null;
@@ -498,8 +504,9 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
   // run, runInput's finally clears the force-close timer, so nothing ever
   // flips `aborted` and the consumer loop parks forever — the stall result is
   // never synthesized and the stream hangs harder than before the watchdog.
-  // abortOnHang (default true) keeps that realism; the hung-run test above
-  // opts out via the same knob to exercise the force-close fallback path.
+  // abortResolvesHang = true here opts INTO that realism (the fake's default
+  // stays false — see the knob's declaration for why); the hung-run test
+  // above keeps the default to exercise the force-close fallback path.
   it('stall watchdog: abort() settles the run (real pi semantics) — stall result still terminates the stream', async () => {
     process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
     process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '10';
