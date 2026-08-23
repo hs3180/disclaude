@@ -111,7 +111,6 @@ describe('buildMcpServers', () => {
     expect(Object.keys(result)).toEqual(['channel-mcp']);
     expect(JSON.stringify(result)).not.toContain('stdio');
   });
-  });
 });
 
 describe('collectInlineMcpInstances (Issue #4302)', () => {
