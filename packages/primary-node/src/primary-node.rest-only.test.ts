@@ -20,9 +20,11 @@ import { join } from 'node:path';
 import { PrimaryNode } from './primary-node.js';
 import { IPC_SOCKET_PATH_FILE } from '@disclaude/core';
 
-/** Point the well-known discovery file at a scratch path for the test. */
+/**
+ * Scratch dir proving nothing per-process is created under /tmp either —
+ * generateSocketPath() used to mint a per-PID socket file here.
+ */
 const SCRATCH_DIR = join(tmpdir(), `disclaude-rest-only-test-${process.pid}`);
-const SCRATCH_SOCKET_FILE = join(SCRATCH_DIR, 'disclaude-ipc-socket');
 
 describe('PrimaryNode REST-only serving (Issue #4280 part 5)', () => {
   beforeEach(() => {
@@ -68,7 +70,6 @@ describe('PrimaryNode REST-only serving (Issue #4280 part 5)', () => {
       ? statSync(IPC_SOCKET_PATH_FILE).mtimeMs
       : -1;
     expect(statAfter).toBe(statBefore);
-    expect(existsSync(SCRATCH_SOCKET_FILE)).toBe(false);
 
     await node.stop();
     await nodeLate.stop();

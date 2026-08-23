@@ -279,27 +279,27 @@ export class PrimaryNode extends EventEmitter {
   // ============================================================================
 
   /**
-   * Register Feishu API handlers for IPC calls.
+   * Register Feishu API handlers.
    *
-   * This method should be called after FeishuChannel starts to enable
-   * MCP Server tools to send messages via IPC.
+   * This method should be called after FeishuChannel starts so the
+   * REST-facing methods (sendMessage/sendCard/uploadFile/…) can reach it.
    */
   registerFeishuHandlers(handlers: FeishuApiHandlers): void {
     this.feishuHandlersContainer.handlers = handlers;
-    logger.info('Feishu API handlers registered for IPC');
+    logger.info('Feishu API handlers registered');
   }
 
   /**
-   * Register channel API handlers for IPC routing.
-   * Issue #3814: Generalized handler registration for multi-channel IPC.
+   * Register channel API handlers.
+   * Issue #3814: Generalized handler registration for multi-channel routing.
    *
    * Handlers are stored with their channel instance for chatId-based routing.
-   * The IPC dispatch resolves the correct handlers by checking which channel
+   * resolveApiHandlers resolves the correct handlers by checking which channel
    * owns a given chatId via `channel.ownsChatId(chatId)`.
    */
   registerChannelHandlers(channelType: string, handlers: ChannelApiHandlers, channel: IChannel): void {
     this.channelHandlersMap.set(channelType, { handlers, channel });
-    logger.info({ channelType }, 'Channel API handlers registered for IPC');
+    logger.info({ channelType }, 'Channel API handlers registered');
   }
 
   // Issue #4280 (part 5): createCompositeHandlersContainer() is removed with
@@ -638,12 +638,11 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Resolve and invoke the channel's listTempChats capability (Issue #1703).
    *
-   * Shared by the IPC composite handler (which returns the raw chat list) and
-   * the REST-facing `listTempChats()` public method below (which wraps it into
-   * `{ success, chats }`). Throws if the active channel does not support
-   * temp-chat tracking. Returns the raw chat list — each caller wraps it into
-   * the response shape appropriate for its transport (IPC payload / REST body),
-   * so the two call sites keep their distinct return contracts.
+   * Issue #4280 (part 5): with the IPC server gone this has a single caller —
+   * the REST-facing `listTempChats()` public method below (which wraps the raw
+   * chat list into `{ success, chats }`). Throws if the active channel does
+   * not support temp-chat tracking. Returns the raw chat list so the caller
+   * can wrap it into the REST response shape.
    */
   private async resolveChannelTempChats(): Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>> {
     const h = this.resolveApiHandlers();
@@ -672,9 +671,9 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Mark a tracked temporary chat as responded — delegates to the channel's
    * markChatResponded capability (temp-chat lifecycle, Issue #1703). REST
-   * parity with the IPC markChatResponded method (Issue #4281); throws the
-   * same "not supported by this channel" error as the IPC composite handler
-   * when the active channel lacks the capability.
+   * parity with the IPC markChatResponded method (Issue #4281); throws
+   * "not supported by this channel" when the active channel lacks the
+   * capability.
    *
    * @returns { success: boolean }
    */
@@ -692,7 +691,8 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Resolve the channel API handlers for a chatId.
    *
-   * Shared by the composite IPC handlers and the scheduler push callbacks.
+   * Shared by the REST-facing public methods (uploadFile/sendMessage/…) and
+   * the scheduler push callbacks.
    * 1. Check registered channel handlers (channelHandlersMap) for chatId ownership
    * 2. Fall back to feishuHandlersContainer for backward compatibility
    */
