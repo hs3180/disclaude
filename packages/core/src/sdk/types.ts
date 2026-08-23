@@ -197,8 +197,18 @@ export interface InlineToolDefinition<TParams = any, TResult = any> {
   description: string;
   /** 参数 Schema（Zod） */
   parameters: ZodSchema<TParams>;
-  /** 处理函数 */
-  handler: (params: TParams) => Promise<TResult>;
+  /**
+   * 处理函数。
+   *
+   * 可选第二参 `onProgress`（#4568）：长时间运行的工具可在执行期间多
+   * 次调用它上报中间进度。目前仅 pi 后端传入——adapter 把它接到 pi
+   * execute 的 onUpdate → pi 发 `tool_execution_update` → 流里出现
+   * `tool_progress` 消息（同时让 stall watchdog #4550 在工具静默期
+   * re-arm）。Claude 后端的 tool() 无对应通道，不会传入——跨后端工具
+   * 使用前需 `typeof onProgress === 'function'` 守卫。不关心进度的
+   * handler 忽略该参数即可（现有工具零改动）。
+   */
+  handler: (params: TParams, onProgress?: (progress: unknown) => void) => Promise<TResult>;
 }
 
 /** stdio 模式 MCP 服务器配置 */
