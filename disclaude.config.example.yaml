@@ -249,7 +249,10 @@ tools:
   disabled: []
 
   # MCP server configurations
-  # ⚠️ Browser automation NO LONGER lives here: the Playwright MCP server was removed
+  # ⚠️ DEPRECATED (#4459): external stdio MCP servers are slated for removal in favor of
+  # Skills (CLI + README — see docs/skill-format-spec.md). Configured servers keep working
+  # (a deprecation warning is logged per use), but new integrations should be a Skill.
+  # Browser automation NO LONGER lives here: the Playwright MCP server was removed
   # (#4460) — use the browser-use Skill instead (skills/browser-use/SKILL.md), pointing
   # it at the shared CDP endpoint via BU_CDP_URL (see docs/cdp-endpoint.md).
   mcpServers:
