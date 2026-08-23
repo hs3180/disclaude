@@ -56,8 +56,9 @@ MCP Server (mcp-server)
 | POST | `/api/upload-file` | uploadFile | #4346 |
 | POST | `/api/upload-image` | uploadImage | #4347 |
 | GET | `/api/temp-chats` | listTempChats | #4348 |
+| POST | `/api/mark-chat-responded` | markChatResponded | #4562 |
 
-> ⚠️ `markChatResponded` was descoped — #4342 was closed as **won't-implement** (the IPC method has 0 in-tree callers and the `responded` flag it writes is never read). There is no `/api/mark-chat-responded` route on `main`; the client route-map entry is documented inert in `rest-ipc-client.ts:78`. Phase 1 ships **7** active endpoints.
+> ℹ️ 2026-07-20: `markChatResponded` was initially descoped — #4342 closed as **won't-implement** (0 in-tree callers, `responded` flag unread). 2026-08-23: reversed by #4281's full-integration slice (#4562) — IPC-method parity requires every protocol method to be REST-reachable, so the endpoint landed for completeness (payload/behavior identical to the #4342 blueprint). Phase 1 now ships **8** active endpoints.
 
 ### 3.2 Design decisions
 
@@ -148,12 +149,13 @@ both unset only for single-host local testing.
 | PR | Title |
 |----|-------|
 | #4341 | GET /api/ping |
-| #4342 | POST /api/mark-chat-responded — ❌ closed (won't-implement: 0 callers, flag unread) |
+| #4342 | POST /api/mark-chat-responded — ❌ closed (won't-implement: 0 callers, flag unread); superseded by #4562 |
 | #4343 | POST /api/send-message |
 | #4344 | POST /api/send-card |
 | #4345 | POST /api/send-interactive |
 | #4346 | POST /api/upload-file (filePath) |
 | #4347 | POST /api/upload-image (filePath) |
 | #4348 | GET /api/temp-chats (single-process) |
+| #4562 | POST /api/mark-chat-responded (#4281 parity slice; supersedes closed #4342) |
 | #4349 | RestIpcClient (12 methods + IpcClientLike + wiring) |
 | #4351 | pushToAgent latency baseline monitoring — ❌ closed (descoped from #4281) |
