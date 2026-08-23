@@ -32,20 +32,18 @@
  */
 
 import * as path from 'path';
-import { promises as fsp } from 'node:fs';
 import { EventEmitter } from 'events';
 import {
   createLogger,
   type IChannel,
   type OutgoingMessage,
-  UnixSocketIpcServer,
-  createInteractiveMessageHandler,
-  generateSocketPath,
-  IPC_SOCKET_PATH_FILE,
+  // Issue #4280 (part 5): the IPC server import is gone — PrimaryNode serves
+  // REST-only via its HttpApiServer (cli.ts --api-port). Only the handler-
+  // container types remain: resolveApiHandlers still routes REST-facing calls
+  // to the owning channel's handlers.
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
   type ChannelApiHandlers,
-  type ChannelHandlersContainer,
   // Issue #1377: Scheduler integration
   Scheduler,
   ScheduleManager,
@@ -150,10 +148,12 @@ export class PrimaryNode extends EventEmitter {
   // Channel management (Issue #1594: unified channel lifecycle)
   protected channelManager: ChannelManager;
 
-  // IPC Server for MCP Server connections (Issue #1042)
-  protected ipcServer: UnixSocketIpcServer | null = null;
+  // Issue #4280 (part 5): the UnixSocketIpcServer field is gone — PrimaryNode
+  // no longer starts an IPC server; MCP tools / push-cli reach it over the
+  // REST API (--api-port). The handler containers below stay: REST-facing
+  // methods (uploadFile/sendCard/… via resolveApiHandlers) route through them.
   protected feishuHandlersContainer: FeishuHandlersContainer = { handlers: undefined };
-  // Issue #3814: Multi-channel IPC handler routing
+  // Issue #3814: Multi-channel handler routing (chatId ownership)
   protected channelHandlersMap = new Map<string, { handlers: ChannelApiHandlers; channel: IChannel }>();
 
   // Scheduler (Issue #1377)
@@ -275,86 +275,8 @@ export class PrimaryNode extends EventEmitter {
   }
 
   // ============================================================================
-  // IPC Server (Issue #1042)
+  // Channel handler registration (Issue #1042 → #4280 part 5)
   // ============================================================================
-
-  /**
-   * Start the IPC server for MCP Server connections.
-   *
-   * The IPC server accepts connections from MCP Server child processes
-   * and allows them to call Feishu API handlers directly (no WebSocket bridging needed
-   * since Primary Node has direct access to the channels).
-   */
-  protected async startIpcServer(): Promise<void> {
-    if (this.ipcServer) {
-      logger.warn('IPC server already running');
-      return;
-    }
-
-    // Issue #1572: Use real InteractiveContextStore for prompt registration (Phase 3 of #1568).
-    // Issue #1573: Phase 4 — simplified to a single registerActionPrompts callback.
-    // State management dispatch cases removed from IPC; only the callback for
-    // sendInteractive's internal prompt registration remains.
-    const contextStore = this.interactiveContextStore;
-
-    // Create the request handler with channel handlers container.
-    // Issue #3814: Use composite container that routes IPC requests to the
-    // correct channel's handlers based on chatId ownership.
-    const compositeContainer = this.createCompositeHandlersContainer();
-    const requestHandler = createInteractiveMessageHandler(
-      (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
-        contextStore.register(messageId, chatId, actionPrompts);
-      },
-      compositeContainer
-    );
-
-    this.ipcServer = new UnixSocketIpcServer(requestHandler, {
-      socketPath: generateSocketPath(),
-    });
-
-    await this.ipcServer.start();
-
-    // Set environment variable for child processes (MCP Server)
-    const socketPath = this.ipcServer.getSocketPath();
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET = socketPath;
-
-    // Issue #3808: Write socket path to well-known file for external processes.
-    // External scripts (e.g., cron jobs) read this file to discover the IPC socket.
-    // Includes PID for stale file detection by CLI consumers.
-    try {
-      const content = `${socketPath}\n${process.pid}`;
-      await fsp.writeFile(IPC_SOCKET_PATH_FILE, content, 'utf-8');
-      logger.debug({ path: IPC_SOCKET_PATH_FILE }, 'IPC socket path written to discovery file');
-    } catch (error) {
-      logger.warn({ err: error }, 'Failed to write IPC socket path discovery file');
-    }
-
-    logger.info({ socketPath }, 'IPC server started for MCP Server connections');
-  }
-
-  /**
-   * Stop the IPC server.
-   */
-  protected async stopIpcServer(): Promise<void> {
-    if (!this.ipcServer) {
-      return;
-    }
-
-    await this.ipcServer.stop();
-    this.ipcServer = null;
-
-    // Clear environment variable
-    delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-
-    // Issue #3808: Clean up socket path discovery file
-    try {
-      await fsp.unlink(IPC_SOCKET_PATH_FILE);
-    } catch {
-      // Ignore cleanup errors (file may not exist)
-    }
-
-    logger.info('IPC server stopped');
-  }
 
   /**
    * Register Feishu API handlers for IPC calls.
@@ -380,81 +302,11 @@ export class PrimaryNode extends EventEmitter {
     logger.info({ channelType }, 'Channel API handlers registered for IPC');
   }
 
-  /**
-   * Create a composite ChannelHandlersContainer that routes IPC requests
-   * to the correct channel's handlers based on chatId ownership.
-   *
-   * Issue #3814: Multi-channel IPC routing.
-   *
-   * Resolution order:
-   * 1. Check registered channel handlers (channelHandlersMap) for chatId ownership
-   * 2. Fall back to feishuHandlersContainer for backward compatibility
-   */
-  protected createCompositeHandlersContainer(): ChannelHandlersContainer {
-    const container: ChannelHandlersContainer = { handlers: undefined };
-
-    const resolveHandlers = (chatId?: string): ChannelApiHandlers | undefined =>
-      this.resolveApiHandlers(chatId);
-
-    // Create proxy handlers that delegate to the resolved channel
-    container.handlers = {
-      sendMessage: (chatId, text, threadId, mentions) => {
-        const h = resolveHandlers(chatId);
-        if (!h) {throw new Error('No channel handlers available');}
-        return h.sendMessage(chatId, text, threadId, mentions);
-      },
-      sendCard: (chatId, card, threadId, description) => {
-        const h = resolveHandlers(chatId);
-        if (!h) {throw new Error('No channel handlers available');}
-        return h.sendCard(chatId, card, threadId, description);
-      },
-      uploadFile: (chatId, filePath, threadId) => {
-        const h = resolveHandlers(chatId);
-        if (!h) {throw new Error('No channel handlers available');}
-        return h.uploadFile(chatId, filePath, threadId);
-      },
-      sendInteractive: (chatId, params) => {
-        const h = resolveHandlers(chatId);
-        if (!h?.sendInteractive) {
-          throw new Error('sendInteractive not supported by this channel');
-        }
-        return h.sendInteractive(chatId, params);
-      },
-
-      // Issue #3814 fix: proxy all optional handlers to prevent regression
-      pushToAgent: (chatId, message) => {
-        const h = resolveHandlers(chatId);
-        if (!h?.pushToAgent) {
-          throw new Error('pushToAgent not supported by this channel');
-        }
-        return h.pushToAgent(chatId, message);
-      },
-
-      uploadImage: (filePath) => {
-        // uploadImage is channel-agnostic (no chatId routing needed)
-        const h = resolveHandlers();
-        if (!h?.uploadImage) {
-          throw new Error('uploadImage not supported by this channel');
-        }
-        return h.uploadImage(filePath);
-      },
-
-      // Delegates to resolveChannelTempChats (shared with the REST-facing
-      // listTempChats() public method) — returns the raw chat list; the IPC
-      // server wraps it into its { success, payload: { success, chats } } response.
-      listTempChats: () => this.resolveChannelTempChats(),
-
-      markChatResponded: (chatId, response) => {
-        const h = resolveHandlers(chatId);
-        if (!h?.markChatResponded) {
-          throw new Error('markChatResponded not supported by this channel');
-        }
-        return h.markChatResponded(chatId, response);
-      },
-    };
-
-    return container;
-  }
+  // Issue #4280 (part 5): createCompositeHandlersContainer() is removed with
+  // the IPC server — it existed to adapt the registered handlers into the
+  // UnixSocketIpcServer's ChannelHandlersContainer shape. The REST-facing
+  // public methods (uploadFile/sendMessage/sendCard/sendInteractive/
+  // listTempChats/markChatResponded/…) call resolveApiHandlers directly.
 
   /**
    * Get all registered channels.
@@ -503,8 +355,10 @@ export class PrimaryNode extends EventEmitter {
       }
     }
 
-    // Start IPC server for MCP Server connections (Issue #1042)
-    await this.startIpcServer();
+    // Issue #4280 (part 5): no IPC server is started anymore — PrimaryNode
+    // serves REST-only via the HttpApiServer wired in cli.ts (--api-port).
+    // MCP tools and push-cli connect as REST clients (see mcp-server
+    // tools/ipc-utils.ts getRestIpcClient and push-cli.ts createRestClient).
 
     // Initialize Scheduler (Issue #1377)
     // Issue #3361: Wrap in try-catch to prevent scheduler failure from
@@ -539,8 +393,7 @@ export class PrimaryNode extends EventEmitter {
     // Stop Scheduler (Issue #1377)
     await this.stopScheduler();
 
-    // Stop IPC server (Issue #1042)
-    await this.stopIpcServer();
+    // Issue #4280 (part 5): no IPC server to stop — REST-only serving.
 
     this.running = false;
     this.emit('stopped');
