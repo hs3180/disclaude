@@ -273,8 +273,7 @@ is *captured* in `RESEARCH.md`, while the outline is *co-edited* on the Canvas.
 The full template, lark-cli commands, and sync/failure rules live in the
 [canvas template reference](./canvas-template.md). In short:
 
-- **Create** on the first scheduled run (`lark-cli docs +create` from the
-  template), store the URL as `canvasUrl` in `RESEARCH.md`, and post the link
+- **Create** on the first scheduled run — this is step 3 of [Per-step behavior](#per-step-behavior) when no `canvasUrl` exists yet (`lark-cli docs +create` from the template), store the URL as `canvasUrl` in `RESEARCH.md`, and post the link
   to the user (grant access — bot docs are not user-visible by default).
 - **Sync at the start of every run** (`docs +fetch`): merge user Canvas edits
   into `RESEARCH.md` first (user edits win on conflict; annotations append to
@@ -305,7 +304,7 @@ At the **start of every step**, before doing anything else:
 
 1. **Read the latest state** — re-read `STATE.md` and `RESEARCH.md` from the workdir. Do not rely on memory of a previous step; state files are the source of truth and may have changed since your last turn.
 2. **Check for user feedback** — new entries in the `## User Feedback` section of `RESEARCH.md` (appended by the conversation Agent, per #4017) are the single feedback channel. Read that section as part of re-reading the state files, treat entries as suggestive rather than authoritative, and let them adjust this step's direction.
-3. **Sync the Research Canvas** — if a `canvasUrl` exists in `RESEARCH.md`, follow the [canvas template](./canvas-template.md) sync flow: fetch the doc, merge user edits back into `RESEARCH.md` (user edits win), then publish this step's progress to the Canvas. A sync failure never blocks the step.
+3. **Create or sync the Research Canvas** — if a `canvasUrl` exists in `RESEARCH.md`, follow the [canvas template](./canvas-template.md) sync flow: fetch the doc, merge user edits back into `RESEARCH.md` (user edits win), then publish this step's progress to the Canvas. A sync failure never blocks the step. If no `canvasUrl` exists **and** this research spans multiple steps (first run), **create** the Canvas now (Sub-E.1): instantiate the [canvas template](./canvas-template.md) from the plan in `RESEARCH.md`, run its create flow (`lark-cli docs +create`), store the doc URL as `canvasUrl` in `RESEARCH.md`, and post the link to the user. A create failure never blocks the step — log it and retry next run. Single-step research skips the Canvas entirely.
 4. **Carry the thread forward** — write the step's outcome, open questions, and intended next action back into `STATE.md` so the next step picks up cleanly.
 5. **Be decisive, flag uncertainty** — make the most reasonable decision and proceed rather than stalling. Record what you decided and what you are unsure about (`⚠️ uncertain: …`) so the user can correct it later. Do **not** block the whole research on a question the user has not answered yet.
 6. **Deliver incrementally** — write the shared artifact to a Feishu doc and post a summary card in both the research group and the source chat, so the user sees progress whenever they look.
