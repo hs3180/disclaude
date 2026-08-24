@@ -483,6 +483,49 @@ describe('logger', () => {
       }).not.toThrow();
     });
 
+    it('should emit the real pid and hostname in production JSON entries (#4577)', async () => {
+      // Regression: the production config once overrode pino's `base` with
+      // literal booleans (`pid: true, hostname: true`), which replaces — not
+      // toggles — the default per-entry pid/hostname fields. With multiple
+      // disclaude instances (e.g. integration tests) writing to the same
+      // log file, entries became unattributable. pino's default base must
+      // stay intact so every entry carries the real process identity.
+      //
+      // Assert on the emitted JSON line (what lands in stdout here /
+      // disclaude-combined.log in production), captured via a stdout spy.
+      process.env.NODE_ENV = 'production';
+
+      const lines: string[] = [];
+      const stdoutSpy = vi
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(((chunk: unknown) => {
+          lines.push(String(chunk));
+          return true;
+        }) as typeof process.stdout.write);
+
+      try {
+        const logger = await initLogger({ fileLogging: false });
+        logger.info('probe entry');
+      } finally {
+        stdoutSpy.mockRestore();
+      }
+
+      const entries = lines
+        .join('\n')
+        .split('\n')
+        .filter((line) => line.includes('"msg":"probe entry"'))
+        .map((line) => JSON.parse(line));
+
+      expect(entries.length).toBe(1);
+      expect(entries[0].pid).toBe(process.pid);
+      expect(typeof entries[0].hostname).toBe('string');
+      expect((entries[0].hostname as string).length).toBeGreaterThan(0);
+
+      // The literal-boolean regression must never come back.
+      expect(entries[0].pid).not.toBe(true);
+      expect(entries[0].hostname).not.toBe(true);
+    });
+
     it('should support structured logging with objects', async () => {
       process.env.NODE_ENV = 'test';
       const logger = await initLogger();

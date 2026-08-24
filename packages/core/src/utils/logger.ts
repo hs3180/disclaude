@@ -206,11 +206,11 @@ function getProductionConfig(): LoggerOptions {
     serializers: {
       err: pino.stdSerializers.err,
       error: pino.stdSerializers.err
-    },
-    base: {
-      pid: true,
-      hostname: true
     }
+    // No `base` override: pino's default base emits the real process pid
+    // and hostname on every entry. Overriding base (as this config once did
+    // with literal `true` values) replaces those fields with the boolean,
+    // making multi-instance logs unattributable (issue #4577).
   };
 }
 
