@@ -124,6 +124,45 @@ describe('getIpcErrorMessage', () => {
   });
 });
 
+describe('buildIpcFallbackHint (Issue #4576)', () => {
+  let buildIpcFallbackHint: typeof import('./ipc-utils.js').buildIpcFallbackHint;
+
+  beforeEach(async () => {
+    ({ buildIpcFallbackHint } = await loadModule());
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await vi.resetModules();
+  });
+
+  it('should point at +messages-reply (thread-preserving), not +messages-send', () => {
+    const hint = buildIpcFallbackHint();
+    expect(hint).toContain('+messages-reply');
+    expect(hint).not.toContain('+messages-send --');
+  });
+
+  it('should embed the concrete parentMessageId when provided', () => {
+    const hint = buildIpcFallbackHint('om_x100b6788c7ec08a8c26e10b5b77637a');
+    expect(hint).toContain('--message-id om_x100b6788c7ec08a8c26e10b5b77637a');
+  });
+
+  it('should use a generic placeholder when no parentMessageId', () => {
+    const hint = buildIpcFallbackHint();
+    expect(hint).toContain('--message-id <om_...>');
+  });
+
+  it('should append --file when filePath is provided (send_file caller)', () => {
+    const hint = buildIpcFallbackHint('om_parent123', { filePath: './report.pdf' });
+    expect(hint).toContain('+messages-reply --message-id om_parent123 --file ./report.pdf');
+  });
+
+  it('should omit --file when no filePath (text/card/interactive callers unchanged)', () => {
+    const hint = buildIpcFallbackHint('om_parent123');
+    expect(hint).not.toContain('--file');
+  });
+});
+
 describe('isIpcAvailable (REST-only)', () => {
   let isIpcAvailable: typeof import('./ipc-utils.js').isIpcAvailable;
   let originalFetch: typeof globalThis.fetch;

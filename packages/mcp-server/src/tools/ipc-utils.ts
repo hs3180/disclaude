@@ -84,6 +84,34 @@ export async function isIpcAvailable(): Promise<boolean> {
 }
 
 /**
+ * Build the lark-cli fallback hint appended to IPC-unavailable errors.
+ *
+ * Issue #4576: when the PrimaryNode REST API is down, agents fall back to
+ * `lark-cli im +messages-send` — which has no reply/thread flag, so in topic
+ * groups the fallback reply "escapes" the thread and starts a new topic at
+ * the group root. The actionable hint tells the agent to use
+ * `+messages-reply` instead, which preserves thread attribution.
+ *
+ * @param parentMessageId - The message id the caller was asked to reply to,
+ *   when known. Embedded in the hint so the agent has a concrete command;
+ *   omitted (generic hint) when the send was not a thread reply.
+ * @param options - Optional extras: `filePath` (send_file only) appends
+ *   `--file <path>` to the suggested command — `+messages-reply` requires a
+ *   content flag, so without it an agent copying the hint would send an empty
+ *   reply. lark-cli only accepts cwd-relative paths, so pass the original
+ *   `filePath` argument, not the workspace-resolved absolute path.
+ * @returns The fallback hint string (empty-context callers append nothing).
+ */
+export function buildIpcFallbackHint(
+  parentMessageId?: string,
+  options?: { filePath?: string }
+): string {
+  const target = parentMessageId ?? '<om_...>';
+  const fileFlag = options?.filePath ? ` --file ${options.filePath}` : '';
+  return `IPC 不可用期间发送消息会丢失话题归属：lark-cli im +messages-send 没有 reply/thread 参数。请改用 \`lark-cli im +messages-reply --message-id ${target}${fileFlag}\` 回到原话题（Issue #4576），或等 PrimaryNode REST 恢复后重试。`;
+}
+
+/**
  * Generate user-facing error message based on IPC error type.
  * Issue #1088: Provide actionable error messages.
  * Issue #4280 (Phase 3, part 3): the service behind these errors is the

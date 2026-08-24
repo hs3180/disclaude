@@ -9,7 +9,7 @@
 
 import { createLogger, sendCard, type FeishuCard, type IpcMethodResult } from '@disclaude/core';
 import { isValidFeishuCard, getCardValidationError } from '../utils/card-validator.js';
-import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient } from './ipc-utils.js';
+import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
 import { getFeishuCredentials } from './credentials.js';
 import { invokeMessageSentCallback } from './callback-manager.js';
 import type { SendMessageResult } from './types.js';
@@ -89,7 +89,9 @@ export async function send_card(params: {
       return {
         success: false,
         error: errorMsg,
-        message: '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。',
+        // Issue #4576: actionable fallback — +messages-send loses thread
+        // attribution in topic groups; +messages-reply preserves it.
+        message: `❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。${buildIpcFallbackHint(parentMessageId)}`,
       };
     }
 
