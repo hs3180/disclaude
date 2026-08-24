@@ -248,21 +248,11 @@ tools:
   # Example: ['WebSearch', 'WebFetch']
   disabled: []
 
-  # MCP server configurations
-  # ⚠️ DEPRECATED (#4459): external stdio MCP servers are slated for removal in favor of
-  # Skills (CLI + README — see docs/skill-format-spec.md). Configured servers keep working
-  # (a deprecation warning is logged per use), but new integrations should be a Skill.
-  # Browser automation NO LONGER lives here: the Playwright MCP server was removed
-  # (#4460) — use the browser-use Skill instead (skills/browser-use/SKILL.md), pointing
-  # it at the shared CDP endpoint via BU_CDP_URL (see docs/cdp-endpoint.md).
-  mcpServers:
-    # Example: Add a custom MCP server
-    # my-custom-server:
-    #   type: "stdio"
-    #   command: "node"
-    #   args: ["./my-mcp-server.js"]
-    #   env:
-    #     CUSTOM_VAR: "value"
+  # NOTE (#4459 Scope 4): external MCP servers (tools.mcpServers) were REMOVED.
+  # The stdio loader no longer exists — entries here are ignored.
+  # Migrate external tools to a CLI Skill (docs/skill-format-spec.md).
+  # Browser automation lives in the browser-use Skill (skills/browser-use/SKILL.md, #4460),
+  # pointing it at the shared CDP endpoint via BU_CDP_URL (see docs/cdp-endpoint.md).
 
 # -----------------------------------------------------------------------------
 # Session Restoration Configuration (Issue #1213)
