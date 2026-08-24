@@ -102,22 +102,24 @@ agent. This is the surface the "reduce MCP" direction most directly targets, and
 - **Transport / spawning**: stdio. disclaude **does not** spawn the subprocess itself and holds **no handle** on
   it — the agent SDK spawns it inside the CLI child. This is why `collectInlineMcpInstances()` skips stdio
   entries (only inline `{instance}` wrappers are closeable; see `mcp-setup.ts:96` doc).
-- **Canonical consumer — Playwright MCP**: declared in
-  [`disclaude.config.example.yaml:257-261`](../disclaude.config.example.yaml):
+- **Canonical consumer — Playwright MCP (REMOVED)**: the Playwright MCP entry is deleted from
+  `disclaude.config.example.yaml`, the `@playwright/mcp` dependency is dropped from
+  `packages/core/package.json`, and README/browser docs now point at the browser-use Skill — the
+  **final part of [#4460](https://github.com/hs3180/disclaude/issues/4460)** (server removal after
+  parity was proven). Historical record (pre-removal):
   ```yaml
   playwright:
     type: "stdio"
     command: "npx"
     args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
   ```
-  Dependency pinned at [`packages/core/package.json`](../packages/core/package.json):
-  `"@playwright/mcp": "^0.0.61"` (lockfile `playwright 1.59.0-alpha`). README advertises "Playwright MCP
-  (15+ tools)" ([`README.md:40`](../README.md), [`:270`](../README.md), [`:535`](../README.md)). Tool-name
+  `"@playwright/mcp": "^0.0.61"` (lockfile `playwright 1.59.0-alpha`); tool-name
   convention `mcp__playwright__browser_*` documented at [`SKILL_SPEC.md:625-626`](../SKILL_SPEC.md).
   **Consumers retired (browser-use skill PR)**: the former grantees — the `site-miner` preset agent and
   the `site-miner` / `playwright-agent` skills — are deleted; browser automation goes through the
-  [`browser-use`](../skills/browser-use/SKILL.md) skill (`Bash`, no MCP grants). Only the
-  server/loader/package surface below remains.
+  [`browser-use`](../skills/browser-use/SKILL.md) skill (`Bash`, no MCP grants). With the server
+  entry/dep gone, **no in-repo consumer of the S2 loader remains** — only user-configured
+  custom stdio servers (below) still exercise it.
 - **Custom servers**: the example shows a generic custom-stdio template
   ([`disclaude.config.example.yaml:263-268`](../disclaude.config.example.yaml)).
 

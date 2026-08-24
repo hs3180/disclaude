@@ -252,21 +252,10 @@ tools:
   # ⚠️ DEPRECATED (#4459): external stdio MCP servers are slated for removal in favor of
   # Skills (CLI + README — see docs/skill-format-spec.md). Configured servers keep working
   # (a deprecation warning is logged per use), but new integrations should be a Skill.
-  # The Playwright entry below is itself being replaced by the browser-use Skill (#4460).
+  # Browser automation NO LONGER lives here: the Playwright MCP server was removed
+  # (#4460) — use the browser-use Skill instead (skills/browser-use/SKILL.md), pointing
+  # it at the shared CDP endpoint via BU_CDP_URL (see docs/cdp-endpoint.md).
   mcpServers:
-    # Playwright browser automation via CDP (Chrome DevTools Protocol)
-    # Option 1 (Docker): Run `docker compose --profile playwright up -d` to start CDP container
-    #   Uses Docker bridge network — CDP endpoint is http://disclaude-playwright:9222
-    #   The container fronts Chrome with an nginx proxy that rewrites Host -> localhost,
-    #   so no `--allowed-hosts` flag is needed on the MCP client.
-    # Option 2 (Host):   Run `./scripts/start-playwright-cdp.sh` to start Chrome CDP on host
-    #   Uses host network — CDP endpoint is http://localhost:9222
-    playwright:
-      type: "stdio"
-      command: "npx"
-      # ⚠️ The default below is for Docker mode. For Host mode, change to http://localhost:9222
-      args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
-
     # Example: Add a custom MCP server
     # my-custom-server:
     #   type: "stdio"
