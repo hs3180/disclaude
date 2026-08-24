@@ -138,13 +138,30 @@ printf '%s\n' '[info]: server ready' > "$SCRATCH/disclaude-test-server-multimoda
 ( cd "$SCRATCH" && unset PROJECT_ROOT && detect_quota_exhaustion "" "$SCRATCH/multimodal-test.sh" )
 check_rc $? 1 "tier 2: clean server log NOT detected"
 
+# Portable mtime back-dating helper (#4573): `touch -d '2 hours ago'` is
+# GNU-only — BSD touch (macOS /usr/bin/touch) rejects relative descriptors
+# ("out of range or illegal time specification"), which aborted the whole
+# suite there. Compose an absolute local timestamp instead: BSD date uses
+# `-v-2H`, GNU date uses `-d '2 hours ago'`; `touch -t [[CC]YY]MMDDhhmm[.ss]`
+# is POSIX and accepts it on both.
+touch_mtime_2h_ago() {
+  local stamp
+  stamp="$(date -v-2H +%Y%m%d%H%M 2>/dev/null \
+    || date -d '2 hours ago' +%Y%m%d%H%M 2>/dev/null \
+    || date -u -v-2H +%Y%m%d%H%M 2>/dev/null \
+    || date -u -d '2 hours ago' +%Y%m%d%H%M)"
+  # Even in UTC fallback the stamp is always "2h ago" of some reference
+  # clock, so it is safely older than any file created in this run.
+  touch -t "$stamp" "$1"
+}
+
 # --- Tier 2 freshness gate: a per-suite log OLDER than the reference file
 # (the suite's just-written output) is a stale leftover from an old
 # standalone run and must NOT be trusted (review round 2, P2-1).
 printf '%s\n' \
   'stderr: {"error":{"type":"rate_limit_error","code":1308,"message":"已达到 5 小时的使用上限"}}' \
   > "$SCRATCH/disclaude-test-server-multimodal-test.log"
-touch -d '2 hours ago' "$SCRATCH/disclaude-test-server-multimodal-test.log"
+touch_mtime_2h_ago "$SCRATCH/disclaude-test-server-multimodal-test.log"
 SUITE_OUT="$TMPDIR_FIX/suite-out-stale.log"
 printf '%s\n' '[FAIL] Chat request failed with HTTP 000' > "$SUITE_OUT"
 ( cd "$SCRATCH" && unset PROJECT_ROOT && detect_quota_exhaustion "$SUITE_OUT" "$SCRATCH/multimodal-test.sh" "$SUITE_OUT" )
