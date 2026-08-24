@@ -1522,6 +1522,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                     'Re-injected chat history into empty-turn replay context ' +
                       '(stale receive-time snapshot param dropped) (Issue #4391)'
                   );
+                  // Issue #4391 (part 3 review nit): the fresh stash supersedes
+                  // the session-start persisted snapshot (same getChatHistory
+                  // source, fetched later). Drop the snapshot CONTENT so the
+                  // replay's message renders one history section instead of two;
+                  // the log-paths hint survives inside history-manager.
+                  this.historyManager.dropPersistedHistoryContent();
                 }
                 // Session-only teardown: close query+channel, keep this agent
                 // (history, restartManager accounting, thread roots) intact.
