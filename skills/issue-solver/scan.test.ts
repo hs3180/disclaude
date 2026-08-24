@@ -43,7 +43,7 @@
 import { describe, it, expect } from "vitest";
 // The extractors are pure functions exported from scan.mjs.
 // @ts-expect-error — .mjs module has no type declarations; skills/ is not type-checked.
-import { extractOpenPRRefs, extractShippedIssueNums, titleMentionsIssue, buildVerificationQueue, renderVerificationBlock } from "./scan.mjs";
+import { extractOpenPRRefs, extractShippedIssueNums, titleMentionsIssue, buildVerificationQueue, renderVerificationBlock, verifyShippedAnchors } from "./scan.mjs";
 
 /** Cross-referenced event as shaped by GRAPHQL_QUERY's timelineItems nodes. */
 const xref = (sourceNumber: number, state: string, willCloseTarget: boolean) => ({
@@ -306,5 +306,142 @@ describe("scan.mjs renderVerificationBlock (#4373 part 3 batch checklist)", () =
 
   it("returns an empty string for an empty queue (no stray header)", () => {
     expect(renderVerificationBlock([])).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4373 part 4: verifyShippedAnchors — the part-3 checklist EXECUTED.
+//
+// Both process runners (git + gh pr view) are injected, so these tests are
+// hermetic: no clone on disk, no network, no token. The fakes mirror the
+// spawnSync return shape ({ status, stdout, stderr }) so the code under test
+// exercises its real result-parsing branches.
+// ---------------------------------------------------------------------------
+describe("scan.mjs verifyShippedAnchors (#4373 part 4 --verify-shipped)", () => {
+  /** git fake: routes by argv substring, returns spawnSync-shaped results. */
+  const fakeGit = (routes: Array<[string, { status?: number; stdout?: string; stderr?: string; error?: Error }]>) => {
+    const calls: string[][] = [];
+    const fn = (args: string[], _repoDir?: string) => {
+      calls.push(args);
+      const hit = routes.find(([needle]) => args.join(" ").includes(needle));
+      if (!hit) return { status: 0, stdout: "", stderr: "" };
+      return { status: 0, stdout: "", stderr: "", ...hit[1] };
+    };
+    return Object.assign(fn, { calls });
+  };
+
+  it("all merges grep-present => confirmed-shipped (the close-hygiene verdict)", async () => {
+    const git = fakeGit([
+      ["--grep=#4527", { stdout: "69f900a1 feat #4520 (part 2): p2p gate (#4527)\n" }],
+      ["--grep=#4511", { stdout: "27997e9c feat #4510: streamingCard p2p (#4511)\n" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4510, title: "p2p-only", mergedPRs: [4527, 4511] }],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(res.details[0].verdict).toBe("confirmed-shipped");
+    expect(res.details[0].results.map((r: any) => r.outcome)).toEqual(["present", "present"]);
+    // The fallback must NOT fire when grep already hit (no wasted gh call).
+    expect(res.summary).toContain("all 1 tier-1 candidates confirmed shipped");
+  });
+
+  it("grep MISS falls back to the merge commit (squash-retitle trap, #4407 case)", async () => {
+    // PR 4407's squash subject reads "(#4396, #4208 P1-b)" — grep misses on a
+    // genuinely merged PR. The gh fallback must rescue it to `present`.
+    const git = fakeGit([
+      ["--grep=#4407", { stdout: "" }],
+      ["cat-file -e", { status: 0, stdout: "", stderr: "" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4407, title: "placeholder card", mergedPRs: [4407] }],
+      { git, prMergeCommits: async () => "abc123def4567890abc123def4567890abc123de" },
+    );
+    expect(res.details[0].verdict).toBe("confirmed-shipped");
+    expect(res.details[0].results[0]).toMatchObject({ outcome: "present", via: "mergeCommit" });
+    // The cat-file probe received the resolved merge commit sha.
+    expect((git as any).calls.some((c: string[]) => c.includes("abc123def4567890abc123def4567890abc123de^{commit}"))).toBe(true);
+  });
+
+  it("grep MISS + merge commit absent from log => absent => issue unverified", async () => {
+    const git = fakeGit([
+      ["--grep=#99", { stdout: "" }],
+      ["cat-file -e", { status: 128, stderr: "fatal: Not a valid object name" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 44, title: "x", mergedPRs: [99] }],
+      { git, prMergeCommits: async () => "dead00000000000000000000000000000000dead" },
+    );
+    expect(res.details[0].verdict).toBe("unverified");
+    expect(res.details[0].results[0]).toMatchObject({ pr: 99, outcome: "absent", via: "mergeCommit" });
+    expect(res.summary).toContain("0/1");
+  });
+
+  it("gh fallback unavailable (null) => error, never counted as absence (no false all-clear)", async () => {
+    const git = fakeGit([["--grep=#99", { stdout: "" }]]);
+    const res = await verifyShippedAnchors(
+      [{ number: 44, title: "x", mergedPRs: [99] }],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(res.details[0].results[0]).toMatchObject({ outcome: "error", via: "mergeCommit", detail: "gh pr view unavailable" });
+    expect(res.details[0].verdict).toBe("unverified");
+  });
+
+  it("git itself fails (no repo / bad dir) => error, not absence", async () => {
+    const git = fakeGit([["--grep=#99", { status: 128, stderr: "fatal: not a git repository" }]]);
+    const res = await verifyShippedAnchors(
+      [{ number: 44, title: "x", mergedPRs: [99] }],
+      { git, prMergeCommits: async () => "abc123def4567890abc123def4567890abc123de" },
+    );
+    expect(res.details[0].results[0].outcome).toBe("error");
+    expect(res.details[0].verdict).toBe("unverified");
+    // The gh fallback must NOT fire when the primary errored (different from MISS).
+    expect((git as any).calls.filter((c: string[]) => c[0] === "cat-file").length).toBe(0);
+  });
+
+  it("one absent merge keeps the whole issue unverified (all-present required)", async () => {
+    const git = fakeGit([
+      ["--grep=#4527", { stdout: "69f900a1 (#4527)\n" }],
+      ["--grep=#4999", { stdout: "" }],
+      ["cat-file -e", { status: 128, stderr: "fatal: not a valid object" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4510, title: "p2p-only", mergedPRs: [4527, 4999] }],
+      { git, prMergeCommits: async () => "1111111111111111111111111111111111111111" },
+    );
+    expect(res.details[0].verdict).toBe("unverified");
+    expect(res.summary).toContain("0/1 tier-1 candidates confirmed shipped");
+  });
+
+  it("empty queue => empty details, explicit no-work summary", async () => {
+    const res = await verifyShippedAnchors([], { git: fakeGit([]), prMergeCommits: async () => null });
+    expect(res.details).toEqual([]);
+    expect(res.summary).toBe("no tier-1 weak-ref candidates to verify");
+  });
+
+  it("non-numeric / malformed entries degrade to unverified without throwing", async () => {
+    const git = fakeGit([]);
+    const res = await verifyShippedAnchors(
+      [
+        { number: "abc;rm -rf /", title: "injected", mergedPRs: [1] },
+        { number: 12, title: "x", mergedPRs: "not-an-array" },
+        { number: 13, title: "x", mergedPRs: [NaN as any] },
+      ],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(res.details.map((d: any) => d.verdict)).toEqual(["unverified", "unverified", "unverified"]);
+    // The injection-shaped issue number never reached git argv.
+    expect((git as any).calls.length).toBe(0);
+    expect(res.summary).toContain("0/3");
+  });
+
+  it("greps anchor to the PR number with the same suffix-digit guard as part 3", async () => {
+    // #45 must not match "#451" — the regex carries `[^0-9]`, same as the
+    // rendered part-3 command.
+    const git = fakeGit([["--grep=#4510[^0-9]", { stdout: "abc1234 (#4510)\n" }]]);
+    await verifyShippedAnchors(
+      [{ number: 9, title: "x", mergedPRs: [4510] }],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(git.calls[0].join(" ")).toContain("--grep=#4510[^0-9]");
   });
 });

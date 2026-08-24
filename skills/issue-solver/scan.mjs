@@ -35,6 +35,11 @@ const RUNTIME_ENV_PATH = join(PROJECT_ROOT, ".runtime-env");
 
 const DEBUG = process.argv.includes("--debug");
 
+// #4373 part 4: execute the part-3 batch-verification checklist against the
+// current repo's git log (with gh pr view fallback) instead of only printing
+// it. Off by default — the plain scan output is byte-identical unless asked.
+const VERIFY_SHIPPED = process.argv.includes("--verify-shipped");
+
 function log(msg) {
   if (DEBUG) {
     console.error(`[${new Date().toISOString()}] ${msg}`);
@@ -422,6 +427,118 @@ export function renderVerificationBlock(queue) {
 }
 
 /**
+ * Execute the part-3 checklist instead of printing it (#4373 part 4).
+ *
+ * Part 3 renders `git log --grep` lines for a human (or a solver tick) to
+ * copy-paste into a clone of `main`. This repo's own ticks did exactly that
+ * by hand every round — memory logs ~15 of the last ~35 minutes per tick
+ * spent re-deriving the same clone+grep+interpret loop. Part 4 automates the
+ * loop behind `--verify-shipped`, so the tick spends its budget on the one or
+ * two issues the automation flags as genuinely unverified.
+ *
+ * Every listed merge present in the repo's `git log` ⇒ the tier-1 anchor
+ * landed ⇒ the issue is a close-hygiene candidate (likely shipped), not a
+ * development opportunity. A grep MISS falls back to `gh pr view --json
+ * mergeCommit` (the squash-retitle trap pinned in the part-3 header: PR
+ * #4407's squash subject reads "(#4396, #4208 P1-b)" — no `#4407` anywhere,
+ * so grep misses on a genuinely merged PR) and only counts as MISS if that
+ * PR's merge commit is ALSO absent from the log.
+ *
+ * Per-PR outcomes: `present` (grep or mergeCommit hit), `absent` (both miss),
+ * `error` (the git/gh invocation itself failed — never interpreted as
+ * absence). An issue is `confirmed-shipped` only when ALL its PRs are
+ * `present` and none are `error`; any `absent` or `error` keeps it
+ * `unverified` so a tooling failure can never print a false all-clear.
+ *
+ * DiFX injection-safe by construction: PR numbers come from GitHub's
+ * cross-ref table as integers (`buildVerificationQueue` maps `r.pr` straight
+ * through), and the log regex is derived from `${n}` under a `^[\d]+$`
+ * guard — neither surface accepts caller text.
+ *
+ * @param {Array<{number: number, title: string, mergedPRs: number[]}>} queue output of buildVerificationQueue
+ * @param {object} deps injectables for tests: `git` (repo dir; default `process.cwd()`)
+ *   and `prMergeCommits` (async (pr: number) => string|null; default shells out
+ *   to `gh pr view`, null on any failure — the caller's auth problem, not ours)
+ * @returns {Promise<{summary: string, details: Array<{issue: number, verdict: "confirmed-shipped"|"unverified", results: Array<{pr: number, outcome: "present"|"absent"|"error", via: "grep"|"mergeCommit", detail: string}>}>}>}
+ */
+export async function verifyShippedAnchors(queue, deps = {}) {
+  const git = typeof deps.git === "function" ? deps.git : null;
+  const repoDir = deps.repoDir || process.cwd();
+  const prMergeCommits =
+    deps.prMergeCommits ||
+    (async (pr) => {
+      // GH token plumbing lives in ensureToken(); gh reads GH_TOKEN from env.
+      const token = await ensureToken();
+      const r = spawnSync("gh", ["pr", "view", String(pr), "--repo", REPO, "--json", "mergeCommit"], {
+        env: { ...process.env, GH_TOKEN: token }, encoding: "utf-8", timeout: 30000,
+      });
+      if (r.status !== 0) return null;
+      try {
+        const sha = JSON.parse(r.stdout)?.mergeCommit?.oid;
+        return typeof sha === "string" && /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
+      } catch {
+        return null;
+      }
+    });
+
+  const details = [];
+  for (const item of queue) {
+    if (!/^\d+$/.test(String(item.number)) || !Array.isArray(item.mergedPRs)) {
+      details.push({ issue: item.number, verdict: "unverified", results: [] });
+      continue;
+    }
+    const results = [];
+    for (const pr of item.mergedPRs) {
+      if (!/^\d+$/.test(String(pr))) {
+        results.push({ pr, outcome: "error", via: "grep", detail: "non-numeric PR number" });
+        continue;
+      }
+      // Primary: grep the log for the PR number (the part-3 command, verbatim
+      // semantics — `#N` not followed by another digit).
+      const grep = git
+        ? git(["log", "--oneline", `--grep=#${pr}[^0-9]`], repoDir)
+        : spawnSync("git", ["log", "--oneline", `--grep=#${pr}[^0-9]`], {
+            cwd: repoDir, encoding: "utf-8", timeout: 30000,
+          });
+      if (grep.error || grep.status !== 0) {
+        results.push({ pr, outcome: "error", via: "grep", detail: (grep.stderr || grep.error?.message || "").trim() });
+        continue;
+      }
+      if ((grep.stdout || "").trim()) {
+        results.push({ pr, outcome: "present", via: "grep", detail: grep.stdout.trim().split("\n")[0] });
+        continue;
+      }
+      // Grep missed — fall back to the merge commit before believing absence.
+      const sha = await prMergeCommits(pr);
+      if (sha === null) {
+        results.push({ pr, outcome: "error", via: "mergeCommit", detail: "gh pr view unavailable" });
+        continue;
+      }
+      const cat = git
+        ? git(["cat-file", "-e", `${sha}^{commit}`], repoDir)
+        : spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], {
+            cwd: repoDir, encoding: "utf-8", timeout: 30000,
+          });
+      if (cat.error || cat.status !== 0) {
+        results.push({ pr, outcome: "absent", via: "mergeCommit", detail: `merge commit ${sha.slice(0, 9)} not in log` });
+      } else {
+        results.push({ pr, outcome: "present", via: "mergeCommit", detail: `squash-retitled merge ${sha.slice(0, 9)}` });
+      }
+    }
+    const confirmed = results.length > 0 && results.every((r) => r.outcome === "present");
+    details.push({ issue: item.number, verdict: confirmed ? "confirmed-shipped" : "unverified", results });
+  }
+
+  const shipped = details.filter((d) => d.verdict === "confirmed-shipped").map((d) => `#${d.issue}`);
+  const summary = !details.length
+    ? "no tier-1 weak-ref candidates to verify"
+    : shipped.length === details.length
+      ? `all ${details.length} tier-1 candidates confirmed shipped (close-hygiene): ${shipped.join(" ")}`
+      : `${shipped.length}/${details.length} tier-1 candidates confirmed shipped (close-hygiene): ${shipped.join(" ") || "none"} — rest unverified (absent merge or tooling error; check details)`;
+  return { summary, details };
+}
+
+/**
  * Issue numbers whose work already shipped, resolved per open issue via
  * GitHub's authoritative closing-link table (#4375). Each open issue's
  * CROSS_REFERENCED_EVENT entries carry `willCloseTarget` — GitHub's own link
@@ -625,7 +742,23 @@ async function main() {
       md += `\n`;
       // #4373 part 3: the same tier-1 data as a batch-verification checklist —
       // copy-paste grep commands instead of a hand-derived per-issue routine.
-      md += renderVerificationBlock(buildVerificationQueue(candidates, weakRefsByIssue));
+      // #4373 part 4: with --verify-shipped, EXECUTE the checklist (grep this
+      // repo's git log + gh pr view fallback) and prepend the verdicts, so a
+      // tick stops re-deriving the clone+grep loop by hand every round. The
+      // copy-paste block still renders — the automated run can error (no
+      // clone, no gh auth) and must not leave the reader without the manual
+      // path.
+      const queue = buildVerificationQueue(candidates, weakRefsByIssue);
+      if (VERIFY_SHIPPED) {
+        const { summary, details } = await verifyShippedAnchors(queue);
+        md += `#### Shipped-anchor verification (#4373 part 4)\n\n${summary}\n\n`;
+        for (const d of details) {
+          md += `- **#${d.issue}** ${d.verdict}\n`;
+          for (const r of d.results) md += `  - #${r.pr} ${r.outcome} (via ${r.via}): ${r.detail}\n`;
+        }
+        md += `\n`;
+      }
+      md += renderVerificationBlock(queue);
       md += `\n`;
     }
     if (contextOnlyList.length) {
