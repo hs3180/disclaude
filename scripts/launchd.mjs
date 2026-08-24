@@ -24,6 +24,7 @@
 
 import { execSync } from 'node:child_process';
 import { writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +51,37 @@ const APP_LOG = resolve(LOG_DIR, 'disclaude-combined.log');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '..');
 const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
+
+// Issue #4576: since #4280 Phase 3 the MCP tools' only transport is the
+// PrimaryNode REST API (GET /api/ping on the HTTP API server). A launchd
+// deployment started with bare `start` has no --api-port, so nothing listens
+// on 9200 and every channel-mcp send tool reports「IPC 服务不可用」. The
+// plist therefore enables the HTTP API server by default. The server binds
+// localhost only (HttpApiServerConfig.host default) and GET routes are
+// token-exempt, so this matches the security posture of interactive runs.
+// Override with DISCLAUDE_LAUNCHD_API_PORT / DISCLAUDE_LAUNCHD_API_TOKEN.
+const DEFAULT_API_PORT = 9200;
+
+/**
+ * Resolve the --api-port value for the plist (Issue #4576).
+ *
+ * Reads DISCLAUDE_LAUNCHD_API_PORT; valid range 1-65535 (same bounds as the
+ * CLI parser in packages/primary-node/src/cli.ts). Falls back to 9200 — the
+ * same default DISCLAUDE_REST_IPC_BASE_URL already assumes.
+ *
+ * @returns {number} port for --api-port
+ */
+export function resolveApiPort() {
+  const raw = process.env.DISCLAUDE_LAUNCHD_API_PORT;
+  if (raw) {
+    const port = parseInt(raw, 10);
+    if (!isNaN(port) && port >= 1 && port <= 65535) {
+      return port;
+    }
+    console.warn(`Warning: invalid DISCLAUDE_LAUNCHD_API_PORT "${raw}", using default ${DEFAULT_API_PORT}`);
+  }
+  return DEFAULT_API_PORT;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -91,6 +123,22 @@ function ensureLogDir() {
   }
 }
 
+/**
+ * Review of #4578: ProgramArguments / EnvironmentVariables values are
+ * interpolated into plist XML. Paths and numbers are inherently safe, but
+ * --api-token is the first free-text injection point — a token containing
+ * & < > would produce an unparseable plist.
+ *
+ * @param {string} value - raw string to embed in plist XML
+ * @returns {string} XML-escaped value
+ */
+export function xmlEscape(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
 // ---------------------------------------------------------------------------
 // Plist generation
 // ---------------------------------------------------------------------------
@@ -115,24 +163,56 @@ function getCaffeinatePath() {
  * service, caffeinate terminates automatically (along with the node child),
  * so no separate cleanup is needed.
  *
+ * Issue #4576: appends --api-port (default 9200) so the PrimaryNode HTTP API
+ * server is up for the REST-only MCP tools; --api-token only when provided
+ * via DISCLAUDE_LAUNCHD_API_TOKEN (mirrors the interactive-run posture — GET
+ * routes stay token-exempt, write routes gain Bearer auth).
+ *
  * @param {string} nodePath - Absolute path to the node binary
  * @returns {string[]} ProgramArguments entries
  */
-function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePath()) {
+export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePath()) {
   const args = [];
 
   if (caffeinatePath) {
     args.push(caffeinatePath, '-s');
   }
 
-  args.push(nodePath, CLI_ENTRY, 'start');
+  args.push(nodePath, CLI_ENTRY, 'start', '--api-port', String(resolveApiPort()));
+
+  const apiToken = process.env.DISCLAUDE_LAUNCHD_API_TOKEN;
+  if (apiToken) {
+    args.push('--api-token', apiToken);
+  }
   return args;
+}
+
+/**
+ * Review of #4578: when the port override differs from 9200, the MCP tools'
+ * REST probe (ipc-utils.ts in core and mcp-server) would still default to
+ * http://localhost:9200 unless DISCLAUDE_REST_IPC_BASE_URL is set. The plist
+ * must propagate the override into the service's EnvironmentVariables so
+ * both sides agree.
+ *
+ * @param {number} apiPort - the resolved --api-port value
+ * @returns {string | null} base URL env value, or null when the default
+ *   already matches (no env entry needed)
+ */
+export function resolveRestIpcBaseUrl(apiPort) {
+  const override = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+  if (override) {
+    // Operator set it explicitly — never clobber their value.
+    return null;
+  }
+  return apiPort === DEFAULT_API_PORT ? null : `http://localhost:${apiPort}`;
 }
 
 function generatePlist() {
   const nodePath = getNodePath();
   const caffeinatePath = getCaffeinatePath();
   const programArgs = buildProgramArguments(nodePath, caffeinatePath);
+  const apiPort = resolveApiPort();
+  const restIpcBaseUrl = resolveRestIpcBaseUrl(apiPort);
 
   // Issue #2934: Application logs go through pino file transport
   // (triggered by LOG_TO_FILE env var). Issue #3416: pino-roll removed,
@@ -149,7 +229,7 @@ function generatePlist() {
 
   <key>ProgramArguments</key>
   <array>
-${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
+${programArgs.map(a => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   </array>
 
   <key>WorkingDirectory</key>
@@ -173,8 +253,8 @@ ${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>${process.env.PATH}</string>
-    <key>HOME</key>
+    <string>${xmlEscape(process.env.PATH ?? '')}</string>
+${restIpcBaseUrl ? `    <key>DISCLAUDE_REST_IPC_BASE_URL</key>\n    <string>${xmlEscape(restIpcBaseUrl)}</string>\n` : ''}    <key>HOME</key>
     <string>${homedir()}</string>
     <key>NODE_ENV</key>
     <string>production</string>
@@ -194,10 +274,14 @@ ${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${CLI_ENTRY}`);
   console.log(`  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`);
+  console.log(`  API server: --api-port ${apiPort} (REST IPC for MCP tools; Issue #4576)`);
+  console.log(`  REST IPC base URL env: ${restIpcBaseUrl ? `${restIpcBaseUrl} (injected so MCP tools probe the override)` : 'not set (default http://localhost:9200 already matches)'}`);
+  console.log(`  API token: ${process.env.DISCLAUDE_LAUNCHD_API_TOKEN ? 'enabled (--api-token)' : 'not set (GET-only routes are token-exempt)'}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
   console.log(`  App log: ${APP_LOG} (use newsyslog for rotation)`);
   console.log(`  Stdout: ${STDOUT_LOG} (launchd fallback log)`);
   console.log(`  Stderr: ${STDERR_LOG} (launchd crash log)`);
+  console.log(`  Note: an already-loaded service must be reloaded (npm run launchd:restart) to pick up the new plist.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -317,8 +401,24 @@ const commands = {
   status: cmdStatus,
 };
 
-if (!command || !commands[command]) {
-  console.log(`Usage: node scripts/launchd.mjs <command>
+// Issue #4576: entry guard (same pattern as skills/issue-solver/scan.mjs) so
+// the pure helpers (resolveApiPort, buildProgramArguments) can be imported by
+// tests without triggering command dispatch. Compared via realpath so a
+// symlinked invocation still matches.
+const isMainEntry = (() => {
+  try {
+    return (
+      process.argv[1] !== undefined &&
+      realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+})();
+
+if (isMainEntry) {
+  if (!command || !commands[command]) {
+    console.log(`Usage: node scripts/launchd.mjs <command>
 
 Commands:
   generate    Generate plist file
@@ -330,7 +430,8 @@ Commands:
   logs        Tail log files [--lines=N]
   status      Show service status
 `);
-  process.exit(1);
-}
+    process.exit(1);
+  }
 
-commands[command]();
+  commands[command]();
+}
