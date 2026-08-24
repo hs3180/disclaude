@@ -36,7 +36,14 @@
 // path needs a built PrimaryNode + creds and is covered by the channel-mcp
 // handler tests, not here.
 //
-// Parts 3–7 of #4459 — does not auto-close the parent issue.
+// Part 11 of #4459 (REST re-land of rejected #4521) added the chatId-format
+// pre-check tests: every subcommand rejects an ill-formed --chat before
+// importing @disclaude/mcp-server, mirroring the MCP entry handlers'
+// getChatIdValidationError pre-check (#1641). (The placeholder chat id below
+// is format-valid on purpose — `oc_test` alone is now rejected by the format
+// gate.)
+//
+// Parts 3–7 + 11 of #4459 — does not auto-close the parent issue.
 
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
@@ -119,7 +126,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('missing text content', async () => {
-      const r = await runCli(['send_text', '--chat', 'oc_test']);
+      const r = await runCli(['send_text', '--chat', 'oc_test0123456789012345678901234567890']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
@@ -127,7 +134,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('invalid --mentions JSON', async () => {
-      const r = await runCli(['send_text', '--chat', 'oc_test', '--text', 'hi', '--mentions', 'not-json']);
+      const r = await runCli(['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi', '--mentions', 'not-json']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
@@ -135,11 +142,98 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('unreadable --text-file', async () => {
-      const r = await runCli(['send_text', '--chat', 'oc_test', '--text-file', '/no/such/path/xyz']);
+      const r = await runCli(['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text-file', '/no/such/path/xyz']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
       expect(String(obj.error)).toMatch(/text-file/i);
+    });
+  });
+
+  describe('chatId format pre-check — every subcommand, pre-import (part 11)', () => {
+    // Issue #4459 part 11 (REST re-land of rejected #4521): parts 3/4/6/7
+    // checked --chat for presence only and let the transport layer reject
+    // ill-formed ids. Every MCP entry handler runs a getChatIdValidationError
+    // pre-check (#1641); on the REST CLI the server only validates chatId as
+    // a non-empty string, so the pre-import twin gate is the only place the
+    // format rules run. All failures below are detected BEFORE importing
+    // @disclaude/mcp-server, so they need no build / PrimaryNode / creds.
+    const BAD_CHAT = 'not-a-chat-id';
+
+    it.each(['send_text', 'send_interactive', 'send_file', 'push_to_agent'] as const)(
+      '%s: ill-formed --chat fails fast with the format error, exactly one JSON',
+      async (command) => {
+        const args = [command, '--chat', BAD_CHAT];
+        // Minimal valid-ish payload per command so the ONLY failure is the
+        // chatId format check (chatId is validated first anyway, but keep the
+        // payloads non-empty to prove the point).
+        if (command === 'send_text') args.push('--text', 'hi');
+        if (command === 'send_interactive')
+          args.push('--question', 'q', '--options', '[{"text":"a","value":"a"}]');
+        if (command === 'send_file') args.push('--file', '/tmp/x.txt');
+        if (command === 'push_to_agent') args.push('--message', 'hi');
+        const r = await runCli(args);
+        expect(r.code).toBe(1);
+        const obj = parseSingleJson(r.stdout);
+        expect(obj).toMatchObject({ ok: false, command });
+        expect(String(obj.error)).toMatch(/invalid chatid format/i);
+        expect(String(obj.error)).toMatch(/oc_|ou_|cli-/);
+      },
+    );
+
+    it('send_card: ill-formed --chat is rejected pre-import too (twin covers all 5)', async () => {
+      // Unlike part 5 (which validated chatId only post-import via the
+      // exported helper), the pre-import twin now gates send_card as well —
+      // a format failure there never pays the @disclaude/mcp-server load.
+      // The valid card makes the chatId the ONLY failure.
+      const VALID_CARD = JSON.stringify({
+        config: { wide_screen_mode: true },
+        header: { title: { content: 't', tag: 'plain_text' }, template: 'blue' },
+        elements: [],
+      });
+      const r = await runCli(['send_card', '--chat', BAD_CHAT, '--card', VALID_CARD]);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_card' });
+      expect(String(obj.error)).toMatch(/invalid chatid format/i);
+    });
+
+    it('send_text: too-short oc_ id (right prefix, under minLength) is rejected', async () => {
+      const r = await runCli(['send_text', '--chat', 'oc_x', '--text', 'hi']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+      expect(String(obj.error)).toMatch(/invalid chatid format/i);
+    });
+
+    it('send_text: leading whitespace is rejected (mirrors isValidChatId trim guard)', async () => {
+      const r = await runCli(['send_text', '--chat', '  oc_0123456789012345678901234567890ab', '--text', 'hi']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+      expect(String(obj.error)).toMatch(/invalid chatid format/i);
+    });
+
+    it('send_text: cli- session id (min length 5) passes the format gate', async () => {
+      // Format-valid ids reach the NEXT failure (missing text content here),
+      // proving the format gate accepted the cli- prefix — this locks the
+      // pre-import twin against the exported validator's pattern table.
+      const r = await runCli(['send_text', '--chat', 'cli-abc123']);
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+      expect(String(obj.error)).toMatch(/text/i); // NOT a chatId error
+    });
+
+    it('twin error text carries the pattern labels (byte-identical to the exported helper)', async () => {
+      // ff0f7bad nit, REST re-land: the twin's format list must include each
+      // pattern's label (e.g. "Feishu group chat"), not bare prefixes — the
+      // agent-facing message stays identical whichever path rejects the id.
+      const r = await runCli(['send_text', '--chat', BAD_CHAT, '--text', 'hi']);
+      const obj = parseSingleJson(r.stdout);
+      expect(String(obj.error)).toMatch(/- `oc_...` \(Feishu group chat\)/);
+      expect(String(obj.error)).toMatch(/- `ou_...` \(Feishu user \(p2p chat\)\)/);
+      expect(String(obj.error)).toMatch(/- `cli-...` \(CLI session\)/);
     });
   });
 
@@ -158,7 +252,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('missing card content (no --card / --card-file / stdin)', async () => {
       // stdin is a closed pipe (EOF) in runCli, so the stdin fallback yields ''
       // and the CLI reports missing card content rather than blocking.
-      const r = await runCli(['send_card', '--chat', 'oc_test']);
+      const r = await runCli(['send_card', '--chat', 'oc_test0123456789012345678901234567890']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_card' });
@@ -166,7 +260,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('invalid --card JSON', async () => {
-      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', 'not-json']);
+      const r = await runCli(['send_card', '--chat', 'oc_test0123456789012345678901234567890', '--card', 'not-json']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_card' });
@@ -174,7 +268,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('card is not an object (array rejected — mirrors handler guard)', async () => {
-      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', '[1,2,3]']);
+      const r = await runCli(['send_card', '--chat', 'oc_test0123456789012345678901234567890', '--card', '[1,2,3]']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_card' });
@@ -188,7 +282,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     // resultEmitted): the failure JSON is the ONLY object on stdout even though
     // process.exit trips pino's sonic-boom "not ready" flush.
     it('invalid card structure (object missing config/header) — exactly one JSON', async () => {
-      const r = await runCli(['send_card', '--chat', 'oc_test', '--card', '{"elements":[]}']);
+      const r = await runCli(['send_card', '--chat', 'oc_test0123456789012345678901234567890', '--card', '{"elements":[]}']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout); // asserts stdout is exactly ONE JSON line
       expect(obj).toMatchObject({ ok: false, command: 'send_card' });
@@ -215,7 +309,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('missing question content', async () => {
       const r = await runCli([
         'send_interactive',
-        '--chat', 'oc_test',
+        '--chat', 'oc_test0123456789012345678901234567890',
         '--options', '[{"text":"a","value":"a"}]',
       ]);
       expect(r.code).toBe(1);
@@ -225,7 +319,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('missing --options', async () => {
-      const r = await runCli(['send_interactive', '--chat', 'oc_test', '--question', 'q']);
+      const r = await runCli(['send_interactive', '--chat', 'oc_test0123456789012345678901234567890', '--question', 'q']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
@@ -235,7 +329,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('invalid --options JSON', async () => {
       const r = await runCli([
         'send_interactive',
-        '--chat', 'oc_test',
+        '--chat', 'oc_test0123456789012345678901234567890',
         '--question', 'q',
         '--options', 'not-json',
       ]);
@@ -248,7 +342,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('invalid option structure (missing value)', async () => {
       const r = await runCli([
         'send_interactive',
-        '--chat', 'oc_test',
+        '--chat', 'oc_test0123456789012345678901234567890',
         '--question', 'q',
         '--options', '[{"text":"a"}]',
       ]);
@@ -261,7 +355,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('invalid --action-prompts (array, not object)', async () => {
       const r = await runCli([
         'send_interactive',
-        '--chat', 'oc_test',
+        '--chat', 'oc_test0123456789012345678901234567890',
         '--question', 'q',
         '--options', '[{"text":"a","value":"a"}]',
         '--action-prompts', '["x"]',
@@ -285,7 +379,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       'keeps the pino "send_text called" line off stdout (routed to stderr)',
       async () => {
         const r = await runCli(
-          ['send_text', '--chat', 'oc_test', '--text', 'hi'],
+          ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi'],
           { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
         );
         expect(r.code).toBe(1);
@@ -312,7 +406,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         const r = await runCli(
           [
             'send_interactive',
-            '--chat', 'oc_test',
+            '--chat', 'oc_test0123456789012345678901234567890',
             '--question', 'Pick one',
             '--options', '[{"text":"A","value":"a","type":"primary"}]',
           ],
@@ -342,7 +436,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('missing --file', async () => {
-      const r = await runCli(['send_file', '--chat', 'oc_test']);
+      const r = await runCli(['send_file', '--chat', 'oc_test0123456789012345678901234567890']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_file' });
@@ -361,7 +455,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       'keeps the pino send_file log line off stdout (routed to stderr)',
       async () => {
         const r = await runCli(
-          ['send_file', '--chat', 'oc_test', '--file', '/no/such/file/xyz'],
+          ['send_file', '--chat', 'oc_test0123456789012345678901234567890', '--file', '/no/such/file/xyz'],
           { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
         );
         expect(r.code).toBe(1);
@@ -388,7 +482,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('missing message content', async () => {
-      const r = await runCli(['push_to_agent', '--chat', 'oc_test']);
+      const r = await runCli(['push_to_agent', '--chat', 'oc_test0123456789012345678901234567890']);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'push_to_agent' });
@@ -399,7 +493,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       const r = await runCli([
         'push_to_agent',
         '--chat',
-        'oc_test',
+        'oc_test0123456789012345678901234567890',
         '--message-file',
         '/no/such/path/xyz',
       ]);
@@ -423,12 +517,13 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     // (issue #631) — against a live PrimaryNode it returns success (exit 0) by
     // enqueuing the instruction, while without a PrimaryNode it fails fast
     // (exit 1). Either way the pino line must be off stdout, which is what this
-    // test locks. oc_test is not a real chat, so no real delivery occurs.
+    // test locks. The chat id is format-valid but not a real chat, so no
+    // real delivery occurs.
     it(
       'keeps the pino "push_to_agent called" line off stdout (routed to stderr)',
       async () => {
         const r = await runCli(
-          ['push_to_agent', '--chat', 'oc_test', '--message', 'hi'],
+          ['push_to_agent', '--chat', 'oc_test0123456789012345678901234567890', '--message', 'hi'],
           { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
         );
         // stdout is still exactly one JSON object — the contract holds even on
@@ -516,7 +611,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         const port = await reserveEphemeralPort();
         const baseUrl = `http://127.0.0.1:${port}`;
         const r = await runCli(
-          ['send_text', '--chat', 'oc_test', '--text', 'hi', '--base-url', baseUrl],
+          ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi', '--base-url', baseUrl],
           { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' },
         );
         expect(r.code).toBe(1);
@@ -540,7 +635,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         const port = await reserveEphemeralPort();
         const baseUrl = `http://127.0.0.1:${port}`;
         const r = await runCli(
-          ['send_text', '--chat', 'oc_test', '--text', 'hi'],
+          ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi'],
           { NODE_ENV: 'test', HOME: '/nonexistent-home-4532', DISCLAUDE_REST_IPC_BASE_URL: baseUrl },
         );
         expect(r.code).toBe(1);
@@ -559,7 +654,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         const port = await reserveEphemeralPort();
         const baseUrl = `http://127.0.0.1:${port}`;
         const r = await runCli(
-          ['push_to_agent', '--chat', 'oc_test', '--message', 'hi', '--base-url', baseUrl],
+          ['push_to_agent', '--chat', 'oc_test0123456789012345678901234567890', '--message', 'hi', '--base-url', baseUrl],
           { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' },
         );
         const obj = parseSingleJson(r.stdout);

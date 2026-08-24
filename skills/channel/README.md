@@ -13,24 +13,28 @@
 > is fine when the PrimaryNode runs without `--api-token`). When the REST face
 > is unreachable, the CLI emits an actionable "start the main service" hint
 > instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
-> pre-check ruling is recorded in §Parity. The Unix-socket IPC face itself is
+> pre-check substance was re-landed on the REST CLI by part 11 (see §Parity).
+> The Unix-socket IPC face itself is
 > deprecated for this consumer and will be removed in #4280 (Phase 3).
 
-> **Status (parts 3–7 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
+> **Status (parts 3–7 + 11 of [#4459](https://github.com/hs3180/disclaude/issues/4459)):**
 > `send_text` (part 3, [#4467](https://github.com/hs3180/disclaude/pull/4467)),
 > `send_file` (part 4, [#4494](https://github.com/hs3180/disclaude/pull/4494)),
 > `send_card` (part 5), `push_to_agent` (part 6,
 > [#4501](https://github.com/hs3180/disclaude/pull/4501)), and
 > `send_interactive` (part 7) — **all 5 channel tools** migrated as CLI
-> subcommands. All reuse the first-party implementations from
-> `@disclaude/mcp-server` over IPC; `send_card` additionally replicates the MCP
-> entry handler's card preprocessing (GFM-table conversion, local-image
-> auto-upload) for feature parity. **Live end-to-end parity** against the inline
-> MCP tool is **deferred** (requires a running PrimaryNode + Feishu credentials) —
-> these parts verify the command surface, validation, and graceful-degradation
-> paths, mirroring how [#4464](https://github.com/hs3180/disclaude/pull/4464) part
-> 1 deferred live browser parity. This README does **not** auto-close the parent
-> issue.
+> subcommands. **Part 11** (REST re-land of rejected
+> [#4521](https://github.com/hs3180/disclaude/pull/4521)) closed the last code
+> parity delta: the chatId *format* pre-check every MCP entry handler runs
+> (#1641) now runs in every subcommand too, before any module import. All reuse
+> the first-party implementations from `@disclaude/mcp-server`; `send_card`
+> additionally replicates the MCP entry handler's card preprocessing
+> (GFM-table conversion, local-image auto-upload) for feature parity. **Live
+> end-to-end parity** against the inline MCP tool is **deferred** (requires a
+> running PrimaryNode + Feishu credentials) — these parts verify the command
+> surface, validation, and graceful-degradation paths, mirroring how
+> [#4464](https://github.com/hs3180/disclaude/pull/4464) part 1 deferred live
+> browser parity. This README does **not** auto-close the parent issue.
 
 A **CLI Skill** under disclaude's "reduce MCP" direction
 ([#4383](https://github.com/hs3180/disclaude/issues/4383), owner decision
@@ -113,6 +117,11 @@ start the PrimaryNode with `--api-port`. No browser or extra binaries required.
 | `push_to_agent` | — | `--chat <id>` *(req)*, `--message <string>`, `--message-file <path>` | ✅ part 6 |
 | `help` | — | — | ✅ |
 
+`--chat` in **every** command is presence- **and format**-checked up front
+(`oc_`/`ou_` ≥ 35 chars, `cli-` ≥ 5 — the same rules as the MCP entry
+handlers, #1641); an ill-formed id fails before the `@disclaude/mcp-server`
+import (part 11).
+
 **Text input** — `--text "<string>"` for short content; `--text-file <path>` (or
 `--text-file -` to read stdin explicitly) for larger bodies; or pipe on stdin
 when no `--text`/`--text-file` is given and stdin is not a TTY. `push_to_agent`
@@ -145,6 +154,7 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 
 // failure — exit 1
 {"ok":false,"command":"send_text","error":"Missing required option --chat <id>","hint":"pass --chat oc_xxx"}
+{"ok":false,"command":"send_text","error":"Invalid chatId: Invalid chatId format: \"not-a-chat-id\"\nExpected one of the following formats:\n- `oc_...` (Feishu group chat)\n- `ou_...` (Feishu user (p2p chat))\n- `cli-...` (CLI session)"}
 {"ok":false,"command":"send_interactive","error":"options must be a non-empty array"}
 {"ok":false,"command":"send_interactive","error":"Invalid --options JSON: ..."}
 {"ok":false,"command":"send_file","error":"Missing required option --file <path>","hint":"pass --file <path> (relative paths resolve against the workspace dir)"}
@@ -158,7 +168,8 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 Failure modes covered: missing/invalid args, unreadable `--text-file` /
 `--card-file` / `--question-file` / `--message-file`, malformed `--mentions` / `--card` /
 `--options` / `--action-prompts` JSON, non-object card, invalid card structure,
-invalid chatId format, invalid option structure (empty `text`/`value`, bad
+invalid chatId format (**every** subcommand, part 11 — same check as the MCP
+entry handlers, run pre-import), invalid option structure (empty `text`/`value`, bad
 `type`), `@disclaude/mcp-server` not built/resolvable, REST face unreachable
 (PrimaryNode not started / port not open — reported with an actionable hint),
 and REST send failure (the underlying first-party tools map these to `SendMessageResult` /
@@ -216,6 +227,7 @@ Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 | `send_text` parameters | `text`, `chatId`, `parentMessageId`, `mentions` | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions` | text gains `--text-file`/stdin for large bodies |
 | `send_file` parameters | `filePath`, `chatId`, `parentMessageId` | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool) | none |
 | `push_to_agent` parameters | `chatId`, `message` | identical, via `--chat`/`--message`/`--message-file` | message gains `--message-file`/stdin for long instructions |
+| chatId format pre-check | `getChatIdValidationError(chatId)` in every entry handler (#1641) | identical check in every subcommand (part 11) — all five pre-import via the twin in `cli.mjs`; `send_card` re-runs the exported helper post-import (part 5) | none |
 | Capability gating | MCP layer gates on `supportedMcpTools` per chat | **not** gated here — the agent invokes the CLI at its own discretion | see open item below |
 | Logging | pino → stdout (in-process, acceptable) | pino → **stderr** for the call's duration (stdout reserved for the result JSON) | none functionally |
 
@@ -242,25 +254,29 @@ left to a later part of #4459 once the full surface is migrated.
 **`push_to_agent` (part 6) parity** — its MCP entry handler
 (`packages/mcp-server/src/channel-mcp.ts`) is the bare first-party
 `push_to_agent` function preceded only by a `getChatIdValidationError(chatId)`
-format check. This CLI calls `push_to_agent()` directly and, like `send_text`
-above, **defers** the chatId *format* check to a presence-only validation; an
-ill-formed id is still rejected, but by the IPC layer rather than up front. This
-is the same deferred-parity item `send_text` carries (resolving it once, across
-all subcommands, is left to a later part of #4459). No card/table/image
-transforms apply to `push_to_agent`, so unlike `send_card` it needs no extra
-helper exports from `@disclaude/mcp-server`.
+format check. Parts 3–6 initially **deferred** the chatId *format* check to a
+presence-only validation (an ill-formed id was still rejected, but by the
+transport layer rather than up front) — the deferred-parity item `send_text`
+carried. **Part 11 closed that delta**: every subcommand now runs the same
+format pre-check as the handlers before any import (`parseChatId` in
+`cli.mjs`). No card/table/image transforms apply to `push_to_agent`, so unlike
+`send_card` it needs no extra helper exports from `@disclaude/mcp-server`.
 
 **#4521 chatId pre-check ruling (#4532 acceptance, explicit — migration is not
 silent):** PR #4521 (chatId-format pre-checks on all 5 subcommands) was
 direction-rejected because it was built on the IPC foundation; its substance is
-transport-independent. On the REST CLI: `send_card` **keeps** its existing
-`getChatIdValidationError` pre-check (part 5 already shipped it), and the other
-four subcommands **intentionally defer** the format check — an ill-formed id is
-rejected by the REST layer (`/api/send-message` validates `chatId` as a
-non-empty string server-side) rather than up front. Re-landing the up-front
-pre-check on the REST CLI (rejected PR #4521's substance) remains deferred to a
-later part of #4459, exactly as before the transport switch — nothing was
-silently dropped or adopted.
+transport-independent. #4532's acceptance item — *"the pre-check's fate on the
+REST CLI is explicitly decided"* — is now settled by **part 11**: **kept, and
+extended to all 5 subcommands**. Every subcommand runs the format pre-check
+**pre-import** via a twin of the exported pattern table (`parseChatId` in
+`cli.mjs`; byte-identical rules to `getChatIdValidationError`), so an
+ill-formed id fails cheaply before the `@disclaude/mcp-server` load. This
+matters *more* on REST than it did on IPC: the REST handlers validate `chatId`
+as a non-empty string only (`/api/send-message` et al.), so without the twin an
+ill-formed id would surface as a confusing Feishu 4xx deep behind the server.
+`send_card` additionally re-runs the exported helper post-import (part 5,
+unchanged shape) — if the twin and the authoritative validator ever disagree,
+the authoritative one wins.
 
 **`send_card` parity (part 5) — preprocessing is replicated, not dropped.** The
 first-party `send_card` fn does **not** itself apply GFM-table conversion
