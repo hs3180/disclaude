@@ -55,10 +55,11 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
   `instance` is an MCP SDK `McpServer` exposing `close()`.
 - **Teardown**: disclaude retains the closeable inline instances via `collectInlineMcpInstances()`
   (`mcp-setup.ts:99`) and `close()`s them on `ChatAgent.dispose()` (issue #4302, defense-in-depth).
-- **IPC backing**: the tools talk to the Primary Node over IPC via `getIpcClient()`
-  ([`channel-mcp.ts:1-10`](../packages/mcp-server/src/channel-mcp.ts) module doc). The IPC transport itself is
-  being unified to REST ([#4168](https://github.com/hs3180/disclaude/issues/4168)); that is orthogonal to the
-  MCP→Skill retirement (the *tool surface* stays, only the *MCP protocol wrapping* goes away).
+- **Transport backing**: the tools talk to the Primary Node over REST via a directly-constructed
+  `RestIpcClient` (`getRestIpcClient()` in `tools/ipc-utils.ts`)
+  ([`channel-mcp.ts:1-10`](../packages/mcp-server/src/channel-mcp.ts) module doc). The Unix-socket IPC
+  transport is removed ([#4168](https://github.com/hs3180/disclaude/issues/4168) Phase 3); that is orthogonal
+  to the MCP→Skill retirement (the *tool surface* stays, only the *MCP protocol wrapping* goes away).
 
 > **Migration note (`#4459` Scope 3):** these 5 tools are the "non-Playwright MCP tools" `#4459` Scope 3
 > targets. They are first-party disclaude capabilities already implemented in-process; retiring MCP here means

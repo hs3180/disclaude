@@ -1,47 +1,34 @@
 /**
  * IPC exports
  *
+ * Issue #4168 (Phase 3 residual): the Unix-socket transport is removed —
+ * `unix-socket-server.ts` / `unix-socket-client.ts` / `transport.ts` and the
+ * `getIpcClient` / `getIpcSocketPath` facade in `ipc-utils.ts` had zero
+ * production consumers after the REST-only migration (#4280 parts 1–5,
+ * #4543, #4547, #4566). What remains is the REST IPC surface: the wire
+ * protocol types (`protocol.ts`), the REST client (`rest-ipc-client.ts`),
+ * the protocol convenience facade (`ipc-client-facade.ts`), and the live
+ * channel-handler contracts extracted from the deleted server file
+ * (`channel-api-handlers.ts`).
+ *
  * @module core/ipc
  */
 
-// Protocol types and constants
+// Protocol types
 export {
-  DEFAULT_IPC_CONFIG,
-  IPC_SOCKET_PATH_FILE,
-  generateSocketPath,
-  type IpcConfig,
   type IpcRequestType,
   type IpcRequestPayloads,
   type IpcResponsePayloads,
-  type IpcRequest,
-  type IpcResponse,
 } from './protocol.js';
 
-// Transport interfaces (Issue #2352)
+// Channel API handler contracts (live surface, extracted from the removed
+// Unix-socket server — see channel-api-handlers.ts)
 export {
-  type IpcConnectionLike,
-  type IIpcServerTransport,
-  type IpcClientTransportHandlers,
-  type IIpcClientTransport,
-} from './transport.js';
-
-// Server implementation
-export {
-  UnixSocketIpcServer,
-  createInteractiveMessageHandler,
-  type IpcRequestHandler,
   type ChannelApiHandlers,
   type ChannelHandlersContainer,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
-} from './unix-socket-server.js';
-
-// Client implementation (connection lifecycle only)
-export {
-  UnixSocketIpcClient,
-  type IpcAvailabilityStatus,
-  type IpcUnavailableReason,
-} from './unix-socket-client.js';
+} from './channel-api-handlers.js';
 
 // REST IPC client (Issue #4279 Phase 2 — channel-method surface via HTTP)
 export { RestIpcClient, type RestIpcClientOptions } from './rest-ipc-client.js';
@@ -60,11 +47,3 @@ export {
   type IpcMethodResult,
   type IpcClientLike,
 } from './ipc-client-facade.js';
-
-// IPC utilities (singleton, socket path, etc.)
-export {
-  getIpcClient,
-  getIpcSocketPath,
-  resetIpcClient,
-  type GetIpcSocketPathOptions,
-} from './ipc-utils.js';
