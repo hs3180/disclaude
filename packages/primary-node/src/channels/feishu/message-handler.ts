@@ -484,8 +484,16 @@ export class MessageHandler {
    * the full conversation context within the thread.
    *
    * Issue #3641 sub-problem 1: Thread context retrieval for topic groups.
+   * Issue #4587 (part 1): also returns `rootId` — the top ancestor's message
+   * ID reached by the walk. Unlike `parent_id ?? message_id` (which differs
+   * between replies in the same thread), the walked root is the stable
+   * per-thread identity part 2 will key agent sessions on. No extra API
+   * calls — the root is already fetched for the context text.
    */
-  private async getThreadContext(parentId: string, maxDepth: number = 10): Promise<string | undefined> {
+  private async getThreadContext(
+    parentId: string,
+    maxDepth: number = 10
+  ): Promise<{ text: string | undefined; rootId: string | undefined } | undefined> {
     if (!this.client) {
       return undefined;
     }
@@ -495,6 +503,9 @@ export class MessageHandler {
       const threadMessages: Array<{ messageId: string; content: string; senderType: string }> = [];
       const visitedIds = new Set<string>();
       let currentId: string | undefined = parentId;
+      // Issue #4587 (part 1): thread-root tracking (see return-site comment)
+      let rootId: string | undefined;
+      let lastVisitedWithParent: string | undefined;
 
       while (currentId && threadMessages.length < maxDepth && !visitedIds.has(currentId)) {
         visitedIds.add(currentId);
@@ -549,12 +560,30 @@ export class MessageHandler {
           });
         }
 
+        // Issue #4587 (part 1): remember the last message that still has a
+        // parent — when the walk ends (no parent_id), the previously visited
+        // message is the thread root. Tracked on a non-text message too (the
+        // root may be a media message whose text is a placeholder).
+        lastVisitedWithParent = currentId;
+        if (msg.message.parent_id) {
+          rootId = msg.message.parent_id;
+        }
+
         // Walk to parent
         currentId = msg.message.parent_id;
       }
 
+      // Issue #4587 (part 1): the walk stopped either at the root (no
+      // parent_id — rootId was set on the previous iteration) or at a fetch
+      // failure / depth cap (rootId may point past what we actually fetched).
+      // Only report a root we have seen: the last id we visited that itself
+      // has a parent, i.e. the highest real message in the chain.
+      const resolvedRootId = rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent;
+
       if (threadMessages.length === 0) {
-        return undefined;
+        // No text assembled, but the root is still known — surface it so
+        // session keying (part 2) works even when context text is empty.
+        return { text: undefined, rootId: resolvedRootId };
       }
 
       // Reverse to get chronological order (oldest first)
@@ -566,7 +595,7 @@ export class MessageHandler {
         return `${label} ${m.content}`;
       });
 
-      return lines.join('\n\n');
+      return { text: lines.join('\n\n'), rootId: resolvedRootId };
     } catch (error) {
       logger.debug({ err: error, parentId }, 'Failed to get thread context');
       return undefined;
@@ -1019,7 +1048,15 @@ export class MessageHandler {
       }
       let fileThreadContext: string | undefined;
       if (chat_type === 'topic' && parent_id) {
-        fileThreadContext = await this.getThreadContext(parent_id);
+        // Issue #4587 (part 1): capture the walked thread root for session keying
+        const threadInfo = await this.getThreadContext(parent_id);
+        fileThreadContext = threadInfo?.text;
+        if (threadInfo?.rootId) {
+          fileMetadata.threadRootId = threadInfo.rootId;
+        } else {
+          // No parent chain to walk (or the walk failed) — this message IS the root
+          fileMetadata.threadRootId = message_id;
+        }
       }
       if (fileThreadContext) {
         fileMetadata.threadContext = fileThreadContext;
@@ -1198,10 +1235,20 @@ export class MessageHandler {
     const isTriggerModeMention = isGroupChat(chat_type) && botMentioned;
     let chatHistoryContext: string | undefined;
     let threadContext: string | undefined;
+    // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
+    let threadRootId: string | undefined;
 
-    if (chat_type === 'topic' && parent_id) {
-      // Topic groups: build thread context from parent chain only
-      threadContext = await this.getThreadContext(parent_id);
+    if (chat_type === 'topic') {
+      if (parent_id) {
+        // Topic groups: build thread context from parent chain only
+        const threadInfo = await this.getThreadContext(parent_id);
+        threadContext = threadInfo?.text;
+        // No parent chain walked (or walk failed) — the parent itself is the root
+        threadRootId = threadInfo?.rootId ?? parent_id;
+      } else {
+        // A topic message without parent_id starts a new thread — it IS the root
+        threadRootId = message_id;
+      }
     } else if (isTriggerModeMention && chat_type !== 'topic') {
       // Regular groups: use flat chat history.
       // Issue #4304 (part 2): topic groups never use flat chat history — it
@@ -1223,6 +1270,10 @@ export class MessageHandler {
     }
     if (threadContext) {
       metadata.threadContext = threadContext;
+    }
+    if (threadRootId) {
+      // Issue #4587 (part 1): stable thread identity for session keying
+      metadata.threadRootId = threadRootId;
     }
 
     // Build attachments from quoted message if available

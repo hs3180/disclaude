@@ -2227,6 +2227,103 @@ describe('MessageHandler', () => {
       expect(msg.metadata.chatHistoryContext).toBeUndefined();
     });
 
+    it('emits threadRootId = walked chain root for topic-group reply (Issue #4587 part 1)', async () => {
+      mockState.isBotMentioned = true;
+      // Same chain shape as the thread-context test above: parent → root.
+      // The walked root (msg_root) — not parent_id (msg_parent) and not the
+      // incoming message_id — is the stable per-thread identity.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // 2nd call: getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // 3rd call: getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_root');
+    });
+
+    it('emits threadRootId = message_id for a topic-group message without parent_id (Issue #4587 part 1)', async () => {
+      // A topic post that starts a new thread IS the thread root.
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_thread_start',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'New thread' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_thread_start');
+    });
+
+    it('does NOT emit threadRootId for non-topic chats (Issue #4587 part 1)', async () => {
+      // Session keying stays chat-scoped for p2p/plain groups — no thread
+      // identity must leak into their metadata.
+      mockState.isBotMentioned = true;
+      mockState.getChatHistory.mockResolvedValue('some history');
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_group_reply',
+            chat_id: 'chat_plain_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Plain group reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_group_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBeUndefined();
+    });
+
     it('should NOT set chatHistoryContext for topic-group text messages without parent_id (Issue #4304 part 2)', async () => {
       // Issue #4304 part 2: a topic message with NO parent_id must not fall back
       // to flat chat history (which mixes messages across threads). Mock non-empty
@@ -2488,16 +2585,18 @@ describe('MessageHandler', () => {
       expect(result).toBeDefined();
       // Read-only: no eager download happened while building context.
       expect(downloadSpy).not.toHaveBeenCalled();
+      // Issue #4587 (part 1): shape is now { text, rootId }.
+      expect(result.text).toBeDefined();
       // Actionable download guidance is surfaced — the resource key + the
       // message_id it points at + a ready-to-run download command — not the
       // opaque placeholder, and not a pre-downloaded local path.
-      expect(result).toContain('img_test123');
-      expect(result).toContain('msg_image');
-      expect(result).toContain('messages-resources-download');
-      expect(result).not.toContain('[未解析的 image 消息]');
-      expect(result).not.toMatch(/已下载到本地/);
+      expect(result.text).toContain('img_test123');
+      expect(result.text).toContain('msg_image');
+      expect(result.text).toContain('messages-resources-download');
+      expect(result.text).not.toContain('[未解析的 image 消息]');
+      expect(result.text).not.toMatch(/已下载到本地/);
       // Non-media (text) message is still extracted normally
-      expect(result).toContain('See this screenshot');
+      expect(result.text).toContain('See this screenshot');
     });
 
     it('should use the real filename (with extension) as the download target (review nit #3)', () => {
@@ -2646,13 +2745,14 @@ describe('MessageHandler', () => {
       const result = await (handler as any).getThreadContext('msg_no_key');
 
       expect(result).toBeDefined();
+      // Issue #4587 (part 1): shape is now { text, rootId }.
       // Honest placeholder retained; no fabricated download guidance / command.
-      expect(result).toContain('[未解析的 image 消息]');
-      expect(result).not.toContain('messages-resources-download');
+      expect(result.text).toContain('[未解析的 image 消息]');
+      expect(result.text).not.toContain('messages-resources-download');
       // Read-only: still no eager download on the fallback path.
       expect(downloadSpy).not.toHaveBeenCalled();
       // Non-media ancestor still extracted normally.
-      expect(result).toContain('thread root');
+      expect(result.text).toContain('thread root');
     });
 
     it('should not fetch thread context for non-topic groups', async () => {

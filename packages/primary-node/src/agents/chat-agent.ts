@@ -184,6 +184,20 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   private chatType?: string;
 
+  /**
+   * Root message ID of the topic-group thread the message currently being
+   * processed belongs to. Updated on each processMessage() call that carries
+   * one; undefined for p2p / plain group chats (no thread isolation).
+   *
+   * Issue #4587 (part 1): while the session is still chat-scoped (part 2
+   * makes it thread-scoped), consecutive messages from DIFFERENT threads
+   * share this agent. Anchoring topic replies to the message's own thread
+   * root — instead of the orchestrator's last-seen messageId — keeps each
+   * reply inside its thread even when another thread's message arrives
+   * in between.
+   */
+  private currentThreadRootId?: string;
+
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
   // `result` message and resolves the completion promise, enabling blocking
@@ -608,6 +622,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       chatHistoryContext,
       chatType,
       threadContext,
+      threadRootId,
     } = params;
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -636,6 +651,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (chatType) {
       this.chatType = chatType;
     }
+
+    // Issue #4587 (part 1): track the thread this message belongs to. Set to
+    // undefined when absent so a non-topic message (or a synthetic system
+    // message) clears any stale thread anchor from a previous turn rather
+    // than leaking it into this one.
+    this.currentThreadRootId = threadRootId;
 
     // Issue #4391: stash the params of the message being processed so an empty
     // turn can replay the exact original input against a fresh session.
@@ -1074,6 +1095,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
     let userVisibleOutputCount = 0;
 
+    // Issue #4587 (part 1): resolve this turn's reply anchor once. In topic
+    // groups the orchestrator's last-seen messageId (setThreadRoot) is the
+    // most recent message across ALL threads sharing this chat-scoped agent,
+    // so interleaved threads would hijack each other's replies. When the
+    // triggering message carried its own thread root, prefer it.
+    const resolveReplyThreadRoot = (): string | undefined =>
+      this.currentThreadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId);
+
     // Issue #4399 (#4208 P2-b): streaming-card state machine. Only constructed
     // when the channel advertises supportsStreaming AND provides all three
     // streaming callbacks; otherwise `streamDriver` is null and the assistant
@@ -1096,7 +1125,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       !!this.callbacks.finalizeStreaming
         ? new StreamingReplyDriver({
             chatId,
-            parentMessageId: this.conversationOrchestrator.getThreadRoot(chatId) ?? undefined,
+            parentMessageId: resolveReplyThreadRoot() ?? undefined,
             startStreaming: this.callbacks.startStreaming,
             streamText: this.callbacks.streamText,
             finalizeStreaming: this.callbacks.finalizeStreaming,
@@ -1179,7 +1208,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               'Filtered intermediate message in topic thread'
             );
           } else {
-            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+            const threadRoot = resolveReplyThreadRoot();
             // Capture as a local so the marker check stays type-safe after the
             // awaited sendMessage (which defeats parsed.content narrowing).
             const visibleContent = parsed.content;
@@ -1227,7 +1256,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.isProcessingMessage = false;
             this.resolveTurn();
             if (this.callbacks.onDone) {
-              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);
             }
             if (this.onceMode) {
@@ -1261,7 +1290,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.isProcessingMessage = false;
             this.resolveTurn();
             if (this.callbacks.onDone) {
-              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);
             }
             if (this.onceMode) {
@@ -1385,7 +1414,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // below). The surrounding try/catch only guards the synchronous
             // setup (getThreadRoot) for the same reason.
             try {
-              const emptyTurnThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const emptyTurnThreadRoot = resolveReplyThreadRoot();
               void this.callbacks
                 .sendMessage(
                   chatId,
@@ -1574,7 +1603,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'Reporting as failed instead of ✅ Complete.'
             );
             try {
-              const upstreamThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const upstreamThreadRoot = resolveReplyThreadRoot();
               // Surface the upstream request_id from the stderr tail if present,
               // so the failure is actionable (Issue #4322 direction 3).
               const stderrTail = (parsed.upstreamApiErrorStderr ?? '').trim();
@@ -1658,7 +1687,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.resolveTurn();
 
           if (this.callbacks.onDone) {
-            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+            const threadRoot = resolveReplyThreadRoot();
             await this.callbacks.onDone(chatId, threadRoot);
           }
 
@@ -1700,7 +1729,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // 重试无法解决，直接向用户展示具体错误。
       if (isStartupFailure(messageCount, elapsedMs)) {
         const stderr = getErrorStderr(iteratorError);
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
 
         // 提取有用的错误信息：优先使用 stderr 内容
         let diagnosticMessage = iteratorError.message;
@@ -1748,7 +1777,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Notify user about the error
       {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         await this.callbacks.sendMessage(
           chatId,
           `❌ Session error: ${iteratorError.message}`,
@@ -1764,7 +1793,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.clearTaskCompletion();
 
       if (this.callbacks.onDone) {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         await this.callbacks.onDone(chatId, threadRoot);
       }
     } finally {
@@ -1773,7 +1802,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // when streaming never started or the channel doesn't stream — the
       // driver's finish() is idempotent and only acts in the streaming state.
       if (streamDriver) {
-        const finishThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const finishThreadRoot = resolveReplyThreadRoot();
         await streamDriver.finish(finishThreadRoot);
       }
     }
@@ -1905,7 +1934,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Notify user that circuit breaker opened
       {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         const blockMessage =
           decision.reason === 'max_restarts_exceeded'
             ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
@@ -1927,7 +1956,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Notify user about the restart
-    const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+    const threadRoot = resolveReplyThreadRoot();
     const restartMessage = iteratorError
       ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
       : '⚠️ 会话意外断开，正在重新连接...';

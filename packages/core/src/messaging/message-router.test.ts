@@ -141,6 +141,24 @@ describe('MessageRouter', () => {
       );
     });
 
+    it('should pass threadRootId to handler (Issue #4587 part 1)', async () => {
+      const handler = createMockHandler();
+      const router = new MessageRouter({ handler });
+      const msg = createUserMessage({
+        chatType: 'topic',
+        threadRootId: 'om_thread_root',
+      });
+
+      await router.route(msg);
+
+      expect(handler.handleUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: 'oc_chat123',
+          threadRootId: 'om_thread_root',
+        }),
+      );
+    });
+
     it('should pass attachments to handler', async () => {
       const handler = createMockHandler();
       const router = new MessageRouter({ handler });
