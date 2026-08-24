@@ -599,6 +599,90 @@ describe('PrimaryAgentPool', () => {
       pool.evictIdleAgents(t0 + 91 * 60 * 1000);
       expect(agent.stop).toHaveBeenCalledOnce();
     });
+
+    it('should still enforce the busy cap when idle eviction is disabled (idleTimeoutMs=0)', () => {
+      // The cap is the memory-bounding control for runaway turns; it must
+      // not be silently disabled along with idle eviction — an unbounded
+      // pool is exactly where a runaway turn hurts most (Issue #4577
+      // evidence A/B). Same always-on principle as the #4256 snapshot.
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 0, busyTurnHardCapMs: 5000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-uncapped-pool', callbacks);
+      const agent = mockAgents.get('chat-uncapped-pool')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      const evictedEarly = pool.evictIdleAgents(t0);
+      expect(evictedEarly).toEqual([]);
+      expect(agent.stop).not.toHaveBeenCalled();
+      // Past the cap with idle eviction off: the busy turn is still stopped
+      // (and nothing is evicted — the agent stays for the idle path that
+      // will never fire, but the runaway turn no longer holds its tree).
+      const evicted = pool.evictIdleAgents(t0 + 6000);
+      expect(evicted).toEqual([]);
+      expect(agent.stop).toHaveBeenCalledOnce();
+      expect(agent.dispose).not.toHaveBeenCalled();
+    });
+
+    it('should fire onBusyCapExceeded after a hard-cap stop', async () => {
+      const onBusyCapExceeded = vi.fn().mockResolvedValue(undefined);
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5 * 60 * 1000, onBusyCapExceeded });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-notify', callbacks);
+      const agent = mockAgents.get('chat-notify')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      pool.evictIdleAgents(t0);
+      pool.evictIdleAgents(t0 + 5 * 60 * 1000 + 100);
+      expect(agent.stop).toHaveBeenCalledOnce();
+
+      // The hook is fire-and-forget; flush microtasks before asserting.
+      await vi.waitFor(() => {
+        expect(onBusyCapExceeded).toHaveBeenCalledOnce();
+      });
+      expect(onBusyCapExceeded).toHaveBeenCalledWith('chat-notify', 5);
+    });
+
+    it('should not fire onBusyCapExceeded when not wired (log-only, no crash)', () => {
+      // Default construction (no hook): the stop still happens and the
+      // sweep completes without throwing.
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-silent', callbacks);
+      const agent = mockAgents.get('chat-silent')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      pool.evictIdleAgents(t0);
+      expect(() => pool.evictIdleAgents(t0 + 5100)).not.toThrow();
+      expect(agent.stop).toHaveBeenCalledOnce();
+    });
+
+    it('should swallow onBusyCapExceeded rejection — a failing channel must not break the sweep', async () => {
+      const onBusyCapExceeded = vi.fn().mockRejectedValue(new Error('channel down'));
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000, onBusyCapExceeded });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-flaky', callbacks);
+      const agent = mockAgents.get('chat-flaky')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      pool.evictIdleAgents(t0);
+      // Must not throw synchronously (the sweep loop) nor emit unhandledRejection.
+      expect(() => pool.evictIdleAgents(t0 + 5100)).not.toThrow();
+      expect(agent.stop).toHaveBeenCalledOnce();
+      await vi.waitFor(() => {
+        expect(onBusyCapExceeded).toHaveBeenCalledOnce();
+      });
+      // The failure is logged (fire-and-forget contract), not propagated.
+      await vi.waitFor(() => {
+        expect(mockLogger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ chatId: 'chat-flaky' }),
+          'Failed to send busy-cap notification'
+        );
+      });
+    });
   });
 
   describe('pool stats / leak diagnostics (Issue #4256)', () => {

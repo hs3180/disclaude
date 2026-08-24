@@ -317,9 +317,20 @@ async function main(): Promise<void> {
     // evicts mid-turn agents — correct, but unbounded: a runaway 2h+ turn
     // held its whole subprocess tree uncollectable (issue evidence A/B).
     // With the cap, an over-long busy turn is stopped (same path as /stop)
-    // and the chat notified. 90 min leaves legitimate long research turns
-    // room while bounding the runaway class. Set 0 to disable.
+    // and the chat notified. 90 min sits in the 60~90min band the issue
+    // recommends for its runaway evidence (2h10m / 13k SDK messages /
+    // $18.90 — judged a runaway loop, not an expected turn). Set 0 to
+    // disable.
     busyTurnHardCapMs: 90 * 60 * 1000,
+    // Issue #4577: user-facing notice after a hard-cap stop — same feedback
+    // the /stop command gives, so the chat isn't silently cut off.
+    onBusyCapExceeded: async (chatId, busyMinutes) => {
+      await primaryNode.sendMessage(
+        chatId,
+        `⏹️ **响应已超过时长上限被停止**（已运行 ${busyMinutes} 分钟，上限 90 分钟）\n\n` +
+          '会话保持活跃，您可以继续发送消息。'
+      );
+    },
   });
   // Issue #4169: Reclaim inactive agents (releasing their query handle, channel,
   // MCP connections, listeners) so the per-chatId pool doesn't grow unbounded.
