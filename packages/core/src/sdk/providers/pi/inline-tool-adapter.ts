@@ -39,7 +39,7 @@
  */
 
 import { z } from 'zod';
-import type { InlineToolDefinition } from '../../types.js';
+import type { InlineToolDefinition, ToolProgressCallback } from '../../types.js';
 
 /** Mirror of pi's `TextContent` (`{ type: 'text', text }`). */
 export interface PiTextContent {
@@ -202,7 +202,7 @@ export function adaptInlineTool(definition: InlineToolDefinition): PiAgentHarnes
       // Bridge pi's progress channel into the disclaude handler (#4568):
       // handler(params, onProgress) → onUpdate({content, details}) → pi
       // `tool_execution_update` → stream `tool_progress` + watchdog re-arm.
-      const onProgress: ((progress: unknown) => void) | undefined = onUpdate
+      const onProgress: ToolProgressCallback | undefined = onUpdate
         ? (progress) => {
             try {
               onUpdate({ content: toContent(progress), details: progress });

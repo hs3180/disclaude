@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { adaptInlineTool } from './inline-tool-adapter.js';
-import type { InlineToolDefinition } from '../../types.js';
+import type { InlineToolDefinition, ToolProgressPayload } from '../../types.js';
 
 function makeTool(overrides: Partial<InlineToolDefinition> = {}): InlineToolDefinition {
   return {
@@ -172,7 +172,7 @@ describe('adaptInlineTool (Issue #4387 / #4384)', () => {
       // pi's loop reads to emit `tool_execution_update`).
       const updates: unknown[] = [];
       const handler = vi.fn(
-        (params: { q: string }, onProgress?: (p: unknown) => void) =>
+        (params: { q: string }, onProgress?: (p: ToolProgressPayload) => void) =>
           new Promise<string>((resolve) => {
             onProgress?.(`halfway through ${params.q}`);
             onProgress?.({ done: 2, total: 4 });
@@ -189,14 +189,17 @@ describe('adaptInlineTool (Issue #4387 / #4384)', () => {
       );
 
       expect(updates).toEqual([
-        { content: [{ type: 'text', text: 'halfway through pi.dev' }], details: 'halfway through pi.dev' },
-        { content: [{ type: 'text', text: '{"done":2,"total":4}' }], details: { done: 2, total: 4 } },
+        {
+          content: [{ type: 'text', text: 'halfway through pi.dev' }],
+          details: 'halfway through pi.dev',
+        },
+        {
+          content: [{ type: 'text', text: '{"done":2,"total":4}' }],
+          details: { done: 2, total: 4 },
+        },
       ]);
       // The handler received the wrapped onProgress as its second argument.
-      expect(handler).toHaveBeenCalledWith(
-        { q: 'pi.dev' },
-        expect.any(Function)
-      );
+      expect(handler).toHaveBeenCalledWith({ q: 'pi.dev' }, expect.any(Function));
       // The terminal result is unaffected by progress reporting.
       expect(res.content).toEqual([{ type: 'text', text: 'finished' }]);
       expect(res.details).toBe('finished');
@@ -219,7 +222,7 @@ describe('adaptInlineTool (Issue #4387 / #4384)', () => {
       // the event stream, not as a failed tool call — the reply would be
       // lost. The handler still completes and its result is returned.
       const handler = vi.fn(
-        (_params: { q: string }, onProgress?: (p: unknown) => void) =>
+        (_params: { q: string }, onProgress?: (p: ToolProgressPayload) => void) =>
           new Promise<string>((resolve) => {
             onProgress?.('step 1'); // throws inside onUpdate — must be swallowed
             resolve('done anyway');
@@ -236,6 +239,44 @@ describe('adaptInlineTool (Issue #4387 / #4384)', () => {
         undefined
       );
       expect(res.content).toEqual([{ type: 'text', text: 'done anyway' }]);
+    });
+
+    it('round-trips every ToolProgressPayload shape through onUpdate verbatim (type test)', async () => {
+      // #4568 type follow-up: the structured payload shapes ({message, percent?},
+      // {done, total?, message?}, plain string) must all be assignable to the
+      // handler's onProgress and reach onUpdate with their details preserved —
+      // the adapter adds no validation or normalization on purpose.
+      const updates: unknown[] = [];
+      const payloads: ToolProgressPayload[] = [
+        { message: 'crawling page 3', percent: 30 },
+        { done: 2, total: 4 },
+        { done: 7 }, // total unknown — heartbeat + counter
+        'plain string passes through',
+      ];
+      const handler = vi.fn(
+        (_params: { q: string }, onProgress?: (p: ToolProgressPayload) => void) =>
+          new Promise<string>((resolve) => {
+            for (const p of payloads) {
+              onProgress?.(p);
+            }
+            resolve('ok');
+          })
+      );
+      const tool = adaptInlineTool({ ...makeTool(), handler } as unknown as InlineToolDefinition);
+      await tool.execute(
+        'call_1',
+        { q: 'x' },
+        undefined,
+        (partial) => updates.push(partial),
+        undefined
+      );
+
+      expect(updates.map((u) => (u as { details: unknown }).details)).toEqual(payloads);
+      // Structured shapes serialize as model-readable JSON text in content.
+      expect(updates[0]).toEqual({
+        content: [{ type: 'text', text: '{"message":"crawling page 3","percent":30}' }],
+        details: { message: 'crawling page 3', percent: 30 },
+      });
     });
   });
 });
