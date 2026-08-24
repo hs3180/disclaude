@@ -450,6 +450,14 @@ export function renderVerificationBlock(queue) {
  * `present` and none are `error`; any `absent` or `error` keeps it
  * `unverified` so a tooling failure can never print a false all-clear.
  *
+ * Shallow-repo guard: the part-3 header's FIRST trap is the `--depth 1`
+ * clone — no history to grep, so every PR reads "absent / not in log" and
+ * the whole verdict block actively misleads (this repo's live tick hit
+ * exactly this, #4559's own verification commit). Before verifying, probe
+ * `git rev-parse --is-shallow-repository`; if `true`, every PR reports
+ * `error` with an unshallow hint instead of `absent` — absence is a claim
+ * about the merge, not about the clone's missing history.
+ *
  * DiFX injection-safe by construction: PR numbers come from GitHub's
  * cross-ref table as integers (`buildVerificationQueue` maps `r.pr` straight
  * through), and the log regex is derived from `${n}` under a `^[\d]+$`
@@ -481,6 +489,20 @@ export async function verifyShippedAnchors(queue, deps = {}) {
       }
     });
 
+  const runGit = (args) =>
+    git
+      ? git(args, repoDir)
+      : spawnSync("git", args, { cwd: repoDir, encoding: "utf-8", timeout: 30000 });
+
+  // Shallow-repo guard (part-3 trap #1): a --depth 1 clone has no history, so
+  // both the grep and the cat-file absence probe lie. Detected once, applied
+  // to every PR — "absent" must stay a claim about the merge, not the clone.
+  let shallowProbe;
+  {
+    const r = runGit(["rev-parse", "--is-shallow-repository"]);
+    shallowProbe = r.error || r.status !== 0 ? null : String(r.stdout || "").trim();
+  }
+
   const details = [];
   for (const item of queue) {
     if (!/^\d+$/.test(String(item.number)) || !Array.isArray(item.mergedPRs)) {
@@ -493,13 +515,16 @@ export async function verifyShippedAnchors(queue, deps = {}) {
         results.push({ pr, outcome: "error", via: "grep", detail: "non-numeric PR number" });
         continue;
       }
+      if (shallowProbe === "true") {
+        results.push({
+          pr, outcome: "error", via: "grep",
+          detail: "shallow clone — run `git fetch --unshallow` (or clone full) before verifying; absence here reflects missing history, not a missing merge",
+        });
+        continue;
+      }
       // Primary: grep the log for the PR number (the part-3 command, verbatim
       // semantics — `#N` not followed by another digit).
-      const grep = git
-        ? git(["log", "--oneline", `--grep=#${pr}[^0-9]`], repoDir)
-        : spawnSync("git", ["log", "--oneline", `--grep=#${pr}[^0-9]`], {
-            cwd: repoDir, encoding: "utf-8", timeout: 30000,
-          });
+      const grep = runGit(["log", "--oneline", `--grep=#${pr}[^0-9]`]);
       if (grep.error || grep.status !== 0) {
         results.push({ pr, outcome: "error", via: "grep", detail: (grep.stderr || grep.error?.message || "").trim() });
         continue;
@@ -514,11 +539,7 @@ export async function verifyShippedAnchors(queue, deps = {}) {
         results.push({ pr, outcome: "error", via: "mergeCommit", detail: "gh pr view unavailable" });
         continue;
       }
-      const cat = git
-        ? git(["cat-file", "-e", `${sha}^{commit}`], repoDir)
-        : spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], {
-            cwd: repoDir, encoding: "utf-8", timeout: 30000,
-          });
+      const cat = runGit(["cat-file", "-e", `${sha}^{commit}`]);
       if (cat.error || cat.status !== 0) {
         results.push({ pr, outcome: "absent", via: "mergeCommit", detail: `merge commit ${sha.slice(0, 9)} not in log` });
       } else {

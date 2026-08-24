@@ -429,19 +429,61 @@ describe("scan.mjs verifyShippedAnchors (#4373 part 4 --verify-shipped)", () => 
       { git, prMergeCommits: async () => null },
     );
     expect(res.details.map((d: any) => d.verdict)).toEqual(["unverified", "unverified", "unverified"]);
-    // The injection-shaped issue number never reached git argv.
-    expect((git as any).calls.length).toBe(0);
+    // The injection-shaped issue number never reached git argv — the only git
+    // call is the shallow-repo probe that precedes the per-PR loop.
+    expect(git.calls.filter((c: string[]) => c[0] !== "rev-parse").length).toBe(0);
     expect(res.summary).toContain("0/3");
   });
 
   it("greps anchor to the PR number with the same suffix-digit guard as part 3", async () => {
     // #45 must not match "#451" — the regex carries `[^0-9]`, same as the
-    // rendered part-3 command.
+    // rendered part-3 command. (calls[0] is the shallow-repo probe.)
     const git = fakeGit([["--grep=#4510[^0-9]", { stdout: "abc1234 (#4510)\n" }]]);
     await verifyShippedAnchors(
       [{ number: 9, title: "x", mergedPRs: [4510] }],
       { git, prMergeCommits: async () => null },
     );
-    expect(git.calls[0].join(" ")).toContain("--grep=#4510[^0-9]");
+    expect(git.calls[1].join(" ")).toContain("--grep=#4510[^0-9]");
+  });
+
+  it("shallow clone (--depth 1) => error with unshallow hint, never `absent` (part-3 trap #1)", async () => {
+    // The #4559 live-tick trap: a depth-1 clone has no history, so grep and
+    // cat-file both "miss" on genuinely merged PRs. Every PR must report
+    // `error` with the remedy, not a misleading absence verdict.
+    const ghCalls: number[] = [];
+    const git = fakeGit([["is-shallow-repository", { stdout: "true\n" }]]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4510, title: "x", mergedPRs: [4527, 4511] }],
+      {
+        git,
+        prMergeCommits: async (pr: number) => {
+          ghCalls.push(pr);
+          return "abc123def4567890abc123def4567890abc123de";
+        },
+      },
+    );
+    expect(res.details[0].results.map((r: any) => r.outcome)).toEqual(["error", "error"]);
+    expect(res.details[0].results[0].detail).toContain("shallow clone");
+    expect(res.details[0].results[0].detail).toContain("git fetch --unshallow");
+    expect(res.details[0].verdict).toBe("unverified");
+    // The gh fallback and the cat-file probe must NOT fire — there is nothing
+    // to verify against until the clone has history.
+    expect(ghCalls).toEqual([]);
+    expect(git.calls.some((c: string[]) => c[0] === "cat-file")).toBe(false);
+  });
+
+  it("shallow-probe failure (git unusable) degrades to probing-null, not a false shallow verdict", async () => {
+    // If rev-parse itself fails we can't know shallowness — proceed with the
+    // normal path rather than blanket-erroring (the per-PR grep still reports
+    // its own error if git really is broken).
+    const git = fakeGit([
+      ["is-shallow-repository", { status: 128, stderr: "fatal: not a git repository" }],
+      ["--grep=#4527", { stdout: "69f900a1 (#4527)\n" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4510, title: "x", mergedPRs: [4527] }],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(res.details[0].results[0].outcome).toBe("present");
   });
 });
