@@ -3,10 +3,15 @@
  *
  * Extracted from chat-agent.ts (Issue #4125 part 1).
  *
+ * Issue #4459 (part 10): the external stdio MCP-server loader was removed —
+ * config `tools.mcpServers` is no longer read and external servers are no
+ * longer merged. Only the inline channel MCP server remains (its retirement
+ * to a Skill is tracked separately in #4459 Scope 3). Migrate external tools
+ * to a CLI Skill (docs/skill-format-spec.md).
+ *
  * @module agents/mcp-setup
  */
 
-import { Config } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { Logger } from 'pino';
 
@@ -18,20 +23,10 @@ export interface McpCapabilitiesProvider {
 }
 
 /**
- * Process-level flag: has the external-MCP deprecation warning fired yet?
- *
- * `buildMcpServers()` runs on every agent-loop start (restarts included), but
- * the warning is migration guidance for the operator, not per-loop diagnostics
- * — one warning per process is enough to be non-silent without log spam.
- */
-let externalMcpDeprecationWarned = false;
-
-/**
  * Build MCP servers configuration for agent SDK.
  *
  * Combines:
  * - Channel MCP server (inline transport, for send_text/send_card/etc.)
- * - Externally configured MCP servers from config file (stdio transport)
  *
  * @param chatId - The bound chat ID for capability lookup
  * @param callbacks - Callbacks providing capability info
@@ -69,40 +64,7 @@ export function buildMcpServers(
     }
   }
 
-  // Merge configured external MCP servers from config file.
-  // Deprecated (#4459 scope 4): external stdio MCP servers are slated for removal in favor of
-  // Skills (CLI + README). Configured servers keep working until the loader is removed, but every
-  // process logs the migration warning once — the migration is never silent.
-  const configuredMcpServers = Config.getMcpServersConfig();
-  if (configuredMcpServers && Object.keys(configuredMcpServers).length > 0) {
-    if (!externalMcpDeprecationWarned) {
-      externalMcpDeprecationWarned = true;
-      logger.warn(
-        { servers: Object.keys(configuredMcpServers) },
-        'External MCP servers are deprecated (#4459) — migrate each server to a Skill ' +
-        '(CLI + README, see docs/skill-format-spec.md); the stdio loader will be removed',
-      );
-    }
-    for (const [name, config] of Object.entries(configuredMcpServers)) {
-      mcpServers[name] = {
-        type: 'stdio',
-        command: config.command,
-        args: config.args || [],
-        ...(config.env && { env: config.env }),
-      };
-    }
-  }
-
   return mcpServers;
-}
-
-/**
- * Reset the process-level external-MCP deprecation warning flag.
- *
- * 用于测试或需要重新触发弃用告警时。
- */
-export function resetExternalMcpDeprecationWarning(): void {
-  externalMcpDeprecationWarned = false;
 }
 
 /**

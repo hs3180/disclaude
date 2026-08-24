@@ -47,7 +47,6 @@ const { mockGetConfigFromFile } = vi.hoisted(() => ({
     tools: {
       enabled: ['Skill', 'Bash'],
       disabled: ['WebSearch'],
-      mcpServers: { test: { command: 'node' } },
     },
     sessionRestore: {
       sessionTimeout: {
@@ -188,8 +187,8 @@ describe('Config.getToolConfig — with enabled/disabled arrays', () => {
     expect(tools?.disabled).toEqual(['WebSearch']);
   });
 
-  it('should still return MCP servers', () => {
+  it('should no longer return MCP servers (loader removed, #4459 part 10)', () => {
     const tools = Config.getToolConfig();
-    expect(tools?.mcpServers?.test).toEqual({ command: 'node' });
+    expect(tools && 'mcpServers' in tools).toBe(false);
   });
 });
