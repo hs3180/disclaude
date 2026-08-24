@@ -48,6 +48,14 @@ const { fakeState } = vi.hoisted(() => {
       /** Issue #4386 (part 5): prompt() parks forever AFTER emitting its scripted events. */
       hangPrompt: false,
       /**
+       * Review (#4570): continue()-started runs park forever AFTER emitting
+       * their scripted events — the follow-up-turn twin of hangPrompt (real
+       * continue() runs the same runWithLifecycle as prompt(), so a hung
+       * streamFn hangs it identically). Separate knob so a test can hang
+       * exactly one of the two run kinds.
+       */
+      hangContinue: false,
+      /**
        * Review (part 5): when true, abort() resolves the parked hang-promise
        * AND emits the aborted-run debris events real pi emits (agent.js
        * handleRunFailure: message_end/turn_end/agent_end) — the DEFAULT
@@ -129,6 +137,13 @@ class FakeAgent {
     const events = fakeState.scripts.shift() ?? [{ type: 'agent_end', messages: [] }];
     await this.emitScripted(events);
     void batch;
+    if (fakeState.hangContinue) {
+      // Same park semantics as prompt() under hangPrompt — see the knob's
+      // declaration for the real-pi rationale.
+      await new Promise<void>((resolve) => {
+        this.abortResolver = resolve;
+      });
+    }
   }
   abort(): void {
     fakeState.aborted = true;
@@ -214,6 +229,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     fakeState.ctorOptions = null;
     fakeState.listeners = [];
     fakeState.hangPrompt = false;
+    fakeState.hangContinue = false;
     fakeState.abortResolvesHang = false;
     fakeState.eventDelayMs = 0;
     provider = new PiAgentProvider();
@@ -765,6 +781,168 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
     } finally {
       delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
       fakeState.eventDelayMs = 0;
+    }
+  });
+
+  // ── Issue #4568 (direction 2): tool-window exemption ─────────────────────
+  // The watchdog's window is the WHOLE run (no #3706-style request boundary
+  // on the pi path), so a tool that runs silently longer than
+  // DISCLAUDE_STALL_TIMEOUT_MS was misjudged as a stall — aborted mid-build.
+  // Exemption: while a tool_execution_start has been seen without its
+  // tool_execution_end (openToolCalls > 0), the watchdog re-arms instead of
+  // firing. The window CLOSES on tool_execution_end — the watchdog must then
+  // fire again if the stream goes silent (exemption is not a free pass).
+
+  it('#4568: silent tool inside the open-tool window is exempt — watchdog re-arms, does not fire', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+    fakeState.scripts = [
+      [
+        { type: 'tool_execution_start', toolCallId: 't1', toolName: 'Bash', args: { cmd: 'build' } },
+        // NO tool_execution_end before the deadline — the tool is still
+        // running silently (no onUpdate wired, direction 1 is separate).
+        // hangPrompt keeps the run active forever, so ONLY the exemption
+        // keeps the watchdog from firing.
+      ],
+    ];
+    fakeState.hangPrompt = true;
+    try {
+      const result = provider.queryStream(
+        (async function* (): AsyncGenerator<UserInput> {
+          yield userInput('build it');
+          await new Promise<void>(() => {}); // channel never closes
+        })(),
+        baseOptions(),
+      );
+      const messages: AgentMessage[] = [];
+      const drained = (async () => {
+        for await (const message of result.iterator) {
+          messages.push(message);
+        }
+      })();
+      await vi.waitFor(() => {
+        expect(messages.map((m) => m.type)).toContain('tool_use');
+      }, { timeout: 500, interval: 10 });
+      // 350ms ≈ 4+ stall windows of 80ms — without the exemption the
+      // watchdog would have fired at ~80ms past the tool start.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(messages.some((m) => m.metadata?.terminatedReason === 'stall')).toBe(false);
+      expect(fakeState.aborted).toBe(false); // agent NOT aborted mid-tool
+      // Still parked (no terminator) — the stream stays alive with the tool.
+      expect(await Promise.race([
+        drained.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+      ])).toBe(false);
+    } finally {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+      fakeState.hangPrompt = false;
+    }
+  });
+
+  it('#4568: exemption closes on tool_execution_end — silent run afterwards still stalls', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+    process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '10';
+    fakeState.scripts = [
+      [
+        { type: 'tool_execution_start', toolCallId: 't1', toolName: 'Bash', args: {} },
+        { type: 'tool_execution_end', toolCallId: 't1', toolName: 'Bash', result: 'ok', isError: false },
+        // tool end emitted, then the run hangs silently — open window closed,
+        // exemption no longer applies.
+      ],
+    ];
+    fakeState.hangPrompt = true;
+    try {
+      const result = provider.queryStream(
+        (async function* (): AsyncGenerator<UserInput> {
+          yield userInput('hi');
+          await new Promise<void>(() => {}); // channel never closes
+        })(),
+        baseOptions(),
+      );
+      const messages: AgentMessage[] = [];
+      const drained = (async () => {
+        for await (const message of result.iterator) {
+          messages.push(message);
+        }
+      })();
+      await vi.waitFor(() => {
+        expect(messages.map((m) => m.type)).toContain('tool_result');
+      }, { timeout: 500, interval: 10 });
+      await new Promise((resolve) => setTimeout(resolve, 120)); // > 80ms after tool end
+      const settled = await Promise.race([
+        drained.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(settled).toBe(true);
+      expect(fakeState.aborted).toBe(true); // exemption did NOT suppress the real stall
+      const stallResult = messages.find((m) => m.metadata?.terminatedReason === 'stall');
+      expect(stallResult).toBeDefined();
+      expect(stallResult?.type).toBe('result');
+    } finally {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+      delete process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
+      fakeState.hangPrompt = false;
+    }
+  });
+
+  // Review regression (#4570): the exemption counter must not outlive the run
+  // that opened the tool windows. pi 0.82.1 pairs every start with an end
+  // before settlement, but that pairing is an implementation detail of a
+  // pre-1.0 package — a future run that settles leaving a start unmatched
+  // (error inside emit, listener failure) would otherwise leak openToolCalls
+  // into every LATER run of the same session and suppress the watchdog for
+  // the session's lifetime. Model it directly: run 1 emits a bare
+  // tool_execution_start and settles WITHOUT its end, then run 2 (a
+  // follow-up) goes fully silent — the watchdog must still fire on run 2.
+  it('#4568: a start unmatched at run settlement does not leak the exemption into later runs', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+    process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '10';
+    fakeState.scripts = [
+      // Run 1 (prompt): start WITHOUT end, then the run settles anyway —
+      // the leak scenario this test pins down.
+      [{ type: 'tool_execution_start', toolCallId: 't1', toolName: 'Bash', args: {} }],
+      // Run 2 (continue): emits nothing at all and hangs — a genuine stall
+      // that the leaked exemption would have wrongly suppressed.
+      [],
+    ];
+    fakeState.hangContinue = true;
+    try {
+      const result = provider.queryStream(
+        (async function* (): AsyncGenerator<UserInput> {
+          yield userInput('first');
+          // Give run 1 time to settle before starting run 2, so the second
+          // input lands while the agent is idle (drains via followUp +
+          // continue, not a second prompt()).
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          yield userInput('second');
+          await new Promise<void>(() => {}); // channel never closes
+        })(),
+        baseOptions(),
+      );
+      const messages: AgentMessage[] = [];
+      const drained = (async () => {
+        for await (const message of result.iterator) {
+          messages.push(message);
+        }
+      })();
+      await vi.waitFor(() => {
+        expect(messages.map((m) => m.type)).toContain('tool_use');
+      }, { timeout: 500, interval: 10 });
+      // 300ms ≈ run-2's stall deadline (80ms) plus generous slack — without
+      // the per-run reset the exemption would have re-armed forever.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const settled = await Promise.race([
+        drained.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(settled).toBe(true); // the stream ENDED (regression: parked forever before the fix)
+      expect(fakeState.aborted).toBe(true); // run 2's real stall still fired the watchdog
+      const stallResult = messages.find((m) => m.metadata?.terminatedReason === 'stall');
+      expect(stallResult).toBeDefined();
+      expect(stallResult?.type).toBe('result');
+    } finally {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+      delete process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
+      fakeState.hangContinue = false;
     }
   });
 });
