@@ -1057,6 +1057,12 @@ export class MessageHandler {
           // No parent chain to walk (or the walk failed) — this message IS the root
           fileMetadata.threadRootId = message_id;
         }
+      } else if (chat_type === 'topic') {
+        // Issue #4587 (part 1, review fix): a topic media message with no
+        // parent_id starts a new thread — same rule as the text path. Without
+        // this, part 2's session keying would treat thread-starting media as
+        // chat-scoped (no identity), diverging from the text path.
+        fileMetadata.threadRootId = message_id;
       }
       if (fileThreadContext) {
         fileMetadata.threadContext = fileThreadContext;

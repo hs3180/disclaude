@@ -2298,6 +2298,32 @@ describe('MessageHandler', () => {
       expect(msg.metadata.threadRootId).toBe('msg_thread_start');
     });
 
+    it('emits threadRootId = message_id for a topic-group FILE message without parent_id (Issue #4587 part 1 review fix)', async () => {
+      // Review fix: the file/image path originally had no no-parent_id branch,
+      // so a thread-starting media message emitted NO threadRootId while the
+      // text path emitted message_id — part 2's session keying would treat
+      // media thread-starts as chat-scoped. Same rule, second path.
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_thread_start',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_1', file_name: 'a.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_file_thread_start');
+    });
+
     it('does NOT emit threadRootId for non-topic chats (Issue #4587 part 1)', async () => {
       // Session keying stays chat-scoped for p2p/plain groups — no thread
       // identity must leak into their metadata.
