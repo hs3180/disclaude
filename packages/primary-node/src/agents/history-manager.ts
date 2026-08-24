@@ -72,6 +72,22 @@ export class HistoryManager {
     return this._persistedHistoryContext;
   }
 
+  /**
+   * Drop the persisted-history CONTENT while keeping the chat log file paths.
+   *
+   * Issue #4391 (part 3 review nit): after a successful re-injection, the
+   * replay's message would otherwise render TWO history sections — the
+   * session-start `persistedHistoryContext` snapshot and the fresh
+   * re-injection stash. Both come from the same `getChatHistory` source and
+   * the re-injection fetch happens strictly later, so the fresh stash is a
+   * superset of the snapshot: keeping both only doubles the token cost. The
+   * log-paths hint from the persisted section is independent of the snapshot
+   * content and must survive (it is not re-fetched anywhere else).
+   */
+  dropPersistedHistoryContent(): void {
+    this._persistedHistoryContext = undefined;
+  }
+
   /** Absolute paths to chat log files for access beyond the context window. */
   get chatLogFilePaths(): string[] | undefined {
     return this._chatLogFilePaths;

@@ -63,9 +63,20 @@ vi.mock('@disclaude/core', async (importOriginal) => {
       // Issue #4391 (§6 history re-injection): append the chat-history
       // context (when present) to the built content so tests can verify the
       // consume-once stash actually flowed into the pushed payload.
-      buildEnhancedContent: vi.fn((input: any) =>
-        input.chatHistoryContext ? `${input.text}\n${input.chatHistoryContext}` : input.text
-      ),
+      // Issue #4391 (part 3 review nit): mirror the production builder's TWO
+      // history sections (chat history + persisted history) so tests can also
+      // catch duplicated context in the pushed payload — the single-section
+      // stub below rendered persistedHistoryContext invisible here.
+      buildEnhancedContent: vi.fn((input: any) => {
+        const sections = [input.text];
+        if (input.persistedHistoryContext) {
+          sections.push(`## Previous Session Context\n\n${input.persistedHistoryContext}`);
+        }
+        if (input.chatHistoryContext) {
+          sections.push(`## Recent Chat History\n\n${input.chatHistoryContext}`);
+        }
+        return sections.join('\n');
+      }),
     })),
     MessageChannel: vi.fn().mockImplementation(() => ({
       push: vi.fn().mockReturnValue(true),
@@ -2512,6 +2523,11 @@ describe('ChatAgent (primary-node)', () => {
       const channelInstances: Array<{ push: ReturnType<typeof vi.fn> }> = [];
       const coreModule = await import('@disclaude/core');
       const MessageChannelCtor = coreModule.MessageChannel as unknown as ReturnType<typeof vi.fn>;
+      // Issue #4391 (part 3 review nit): mockImplementation replaces the
+      // factory-level implementation for the REST OF THE FILE
+      // (vi.clearAllMocks clears calls, not implementations) — save the
+      // original and restore it in a finally below.
+      const originalImpl = MessageChannelCtor.getMockImplementation();
       MessageChannelCtor.mockImplementation(function (this: {
         push: ReturnType<typeof vi.fn>;
         close: ReturnType<typeof vi.fn>;
@@ -2530,6 +2546,7 @@ describe('ChatAgent (primary-node)', () => {
         return this;
       });
 
+      try {
       void agent.processMessage({
         chatId: 'oc_retry_hist',
         payload: 'please answer',
@@ -2563,6 +2580,115 @@ describe('ChatAgent (primary-node)', () => {
       expect(channelInstances.length).toBe(2);
       const replayPushed = channelInstances[1].push.mock.calls.map((c: unknown[]) => JSON.stringify(c[0]));
       expect(replayPushed.some((p) => p.includes('what is the ETF flow?'))).toBe(true);
+      } finally {
+        // Restore the factory-level implementation (undefined when nothing
+        // was set — restore that too; mockImplementation(undefined) is
+        // rejected by typings, so cast through the generic mock shape).
+        if (originalImpl) {
+          MessageChannelCtor.mockImplementation(originalImpl);
+        } else {
+          (MessageChannelCtor as unknown as { mockImplementation: (i?: unknown) => unknown })
+            .mockImplementation(undefined);
+        }
+      }
+    });
+
+    // Issue #4391 (part 3 review nit): the replayed message rendered TWO
+    // history sections — the session-start persistedHistoryContext snapshot
+    // ("Previous Session Context") AND the fresh re-injection stash ("Recent
+    // Chat History"). Both come from the same getChatHistory source, and the
+    // re-injection fetch happens strictly LATER, so it is a superset of the
+    // session-start snapshot: keeping both only doubles the token cost. The
+    // replay payload must carry the fresh section alone (the log-paths hint
+    // from the persisted section stays — only the duplicated CONTENT drops).
+    it('replay payload renders the fresh history once, not duplicated as both persisted and fresh sections', async () => {
+      const localCallbacks = createMockCallbacks();
+      // First fetch = the session-start snapshot (persisted history); every
+      // later fetch (first-message load, re-injection) returns history that
+      // strictly contains it plus turns logged since.
+      const SESSION_START = '👤 [day 1] earlier turns';
+      const FRESH = '👤 [day 1] earlier turns\n👤 [day 2] turns logged after session start';
+      let fetchCount = 0;
+      const getChatHistory = vi.fn(() => {
+        fetchCount++;
+        return Promise.resolve(fetchCount === 1 ? SESSION_START : FRESH);
+      });
+      localCallbacks.getChatHistory = getChatHistory;
+      const agent = makeRetryAgent('oc_retry_dedup', localCallbacks);
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        const recovered = queryCount >= 2;
+        return {
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            if (recovered) {
+              yield { parsed: { type: 'text', content: 'Recovered once!' }, raw: {} };
+            }
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        };
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      const channelInstances: Array<{ push: ReturnType<typeof vi.fn> }> = [];
+      const coreModule = await import('@disclaude/core');
+      const MessageChannelCtor = coreModule.MessageChannel as unknown as ReturnType<typeof vi.fn>;
+      const originalImpl = MessageChannelCtor.getMockImplementation();
+      MessageChannelCtor.mockImplementation(function (this: {
+        push: ReturnType<typeof vi.fn>;
+        close: ReturnType<typeof vi.fn>;
+        generator: ReturnType<typeof vi.fn>;
+      }) {
+        this.push = vi.fn((_payload: unknown) => true);
+        this.close = vi.fn();
+        this.generator = vi.fn(() =>
+          (async function* () {
+            /* empty */
+          })()
+        );
+        channelInstances.push(this as never);
+        return this;
+      });
+
+      try {
+        void agent.processMessage({
+          chatId: 'oc_retry_dedup',
+          payload: 'please answer',
+          messageId: 'om_real_user_dedup',
+        });
+
+        await vi.waitFor(() => {
+          expect(createQueryStream).toHaveBeenCalledTimes(2);
+        }, { timeout: 1000, interval: 20 });
+        await vi.waitFor(() => {
+          const call = localCallbacks.sendMessage.mock.calls.find(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('Recovered once!')
+          );
+          expect(call).toBeDefined();
+        }, { timeout: 1000, interval: 20 });
+
+        // The replay payload embeds the fresh history…
+        expect(channelInstances.length).toBe(2);
+        const replayPushed = channelInstances[1].push.mock.calls
+          .map((c: unknown[]) => JSON.stringify(c[0]))
+          .join('\n');
+        expect(replayPushed.includes('turns logged after session start')).toBe(true);
+        // …exactly once: the day-1 turns appear in the fresh section only, not
+        // a second time through the stale persisted section.
+        expect(replayPushed.split('👤 [day 1]').length - 1).toBe(1);
+      } finally {
+        if (originalImpl) {
+          MessageChannelCtor.mockImplementation(originalImpl);
+        } else {
+          (MessageChannelCtor as unknown as { mockImplementation: (i?: unknown) => unknown })
+            .mockImplementation(undefined);
+        }
+      }
     });
 
     // Issue #4391 (§6 review follow-up): trigger-mode @mentions carry a
