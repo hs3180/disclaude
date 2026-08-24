@@ -197,6 +197,64 @@ printf '%s\n' \
 ( cd "$SCRATCH" && detect_quota_exhaustion "" "$SCRATCH/multimodal-test.sh" )
 check_rc $? 1 "tier 3: SDK log with only transient 429 NOT detected"
 
+# =============================================================================
+# #4584: run-all-tests.sh summary must NAME the failed suites
+# =============================================================================
+# The runner's summary previously printed only "$failed test suite(s) failed";
+# when a background run's output was tail-truncated (#4584's CI report lost
+# the per-suite banner lines), the failing suite could not be identified
+# without re-running. The summary now also prints "Failed suite(s): <names>".
+# Source-level test: extract the runner's suite iteration + summary block
+# into a scratch harness (run_suite stubbed), and drive it against #4584's
+# exact scenario — one suite fails, quota detection correctly flags the
+# failure as environmental in the same summary.
+
+H4584="$TMPDIR_FIX/harness"
+# Extract from the counters down to (and including) the "Failed suite(s):"
+# summary line (awk stops at FIRST match — sed's addr,addr range would run
+# to the next re-match), dedent, and append the closing `fi` for the
+# else-branch the extraction cut open. (Use $a with a real newline — GNU
+# sed treats `'$a\fi'` as append-text "i", dropping the f.)
+awk '/^    local failed=0$/{f=1} f{print} /log_error "Failed suite/{exit}' \
+  "$SCRIPT_DIR/run-all-tests.sh" \
+  | sed -e 's/^    //' -e 's/^local //' -e '$a\
+fi' \
+  > "$H4584"
+
+# Harness prelude: source common.sh (log_* helpers), then the stub run_suite
+# — exact #4584 scenario: Multimodal FAILS (non-zero), all other suites pass.
+# (`run_suite` contract mirrors the runner's: non-zero = suite failed.)
+H4584_PRE="$TMPDIR_FIX/harness-pre"
+{
+  echo '#!/bin/bash'
+  echo 'SCRIPT_DIR="'"$SCRIPT_DIR"'"'
+  echo 'source "$SCRIPT_DIR/common.sh" >/dev/null 2>&1'
+  echo 'run_suite() { [ "$2" != "Multimodal Tests" ]; }'
+  cat "$H4584"
+} > "$H4584_PRE"
+H4584_OUT="$( cd "$SCRATCH" && bash "$H4584_PRE" 2>&1 )"
+# Strip ANSI color codes (log_error wraps the prefix in \033[0;31m…\033[0m)
+# so the assertions below match the text, not the escape bytes.
+H4584_PLAIN="$(printf '%s' "$H4584_OUT" | sed 's/\x1b\[[0-9;]*m//g')"
+
+printf '%s' "$H4584_PLAIN" | grep -qE '\[ERROR\][[:space:]]+1 test suite\(s\) failed'
+check_rc $? 0 "#4584: summary still prints the failed count"
+
+printf '%s' "$H4584_PLAIN" | grep -qF 'Failed suite(s): Multimodal Tests'
+check_rc $? 0 "#4584: summary names the failed suite (exact #4584 scenario)"
+
+printf '%s' "$H4584_PLAIN" | grep -qF 'REST Channel Tests'
+check_rc $? 1 "#4584: passing suite NOT listed in the failure summary"
+
+# All-pass variant: the names line must not appear.
+sed 's|^run_suite() { \[ "\$2" != "Multimodal Tests" \]; }$|run_suite() { return 0; }|' \
+  "$H4584_PRE" > "$H4584.ok"
+H4584_OK_OUT="$( cd "$SCRATCH" && bash "$H4584.ok" 2>&1 )"
+printf '%s' "$H4584_OK_OUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -q 'All test suites passed'
+check_rc $? 0 "#4584: all-pass summary unchanged"
+printf '%s' "$H4584_OK_OUT" | grep -qF 'Failed suite(s):'
+check_rc $? 1 "#4584: no Failed-suite line when everything passed"
+
 # --- Nothing anywhere → 1 ---
 rm -f "$SCRATCH/disclaude-test-server-multimodal-test.log" "$SDKLOG"
 ( cd "$SCRATCH" && detect_quota_exhaustion "" "$SCRATCH/multimodal-test.sh" )

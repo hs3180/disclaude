@@ -416,35 +416,32 @@ main() {
     local failed=0
     local RETRIED_SUCCESSES=0
     local TOTAL_RETRIES=0
+    # Issue #4584: remember WHICH suites failed so the summary names them —
+    # a bare "1 test suite(s) failed" forces the operator to dig through
+    # (often truncated) background-run output to find the suite.
+    local FAILED_SUITE_NAMES=()
 
-    if ! run_suite "$SCRIPT_DIR/rest-channel-test.sh" "REST Channel Tests"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/use-case-1-basic-reply.sh" "Use Case 1 - Basic Reply"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/use-case-2-task-execution.sh" "Use Case 2 - Task Execution"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/use-case-3-multi-turn.sh" "Use Case 3 - Multi-turn Conversation"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests"; then
-        failed=$((failed + 1))
-    fi
+    local script name
+    for spec in \
+        "rest-channel-test.sh|REST Channel Tests" \
+        "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply" \
+        "use-case-2-task-execution.sh|Use Case 2 - Task Execution" \
+        "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation" \
+        "mcp-tools-test.sh|MCP Tools Tests" \
+        "multimodal-test.sh|Multimodal Tests"; do
+        script="${spec%%|*}"
+        name="${spec##*|}"
+        if ! run_suite "$SCRIPT_DIR/$script" "$name"; then
+            failed=$((failed + 1))
+            FAILED_SUITE_NAMES+=("$name")
+        fi
+    done
 
     # Feishu IPC tests don't need a running server (uses mock handlers)
     log_info "Running Feishu IPC transport tests (no server needed)..."
     if ! run_suite "$SCRIPT_DIR/feishu-ipc-test.sh" "Feishu IPC Transport Tests"; then
         failed=$((failed + 1))
+        FAILED_SUITE_NAMES+=("Feishu IPC Transport Tests")
     fi
 
     echo ""
@@ -453,6 +450,10 @@ main() {
         log_info "All test suites passed!"
     else
         log_error "$failed test suite(s) failed"
+        # Issue #4584: name the failing suites right after the count, so
+        # tail-truncated output (#4584's CI report lost the suite lines)
+        # still identifies them.
+        log_error "Failed suite(s): ${FAILED_SUITE_NAMES[*]}"
     fi
     if [ $RETRIED_SUCCESSES -gt 0 ]; then
         log_warn "${RETRIED_SUCCESSES} suite(s) passed after retry"
