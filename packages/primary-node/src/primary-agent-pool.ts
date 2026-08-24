@@ -63,6 +63,21 @@ export interface PrimaryAgentPoolOptions {
    * Issue #4169: How often to sweep for idle agents. Default: 5 minutes.
    */
   idleSweepIntervalMs?: number;
+
+  /**
+   * Issue #4577: Hard cap on a single busy turn, in ms.
+   *
+   * The busy exemption in `evictIdleAgents()` is correct (never kill a
+   * mid-turn agent) but previously had NO upper bound — a 2h10m runaway
+   * turn (13,903 SDK messages / $18.90 in the issue's evidence A) kept its
+   * full subprocess tree (claude binary + 2 MCP servers + stray LSP)
+   * uncollectable for the whole window. When a busy agent's turn exceeds
+   * this cap, the sweep stops the query (abort + channel close, same as
+   * the /stop command) and notifies the chat instead of silently waiting.
+   *
+   * Default: 90 minutes. Set to 0 to disable the busy-turn cap.
+   */
+  busyTurnHardCapMs?: number;
 }
 
 const logger = createLogger('PrimaryAgentPool');
@@ -71,6 +86,13 @@ const logger = createLogger('PrimaryAgentPool');
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 /** Issue #4169: Default idle-sweep interval. */
 const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+/**
+ * Issue #4577: Default hard cap on a single busy turn before the sweep stops
+ * the query. Generous enough for legitimate long research turns (the issue's
+ * legitimate weekly-research example ran 2h10m — that's exactly the class this
+ * cap flags), short enough to bound a runaway loop's memory hold.
+ */
+const DEFAULT_BUSY_TURN_HARD_CAP_MS = 90 * 60 * 1000;
 
 /**
  * Issue #4256 (part 2): structured pool-state snapshot for leak diagnostics.
@@ -107,6 +129,13 @@ export class PrimaryAgentPool {
   private readonly lastUsedAt = new Map<string, number>();
   /** Issue #4169: Periodic sweep timer (unref'd) for idle eviction. */
   private idleSweepTimer?: ReturnType<typeof setInterval>;
+  /**
+   * Issue #4577: When each chat's current busy turn started (ms epoch).
+   * Populated by the idle sweep when it first observes `isBusy`; cleared when
+   * the agent goes idle again. Bounded by the pool size — one entry per
+   * currently-busy chat, deleted on turn end.
+   */
+  private readonly busySince = new Map<string, number>();
   /** Issue #4256: Peak concurrent agent count since pool start (leak diagnostics). */
   private peakActive = 0;
   /**
@@ -234,6 +263,8 @@ export class PrimaryAgentPool {
     if (agent) {
       this.agents.delete(chatId);
       this.lastUsedAt.delete(chatId);
+      // Issue #4577: clear the busy-turn marker along with the agent.
+      this.busySince.delete(chatId);
       agent.dispose();
     }
   }
@@ -263,6 +294,8 @@ export class PrimaryAgentPool {
     }
     this.agents.clear();
     this.lastUsedAt.clear();
+    // Issue #4577: clear busy-turn markers along with the agents.
+    this.busySince.clear();
   }
 
   /**
@@ -301,6 +334,14 @@ export class PrimaryAgentPool {
   /**
    * Issue #4169: Evict (dispose) agents idle longer than the idle timeout.
    *
+   * Issue #4577: busy agents are still never *evicted* mid-turn, but the
+   * exemption now has a hard cap — a busy turn running longer than
+   * `busyTurnHardCapMs` is stopped (abort + channel close, same path as the
+   * /stop command) and the chat is notified, bounding how long a runaway
+   * turn (2h10m / 13k SDK messages in the issue's evidence) can hold its
+   * subprocess tree uncollectable. The stopped agent itself stays in the
+   * pool and is reclaimed by the normal idle path once the turn unwinds.
+   *
    * @param now - Injectable clock for deterministic testing (defaults to Date.now()).
    * @returns chatIds of the agents that were evicted.
    */
@@ -309,8 +350,18 @@ export class PrimaryAgentPool {
     if (timeout <= 0) { return []; }
     const evicted: string[] = [];
     for (const [chatId, agent] of this.agents) {
-      // Never evict an agent mid-turn.
-      if (agent.isBusy) { continue; }
+      // Never evict an agent mid-turn...
+      if (agent.isBusy) {
+        // ...but Issue #4577: cap how long a busy turn can run. Track when
+        // this busy turn was first observed; if it exceeds the hard cap,
+        // stop the query so the turn unwinds and the agent becomes
+        // evictable on a later sweep.
+        this.enforceBusyTurnCap(chatId, agent, now);
+        continue;
+      }
+      // Issue #4577: turn over — clear the busy-start marker so the next
+      // busy turn starts a fresh cap window.
+      this.busySince.delete(chatId);
       const last = this.lastUsedAt.get(chatId) ?? now;
       if (now - last >= timeout) {
         this.agents.delete(chatId);
@@ -322,6 +373,66 @@ export class PrimaryAgentPool {
     // Issue #4256: tally evictions for the leak-diagnostics snapshot.
     this.totalEvictions += evicted.length;
     return evicted;
+  }
+
+  /**
+   * Issue #4577: enforce the busy-turn hard cap for one busy agent.
+   *
+   * Records the first-observed busy timestamp (the sweep runs every
+   * `idleSweepIntervalMs`, so the effective measurement granularity is one
+   * sweep interval — acceptable for a 90-minute cap). When the current busy
+   * turn exceeds `busyTurnHardCapMs`, stops the agent's query (same path as
+   * the /stop command: abort + channel close, session preserved) and
+   * notifies the chat. Notification is fire-and-forget — a failing channel
+   * must not break the sweep for other agents.
+   */
+  private enforceBusyTurnCap(
+    chatId: string,
+    agent: Pick<ChatAgent, 'isBusy' | 'stop'>,
+    now: number
+  ): void {
+    const cap = this.options.busyTurnHardCapMs ?? DEFAULT_BUSY_TURN_HARD_CAP_MS;
+    if (cap <= 0) {
+      // Cap disabled — still keep the marker consistent for stats.
+      if (!this.busySince.has(chatId)) { this.busySince.set(chatId, now); }
+      return;
+    }
+    const since = this.busySince.get(chatId);
+    if (since === undefined) {
+      this.busySince.set(chatId, now);
+      return;
+    }
+    if (now - since < cap) { return; }
+    const busyMin = Math.round((now - since) / 60000);
+    logger.warn(
+      { chatId, busyMinutes: busyMin, capMs: cap },
+      'Busy turn exceeded hard cap (Issue #4577) — stopping query'
+    );
+    agent.stop(chatId);
+    // Clear the marker so the next busy turn (if any) gets a fresh window
+    // rather than being re-stopped on every sweep tick.
+    this.busySince.delete(chatId);
+    // Notify the user fire-and-forget: channel failure must not propagate
+    // into the sweep loop.
+    void this.notifyBusyCapExceeded(chatId, busyMin).catch((err) => {
+      logger.error({ err, chatId }, 'Failed to send busy-cap notification');
+    });
+  }
+
+  /**
+   * Issue #4577: user-facing notice after a hard-cap stop. Fire-and-forget by
+   * contract — a failing channel must not break the sweep. Subclasses (or
+   * tests) override to route the message through the channel callbacks.
+   */
+  protected async notifyBusyCapExceeded(
+    _chatId: string,
+    _busyMinutes: number
+  ): Promise<void> {
+    // Base implementation: log-only. The pool is constructed before channel
+    // callbacks exist (cli.ts wires it with factory-level options only), and
+    // callbacks arrive per message (Issue #3776), so the default keeps the
+    // pool decoupled from channel state; the hard stop itself is the
+    // memory-bounding action and does not depend on this notice.
   }
 
   /**

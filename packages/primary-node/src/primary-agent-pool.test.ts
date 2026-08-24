@@ -472,6 +472,135 @@ describe('PrimaryAgentPool', () => {
     });
   });
 
+  // ==========================================================================
+  // busy-turn hard cap (Issue #4577)
+  // ==========================================================================
+
+  describe('busy-turn hard cap (Issue #4577)', () => {
+    it('should stop (not evict) a busy agent whose turn exceeds the hard cap', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-runaway', callbacks);
+      const agent = mockAgents.get('chat-runaway')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      // First sweep observes the busy turn and records its start.
+      pool.evictIdleAgents(t0);
+      expect(agent.stop).not.toHaveBeenCalled();
+      // Agent is still busy before the cap elapses — untouched.
+      pool.evictIdleAgents(t0 + 4000);
+      expect(agent.stop).not.toHaveBeenCalled();
+      expect(agent.dispose).not.toHaveBeenCalled();
+      // Past the cap: query is stopped, but the agent is NOT disposed
+      // mid-turn (the stop unwinds it; the normal idle path reclaims later).
+      const evicted = pool.evictIdleAgents(t0 + 5100);
+      expect(evicted).toEqual([]);
+      expect(agent.stop).toHaveBeenCalledOnce();
+      expect(agent.stop).toHaveBeenCalledWith('chat-runaway');
+      expect(agent.dispose).not.toHaveBeenCalled();
+    });
+
+    it('should NOT stop busy agents within the cap (existing behavior preserved)', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 60_000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-legit', callbacks);
+      const agent = mockAgents.get('chat-legit')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      pool.evictIdleAgents(t0);
+      pool.evictIdleAgents(t0 + 30_000);
+
+      expect(agent.stop).not.toHaveBeenCalled();
+      expect(agent.dispose).not.toHaveBeenCalled();
+    });
+
+    it('should give the next busy turn a fresh cap window after a stop', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-again', callbacks);
+      const agent = mockAgents.get('chat-again')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      pool.evictIdleAgents(t0); // observe busy start
+      pool.evictIdleAgents(t0 + 6000); // cap exceeded → stop, marker cleared
+      expect(agent.stop).toHaveBeenCalledOnce();
+      // Still busy (turn hasn't unwound yet) — the stop must not re-fire
+      // on every subsequent sweep tick.
+      pool.evictIdleAgents(t0 + 7000);
+      pool.evictIdleAgents(t0 + 8000);
+      expect(agent.stop).toHaveBeenCalledOnce();
+    });
+
+    it('should clear the busy marker when the turn ends, resetting the window', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-cycle', callbacks);
+      const agent = mockAgents.get('chat-cycle')!;
+      const t0 = Date.now();
+
+      // Turn 1: busy for a while, ends before cap. The idle sweep at
+      // t0+4000 clears the busy marker; idle timeout is disabled for this
+      // agent's chat by keeping lastUsedAt fresh (a new message arrived
+      // between the two sweeps, which is exactly how a short turn-then-new-
+      // message cycle looks in production).
+      agent.isBusy = true;
+      pool.evictIdleAgents(t0);
+      agent.isBusy = false;
+      pool.evictIdleAgents(t0 + 500); // idle but recently used → marker cleared, not evicted
+      expect(agent.stop).not.toHaveBeenCalled();
+      expect(pool.get('chat-cycle')).toBeDefined();
+
+      // Turn 2 starts: busy again. If the turn-1 marker had leaked, the
+      // sweep at t0+4500 would compute busy-since = t0 (4500 < 5000, ok)
+      // but t0+5600 → 5600ms ≥ cap would stop early with the turn-2 window
+      // being only 1100ms. With the marker cleared, turn 2 is observed
+      // fresh at t0+4500 and nothing fires.
+      agent.isBusy = true;
+      pool.evictIdleAgents(t0 + 4500); // turn-2 start observed here
+      pool.evictIdleAgents(t0 + 5600); // 1100ms into turn 2 < 5000 cap → no stop
+      expect(agent.stop).not.toHaveBeenCalled();
+      // Cap measured from turn 2's first observation (t0+4500): at t0+9510
+      // the window is 5010ms ≥ 5000 → stop fires.
+      pool.evictIdleAgents(t0 + 9510);
+      expect(agent.stop).toHaveBeenCalledOnce();
+    });
+
+    it('should be disabled when busyTurnHardCapMs is 0', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 0 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-uncapped', callbacks);
+      const agent = mockAgents.get('chat-uncapped')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      pool.evictIdleAgents(t0);
+      pool.evictIdleAgents(t0 + 10_000_000);
+
+      expect(agent.stop).not.toHaveBeenCalled();
+      expect(agent.dispose).not.toHaveBeenCalled();
+    });
+
+    it('default cap (90 min) applies when the option is omitted', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-default', callbacks);
+      const agent = mockAgents.get('chat-default')!;
+      agent.isBusy = true;
+
+      const t0 = Date.now();
+      pool.evictIdleAgents(t0);
+      // Just under 90 min: untouched.
+      pool.evictIdleAgents(t0 + 89 * 60 * 1000);
+      expect(agent.stop).not.toHaveBeenCalled();
+      // Past 90 min: stopped.
+      pool.evictIdleAgents(t0 + 91 * 60 * 1000);
+      expect(agent.stop).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('pool stats / leak diagnostics (Issue #4256)', () => {
     it('getPoolStats() reports active/busy/idle for current agents', () => {
       const pool = new PrimaryAgentPool();
