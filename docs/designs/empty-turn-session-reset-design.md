@@ -136,12 +136,30 @@ turn, and add the branch above.
 
 ## 6. Open questions / out of scope
 
-- **History re-injection depth** — v1 does none. Follow-up: optionally re-inject the
+- **History re-injection depth** — ~~v1 does none. Follow-up: optionally re-inject the
   last N real user messages into the fresh session so the retry does not lose context.
-  Needs a decision on N and on dedup vs. the replayed message.
+  Needs a decision on N and on dedup vs. the replayed message.~~ **Delivered** (2026-08):
+  the replay's deferred callback now calls `HistoryManager.reloadFirstMessageHistory()`
+  before the teardown, re-stashing the recent chat history (via `getChatHistory`, same
+  source and truncation as the first-message load) so the replayed message — the fresh
+  session's first — consumes it through the existing consume-once path. What v1 lost was
+  not ALL context (the session-start `persistedHistoryContext` snapshot rode every
+  message, teardown included) but FRESHNESS: turns logged after that snapshot. Depth
+  decision: reuse the first-message budget rather than a new N (one knob, one truncation
+  owner); no dedup needed — the replayed message appearing in the history tail mirrors
+  what a manual user resend produces today. Best-effort: fetch failure or `--no-context`
+  (`skipHistory`) skips re-injection and the replay falls back to the v1 param (a
+  trigger-mode mention's receive-time snapshot, or context-less otherwise); guards
+  (disposed / messageSeq) are re-checked after the fetch's await. **Param precedence
+  follow-up**: `processMessage` prefers an incoming `chatHistoryContext` param over the
+  stash, and trigger-mode @mentions carry one — so on a successful re-injection the
+  replay passes a COPY of the original params with that stale param stripped (copy, not
+  mutate: the stash object is `lastTurnMessage` by reference), letting the fresh fetch
+  win and keeping the consume-once semantics (the stash can no longer leak onto a later
+  param-less message).
 - **Where to stash original `UserMessageParams`** for the in-flight turn (instance field
   vs. threading through `processIterator`). Minor; pick whatever the codebase finds
-  least intrusive.
+  least intrusive. *(Resolved in part 2: instance field `lastTurnMessage`.)*
 - **Reset/replay for non-real-user-but-non-synthetic** messages (if any exist between
   "real user" and the `isSyntheticMessageId` set) — confirm the policy's eligibility
   covers exactly the intended set.

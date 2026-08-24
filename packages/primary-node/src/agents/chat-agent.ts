@@ -1422,8 +1422,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // (endEmptyTurnSession) and re-invoke processMessage with the
           // ORIGINAL params. processMessage sees !isSessionActive and calls
           // startAgentLoop() — a fresh SDK query with a fresh channel — so the
-          // replay never re-enters this iterator. v1 replays only the single
-          // message (no history re-injection, design §4.1).
+          // replay never re-enters this iterator. v1 replayed only the single
+          // message (no fresh history re-injection, design §4.1 — the replay
+          // still carried the session-start persistedHistoryContext snapshot);
+          // the deferred callback now also re-stashes recent chat history so
+          // the replayed message — the fresh session's first — carries a FRESH
+          // context snapshot (the §6 history re-injection follow-up, see the
+          // callback body).
           //
           // Seq guard: if a NEWER message arrives before the timer fires (the
           // user resend, or anything else), the replay is dropped — it must
@@ -1437,7 +1442,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'session reset + replay of the original input'
             );
             setTimeout(() => {
-              try {
+              // Async for the §6 history re-injection await below (the await
+              // yields to the event loop; guards are re-checked after it).
+              (async () => {
                 // Issue #4391 (part 2 review): the disposed check is
                 // ChatAgent's own `disposed` flag, NOT `!this.initialized` —
                 // BaseAgent.initialized has no production path setting it
@@ -1455,21 +1462,82 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                   );
                   return;
                 }
+                // Issue #4391 (§6 history re-injection): re-stash recent chat
+                // history BEFORE the teardown so the replayed message — the
+                // fresh session's first — picks it up via the existing
+                // consume-once first-message path in processMessage(). Without
+                // this the fresh session's first message carries only the
+                // session-start persistedHistoryContext snapshot: turns logged
+                // after that snapshot are lost, exactly while recovering from
+                // a stale session (long-lived chats lose the most). Best-effort:
+                // on failure reloadFirstMessageHistory() logs and returns false,
+                // and the replay proceeds on the stale snapshot (v1 behavior) —
+                // re-injection must never block recovery.
+                const reInjected = await this.historyManager.reloadFirstMessageHistory();
+                // Re-check the guards AFTER the await: the fetch yields the
+                // event loop, so a newer message (or dispose) may have landed
+                // while re-injection was in flight. Without this second check
+                // the teardown below would clobber that fresher input — the
+                // exact hazard the seq guard exists to prevent. If we bail
+                // here, the teardown never ran, so the newer message went into
+                // the still-active OLD session — and it will consume the
+                // re-stashed context on its next processMessage (the consume
+                // runs on every message; the once-semantics come from the
+                // stash being filled once). That is benign — the newer message
+                // gets a fresh history snapshot attached — and the disposed
+                // sub-case is trivially safe (no processMessage can follow).
+                if (this.disposed || this.messageSeq !== replaySeq) {
+                  this.logger.info(
+                    {
+                      chatId,
+                      replaySeq,
+                      currentSeq: this.messageSeq,
+                      disposed: this.disposed,
+                    },
+                    'Empty-turn replay skipped after history re-injection ' +
+                      '(agent disposed or a newer message arrived) (Issue #4391)'
+                  );
+                  return;
+                }
+                // Issue #4391 (§6 review follow-up): processMessage prefers an
+                // incoming chatHistoryContext param over the consume-once
+                // stash. Trigger-mode @mentions — the primary empty-turn
+                // scenario this recovery targets — carry a receive-time
+                // snapshot param, so replaying the original params unchanged
+                // would leave the fresh stash unconsumed (and leaking onto a
+                // later param-less message). When re-injection succeeded,
+                // replay a COPY of the params with the stale param stripped so
+                // the fresh fetch wins. Copy, never mutate: replayParams is
+                // lastTurnMessage by reference. On a failed fetch keep the
+                // param (v1 behavior — the snapshot beats context-less).
+                const effectiveReplayParams = reInjected
+                  ? (() => {
+                      const { chatHistoryContext: _staleSnapshot, ...rest } = replayParams;
+                      return rest as UserMessageParams;
+                    })()
+                  : replayParams;
+                if (reInjected) {
+                  this.logger.info(
+                    { chatId, messageId: replayParams.messageId },
+                    'Re-injected chat history into empty-turn replay context ' +
+                      '(stale receive-time snapshot param dropped) (Issue #4391)'
+                  );
+                }
                 // Session-only teardown: close query+channel, keep this agent
                 // (history, restartManager accounting, thread roots) intact.
                 this.endEmptyTurnSession();
-                void this.processMessage(replayParams).catch((replayErr) => {
+                void this.processMessage(effectiveReplayParams).catch((replayErr) => {
                   this.logger.error(
                     { err: replayErr, chatId },
                     'Empty-turn replay processMessage failed (Issue #4391)'
                   );
                 });
-              } catch (schedErr) {
+              })().catch((schedErr) => {
                 this.logger.error(
                   { err: schedErr, chatId },
                   'Empty-turn replay scheduling callback failed (Issue #4391)'
                 );
-              }
+              });
             }, 0);
           }
 
