@@ -35,6 +35,10 @@ vi.mock('./ipc-utils.js', () => ({
   // factory — mock it to return the shared mockIpcClient.
   getRestIpcClient: () => mockGetRestIpcClient(),
   isIpcAvailable: vi.fn(),
+  // Issue #4576: deterministic stub — the unavailable-branch tests assert the
+  // fallback hint (thread-preserving +messages-reply) is appended.
+  buildIpcFallbackHint: (parentMessageId?: string) =>
+    `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}`,
   getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
     if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
     return `❌ 操作失败: ${originalError ?? '未知错误'}`;
@@ -103,6 +107,17 @@ describe('send_text', () => {
       const result = await send_text({ text: 'hello', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('IPC');
+    });
+
+    it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const result = await send_text({
+        text: 'hello',
+        chatId: 'oc_test',
+        parentMessageId: 'om_parent123',
+      });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('+messages-reply --message-id om_parent123');
     });
   });
 

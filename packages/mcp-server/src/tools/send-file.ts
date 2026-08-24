@@ -9,7 +9,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createLogger, uploadFile } from '@disclaude/core';
-import { isIpcAvailable, getRestIpcClient } from './ipc-utils.js';
+import { isIpcAvailable, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
 import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import type { SendFileResult } from './types.js';
 
@@ -80,7 +80,9 @@ export async function send_file(params: {
       return {
         success: false,
         error: 'IPC not available',
-        message: '❌ File upload requires IPC connection. Please ensure Primary Node is running.',
+        // Issue #4576: actionable fallback — +messages-send loses thread
+        // attribution in topic groups; +messages-reply preserves it.
+        message: `❌ File upload requires IPC connection. Please ensure Primary Node is running.${buildIpcFallbackHint(parentMessageId)}`,
       };
     }
 
