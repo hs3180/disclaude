@@ -82,7 +82,10 @@ export async function send_file(params: {
         error: 'IPC not available',
         // Issue #4576: actionable fallback — +messages-send loses thread
         // attribution in topic groups; +messages-reply preserves it.
-        message: `❌ File upload requires IPC connection. Please ensure Primary Node is running.${buildIpcFallbackHint(parentMessageId)}`,
+        // filePath (the original arg, not the workspace-resolved absolute
+        // path) rides along so the suggested reply command carries --file —
+        // +messages-reply requires a content flag or the reply is empty.
+        message: `❌ File upload requires IPC connection. Please ensure Primary Node is running.${buildIpcFallbackHint(parentMessageId, { filePath })}`,
       };
     }
 

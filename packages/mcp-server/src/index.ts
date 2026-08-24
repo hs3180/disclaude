@@ -27,6 +27,7 @@ export type {
 export {
   isIpcAvailable,
   getIpcErrorMessage,
+  buildIpcFallbackHint,
   getFeishuCredentials,
   getWorkspaceDir,
   setMessageSentCallback,

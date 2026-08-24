@@ -151,6 +151,16 @@ describe('buildIpcFallbackHint (Issue #4576)', () => {
     const hint = buildIpcFallbackHint();
     expect(hint).toContain('--message-id <om_...>');
   });
+
+  it('should append --file when filePath is provided (send_file caller)', () => {
+    const hint = buildIpcFallbackHint('om_parent123', { filePath: './report.pdf' });
+    expect(hint).toContain('+messages-reply --message-id om_parent123 --file ./report.pdf');
+  });
+
+  it('should omit --file when no filePath (text/card/interactive callers unchanged)', () => {
+    const hint = buildIpcFallbackHint('om_parent123');
+    expect(hint).not.toContain('--file');
+  });
 });
 
 describe('isIpcAvailable (REST-only)', () => {
