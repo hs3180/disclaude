@@ -21,26 +21,24 @@ Replace the Unix-socket IPC between the MCP server and Primary Node with a REST 
 |-------|-------|-------|--------|
 | Phase 1 | 7 REST endpoints (channel-method parity) | #4279 | ✅ Complete (#4341, #4343–#4348) |
 | Phase 2 | RestIpcClient + getIpcClient wiring | #4279 | ✅ Complete (#4349) |
-| Phase 3 | Remove Unix-socket IPC | #4280 | ⬜ Future |
+| Phase 3 | Remove Unix-socket IPC | #4280 | ✅ Complete (parts 1–5 + dead-code sweep: #4485, #4490, #4540, #4545, #4547, #4554, #4566, #4563; final code removal in the #4168 Phase-3-residual PR) |
 | Phase 4 | Migration acceptance (safety review + full integration) | #4281 | ⬜ Future |
 
-Dual-path retention: IPC stays as default (Phase 3 removes it). REST is opt-in via env var.
+REST is the only transport: the Unix-socket server/client, their transport interfaces, and the
+dual-path `getIpcClient()` facade are deleted (the migration PRs first moved every consumer to a
+directly-constructed `RestIpcClient`, then this removal swept the now-dead transport files).
 
 ## 2. Architecture
 
 ```
-MCP Server (mcp-server)
-  ↓ getIpcClient()
-  ↓ DISCLAUDE_REST_IPC_ENABLED=true?
-  ├─ YES → RestIpcClient (HTTP fetch)
-  │         ↓
-  │    HttpApiServer (primary-node, localhost)
-  │         ↓ route handler
-  │    primaryNode.{sendMessage|sendCard|...}()
-  │         ↓ resolveApiHandlers(chatId)
-  │    Channel handler (Feishu/WeChat/REST)
-  │
-  └─ NO (default) → UnixSocketIpcClient (existing)
+MCP Server (mcp-server) / push-cli
+  ↓ RestIpcClient (HTTP fetch, direct construction)
+  ↓
+  HttpApiServer (primary-node, localhost, --api-port)
+  ↓ route handler
+  primaryNode.{sendMessage|sendCard|...}()
+  ↓ resolveApiHandlers(chatId)
+  Channel handler (Feishu/WeChat/REST)
 ```
 
 ## 3. Phase 1: REST Endpoints
@@ -82,26 +80,24 @@ All endpoints return `{ ok: true, ...IPC_PAYLOAD }`. The `ok` envelope is stripp
   - Channel methods: default `stripOk`.
   - `pushToAgent` → `/api/push`: `{ ok, message }` → `{ success: ok }`.
 - `isAvailable()`: GET `/api/ping` health probe.
-- `disconnect()`: no-op (stateless HTTP), matching `UnixSocketIpcClient.disconnect()` signature.
+- `disconnect()`: no-op (stateless HTTP).
 - 15 tests (mocked fetch).
 
-### 4.2 getIpcClient wiring (`packages/core/src/ipc/ipc-utils.ts`)
+### 4.2 Client construction (was: getIpcClient wiring)
 
-```ts
-if (process.env.DISCLAUDE_REST_IPC_ENABLED === 'true') {
-  ipcClientInstance = new RestIpcClient({ baseUrl, apiToken });
-} else {
-  ipcClientInstance = new UnixSocketIpcClient({ socketPath }); // default
-}
-```
+The dual-path `getIpcClient()` facade in `packages/core/src/ipc/ipc-utils.ts` is **deleted**
+(Phase 3): every consumer (mcp-server tools, push-cli) constructs a `RestIpcClient` directly
+from env — `getRestIpcClient()` in `packages/mcp-server/src/tools/ipc-utils.ts`, and the
+equivalent inline construction in `push-cli.ts`. There is no transport toggle.
 
 ### 4.3 Environment variables (decision 3: env injection)
 
 | Env var | Required | Default | Description |
 |---------|----------|---------|-------------|
-| `DISCLAUDE_REST_IPC_ENABLED` | No | unset (IPC) | Set to `'true'` to enable REST IPC. |
 | `DISCLAUDE_REST_IPC_BASE_URL` | No | `http://localhost:9200` | HttpApiServer URL. |
 | `DISCLAUDE_REST_IPC_API_TOKEN` | No | unset | Bearer token for POST endpoints. |
+
+(`DISCLAUDE_REST_IPC_ENABLED` is gone with the dual path — REST is unconditional.)
 
 ### 4.4 Token coordination across processes (PrimaryNode ↔ MCP server)
 
@@ -114,7 +110,7 @@ REST flag; a mismatch silently breaks every write route.
 | Process | Token source | Where it is read |
 |---------|--------------|------------------|
 | PrimaryNode (`HttpApiServer`) | `--api-token TOKEN` CLI flag | `packages/primary-node/src/cli.ts:86` → `cli.ts:481` (`new HttpApiServer({ apiToken })`) |
-| MCP server (`RestIpcClient`) | `DISCLAUDE_REST_IPC_API_TOKEN` env var | §4.3 above → `packages/core/src/ipc/ipc-utils.ts` |
+| MCP server (`RestIpcClient`) | `DISCLAUDE_REST_IPC_API_TOKEN` env var | §4.3 above → `getRestIpcClient()` (`packages/mcp-server/src/tools/ipc-utils.ts`) / inline in `push-cli.ts` |
 
 The PrimaryNode token is **not** read from an env var and is **not** auto-generated; it is
 only present when `--api-token` is passed on the PrimaryNode command line.
@@ -141,7 +137,7 @@ both unset only for single-host local testing.
 
 ## 5. Remaining Work
 
-- **Phase 3 (#4280)**: Remove Unix-socket IPC. (The "consolidate LoopRunner dual-path" half was obsoleted by the loop-system removal #4430 — the LoopRunner and its `/api/loop/*` endpoints no longer exist.) Only after Phase 1+2 are production-tested with REST enabled.
+- **Phase 3 (#4280)**: ✅ Complete — Unix-socket IPC removed. (The "consolidate LoopRunner dual-path" half was obsoleted by the loop-system removal #4430 — the LoopRunner and its `/api/loop/*` endpoints no longer exist.) The migration moved every consumer to a directly-constructed `RestIpcClient` (#4485, #4490, #4540, #4545, #4547, #4554, #4566, #4563), then the final sweep deleted `unix-socket-server.ts` / `unix-socket-client.ts` / `transport.ts` / the `ipc-utils.ts` facade (extracting the live `ChannelApiHandlers` contracts to `channel-api-handlers.ts`).
 - **Phase 4 (#4281)**: Migration acceptance — safety review + full integration of REST IPC. Latency baseline monitoring was **removed** from #4281 (#4351 closed: REST IPC is an architectural migration, not a perf optimization; the ~51× same-machine latency regression was measured in #4275 and already accepted in #4281, so continuous runtime instrumentation + drift alerting would add log noise with no action consumer).
 
 ## 6. PR Index

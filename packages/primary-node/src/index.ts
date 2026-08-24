@@ -40,14 +40,6 @@ export type {
   ChannelFactory,
   ChannelCapabilities,
 
-  // IPC types
-  IpcRequestType,
-  IpcRequestPayloads,
-  IpcResponsePayloads,
-  IpcRequest,
-  IpcResponse,
-  IpcConfig,
-
   // WebSocket message types
   CardActionMessage,
 } from '@disclaude/core';
@@ -55,26 +47,22 @@ export type {
 // Re-export constants and utilities from @disclaude/core
 export {
   DEFAULT_CHANNEL_CAPABILITIES,
-  DEFAULT_IPC_CONFIG,
   createLogger,
 } from '@disclaude/core';
 
 // Channel base class
 export { BaseChannel } from '@disclaude/core';
 
-// IPC module
+// IPC module (Issue #4168 Phase 3: REST-only — handler contracts + protocol
+// types survive; the Unix-socket transport exports are gone)
 export {
-  // Types re-exported above
-  UnixSocketIpcServer,
-  UnixSocketIpcClient,
-  getIpcClient,
-  resetIpcClient,
-  createInteractiveMessageHandler,
-  type IpcRequestHandler,
+  type ChannelApiHandlers,
+  type ChannelHandlersContainer,
   type FeishuApiHandlers,
   type FeishuHandlersContainer,
-  type IpcAvailabilityStatus,
-  type IpcUnavailableReason,
+  type IpcRequestType,
+  type IpcRequestPayloads,
+  type IpcResponsePayloads,
 } from './ipc/index.js';
 
 // Note: ChannelManager is now internal to PrimaryNode (Issue #1594).

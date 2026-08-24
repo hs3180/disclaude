@@ -72,13 +72,9 @@ export { getChatIdValidationError } from './utils/chat-id-validator.js';
 export { detectMarkdownTableWarnings } from './utils/card-validator.js';
 
 // IPC Client (re-exported from @disclaude/core for convenience)
-export {
-  UnixSocketIpcClient,
-  getIpcClient,
-  resetIpcClient,
-  type IpcAvailabilityStatus,
-  type IpcUnavailableReason,
-} from '@disclaude/core';
+// Issue #4168 (Phase 3): REST-only — the Unix-socket client and the
+// getIpcClient facade are gone; the REST client is the transport.
+export { RestIpcClient, type RestIpcClientOptions } from '@disclaude/core';
 
 // Channel MCP Server (platform-agnostic messaging tools via IPC)
 export {
