@@ -44,6 +44,15 @@ _USER_TIMEOUT=""
 # per suite just burns wall clock (#4552's "28-minute slow round").
 QUOTA_EXHAUSTED=false
 
+# Issue #4552: current suite's captured output (set by run_test_script;
+# removed on every exit path — the normal ones inline, and this trap for
+# Ctrl-C / set -e aborts — so mktemp files don't linger in $TMPDIR).
+_SUITE_OUTPUT_FILE=""
+
+_suite_output_cleanup() {
+    [ -n "$_SUITE_OUTPUT_FILE" ] && rm -f "$_SUITE_OUTPUT_FILE"
+}
+
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
 register_cleanup
@@ -141,8 +150,10 @@ run_test_script() {
     local max_attempts=$((max_retries + 1))
     # Issue #4552: capture each attempt's output so failure evidence (HTTP
     # status lines, server-log excerpts) survives for quota detection below.
+    # Tracked in _SUITE_OUTPUT_FILE for the abort-trap cleanup above.
     local output_file
     output_file="$(mktemp "${TMPDIR:-/tmp}/suite-output.XXXXXX")"
+    _SUITE_OUTPUT_FILE="$output_file"
 
     while [ $attempt -le $max_attempts ]; do
         echo ""
@@ -157,6 +168,7 @@ run_test_script() {
                 RETRIED_SUCCESSES=$((RETRIED_SUCCESSES + 1))
             fi
             rm -f "$output_file"
+            _SUITE_OUTPUT_FILE=""
             return 0
         else
             # Issue #4552: account-level quota exhaustion (GLM code 1308,
@@ -167,10 +179,11 @@ run_test_script() {
             # run so remaining suites make a single attempt each (an
             # occasional pass-through window was observed in #4552 — one
             # cheap probe is worth it; blind 3x chains are not).
-            if detect_quota_exhaustion "$output_file" "$script"; then
+            if detect_quota_exhaustion "$output_file" "$script" "$output_file"; then
                 log_error "$name failed: account-level quota exhausted (rate-limit code 1308 / usage cap) — retries cannot succeed until the quota window resets; skipping remaining retries for this suite (Issue #4552)"
                 QUOTA_EXHAUSTED=true
                 rm -f "$output_file"
+                _SUITE_OUTPUT_FILE=""
                 return 1
             fi
             if [ $attempt -lt $max_attempts ]; then
@@ -220,6 +233,7 @@ run_test_script() {
     done
 
     rm -f "$output_file"
+    _SUITE_OUTPUT_FILE=""
     log_error "$name failed after ${max_attempts} attempt(s)"
     TOTAL_RETRIES=$((TOTAL_RETRIES + max_retries))
     return 1

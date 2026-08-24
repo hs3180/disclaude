@@ -940,9 +940,11 @@ is_quota_exhausted_failure() {
     [ -n "$text" ] || return 1
 
     # GLM account-level usage cap, machine-readable form ("code":1308,
-    # code 1308). Anchored to the "code" key so bare numbers in test output
-    # (ports, computed values) don't trip it.
-    if echo "$text" | grep -qE 'code.{0,3}1308'; then
+    # code:1308, code=1308, flattened {code:1308}). Left-bounded so word
+    # suffixes (encode/barcode/unicode/pincode 1308) don't trip it, and
+    # right-bounded so longer numbers (code:13081, code 13086) don't either;
+    # bare numbers elsewhere in test output (ports, ms values) never match.
+    if echo "$text" | grep -qE '(^|[^A-Za-z])code[^A-Za-z0-9]{0,3}1308([^0-9]|$)'; then
         return 0
     fi
 
@@ -973,11 +975,16 @@ is_quota_exhausted_failure() {
 # positive costs a few retries; a false negative costs the full 3-wave ×
 # all-sites slow round (#4552: ~28 minutes).
 #
-# Usage: detect_quota_exhaustion [suite_output_file] [suite_script_path]
+# Usage: detect_quota_exhaustion [suite_output_file] [suite_script_path] [since_ref]
+#   since_ref — optional reference path (e.g. the suite's just-written output
+#   file): per-suite server logs are only trusted when modified no earlier
+#   than this file, so a stale log from an old standalone run can't
+#   misclassify a fresh, unrelated failure as quota exhaustion.
 # Returns: 0 if quota exhaustion is the likely failure cause, 1 otherwise
 detect_quota_exhaustion() {
     local suite_output="${1:-}"
     local script="${2:-}"
+    local since_ref="${3:-}"
 
     # Tier 1: the suite's own output
     if [ -n "$suite_output" ] && [ -f "$suite_output" ] \
@@ -994,8 +1001,16 @@ detect_quota_exhaustion() {
         local slug
         slug="$(basename "$script" .sh 2>/dev/null | tr -c 'A-Za-z0-9_-' '-' \
             | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')"
-        local suite_log="disclaude-test-server-${slug}.log"
-        if [ -f "$suite_log" ]; then
+        # start_server() writes the per-suite log after `cd "$PROJECT_ROOT"`
+        # (common.sh), so resolve it there when known — running the runner
+        # from another cwd must not silently disable this tier.
+        local log_dir="${PROJECT_ROOT:-.}"
+        local suite_log="${log_dir}/disclaude-test-server-${slug}.log"
+        local fresh=true
+        if [ -n "$since_ref" ] && [ -f "$since_ref" ] && [ "$suite_log" -ot "$since_ref" ]; then
+            fresh=false
+        fi
+        if [ -f "$suite_log" ] && [ "$fresh" = true ]; then
             candidates+=("$suite_log")
         fi
     fi
@@ -1006,10 +1021,12 @@ detect_quota_exhaustion() {
             return 0
         fi
 
-        # Tier 3: SDK debug log pointed to by this server log (last pointer wins)
+        # Tier 3: SDK debug log pointed to by this server log (last pointer
+        # wins). Trim only surrounding whitespace — stripping every space
+        # would mangle paths that legitimately contain one.
         local sdk_debug
         sdk_debug="$(grep 'SDK debug logs:' "$log_path" 2>/dev/null | tail -1 \
-            | sed 's/^.*SDK debug logs:[[:space:]]*//' | tr -d '[:space:]')"
+            | sed -e 's/^.*SDK debug logs:[[:space:]]*//' -e 's/[[:space:]]*$//')"
         if [ -n "$sdk_debug" ] && [ -f "$sdk_debug" ]; then
             if is_quota_exhausted_failure "$(tail -200 "$sdk_debug" 2>/dev/null)"; then
                 return 0
