@@ -14,7 +14,7 @@
  * - constructor trailing-slash normalization feeding the request URL,
  * - POST /api/push routing with content-type + Bearer headers from env,
  * - the REST `{ok}` envelope → IPC `{success}` shape translation,
- * - the real `disconnect()` no-op being awaited on the success path.
+ * - the real `disconnect()` no-op firing on the success path without a throw.
  *
  * @module primary-node/push-cli.real-client.test
  */
@@ -133,12 +133,14 @@ describe('push-cli (real RestIpcClient route, Issue #4543 part 2)', () => {
     expect(out).toContain('--api-port');
   });
 
-  it('awaits the real disconnect() no-op after success (stateless HTTP, no throw)', async () => {
+  it('fires the real disconnect() no-op on the success path (stateless HTTP, no throw)', async () => {
     stubFetch([{ json: { ok: true, message: 'pushed' } }]);
     process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
 
     // Reaching here without an unhandled rejection is the assertion: the real
-    // disconnect() resolves immediately and main()'s finally awaits it.
+    // disconnect() resolves immediately and main()'s finally fire-and-forgets
+    // it with a defensive .catch (that catch is what the sibling mock test's
+    // reject case pins; the await itself is not part of main()'s contract).
     await main();
     expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
   });
