@@ -441,11 +441,10 @@ main() {
         failed=$((failed + 1))
     fi
 
-    # Feishu IPC tests don't need a running server (uses mock handlers)
-    log_info "Running Feishu IPC transport tests (no server needed)..."
-    if ! run_suite "$SCRIPT_DIR/feishu-ipc-test.sh" "Feishu IPC Transport Tests"; then
-        failed=$((failed + 1))
-    fi
+    # Feishu IPC transport suite removed with the Unix-socket transport itself
+    # (#4168 Phase 3, PR #4583): its 7 test files exercised the deleted
+    # UnixSocketIpcServer↔Client round-trip. REST IPC coverage lives in the
+    # unit suites (rest-ipc-client.test.ts, http-api-server tests).
 
     echo ""
     echo "=========================================="
