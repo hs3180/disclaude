@@ -222,19 +222,6 @@ export interface LoggingConfig {
 }
 
 /**
- * MCP server configuration (for external MCP servers like Playwright).
- * Matches the format used in .mcp.json files.
- */
-export interface McpServerConfig {
-  /** Command to spawn the MCP server process */
-  command: string;
-  /** Arguments to pass to the command */
-  args?: string[];
-  /** Environment variables for the server process (optional) */
-  env?: Record<string, string>;
-}
-
-/**
  * Tools configuration section.
  */
 export interface ToolsConfig {
@@ -242,8 +229,6 @@ export interface ToolsConfig {
   enabled?: string[];
   /** List of disabled tools */
   disabled?: string[];
-  /** MCP server configurations (format matches .mcp.json) */
-  mcpServers?: Record<string, McpServerConfig>;
 }
 
 /**

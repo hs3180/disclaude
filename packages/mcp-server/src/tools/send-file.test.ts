@@ -37,6 +37,11 @@ vi.mock('./ipc-utils.js', () => ({
   // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
   getRestIpcClient: () => mockGetRestIpcClient(),
   isIpcAvailable: vi.fn(),
+  // Issue #4576: deterministic stub — the unavailable-branch tests assert the
+  // fallback hint (thread-preserving +messages-reply) is appended. Mirrors
+  // the real signature: filePath rides along as --file.
+  buildIpcFallbackHint: (parentMessageId?: string, options?: { filePath?: string }) =>
+    `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}${options?.filePath ? ` --file ${options.filePath}` : ''}`,
 }));
 
 vi.mock('fs/promises', () => ({
@@ -114,6 +119,27 @@ describe('send_file', () => {
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('IPC connection');
+    });
+
+    it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const result = await send_file({
+        filePath: '/test/file.txt',
+        chatId: 'oc_test',
+        parentMessageId: 'om_parent123',
+      });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('+messages-reply --message-id om_parent123');
+    });
+
+    it('should pass the original filePath into the hint as --file (Issue #4576 review nit)', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const result = await send_file({
+        filePath: './report.pdf',
+        chatId: 'oc_test',
+        parentMessageId: 'om_parent123',
+      });
+      expect(result.message).toContain('--file ./report.pdf');
     });
   });
 
