@@ -216,6 +216,15 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // firing. Tool deadlocks stay detectable in principle through the tool's
       // own abort signal (wired in inline-tool-adapter) — the same residual
       // #3706 accepts for its request-level exemption.
+      // Scope guard: the counter is reset when a run settles (runInput's
+      // finally). pi 0.82.1 pairs every start with an end before settlement
+      // (executePreparedToolCall/finalizeExecutedToolCall convert throws into
+      // isError ends; abort breaks happen after the end), but that is an
+      // implementation detail of a pre-1.0 package, not a contract. A run
+      // that settled leaving starts unmatched (a future pi emitting start
+      // then erroring in emit, a run-level listener failure) would otherwise
+      // leak the count into every LATER run of the same session — and the
+      // exemption would suppress the watchdog for the session's lifetime.
       let openToolCalls = 0;
       const armStallTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
         const t = setTimeout(fn, ms);
@@ -341,6 +350,11 @@ export class PiAgentProvider implements IAgentSDKProvider {
           // stream termination.
         } finally {
           runActive = false;
+          // Issue #4568 (direction 2, review): the settled run's tool windows
+          // close with it — any tool_execution_start it left unmatched must
+          // not leak the exemption into the session's later runs (see the
+          // openToolCalls declaration for the pi-version rationale).
+          openToolCalls = 0;
           clearStallTimers();
           wakeAll();
         }
