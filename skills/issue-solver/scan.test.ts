@@ -292,6 +292,18 @@ describe("scan.mjs renderVerificationBlock (#4373 part 3 batch checklist)", () =
     expect(md).not.toContain("--grep=\"#44");
   });
 
+  it("header pins the two grep traps seen in live verification (review #4559)", () => {
+    // Trap 1: a --depth 1 clone has no history to grep — the header must say
+    // the clone needs full history. Trap 2: a squash merge may retitle the
+    // commit away from the PR number (live case: #4407's squash subject reads
+    // "(#4396, #4208 P1-b)" — grep "#4407" MISses on a merged PR), so the
+    // header must route a MISS to gh pr view --json mergeCommit instead.
+    const md = renderVerificationBlock([{ number: 4407, title: "placeholder card", mergedPRs: [4407] }]);
+    expect(md).toContain("unshallowed");
+    expect(md).toContain("gh pr view N --repo");
+    expect(md).toContain("A grep MISS is not proof of absence");
+  });
+
   it("returns an empty string for an empty queue (no stray header)", () => {
     expect(renderVerificationBlock([])).toBe("");
   });

@@ -393,6 +393,13 @@ export function buildVerificationQueue(candidates, weakRefsByIssue) {
  * every listed merge is present, the anchor landed and the issue is a
  * close-hygiene candidate, not a development opportunity. Pure — no I/O.
  *
+ * Two grep traps the rendered header pins for the runner (both hit during
+ * this PR's own live verification): a `--depth 1` clone has no history to
+ * grep (fetch full history first), and a squash merge may retitle the commit
+ * away from the PR number (#4407's squash subject reads "(#4396, #4208
+ * P1-b)" — no `#4407` anywhere) — fall back to `gh pr view --json
+ * mergeCommit` for those, not the grep.
+ *
  * @param {Array<{number: number, title: string, mergedPRs: number[]}>} queue output of buildVerificationQueue
  * @returns {string} Markdown block (empty string for an empty queue)
  */
@@ -401,7 +408,7 @@ export function renderVerificationBlock(queue) {
   const lines = [
     `#### Batch verification (#4373 part 3)`,
     ``,
-    `Run these in a clone of \`main\` — every listed merge present means the issue's work already shipped (close-hygiene, not a dev opportunity):`,
+    `Run these in a full (unshallowed) clone of \`main\` — every listed merge present means the issue's work already shipped (close-hygiene, not a dev opportunity). A grep MISS is not proof of absence: a \`--depth 1\` clone has no history, and a squash merge may retitle the commit away from the PR number (then: \`gh pr view N --repo ${REPO} --json mergeCommit\`).`,
     ``,
   ];
   for (const item of queue) {
