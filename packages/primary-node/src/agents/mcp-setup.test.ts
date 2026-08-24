@@ -47,10 +47,10 @@ describe('buildMcpServers', () => {
     expect(result).toHaveProperty('channel-mcp');
     expect(result['channel-mcp']).toEqual({ type: 'inline' });
     expect(callbacks.getCapabilities).toHaveBeenCalledWith('test-chat');
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET }),
-      'Configured channel MCP server (inline transport)',
-    );
+    // Issue #4280 (part 5): no ipcSocket field in the log — PrimaryNode no
+    // longer sets DISCLAUDE_WORKER_IPC_SOCKET (no IPC server); the MCP tools
+    // reach it over REST.
+    expect(logger.info).toHaveBeenCalledWith('Configured channel MCP server (inline transport)');
   });
 
   it('should include channel-mcp when supportedMcpTools contains a context tool', () => {

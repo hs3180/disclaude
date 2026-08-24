@@ -147,6 +147,17 @@ Report to the **source chat** that the discussion has been initiated:
 4. **Cache is rebuildable**: `bot-chat-mapping.json` can be reconstructed from Feishu API
 5. **No IPC for group ops**: Direct `lark-cli` calls via Bash — no MCP/IPC indirection
 
+## Feedback Origin — This Group Is Not a Feedback Channel
+
+> Issue #4017. When this group is the **execution chat** of a longer-running delegated task (e.g. an `agentic-research` run driven by scheduled runs), it carries progress updates and delivery only. User feedback — corrections, intent changes, scope or source-preference adjustments — originates in the **initial conversation** with the user, not here.
+
+If the task maintains a shared state file (e.g. `RESEARCH.md`), feedback flows only through that file's dedicated `## User Feedback` section (append-only, timestamped, one point per entry) — see `agentic-research/SKILL.md` for the full protocol. If it does not, tell the user in the initialization prompt to give feedback in the source chat rather than in this group.
+
+Concretely, when composing the initialization prompt (Step 3):
+
+- If a state file with a feedback section exists, tell the execution agent to **re-read the `## User Feedback` section at the start of every run** and carry it forward verbatim when writing state back.
+- Either way, do **not** tell the execution agent to read the initial conversation's messages — the state file is the single feedback channel, and cross-conversation message reading is out of scope (the earlier approach was reviewed and rejected; see closed PR #4030).
+
 ## Integration with Other Skills
 
 | Skill | Relationship |
@@ -154,3 +165,4 @@ Report to the **source chat** that the discussion has been initiated:
 | `pr-scanner` | Separate system for PR review groups (purpose: `pr-review`) |
 | `daily-chat-review` | May trigger `start-discussion` when repetitive issues detected |
 | `daily-soul-question` | May trigger `start-discussion` for deep reflection topics |
+| `agentic-research` | May use `start-discussion` to create the research execution group; feedback then flows via `RESEARCH.md` (see Feedback Origin above) |

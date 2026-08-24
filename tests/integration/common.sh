@@ -922,6 +922,121 @@ is_rate_limit_failure() {
     return 1
 }
 
+# Detect if a failure pattern looks like account-level quota exhaustion rather
+# than a transient per-minute rate limit (Issue #4552).
+#
+# GLM answers with error code 1308 and message「已达到 5 小时的使用上限」— the
+# quota resets hours later, so retrying inside the test run cannot succeed.
+# #4552's multimodal suite burned its whole 3x retry chain (plus every later
+# wave) against that window, producing the "28-minute slow round". Unlike
+# is_rate_limit_failure (per-minute → retry helps), a positive here means:
+# stop retrying, the wait is measured in hours.
+#
+# Usage: if is_quota_exhausted_failure "$text"; then ...
+# Returns: 0 if quota-exhaustion-like, 1 otherwise
+is_quota_exhausted_failure() {
+    local text="${1:-}"
+
+    [ -n "$text" ] || return 1
+
+    # GLM account-level usage cap, machine-readable form ("code":1308,
+    # code:1308, code=1308, flattened {code:1308}). Left-bounded so word
+    # suffixes (encode/barcode/unicode/pincode 1308) don't trip it, and
+    # right-bounded so longer numbers (code:13081, code 13086) don't either;
+    # bare numbers elsewhere in test output (ports, ms values) never match.
+    if echo "$text" | grep -qE '(^|[^A-Za-z])code[^A-Za-z0-9]{0,3}1308([^0-9]|$)'; then
+        return 0
+    fi
+
+    # Human-readable variants across providers
+    if echo "$text" | grep -iqE "使用上限|usage limit|quota exceeded|额度已用完|已达到.*上限"; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Scan a failed suite's evidence for account-level quota exhaustion
+# (Issue #4552). Checks, in order:
+#   1. The suite's captured output (path in $1, may be empty/missing)
+#   2. Server logs: the shared $SERVER_LOG plus the suite's own per-suite log
+#      (derived from the script path in $2, mirroring the per-suite naming
+#      rule at the top of this file)
+#   3. The SDK debug log each server log points to via its
+#      "SDK debug logs: <path>" banner line
+#
+# Tier 3 fires on the quota signature alone (no terminal "SDK gave up" marker
+# required): in #4552 the server-side SDK retry chain kept running for minutes
+# AFTER the client had already timed out, so waiting for chain exhaustion
+# would miss the very waves this exists to skip. The signature (1308 /
+# 使用上限) is account-level-cap specific — transient per-minute limits say
+# 「访问量过大」/ "request frequency", which is_quota_exhausted_failure
+# deliberately does not match. Cost asymmetry favors sensitivity: a false
+# positive costs a few retries; a false negative costs the full 3-wave ×
+# all-sites slow round (#4552: ~28 minutes).
+#
+# Usage: detect_quota_exhaustion [suite_output_file] [suite_script_path] [since_ref]
+#   since_ref — optional reference path (e.g. the suite's just-written output
+#   file): per-suite server logs are only trusted when modified no earlier
+#   than this file, so a stale log from an old standalone run can't
+#   misclassify a fresh, unrelated failure as quota exhaustion.
+# Returns: 0 if quota exhaustion is the likely failure cause, 1 otherwise
+detect_quota_exhaustion() {
+    local suite_output="${1:-}"
+    local script="${2:-}"
+    local since_ref="${3:-}"
+
+    # Tier 1: the suite's own output
+    if [ -n "$suite_output" ] && [ -f "$suite_output" ] \
+        && is_quota_exhausted_failure "$(cat "$suite_output" 2>/dev/null)"; then
+        return 0
+    fi
+
+    # Tier 2: server logs
+    local candidates=()
+    if [ -n "${SERVER_LOG:-}" ] && [ -f "${SERVER_LOG}" ]; then
+        candidates+=("${SERVER_LOG}")
+    fi
+    if [ -n "$script" ]; then
+        local slug
+        slug="$(basename "$script" .sh 2>/dev/null | tr -c 'A-Za-z0-9_-' '-' \
+            | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')"
+        # start_server() writes the per-suite log after `cd "$PROJECT_ROOT"`
+        # (common.sh), so resolve it there when known — running the runner
+        # from another cwd must not silently disable this tier.
+        local log_dir="${PROJECT_ROOT:-.}"
+        local suite_log="${log_dir}/disclaude-test-server-${slug}.log"
+        local fresh=true
+        if [ -n "$since_ref" ] && [ -f "$since_ref" ] && [ "$suite_log" -ot "$since_ref" ]; then
+            fresh=false
+        fi
+        if [ -f "$suite_log" ] && [ "$fresh" = true ]; then
+            candidates+=("$suite_log")
+        fi
+    fi
+
+    local log_path
+    for log_path in "${candidates[@]}"; do
+        if is_quota_exhausted_failure "$(tail -300 "$log_path" 2>/dev/null)"; then
+            return 0
+        fi
+
+        # Tier 3: SDK debug log pointed to by this server log (last pointer
+        # wins). Trim only surrounding whitespace — stripping every space
+        # would mangle paths that legitimately contain one.
+        local sdk_debug
+        sdk_debug="$(grep 'SDK debug logs:' "$log_path" 2>/dev/null | tail -1 \
+            | sed -e 's/^.*SDK debug logs:[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        if [ -n "$sdk_debug" ] && [ -f "$sdk_debug" ]; then
+            if is_quota_exhausted_failure "$(tail -200 "$sdk_debug" 2>/dev/null)"; then
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
 # =============================================================================
 # Test Registration and Execution
 # =============================================================================

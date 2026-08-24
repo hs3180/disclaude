@@ -62,12 +62,30 @@ export class HistoryManager {
   // --- Internal plumbing (not part of the public surface) ---
   private historyLoadPromise?: Promise<void>;
   private firstMessageHistoryLoadPromise?: Promise<void>;
+  /** Issue #3696 (--no-context): history loading explicitly disabled for this agent. */
+  private skipHistory = false;
 
   constructor(private readonly config: HistoryManagerConfig) {}
 
   /** Truncated persisted history attached to every message (session restore). */
   get persistedHistoryContext(): string | undefined {
     return this._persistedHistoryContext;
+  }
+
+  /**
+   * Drop the persisted-history CONTENT while keeping the chat log file paths.
+   *
+   * Issue #4391 (part 3 review nit): after a successful re-injection, the
+   * replay's message would otherwise render TWO history sections — the
+   * session-start `persistedHistoryContext` snapshot and the fresh
+   * re-injection stash. Both come from the same `getChatHistory` source and
+   * the re-injection fetch happens strictly later, so the fresh stash is a
+   * superset of the snapshot: keeping both only doubles the token cost. The
+   * log-paths hint from the persisted section is independent of the snapshot
+   * content and must survive (it is not re-fetched anywhere else).
+   */
+  dropPersistedHistoryContent(): void {
+    this._persistedHistoryContext = undefined;
   }
 
   /** Absolute paths to chat log files for access beyond the context window. */
@@ -98,6 +116,74 @@ export class HistoryManager {
   markSkipped(): void {
     this.historyLoaded = true;
     this.firstMessageHistoryLoaded = true;
+    this.skipHistory = true;
+  }
+
+  /**
+   * Force-reload the first-message chat history so the NEXT message consumes it.
+   *
+   * Issue #4391 (design doc §6 follow-up — history re-injection): the empty-turn
+   * reset+replay tears down the SDK session and replays the original input into
+   * a FRESH session. v1's replay still carried `persistedHistoryContext` (the
+   * session-start snapshot attached to every message), but NOT the recent
+   * first-message history — the fresh session's first message lost the turns
+   * logged after that snapshot, exactly while recovering from a stale-session
+   * empty turn. This re-fetches the recent chat history (same source as the
+   * first-message load: `getChatHistory`) and re-stashes it, so the replayed
+   * message — the fresh session's first message — carries a FRESH snapshot via
+   * the existing consume-once path (`consumeFirstMessageContext`).
+   *
+   * Distinct from `loadFirstMessageHistory()`: that method is a load-once cache
+   * fill (no-op once `firstMessageHistoryLoaded`); by the time an empty turn
+   * fires, the original turn already consumed that context. This method always
+   * re-fetches. Truncation stays owned by `getChatHistory` (Issue #1863), so no
+   * re-truncation here.
+   *
+   * Failure is non-fatal: the replay proceeds without context (v1 behavior) —
+   * history re-injection is a best-effort enrichment, never a recovery blocker.
+   *
+   * @returns Promise resolving to true when context was re-stashed (a
+   *   subsequent consume will see it), false when unavailable/failed.
+   */
+  async reloadFirstMessageHistory(): Promise<boolean> {
+    const { chatId, logger, callbacks } = this.config;
+    try {
+      if (this.skipHistory) {
+        // --no-context (Issue #3696): the agent was created with history
+        // loading explicitly disabled; re-injection must not quietly reverse
+        // that operator choice on the recovery path.
+        logger.debug({ chatId }, 'skipHistory set, skipping empty-turn history re-injection');
+        return false;
+      }
+      if (!callbacks.getChatHistory) {
+        logger.debug(
+          { chatId },
+          'getChatHistory callback unavailable, skipping history re-injection'
+        );
+        return false;
+      }
+      const history = await callbacks.getChatHistory(chatId);
+      if (!history || !history.trim()) {
+        logger.debug({ chatId }, 'No chat history to re-inject before empty-turn replay');
+        return false;
+      }
+      this._firstMessageHistoryContext = history;
+      // Keep the loaded flag true so loadFirstMessageHistory() stays a no-op —
+      // the stash below is consumed by the replay's processMessage, not by an
+      // unrelated first-message load.
+      this.firstMessageHistoryLoaded = true;
+      logger.info(
+        { chatId, historyLength: history.length },
+        'Chat history re-stashed for empty-turn replay (Issue #4391 history re-injection)'
+      );
+      return true;
+    } catch (error) {
+      logger.warn(
+        { err: error, chatId },
+        'Failed to reload chat history for empty-turn replay; replaying without context'
+      );
+      return false;
+    }
   }
 
   /**
@@ -240,7 +326,6 @@ export class HistoryManager {
       logger.info({ chatId }, 'Loading chat history for first message context');
 
       const history = await callbacks.getChatHistory?.(chatId);
-
       if (history && history.trim()) {
         this._firstMessageHistoryContext = history;
         logger.info(

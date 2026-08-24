@@ -56,9 +56,11 @@ export function buildMcpServers(
     if (shouldIncludeContextMcp) {
       mcpServers['channel-mcp'] = createChannelMcpServer();
 
-      logger.info({
-        ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
-      }, 'Configured channel MCP server (inline transport)');
+      // Issue #4280 (part 5): the ipcSocket env field is gone — PrimaryNode
+      // no longer sets DISCLAUDE_WORKER_IPC_SOCKET (no IPC server). The MCP
+      // tools inside this server reach PrimaryNode over REST
+      // (DISCLAUDE_REST_IPC_BASE_URL / getRestIpcClient).
+      logger.info('Configured channel MCP server (inline transport)');
     }
   }
 

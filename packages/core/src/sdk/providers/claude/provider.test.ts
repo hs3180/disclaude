@@ -1512,13 +1512,21 @@ describe('ClaudeSDKProvider', () => {
 
       const result = provider.createInlineTool(definition);
 
+      // #4568: the handler passed to SDK tool() is a progress-dropping
+      // adapter around definition.handler (the Claude channel has no
+      // onProgress plumbing), not definition.handler itself.
       expect(mockTool).toHaveBeenCalledWith(
         'test_tool',
         'A test tool',
         definition.parameters,
-        handler,
+        expect.any(Function),
       );
       expect(result).toBeDefined();
+
+      // The adapter still routes execution to the original handler.
+      const wrapped = mockTool.mock.calls[0][3] as (params: unknown) => Promise<unknown>;
+      void wrapped({ x: 1 });
+      expect(handler).toHaveBeenCalledWith({ x: 1 });
     });
   });
 

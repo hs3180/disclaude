@@ -250,8 +250,9 @@ tools:
 
   # NOTE (#4459 Scope 4): external MCP servers (tools.mcpServers) were REMOVED.
   # The stdio loader no longer exists — entries here are ignored.
-  # Migrate external tools to a CLI Skill (docs/skill-format-spec.md);
-  # browser automation lives in the browser-use skill (BU_CDP_URL, see #4460).
+  # Migrate external tools to a CLI Skill (docs/skill-format-spec.md).
+  # Browser automation lives in the browser-use Skill (skills/browser-use/SKILL.md, #4460),
+  # pointing it at the shared CDP endpoint via BU_CDP_URL (see docs/cdp-endpoint.md).
 
 # -----------------------------------------------------------------------------
 # Session Restoration Configuration (Issue #1213)

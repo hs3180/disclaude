@@ -10,15 +10,14 @@ the **Playwright MCP server** (disclaude's largest MCP dependency) per the reduc
   first-class capability there ("write Python freely in the browser"), which verb-primitive CLIs
   (navigate/click/type/snapshot) cannot serve.
 
-> **Status (part 1):** the Skill contract is defined — SKILL.md + this README document the command
-> surface, the Playwright-MCP capability mapping, and the artifact/output contract. The command
-> surface, console scripts, and helper names are evidenced from the upstream **browser-use 0.13.7
-> wheel** (`cli.py`, `entry_points.txt`); a few helper *return contracts* (notably
-> `capture_screenshot`) are inferred from the wheel + the `browser-harness` dep and are confirmed
-> at live acceptance (part 2). **Deferred:** host-side CLI install + live
-> round-trip acceptance (part 2, needs the runtime on the deployment host — see
-> [Runtime](#runtime)), parity sign-off vs Playwright MCP (part 2), and removal of the Playwright
-> MCP server (final part, only after parity is proven).
+> **Status (parts 1–2 + consumer retirement done; final part done):** the Skill contract is defined
+> — SKILL.md + this README document the command surface, the Playwright-MCP capability mapping, and
+> the artifact/output contract. The command surface, console scripts, and helper names are evidenced
+> from the upstream **browser-use 0.13.7 wheel** (`cli.py`, `entry_points.txt`); a few helper *return
+> contracts* (notably `capture_screenshot`) are inferred from the wheel + the `browser-harness` dep
+> and are confirmed at live acceptance (part 2, recorded in `docs/cdp-endpoint.md` Scope-6).
+> The Playwright MCP server itself is **removed** (final part — config example entry, compose/env
+> wiring comments, README, and the `@playwright/mcp` package dependency).
 
 ---
 
@@ -93,11 +92,16 @@ Legacy pre-3.0 subcommands (`open`, `state`, `screenshot`, `eval`, `-c`, `--sess
 2. ✅ **part 2** (live acceptance, recorded in [#4496](https://github.com/hs3180/disclaude/issues/4496) /
    `docs/cdp-endpoint.md` Scope-6, PR #4515): `BU_CDP_URL` attach, screenshot round-trip, script-injection
    round-trip, tab management, cross-driver CDP sharing — all exercised against browser-use CLI 0.13.7
-3. ✅ **consumer retirement** (this PR): the two former Playwright-MCP consumer surfaces — the
+3. ✅ **consumer retirement**: the two former Playwright-MCP consumer surfaces — the
    `site-miner` preset agent (`agents/site-miner.md` + `skills/site-miner/`) and
    `skills/playwright-agent/` — are **deleted** rather than migrated: site-mining is a plain
    "invoke the browser-use skill from the conversation" flow (its wrapper added no dispatch value),
    and playwright-agent's background-`/skill`-runtime never shipped. Browser automation now has one
    surface: this skill (Bash + browser-use CLI, no MCP grants)
-4. ⬜ **final part**: remove the Playwright MCP server from disclaude (config example, package dep,
-   `@playwright/mcp` install surface); record parity deltas explicitly (no silent gaps)
+4. ✅ **final part — server removal**: the Playwright MCP entry is deleted from
+   `disclaude.config.example.yaml`, the mcpServers wiring comments in `docker-compose.yml` /
+   `.env.example` now point at `BU_CDP_URL`, README advertises this Skill instead of
+   `@playwright/mcp`, and the `@playwright/mcp` dependency is dropped from
+   `packages/core/package.json`. Parity deltas vs the old MCP surface are the ones already recorded
+   in the capability mapping above (coordinate-based click; named sessions removed upstream);
+   the CDP container itself stays — it is the shared endpoint this Skill attaches to (#4496).
