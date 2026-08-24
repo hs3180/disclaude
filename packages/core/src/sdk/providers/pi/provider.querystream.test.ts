@@ -767,4 +767,104 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
       fakeState.eventDelayMs = 0;
     }
   });
+
+  // ── Issue #4568 (direction 2): tool-window exemption ─────────────────────
+  // The watchdog's window is the WHOLE run (no #3706-style request boundary
+  // on the pi path), so a tool that runs silently longer than
+  // DISCLAUDE_STALL_TIMEOUT_MS was misjudged as a stall — aborted mid-build.
+  // Exemption: while a tool_execution_start has been seen without its
+  // tool_execution_end (openToolCalls > 0), the watchdog re-arms instead of
+  // firing. The window CLOSES on tool_execution_end — the watchdog must then
+  // fire again if the stream goes silent (exemption is not a free pass).
+
+  it('#4568: silent tool inside the open-tool window is exempt — watchdog re-arms, does not fire', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+    fakeState.scripts = [
+      [
+        { type: 'tool_execution_start', toolCallId: 't1', toolName: 'Bash', args: { cmd: 'build' } },
+        // NO tool_execution_end before the deadline — the tool is still
+        // running silently (no onUpdate wired, direction 1 is separate).
+        // hangPrompt keeps the run active forever, so ONLY the exemption
+        // keeps the watchdog from firing.
+      ],
+    ];
+    fakeState.hangPrompt = true;
+    try {
+      const result = provider.queryStream(
+        (async function* (): AsyncGenerator<UserInput> {
+          yield userInput('build it');
+          await new Promise<void>(() => {}); // channel never closes
+        })(),
+        baseOptions(),
+      );
+      const messages: AgentMessage[] = [];
+      const drained = (async () => {
+        for await (const message of result.iterator) {
+          messages.push(message);
+        }
+      })();
+      await vi.waitFor(() => {
+        expect(messages.map((m) => m.type)).toContain('tool_use');
+      }, { timeout: 500, interval: 10 });
+      // 350ms ≈ 4+ stall windows of 80ms — without the exemption the
+      // watchdog would have fired at ~80ms past the tool start.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(messages.some((m) => m.metadata?.terminatedReason === 'stall')).toBe(false);
+      expect(fakeState.aborted).toBe(false); // agent NOT aborted mid-tool
+      // Still parked (no terminator) — the stream stays alive with the tool.
+      expect(await Promise.race([
+        drained.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+      ])).toBe(false);
+    } finally {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+      fakeState.hangPrompt = false;
+    }
+  });
+
+  it('#4568: exemption closes on tool_execution_end — silent run afterwards still stalls', async () => {
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '80';
+    process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '10';
+    fakeState.scripts = [
+      [
+        { type: 'tool_execution_start', toolCallId: 't1', toolName: 'Bash', args: {} },
+        { type: 'tool_execution_end', toolCallId: 't1', toolName: 'Bash', result: 'ok', isError: false },
+        // tool end emitted, then the run hangs silently — open window closed,
+        // exemption no longer applies.
+      ],
+    ];
+    fakeState.hangPrompt = true;
+    try {
+      const result = provider.queryStream(
+        (async function* (): AsyncGenerator<UserInput> {
+          yield userInput('hi');
+          await new Promise<void>(() => {}); // channel never closes
+        })(),
+        baseOptions(),
+      );
+      const messages: AgentMessage[] = [];
+      const drained = (async () => {
+        for await (const message of result.iterator) {
+          messages.push(message);
+        }
+      })();
+      await vi.waitFor(() => {
+        expect(messages.map((m) => m.type)).toContain('tool_result');
+      }, { timeout: 500, interval: 10 });
+      await new Promise((resolve) => setTimeout(resolve, 120)); // > 80ms after tool end
+      const settled = await Promise.race([
+        drained.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(settled).toBe(true);
+      expect(fakeState.aborted).toBe(true); // exemption did NOT suppress the real stall
+      const stallResult = messages.find((m) => m.metadata?.terminatedReason === 'stall');
+      expect(stallResult).toBeDefined();
+      expect(stallResult?.type).toBe('result');
+    } finally {
+      delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+      delete process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
+      fakeState.hangPrompt = false;
+    }
+  });
 });

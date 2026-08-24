@@ -156,6 +156,15 @@ export class PiAgentProvider implements IAgentSDKProvider {
         // Issue #4386 (part 5): any enqueued event is progress — advance the
         // stall deadline (a no-op re-arm when the run is not active).
         touchStallWatchdog();
+        // Issue #4568 (direction 2): track the open-tool-call window so the
+        // watchdog can exempt it (see fireStallWatchdog). tool_execution_update
+        // deliberately does NOT count as closing — it is progress emitted
+        // mid-execution; the tool is still running afterwards.
+        if (event.type === 'tool_execution_start') {
+          openToolCalls++;
+        } else if (event.type === 'tool_execution_end') {
+          openToolCalls = Math.max(0, openToolCalls - 1);
+        }
         wakeAll();
       };
       onAbort = (): void => {
@@ -170,7 +179,10 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // symmetric case of GLM's zero-content_block_delta SSE stall). The
       // watchdog is armed when a run starts and re-armed on EVERY enqueued
       // event (any progress — text, thinking, tool — counts; only a fully
-      // silent run fires), disarmed when the run settles. Firing aborts the
+      // silent run fires), disarmed when the run settles. EXCEPTION (#4568
+      // direction 2): while a tool call is open (start seen, end pending) the
+      // silence is attributed to the tool, not the stream — the watchdog
+      // re-arms instead of firing (see openToolCalls below). Firing aborts the
       // agent, wakes the consumer, and synthesizes a terminal result with
       // terminatedReason 'stall' so ChatAgent recordFailure('stall')s like
       // it does for Claude. Timeout is env-tunable per-call
@@ -192,6 +204,19 @@ export class PiAgentProvider implements IAgentSDKProvider {
       let stalled = false;
       let stallWatchdog: ReturnType<typeof setTimeout> | null = null;
       let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;
+      // Issue #4568 (direction 2): count of tool calls whose tool_execution_start
+      // has been enqueued without a matching tool_execution_end. Maintained in
+      // enqueue() so it advances in lockstep with the watchdog's own event view.
+      // The stall watchdog counts the WHOLE run as its timing window (unlike
+      // #3706's message_start→message_stop request window, which structurally
+      // excludes tool execution); without an exemption a silently-running tool
+      // (long build/test, big file processing — no onUpdate wired yet, cf.
+      // direction 1 / PR #4569) exhausts STALL_TIMEOUT_MS and is misjudged as
+      // a stall. While openToolCalls > 0 the watchdog re-arms instead of
+      // firing. Tool deadlocks stay detectable in principle through the tool's
+      // own abort signal (wired in inline-tool-adapter) — the same residual
+      // #3706 accepts for its request-level exemption.
+      let openToolCalls = 0;
       const armStallTimer = (fn: () => void, ms: number): ReturnType<typeof setTimeout> => {
         const t = setTimeout(fn, ms);
         (t as unknown as { unref?: () => void }).unref?.();
@@ -219,6 +244,14 @@ export class PiAgentProvider implements IAgentSDKProvider {
       const fireStallWatchdog = (): void => {
         stallWatchdog = null;
         if (!runActive || stalled) {
+          return;
+        }
+        // Issue #4568 (direction 2): a tool is mid-execution (start seen, end
+        // not) — the silence is the tool itself, not the agent stream. Re-arm
+        // for another window instead of firing; when tool_execution_end (or
+        // any other event) lands, enqueue's touch re-arms as usual.
+        if (openToolCalls > 0) {
+          stallWatchdog = armStallTimer(fireStallWatchdog, STALL_TIMEOUT_MS);
           return;
         }
         stalled = true;
