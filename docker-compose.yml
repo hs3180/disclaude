@@ -166,13 +166,10 @@ services:
   # nginx cannot bind 0.0.0.0:$CDP_PORT — it would collide with Chrome's 127.0.0.1
   # listener on the same port). See docker/playwright-cdp-nginx.conf for the full rationale.
   #
-  # Configure in disclaude.config.yaml:
-  #   tools:
-  #     mcpServers:
-  #       playwright:
-  #         command: npx
-  #         args: ["-y", "@playwright/mcp@latest",
-  #                "--cdp-endpoint", "http://disclaude-playwright:9222"]
+  # Attach (browser-use Skill / any CDP driver — the Playwright MCP server is removed, #4460):
+  #   BU_CDP_URL=http://disclaude-playwright:9222   # env var read by the browser-use CLI
+  #   chromium.connectOverCDP("http://disclaude-playwright:9222")   # Playwright library
+  # Contract: docs/cdp-endpoint.md (#4496)
   playwright:
     # Pinned to the version the #4496 Scope-6 smoke matrix was executed against
     # (Playwright 1.62.0 / chromium-1234 / Chromium 151.0.7922.34) so compose-fronted
