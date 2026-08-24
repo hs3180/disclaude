@@ -76,6 +76,15 @@
  *     `supportedMcpTools`; a CLI is invoked at the agent's discretion) — see
  *     README §Parity.
  *
+ * Part 11 (chatId-format pre-check parity, REST re-land of rejected #4521):
+ * parts 3/4/6/7 checked --chat for presence only and deferred the FORMAT
+ * check to the transport layer. Every MCP entry handler runs a
+ * getChatIdValidationError format pre-check (#1641); the REST handlers
+ * validate chatId as a non-empty string only, so on the REST CLI the up-front
+ * twin gate (parseChatId below) is the only place the format rules run.
+ * send_card keeps the exported helper post-import too (part 5, unchanged
+ * shape) — the twin must agree with it byte-for-byte.
+ *
  * Usage:
  *   node skills/channel/cli.mjs --help
  *   node skills/channel/cli.mjs send_text --chat oc_xxx --text "Hello"
@@ -84,7 +93,7 @@
  *   node skills/channel/cli.mjs send_card --chat oc_xxx --card-file ./card.json
  *   node skills/channel/cli.mjs push_to_agent --chat oc_xxx --message "Summarize the thread"
  *
- * Parts 3–7 of #4459, REST transport switch from #4532 part 1 — does not
+ * Parts 3–7 + 11 of #4459, REST transport switch from #4532 part 1 — does not
  * auto-close the parent issues.
  */
 
@@ -501,6 +510,73 @@ function parseActionPrompts(raw) {
   return parsed;
 }
 
+/**
+ * The chatId-format half of `parseChatId` below, without the
+ * @disclaude/mcp-server dependency. The MCP entry handlers pre-check the
+ * chatId FORMAT via getChatIdValidationError (channel-mcp.ts, #1641) so an
+ * ill-formed id fails cheaply instead of surfacing as a confusing HTTP 400
+ * deep inside the transport. `cmdSendCard` (part 5) already replicates that
+ * pre-check post-import via the exported helper; this part extends the same
+ * pre-check to the other four subcommands, keeping it pre-import (a format
+ * failure never pays the module load). The REST handlers only validate
+ * `chatId` as a non-empty string server-side (http-api-server.ts), so on the
+ * REST CLI the up-front format gate is the ONLY place the twin rules run —
+ * without it an ill-formed id surfaces as a 4xx Feishu error behind the
+ * server. The format table (oc_/ou_/cli- prefixes) is tiny and stable, so
+ * this twin is safe to inline; cli.test.ts locks both paths — the twin via
+ * the four fail-fast cases, the exported helper via the send_card regression
+ * case — against the same ill-formed example plus prefix/length/whitespace
+ * edges.
+ */
+const CHAT_ID_PATTERNS = [
+  { prefix: "oc_", label: "Feishu group chat", minLength: 35 },
+  { prefix: "ou_", label: "Feishu user (p2p chat)", minLength: 35 },
+  { prefix: "cli-", label: "CLI session", minLength: 5 },
+];
+
+function isValidChatIdFormat(chatId) {
+  if (chatId !== chatId.trim()) return false;
+  return CHAT_ID_PATTERNS.some(
+    ({ prefix, minLength }) => chatId.startsWith(prefix) && chatId.length >= minLength
+  );
+}
+
+function getChatIdFormatError(chatId) {
+  if (isValidChatIdFormat(chatId)) return null;
+  // Labels are carried so the twin's message stays byte-identical to the
+  // authoritative getChatIdValidationError (chat-id-validator.ts).
+  const formatList = CHAT_ID_PATTERNS.map(
+    ({ prefix, label }) => `- \`${prefix}...\` (${label})`
+  ).join("\n");
+  const shown = chatId.length > 20 ? `${chatId.slice(0, 20)}...` : chatId;
+  return (
+    `Invalid chatId format: "${shown}"\n` +
+    `Expected one of the following formats:\n${formatList}`
+  );
+}
+
+/**
+ * Validate the --chat value for a subcommand: presence + format (mirrors the
+ * MCP entry handler pre-checks, #1641). cmdSendCard keeps using the exported
+ * getChatIdValidationError post-import so the two paths stay provably
+ * identical for the one command that already had it (part 5); this pre-import
+ * twin covers the rest.
+ *
+ * Returns { chatId } on success, or { code: 1 } after emitting the failure.
+ */
+function parseChatId(command, rawChatId) {
+  if (!rawChatId || typeof rawChatId !== "string") {
+    emitFail(command, "Missing required option --chat <id>", `pass --chat oc_xxx`);
+    return { code: 1 };
+  }
+  const formatError = getChatIdFormatError(rawChatId);
+  if (formatError) {
+    emitFail(command, `Invalid chatId: ${formatError}`);
+    return { code: 1 };
+  }
+  return { chatId: rawChatId };
+}
+
 // ---------------------------------------------------------------------------
 // send_text command
 // ---------------------------------------------------------------------------
@@ -510,11 +586,9 @@ async function cmdSendText(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chatId = args.chat;
-  if (!chatId || typeof chatId !== "string") {
-    emitFail("send_text", "Missing required option --chat <id>", "pass --chat oc_xxx");
-    return 1;
-  }
+  const chat = parseChatId("send_text", args.chat);
+  if (chat.code) return chat.code;
+  const chatId = chat.chatId;
 
   // Resolve text: --text, --text-file, or piped stdin (when stdin is not a TTY).
   let text;
@@ -621,11 +695,9 @@ async function cmdSendInteractive(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chatId = args.chat;
-  if (!chatId || typeof chatId !== "string") {
-    emitFail("send_interactive", "Missing required option --chat <id>", "pass --chat oc_xxx");
-    return 1;
-  }
+  const chat = parseChatId("send_interactive", args.chat);
+  if (chat.code) return chat.code;
+  const chatId = chat.chatId;
 
   // Resolve question: --question, --question-file, or piped stdin (when stdin
   // is not a TTY). Mirrors send_text's text resolution for large bodies.
@@ -751,11 +823,9 @@ async function cmdSendFile(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chatId = args.chat;
-  if (!chatId || typeof chatId !== "string") {
-    emitFail("send_file", "Missing required option --chat <id>", "pass --chat oc_xxx");
-    return 1;
-  }
+  const chat = parseChatId("send_file", args.chat);
+  if (chat.code) return chat.code;
+  const chatId = chat.chatId;
 
   // Path presence only: existence/resolution is delegated to the first-party
   // send_file (relative paths resolve against the configured workspace dir, and
@@ -888,11 +958,9 @@ async function cmdSendCard(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chatId = args.chat;
-  if (!chatId || typeof chatId !== "string") {
-    emitFail("send_card", "Missing required option --chat <id>", "pass --chat oc_xxx");
-    return 1;
-  }
+  const chat = parseChatId("send_card", args.chat);
+  if (chat.code) return chat.code;
+  const chatId = chat.chatId;
 
   const resolved = resolveCardJson(args);
   if (resolved.error) {
@@ -958,8 +1026,12 @@ async function cmdSendCard(argv) {
     return 1;
   }
 
-  // Card-structure + chatId-format validation (mirrors the handler pre-checks,
-  // before any transform / upload / IPC).
+  // Card-structure validation (mirrors the handler pre-check, before any
+  // transform / upload / IPC). The chatId FORMAT was already gated pre-import
+  // by the twin in parseChatId above (byte-identical rules); this exported
+  // helper re-runs it post-import so the two paths stay provably identical —
+  // it cannot fire unless the twin and the authoritative validator disagree,
+  // in which case this is the authoritative one.
   if (!isValidFeishuCard(card)) {
     emitFail("send_card", `Invalid card structure: ${getCardValidationError(card)}`);
     return 1;
@@ -1046,11 +1118,9 @@ async function cmdPushToAgent(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chatId = args.chat;
-  if (!chatId || typeof chatId !== "string") {
-    emitFail("push_to_agent", "Missing required option --chat <id>", "pass --chat oc_xxx");
-    return 1;
-  }
+  const chat = parseChatId("push_to_agent", args.chat);
+  if (chat.code) return chat.code;
+  const chatId = chat.chatId;
 
   // Resolve message: --message, --message-file, or piped stdin (when not a TTY).
   let message;
