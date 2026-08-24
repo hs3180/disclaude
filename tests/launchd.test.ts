@@ -31,13 +31,13 @@ import { describe, it, expect, afterEach } from 'vitest';
 // Pure helpers exported from launchd.mjs; .mjs has no type declarations and
 // scripts/ is not type-checked.
 // @ts-expect-error — .mjs module without type declarations
-import { buildProgramArguments, resolveApiPort } from '../scripts/launchd.mjs';
+import { buildProgramArguments, resolveApiPort, resolveRestIpcBaseUrl, xmlEscape } from '../scripts/launchd.mjs';
 
 const NODE = '/usr/local/bin/node';
 const CAFFEINATE = '/usr/bin/caffeinate';
 
 const savedEnv: Record<string, string | undefined> = {};
-const ENV_KEYS = ['DISCLAUDE_LAUNCHD_API_PORT', 'DISCLAUDE_LAUNCHD_API_TOKEN'] as const;
+const ENV_KEYS = ['DISCLAUDE_LAUNCHD_API_PORT', 'DISCLAUDE_LAUNCHD_API_TOKEN', 'DISCLAUDE_REST_IPC_BASE_URL'] as const;
 
 afterEach(() => {
   for (const key of ENV_KEYS) {
@@ -117,5 +117,41 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
     const args = buildProgramArguments(NODE, null);
     // args = [node, cli, 'start', '--api-port', '9200', '--api-token', token]
     expect(args.slice(-4)).toEqual(['--api-port', '9200', '--api-token', 'secret-token']);
+  });
+});
+
+describe('resolveRestIpcBaseUrl (port-override propagation, #4578 review nit 1)', () => {
+  it('stays null at the default port — plist gains no env entry', () => {
+    snapshotEnv();
+    expect(resolveRestIpcBaseUrl(9200)).toBeNull();
+  });
+
+  it('mirrors a non-default port so MCP tools probe the override', () => {
+    snapshotEnv();
+    expect(resolveRestIpcBaseUrl(9300)).toBe('http://localhost:9300');
+  });
+
+  it('never clobbers an explicit DISCLAUDE_REST_IPC_BASE_URL', () => {
+    snapshotEnv();
+    process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://elsewhere:9999';
+    expect(resolveRestIpcBaseUrl(9300)).toBeNull();
+  });
+});
+
+describe('xmlEscape (plist safety, #4578 review nit 2)', () => {
+  it('escapes XML-significant characters', () => {
+    expect(xmlEscape('a&b<c>d')).toBe('a&amp;b&lt;c&gt;d');
+  });
+
+  it('passes safe values (paths, numbers, URLs) through unchanged', () => {
+    expect(xmlEscape('/usr/local/bin/node')).toBe('/usr/local/bin/node');
+    expect(xmlEscape('9200')).toBe('9200');
+    expect(xmlEscape('http://localhost:9200')).toBe('http://localhost:9200');
+  });
+
+  it('renders a token with markup chars into parseable plist content', () => {
+    // The exact hazard: --api-token is the first free-text value interpolated
+    // into the plist XML; without escaping this yields an unparseable plist.
+    expect(xmlEscape('tok&en<x>')).toBe('tok&amp;en&lt;x&gt;');
   });
 });

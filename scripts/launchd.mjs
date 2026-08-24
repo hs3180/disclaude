@@ -123,6 +123,22 @@ function ensureLogDir() {
   }
 }
 
+/**
+ * Review of #4578: ProgramArguments / EnvironmentVariables values are
+ * interpolated into plist XML. Paths and numbers are inherently safe, but
+ * --api-token is the first free-text injection point — a token containing
+ * & < > would produce an unparseable plist.
+ *
+ * @param {string} value - raw string to embed in plist XML
+ * @returns {string} XML-escaped value
+ */
+export function xmlEscape(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
 // ---------------------------------------------------------------------------
 // Plist generation
 // ---------------------------------------------------------------------------
@@ -171,10 +187,32 @@ export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePa
   return args;
 }
 
+/**
+ * Review of #4578: when the port override differs from 9200, the MCP tools'
+ * REST probe (ipc-utils.ts in core and mcp-server) would still default to
+ * http://localhost:9200 unless DISCLAUDE_REST_IPC_BASE_URL is set. The plist
+ * must propagate the override into the service's EnvironmentVariables so
+ * both sides agree.
+ *
+ * @param {number} apiPort - the resolved --api-port value
+ * @returns {string | null} base URL env value, or null when the default
+ *   already matches (no env entry needed)
+ */
+export function resolveRestIpcBaseUrl(apiPort) {
+  const override = process.env.DISCLAUDE_REST_IPC_BASE_URL;
+  if (override) {
+    // Operator set it explicitly — never clobber their value.
+    return null;
+  }
+  return apiPort === DEFAULT_API_PORT ? null : `http://localhost:${apiPort}`;
+}
+
 function generatePlist() {
   const nodePath = getNodePath();
   const caffeinatePath = getCaffeinatePath();
   const programArgs = buildProgramArguments(nodePath, caffeinatePath);
+  const apiPort = resolveApiPort();
+  const restIpcBaseUrl = resolveRestIpcBaseUrl(apiPort);
 
   // Issue #2934: Application logs go through pino file transport
   // (triggered by LOG_TO_FILE env var). Issue #3416: pino-roll removed,
@@ -191,7 +229,7 @@ function generatePlist() {
 
   <key>ProgramArguments</key>
   <array>
-${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
+${programArgs.map(a => `    <string>${xmlEscape(a)}</string>`).join('\n')}
   </array>
 
   <key>WorkingDirectory</key>
@@ -215,8 +253,8 @@ ${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>${process.env.PATH}</string>
-    <key>HOME</key>
+    <string>${xmlEscape(process.env.PATH ?? '')}</string>
+${restIpcBaseUrl ? `    <key>DISCLAUDE_REST_IPC_BASE_URL</key>\n    <string>${xmlEscape(restIpcBaseUrl)}</string>\n` : ''}    <key>HOME</key>
     <string>${homedir()}</string>
     <key>NODE_ENV</key>
     <string>production</string>
@@ -236,7 +274,8 @@ ${programArgs.map(a => `    <string>${a}</string>`).join('\n')}
   console.log(`  Node: ${nodePath}`);
   console.log(`  Entry: ${CLI_ENTRY}`);
   console.log(`  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`);
-  console.log(`  API server: --api-port ${resolveApiPort()} (REST IPC for MCP tools; Issue #4576)`);
+  console.log(`  API server: --api-port ${apiPort} (REST IPC for MCP tools; Issue #4576)`);
+  console.log(`  REST IPC base URL env: ${restIpcBaseUrl ? `${restIpcBaseUrl} (injected so MCP tools probe the override)` : 'not set (default http://localhost:9200 already matches)'}`);
   console.log(`  API token: ${process.env.DISCLAUDE_LAUNCHD_API_TOKEN ? 'enabled (--api-token)' : 'not set (GET-only routes are token-exempt)'}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
   console.log(`  App log: ${APP_LOG} (use newsyslog for rotation)`);
