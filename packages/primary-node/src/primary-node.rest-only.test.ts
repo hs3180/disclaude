@@ -18,7 +18,15 @@ import { existsSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PrimaryNode } from './primary-node.js';
-import { IPC_SOCKET_PATH_FILE } from '@disclaude/core';
+
+/**
+ * The socket-path discovery file the IPC server used to write (Issue #3808).
+ * Issue #4168 (Phase 3 residual) removed IPC_SOCKET_PATH_FILE from
+ * @disclaude/core with the transport; the well-known path is pinned here
+ * because a stale file from an older deployment may still exist on the host —
+ * the test below asserts start() never (re)writes it.
+ */
+const IPC_SOCKET_PATH_FILE = join(tmpdir(), 'disclaude-ipc-socket');
 
 /**
  * Scratch dir proving nothing per-process is created under /tmp either —

@@ -32,15 +32,13 @@ vi.mock('@disclaude/core', () => ({
   // ipc-client-facade. The production code imports it directly, so the mock
   // must provide it too.
   pushToAgent: mockPushToAgent,
-  // Issue #4543 anti-regression: the facade and socket symbols must exist for
-  // other importers of the mocked module, but push-cli must never touch them.
-  getIpcClient: vi.fn(),
-  getIpcSocketPath: vi.fn(() => '/tmp/test.ipc'),
-  UnixSocketIpcClient: vi.fn(),
+  // Issue #4168 (Phase 3): the Unix-socket symbols (getIpcClient /
+  // getIpcSocketPath / UnixSocketIpcClient) are removed from @disclaude/core —
+  // a bare import of them would now fail at module load, which is itself the
+  // anti-regression. The mock no longer needs to stub them.
 }));
 
 import { parseArgs, main } from './push-cli.js';
-import { getIpcClient, getIpcSocketPath, UnixSocketIpcClient } from '@disclaude/core';
 
 describe('push-cli', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -53,9 +51,6 @@ describe('push-cli', () => {
     mockPushToAgent.mockClear();
     mockDisconnect.mockClear();
     MockRestIpcClient.mockClear();
-    vi.mocked(getIpcClient).mockClear();
-    vi.mocked(getIpcSocketPath).mockClear();
-    vi.mocked(UnixSocketIpcClient).mockClear();
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); }) as any;
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -147,12 +142,15 @@ describe('push-cli', () => {
       expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
     });
 
-    it('never constructs a Unix-socket client — directly or via the getIpcClient facade', async () => {
+    it('never constructs a Unix-socket client — the socket symbols no longer exist in @disclaude/core (#4168 Phase 3)', async () => {
+      // Issue #4168 (Phase 3): UnixSocketIpcClient / getIpcClient /
+      // getIpcSocketPath were deleted from the package surface. Asserting on
+      // the mock registry would require stubbing them back into existence;
+      // the module-surface deletion is pinned instead by the import above
+      // resolving without them and by the direct-client assertions here.
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
       await main();
-      expect(UnixSocketIpcClient).not.toHaveBeenCalled();
-      expect(getIpcClient).not.toHaveBeenCalled();
-      expect(getIpcSocketPath).not.toHaveBeenCalled();
+      expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
     });
 
     it('is unaffected by DISCLAUDE_REST_IPC_ENABLED (env has no influence on transport)', async () => {
@@ -161,13 +159,11 @@ describe('push-cli', () => {
       await main();
       // Still the direct REST client — the flag neither enables nor disables anything.
       expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
-      expect(getIpcClient).not.toHaveBeenCalled();
 
       MockRestIpcClient.mockClear();
       process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
       await main();
       expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
-      expect(getIpcClient).not.toHaveBeenCalled();
     });
 
     it('wires DISCLAUDE_REST_IPC_BASE_URL / DISCLAUDE_REST_IPC_API_TOKEN into the client', async () => {
@@ -228,9 +224,6 @@ describe('push-cli', () => {
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello', '-s', '/custom.ipc'];
       await main();
       expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
-      expect(getIpcClient).not.toHaveBeenCalled();
-      expect(UnixSocketIpcClient).not.toHaveBeenCalled();
-      expect(getIpcSocketPath).not.toHaveBeenCalled();
     });
 
     it('should exit(1) on pushToAgent failure with error details', async () => {
