@@ -215,24 +215,35 @@ H4584="$TMPDIR_FIX/harness"
 # to the next re-match), dedent, and append the closing `fi` for the
 # else-branch the extraction cut open. (Use $a with a real newline — GNU
 # sed treats `'$a\fi'` as append-text "i", dropping the f.)
+# The `local` declarations are blanked (not stripped): stripping turns
+# `local script name` into `script name`, which executes util-linux
+# `script(1)` — a typescript session that hangs forever when stdin is a
+# pipe (exactly what CI's execFileSync child gets; the first CI run of
+# this test timed out to that). The harness prelude re-initializes the
+# variables the blanked `local` lines used to declare.
 awk '/^    local failed=0$/{f=1} f{print} /log_error "Failed suite/{exit}' \
   "$SCRIPT_DIR/run-all-tests.sh" \
-  | sed -e 's/^    //' -e 's/^local //' -e '$a\
+  | sed -e 's/^    //' -e 's/^local .*/:/' -e '$a\
 fi' \
   > "$H4584"
 
 # Harness prelude: source common.sh (log_* helpers), then the stub run_suite
 # — exact #4584 scenario: Multimodal FAILS (non-zero), all other suites pass.
 # (`run_suite` contract mirrors the runner's: non-zero = suite failed.)
+# Stdin is redirected from /dev/null: belt-and-braces against any future
+# extraction fragment that touches stdin under a piped-stdio parent.
 H4584_PRE="$TMPDIR_FIX/harness-pre"
 {
   echo '#!/bin/bash'
   echo 'SCRIPT_DIR="'"$SCRIPT_DIR"'"'
   echo 'source "$SCRIPT_DIR/common.sh" >/dev/null 2>&1'
+  echo 'failed=0 RETRIED_SUCCESSES=0 TOTAL_RETRIES=0'
+  echo 'FAILED_SUITE_NAMES=()'
+  echo 'script= name='
   echo 'run_suite() { [ "$2" != "Multimodal Tests" ]; }'
   cat "$H4584"
 } > "$H4584_PRE"
-H4584_OUT="$( cd "$SCRATCH" && bash "$H4584_PRE" 2>&1 )"
+H4584_OUT="$( cd "$SCRATCH" && bash "$H4584_PRE" < /dev/null 2>&1 )"
 # Strip ANSI color codes (log_error wraps the prefix in \033[0;31m…\033[0m)
 # so the assertions below match the text, not the escape bytes.
 H4584_PLAIN="$(printf '%s' "$H4584_OUT" | sed 's/\x1b\[[0-9;]*m//g')"
@@ -249,7 +260,7 @@ check_rc $? 1 "#4584: passing suite NOT listed in the failure summary"
 # All-pass variant: the names line must not appear.
 sed 's|^run_suite() { \[ "\$2" != "Multimodal Tests" \]; }$|run_suite() { return 0; }|' \
   "$H4584_PRE" > "$H4584.ok"
-H4584_OK_OUT="$( cd "$SCRATCH" && bash "$H4584.ok" 2>&1 )"
+H4584_OK_OUT="$( cd "$SCRATCH" && bash "$H4584.ok" < /dev/null 2>&1 )"
 printf '%s' "$H4584_OK_OUT" | sed 's/\x1b\[[0-9;]*m//g' | grep -q 'All test suites passed'
 check_rc $? 0 "#4584: all-pass summary unchanged"
 printf '%s' "$H4584_OK_OUT" | grep -qF 'Failed suite(s):'
