@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionManager, buildSessionKey } from './session-manager.js';
+import { SessionManager, buildSessionKey, chatIdOfSessionKey } from './session-manager.js';
 import { MessageChannel } from './message-channel.js';
 import type { QueryHandle } from '../sdk/index.js';
 import type { Logger } from '../utils/logger.js';
@@ -361,6 +361,29 @@ describe('SessionManager', () => {
     it('isolates chats: same threadRoot, different chatIds → different keys', () => {
       expect(buildSessionKey('oc_chat1', 'om_threadA'))
         .not.toBe(buildSessionKey('oc_chat2', 'om_threadA'));
+    });
+  });
+
+  describe('chatIdOfSessionKey (Issue #4587 part 2)', () => {
+    // Inverse of buildSessionKey — the agent pool uses it to recover the plain
+    // chatId from a composite session key for boundary notifications. These
+    // lock the round-trip so the separator format can't drift between the two
+    // halves of the pair (they now share one constant — PR #4590 review N4).
+
+    it('inverts buildSessionKey for a threaded key', () => {
+      expect(chatIdOfSessionKey(buildSessionKey('oc_chat1', 'om_threadA')))
+        .toBe('oc_chat1');
+    });
+
+    it('passes a p2p key (no threadRoot) through unchanged', () => {
+      expect(chatIdOfSessionKey(buildSessionKey('oc_chat1'))).toBe('oc_chat1');
+    });
+
+    it('splits at the first separator, preserving a chatId-like remainder', () => {
+      // Defensive: even if a future id scheme contained a separator-like
+      // sequence, the FIRST separator is the key boundary — everything after
+      // it belongs to the threadRoot side.
+      expect(chatIdOfSessionKey('oc_chat1::om_a::weird')).toBe('oc_chat1');
     });
   });
 });

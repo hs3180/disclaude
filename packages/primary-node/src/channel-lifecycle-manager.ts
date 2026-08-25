@@ -71,7 +71,11 @@ export interface IPrimaryNodeForSetup {
 export interface ChannelSetupContext {
   /** Agent pool for creating chat agents */
   agentPool: {
-    getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
+    /**
+     * Issue #4587 (part 2): optional threadRootId (topic-group messages)
+     * selects that thread's agent — per-thread session keying.
+     */
+    getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks, threadRootId?: string) => ChatAgent;
     /** Issue #4256 (part 2): pool stats for /api/health leak diagnostics. */
     getPoolStats(): AgentPoolStats;
   };

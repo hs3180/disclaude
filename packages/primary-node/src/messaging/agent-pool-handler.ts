@@ -28,7 +28,16 @@ const AGENT_CREATION_FAILED_MESSAGE = '⚠️ Agent 创建失败，请发送 /re
 export interface AgentPoolHandlerOptions {
   /** Agent pool for creating/getting persistent agents */
   agentPool: {
-    getOrCreateChatAgent: (chatId: string, callbacks: ChatAgentCallbacks) => ChatAgent;
+    /**
+     * Issue #4587 (part 2): `threadRootId` (topic-group messages only)
+     * selects that thread's agent — one session per thread. Omitted for
+     * p2p / plain groups / system messages (chat-scoped agent).
+     */
+    getOrCreateChatAgent: (
+      chatId: string,
+      callbacks: ChatAgentCallbacks,
+      threadRootId?: string
+    ) => ChatAgent;
   };
   /** Callbacks factory for ChatAgent creation */
   callbacksFactory: (chatId: string) => ChatAgentCallbacks;
@@ -57,13 +66,16 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
   }
 
   handleUserMessage(params: UserMessageParams): Promise<void> {
-    const { chatId, messageId, senderOpenId, attachments, chatType } = params;
+    const { chatId, messageId, senderOpenId, attachments, chatType, threadRootId } = params;
     this.log.info(
-      { chatId, messageId, senderOpenId, hasAttachments: !!attachments?.length, chatType },
+      { chatId, messageId, senderOpenId, hasAttachments: !!attachments?.length, chatType, threadRootId },
       'Handling user message via agent pool',
     );
 
-    const agent = this.getAgentSafely(chatId, messageId, 'user message');
+    // Issue #4587 (part 2): a topic-group thread message routes to that
+    // thread's own agent (pool keys on chatId::threadRoot); everything else
+    // keeps the chat-scoped agent.
+    const agent = this.getAgentSafely(chatId, messageId, 'user message', threadRootId);
     if (!agent) {return Promise.resolve();}
 
     // Issue #3962: Catch processMessage errors instead of silently swallowing
@@ -119,15 +131,19 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
    * Safely get or create a ChatAgent from the pool.
    * Returns null if agent creation fails (logs error + notifies user).
    * Issue #3962: Prevents silent failures when agent subprocess fails to spawn.
+   * Issue #4587 (part 2): `threadRootId` (user messages only) selects the
+   * thread's agent; system messages stay chat-scoped by design (scheduler /
+   * loop tasks have no thread identity).
    */
   private getAgentSafely(
     chatId: string,
     messageId: string,
     context: string,
+    threadRootId?: string,
   ): ChatAgent | null {
     const callbacks = this.callbacksFactory(chatId);
     try {
-      return this.agentPool.getOrCreateChatAgent(chatId, callbacks);
+      return this.agentPool.getOrCreateChatAgent(chatId, callbacks, threadRootId);
     } catch (err) {
       this.log.error({ err, chatId, messageId }, `Failed to create/get ChatAgent for ${context}`);
       // Silent catch: agent itself is broken, notification failure should not cause further errors
