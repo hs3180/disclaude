@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, buildSessionKey, createLogger } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, buildSessionKey, chatIdOfSessionKey, createLogger } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -105,17 +105,10 @@ const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
  */
 const DEFAULT_BUSY_TURN_HARD_CAP_MS = 90 * 60 * 1000;
 
-/**
- * Issue #4587 (part 2): recover the plain chatId from a pool session key.
- * Inverse of `buildSessionKey` — `chatId::threadRoot` → `chatId`, and a
- * key without `::` (p2p / chat-scoped) passes through unchanged. Feishu
- * chat ids (`oc_…`) and thread ids (`om_…`) never contain `::`, so the
- * first separator is unambiguously the key boundary.
- */
-export function chatIdOfSessionKey(sessionKey: string): string {
-  const sep = sessionKey.indexOf('::');
-  return sep === -1 ? sessionKey : sessionKey.slice(0, sep);
-}
+// Re-export so existing `./primary-agent-pool.js` importers keep working; the
+// implementation now lives in core next to buildSessionKey (PR #4590 review N4
+// — the `::` separator had been hardcoded here and in the pool test mock).
+export { chatIdOfSessionKey };
 
 /**
  * Issue #4256 (part 2): structured pool-state snapshot for leak diagnostics.

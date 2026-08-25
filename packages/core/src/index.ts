@@ -116,6 +116,7 @@ export {
   type SessionManagerConfig,
   SessionManager,
   buildSessionKey,
+  chatIdOfSessionKey,
 } from './agents/session-manager.js';
 
 // Restart manager
