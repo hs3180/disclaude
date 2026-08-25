@@ -158,6 +158,26 @@ Two operational notes confirmed during the run:
   avoid, which is the empirical argument for preferring the endpoint on
   headless hosts.
 
+A third note, confirmed on the macOS re-run (2026-08-25, browser-use 0.13.8 /
+browser-harness 0.1.9 — same driver-side matrix, 5/6 green; the compose-front
+case stays environment-blocked):
+
+- **The daemon pins the attach target from its *first-start* environment** —
+  `BU_CDP_URL`/`BU_CDP_WS` are read once by the long-lived daemon
+  (`browser_harness/daemon.py:90`, `get_ws_url`), and later CLI invocations
+  just connect to the daemon over its unix socket (`_ipc.py`), never
+  re-reading the env. Practical consequence: **changing `BU_CDP_URL` between
+  invocations is silently ignored** while the old daemon lives. This is also a
+  *test-validity* trap — re-running the "dead endpoint fails hard" case
+  (matrix case 5) against a daemon that already holds a healthy connection
+  **passes vacuously**: the run succeeds, exit 0, and proves nothing. Verified:
+  dead-`BU_CDP_URL` invocation against a live daemon returned `page_info()`
+  from the healthy session; only after `browser-use --reload` (kills the
+  daemon) did the same invocation exit 1 with
+  `BU_CDP_URL=… unreachable after 30s`. Rule: when the endpoint env changes,
+  `browser-use --reload` first (or set `BU_NAME` per endpoint so each gets its
+  own daemon socket).
+
 ### Remaining (needs a Docker-capable host)
 
 - [ ] One confirmation run through the **nginx-fronted compose endpoint**
