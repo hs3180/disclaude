@@ -184,6 +184,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   private chatType?: string;
 
+  /**
+   * Issue #4587 (part 1, review fix): FIFO of reply anchors for user messages
+   * pushed onto the CURRENT session's channel but not yet consumed by an SDK
+   * turn. Entry order = push order; `undefined` entries (plain-group /
+   * synthetic messages) keep their slot so turn↔message pairing stays aligned.
+   *
+   * Why a queue and not a single field: one processIterator (session) serves
+   * MANY turns. processMessage(B) runs synchronously even while A's turn is
+   * mid-flight (no busy-gating on the user path), so any single mutable
+   * "current anchor" field is overwritten by B before A's tail outputs are
+   * emitted — re-introducing exactly the cross-thread hijack part 1 set out
+   * to fix (A's reply landing in B's thread). The iterator instead consumes
+   * one anchor per turn at the turn's first event (see processIterator), so
+   * each turn replies into its own thread even with interleaved arrivals.
+   *
+   * Reset on startAgentLoop (fresh session) and reset(); bounded to avoid
+   * unbounded growth if turns never drain (iterator parked/dead session).
+   */
+  private pendingTurnAnchors: (string | undefined)[] = [];
+
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
   // `result` message and resolves the completion promise, enabling blocking
@@ -608,6 +628,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       chatHistoryContext,
       chatType,
       threadContext,
+      threadRootId,
     } = params;
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -651,6 +672,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
       this.startAgentLoop();
+    }
+
+    // Issue #4587 (part 1, review fix): enqueue this turn's reply anchor —
+    // AFTER startAgentLoop() (which clears anchors left over from the previous
+    // session; clearing must never eat this message's own anchor) and BEFORE
+    // the channel push below (the anchor must be queued no later than the
+    // message becomes visible to the iterator). Fallback resolved NOW, not at
+    // consumption time, so a later message's setThreadRoot cannot change what
+    // this turn falls back to.
+    this.pendingTurnAnchors.push(
+      threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId)
+    );
+    // Bounded: a dead/parked session with no iterator draining would otherwise
+    // grow this unboundedly (anchors for messages the session never answers).
+    if (this.pendingTurnAnchors.length > 50) {
+      this.pendingTurnAnchors.splice(0, this.pendingTurnAnchors.length - 50);
     }
 
     // Issue #1863: Wait for first message history to load before building content.
@@ -928,6 +965,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // bump and exits as a superseded session instead of "unexpected end".
     this.sessionGeneration++;
 
+    // Issue #4587 (part 1, review fix): fresh session — anchors queued for the
+    // OLD session's channel are dead (that channel is closed above). Safe
+    // because processMessage enqueues AFTER startAgentLoop() returns (see the
+    // enqueue site), so a live anchor is never eaten here.
+    this.pendingTurnAnchors = [];
+
     // Issue #3378: Log process exit listener count for leak monitoring.
     // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
     // Normal range is 1-3; values > 8 indicate a leak.
@@ -1074,6 +1117,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
     let userVisibleOutputCount = 0;
 
+    // Issue #4587 (part 1, review fix): per-turn reply anchor, consumed from
+    // the pendingTurnAnchors FIFO. The original part-1 shape read the live
+    // currentThreadRootId at each output site; processMessage(B) overwrites it
+    // while A's iterator is still draining, so A's tail outputs anchored to
+    // B's thread — the exact cross-thread hijack the PR set out to fix. Here
+    // the anchor is frozen for the whole turn at the turn's FIRST event
+    // (loop head below), and re-armed after each result so the next turn
+    // (next queued message) picks up its own anchor.
+    let turnAnchorConsumed = false;
+    let currentTurnAnchor: string | undefined;
+    const consumeTurnAnchor = (): string | undefined => {
+      if (!turnAnchorConsumed) {
+        turnAnchorConsumed = true;
+        currentTurnAnchor = this.pendingTurnAnchors.shift();
+      }
+      return currentTurnAnchor;
+    };
+    // Issue #4587 (part 1, review fix): resolve this turn's reply anchor once.
+    const resolveReplyThreadRoot = (): string | undefined =>
+      consumeTurnAnchor() ?? this.conversationOrchestrator.getThreadRoot(chatId);
+
     // Issue #4399 (#4208 P2-b): streaming-card state machine. Only constructed
     // when the channel advertises supportsStreaming AND provides all three
     // streaming callbacks; otherwise `streamDriver` is null and the assistant
@@ -1096,7 +1160,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       !!this.callbacks.finalizeStreaming
         ? new StreamingReplyDriver({
             chatId,
-            parentMessageId: this.conversationOrchestrator.getThreadRoot(chatId) ?? undefined,
+            parentMessageId: resolveReplyThreadRoot() ?? undefined,
             startStreaming: this.callbacks.startStreaming,
             streamText: this.callbacks.streamText,
             finalizeStreaming: this.callbacks.finalizeStreaming,
@@ -1118,6 +1182,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
           break;
         }
+
+        // Issue #4587 (part 1, review fix): this event's turn adopts its
+        // anchor from the FIFO on the turn's FIRST event. Harmless no-op for
+        // the leading system/status events of a turn (they don't reply), and
+        // it guarantees the anchor is frozen before any text/result of the
+        // turn is dispatched, even when an interleaved processMessage pushed
+        // a second anchor mid-turn.
+        consumeTurnAnchor();
 
         messageCount++;
 
@@ -1179,7 +1251,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               'Filtered intermediate message in topic thread'
             );
           } else {
-            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+            const threadRoot = resolveReplyThreadRoot();
             // Capture as a local so the marker check stays type-safe after the
             // awaited sendMessage (which defeats parsed.content narrowing).
             const visibleContent = parsed.content;
@@ -1227,7 +1299,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.isProcessingMessage = false;
             this.resolveTurn();
             if (this.callbacks.onDone) {
-              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);
             }
             if (this.onceMode) {
@@ -1261,7 +1333,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.isProcessingMessage = false;
             this.resolveTurn();
             if (this.callbacks.onDone) {
-              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);
             }
             if (this.onceMode) {
@@ -1385,7 +1457,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // below). The surrounding try/catch only guards the synchronous
             // setup (getThreadRoot) for the same reason.
             try {
-              const emptyTurnThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const emptyTurnThreadRoot = resolveReplyThreadRoot();
               void this.callbacks
                 .sendMessage(
                   chatId,
@@ -1574,7 +1646,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'Reporting as failed instead of ✅ Complete.'
             );
             try {
-              const upstreamThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const upstreamThreadRoot = resolveReplyThreadRoot();
               // Surface the upstream request_id from the stderr tail if present,
               // so the failure is actionable (Issue #4322 direction 3).
               const stderrTail = (parsed.upstreamApiErrorStderr ?? '').trim();
@@ -1658,9 +1730,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.resolveTurn();
 
           if (this.callbacks.onDone) {
-            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+            const threadRoot = resolveReplyThreadRoot();
             await this.callbacks.onDone(chatId, threadRoot);
           }
+
+          // Issue #4587 (part 1, review fix): turn boundary — re-arm the FIFO
+          // consumption so the NEXT queued message's anchor (possibly another
+          // thread's, pushed while this turn was draining) is adopted at the
+          // next turn's first event. currentTurnAnchor keeps this turn's value
+          // for the tail paths below (onDone above already ran; error paths
+          // after a result are not expected but read the frozen value).
+          turnAnchorConsumed = false;
 
           // Issue #3124: In once-mode, close channel after result to end the iterator.
           // This enables blocking one-shot execution via processMessage + taskComplete.
@@ -1700,7 +1780,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // 重试无法解决，直接向用户展示具体错误。
       if (isStartupFailure(messageCount, elapsedMs)) {
         const stderr = getErrorStderr(iteratorError);
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
 
         // 提取有用的错误信息：优先使用 stderr 内容
         let diagnosticMessage = iteratorError.message;
@@ -1748,7 +1828,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Notify user about the error
       {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         await this.callbacks.sendMessage(
           chatId,
           `❌ Session error: ${iteratorError.message}`,
@@ -1764,7 +1844,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.clearTaskCompletion();
 
       if (this.callbacks.onDone) {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         await this.callbacks.onDone(chatId, threadRoot);
       }
     } finally {
@@ -1773,7 +1853,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // when streaming never started or the channel doesn't stream — the
       // driver's finish() is idempotent and only acts in the streaming state.
       if (streamDriver) {
-        const finishThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const finishThreadRoot = resolveReplyThreadRoot();
         await streamDriver.finish(finishThreadRoot);
       }
     }
@@ -1905,7 +1985,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Notify user that circuit breaker opened
       {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         const blockMessage =
           decision.reason === 'max_restarts_exceeded'
             ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
@@ -1927,7 +2007,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Notify user about the restart
-    const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+    const threadRoot = resolveReplyThreadRoot();
     const restartMessage = iteratorError
       ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
       : '⚠️ 会话意外断开，正在重新连接...';
@@ -2035,6 +2115,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // isSessionActive=false set above, which already reads as explicit close).
     this.sessionGeneration++;
     this.clearTaskCompletion();
+
+    // Issue #4587 (part 1, review fix): drop pending turn anchors too — the
+    // aborted iterator's finally block may still emit its error notice, and it
+    // must not reply into a pre-reset thread; queued messages are gone with
+    // the session.
+    this.pendingTurnAnchors = [];
 
     // Issue #4063: Clear per-turn completion state
     this.rejectTurn(new Error('Agent reset'));

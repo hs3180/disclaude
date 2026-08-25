@@ -226,6 +226,8 @@ export function createDefaultMessageHandler(
       const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
       const chatType = metadata?.chatType as string | undefined;
       const threadContext = metadata?.threadContext as string | undefined;
+      // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
+      const threadRootId = metadata?.threadRootId as string | undefined;
       const fileRefs = options.extractAttachments?.(message);
 
       const userMessage: UserMessage = {
@@ -239,6 +241,7 @@ export function createDefaultMessageHandler(
         chatHistoryContext,
         chatType,
         threadContext,
+        threadRootId,
         createdAt: toISOStringSafe(message.timestamp),
       };
 

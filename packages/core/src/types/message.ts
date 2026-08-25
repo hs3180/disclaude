@@ -61,6 +61,14 @@ export interface UserMessage extends Message {
   chatType?: string;
   /** Thread context for topic groups (Issue #3641 sub-problem 1) */
   threadContext?: string;
+  /**
+   * Root message ID of the topic-group thread this message belongs to
+   * (the top ancestor of the parent_id chain, or the message itself when it
+   * starts a new thread). Only set for topic groups — the stable per-thread
+   * identity that part 2 of #4587 will key agent sessions on.
+   * Issue #4587 (part 1).
+   */
+  threadRootId?: string;
 }
 
 // ============================================================================
