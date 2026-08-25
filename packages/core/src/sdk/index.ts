@@ -83,6 +83,8 @@ export type {
   ToolUseBlock,
   ToolResultBlock,
   InlineToolDefinition,
+  ToolProgressPayload,
+  ToolProgressCallback,
 
   // MCP 配置
   McpServerConfig,
