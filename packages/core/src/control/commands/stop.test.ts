@@ -86,6 +86,48 @@ describe('handleStop', () => {
 
     expect(context.agentPool.reset).not.toHaveBeenCalled();
   });
+
+  it('should stop the thread slot when threadRootId is set (Issue #4587 part 3)', () => {
+    const stopThread = vi.fn(() => true);
+    const context = createMockContext({
+      agentPool: {
+        reset: vi.fn(),
+        stop: vi.fn(() => false),
+        stopThread,
+      },
+    });
+
+    const result = handleStop({ type: 'stop', chatId: 'test-chat-id', threadRootId: 'om_root' }, context);
+
+    if (result instanceof Promise) {
+      throw new Error('Expected synchronous result');
+    }
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('已停止当前响应');
+    expect(stopThread).toHaveBeenCalledWith('test-chat-id', 'om_root');
+    // The chat-scoped agent must NOT be stopped
+    expect(context.agentPool.stop).not.toHaveBeenCalled();
+  });
+
+  it('should fall back to chat-scoped stop when stopThread is unavailable (Issue #4587 part 3)', () => {
+    const context = createMockContext({
+      agentPool: {
+        reset: vi.fn(),
+        stop: vi.fn(() => true),
+        // no stopThread — a pre-part-3 pool implementation
+      },
+    });
+
+    const result = handleStop({ type: 'stop', chatId: 'test-chat-id', threadRootId: 'om_root' }, context);
+
+    if (result instanceof Promise) {
+      throw new Error('Expected synchronous result');
+    }
+
+    expect(result.success).toBe(true);
+    expect(context.agentPool.stop).toHaveBeenCalledWith('test-chat-id');
+  });
 });
 
 describe('getHandler for stop command', () => {

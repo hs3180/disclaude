@@ -97,10 +97,43 @@ describe('tryHandleSlashCommand', () => {
       { textWithoutMentions: '/trigger batch', chatId: 'oc_x' },
       deps,
     );
+    // Issue #4587 part 3: the router now always passes a 4th extra arg —
+    // undefined outside topic threads.
     expect(createControlCommand).toHaveBeenCalledWith(
       'trigger',
       'oc_x',
       { args: ['batch'] },
+      undefined,
+    );
+  });
+
+  it('forwards threadRootId on the emitted command (Issue #4587 part 3)', async () => {
+    vi.mocked(createControlCommand).mockClear();
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
+    await tryHandleSlashCommand(
+      { textWithoutMentions: '/reset', chatId: 'oc_x', threadRootId: 'om_root' },
+      deps,
+    );
+    expect(createControlCommand).toHaveBeenCalledWith(
+      'reset',
+      'oc_x',
+      { args: [] },
+      { threadRootId: 'om_root' },
+    );
+  });
+
+  it('omits the threadRootId extra when not in a thread (Issue #4587 part 3)', async () => {
+    vi.mocked(createControlCommand).mockClear();
+    const { deps } = makeDeps({ hasControlHandler: true, controlResponse: { success: true } });
+    await tryHandleSlashCommand(
+      { textWithoutMentions: '/reset', chatId: 'oc_x' },
+      deps,
+    );
+    expect(createControlCommand).toHaveBeenCalledWith(
+      'reset',
+      'oc_x',
+      { args: [] },
+      undefined,
     );
   });
 });
