@@ -4,12 +4,16 @@ import type { ControlHandlerContext, CommandHandler } from '../types.js';
 /**
  * /stop 命令处理
  * Issue #1349: 停止当前正在进行的 AI 响应，但不重置会话
+ * Issue #4587 (part 3): a stop issued inside a topic-group thread stops
+ * that thread's agent, not the chat-scoped one.
  */
 export const handleStop: CommandHandler = (
   command: ControlCommand,
   context: ControlHandlerContext
 ): ControlResponse => {
-  const stopped = context.agentPool.stop(command.chatId);
+  const stopped = command.threadRootId && context.agentPool.stopThread
+    ? context.agentPool.stopThread(command.chatId, command.threadRootId)
+    : context.agentPool.stop(command.chatId);
 
   if (stopped) {
     return {
