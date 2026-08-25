@@ -33,6 +33,10 @@ const { mockLogger } = vi.hoisted(() => ({
 }));
 vi.mock('@disclaude/core', () => ({
   createLogger: () => mockLogger,
+  // Issue #4587 (part 2): the real key-derivation primitive — pure function,
+  // no dependencies, so expose it verbatim rather than re-implementing it.
+  buildSessionKey: (chatId: string, threadRootId?: string) =>
+    threadRootId ? `${chatId}::${threadRootId}` : chatId,
 }));
 
 // Track mock agent instances for assertions
@@ -56,7 +60,7 @@ vi.mock('./agents/factory.js', () => ({
 }));
 
 import { AgentFactory } from './agents/factory.js';
-import { PrimaryAgentPool } from './primary-agent-pool.js';
+import { PrimaryAgentPool, chatIdOfSessionKey } from './primary-agent-pool.js';
 
 // Helper to create mock ChatAgentCallbacks
 const createMockCallbacks = () => ({
@@ -770,6 +774,193 @@ describe('PrimaryAgentPool', () => {
       expect(peakSnapshots[0][0]?.active).toBe(1);
       expect(peakSnapshots[1][0]?.active).toBe(2);
       expect(peakSnapshots[1][0]?.peakActive).toBe(2);
+    });
+  });
+
+  // ==========================================================================
+  // Per-thread session keying (Issue #4587 part 2)
+  // ==========================================================================
+
+  describe('per-thread session keying (Issue #4587 part 2)', () => {
+    it('creates separate agents for two threads of the same topic group', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      const agentA = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+      const agentB = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadB');
+
+      expect(agentA).not.toBe(agentB);
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns the same agent for subsequent messages in the same thread', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      const agentA1 = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+      const agentA2 = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+
+      expect(agentA1).toBe(agentA2);
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledOnce();
+    });
+
+    it('constructs thread agents with the PLAIN chatId (boundChatId/history stay chat-scoped)', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+
+      // The factory receives the plain chatId — never the composite key — so
+      // the agent's boundChatId guard (#644), HistoryManager, and callbacks
+      // keep addressing the chat, not the thread.
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
+        'pilot',
+        'oc_topic',
+        callbacks,
+        { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
+      );
+      // And it is still retrievable only via the thread key...
+      expect(pool.get('oc_topic', 'om_threadA')).toBeDefined();
+      expect(pool.get('oc_topic')).toBeUndefined();
+    });
+
+    it('lazy migration: a thread agent never clobbers the existing chat-scoped agent', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      // Existing chat-scoped session (pre-topic-message state).
+      const chatScoped = pool.getOrCreateChatAgent('oc_topic', callbacks);
+      // First topic-group thread message arrives — it must get its OWN agent,
+      // leaving the chat-scoped one untouched (the issue's 惰性迁移).
+      const threadAgent = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+
+      expect(threadAgent).not.toBe(chatScoped);
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledTimes(2);
+      expect(pool.get('oc_topic')).toBe(chatScoped);
+      expect(pool.get('oc_topic', 'om_threadA')).toBe(threadAgent);
+    });
+
+    it('reset(chatId, skip, threadRoot) disposes only that thread agent', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      const chatScoped = pool.getOrCreateChatAgent('oc_topic', callbacks);
+      const agentA = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+      const agentB = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadB');
+
+      pool.reset('oc_topic', undefined, 'om_threadA');
+
+      expect(agentA.dispose).toHaveBeenCalledOnce();
+      expect(agentB.dispose).not.toHaveBeenCalled();
+      expect(chatScoped.dispose).not.toHaveBeenCalled();
+      // Other slots still return their cached agents.
+      expect(pool.get('oc_topic')).toBe(chatScoped);
+      expect(pool.get('oc_topic', 'om_threadB')).toBe(agentB);
+    });
+
+    it('reset without threadRoot still resets the chat-scoped agent only', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      const chatScoped = pool.getOrCreateChatAgent('oc_topic', callbacks);
+      const agentA = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+
+      pool.reset('oc_topic');
+
+      expect(chatScoped.dispose).toHaveBeenCalledOnce();
+      expect(agentA.dispose).not.toHaveBeenCalled();
+    });
+
+    it('reset(chatId, true, threadRoot) skips history for that thread only (#4206 × #4587)', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+      pool.reset('oc_topic', true, 'om_threadA');
+      mockAgents.clear();
+
+      pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+      expect(AgentFactory.createChatAgent).toHaveBeenCalledWith(
+        'pilot',
+        'oc_topic',
+        callbacks,
+        expect.objectContaining({ skipHistory: true }),
+      );
+    });
+
+    it('stop(chatId, threadRoot) stops only that thread agent, with the plain chatId', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      const agentA = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+      const agentB = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadB');
+
+      const result = pool.stop('oc_topic', 'om_threadA');
+
+      expect(result).toBe(true);
+      // stop() receives the PLAIN chatId — the agent's boundChatId guard
+      // rejects the composite key.
+      expect(agentA.stop).toHaveBeenCalledWith('oc_topic');
+      expect(agentB.stop).not.toHaveBeenCalled();
+    });
+
+    it('isAgentBusy(chatId, threadRoot) checks that thread only', () => {
+      const pool = new PrimaryAgentPool();
+      const callbacks = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('oc_topic', callbacks);
+      // The factory mock returns a shared shape per call — capture the thread
+      // agent by return value (mockAgents keys on the plain chatId).
+      pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+      const threadAgent = pool.get('oc_topic', 'om_threadA');
+      (threadAgent as unknown as { isBusy: boolean }).isBusy = true;
+
+      // A busy thread does not make the chat-scoped agent (or another thread)
+      // look busy — scheduler gating keys on the chat-scoped agent.
+      expect(pool.isAgentBusy('oc_topic', 'om_threadA')).toBe(true);
+      expect(pool.isAgentBusy('oc_topic')).toBe(false);
+      expect(pool.isAgentBusy('oc_topic', 'om_threadB')).toBe(false);
+    });
+
+    it('idle eviction evicts thread agents under their session key and keeps others', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000 });
+      const callbacks = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('oc_topic', callbacks);
+      pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+
+      const evicted = pool.evictIdleAgents(Date.now() + 2000);
+
+      // Session keys, not plain chatIds, are reported for thread agents.
+      expect(evicted).toEqual(['oc_topic', 'oc_topic::om_threadA']);
+      expect(pool.get('oc_topic')).toBeUndefined();
+      expect(pool.get('oc_topic', 'om_threadA')).toBeUndefined();
+    });
+
+    it('busy-cap stop and notification address the PLAIN chatId for a thread agent', () => {
+      const onBusyCapExceeded = vi.fn();
+      const pool = new PrimaryAgentPool({
+        idleTimeoutMs: 1000,
+        busyTurnHardCapMs: 5000,
+        onBusyCapExceeded,
+      });
+      const callbacks = createMockCallbacks();
+      const agent = pool.getOrCreateChatAgent('oc_topic', callbacks, 'om_threadA');
+      (agent as unknown as { isBusy: boolean }).isBusy = true;
+
+      const t0 = Date.now();
+      pool.evictIdleAgents(t0); // observe busy start
+      pool.evictIdleAgents(t0 + 5100); // cap exceeded
+
+      // agent.stop() and the user-facing hook both get the plain chatId —
+      // the agent's boundChatId guard and the channel key on chatId.
+      expect(agent.stop).toHaveBeenCalledWith('oc_topic');
+      expect(onBusyCapExceeded).toHaveBeenCalledWith('oc_topic', expect.any(Number));
+    });
+
+    it('chatIdOfSessionKey inverts buildSessionKey', () => {
+      expect(chatIdOfSessionKey('oc_topic')).toBe('oc_topic');
+      expect(chatIdOfSessionKey('oc_topic::om_threadA')).toBe('oc_topic');
     });
   });
 });
