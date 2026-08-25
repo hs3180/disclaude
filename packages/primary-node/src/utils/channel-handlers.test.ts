@@ -617,6 +617,28 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
     );
   });
 
+  it('should pass threadRootId from metadata in UserMessage (Issue #4587 part 1)', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Feishu channel',
+    });
+    const message = createMockMessage({
+      metadata: { chatType: 'topic', threadRootId: 'om_thread_root' },
+    });
+    await handler(message);
+
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadRootId: 'om_thread_root',
+      }),
+    );
+    // Absent threadRootId must NOT be stringified 'undefined' — plain chats
+    // keep the field truly unset so part 2's session keying stays chat-scoped.
+    const plain = createMockMessage({ metadata: { chatType: 'group' } });
+    await handler(plain);
+    const routedPlain = mockRouter.route.mock.lastCall?.[0] as Record<string, unknown>;
+    expect(routedPlain.threadRootId).toBeUndefined();
+  });
+
   it('should pass attachments from extractAttachments in UserMessage', async () => {
     const fileRefs = [{
       id: 'file-001',

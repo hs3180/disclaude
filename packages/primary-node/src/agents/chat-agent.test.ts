@@ -1866,6 +1866,183 @@ describe('ChatAgent (primary-node)', () => {
       );
       expect(userCalls.length).toBe(0);
     });
+
+    it('anchors topic-thread replies to the message threadRootId, not the orchestrator last-seen id (Issue #4587 part 1)', async () => {
+      // Two threads share this chat-scoped agent. The orchestrator mock's
+      // getThreadRoot returns a constant ('thread-root-123' = whichever
+      // message was seen last across ALL threads). A reply turn triggered by
+      // thread A's message must anchor to thread A's root even if thread B's
+      // message arrived after — the turn's own threadRootId wins.
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_topic_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      (agent as any).chatType = 'topic';
+
+      async function* replyIterator() {
+        yield { parsed: { type: 'text', content: 'Reply in thread A' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: replyIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_topic_chat',
+        payload: 'question in thread A',
+        messageId: 'msg_thread_a_2',
+        chatType: 'topic',
+        threadRootId: 'omt_thread_a',
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      // The assistant reply went out with thread A's root, not the
+      // orchestrator's last-seen id (thread-root-123).
+      const replyCall = localCallbacks.sendMessage.mock.calls.find(
+        (call: any[]) => call[1] === 'Reply in thread A'
+      );
+      expect(replyCall).toBeDefined();
+      expect(replyCall![2]).toBe('omt_thread_a');
+
+      // A subsequent message WITHOUT threadRootId (plain group / synthetic)
+      // clears the stale anchor and falls back to the orchestrator value.
+      async function* replyIterator2() {
+        yield { parsed: { type: 'text', content: 'Reply without thread' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: replyIterator2(),
+      });
+      void agent.processMessage({
+        chatId: 'oc_topic_chat',
+        payload: 'follow-up',
+        messageId: 'msg_no_thread',
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (call: any[]) => call[1] === 'Reply without thread'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+      const plainCall = localCallbacks.sendMessage.mock.calls.find(
+        (call: any[]) => call[1] === 'Reply without thread'
+      );
+      expect(plainCall![2]).toBe('thread-root-123');
+    });
+
+    it('freezes the reply anchor per turn — thread B arriving MID-TURN of thread A cannot hijack A\'s tail output (Issue #4587 part 1 review fix)', async () => {
+      // The original part-1 shape resolved the anchor live at each output site
+      // (currentThreadRootId ?? orchestrator). But processMessage(B) overwrites
+      // currentThreadRootId synchronously, and B can arrive while A's iterator
+      // is still draining — so A's post-B outputs anchored to B's thread, the
+      // exact cross-thread hijack the PR set out to fix. The fix snapshots the
+      // anchor at turn start (turnThreadRootAnchor) and every reply site reads
+      // the frozen value.
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_topic_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      (agent as any).chatType = 'topic';
+
+      // Thread A's iterator: first chunk goes out, then a real async gap
+      // (timeout) during which thread B's processMessage lands, then A's
+      // second chunk + result.
+      async function* threadAIterator() {
+        yield { parsed: { type: 'text', content: 'A chunk 1' } };
+        await new Promise<void>((r) => setTimeout(r, 50));
+        yield { parsed: { type: 'text', content: 'A chunk 2 after B arrived' } };
+        yield { parsed: { type: 'result', content: 'Done A' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: threadAIterator(),
+      });
+
+      // Start thread A's turn — do NOT await; it must be in flight.
+      void agent.processMessage({
+        chatId: 'oc_topic_chat',
+        payload: 'question in thread A',
+        messageId: 'msg_a_1',
+        chatType: 'topic',
+        threadRootId: 'omt_thread_a',
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (call: any[]) => call[1] === 'A chunk 1'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 10 }
+      );
+
+      // Thread B's message arrives MID-TURN of A (same chat-scoped agent).
+      // This overwrites currentThreadRootId synchronously.
+      async function* threadBIterator() {
+        yield { parsed: { type: 'text', content: 'B chunk 1' } };
+        yield { parsed: { type: 'result', content: 'Done B' } };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: threadBIterator(),
+      });
+      void agent.processMessage({
+        chatId: 'oc_topic_chat',
+        payload: 'question in thread B',
+        messageId: 'msg_b_1',
+        chatType: 'topic',
+        threadRootId: 'omt_thread_b',
+      });
+
+      // Wait for A's post-B chunk and let everything settle.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (call: any[]) => call[1] === 'A chunk 2 after B arrived'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 10 }
+      );
+      await new Promise((r) => setTimeout(r, 100));
+
+      const a2 = localCallbacks.sendMessage.mock.calls.find(
+        (call: any[]) => call[1] === 'A chunk 2 after B arrived'
+      );
+      expect(a2).toBeDefined();
+      // A's post-B output must still anchor to A's thread root — not B's.
+      expect(a2![2]).toBe('omt_thread_a');
+    });
   });
 
   describe('Issue #3985: isBusy / isProcessingMessage', () => {
