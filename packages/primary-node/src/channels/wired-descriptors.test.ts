@@ -335,7 +335,9 @@ describe('WiredChannelDescriptors', () => {
         sendCard: expect.any(Function),
         sendFile: expect.any(Function),
         onDone: expect.any(Function),
-      }));
+      }),
+      // Issue #4587 (part 2): no threadRootId in this message → chat-scoped agent
+      undefined);
       expect(mockAgent.processMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-1', payload: 'Hello from WeChat', messageId: 'msg-1', senderOpenId: 'user-1' }));
     });
 

@@ -167,8 +167,10 @@ export class PrimaryNode extends EventEmitter {
 
   // Issue #4206: stashed in initInputMessageRouter() so the scheduler's
   // clearContext callback can reset a chat's agent before a scheduled task.
+  // Issue #4587 (part 2): getOrCreateChatAgent takes an optional threadRootId
+  // (topic-group thread session keying).
   protected agentPool?: {
-    getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
+    getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks, threadRootId?: string) => import('./agents/chat-agent.js').ChatAgent;
     reset: (chatId: string, skipContext?: boolean) => void;
   };
   // Issue #4199: optional busy-state provider used to gate blocking scheduled
@@ -753,7 +755,11 @@ export class PrimaryNode extends EventEmitter {
    */
   initInputMessageRouter(
     agentPool: {
-      getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
+      /**
+       * Issue #4587 (part 2): optional threadRootId (topic-group messages)
+       * selects that thread's agent — per-thread session keying.
+       */
+      getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks, threadRootId?: string) => import('./agents/chat-agent.js').ChatAgent;
       reset: (chatId: string, skipContext?: boolean) => void;
       isAgentBusy?: (chatId: string) => boolean;
     },
