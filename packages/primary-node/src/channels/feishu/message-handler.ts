@@ -10,6 +10,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { promisify } from 'util';
+import { setTimeout as sleep } from 'timers/promises';
 import { execFile } from 'child_process';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import {
@@ -133,6 +134,14 @@ interface QuotedMessageResult {
  * placeholder. getThreadContext itself stays read-only and does NOT download.
  */
 const MEDIA_MESSAGE_TYPES = new Set(['image', 'file', 'audio', 'media', 'video']);
+
+/**
+ * Issue #4591 (fix 2): backoff before the single retry of a failed per-node
+ * im.message.get in the thread walk. Short on purpose — the retry only needs
+ * to ride out a transient blip, not a sustained outage (a still-failing retry
+ * aborts the walk and the caller falls back, same as before).
+ */
+const THREAD_WALK_RETRY_DELAY_MS = 200;
 
 /** Issue #4319: short Chinese label for a media message type (thread-context display). */
 function mediaThreadLabel(messageType?: string): string {
@@ -489,11 +498,19 @@ export class MessageHandler {
    * between replies in the same thread), the walked root is the stable
    * per-thread identity part 2 will key agent sessions on. No extra API
    * calls — the root is already fetched for the context text.
+   * Issue #4591: also returns `incomplete` — false only when the walk reached
+   * the true root (a message with no parent_id). When true, `rootId` is a
+   * mid-chain node that other replies of the same thread may resolve
+   * differently, so callers must NOT key sessions on it (they fall back to
+   * parent_id instead).
    */
   private async getThreadContext(
     parentId: string,
     maxDepth: number = 10
-  ): Promise<{ text: string | undefined; rootId: string | undefined } | undefined> {
+  ): Promise<
+    | { text: string | undefined; rootId: string | undefined; incomplete: boolean }
+    | undefined
+  > {
     if (!this.client) {
       return undefined;
     }
@@ -506,14 +523,41 @@ export class MessageHandler {
       // Issue #4587 (part 1): thread-root tracking (see return-site comment)
       let rootId: string | undefined;
       let lastVisitedWithParent: string | undefined;
+      // Issue #4591 (fix 1): whether the walk reached the true root (a message
+      // with no parent_id). When it did not (depth cap or a fetch that stayed
+      // failed after retry), resolvedRootId is a mid-chain node — a per-message
+      // value that two replies in the same thread may disagree on. Callers use
+      // the flag to fall back to a uniform per-thread key instead.
+      let walkComplete = false;
 
-      while (currentId && threadMessages.length < maxDepth && !visitedIds.has(currentId)) {
+      // Issue #4591 (fix 1): count visited nodes, not assembled texts. The old
+      // `threadMessages.length < maxDepth` guard counted only messages with
+      // text, so a chain of media placeholders could silently walk past the
+      // intended cap; and capping mid-chain left different replies resolving
+      // different roots.
+      let visitedCount = 0;
+      while (currentId && visitedCount < maxDepth && !visitedIds.has(currentId)) {
         visitedIds.add(currentId);
+        visitedCount++;
 
-        const response = await this.client.im.message.get({
-          path: { message_id: currentId },
-          params: { user_id_type: 'open_id' },
-        });
+        // Issue #4591 (fix 2): one retry with a short backoff on the per-node
+        // fetch. A transient im.message.get failure used to abort the whole
+        // walk (→ undefined → caller falls back to parent_id) while other
+        // messages in the same thread walked fine — splitting the session key.
+        let response;
+        try {
+          response = await this.client.im.message.get({
+            path: { message_id: currentId },
+            params: { user_id_type: 'open_id' },
+          });
+        } catch (fetchError) {
+          logger.debug({ err: fetchError, messageId: currentId }, 'Thread-walk fetch failed, retrying once');
+          await sleep(THREAD_WALK_RETRY_DELAY_MS);
+          response = await this.client.im.message.get({
+            path: { message_id: currentId },
+            params: { user_id_type: 'open_id' },
+          });
+        }
 
         const msg = response.data as {
           message?: {
@@ -567,6 +611,10 @@ export class MessageHandler {
         lastVisitedWithParent = currentId;
         if (msg.message.parent_id) {
           rootId = msg.message.parent_id;
+        } else {
+          // The current node has no parent — it IS the true root and the walk
+          // is complete (Issue #4591 fix 1).
+          walkComplete = true;
         }
 
         // Walk to parent
@@ -583,7 +631,7 @@ export class MessageHandler {
       if (threadMessages.length === 0) {
         // No text assembled, but the root is still known — surface it so
         // session keying (part 2) works even when context text is empty.
-        return { text: undefined, rootId: resolvedRootId };
+        return { text: undefined, rootId: resolvedRootId, incomplete: !walkComplete };
       }
 
       // Reverse to get chronological order (oldest first)
@@ -595,7 +643,7 @@ export class MessageHandler {
         return `${label} ${m.content}`;
       });
 
-      return { text: lines.join('\n\n'), rootId: resolvedRootId };
+      return { text: lines.join('\n\n'), rootId: resolvedRootId, incomplete: !walkComplete };
     } catch (error) {
       logger.debug({ err: error, parentId }, 'Failed to get thread context');
       return undefined;
@@ -1051,12 +1099,14 @@ export class MessageHandler {
         // Issue #4587 (part 1): capture the walked thread root for session keying
         const threadInfo = await this.getThreadContext(parent_id);
         fileThreadContext = threadInfo?.text;
-        if (threadInfo?.rootId) {
-          fileMetadata.threadRootId = threadInfo.rootId;
-        } else {
-          // No parent chain to walk (or the walk failed) — this message IS the root
-          fileMetadata.threadRootId = message_id;
-        }
+        // Issue #4591 (fix 1): same rule as the text path — trust the walked
+        // root only when the walk completed; otherwise fall back to parent_id.
+        // (The old fallback here was message_id, a per-message value no other
+        // message in the thread could ever share — a guaranteed session-key
+        // split that even a successful walk on the next message would hit.)
+        fileMetadata.threadRootId = threadInfo && !threadInfo.incomplete && threadInfo.rootId
+          ? threadInfo.rootId
+          : parent_id;
       } else if (chat_type === 'topic') {
         // Issue #4587 (part 1, review fix): a topic media message with no
         // parent_id starts a new thread — same rule as the text path. Without
@@ -1249,8 +1299,15 @@ export class MessageHandler {
         // Topic groups: build thread context from parent chain only
         const threadInfo = await this.getThreadContext(parent_id);
         threadContext = threadInfo?.text;
-        // No parent chain walked (or walk failed) — the parent itself is the root
-        threadRootId = threadInfo?.rootId ?? parent_id;
+        // Issue #4591 (fix 1): a walked root is only trustworthy when the walk
+        // reached the true root. On an incomplete walk (depth cap / fetch that
+        // stayed failed after retry) the resolved root is a mid-chain node that
+        // differs between replies of the same thread — fall back to parent_id,
+        // the same uniform fallback the total-failure path uses, so every
+        // message in the thread still lands on ONE session key.
+        threadRootId = threadInfo && !threadInfo.incomplete
+          ? threadInfo.rootId ?? parent_id
+          : parent_id;
       } else {
         // A topic message without parent_id starts a new thread — it IS the root
         threadRootId = message_id;

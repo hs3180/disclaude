@@ -2350,6 +2350,266 @@ describe('MessageHandler', () => {
       expect(msg.metadata.threadRootId).toBeUndefined();
     });
 
+    it('falls back to parent_id when the walk hits the depth cap (Issue #4591 fix 1 — deep-chain unification)', async () => {
+      // A chain deeper than maxDepth must not resolve a mid-chain node as the
+      // thread root: shallow replies to the true root walk 1 step and get the
+      // real root, deep replies used to cap out and get lastVisitedWithParent —
+      // two different keys for one thread. On an incomplete walk we now fall
+      // back to parent_id (identical to the total-failure fallback).
+      mockState.isBotMentioned = true;
+      const deepMsg = (id: string, parent: string) => ({
+        data: {
+          message: {
+            message_type: 'text',
+            content: JSON.stringify({ text: `msg ${id}` }),
+            message_id: id,
+            parent_id: parent,
+            sender: { sender_type: 'user' },
+          },
+        },
+      });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'msg d9' }), message_id: 'd9' } },
+              })
+              // getThreadContext walk: d9 → d8 → ... → d0 → (parent of d0,
+              // never fetched) — 10 nodes visited, cap hit before the root.
+              .mockResolvedValueOnce(deepMsg('d9', 'd8'))
+              .mockResolvedValueOnce(deepMsg('d8', 'd7'))
+              .mockResolvedValueOnce(deepMsg('d7', 'd6'))
+              .mockResolvedValueOnce(deepMsg('d6', 'd5'))
+              .mockResolvedValueOnce(deepMsg('d5', 'd4'))
+              .mockResolvedValueOnce(deepMsg('d4', 'd3'))
+              .mockResolvedValueOnce(deepMsg('d3', 'd2'))
+              .mockResolvedValueOnce(deepMsg('d2', 'd1'))
+              .mockResolvedValueOnce(deepMsg('d1', 'd0'))
+              .mockResolvedValueOnce(deepMsg('d0', 'd_root_unfetched')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_deep',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Deep reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'd9',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Incomplete walk → parent_id, NOT the mid-chain d0 the old code resolved.
+      expect(msg.metadata.threadRootId).toBe('d9');
+      // Context text still assembled from the walked part of the chain.
+      expect(msg.metadata.threadContext).toContain('msg d0');
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(11);
+    });
+
+    it('retries a transient fetch failure and reports the true root (Issue #4591 fix 2)', async () => {
+      // One transient im.message.get blip must not abort the walk: the retry
+      // succeeds and the session key still lands on the true root — same key
+      // as a sibling reply whose walk never blipped.
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // 2nd call: getThreadContext(parent_id) — transient failure
+              .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+              // retry of the same node succeeds
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // walk continues to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_blip',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Retry rode out the blip → walk completed → true root, not parent_id.
+      expect(msg.metadata.threadRootId).toBe('msg_root');
+      expect(msg.metadata.threadContext).toContain('Root message');
+    });
+
+    it('falls back to parent_id when the fetch fails even after the retry (Issue #4591 fix 2 — unified failure path)', async () => {
+      // A persistent failure aborts the walk (undefined) — the text path then
+      // falls back to parent_id, the same key a depth-capped walk now uses:
+      // both incomplete-walk flavors converge on ONE fallback instead of two.
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // getThreadContext(parent_id) — fails, retry fails, walk aborts
+              .mockRejectedValue(new Error('ECONNRESET')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_hardfail',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Walk aborted → parent_id fallback (unchanged behavior), and exactly
+      // one retry was attempted (2 thread-walk calls + 1 quoted-context call).
+      expect(msg.metadata.threadRootId).toBe('msg_parent');
+      expect(msg.metadata.threadContext).toBeUndefined();
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(3);
+    });
+
+    it('FILE path: walk failure falls back to parent_id, not message_id (Issue #4591 fix 1 — call-site parity)', async () => {
+      // The media call site used message_id as its failure fallback — a value
+      // unique to this message, so no other message in the thread could ever
+      // share the key: a guaranteed split. Now both paths use parent_id.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockRejectedValue(new Error('ECONNRESET')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_deep', file_name: 'b.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Same key the text path resolves for a sibling reply of msg_parent.
+      expect(msg.metadata.threadRootId).toBe('msg_parent');
+      expect(msg.metadata.threadRootId).not.toBe('msg_file_reply');
+    });
+
+    it('FILE path: depth-capped walk also falls back to parent_id (Issue #4591 fix 1)', async () => {
+      // Media reply in an over-cap chain — must not resolve the mid-chain
+      // node either; identical rule to the text path.
+      const deepMsg = (id: string, parent: string) => ({
+        data: {
+          message: {
+            message_type: 'text',
+            content: JSON.stringify({ text: `msg ${id}` }),
+            message_id: id,
+            parent_id: parent,
+            sender: { sender_type: 'user' },
+          },
+        },
+      });
+      // Topic chats are group chats: without a @mention the message is filtered
+      // before the thread walk (trigger mode off).
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockResolvedValueOnce(deepMsg('d9', 'd8'))
+              .mockResolvedValueOnce(deepMsg('d8', 'd7'))
+              .mockResolvedValueOnce(deepMsg('d7', 'd6'))
+              .mockResolvedValueOnce(deepMsg('d6', 'd5'))
+              .mockResolvedValueOnce(deepMsg('d5', 'd4'))
+              .mockResolvedValueOnce(deepMsg('d4', 'd3'))
+              .mockResolvedValueOnce(deepMsg('d3', 'd2'))
+              .mockResolvedValueOnce(deepMsg('d2', 'd1'))
+              .mockResolvedValueOnce(deepMsg('d1', 'd0'))
+              .mockResolvedValueOnce(deepMsg('d0', 'd_root_unfetched')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_deep',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_cap', file_name: 'c.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+            parent_id: 'd9',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('d9');
+      expect(msg.metadata.threadRootId).not.toBe('d0');
+    });
+
     it('should NOT set chatHistoryContext for topic-group text messages without parent_id (Issue #4304 part 2)', async () => {
       // Issue #4304 part 2: a topic message with NO parent_id must not fall back
       // to flat chat history (which mixes messages across threads). Mock non-empty
