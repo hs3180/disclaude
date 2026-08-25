@@ -262,20 +262,22 @@ export function createDefaultMessageHandler(
     }
 
     // Existing path: direct agent pool access (backward compatible fallback)
-    const callbacks = context.callbacks(chatId);
-    const agent = context.agentPool.getOrCreateChatAgent(chatId, callbacks);
-
     // Extract context
     const senderOpenId = userId;
     const chatHistoryContext = metadata?.chatHistoryContext as string | undefined;
     const chatType = metadata?.chatType as string | undefined;
     const threadContext = metadata?.threadContext as string | undefined;
+    // Issue #4587 (part 2): thread root for per-thread session keying
+    const threadRootId = metadata?.threadRootId as string | undefined;
+
+    const callbacks = context.callbacks(chatId);
+    const agent = context.agentPool.getOrCreateChatAgent(chatId, callbacks, threadRootId);
 
     // Convert attachments if the channel supports them
     const fileRefs = options.extractAttachments?.(message);
 
     try {
-      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, chatType, threadContext });
+      void agent.processMessage({ chatId, payload: content, messageId, senderOpenId, attachments: fileRefs, chatHistoryContext, chatType, threadContext, threadRootId });
     } catch (error) {
       context.logger.error({ err: error, chatId, messageId }, 'Failed to process message');
       const errorMsg = error instanceof Error ? error.message : String(error);

@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, createLogger } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, buildSessionKey, chatIdOfSessionKey, createLogger } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -105,6 +105,11 @@ const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
  */
 const DEFAULT_BUSY_TURN_HARD_CAP_MS = 90 * 60 * 1000;
 
+// Re-export so existing `./primary-agent-pool.js` importers keep working; the
+// implementation now lives in core next to buildSessionKey (PR #4590 review N4
+// — the `::` separator had been hardcoded here and in the pool test mock).
+export { chatIdOfSessionKey };
+
 /**
  * Issue #4256 (part 2): structured pool-state snapshot for leak diagnostics.
  *
@@ -130,13 +135,27 @@ export interface AgentPoolStats {
  *
  * Each chatId gets its own ChatAgent instance with full MessageBuilder
  * support for enhanced prompts with context.
+ *
+ * Issue #4587 (part 2): topic-group threads get their OWN agent per thread.
+ * Internally the pool keys agents on `buildSessionKey(chatId, threadRootId)`
+ * (`chatId` for p2p/plain chats, `chatId::threadRoot` inside topic groups), so
+ * each thread's context stays isolated. Everything user-facing — the agent's
+ * `boundChatId`, callbacks, busy-cap notification — still receives the plain
+ * `chatId`, so replies route to the chat exactly as before. Lazy migration:
+ * messages without a `threadRootId` keep using the chat-scoped key, so
+ * existing sessions are unaffected until a thread message starts a new one.
  */
 export class PrimaryAgentPool {
+  /** Keyed by buildSessionKey(chatId, threadRootId) — see class doc (Issue #4587 part 2). */
   private readonly agents = new Map<string, ChatAgent>();
   private readonly options: PrimaryAgentPoolOptions;
-  /** Issue #3696: chatIds that should skip history loading on next agent creation */
+  /**
+   * Issue #3696: session keys that should skip history loading on next agent
+   * creation. Keyed like `agents` (Issue #4587 part 2) — a /reset in a thread
+   * only skips history for that thread's next agent.
+   */
   private readonly skipHistoryChatIds = new Set<string>();
-  /** Issue #4169: Last-used timestamp per chatId, for idle eviction. */
+  /** Issue #4169: Last-used timestamp per session key, for idle eviction. */
   private readonly lastUsedAt = new Map<string, number>();
   /** Issue #4169: Periodic sweep timer (unref'd) for idle eviction. */
   private idleSweepTimer?: ReturnType<typeof setInterval>;
@@ -161,14 +180,25 @@ export class PrimaryAgentPool {
   }
 
   /**
+   * Issue #4587 (part 2): pool map key for a chat/thread pair.
+   * `chatId::threadRoot` for topic-group threads, plain `chatId` otherwise
+   * (delegates to the #4305 part-1 primitive).
+   */
+  private sessionKeyOf(chatId: string, threadRootId?: string): string {
+    return buildSessionKey(chatId, threadRootId);
+  }
+
+  /**
    * Get the ChatAgent for a chatId without creating one.
    * Issue #3931: Used for internal lookups (e.g., isAgentBusy).
+   * Issue #4587 (part 2): `threadRootId` selects a topic-group thread's agent.
    *
    * @param chatId - Chat ID to look up
+   * @param threadRootId - Optional thread root (topic groups only)
    * @returns ChatAgent if one exists, undefined otherwise
    */
-  get(chatId: string): ChatAgent | undefined {
-    return this.agents.get(chatId);
+  get(chatId: string, threadRootId?: string): ChatAgent | undefined {
+    return this.agents.get(this.sessionKeyOf(chatId, threadRootId));
   }
 
   /**
@@ -178,11 +208,16 @@ export class PrimaryAgentPool {
    * isProcessingMessage flag per Issue #3985) rather than taskComplete
    * to avoid timing windows.
    *
+   * Issue #4587 (part 2): with `threadRootId`, checks that thread's agent.
+   * Without it, checks the chat-scoped agent (scheduler/loop callers) — a busy
+   * thread does NOT make the chat-scoped agent look busy.
+   *
    * @param chatId - Chat ID to check
+   * @param threadRootId - Optional thread root (topic groups only)
    * @returns true if the agent exists and is busy processing a message
    */
-  isAgentBusy(chatId: string): boolean {
-    const agent = this.agents.get(chatId);
+  isAgentBusy(chatId: string, threadRootId?: string): boolean {
+    const agent = this.agents.get(this.sessionKeyOf(chatId, threadRootId));
     return agent ? agent.isBusy : false;
   }
 
@@ -193,24 +228,39 @@ export class PrimaryAgentPool {
    * the current message's channel. This ensures responses are routed correctly
    * when multiple channels (e.g., Feishu and REST) share the same chatId.
    *
+   * Issue #4587 (part 2): a topic-group `threadRootId` selects that thread's
+   * agent — one agent per thread, so thread contexts stay isolated. The agent
+   * itself is still constructed with the plain `chatId` (boundChatId, history,
+   * callbacks all stay chat-scoped); only the pool slot is per-thread. Lazy
+   * migration: messages without a `threadRootId` use the chat-scoped slot, so
+   * pre-existing chat sessions keep their agent untouched.
+   *
    * @param chatId - Chat ID to get/create agent for
    * @param callbacks - Callbacks for the current channel (used for new agents
    *   or to update existing agents)
+   * @param threadRootId - Optional thread root; present only for topic-group
+   *   messages (part 1 pipeline). Omitted for p2p, plain groups, and
+   *   scheduler/loop system messages.
    * @returns ChatAgent instance
    */
-  getOrCreateChatAgent(chatId: string, callbacks: ChatAgentCallbacks): ChatAgent {
-    let agent = this.agents.get(chatId);
+  getOrCreateChatAgent(
+    chatId: string,
+    callbacks: ChatAgentCallbacks,
+    threadRootId?: string
+  ): ChatAgent {
+    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
+    let agent = this.agents.get(sessionKey);
     if (!agent) {
-      const skipHistory = this.skipHistoryChatIds.has(chatId);
+      const skipHistory = this.skipHistoryChatIds.has(sessionKey);
       agent = AgentFactory.createChatAgent('pilot', chatId, callbacks, {
         messageBuilderOptions: this.options.messageBuilderOptions,
         cwdProvider: this.options.cwdProvider,
         cwdResolver: this.options.cwdResolver,
         skipHistory,
       });
-      this.agents.set(chatId, agent);
+      this.agents.set(sessionKey, agent);
       // Issue #3696: clear skip-history flag after agent creation
-      this.skipHistoryChatIds.delete(chatId);
+      this.skipHistoryChatIds.delete(sessionKey);
     } else {
       // Issue #3776: Update callbacks so responses route to the correct channel.
       // Without this, REST Channel responses go to Feishu's callbacks (which
@@ -221,7 +271,7 @@ export class PrimaryAgentPool {
       agent.updateCallbacks(callbacks);
     }
     // Issue #4169: Track usage for idle eviction.
-    this.lastUsedAt.set(chatId, Date.now());
+    this.lastUsedAt.set(sessionKey, Date.now());
     // Issue #4256: Track peak concurrent agents for leak diagnostics. Each
     // agent holds a query handle + inline MCP connections (incl. stdio child
     // processes for configured external MCP servers), so the active count is
@@ -257,10 +307,16 @@ export class PrimaryAgentPool {
    *
    *   Note the inverted polarity vs `ChatAgent.reset(chatId, keepContext)`:
    *   there `true` means keep context, here `true` means skip it.
+   * @param threadRootId - Optional thread root (Issue #4587 part 2): reset only
+   *   that thread's agent instead of the chat-scoped one. `/reset` inside a
+   *   topic-group thread clears that thread's context; other threads and the
+   *   chat-scoped agent are untouched. Omitted (scheduler/control commands
+   *   today) resets the chat-scoped agent.
    */
-  reset(chatId: string, skipContext?: boolean): void {
+  reset(chatId: string, skipContext?: boolean, threadRootId?: string): void {
+    const sessionKey = this.sessionKeyOf(chatId, threadRootId);
     if (skipContext) {
-      this.skipHistoryChatIds.add(chatId);
+      this.skipHistoryChatIds.add(sessionKey);
     } else {
       // Issue #4206 (review nit): a non-skip reset means "start fresh WITH
       // history next time". Clear any stale skip-history flag left by a prior
@@ -268,14 +324,14 @@ export class PrimaryAgentPool {
       // clearContext scheduled task that failed before routing. Without this,
       // that stale flag would leak to the next unrelated message and silently
       // drop its history.
-      this.skipHistoryChatIds.delete(chatId);
+      this.skipHistoryChatIds.delete(sessionKey);
     }
-    const agent = this.agents.get(chatId);
+    const agent = this.agents.get(sessionKey);
     if (agent) {
-      this.agents.delete(chatId);
-      this.lastUsedAt.delete(chatId);
+      this.agents.delete(sessionKey);
+      this.lastUsedAt.delete(sessionKey);
       // Issue #4577: clear the busy-turn marker along with the agent.
-      this.busySince.delete(chatId);
+      this.busySince.delete(sessionKey);
       agent.dispose();
     }
   }
@@ -283,12 +339,14 @@ export class PrimaryAgentPool {
   /**
    * Stop the current query for a chatId without resetting the session.
    * Issue #1349: /stop command
+   * Issue #4587 (part 2): `threadRootId` stops that thread's agent only.
    *
    * @param chatId - Chat ID to stop
+   * @param threadRootId - Optional thread root (topic groups only)
    * @returns true if a query was stopped, false if no active query
    */
-  stop(chatId: string): boolean {
-    const agent = this.agents.get(chatId);
+  stop(chatId: string, threadRootId?: string): boolean {
+    const agent = this.agents.get(this.sessionKeyOf(chatId, threadRootId));
     if (agent) {
       return agent.stop(chatId);
     }
@@ -359,31 +417,33 @@ export class PrimaryAgentPool {
    * unbounded.
    *
    * @param now - Injectable clock for deterministic testing (defaults to Date.now()).
-   * @returns chatIds of the agents that were evicted.
+   * @returns Session keys of the agents that were evicted. Issue #4587 (part 2):
+   *   these are `buildSessionKey()` values — plain chatIds for chat-scoped
+   *   agents, `chatId::threadRoot` for topic-group thread agents.
    */
   evictIdleAgents(now: number = Date.now()): string[] {
     const timeout = this.options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     const evicted: string[] = [];
-    for (const [chatId, agent] of this.agents) {
+    for (const [sessionKey, agent] of this.agents) {
       // Never evict an agent mid-turn...
       if (agent.isBusy) {
         // ...but Issue #4577: cap how long a busy turn can run. Track when
         // this busy turn was first observed; if it exceeds the hard cap,
         // stop the query so the turn unwinds and the agent becomes
         // evictable on a later sweep.
-        this.enforceBusyTurnCap(chatId, agent, now);
+        this.enforceBusyTurnCap(sessionKey, agent, now);
         continue;
       }
       // Issue #4577: turn over — clear the busy-start marker so the next
       // busy turn starts a fresh cap window.
-      this.busySince.delete(chatId);
+      this.busySince.delete(sessionKey);
       if (timeout <= 0) { continue; }
-      const last = this.lastUsedAt.get(chatId) ?? now;
+      const last = this.lastUsedAt.get(sessionKey) ?? now;
       if (now - last >= timeout) {
-        this.agents.delete(chatId);
-        this.lastUsedAt.delete(chatId);
+        this.agents.delete(sessionKey);
+        this.lastUsedAt.delete(sessionKey);
         agent.dispose();
-        evicted.push(chatId);
+        evicted.push(sessionKey);
       }
     }
     // Issue #4256: tally evictions for the leak-diagnostics snapshot.
@@ -402,35 +462,44 @@ export class PrimaryAgentPool {
    * the `onBusyCapExceeded` hook (user notice). Notification is
    * fire-and-forget — a failing channel must not break the sweep for other
    * agents.
+   *
+   * Issue #4587 (part 2): `sessionKey` is the pool map key (`chatId`, or
+   * `chatId::threadRoot` for a topic-group thread). Everything that talks to
+   * the OUTSIDE — `agent.stop()`, the notify hook — receives the plain
+   * chatId, derived here, because the agent's boundChatId and the channel
+   * both key on chatId, never on the composite session key.
    */
   private enforceBusyTurnCap(
-    chatId: string,
+    sessionKey: string,
     agent: Pick<ChatAgent, 'isBusy' | 'stop'>,
     now: number
   ): void {
     const cap = this.options.busyTurnHardCapMs ?? DEFAULT_BUSY_TURN_HARD_CAP_MS;
     if (cap <= 0) { return; } // Cap disabled — no tracking, never stop.
-    const since = this.busySince.get(chatId);
+    const since = this.busySince.get(sessionKey);
     if (since === undefined) {
-      this.busySince.set(chatId, now);
+      this.busySince.set(sessionKey, now);
       return;
     }
     if (now - since < cap) { return; }
     const busyMin = Math.round((now - since) / 60000);
+    // Issue #4587 (part 2): strip the `::threadRoot` suffix for everything
+    // that addresses the chat (agent boundChatId guard + user notification).
+    const chatId = chatIdOfSessionKey(sessionKey);
     logger.warn(
-      { chatId, busyMinutes: busyMin, capMs: cap },
+      { chatId, sessionKey, busyMinutes: busyMin, capMs: cap },
       'Busy turn exceeded hard cap (Issue #4577) — stopping query'
     );
     agent.stop(chatId);
     // Clear the marker so the next busy turn (if any) gets a fresh window
     // rather than being re-stopped on every sweep tick.
-    this.busySince.delete(chatId);
+    this.busySince.delete(sessionKey);
     // Notify the user fire-and-forget: channel failure must not propagate
     // into the sweep loop.
     const notify = this.options.onBusyCapExceeded;
     if (notify) {
       void Promise.resolve(notify(chatId, busyMin)).catch((err) => {
-        logger.error({ err, chatId }, 'Failed to send busy-cap notification');
+        logger.error({ err, chatId, sessionKey }, 'Failed to send busy-cap notification');
       });
     }
   }

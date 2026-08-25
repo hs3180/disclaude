@@ -271,6 +271,7 @@ describe('createDefaultMessageHandler', () => {
         sendFile: expect.any(Function),
         onDone: expect.any(Function),
       }),
+      undefined, // Issue #4587 (part 2): no threadRootId → chat-scoped agent
     );
   });
 
@@ -337,6 +338,24 @@ describe('createDefaultMessageHandler', () => {
         senderOpenId: 'user-001',
         chatHistoryContext: 'Previous conversation context',
       }),
+    );
+  });
+
+  // Issue #4587 (part 2): a topic-group thread message's metadata.threadRootId
+  // selects that thread's agent on the direct (non-router) path.
+  it('should pass metadata.threadRootId to the pool for session keying (#4587 part 2)', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Test channel',
+    });
+    const message = createMockMessage({
+      metadata: { chatType: 'topic', threadRootId: 'om_root' },
+    });
+    await handler(message);
+
+    expect(context.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
+      'chat-001',
+      expect.anything(),
+      'om_root',
     );
   });
 
@@ -758,6 +777,7 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
       expect.objectContaining({
         sendMessage: expect.any(Function),
       }),
+      undefined, // Issue #4587 (part 2): no threadRootId → chat-scoped agent
     );
   });
 });
