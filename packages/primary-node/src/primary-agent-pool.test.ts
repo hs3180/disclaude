@@ -31,13 +31,17 @@ const { mockLogger } = vi.hoisted(() => ({
     child: vi.fn().mockReturnThis(),
   },
 }));
-vi.mock('@disclaude/core', () => ({
-  createLogger: () => mockLogger,
-  // Issue #4587 (part 2): the real key-derivation primitive — pure function,
-  // no dependencies, so expose it verbatim rather than re-implementing it.
-  buildSessionKey: (chatId: string, threadRootId?: string) =>
-    threadRootId ? `${chatId}::${threadRootId}` : chatId,
-}));
+vi.mock('@disclaude/core', async (importOriginal) => {
+  // Issue #4587 (part 2): buildSessionKey / chatIdOfSessionKey are pure
+  // functions with no dependencies — pull the real implementations from core
+  // instead of re-implementing them here (PR #4590 review N4), and stub only
+  // the logger.
+  const actual = await importOriginal<typeof import('@disclaude/core')>();
+  return {
+    ...actual,
+    createLogger: () => mockLogger,
+  };
+});
 
 // Track mock agent instances for assertions
 const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean }> = new Map();
