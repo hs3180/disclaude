@@ -1266,9 +1266,19 @@ export class MessageHandler {
     // Add typing reaction
     await this.addTypingReaction(message_id);
 
+    // Issue #4587 (part 3) review fix: slash-prefixed text skips the reply and
+    // history fetches below. A recognized command is consumed by the router
+    // before those results are ever read — for a file parent the quoted fetch
+    // downloads the real resource via lark-cli and the download is immediately
+    // dropped. An UNrecognized `/xxx` still falls through as a normal message
+    // (skill invocations such as /mineru-pdf rely on quoted context), so it is
+    // fetched after the router declines — matching main's dispatch-then-fetch
+    // ordering. getThreadContext stays at thread-root resolution: commands in
+    // topic groups need threadRootId to address the right agent slot.
+    const isSlashCommand = textWithoutMentions.startsWith('/');
     // Get quoted/replied message context if this is a reply
     let quotedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
-    if (parent_id) {
+    if (parent_id && !isSlashCommand) {
       quotedMessageResult = await this.getQuotedMessageContext(parent_id);
     }
 
@@ -1304,7 +1314,12 @@ export class MessageHandler {
       // Issue #4304 (part 2): topic groups never use flat chat history — it
       // mixes messages across threads. A topic message without parent_id gets
       // no injected context here, matching the file/image path.
-      chatHistoryContext = await this.getChatHistoryContext(chat_id);
+      // Issue #4587 (part 3) review fix: skipped for slash commands — a
+      // consumed command never reads it, and an unrecognized one re-fetches
+      // below after the router declines.
+      if (!isSlashCommand) {
+        chatHistoryContext = await this.getChatHistoryContext(chat_id);
+      }
     }
 
     // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
@@ -1321,6 +1336,19 @@ export class MessageHandler {
     );
     if (commandHandled) {
       return;
+    }
+
+    // Issue #4587 (part 3) review fix: the router declined — this is an
+    // unrecognized `/xxx` (e.g. a skill invocation) processed as a normal
+    // message. Fetch the context we skipped above so reply/history context
+    // behaves exactly as it did before the dispatch moved (main ordering).
+    if (isSlashCommand) {
+      if (parent_id) {
+        quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+      }
+      if (isTriggerModeMention && chat_type !== 'topic') {
+        chatHistoryContext = await this.getChatHistoryContext(chat_id);
+      }
     }
 
     // Build metadata

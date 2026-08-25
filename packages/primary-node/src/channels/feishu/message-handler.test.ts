@@ -2341,15 +2341,13 @@ describe('MessageHandler', () => {
         im: {
           message: {
             get: vi.fn()
-              // 1st call: getQuotedMessageContext(parent_id)
-              .mockResolvedValueOnce({
-                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
-              })
-              // 2nd call: getThreadContext(parent_id) — parent itself
+              // Issue #4587 part 3 review fix: the quoted-context fetch is
+              // skipped for slash commands, so the walk starts at call 1.
+              // 1st call: getThreadContext(parent_id) — parent itself
               .mockResolvedValueOnce({
                 data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
               })
-              // 3rd call: getThreadContext walks to root
+              // 2nd call: getThreadContext walks to root
               .mockResolvedValueOnce({
                 data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
               }),
@@ -2380,6 +2378,118 @@ describe('MessageHandler', () => {
       expect(cmd.type).toBe('stop');
       expect(cmd.threadRootId).toBe('msg_root');
       expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('a consumed command replying to a file message does NOT download it (Issue #4587 part 3 review fix)', async () => {
+      // The command dispatch moved after the quoted-context fetch, so a reply
+      // to a file message used to eagerly download the file (lark-cli + disk
+      // write) only for the download to be dropped when the command was
+      // consumed. The slash guard must keep the quoted fetch off the consumed
+      // path — lock it so reordering the dispatch turns this red.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // getThreadContext(parent_id) — parent itself (text, has root)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      handler.setControlHandler(true);
+      const downloadSpy = vi.spyOn(handler as any, 'handleQuotedFileMessage').mockResolvedValue(undefined);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_file_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Command consumed with the right thread slot …
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      expect(firstCallArg(mockState.emitControl).threadRootId).toBe('msg_root');
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      // … and the quoted-context fetch (the only handleQuotedFileMessage entry
+      // point on this path) never ran — no eager download for a dropped command.
+      expect(downloadSpy).not.toHaveBeenCalled();
+      // The mock parent chain above is text-only, so also prove the quoted
+      // fetch itself never started: only the two thread-walk calls happened.
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('an UNrecognized slash command replying to a message still gets quoted context (Issue #4587 part 3 review fix)', async () => {
+      // Unrecognized `/xxx` (e.g. a skill invocation like /mineru-pdf) falls
+      // through as a normal message and NEEDS the quoted reply context. The
+      // slash guard must not permanently starve it — the deferred fetch after
+      // the router declines restores main's dispatch-then-fetch ordering.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      // Control handler declines the command → router returns false.
+      mockState.emitControl.mockResolvedValue({ success: false });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // Deferred getQuotedMessageContext(parent_id) after router decline
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_skill_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/mineru-pdf parse this' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Fell through to the agent with the deferred quoted context intact.
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('First reply');
+      expect(msg.metadata.threadRootId).toBe('msg_root');
     });
 
     it('leaves commands in non-topic chats chat-scoped (Issue #4587 part 3)', async () => {
