@@ -78,7 +78,9 @@ Rules when instantiating the template:
 
 ## Create (first scheduled run)
 
-Write the instantiated XML to a file and create the doc, then persist the handle
+The create step is wired into the SKILL.md per-step behavior (step 3, when no
+`canvasUrl` exists in `RESEARCH.md` yet — Sub-E.1). Write the instantiated XML
+to a file and create the doc, then persist the handle
 and tell the user where the Canvas lives:
 
 ```bash
