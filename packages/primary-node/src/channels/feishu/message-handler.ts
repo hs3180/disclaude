@@ -1266,19 +1266,6 @@ export class MessageHandler {
     // Add typing reaction
     await this.addTypingReaction(message_id);
 
-    // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
-    const commandHandled = await tryHandleSlashCommand(
-      { textWithoutMentions, chatId: chat_id },
-      {
-        hasControlHandler: this.controlHandler,
-        emitControl: (command) => this.callbacks.emitControl(command),
-        sendMessage: (reply) => this.callbacks.sendMessage(reply),
-      },
-    );
-    if (commandHandled) {
-      return;
-    }
-
     // Get quoted/replied message context if this is a reply
     let quotedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
     if (parent_id) {
@@ -1318,6 +1305,22 @@ export class MessageHandler {
       // mixes messages across threads. A topic message without parent_id gets
       // no injected context here, matching the file/image path.
       chatHistoryContext = await this.getChatHistoryContext(chat_id);
+    }
+
+    // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
+    // Issue #4587 (part 3): resolve thread identity BEFORE dispatching, so a
+    // /reset or /stop typed inside a topic-group thread addresses that
+    // thread's agent slot rather than the chat-scoped one.
+    const commandHandled = await tryHandleSlashCommand(
+      { textWithoutMentions, chatId: chat_id, threadRootId },
+      {
+        hasControlHandler: this.controlHandler,
+        emitControl: (command) => this.callbacks.emitControl(command),
+        sendMessage: (reply) => this.callbacks.sendMessage(reply),
+      },
+    );
+    if (commandHandled) {
+      return;
     }
 
     // Build metadata

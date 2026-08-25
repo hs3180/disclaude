@@ -171,6 +171,17 @@ export interface ControlCommand<T extends ControlCommandType = ControlCommandTyp
 
   /** Target node ID for switch-node command */
   targetNodeId?: string;
+
+  /**
+   * Thread root for topic-group commands (Issue #4587 part 3).
+   *
+   * When a `/reset` or `/stop` is typed inside a topic-group thread, the
+   * command must address THAT thread's agent slot (`chatId::threadRoot`,
+   * Issue #4587 part 2) rather than the chat-scoped one. Absent for p2p,
+   * plain groups, and REST callers that don't supply it — those keep
+   * addressing the chat-scoped agent, bit-identical to today.
+   */
+  threadRootId?: string;
 }
 
 /**

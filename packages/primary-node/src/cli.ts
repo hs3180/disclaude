@@ -344,6 +344,11 @@ async function main(): Promise<void> {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
       stop: (chatId: string) => agentPool.stop(chatId),
+      // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
+      // inside a topic-group thread — the pool's part-2 slots, previously
+      // reachable only from the message path.
+      resetThread: (chatId, skipContext, threadRootId) => agentPool.reset(chatId, skipContext, threadRootId),
+      stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),

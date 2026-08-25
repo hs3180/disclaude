@@ -2298,6 +2298,103 @@ describe('MessageHandler', () => {
       expect(msg.metadata.threadRootId).toBe('msg_thread_start');
     });
 
+    it('routes a /reset typed in a topic-group thread to that thread (Issue #4587 part 3)', async () => {
+      // A /reset inside a thread must carry the thread root on the control
+      // command so it resets the chatId::threadRoot slot, not the chat-scoped
+      // agent. Thread-start form (no parent_id): message_id IS the root.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_thread',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('reset');
+      expect(cmd.threadRootId).toBe('msg_cmd_thread');
+      // The command was consumed — no message forwarded to the agent
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('routes a /stop reply inside a topic-group thread to the walked root (Issue #4587 part 3)', async () => {
+      // Reply form (parent_id set): the command's threadRootId uses the same
+      // walked-root resolution as the message path, so /stop in a reply hits
+      // the same thread slot the original question landed in.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // 2nd call: getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // 3rd call: getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/stop' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('stop');
+      expect(cmd.threadRootId).toBe('msg_root');
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('leaves commands in non-topic chats chat-scoped (Issue #4587 part 3)', async () => {
+      mockState.hasControlHandler = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive(textEvent('/reset'));
+
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('reset');
+      expect(cmd.threadRootId).toBeUndefined();
+    });
+
     it('emits threadRootId = message_id for a topic-group FILE message without parent_id (Issue #4587 part 1 review fix)', async () => {
       // Review fix: the file/image path originally had no no-parent_id branch,
       // so a thread-starting media message emitted NO threadRootId while the

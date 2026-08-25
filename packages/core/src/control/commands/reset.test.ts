@@ -45,6 +45,33 @@ describe('handleReset', () => {
     expect(context.agentPool.reset).toHaveBeenCalledWith('chat-123', true);
     expect(result.message).toContain('历史上下文已跳过');
   });
+
+  it('should reset the thread slot when threadRootId is set (Issue #4587 part 3)', async () => {
+    const context = createMockContext();
+    context.agentPool.resetThread = vi.fn();
+    const result = await handleReset(
+      { type: 'reset', chatId: 'chat-123', threadRootId: 'om_root' },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect(context.agentPool.resetThread).toHaveBeenCalledWith('chat-123', undefined, 'om_root');
+    // The chat-scoped agent must NOT be reset
+    expect(context.agentPool.reset).not.toHaveBeenCalled();
+    expect(result.message).toContain('话题');
+  });
+
+  it('should fall back to chat-scoped reset when resetThread is unavailable (Issue #4587 part 3)', async () => {
+    const context = createMockContext();
+    // context.agentPool has no resetThread — a pre-part-3 pool implementation
+    const result = await handleReset(
+      { type: 'reset', chatId: 'chat-123', threadRootId: 'om_root' },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect(context.agentPool.reset).toHaveBeenCalledWith('chat-123', undefined);
+  });
 });
 
 describe('handleRestart', () => {

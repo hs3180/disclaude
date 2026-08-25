@@ -28,6 +28,19 @@ export interface ControlHandlerContext {
     reset(chatId: string, skipContext?: boolean): void;
     /** Issue #1349: Stop current query without resetting session */
     stop(chatId: string): boolean;
+    /**
+     * Issue #4587 (part 3): thread-scoped reset. Resets the topic-group
+     * thread's agent (`chatId::threadRoot` slot) instead of the chat-scoped
+     * one. Implementations that predate part 3 may omit this — the /reset
+     * handler falls back to the chat-scoped `reset()`.
+     */
+    resetThread?(chatId: string, skipContext: boolean | undefined, threadRootId: string): void;
+    /**
+     * Issue #4587 (part 3): thread-scoped stop. Stops the topic-group
+     * thread's agent instead of the chat-scoped one. Same fallback rule
+     * as `resetThread`.
+     */
+    stopThread?(chatId: string, threadRootId: string): boolean;
   };
 
   /** 节点相关能力 */
