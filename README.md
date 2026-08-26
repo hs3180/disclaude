@@ -535,8 +535,8 @@ This architecture enables:
 
 | Symptom | Solution |
 |---------|----------|
-| `browser-use: command not found` | Install the browser-use CLI (see `skills/browser-use/README.md` → Runtime) |
-| CDP attach fails | Start the endpoint (`docker compose --profile playwright up -d`) and set `BU_CDP_URL` — see `docs/cdp-endpoint.md` |
+| `browser-use: command not found` | Rebuild the image (`docker compose up -d --build`) — the CLI is baked into `Dockerfile.primary` (#4599). On non-Docker installs, see `skills/browser-use/README.md` → Runtime |
+| CDP attach fails | Start the endpoint (`docker compose --profile playwright up -d`) — `BU_CDP_URL` defaults to it in `docker-compose.yml` — see `docs/cdp-endpoint.md` |
 | Browser errors | Check the CDP endpoint is reachable: `curl http://disclaude-playwright:9222/json/version` |
 
 ### PM2 issues
