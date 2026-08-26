@@ -178,19 +178,61 @@ case stays environment-blocked):
   `browser-use --reload` first (or set `BU_NAME` per endpoint so each gets its
   own daemon socket).
 
-### Remaining (needs a Docker-capable host)
+### nginx-fronted compose endpoint — confirmed (2026-08-27, #4496 final box)
 
-- [ ] One confirmation run through the **nginx-fronted compose endpoint**
-  (`docker compose --profile playwright up -d`, then the same matrix against
-  `http://localhost:${CDP_PORT}`), to exercise the Host-rewrite + healthcheck
-  path that a bare loopback listener does not.
+The one outstanding item — the same matrix through the **nginx-fronted compose
+endpoint** rather than a bare loopback listener — was executed from the
+disclaude **primary container itself** (a peer container on the compose Docker
+network), which exercises exactly the path the bare-listener run could not:
+
+- Endpoint: `http://disclaude-playwright:9222` — the compose default
+  (`BU_CDP_URL` as promoted into tracked `docker-compose.yml`), reached as a
+  **peer container by container DNS name**, i.e. the nginx Host-rewrite path
+  (`Server: nginx/1.24.0` on `GET /json/version`, non-IP `Host:` header
+  accepted → Chrome's DNS-rebinding check satisfied by the proxy).
+- Image: the compose default pinned by #4528 —
+  `mcr.microsoft.com/playwright:v1.62.0-noble` → Chromium **151.0.7922.34**
+  (`/json/version` "Browser" field), i.e. **identical to the Scope-6
+  smoke-tested version** — the version-delta caveat #4528 existed for does not
+  apply to the confirmed configuration.
+- Client: browser-use CLI 0.1.9 (`browser-harness` 0.1.9), same family as the
+  macOS re-run; each case used a **fresh `BU_NAME` daemon** so no case
+  inherited a prior daemon's attach target (the vacuous-pass trap recorded
+  above).
+
+| # | Case | Result | Evidence |
+|---|---|---|---|
+| 1 | Peer-container attach via compose DNS name, **no self-spawn** | ✅ | `new_tab("https://example.com")` + `js("document.title")` → `Example Domain`; `ps` in the client container shows **zero local Chrome processes** |
+| 2 | Script-injection round-trip through nginx | ✅ | `new_tab("data:…<script>window.marker=42</script>")`; `js()` → text `hello-cdp`, `{"m":42,"computed":[2,4,6]}` |
+| 3 | Screenshot round-trip through nginx | ✅ | `ensure_real_tab()` + `capture_screenshot(path=…)` → PNG (magic bytes `\x89PNG`), 15231 bytes |
+| 4 | `BU_CDP_WS` WS form resolved through the nginx front | ✅ | `/json/version` → `webSocketDebuggerUrl` (ws://…/devtools/browser/…) → attach + `document.title` → `Example Domain` — the **WS upgrade through nginx** works, not just plain HTTP |
+| 5 | Attach failure = **hard error**, no silent fallback | ✅ | `BU_CDP_URL=http://disclaude-playwright:9223` (dead port) in a fresh daemon → exit 1 after 30s: `unreachable after 30s: Connection refused` — no self-launched browser |
+| 6 | Shared-browser across independent client sessions | ✅ | A second, separate daemon session `list_tabs()` sees the first session's tabs (`cdp-confirm`, `Example Domain` ×N) — same cross-client sharing the Playwright case proved driver-side |
+
+Notes from the run:
+
+- **Case-3 detail**: `capture_screenshot` against a `data:` tab that the
+  harness considers inactive raises `Not attached to an active page`; the
+  skill's `ensure_real_tab()` activation first (per
+  `skills/browser-use/SKILL.md`) makes the same call succeed. Not a
+  contract issue — a usage prerequisite like the #4600 `mkdir` one.
+- **Nginx-front specifics confirmed**: Host rewrite (container-DNS `Host:`
+  header accepted where a direct Chrome listener would 500), HTTP→WS upgrade
+  (case 4), and plain-HTTP metadata (`/json/version`) all work through the
+  proxy — the front adds no contract-visible behavior beyond making the
+  endpoint reachable, which is exactly its design goal.
+
+With this, every environment-blocked acceptance item of #4496 has now been
+executed: the driver-side matrix (part 2) and the compose-fronted endpoint
+(this run) agree on all cases.
 
 ## Acceptance status
 
 - [x] Scope-5 reuse decision — recorded above (part 1, #4506)
 - [x] Scope-2/3/4 contract + policy docs — this page (part 1, #4506)
 - [x] Scope-6 smoke acceptance — driver-side matrix above (part 2; nginx-front
-  confirmation pending a Docker host)
+  confirmation run executed 2026-08-27, see the compose-endpoint section
+  above — all 6 cases ✅)
 - [x] Optional: Playwright attaching to the same endpoint as a second driver
   (case 6 — cross-driver reuse confirmed, config-only as designed)
 - [x] README records the endpoint: driver/skill attach URLs (①), skill CDP
