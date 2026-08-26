@@ -281,9 +281,11 @@ The Playwright MCP server is **removed** (#4460). Browser automation goes throug
 
 Pulling Chromium on a headless host is fragile (missing shared libs,
 sandbox/seccomp friction). The supported path is an **external CDP endpoint** —
-the containerized `playwright` compose service that any browser driver
-(browser-use CLI / Skill, Playwright library) attaches to over
-[CDP](https://chromedevtools.org/docs/chrome-devtools-protocol/). Full contract:
+the containerized Chromium compose service (service name `playwright`; Chromium
+ships via the official Playwright image, #4604) that any browser driver attaches
+to over [CDP](https://chromedevtools.org/docs/chrome-devtools-protocol/). The
+primary consumer is the **browser-use Skill**; other CDP drivers (e.g. the
+Playwright library) may also attach — full contract:
 [`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) (#4496).
 
 **① Point drivers/skills at the endpoint:**
