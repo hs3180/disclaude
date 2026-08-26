@@ -198,6 +198,105 @@ printf '%s\n' \
 check_rc $? 1 "tier 3: SDK log with only transient 429 NOT detected"
 
 # =============================================================================
+# #4595: warm-up phase must consult the quota detector
+# =============================================================================
+# #4595's run burned the whole warm-up retry chain (10+20+40s) against a GLM
+# code-1308 5-hour usage cap and aborted with "API appears unreachable" —
+# the 1308 signature sat in the SDK debug log the entire time, but
+# warmup_agent() never looked (only run_suite did, via #4552). Source-level
+# test, same convention as the #4584 harness below: extract the REAL
+# warmup_agent body from run-all-tests.sh, stub its collaborators, and
+# drive it against #4595's exact scenario — ping fails, SDK debug log
+# carries 1308.
+H4595="$TMPDIR_FIX/warmup-harness"
+# Extract the function verbatim: from its comment-block end (`warmup_agent() {`)
+# through its closing brace (the first `^}` after the start marker).
+awk '/^warmup_agent\(\) \{/{f=1} f{print} f && /^}/{exit}' \
+  "$SCRIPT_DIR/run-all-tests.sh" > "$H4595"
+# Sanity: extraction actually got the function (guards against a rename in
+# run-all-tests.sh silently turning this test into a no-op pass).
+grep -q 'detect_quota_exhaustion' "$H4595" || { echo "FAIL: extracted warmup_agent lost the #4595 quota check (extraction stale?)"; fail=$((fail + 1)); }
+
+# Scenario fixture — #4595's actual evidence shape: warm-up ping gets no
+# response; the server log points at an SDK debug log carrying the 1308
+# account-cap signature.
+S4595="$TMPDIR_FIX/warmup-scratch"
+mkdir -p "$S4595"
+SDK4595="$S4595/sdk-debug.txt"
+printf '%s\n' \
+  '2026-08-25T07:40:27Z [ERROR] API error (attempt 1/11): 429 {"error":{"type":"rate_limit_error","code":1308,"message":"[1308][已达到 5 小时的使用上限。您的限额将在 2026-08-25 17:50:06 重置。]"}}' \
+  > "$SDK4595"
+printf 'SDK debug logs: %s\n' "$SDK4595" > "$S4595/server.log"
+
+# Harness prelude: source common.sh for the log_*/parse_response helpers and
+# REAL detect_quota_exhaustion; stub the warm-up's collaborators. sleep is
+# stubbed to COUNT instead of delay — the quota path must return before any
+# retry sleep, so SLEPT>0 would mean the fail-fast didn't fire.
+W4595_PRE="$TMPDIR_FIX/warmup-pre"
+{
+  echo '#!/bin/bash'
+  echo 'SCRIPT_DIR="'"$SCRIPT_DIR"'"'
+  echo 'source "$SCRIPT_DIR/common.sh" >/dev/null 2>&1'
+  echo 'SERVER_LOG="'"$S4595/server.log"'"'
+  echo 'RESPONSE_STATUS=""'
+  echo 'QUOTA_EXHAUSTED=false'
+  echo 'SLEPT=0; sleep() { SLEPT=$((SLEPT + $1)); }'
+  echo 'make_sync_request() { echo "curl: (7) Failed to connect"; return 1; }'
+  echo 'parse_response() { RESPONSE_STATUS="000"; }'
+  echo 'check_server_health_detailed() { :; }'
+  echo 'is_server_running() { return 0; }'
+  echo 'show_server_logs() { tail -5 "$SERVER_LOG"; }'
+  cat "$H4595"
+  echo 'warmup_agent'
+} > "$W4595_PRE"
+
+# Quota-exhausted warm-up: fails fast on attempt 1 — no sleeps, sets the
+# flag, prints the environmental diagnosis (not "unreachable").
+W4595_OUT="$( cd "$S4595" && bash "$W4595_PRE" < /dev/null 2>&1; echo "rc=$?" )"
+W4595_RC="${W4595_OUT##*rc=}"
+W4595_PLAIN="$(printf '%s' "$W4595_OUT" | sed 's/\x1b\[[0-9;]*m//g')"
+
+check_rc "$W4595_RC" 1 "#4595: quota-exhausted warm-up fails (rc=1)"
+printf '%s' "$W4595_PLAIN" | grep -qF 'account-level quota exhausted'
+check_rc $? 0 "#4595: diagnosis names quota exhaustion"
+# Flag/sleep assertions: rerun the same prelude with a different epilogue
+# that invokes the function quietly and echoes the stub counters after it
+# returns. (The first harness run's `bash` and the script's own trap share
+# nothing, but the SDK fixture is re-written first: the control scenario
+# below overwrites it later in this file.)
+printf '%s\n' \
+  '2026-08-25T07:40:27Z [ERROR] API error (attempt 1/11): 429 {"error":{"type":"rate_limit_error","code":1308,"message":"[1308][已达到 5 小时的使用上限。您的限额将在 2026-08-25 17:50:06 重置。]"}}' \
+  > "$SDK4595"
+W4595_EPILOGUE="$TMPDIR_FIX/warmup-epilogue"
+{
+  # Reuse the prelude minus its trailing `warmup_agent` call line.
+  sed '$d' "$W4595_PRE"
+  echo 'warmup_agent >/dev/null 2>&1; echo "slept=$SLEPT quota=$QUOTA_EXHAUSTED"'
+} > "$W4595_EPILOGUE"
+W4595_META="$( cd "$S4595" && bash "$W4595_EPILOGUE" < /dev/null 2>&1 | tail -1 )"
+printf '%s' "$W4595_META" | grep -qF 'slept=0'
+check_rc $? 0 "#4595: no retry sleeps before the quota fail-fast"
+printf '%s' "$W4595_META" | grep -qF 'quota=true'
+check_rc $? 0 "#4595: QUOTA_EXHAUSTED flag set (later suites single-attempt)"
+printf '%s' "$W4595_PLAIN" | grep -q 'retrying in'
+check_rc $? 1 "#4595: no futile retry-warn lines on the quota path"
+
+# Counter-scenario: SDK log WITHOUT the quota signature (plain transient
+# 429 / unreachable) — the warm-up must keep its ORIGINAL retry-then-generic
+# -diagnosis behavior, i.e. the quota check must not swallow it.
+printf '%s\n' \
+  '2026-08-25T07:40:27Z [ERROR] API error (attempt 1/11): 429 Too Many Requests (per-minute)' \
+  > "$SDK4595"
+W4595_OUT2="$( cd "$S4595" && bash "$W4595_PRE" < /dev/null 2>&1; echo "rc=$?" )"
+W4595_RC2="${W4595_OUT2##*rc=}"
+W4595_PLAIN2="$(printf '%s' "$W4595_OUT2" | sed 's/\x1b\[[0-9;]*m//g')"
+check_rc "$W4595_RC2" 1 "#4595 (control): non-quota unreachable warm-up still fails"
+printf '%s' "$W4595_PLAIN2" | grep -qF 'account-level quota exhausted'
+check_rc $? 1 "#4595 (control): no quota diagnosis without the 1308 signature"
+printf '%s' "$W4595_PLAIN2" | grep -qF 'This usually means the AI API endpoint is unreachable'
+check_rc $? 0 "#4595 (control): original unreachable diagnosis preserved"
+
+# =============================================================================
 # #4584: run-all-tests.sh summary must NAME the failed suites
 # =============================================================================
 # The runner's summary previously printed only "$failed test suite(s) failed";
