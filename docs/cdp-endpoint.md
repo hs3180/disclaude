@@ -138,6 +138,13 @@ Versions under test: `browser-use` CLI 0.13.7 (`browser-harness` 0.1.8),
 Playwright-bundled Chromium 151.0.7922.34 (playwright pin `chromium-1234`),
 Playwright (Python) 1.62.0.
 
+> 🔁 **The matrix is scriptable** — `scripts/browser-use-smoke.sh` (#4602)
+> encodes the driver-side cases below as one repeatable command (including the
+> daemon-pin `--reload` dance from the 2026-08-25 note):
+> `SMOKE_CDP_URL=http://localhost:${CDP_PORT:-9222} ./scripts/browser-use-smoke.sh`.
+> The hand-run evidence table stays as the original acceptance record; prefer
+> the script for regression re-checks (image rebuilds, playwright upgrades).
+
 | # | Case | Result | Evidence |
 |---|---|---|---|
 | 1 | `BU_CDP_URL=http://127.0.0.1:<port>` → browser-use attaches, **no self-spawn** | ✅ | `ps` shows exactly the one pre-started Chromium process tree; `BROWSER_KIND="cdp"` (`browser_harness/daemon.py:90`); `new_tab("https://example.com")` + `js("document.title")` → `Example Domain` |
