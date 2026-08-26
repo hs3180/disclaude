@@ -94,6 +94,14 @@ PY
 
 Then report the artifact path in your reply (or send it to the chat via the channel skill).
 
+> ⚠️ **The `mkdir` line above is a hard prerequisite, not optional tidiness.** `capture_screenshot`
+> does **not** create the parent directory. If `path=` points into a directory that doesn't exist,
+> the call does **not** fail with `FileNotFoundError` — it **hangs until the IPC timeout** and the
+> resulting `TimeoutError` stack trace points at `browser_harness/_ipc.py`, with nothing indicating
+> the real cause (observed on browser-use 0.13.8 / browser-harness 0.1.9, attach mode; #4600).
+> Always `mkdir(parents=True, exist_ok=True)` before writing to any non-existing path. The same
+> applies to any other helper that writes to a caller-supplied path.
+
 > ℹ️ `capture_screenshot(path=None, full=False, max_dim=None)` is defined in the `browser-harness`
 > dependency (`helpers.py`). It writes the PNG to `path` (default a temp file) and **returns the
 > path string** — verified from source. Pass `path=` to write straight to your workspace; do **not**
