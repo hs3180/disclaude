@@ -149,9 +149,16 @@ services:
       start_period: 40s
 
   # ===========================================================================
-  # Playwright Browser (optional)
+  # CDP Chromium endpoint (optional)
   # ===========================================================================
-  # Headless Chromium with CDP for browser automation.
+  # Headless Chromium exposing a CDP endpoint for browser automation. Its primary
+  # consumer is the browser-use Skill (#4460); any CDP driver may attach (see
+  # docs/cdp-endpoint.md, #4496). Chromium ships via the official Playwright
+  # image — the name is the distribution channel, not a tooling statement.
+  # NOTE (#4604): the service/container/profile identifiers below still read
+  # `playwright`; renaming them is a breaking change (container DNS name →
+  # BU_CDP_URL default, deployed overrides) pending an owner decision. Only the
+  # narrative says browser-use / Chromium.
   # Start with: docker compose --profile playwright up -d
   #
   # The CDP endpoint is available at http://disclaude-playwright:${CDP_PORT:-9222}
@@ -172,15 +179,18 @@ services:
   # nginx cannot bind 0.0.0.0:$CDP_PORT — it would collide with Chrome's 127.0.0.1
   # listener on the same port). See docker/playwright-cdp-nginx.conf for the full rationale.
   #
-  # Consumed by the browser-use skill (the Playwright MCP server is removed, #4460 —
-  # browser-use is the only browser surface): attach via BU_CDP_URL=http://disclaude-playwright:9222
-  # (external tools.mcpServers config was removed in #4459 Scope 4)
-  #   chromium.connectOverCDP("http://disclaude-playwright:9222")   # Playwright library
+  # Consumed by the browser-use skill — the primary driver (the Playwright MCP
+  # server is removed, #4460; browser-use is the only browser surface): attach
+  # via BU_CDP_URL=http://disclaude-playwright:9222 (external tools.mcpServers
+  # config was removed in #4459 Scope 4). Other CDP drivers may attach too:
+  #   chromium.connectOverCDP("http://disclaude-playwright:9222")   # Playwright library (external driver, "may also" tier)
   # Contract: docs/cdp-endpoint.md (#4496)
   playwright:
-    # Pinned to the version the #4496 Scope-6 smoke matrix was executed against
-    # (Playwright 1.62.0 / chromium-1234 / Chromium 151.0.7922.34) so compose-fronted
-    # runs match the driver-side matrix. Override via PLAYWRIGHT_IMAGE_TAG if needed (#4528).
+    # Chromium distributed via the official Playwright image (mcr.microsoft.com/playwright);
+    # the tag names the image, not the driver. Pinned to the version the #4496 Scope-6
+    # smoke matrix was executed against (Playwright 1.62.0 / chromium-1234 /
+    # Chromium 151.0.7922.34) so compose-fronted runs match the driver-side matrix.
+    # Override via PLAYWRIGHT_IMAGE_TAG if needed (#4528).
     image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.62.0-noble}
     container_name: disclaude-playwright
     restart: unless-stopped
