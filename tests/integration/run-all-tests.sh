@@ -286,6 +286,14 @@ check_server_health_detailed() {
 # Issue #3777: Added retry with exponential backoff and fail-fast behavior.
 # When the API is unreachable (HTTP 000 on all retries), the test suite
 # fails immediately instead of letting every test time out individually.
+# Issue #4595: a failed warm-up attempt now consults the #4552 quota-
+# exhaustion detector before retrying. #4595 burned the whole 4-attempt
+# chain (10+20+40s sleeps) against a GLM code-1308 5-hour usage cap — the
+# signature sat in the SDK debug log the entire time, but the warm-up path
+# never looked, then aborted with the misleading "API appears unreachable".
+# A quota-exhausted warm-up now fails fast on attempt 1 with the
+# environmental diagnosis. Only reached on a FAILED attempt — the success
+# path is bit-identical to before.
 # Returns: 0 on success, 1 on failure (fatal — test suite aborts)
 warmup_agent() {
     local max_retries="${WARMUP_MAX_RETRIES:-3}"
@@ -310,6 +318,24 @@ warmup_agent() {
             # Record baseline exit listener count after warm-up
             check_server_health_detailed
             return 0
+        fi
+
+        # Issue #4595: failed attempt — before sleeping/retrying (and before
+        # the generic unreachable diagnosis), check whether the failure is
+        # account-level quota exhaustion. The quota resets hours later
+        # (#4552), so the remaining warm-up attempts AND every later suite
+        # are pre-doomed; retrying only burns wall clock. Mirror run_suite:
+        # set QUOTA_EXHAUSTED so any later suite single-attempts.
+        # Tier 1 has no warm-up output file yet (""), so detection rides on
+        # the server log / SDK debug log tiers — exactly where #4595's
+        # evidence lived.
+        if detect_quota_exhaustion "" "" ""; then
+            log_error "Agent warm-up failed: account-level quota exhausted (rate-limit code 1308 / usage cap, Issue #4595)"
+            log_error "This is environmental, not a code failure — the quota window resets hours later; retries cannot succeed."
+            log_error "Re-run the full suite after the quota resets (see the reset time in the SDK log below)."
+            show_server_logs
+            QUOTA_EXHAUSTED=true
+            return 1
         fi
 
         # Attempt failed
@@ -407,8 +433,15 @@ main() {
 
     # Issue #3378: Warm up agent before first AI test to prevent cold-start issues
     # Issue #3777: Fail fast if API is unreachable instead of letting tests time out
+    # Issue #4595: when warmup_agent flagged quota exhaustion, the abort line
+    # must NOT say "API appears unreachable" — that misdiagnosis is what the
+    # #4595 report had to manually root-cause against the SDK debug log.
     warmup_agent || {
-        log_error "Agent warm-up failed — API appears unreachable. Aborting tests."
+        if [ "$QUOTA_EXHAUSTED" = true ]; then
+            log_error "Agent warm-up failed — account-level quota exhausted (environmental, Issue #4595). Aborting tests; re-run after the quota resets."
+        else
+            log_error "Agent warm-up failed — API appears unreachable. Aborting tests."
+        fi
         cleanup
         exit 1
     }
