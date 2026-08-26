@@ -165,6 +165,41 @@ describe('send_file', () => {
     });
   });
 
+  describe('progress reporting (#4568)', () => {
+    it('reports the file size once before the upload starts', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'file_key_123', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048000,
+      });
+      const onProgress = vi.fn();
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', onProgress });
+
+      expect(result.success).toBe(true);
+      expect(onProgress).toHaveBeenCalledTimes(1);
+      // stat is mocked to 1 MB — the pre-upload report carries name + size
+      expect(onProgress).toHaveBeenCalledWith({
+        message: 'Uploading doc.pdf (1.00 MB)…',
+      });
+    });
+
+    it('does not report progress when IPC is unavailable', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const onProgress = vi.fn();
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', onProgress });
+
+      expect(result.success).toBe(false);
+      expect(onProgress).not.toHaveBeenCalled();
+    });
+
+    it('behaves identically without a callback (back-compat, Claude backend)', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'file_key_123', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048000,
+      });
+      // No onProgress arg — must not throw.
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe('IPC failure', () => {
     it('should return error when IPC upload fails', async () => {
       mockIpcClient.uploadFile.mockResolvedValue({ success: false });

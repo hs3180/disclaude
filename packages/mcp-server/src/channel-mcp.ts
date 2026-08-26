@@ -14,6 +14,7 @@ import {
   createLogger,
   withTiming,
   type SdkInlineToolDefinition,
+  type ToolProgressCallback,
 } from '@disclaude/core';
 import {
   send_text,
@@ -358,15 +359,18 @@ When building tables with \`column_set\`, follow these rules:
         .optional()
         .describe('Optional parent message ID for thread reply'),
     }),
-    handler: async ({
-      card,
-      chatId,
-      parentMessageId,
-    }: {
-      card: Record<string, unknown>;
-      chatId: string;
-      parentMessageId?: string;
-    }) =>
+    handler: async (
+      {
+        card,
+        chatId,
+        parentMessageId,
+      }: {
+        card: Record<string, unknown>;
+        chatId: string;
+        parentMessageId?: string;
+      },
+      onProgress?: ToolProgressCallback
+    ) =>
       await withTiming(timingLogger, 'mcp:send_card', chatId, async () => {
         // Issue #1355: Pre-validation to prevent message sending on invalid params
         // Validate card type
@@ -391,8 +395,10 @@ When building tables with \`column_set\`, follow these rules:
           // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
           let processedCard = transformCardTables(card);
 
-          // Issue #2951: Auto-upload local image paths and replace with Feishu image_keys
-          const imageResult = await resolveCardImages(processedCard);
+          // Issue #2951: Auto-upload local image paths and replace with Feishu image_keys.
+          // Issue #4568: forward the progress callback — each settled upload
+          // reports done/total, keeping the silent upload window observable.
+          const imageResult = await resolveCardImages(processedCard, onProgress);
           processedCard = imageResult.card;
 
           const result = await send_card({ card: processedCard, chatId, parentMessageId });
@@ -554,15 +560,18 @@ For display-only cards, use send_card instead.
       chatId: z.string(),
       parentMessageId: z.string().optional(),
     }),
-    handler: async ({
-      filePath,
-      chatId,
-      parentMessageId,
-    }: {
-      filePath: string;
-      chatId: string;
-      parentMessageId?: string;
-    }) =>
+    handler: async (
+      {
+        filePath,
+        chatId,
+        parentMessageId,
+      }: {
+        filePath: string;
+        chatId: string;
+        parentMessageId?: string;
+      },
+      onProgress?: ToolProgressCallback
+    ) =>
       await withTiming(timingLogger, 'mcp:send_file', chatId, async () => {
         // Issue #1641 P1: Validate chatId format before IPC call
         const chatIdError = getChatIdValidationError(chatId);
@@ -571,7 +580,9 @@ For display-only cards, use send_card instead.
         }
 
         try {
-          const result = await send_file({ filePath, chatId, parentMessageId });
+          // Issue #4568: forward the progress callback — send_file reports the
+          // file size right before the (single, long-silent) REST upload.
+          const result = await send_file({ filePath, chatId, parentMessageId, onProgress });
           return result.success ? toolSuccess(result.message) : toolError(result.message);
         } catch (error) {
           return toolError(
