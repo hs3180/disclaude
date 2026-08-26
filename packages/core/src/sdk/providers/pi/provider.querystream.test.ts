@@ -344,7 +344,7 @@ describe('PiAgentProvider.queryStream (Issue #4386, part 3)', () => {
         provider.queryStream(inputs(userInput('hi')), {
           ...baseOptions(),
           mcpServers: {
-            playwright: { type: 'stdio', name: 'playwright', command: 'npx', args: ['-y', 'some-mcp-server'] },
+            'dummy-server': { type: 'stdio', name: 'dummy-server', command: 'npx', args: ['-y', 'some-mcp-server'] },
             'channel-mcp': { type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: [makeTool('send')] },
           },
         }).iterator,
