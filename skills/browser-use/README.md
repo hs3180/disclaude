@@ -54,7 +54,7 @@ Legacy pre-3.0 subcommands (`open`, `state`, `screenshot`, `eval`, `-c`, `--sess
 | `navigate` | `new_tab(url)` / `goto_url(url)` | **first nav in a session must be `new_tab`**; `goto_url` re-navigates an already-open tab |
 | `click` | `click_at_xy(x, y)` | coordinate-based; derive coords from `page_info()` |
 | `type` | `type_text(text)` / `fill_input(selector, text)` | |
-| `screenshot` | `capture_screenshot(path=...)` | writes PNG to `path`, returns the path string (not bytes; source-verified) |
+| `screenshot` | `capture_screenshot(path=...)` | writes PNG to `path`, returns the path string (not bytes; source-verified). ⚠️ does **not** create the parent dir — a missing parent **hangs to IPC timeout** instead of erroring; `mkdir` first (#4600) |
 | accessibility snapshot | `print(page_info())` | page state incl. clickable elements |
 | extract content | `js(code)` + `print()` / `json.dumps` | |
 | **script injection / eval** (new, first-class) | `js(code)`, `cdp(method, ...)` | owner's core requirement — the reason for the direction change |
