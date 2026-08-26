@@ -85,6 +85,12 @@ services:
       # NVIDIA_VISIBLE_DEVICES=0.
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      # Issue #4599 (part 1): BU_CDP_URL promoted into the tracked compose file
+      # so the browser-use skill works without an untracked override. Default
+      # points at the optional playwright compose service (#4496). Deliberately
+      # `${BU_CDP_URL-…}` (no colon): set BU_CDP_URL= (empty) in .env to pass an
+      # empty value through — browser-use treats empty as unset and self-launches.
+      - BU_CDP_URL=${BU_CDP_URL-http://disclaude-playwright:${CDP_PORT:-9222}}
 
     # Issue #4114: OOM protection — set host-side via the `oom_score_adj` field.
     # cgroup v2 forbids writing a negative /proc/self/oom_score_adj from inside the
