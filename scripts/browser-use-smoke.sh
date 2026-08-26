@@ -93,9 +93,26 @@ chrome_process_count() {
 }
 
 # ── Case 0: preflight ───────────────────────────────────────────────────────
+usage() {
+    cat <<'EOF'
+Usage: SMOKE_CDP_URL=<cdp-url> [SMOKE_OUT_DIR=<dir>] ./scripts/browser-use-smoke.sh
+
+Environment:
+  SMOKE_CDP_URL    CDP endpoint to attach to (required — e.g.
+                   http://disclaude-playwright:9222 inside the compose
+                   network, http://localhost:9222 from the host)
+  SMOKE_OUT_DIR    screenshot artifact dir (default: ./browser-use-smoke)
+
+Prerequisites: browser-use >= 0.13.7, curl, timeout, and a running CDP
+endpoint (docker compose --profile playwright up -d brings one up).
+EOF
+}
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
 if [ -z "$SMOKE_CDP_URL" ]; then
-    echo "Error: SMOKE_CDP_URL is required (e.g. SMOKE_CDP_URL=http://localhost:9220)" >&2
-    echo "Run with --help for usage information." >&2
+    echo "Error: SMOKE_CDP_URL is required (e.g. SMOKE_CDP_URL=http://localhost:9222)" >&2
+    usage >&2
     exit 2
 fi
 if ! command -v browser-use >/dev/null 2>&1; then
@@ -117,11 +134,11 @@ fi
 # ── Case 2: attach + js() title round-trip (data: URL — no network needed) ─
 CHROME_BEFORE=$(chrome_process_count)
 out=$(run_bu "$SMOKE_CDP_URL" 'new_tab("data:text/html,<title>bu-smoke</title><h1>hello-cdp</h1>")
-print("TITLE=" + str(js("document.title")))') || true
+print("TITLE=" + str(js("document.title")))') ; rc=$?
 if [ -n "$out" ]; then
     assert_contains "case 2: BU_CDP_URL attach — new_tab + js() title round-trip" "TITLE=bu-smoke" "$out"
 else
-    log_fail "case 2: BU_CDP_URL attach — browser-use produced no output (exit $?)"
+    log_fail "case 2: BU_CDP_URL attach — browser-use produced no output (exit $rc)"
 fi
 
 # ── Case 2b: no self-spawned Chrome ─────────────────────────────────────────
