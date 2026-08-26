@@ -493,9 +493,9 @@ export class PiAgentProvider implements IAgentSDKProvider {
       // collectInlineTools duck-types this handle shape (see below).
       //
       // Part-1 scope: inline handle construction + stdio decision. Deferred to
-      // later parts of #4417: external stdio MCP servers (e.g. Playwright MCP),
-      // which need the @modelcontextprotocol/sdk client → AgentHarnessTool
-      // converter (S4b).
+      // later parts of #4417: external stdio MCP servers (e.g. a user-configured
+      // `context7` server), which need the @modelcontextprotocol/sdk client →
+      // AgentHarnessTool converter (S4b).
       const tools = (config.tools?.map((tool) => this.createInlineTool(tool)) ?? []);
       return {
         name: config.name,
@@ -504,9 +504,9 @@ export class PiAgentProvider implements IAgentSDKProvider {
       };
     }
 
-    // stdio MCP servers are not supported by the pi backend, matching
-    // ClaudeSDKProvider's stance. External stdio servers require the
-    // @modelcontextprotocol/sdk client converter tracked under #4417 (S4b).
+    // stdio MCP servers are not supported by the pi backend (decision
+    // 2026-08-07: pi does not support MCP; tools go through Skills / inline
+    // tools only). External stdio servers are a config error.
     throw new Error(
       'stdio MCP servers are not supported by PiAgentProvider.createMcpServer',
     );

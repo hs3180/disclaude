@@ -114,6 +114,6 @@ lark-cli docs +update --doc "$DOC_ID" \
 ## DO NOT
 
 - **不要** 用绝对路径作 `--file` 参数
-- **不要** 用 Playwright/curl 访问飞书文档链接 — 用 `docs +fetch --as bot`
+- **不要** 用 browser-use/curl 访问飞书文档链接 — 用 `docs +fetch --as bot`（Playwright MCP 已退役 #4460，浏览器面是 browser-use skill）
 - **不要** 在 MD 中用 `![alt](local_path)` 直接导入期望图片出现 — 会变空白占位符，必须先替换为文本标记再插入
 - **不要** 跳过 `delete_range` 删除标记 — 标记文本会残留在文档中
