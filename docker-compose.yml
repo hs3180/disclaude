@@ -49,7 +49,7 @@ services:
     command: ["node", "packages/primary-node/dist/cli.js", "start"]
 
     # Uses bridge network (disclaude-net) for container-to-container communication
-    # (e.g., CDP endpoint from playwright service). Re-add `network_mode: host`
+    # (e.g., CDP endpoint from chromium service). Re-add `network_mode: host`
     # if primary needs to access other host-local services.
     networks:
       - disclaude-net
@@ -87,10 +87,10 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       # Issue #4599 (part 1): BU_CDP_URL promoted into the tracked compose file
       # so the browser-use skill works without an untracked override. Default
-      # points at the optional playwright compose service (#4496). Deliberately
+      # points at the optional chromium compose service (#4496). Deliberately
       # `${BU_CDP_URL-…}` (no colon): set BU_CDP_URL= (empty) in .env to pass an
       # empty value through — browser-use treats empty as unset and self-launches.
-      - BU_CDP_URL=${BU_CDP_URL-http://disclaude-playwright:${CDP_PORT:-9222}}
+      - BU_CDP_URL=${BU_CDP_URL-http://disclaude-chromium:${CDP_PORT:-9222}}
 
     # Issue #4114: OOM protection — set host-side via the `oom_score_adj` field.
     # cgroup v2 forbids writing a negative /proc/self/oom_score_adj from inside the
@@ -149,12 +149,12 @@ services:
       start_period: 40s
 
   # ===========================================================================
-  # Playwright Browser (optional)
+  # Chromium Browser (optional)
   # ===========================================================================
   # Headless Chromium with CDP for browser automation.
-  # Start with: docker compose --profile playwright up -d
+  # Start with: docker compose --profile chromium up -d
   #
-  # The CDP endpoint is available at http://disclaude-playwright:${CDP_PORT:-9222}
+  # The CDP endpoint is available at http://disclaude-chromium:${CDP_PORT:-9222}
   # within the Docker network (internal only, not exposed to host).
   #
   # IMPORTANT — why an nginx reverse proxy fronts Chrome's CDP listener:
@@ -170,19 +170,21 @@ services:
   # bridge-network IP (so Chrome embeds a reachable IP into the webSocketDebuggerUrl),
   # and upgrades HTTP->WebSocket for the CDP socket. The two ports MUST differ (otherwise
   # nginx cannot bind 0.0.0.0:$CDP_PORT — it would collide with Chrome's 127.0.0.1
-  # listener on the same port). See docker/playwright-cdp-nginx.conf for the full rationale.
+  # listener on the same port). See docker/chromium-cdp-nginx.conf for the full rationale.
   #
   # Consumed by the browser-use skill (the Playwright MCP server is removed, #4460 —
-  # browser-use is the only browser surface): attach via BU_CDP_URL=http://disclaude-playwright:9222
+  # browser-use is the only browser surface): attach via BU_CDP_URL=http://disclaude-chromium:9222
   # (external tools.mcpServers config was removed in #4459 Scope 4)
-  #   chromium.connectOverCDP("http://disclaude-playwright:9222")   # Playwright library
+  #   chromium.connectOverCDP("http://disclaude-chromium:9222")   # Playwright library
   # Contract: docs/cdp-endpoint.md (#4496)
-  playwright:
+  chromium:
     # Pinned to the version the #4496 Scope-6 smoke matrix was executed against
     # (Playwright 1.62.0 / chromium-1234 / Chromium 151.0.7922.34) so compose-fronted
-    # runs match the driver-side matrix. Override via PLAYWRIGHT_IMAGE_TAG if needed (#4528).
-    image: mcr.microsoft.com/playwright:${PLAYWRIGHT_IMAGE_TAG:-v1.62.0-noble}
-    container_name: disclaude-playwright
+    # runs match the driver-side matrix. Override via CHROMIUM_IMAGE_TAG if needed (#4528).
+    # The image stays on mcr.microsoft.com/playwright — it is only a distribution
+    # channel for Chromium; the service/profile/ENV names describe what it runs (#4613).
+    image: mcr.microsoft.com/playwright:${CHROMIUM_IMAGE_TAG:-v1.62.0-noble}
+    container_name: disclaude-chromium
     restart: unless-stopped
 
     entrypoint: ["/bin/sh", "-c"]
@@ -212,7 +214,7 @@ services:
         # sees it as $remote_addr == gateway. The nginx map uses this to detect
         # host-originated requests and embed 127.0.0.1 into their webSocketDebuggerUrl
         # (instead of CDP_HOST), so the host MCP connects back over loopback. See
-        # docker/playwright-cdp-nginx.conf header comment.
+        # docker/chromium-cdp-nginx.conf header comment.
         GATEWAY=$$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
         if [ -z "$$GATEWAY" ]; then
           GATEWAY=$$(route -n 2>/dev/null | awk '$$1=="0.0.0.0"{print $$2; exit}')
@@ -222,7 +224,7 @@ services:
           exit 1
         fi
         # Substitute the placeholders in the mounted nginx config (see
-        # docker/playwright-cdp-nginx.conf), then start nginx. nginx cannot read env
+        # docker/chromium-cdp-nginx.conf), then start nginx. nginx cannot read env
         # vars for `map`/`listen`/`proxy_pass`/headers at runtime, so we template
         # them here.
         sed "s/__CDP_HOST__/$$CDP_HOST/g; s/__GATEWAY__/$$GATEWAY/g; s/__CDP_PORT__/$$CDP_PORT/g; s/__CDP_INTERNAL_PORT__/$$CDP_INTERNAL_PORT/g" \
@@ -270,8 +272,8 @@ services:
 
     volumes:
       # nginx reverse-proxy config (templated with port placeholders). See the
-      # header comment above and docker/playwright-cdp-nginx.conf for why it's needed.
-      - ./docker/playwright-cdp-nginx.conf:/etc/nginx/cdp-proxy.conf.template:ro
+      # header comment above and docker/chromium-cdp-nginx.conf for why it's needed.
+      - ./docker/chromium-cdp-nginx.conf:/etc/nginx/cdp-proxy.conf.template:ro
 
     environment:
       # External port other containers connect to (nginx listens here).
@@ -308,7 +310,7 @@ services:
       start_period: 10s
 
     profiles:
-      - playwright
+      - chromium
 
   # ===========================================================================
   # Filebeat Log Forwarder (optional)
