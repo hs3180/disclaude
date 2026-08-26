@@ -372,7 +372,7 @@ Tools are configured via `buildDisallowedTools()` (`packages/primary-node/src/ag
 
 To change the list, modify `BASE_DISALLOWED_TOOLS` / `BUILTIN_CRON_TOOLS` in `disallowed-tools.ts`.
 
-### 6. Installing System Packages (Container)
+### 5. Installing System Packages (Container)
 
 Inside Docker the agent runs as the non-root `disclaude` user (uid 1001). It has **passwordless sudo** (restricted to `apk` only), so install Alpine packages on demand:
 
