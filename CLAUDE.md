@@ -6,13 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # === Development ===
-npx tsx watch          # Start with auto-reload
+npm run build          # Build all packages to dist/ (tsc -b) — do this first
+npx tsx watch packages/primary-node/src/cli.ts start  # Run Primary Node with auto-reload
 npx tsc -b             # Build to dist/
-npx tsc --noEmit        # TypeScript type checking
-npx eslint .            # ESLint
-npx eslint . --fix      # ESLint with auto-fix
-npx vitest run          # Run tests
-npx vitest run --coverage # Run tests with coverage
+npm run type-check     # TypeScript type checking (tsc -b && tsc --noEmit)
+npm run lint           # ESLint
+npm run lint:fix       # ESLint with auto-fix
+npm test               # Run tests (build + vitest --run)
+npm run test:coverage # Run tests with coverage
 
 # === Production (Docker — recommended) ===
 # No local build needed. Docker builds inside the container.
