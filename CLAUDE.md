@@ -30,51 +30,61 @@ npm run launchd:logs      # View recent logs
 npm run launchd:status    # Check service status
 npm run launchd:uninstall # Remove plist and stop service
 
-# === CLI usage ===
-npx tsx packages/primary-node/src/cli.ts feishu              # Start Feishu bot
-npx tsx packages/primary-node/src/cli.ts --prompt "<query>"  # Single prompt query
+# === CLI usage (Issue #4601: --prompt / feishu subcommands were removed) ===
+npx tsx packages/primary-node/src/cli.ts start               # Start the Primary Node (Feishu bot + REST API)
+npx tsx packages/primary-node/src/cli.ts start --api-port 9200 --api-token <token>
+# `disclaude start` / `disclaude mcp` route through bin/disclaude.js; disclaude-push is packages/primary-node/src/push-cli.ts
+# There is NO single-prompt CLI mode anymore — run tests (vitest) or the REST /api/push route instead.
 ```
 
 ## Architecture Overview
 
-Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/Lark) with Claude Agent SDK capabilities.
+Disclaude is a multi-platform AI agent bot bridging messaging platforms (Feishu/Lark) with agent-SDK capabilities. It is an npm-workspaces monorepo (Issue #4601: the old flat `src/` layout no longer exists):
+
+| Package | Purpose |
+|---------|---------|
+| `packages/core` | Config, agents (base/message-builder), IPC (REST), channels abstraction, scheduling, SDK provider layer |
+| `packages/primary-node` | Primary Node runtime: Feishu channel + bot, ChatAgent pool, REST API (`--api-port`), `push-cli` |
+| `packages/mcp-server` | In-process channel MCP tools (stdio), talks to Primary Node over REST |
+| `packages/voice-orchestrator` | Voice intent snapshot store (MVP foundation) |
 
 ### Entry Points
 
-- **`src/cli-entry.ts`** - Main CLI entry, handles `disclaude feishu` and `disclaude --prompt`
+- **`bin/disclaude.js`** - Unified CLI router: `disclaude start` → `packages/primary-node/src/cli.ts`, `disclaude mcp` → `packages/mcp-server/src/cli.ts`
+- **`packages/primary-node/src/cli.ts`** - Primary Node entry; only subcommand is `start` (+ `--config` / `--api-port` / `--api-token`)
+- **`packages/primary-node/src/push-cli.ts`** - `disclaude-push` external push CLI (REST-only, POST /api/push)
 
 ### Core Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    cli-entry.ts                             │
-│                  (Command Router)                           │
+│              packages/primary-node/src/cli.ts               │
+│                  (`disclaude start`)                        │
 └────────────────────┬────────────────────────────────────────┘
                      │
         ┌────────────┴────────────┐
-        │                         │
         ▼                         ▼
 ┌──────────────┐         ┌──────────────┐
-│  CLI Mode    │         │  Feishu Bot  │
-│  (cli/)      │         │  (feishu/)   │
+│ Feishu WS    │         │  REST API    │
+│ channel      │         │ (--api-port) │
 └──────┬───────┘         └──────┬───────┘
        │                        │
        └────────────────┬───────┴────────┐
                         ▼                ▼
                  ┌──────────────────────────┐
-                 │      ChatAgent           │
-                 │  (agents/chat-agent/)    │
+                 │  ChatAgent pool          │
+                 │  (primary-agent-pool)    │
                  └────────────┬─────────────┘
                               ▼
                  ┌──────────────────────────┐
-                 │   Claude Agent SDK       │
-                 │   + MCP Servers          │
+                 │  Agent SDK provider      │
+                 │  (claude | pi) + Skills  │
                  └──────────────────────────┘
 ```
 
 ### Key Modules
 
-#### `src/config/` - Configuration Management
+#### `packages/core/src/config/` - Configuration Management
 
 File-based configuration using `disclaude.config.yaml`:
 
@@ -83,7 +93,8 @@ File-based configuration using `disclaude.config.yaml`:
   - `apiKey` - API key for the configured provider
   - `model` - Model identifier
   - `apiBaseUrl` - Optional custom endpoint
-  - `provider` - `'anthropic'` or `'glm'`
+  - `provider` - `'anthropic'` or `'glm'` (model layer)
+  - `agentBackend` - `'claude'` or `'pi'` (agent-runtime layer, orthogonal to `provider`, default `'claude'`)
 
 **Configuration file structure**:
 ```yaml
@@ -97,79 +108,63 @@ feishu:
   appSecret: "..."
 agent:
   model: "claude-sonnet-4-20250514"
+  agentBackend: claude   # claude | pi (agent SDK runtime; #4383)
 logging:
   level: debug
   rotate: true
 ```
 
-#### `src/agents/` - Agent System
+#### `packages/core/src/agents/` + `packages/primary-node/src/agents/` - Agent System
 
 Agent implementations using the Template Method pattern:
 
-- **`base-agent.ts`** - Abstract base class with common functionality:
+- **`base-agent.ts`** (core) - Abstract base class with common functionality:
   - SDK configuration building via `createSdkOptions()`
-  - `queryOnce()` - For static prompts (ScheduleExecutor)
-  - `createQueryStream()` - For streaming input (ChatAgent)
   - Error handling and logging
 
-- **`chat-agent.ts`** - Platform-agnostic direct chat abstraction:
+- **`chat-agent.ts`** (primary-node) - Platform-agnostic direct chat abstraction:
   - **Streaming Input Mode**: Uses SDK's AsyncGenerator-based input
-  - **Per-chatId Agent Instances**: Each conversation has its own persistent Agent
+  - **Per-chatId Agent Instances**: Each conversation has its own persistent Agent (pool: `primary-agent-pool.ts`)
   - **Message Queue**: Messages queued and processed sequentially per chatId
-  - **Session Cleanup**: Idle sessions cleaned up after timeout (default 30min)
+  - **Session Cleanup**: Idle sessions cleaned up after timeout
   - `processMessage()` - Non-blocking, queues message for Agent processing
-  - `runOnce()` - Blocking one-shot query using unified streaming path (Issue #3124)
+  - `runOnce()` - Blocking one-shot query (still on ChatAgent, but **no CLI flag exposes it** — Issue #4601)
 
-#### `src/feishu/bot.ts` - WebSocket Bot
+#### `packages/primary-node/src/channels/feishu/` - Feishu Channel & Bot
 
-Feishu/Lark WebSocket implementation:
+Feishu/Lark WebSocket implementation (split into focused modules):
 
-```typescript
-// Key components
-- processedMessageIds: Set<string>  // Message deduplication
-- commands: /reset, /status, /help
-- Message handler: handleMessageReceive()
-- Uses ChatAgent for agent interactions
-```
+- **`message-handler.ts`** - `handleMessageReceive()` pipeline: dedup → bot-self check → age check → thread/history context → command router → agent
+- **`message-filters.ts`** - Pure verdict functions for the three early guard clauses (duplicate / bot / old)
+- **`ws-connection-manager.ts`** - WebSocket connection manager & auto-reconnect
+- **`command-router.ts`** - Slash commands (`/reset`, `/status`, `/help`, `/project`, ...)
+- **`mention-detector.ts`** - @mention detection (group trigger modes)
 
 **Critical behaviors**:
 - Ignores messages from bot itself (`sender.sender_type === 'app'`)
-- Deduplicates via `message_id` to prevent infinite loops
+- Deduplicates via processed `message_id` to prevent infinite loops
 - **Each SDK message is sent immediately** (no accumulation/batching)
 
-#### `src/feishu/session.ts` - Session Storage
+#### Session / History Storage
 
-In-memory session management per chatId:
+Conversation history is managed by `packages/primary-node/src/agents/history-manager.ts` (Issue #4125): it attaches persisted (session-restore) history context and chat log file paths to each message, so a restarted process restores prior context for ongoing chats.
 
-```typescript
-getSessionId(chatId: string)    // Retrieve session ID
-setSessionId(chatId, sessionId) // Store session ID
-clearSession(chatId)            // Reset conversation
-```
+#### `packages/mcp-server/` - Channel MCP Tools
 
-**Limitation**: Sessions are lost on restart (in-memory only).
+In-process MCP server providing channel tools to the agent (`send_text`, `send_file`, `send_card`, `send_interactive`, `push_to_agent`). It communicates with the Primary Node **over REST** (`RestIpcClient`, Issue #4168 Phase 3 — the Unix-socket IPC transport was removed).
 
-#### `src/mcp/` - MCP Servers
-
-Internal MCP servers providing custom tools:
-
-- **`channel-mcp.ts`** - Platform-agnostic MCP implementation (send messages, files, cards, SDK integration) communicating via IPC
-- **`task-skill-mcp.ts`** - Custom skill integration
-
-External MCP servers can be configured via `disclaude.config.yaml`.
+The external-MCP-server loader (config `tools.mcpServers`) was **removed** (#4459 Scope 4). External tools migrate to CLI Skills — see `docs/skill-format-spec.md`, `skills/channel/`, and `skills/browser-use/`.
 
 ### Data Flow (Feishu Mode)
 
 ```
 WebSocket Event
     ↓
-handleMessageReceive()
+handleMessageReceive() (message-handler.ts)
     ↓
-Deduplication Check (processedMessageIds)
+Message filters: dedup / bot-self / age (message-filters.ts)
     ↓
-Bot Self-Check? (skip if sender_type === 'app')
-    ↓
-Is Command? → handleCommand() → Send response
+Is Command? → command-router.ts → Send response
     ↓
 agent.processMessage() - queues message
     ↓
@@ -186,27 +181,23 @@ For each SDK message:
 
 ### Permission Modes
 
-| Mode | Setting | Behavior |
-|------|---------|----------|
-| **Bot** | `bypassPermissions` | Auto-approves all actions |
-| **CLI** | `default` | Asks user for permissions |
-
-**Note**: ChatAgent defaults to `bypassPermissions` for all modes unless explicitly configured.
+Chat agents default to `bypassPermissions` (`packages/primary-node/src/agents/factory.ts` — `permissionMode ?? 'bypassPermissions'`); override per-call via the factory options. The pi backend has no built-in permission system — gating is the `beforeToolCall` deny hook over `buildDisallowedTools()` (#4389).
 
 ### WebSocket Bot Gotchas
 
 1. **Infinite loop prevention**: Bot must ignore its own messages (`sender.sender_type === 'app'`)
-2. **Duplicate events**: Feishu may send duplicate events - use `processedMessageIds` Set
-3. **Session storage**: Currently in-memory; sessions lost on restart
-4. **Message timing**: Each SDK message is sent immediately, don't accumulate
+2. **Duplicate events**: Feishu may send duplicate events - processed-message dedup drops them
+3. **Message timing**: Each SDK message is sent immediately, don't accumulate
 
 ### Build Output
 
-- **Builder**: `tsup` (wraps esbuild)
-- **Output dir**: `dist/`
-- **Entry points**:
-  - `dist/cli-entry.js` - Main binary entry point
-  - `dist/mcp/` - Bundled MCP servers
+- **Builder**: `tsc -b` (root `package.json` build script; follows project references core → mcp-server → primary-node). `tsup` is a leftover devDependency and is NOT used.
+- **Output**: per-package `dist/` (e.g. `packages/primary-node/dist/cli.js`)
+- **Binaries** (root `package.json` `bin`):
+  - `disclaude` → `bin/disclaude.js` (subcommand router)
+  - `disclaude-primary` → `packages/primary-node/dist/cli.js`
+  - `disclaude-mcp` → `packages/mcp-server/dist/cli.js`
+  - `disclaude-push` → `packages/primary-node/dist/push-cli.js`
 
 ### Testing
 
@@ -305,7 +296,7 @@ const server = new IpcServer();
 try { /* assertions */ } finally { await server.stop().catch(() => {}); }
 ```
 
-**集成测试放 `tests/integration/`**，不放 `src/__tests__/`（后者会混入单元测试）。
+**集成测试放 `tests/integration/`**，不放 `packages/*/src/` 内的测试目录（后者会混入单元测试）。
 
 ## Development Workflow
 
@@ -316,40 +307,34 @@ try { /* assertions */ } finally { await server.stop().catch(() => {}); }
 **macOS (launchd):** `npm run launchd:restart` automatically builds before restarting.
 
 General rules:
-- Always test changes with CLI mode before deploying
+- Always test changes (vitest + lint + type-check) before deploying
 - Only restart when **explicitly requested** by the user
 - **Why?** Prevents accidental deployment of untested code and mid-conversation restarts
 
-### Testing New Features with CLI Mode
+### Testing New Features
 
-**Recommended approach for rapid development:**
+**Recommended approach for rapid development (no CLI prompt mode — Issue #4601):**
 
 ```bash
 # 1. Make code changes
 vim packages/primary-node/src/agents/chat-agent.ts
 
-# 2. Build
+# 2. Type-check / build
 npx tsc -b
 
-# 3. Test with CLI (instant feedback)
-npx tsx packages/primary-node/src/cli.ts --prompt "Read packages/primary-node/src/agents/chat-agent.ts and summarize it"
-npx tsx packages/primary-node/src/cli.ts --prompt "List all TypeScript files in src/"
+# 3. Run the relevant tests (instant feedback)
+npx vitest run packages/primary-node/src/agents/chat-agent.test.ts
 
-# 4. If working, deploy:
+# 4. Exercise a live agent turn via the REST API (if the service runs with --api-port):
+curl -X POST http://localhost:9200/api/push -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"chatId":"oc_xxx","message":"Read packages/primary-node/src/agents/chat-agent.ts and summarize it"}'
+
+# 5. If working, deploy:
 #    Docker: docker compose up -d --build
 ```
 
-### CLI vs Feishu Mode Comparison
-
-| Aspect | CLI Mode (`--prompt`) | Feishu Mode (`feishu`) |
-|--------|----------------------|------------------------|
-| **Startup** | ⚡ Instant | 🔄 Requires WebSocket connection |
-| **Output** | 📺 Full colored console | 💬 Chat messages (throttled) |
-| **Session** | ❌ One-shot (`runOnce()`) | ✅ Persistent (`processMessage()`) |
-| **Permissions** | 🔒 `default` (ask user) | ✅ `bypassPermissions` (auto-approve) |
-| **Best for** | 🔧 Development & testing | 🤖 Production & users |
-
-**Note**: ChatAgent defaults to `bypassPermissions` for both modes unless explicitly configured otherwise.
+There is **no single-prompt CLI mode** anymore (`--prompt` / `feishu` subcommands were removed; `runOnce()` exists on ChatAgent but no CLI flag exposes it). Use vitest for code-level verification and the REST `/api/push` route (or `disclaude-push`) for end-to-end agent turns against a running service.
 
 ## Working Directory
 
@@ -363,13 +348,13 @@ The agent uses `workspace/` as its working directory:
 ### 1. Forgetting to Build
 
 After code changes, always run `npx tsc -b` before:
-- Testing with CLI mode
+- Running tests against built output
 - **Note**: Docker deployments build inside the container — no local build needed
 
 ### 2. WebSocket Event Duplication
 
 Feishu may send duplicate events. Always:
-- Use `processedMessageIds` Set for deduplication
+- Dedup on `message_id` (the processed-message check in `message-handler.ts`)
 - Check `message_id` before processing
 
 ### 3. Bot Messaging Itself
@@ -378,23 +363,16 @@ When implementing new features:
 - Always check `sender.sender_type === 'app'`
 - Skip processing to prevent infinite loops
 
-### 4. Session Loss on Restart
+### 4. Tool Configuration
 
-Current implementation uses in-memory sessions:
-- All conversations reset on process restart
-- For persistence, consider implementing Redis/file-based storage
+Tools are configured via `buildDisallowedTools()` (`packages/primary-node/src/agents/disallowed-tools.ts`, Issue #4181):
+- Base list always included: `EnterPlanMode` (keeps agent in execution mode), `AskUserQuestion` (disclaude uses interactive cards instead)
+- Session-only built-in cron/loop tools (`CronCreate`/`CronList`/`CronDelete`/`ScheduleWakeup`) are also disallowed by default — persistent recurring work goes through the file-based `schedules/<slug>/SCHEDULE.md` + `schedule` skill
+- Set `DISCLAUDE_ALLOW_BUILTIN_CRON=1` to restore the built-in cron tools
 
-### 5. Tool Configuration
+To change the list, modify `BASE_DISALLOWED_TOOLS` / `BUILTIN_CRON_TOOLS` in `disallowed-tools.ts`.
 
-Tools are configured via `disallowedTools` in the agent classes:
-- **ChatAgent** (`packages/primary-node/src/agents/chat-agent.ts`): Uses `disallowedTools: ['EnterPlanMode', 'AskUserQuestion']`
-  - `EnterPlanMode`: Blocks plan-mode entry to keep agent in execution mode
-  - `AskUserQuestion`: Blocks SDK's built-in question tool to prevent agent loop blocking; disclaude uses interactive cards instead
-- **BaseAgent**: Provides `createSdkOptions()` for SDK configuration
-
-To enable/disable tools, modify the `disallowedTools` array in `ChatAgent.startAgentLoop()` or `ChatAgent.runOnce()`.
-
-### 6. Installing System Packages (Container)
+### 5. Installing System Packages (Container)
 
 Inside Docker the agent runs as the non-root `disclaude` user (uid 1001). It has **passwordless sudo** (restricted to `apk` only), so install Alpine packages on demand:
 
@@ -450,7 +428,7 @@ logger.debug({
 ### Enable Verbose Logging
 
 ```typescript
-// In src/feishu/bot.ts or src/cli/
+// In packages/primary-node/src/channels/feishu/message-handler.ts or the module under test
 console.log('[DEBUG]', { context });
 ```
 
@@ -480,8 +458,8 @@ tail -f /tmp/disclaude-stdout.log     # Live tail (Ctrl+C to exit)
 
 ### Tool Not Working
 
-1. Check if tool is in `disallowedTools` array in `packages/primary-node/src/agents/chat-agent.ts`
-2. Verify MCP server is configured in `disclaude.config.yaml` or built-in
+1. Check if the tool is in the `buildDisallowedTools()` list (`packages/primary-node/src/agents/disallowed-tools.ts`)
+2. Channel tools live in the in-process MCP server (`packages/mcp-server/src/tools/`) and need the Primary Node REST API reachable; browser automation is the `browser-use` skill (`skills/browser-use/`)
 3. Check SDK version compatibility
 
 ## Error Handling Patterns
@@ -645,11 +623,11 @@ glm:
 feishu:
   appId: "your-app-id"
   appSecret: "your-app-secret"
-  cliChatId: "optional-cli-chat-id"  # For CLI mode testing
 
 # Agent configuration
 agent:
   model: "claude-sonnet-4-20250514"  # Used when Anthropic is provider
+  agentBackend: claude              # claude | pi — agent SDK runtime (#4383)
 
 # Logging configuration
 # NOTE: Logs can be forwarded to Elasticsearch/Loki via infrastructure-level log shippers.
