@@ -76,8 +76,11 @@ Legacy pre-3.0 subcommands (`open`, `state`, `screenshot`, `eval`, `-c`, `--sess
 
 ## Runtime
 
-- Python **3.11+** (`pip install browser-use`); Chromium via `browser-use install`
-  (needs `uvx` on PATH).
+- Python **3.11+** (`pip install browser-use`). In the Docker deployment the CLI is **baked into
+  `Dockerfile.primary`** (pinned `browser-use==0.13.8`, #4599): a fresh
+  `docker compose up -d --build` has it on PATH with no manual pip step, and it survives container
+  recreates. Chromium via `browser-use install` (needs `uvx` on PATH) is **not** needed on the
+  supported CDP-attach path below.
 - **Headless hosts** (disclaude deployments): launching Chromium in-place is fragile (missing
   shared libs, sandbox/seccomp friction). The supported path is an external, stable CDP endpoint
   via `BU_CDP_URL=<ws://host:port>` — browser-use, Playwright, and the existing CDP infra

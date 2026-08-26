@@ -146,6 +146,18 @@ RUN apt-get install -y --no-install-recommends \
 # PIP_INDEX_URL: override PyPI mirror (default: official https://pypi.org/simple)
 RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} matplotlib numpy
 
+# Issue #4599: bake the browser-use CLI into the image so it survives container
+# recreates (a runtime `pip install --user` is lost on every recreate — the
+# 2026-08-26 deployment verification hit exactly that). Pinned to 0.13.8, the
+# version live-tested with browser-harness 0.1.9 in that verification.
+# System-wide (--break-system-packages) so the console scripts land in
+# /usr/local/bin (already on PATH) — no PATH patch via a compose override.
+# uvx and a Chromium binary are deliberately NOT installed: the supported
+# browser path is CDP attach (BU_CDP_URL → the playwright compose service,
+# #4496); `browser-use install` (self-launched Chromium) is not needed here.
+# Image size cost: ~400 MB (browser-use + ~90 transitive deps, measured).
+RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index-url $PIP_INDEX_URL} 'browser-use==0.13.8'
+
 # Install @larksuite/cli globally
 # Issue #3888: @larksuite/cli needed by dissolve-group, lark-docs, pr-scanner skills
 RUN npm config set registry ${NPM_REGISTRY} && \
