@@ -8,7 +8,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createLogger, uploadFile } from '@disclaude/core';
+import { createLogger, uploadFile, type ToolProgressCallback } from '@disclaude/core';
 import { isIpcAvailable, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
 import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import type { SendFileResult } from './types.js';
@@ -46,8 +46,15 @@ export async function send_file(params: {
   chatId: string;
   /** Optional parent message ID for thread reply (Issue #1619) */
   parentMessageId?: string;
+  /**
+   * Optional progress callback (#4568). The REST upload of a large file is a
+   * single long-silent request — this fires once the size is known (before
+   * the upload) so the pi stall watchdog re-arms and ChatAgent can render
+   * progress. Absent on the Claude backend; guarded with typeof.
+   */
+  onProgress?: ToolProgressCallback;
 }): Promise<SendFileResult> {
-  const { filePath, chatId, parentMessageId } = params;
+  const { filePath, chatId, parentMessageId, onProgress } = params;
 
   try {
     if (!chatId) { throw new Error('chatId is required'); }
@@ -90,6 +97,13 @@ export async function send_file(params: {
     }
 
     logger.debug({ chatId, filePath, parentMessageId }, 'Using IPC for file upload');
+    // Issue #4568: the upload is one long-silent REST request; report the
+    // size (already known from stat) right before it starts so the tool is
+    // not misjudged as stalled while the bytes transfer.
+    if (typeof onProgress === 'function') {
+      const sizeMBBefore = (stats.size / 1024 / 1024).toFixed(2);
+      onProgress({ message: `Uploading ${path.basename(resolvedPath)} (${sizeMBBefore} MB)…` });
+    }
     const { fileSize } = await uploadFileViaIpc(chatId, resolvedPath, parentMessageId);
 
     const sizeMB = (fileSize / 1024 / 1024).toFixed(2);

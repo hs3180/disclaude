@@ -15,7 +15,7 @@
 
 import { promises as fsp } from 'fs';
 import { resolve, extname } from 'path';
-import { createLogger, uploadImage } from '@disclaude/core';
+import { createLogger, uploadImage, type ToolProgressCallback } from '@disclaude/core';
 import { getRestIpcClient } from '../tools/ipc-utils.js';
 
 const logger = createLogger('CardImageResolver');
@@ -126,6 +126,8 @@ async function uploadAndGetImageKey(filePath: string): Promise<string | undefine
  */
 export async function resolveCardImages(
   card: Record<string, unknown>,
+  /** Optional per-image progress (#4568) — fires after each upload settles. */
+  onProgress?: ToolProgressCallback,
 ): Promise<ResolveCardImagesResult> {
   let uploadedCount = 0;
   let failedCount = 0;
@@ -188,6 +190,20 @@ export async function resolveCardImages(
   // Upload all unique local paths
   if (pathToKey.size > 0) {
     logger.info({ count: pathToKey.size }, 'Uploading card images');
+    // Issue #4568: report done/total as each upload settles, so a card with
+    // several large images keeps emitting progress during the silent upload
+    // window (pi stall watchdog re-arm / ChatAgent progress display).
+    const total = pathToKey.size;
+    let settledCount = 0;
+    const reportProgress = (): void => {
+      if (typeof onProgress !== 'function') {return;}
+      settledCount++;
+      onProgress({
+        done: settledCount,
+        total,
+        message: `Uploading card images (${settledCount}/${total})…`,
+      });
+    };
 
     const uploadPromises = Array.from(pathToKey.keys()).map(async (filePath) => {
       const imageKey = await uploadAndGetImageKey(filePath);
@@ -197,6 +213,7 @@ export async function resolveCardImages(
       } else {
         failedCount++;
       }
+      reportProgress();
     });
 
     await Promise.all(uploadPromises);
