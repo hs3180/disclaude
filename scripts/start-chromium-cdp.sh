@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Playwright Chrome CDP Startup Script
+# Chromium CDP Startup Script
 # =============================================================================
 #
 # Starts a Chromium browser instance with Chrome DevTools Protocol (CDP)
@@ -12,7 +12,7 @@
 # browser inside the container.
 #
 # Usage:
-#   ./scripts/start-playwright-cdp.sh [port]
+#   ./scripts/start-chromium-cdp.sh [port]
 #
 # Arguments:
 #   port  - CDP port to listen on (default: 9222)
@@ -23,13 +23,13 @@
 #
 # Examples:
 #   # Start on default port 9222
-#   ./scripts/start-playwright-cdp.sh
+#   ./scripts/start-chromium-cdp.sh
 #
 #   # Start on custom port
-#   ./scripts/start-playwright-cdp.sh 9223
+#   ./scripts/start-chromium-cdp.sh 9223
 #
 #   # Start with environment variable
-#   CDP_PORT=9224 ./scripts/start-playwright-cdp.sh
+#   CDP_PORT=9224 ./scripts/start-chromium-cdp.sh
 #
 # =============================================================================
 

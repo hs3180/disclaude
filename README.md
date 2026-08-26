@@ -281,7 +281,7 @@ The Playwright MCP server is **removed** (#4460). Browser automation goes throug
 
 Pulling Chromium on a headless host is fragile (missing shared libs,
 sandbox/seccomp friction). The supported path is an **external CDP endpoint** —
-the containerized `playwright` compose service that any browser driver
+the containerized `chromium` compose service that any browser driver
 (browser-use CLI / Skill, Playwright library) attaches to over
 [CDP](https://chromedevtools.org/docs/chrome-devtools-protocol/). Full contract:
 [`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) (#4496).
@@ -289,9 +289,9 @@ the containerized `playwright` compose service that any browser driver
 **① Point drivers/skills at the endpoint:**
 
 ```bash
-docker compose --profile playwright up -d   # optional profile; loopback-only publish
+docker compose --profile chromium up -d   # optional profile; loopback-only publish
 # from a peer container:
-http://disclaude-playwright:${CDP_PORT:-9222}
+http://disclaude-chromium:${CDP_PORT:-9222}
 # from the host:
 http://localhost:${CDP_PORT:-9222}
 ```
@@ -536,8 +536,8 @@ This architecture enables:
 | Symptom | Solution |
 |---------|----------|
 | `browser-use: command not found` | Rebuild the image (`docker compose up -d --build`) — the CLI is baked into `Dockerfile.primary` (#4599). On non-Docker installs, see `skills/browser-use/README.md` → Runtime |
-| CDP attach fails | Start the endpoint (`docker compose --profile playwright up -d`) — `BU_CDP_URL` defaults to it in `docker-compose.yml` — see `docs/cdp-endpoint.md` |
-| Browser errors | Check the CDP endpoint is reachable: `curl http://disclaude-playwright:9222/json/version` |
+| CDP attach fails | Start the endpoint (`docker compose --profile chromium up -d`) — `BU_CDP_URL` defaults to it in `docker-compose.yml` — see `docs/cdp-endpoint.md` |
+| Browser errors | Check the CDP endpoint is reachable: `curl http://disclaude-chromium:9222/json/version` |
 
 ### PM2 issues
 
