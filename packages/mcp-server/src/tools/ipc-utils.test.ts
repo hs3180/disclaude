@@ -202,7 +202,7 @@ describe('isIpcAvailable (REST-only)', () => {
     const result = await isIpcAvailable();
     expect(result).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:9200/api/ping',
+      'http://localhost:19200/api/ping',
       expect.objectContaining({ method: 'GET' }),
     );
   });
@@ -227,7 +227,7 @@ describe('isIpcAvailable (REST-only)', () => {
     await loadWithPing(fetchMock as unknown as typeof globalThis.fetch);
     expect(await isIpcAvailable()).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:9200/api/ping',
+      'http://localhost:19200/api/ping',
       expect.anything(),
     );
   });
@@ -297,7 +297,7 @@ describe('getRestIpcClient (REST-only construction)', () => {
   it('should construct a RestIpcClient directly with all env unset (no IPC fallback)', () => {
     const client = getRestIpcClient() as unknown as MockRestIpcClient;
     expect(client).toBeInstanceOf(MockRestIpcClient);
-    expect(client.opts.baseUrl).toBe('http://localhost:9200');
+    expect(client.opts.baseUrl).toBe('http://localhost:19200');
   });
 
   it('should wire DISCLAUDE_REST_IPC_BASE_URL / _API_TOKEN into the client', () => {
@@ -319,7 +319,7 @@ describe('getRestIpcClient (REST-only construction)', () => {
     const on = getRestIpcClient() as unknown as MockRestIpcClient;
     process.env.DISCLAUDE_REST_IPC_ENABLED = 'false';
     const off = getRestIpcClient() as unknown as MockRestIpcClient;
-    expect(on.opts.baseUrl).toBe('http://localhost:9200');
-    expect(off.opts.baseUrl).toBe('http://localhost:9200');
+    expect(on.opts.baseUrl).toBe('http://localhost:19200');
+    expect(off.opts.baseUrl).toBe('http://localhost:19200');
   });
 });
