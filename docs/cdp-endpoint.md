@@ -240,6 +240,31 @@ executed: the driver-side matrix (part 2) and the compose-fronted endpoint
   `README.md` → "Browser on Headless Hosts (CDP Endpoint)" (part 3), linking
   here for the full contract
 
+## Agent-level e2e harness (#4602)
+
+The matrix above exercises the **CLI** layer. The **agent-level** chain
+(agent discovers the browser-use skill unprompted → attaches via `BU_CDP_URL`
+without self-spawning → `js()` round-trip → screenshot artifact → dead-endpoint
+error is explicit) is covered by a repeatable one-command harness:
+
+```bash
+npx tsx scripts/browser-use-agent-e2e.mts \
+  --workspace <workspace-dir> --cdp-url http://disclaude-playwright:9222
+```
+
+It instantiates a real one-shot ChatAgent (`AgentFactory.createAgent`), feeds
+it a prompt that never names the skill (so discovery is genuinely unprompted),
+and prints a PASS/FAIL table for the 5 checks. Live-only inputs (model API
+key, reachable CDP endpoint) mean the run belongs to an operator shell — the
+same tooling/live split as the Card Kit bench. The assertion core is
+unit-tested in CI (`packages/primary-node/src/testing/browser-use-e2e.test.ts`).
+
+The dead-endpoint check inherits the daemon-pin trap above: the prompt tells
+the agent to reload the harness CLI (without naming it — discovery must stay
+unprompted) **before** flipping `BU_CDP_URL` to a dead port, and once more
+after, so check 5 can't pass vacuously against the daemon's still-healthy
+pinned session — the same guard `smoke.sh` case 6 has.
+
 ## Related
 
 - #4496 — this contract (endpoint side); #4460 — browser-use Skill (skill side)
