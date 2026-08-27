@@ -105,6 +105,16 @@ const DEFAULT_IDLE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
  */
 const DEFAULT_BUSY_TURN_HARD_CAP_MS = 90 * 60 * 1000;
 
+/**
+ * Issue #4620 (review fix): composite guard key for `busyTurnStoppedFor`.
+ * `\x00` can't appear in a sessionKey (chatId/threadRoot are Feishu IDs), so
+ * the pair is unambiguous — a bare timestamp would collide across chats whose
+ * turns start in the same millisecond (group broadcast).
+ */
+function busyTurnGuardKey(sessionKey: string, turnStartedAtMs: number): string {
+  return `${sessionKey}\x00${turnStartedAtMs}`;
+}
+
 // Re-export so existing `./primary-agent-pool.js` importers keep working; the
 // implementation now lives in core next to buildSessionKey (PR #4590 review N4
 // — the `::` separator had been hardcoded here and in the pool test mock).
@@ -164,8 +174,23 @@ export class PrimaryAgentPool {
    * Populated by the idle sweep when it first observes `isBusy`; cleared when
    * the agent goes idle again (or is reset/disposed). Bounded by the pool
    * size — one entry per currently-busy chat, deleted on turn end.
+   *
+   * Issue #4620: now a FALLBACK only — the primary measure is the agent's
+   * authoritative `turnStartedAtMs` (set at turn start, not at sweep
+   * observation), which cannot accumulate across back-to-back turns.
    */
   private readonly busySince = new Map<string, number>();
+  /**
+   * Issue #4620: turns already stopped by the busy cap, as composite
+   * `sessionKey\x00turnStartedAtMs` keys (review fix: a bare timestamp
+   * collides across chats — a group broadcast can start turns in several
+   * chats within the same millisecond). The authoritative
+   * `turnStartedAtMs` stays constant for the whole (stopped) turn, so the
+   * sweep needs a separate guard against re-stopping the same turn on every
+   * tick — this set holds the turns it has already acted on. Cleared when
+   * the turn ends (agent idle).
+   */
+  private readonly busyTurnStoppedFor = new Set<string>();
   /** Issue #4256: Peak concurrent agent count since pool start (leak diagnostics). */
   private peakActive = 0;
   /**
@@ -332,6 +357,12 @@ export class PrimaryAgentPool {
       this.lastUsedAt.delete(sessionKey);
       // Issue #4577: clear the busy-turn marker along with the agent.
       this.busySince.delete(sessionKey);
+      // Issue #4620: forget the stop-guard too — a disposed agent's
+      // turn-start timestamp must not suppress a future turn's cap.
+      const stoppedFor = agent.turnStartedAtMs;
+      if (typeof stoppedFor === 'number' && stoppedFor > 0) {
+        this.busyTurnStoppedFor.delete(busyTurnGuardKey(sessionKey, stoppedFor));
+      }
       agent.dispose();
     }
   }
@@ -365,6 +396,8 @@ export class PrimaryAgentPool {
     this.lastUsedAt.clear();
     // Issue #4577: clear busy-turn markers along with the agents.
     this.busySince.clear();
+    // Issue #4620: clear the stop-guard set as well.
+    this.busyTurnStoppedFor.clear();
   }
 
   /**
@@ -435,8 +468,14 @@ export class PrimaryAgentPool {
         continue;
       }
       // Issue #4577: turn over — clear the busy-start marker so the next
-      // busy turn starts a fresh cap window.
+      // busy turn starts a fresh cap window. Issue #4620: also forget the
+      // stop-guard for this agent's last authoritative turn-start, so a
+      // future turn that happens to reuse a timestamp isn't skipped.
       this.busySince.delete(sessionKey);
+      const stoppedFor = agent.turnStartedAtMs;
+      if (typeof stoppedFor === 'number' && stoppedFor > 0) {
+        this.busyTurnStoppedFor.delete(busyTurnGuardKey(sessionKey, stoppedFor));
+      }
       if (timeout <= 0) { continue; }
       const last = this.lastUsedAt.get(sessionKey) ?? now;
       if (now - last >= timeout) {
@@ -471,17 +510,36 @@ export class PrimaryAgentPool {
    */
   private enforceBusyTurnCap(
     sessionKey: string,
-    agent: Pick<ChatAgent, 'isBusy' | 'stop'>,
+    agent: Pick<ChatAgent, 'isBusy' | 'turnStartedAtMs' | 'stop'>,
     now: number
   ): void {
     const cap = this.options.busyTurnHardCapMs ?? DEFAULT_BUSY_TURN_HARD_CAP_MS;
     if (cap <= 0) { return; } // Cap disabled — no tracking, never stop.
-    const since = this.busySince.get(sessionKey);
+    // Issue #4620: measure the CURRENT turn from the agent's authoritative
+    // turn-start timestamp, not from when the sweep first observed isBusy.
+    // The observation-based marker survived turn boundaries whenever every
+    // sweep tick landed mid-turn of back-to-back turns — after 90 min of
+    // session wall-clock, a brand-new turn was insta-killed. When the agent
+    // does not expose the timestamp (older implementation), fall back to the
+    // observation-based marker for compatibility.
+    const turnStarted = typeof agent.turnStartedAtMs === 'number' ? agent.turnStartedAtMs : 0;
+    const since = turnStarted > 0 ? turnStarted : this.busySince.get(sessionKey);
     if (since === undefined) {
       this.busySince.set(sessionKey, now);
       return;
     }
     if (now - since < cap) { return; }
+    // Issue #4620: the authoritative timestamp is constant for the whole
+    // (stopped) turn — without this guard every subsequent sweep tick would
+    // re-stop the same turn. Keyed by sessionKey+timestamp so concurrent
+    // turns in different chats that start within the same millisecond
+    // (group broadcast) don't collide. Observation fallback re-arms via
+    // marker delete (same value can't repeat across turns).
+    if (turnStarted > 0) {
+      const guardKey = busyTurnGuardKey(sessionKey, turnStarted);
+      if (this.busyTurnStoppedFor.has(guardKey)) { return; }
+      this.busyTurnStoppedFor.add(guardKey);
+    }
     const busyMin = Math.round((now - since) / 60000);
     // Issue #4587 (part 2): strip the `::threadRoot` suffix for everything
     // that addresses the chat (agent boundChatId guard + user notification).
