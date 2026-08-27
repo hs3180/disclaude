@@ -249,7 +249,7 @@ error is explicit) is covered by a repeatable one-command harness:
 
 ```bash
 npx tsx scripts/browser-use-agent-e2e.mts \
-  --workspace <workspace-dir> --cdp-url http://disclaude-playwright:9222
+  --workspace <workspace-dir> --cdp-url http://disclaude-chromium:9222
 ```
 
 It instantiates a real one-shot ChatAgent (`AgentFactory.createAgent`), feeds
