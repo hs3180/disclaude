@@ -115,6 +115,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // between "session exists but idle" and "actively processing a message".
   private isProcessingMessage = false;
 
+  // Issue #4620: When the current turn started (ms epoch), set at the same
+  // moment isProcessingMessage flips true. Lets the pool's busy-turn cap
+  // measure the CURRENT turn, not the accumulated wall-clock of many
+  // back-to-back turns (the observation-based busySince marker survived
+  // turn boundaries whenever every sweep tick landed mid-turn).
+  private turnStartedAtMsPrivate = 0;
+
   // Issue #3706 (GLM stall): set when the provider's no-content-progress watchdog
   // terminated the stream. Checked at the iterator-end/restart decision point to
   // suppress the auto-restart (would immediately re-stall) while keeping context.
@@ -391,6 +398,29 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   get isBusy(): boolean {
     return this.isProcessingMessage;
+  }
+
+  /**
+   * When the most recent turn started (ms epoch), or 0 if no turn has
+   * started yet.
+   *
+   * Issue #4620: the pool's busy-turn hard cap measures the CURRENT turn
+   * from this authoritative timestamp. The previous observation-based
+   * marker (set when the idle sweep first saw isBusy, cleared when a sweep
+   * saw !isBusy) silently accumulated across back-to-back turns — whenever
+   * every sweep tick landed mid-turn, the marker never cleared, and after
+   * 90 min of session wall-clock a brand-new turn was insta-killed with a
+   * misleading "running for 90 minutes" message.
+   *
+   * Note: the timestamp is set on turn start and never reset — once a turn
+   * has run, idle agents still report that (stale) turn's start. Readers
+   * must gate on `isBusy` for "is this turn live" semantics; the pool does.
+   *
+   * @returns ms epoch of the most recent turn's start, or 0 if no turn has
+   * started.
+   */
+  get turnStartedAtMs(): number {
+    return this.turnStartedAtMsPrivate;
   }
 
   /**
@@ -748,6 +778,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (this.channel) {
       // Issue #3985: Mark as processing when a user message is pushed to the channel.
       this.isProcessingMessage = true;
+      // Issue #4620: authoritative turn-start timestamp for the pool's
+      // busy-turn cap — see turnStartedAtMs getter.
+      this.turnStartedAtMsPrivate = Date.now();
       // Issue #4063: Set up per-turn completion promise
       this.setTurnPending();
       const accepted = this.channel.push(userMessage);
