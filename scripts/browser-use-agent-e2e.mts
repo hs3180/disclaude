@@ -167,9 +167,21 @@ async function main(): Promise<void> {
   });
 
   let timedOut = false;
+  // Resolved by the timeout callback — racing turnComplete against this
+  // guarantees the runner reaches its teardown even when the turn promise
+  // never settles (see the comment at the await below).
+  let fireTimeoutGuard: (() => void) | undefined;
+  const timeoutGuard = new Promise<void>((resolve) => {
+    fireTimeoutGuard = resolve;
+  });
   const timer = setTimeout(() => {
     timedOut = true;
-    agent.stop();
+    try {
+      agent.stop();
+    } catch (stopError) {
+      console.error(`agent.stop() threw: ${stopError instanceof Error ? stopError.message : String(stopError)}`);
+    }
+    fireTimeoutGuard?.();
   }, config.turnTimeoutMs);
 
   let exitCode = 0;
@@ -182,7 +194,16 @@ async function main(): Promise<void> {
     });
     // turnComplete is undefined until the first turn starts; processMessage
     // awaiting means the turn promise exists (set in the turn prologue).
-    await (agent.turnComplete ?? Promise.resolve());
+    //
+    // Race it against the timeout: stop() only closes the channel/query and
+    // aborts the controller — the turn promise is settled from inside the
+    // iterator paths (resolveTurn/rejectTurn) or dispose(), so if the
+    // iterator is stuck on I/O that ignores the abort, a bare await would
+    // hang forever and the finally below (incl. dispose) would never run.
+    // Both race participants keep their rejection handled (Promise.race
+    // attaches handlers to all of them), so a late rejectTurn after a lost
+    // race cannot become an unhandled rejection.
+    await Promise.race([agent.turnComplete ?? Promise.resolve(), timeoutGuard]);
   } catch (error) {
     console.error(`Agent run failed: ${error instanceof Error ? error.message : String(error)}`);
     exitCode = 1;

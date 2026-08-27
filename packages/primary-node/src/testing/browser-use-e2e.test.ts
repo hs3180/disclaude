@@ -177,6 +177,18 @@ describe('AGENT_E2E_PROMPT contract', () => {
   it('warns the agent about the mkdir prerequisite (#4600)', () => {
     expect(AGENT_E2E_PROMPT).toMatch(/create the parent directory first/i);
   });
+
+  it('makes the agent reload the harness daemon before the dead-endpoint attach (daemon-pin trap, cdp-endpoint.md)', () => {
+    // Without the reload, step 4 runs against the daemon's still-healthy
+    // pinned session and check 5 passes vacuously — the exact false-positive
+    // docs/cdp-endpoint.md warns about and smoke.sh case 6 reloads around.
+    expect(AGENT_E2E_PROMPT).toMatch(/--reload/);
+    // And the reload must be ordered BEFORE the dead-endpoint attempt.
+    const reloadAt = AGENT_E2E_PROMPT.indexOf('--reload');
+    const deadAt = AGENT_E2E_PROMPT.indexOf('http://127.0.0.1:1');
+    expect(reloadAt).toBeGreaterThan(-1);
+    expect(deadAt).toBeGreaterThan(reloadAt);
+  });
 });
 
 describe('preflight', () => {

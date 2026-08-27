@@ -77,7 +77,7 @@ export const AGENT_E2E_PROMPT = `Run this browser e2e checklist using whatever b
    data:text/html,<script>window.marker=42</script><h1 id="x">hello-agent-e2e</h1>
 2. In that tab, evaluate JavaScript that returns JSON.stringify({marker: window.marker, heading: document.getElementById('x').textContent}).
 3. Take a screenshot and save the PNG to the workspace at exactly: ${E2E_SCREENSHOT_RELATIVE_PATH} (create the parent directory first — the screenshot helper does not create it and will hang if missing).
-4. Then simulate the failure path: attempt ONE additional attach with BU_CDP_URL pointing at http://127.0.0.1:1 (a port nothing listens on), and record what error you get. Do not retry it more than once.
+4. Then simulate the failure path. IMPORTANT: the browser harness daemon keeps its attach target from its FIRST start and ignores later BU_CDP_URL changes, so first re-run the CLI you used for steps 1-3 with its --reload flag to drop the pinned state, then attempt ONE additional attach with BU_CDP_URL pointing at http://127.0.0.1:1 (a port nothing listens on), and record what error you get. Do not retry it more than once. After recording the error, run the reload flag once more so the harness state is clean for later runs.
 
 Finish your reply with a fenced code block tagged e2e-report containing exactly these keys, one key=value per line:
 skill_discovery=<which skill or CLI you used to drive the browser>

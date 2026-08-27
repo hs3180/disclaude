@@ -217,6 +217,12 @@ key, reachable CDP endpoint) mean the run belongs to an operator shell — the
 same tooling/live split as the Card Kit bench. The assertion core is
 unit-tested in CI (`packages/primary-node/src/testing/browser-use-e2e.test.ts`).
 
+The dead-endpoint check inherits the daemon-pin trap above: the prompt tells
+the agent to reload the harness CLI (without naming it — discovery must stay
+unprompted) **before** flipping `BU_CDP_URL` to a dead port, and once more
+after, so check 5 can't pass vacuously against the daemon's still-healthy
+pinned session — the same guard `smoke.sh` case 6 has.
+
 ## Related
 
 - #4496 — this contract (endpoint side); #4460 — browser-use Skill (skill side)
