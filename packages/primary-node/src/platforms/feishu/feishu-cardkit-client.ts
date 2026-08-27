@@ -35,8 +35,10 @@
  * operations. `createCard` (part 2) was deferred from #4411 until the create
  * path was settled — decision #4208 (2026-08-03) settled it on Card Kit native
  * POST /cards. The message-send step that makes a created card appear in a
- * conversation is wiring (ChatAgent / #4399 / #4400), NOT this client. Nothing
- * in disclaude wires this client yet (pure infrastructure).
+ * conversation is wiring (ChatAgent / #4399 / #4400), NOT this client — but
+ * see `createCard()` JSDoc for the IM delivery format pitfall (card_json
+ * envelope vs {type:'card',data:{card_id}}). Nothing in disclaude wires
+ * this client yet (pure infrastructure).
  */
 
 import { createLogger } from '@disclaude/core';
@@ -141,6 +143,14 @@ export class FeishuCardKitClient {
    * `type: card_json`, then a separate message-send step makes the card appear
    * in a conversation — that send is wiring (ChatAgent / #4399 / #4400), out of
    * scope for this pure-infrastructure client.
+   *
+   * ⚠️ That message-send step has a NON-obvious format (verified live
+   * 2026-08-26): IM delivery of an already-created card must use
+   * `POST im/v1/messages` with `msg_type: 'interactive'` and content
+   * `{ "type": "card", "data": { "card_id": <id> } }`. Reusing the Card Kit
+   * `card_json` envelope here (the natural guess after reading the endpoints
+   * above) fails with business codes 230099 / 200621. See the step-2 IM send
+   * in FeishuChannel.startStreaming for the working call.
    *
    * @param card - the JSON-2.0 card object (e.g. buildStreamingPlaceholderCard()
    *               from #4396); serialized into `{type:'card_json', data}`
