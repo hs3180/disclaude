@@ -44,7 +44,9 @@ vi.mock('@disclaude/core', async (importOriginal) => {
 });
 
 // Track mock agent instances for assertions
-const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean }> = new Map();
+// Issue #4620: mock now carries turnStartedAtMs (0 = not set; tests that
+// exercise the observation-based fallback leave it 0/undefined).
+const mockAgents: Map<string, { dispose: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; updateCallbacks: ReturnType<typeof vi.fn>; taskComplete?: Promise<void>; isBusy: boolean; turnStartedAtMs?: number }> = new Map();
 
 // Mock AgentFactory
 vi.mock('./agents/factory.js', () => ({
@@ -56,6 +58,9 @@ vi.mock('./agents/factory.js', () => ({
         updateCallbacks: vi.fn().mockReturnValue(true),
         taskComplete: undefined as Promise<void> | undefined,
         isBusy: false,
+        // Issue #4620: default 0 = agent does not report a turn-start
+        // timestamp → pool falls back to observation-based tracking.
+        turnStartedAtMs: 0,
       };
       mockAgents.set(chatId, agent);
       return agent;
@@ -690,6 +695,81 @@ describe('PrimaryAgentPool', () => {
           'Failed to send busy-cap notification'
         );
       });
+    });
+
+    it('Issue #4620: back-to-back turns never accumulate — a new turn after 90min of session wall-clock is not insta-killed', () => {
+      // Regression shape from the issue: many completed turns where every
+      // sweep tick lands mid-turn of SOME turn (short interactive-card
+      // turns arriving every few minutes). The observation-based marker
+      // never saw !isBusy, so it anchored to the first turn; the next turn
+      // was killed ~77s in with a false "running for 90 minutes" message.
+      const cap = 90 * 60 * 1000;
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 0, busyTurnHardCapMs: cap });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-b2b', callbacks);
+      const agent = mockAgents.get('chat-b2b')!;
+
+      const t0 = Date.now();
+      const sweep = 5 * 60 * 1000; // production sweep interval
+      // Two hours of 5-minute turns, each reported by the agent with its
+      // own authoritative turnStartedAtMs (as ChatAgent now does).
+      for (let turnStart = t0; turnStart < t0 + 120 * 60 * 1000; turnStart += sweep) {
+        agent.isBusy = true;
+        agent.turnStartedAtMs = turnStart;
+        // Sweep lands mid-turn (turns span the full sweep interval).
+        pool.evictIdleAgents(turnStart + sweep / 2);
+        // Turn completes just before the next sweep would fire.
+        agent.isBusy = false;
+        agent.turnStartedAtMs = 0;
+      }
+      expect(agent.stop).not.toHaveBeenCalled();
+
+      // New turn starts (interactive-card click) — 120+ min after session
+      // start but only ~77s into THIS turn. Must NOT be insta-killed.
+      const newTurnStart = t0 + 125 * 60 * 1000;
+      agent.isBusy = true;
+      agent.turnStartedAtMs = newTurnStart;
+      pool.evictIdleAgents(newTurnStart + 77 * 1000);
+      expect(agent.stop).not.toHaveBeenCalled();
+      // And a genuinely over-long turn IS still capped (cap still enforced).
+      pool.evictIdleAgents(newTurnStart + cap + 1000);
+      expect(agent.stop).toHaveBeenCalledOnce();
+      expect(agent.stop).toHaveBeenCalledWith('chat-b2b');
+    });
+
+    it('Issue #4620: a genuine single runaway turn still trips the cap via turnStartedAtMs', () => {
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-runaway4620', callbacks);
+      const agent = mockAgents.get('chat-runaway4620')!;
+
+      const t0 = Date.now();
+      agent.isBusy = true;
+      agent.turnStartedAtMs = t0;
+      // First sweep observes the busy agent — with the authoritative
+      // timestamp available, the cap is measured from t0 immediately.
+      pool.evictIdleAgents(t0 + 1000);
+      expect(agent.stop).not.toHaveBeenCalled();
+      pool.evictIdleAgents(t0 + 5100);
+      expect(agent.stop).toHaveBeenCalledOnce();
+    });
+
+    it('Issue #4620: agents without turnStartedAtMs keep the observation-based fallback', () => {
+      // Backward compatibility: a mock/older agent that reports isBusy but
+      // no turn-start timestamp falls back to the pre-#4620 marker logic.
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-fallback', callbacks);
+      const agent = mockAgents.get('chat-fallback')!;
+      (agent as { turnStartedAtMs?: number }).turnStartedAtMs = undefined;
+
+      const t0 = Date.now();
+      agent.isBusy = true;
+      pool.evictIdleAgents(t0); // observe busy start
+      pool.evictIdleAgents(t0 + 4000);
+      expect(agent.stop).not.toHaveBeenCalled();
+      pool.evictIdleAgents(t0 + 5100);
+      expect(agent.stop).toHaveBeenCalledOnce();
     });
   });
 
