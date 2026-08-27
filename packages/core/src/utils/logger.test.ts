@@ -436,7 +436,9 @@ describe('logger', () => {
       // With sync:false this write would buffer and only flush via the event
       // loop — the assertion below distinguishes the two.
       logger.info('sync fd probe');
-      void flushLogger();
+      // Await (not fire-and-forget) so a rejection fails this test instead
+      // of surfacing as an unhandled rejection after the fact.
+      await flushLogger();
 
       // Access the underlying SonicBoom via the module's private dest is not
       // exported; instead assert through behaviour: the destination reports
