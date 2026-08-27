@@ -314,7 +314,7 @@ mcpServers:
   playwright:
     type: "stdio"
     command: "npx"
-    args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
+    args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-chromium:9222"]
 ```
 
 plus any user-added stdio server (`disclaude.config.example.yaml:263-268`). `@playwright/mcp@^0.0.61`

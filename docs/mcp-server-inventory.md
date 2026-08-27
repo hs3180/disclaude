@@ -115,7 +115,7 @@ agent. This is the surface the "reduce MCP" direction most directly targets, and
   playwright:
     type: "stdio"
     command: "npx"
-    args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-playwright:9222"]
+    args: ["@playwright/mcp@latest", "--cdp-endpoint", "http://disclaude-chromium:9222"]
   ```
   `"@playwright/mcp": "^0.0.61"` (lockfile `playwright 1.59.0-alpha`); tool-name
   convention `mcp__playwright__browser_*` documented at [`SKILL_SPEC.md:625-626`](../SKILL_SPEC.md).

@@ -7,16 +7,16 @@
 > (how the browser-use Skill reads config and attaches) is #4460.
 > Part 2 (Scope-6 smoke acceptance results) is recorded further down this page.
 
-## Decision: reuse the existing Playwright CDP service (Scope-5)
+## Decision: reuse the existing Chromium CDP service (Scope-5)
 
-**We reuse the existing `disclaude-playwright` compose service. No new
+**We reuse the existing `disclaude-chromium` compose service. No new
 browser-use-native container is introduced.**
 
 Rationale (all verifiable in this repo today):
 
 | #4496 requirement | Satisfied by existing infra |
 |---|---|
-| Dockerized headless Chromium, deps baked into image, no host packages | `mcr.microsoft.com/playwright:v1.62.0-noble` — the official image bundles Chromium + all shared libs (`docker-compose.yml`, `playwright` service); pinned to the Scope-6 smoke-tested version (Playwright 1.62.0 / chromium-1234 / Chromium 151.0.7922.34, #4528) |
+| Dockerized headless Chromium, deps baked into image, no host packages | `mcr.microsoft.com/playwright:v1.62.0-noble` — the official image bundles Chromium + all shared libs (docker-compose.yml, `chromium` service); pinned to the Scope-6 smoke-tested version (Playwright 1.62.0 / chromium-1234 / Chromium 151.0.7922.34, #4528) |
 | Stable, cross-driver CDP endpoint | nginx-fronted endpoint at `CDP_PORT` (#4151 rationale), source-aware Host rewriting for container vs host clients (#4164) |
 | Liveness signal | compose healthcheck probing `GET /json/version` **through nginx** (#4099), so it catches both Chrome dying and proxy failure |
 
@@ -30,33 +30,33 @@ same endpoint like any other driver.
 Bring-up (optional compose profile):
 
 ```bash
-docker compose --profile playwright up -d
+docker compose --profile chromium up -d
 ```
 
 The endpoint is then reachable at:
 
 | Client location | URL | Notes |
 |---|---|---|
-| Peer container on the Docker network | `http://disclaude-playwright:${CDP_PORT:-9222}` | default `9222` |
+| Peer container on the Docker network | `http://disclaude-chromium:${CDP_PORT:-9222}` | default `9222` |
 | Host (user-scope MCP clients) | `http://localhost:${CDP_PORT:-9222}` | published on **loopback only** (`127.0.0.1:` binding) |
 
 - `GET /json/version` — plain HTTP, returns browser metadata + `webSocketDebuggerUrl`.
 - WS upgrade — per-target CDP socket. nginx performs the HTTP→WebSocket
   upgrade; Chrome's DNS-rebinding Host check is satisfied by the proxy's Host
-  rewrite (`docker/playwright-cdp-nginx.conf` header comment documents both
+  rewrite (`docker/chromium-cdp-nginx.conf` header comment documents both
   Chrome 148+ quirks and why a plain TCP forwarder like socat fails).
 - Env knobs (`.env`): `CDP_PORT` (external, default 9222), `CDP_INTERNAL_PORT`
   (Chrome loopback listener, default 9221 — **must differ** from `CDP_PORT`),
-  `PLAYWRIGHT_IMAGE_TAG`.
+  `CHROMIUM_IMAGE_TAG`.
 
 ### Pointing drivers at the endpoint (Acceptance-①)
 
 ```bash
 # Playwright (library)
-chromium.connectOverCDP("http://disclaude-playwright:9222")
+chromium.connectOverCDP("http://disclaude-chromium:9222")
 
 # browser-use CLI / Skill — see config contract below
-BU_CDP_URL=http://disclaude-playwright:9222 browser-use ...
+BU_CDP_URL=http://disclaude-chromium:9222 browser-use ...
 ```
 
 > The Playwright MCP driver entry (`tools.mcpServers.playwright`) was **removed** in
@@ -102,13 +102,13 @@ env var is required — recommended for containerized injection):
 Current, explicit tradeoff recorded here:
 
 - Chrome runs with `--no-sandbox --disable-setuid-sandbox`
-  (`docker-compose.yml`, `playwright.command`). This is **not** an oversight —
+  (`docker-compose.yml`, `chromium.command`). This is **not** an oversight —
   it avoids seccomp/AppArmor friction on arbitrary headless hosts — but it is
   compensated by container-level confinement:
   - The CDP port is published **loopback-only** (`127.0.0.1:${CDP_PORT}`). CDP
     is unauthenticated and exposes the live browser session (pages, JS
     context, network); loopback binding means no LAN host can drive it.
-  - Dedicated optional compose profile (`--profile playwright`) — the browser
+  - Dedicated optional compose profile (`--profile chromium`) — the browser
     only runs where explicitly enabled.
   - Resource limits: 1 CPU / 2 GB RAM ceiling, 0.25 CPU / 256 MB reservation.
   - `--disable-dev-shm-usage`, network/extension/sync hardening flags.
@@ -124,7 +124,7 @@ Current, explicit tradeoff recorded here:
 The contract above was exercised end-to-end on a live headless deployment
 (2026-08-16; Debian 12 headless container, no desktop). Because that host had
 no Docker daemon, the **endpoint process** was brought up as a bare
-`--headless=new` Chromium rather than via `docker compose --profile playwright`
+`--headless=new` Chromium rather than via `docker compose --profile chromium`
 — the same Chrome binary family the compose service runs (Playwright-bundled
 Chromium 151, `--no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage
 --remote-debugging-port=<port> --user-data-dir=<dedicated dir>`), i.e. the
@@ -185,7 +185,7 @@ endpoint** rather than a bare loopback listener — was executed from the
 disclaude **primary container itself** (a peer container on the compose Docker
 network), which exercises exactly the path the bare-listener run could not:
 
-- Endpoint: `http://disclaude-playwright:9222` — the compose default
+- Endpoint: `http://disclaude-chromium:9222` — the compose default
   (`BU_CDP_URL` as promoted into tracked `docker-compose.yml`), reached as a
   **peer container by container DNS name**, i.e. the nginx Host-rewrite path
   (`Server: nginx/1.24.0` on `GET /json/version`, non-IP `Host:` header
@@ -206,7 +206,7 @@ network), which exercises exactly the path the bare-listener run could not:
 | 2 | Script-injection round-trip through nginx | ✅ | `new_tab("data:…<script>window.marker=42</script>")`; `js()` → text `hello-cdp`, `{"m":42,"computed":[2,4,6]}` |
 | 3 | Screenshot round-trip through nginx | ✅ | `ensure_real_tab()` + `capture_screenshot(path=…)` → PNG (magic bytes `\x89PNG`), 15231 bytes |
 | 4 | `BU_CDP_WS` WS form resolved through the nginx front | ✅ | `/json/version` → `webSocketDebuggerUrl` (ws://…/devtools/browser/…) → attach + `document.title` → `Example Domain` — the **WS upgrade through nginx** works, not just plain HTTP |
-| 5 | Attach failure = **hard error**, no silent fallback | ✅ | `BU_CDP_URL=http://disclaude-playwright:9223` (dead port) in a fresh daemon → exit 1 after 30s: `unreachable after 30s: Connection refused` — no self-launched browser |
+| 5 | Attach failure = **hard error**, no silent fallback | ✅ | `BU_CDP_URL=http://disclaude-chromium:9223` (dead port) in a fresh daemon → exit 1 after 30s: `unreachable after 30s: Connection refused` — no self-launched browser |
 | 6 | Shared-browser across independent client sessions | ✅ | A second, separate daemon session `list_tabs()` sees the first session's tabs (`cdp-confirm`, `Example Domain` ×N) — same cross-client sharing the Playwright case proved driver-side |
 
 Notes from the run:
@@ -244,5 +244,5 @@ executed: the driver-side matrix (part 2) and the compose-fronted endpoint
 
 - #4496 — this contract (endpoint side); #4460 — browser-use Skill (skill side)
 - #4151 nginx CDP proxy · #4164 host-scope CDP · #4099 healthcheck
-- Implementation files: `docker-compose.yml` (`playwright` service),
-  `docker/playwright-cdp-nginx.conf`, `.env.example`
+- Implementation files: `docker-compose.yml` (`chromium` service),
+  `docker/chromium-cdp-nginx.conf`, `.env.example`

@@ -165,7 +165,7 @@ See `filebeat.yml` in the project root for the full configuration.
   curl -X DELETE "http://localhost:9200/_template/disclaude-logs"
   ```
 - **Network mode**: Filebeat uses `network_mode: host` for maximum compatibility
-  (same as primary and playwright services). If you need stricter network isolation,
+  (same as primary and chromium services). If you need stricter network isolation,
   replace it with a custom bridge network and expose only the ES port.
 
 ## macOS (launchd): Filebeat
