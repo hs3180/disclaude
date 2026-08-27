@@ -401,7 +401,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   }
 
   /**
-   * When the current turn started (ms epoch), or 0 when idle.
+   * When the most recent turn started (ms epoch), or 0 if no turn has
+   * started yet.
    *
    * Issue #4620: the pool's busy-turn hard cap measures the CURRENT turn
    * from this authoritative timestamp. The previous observation-based
@@ -411,7 +412,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * 90 min of session wall-clock a brand-new turn was insta-killed with a
    * misleading "running for 90 minutes" message.
    *
-   * @returns ms epoch of the current turn's start, or 0 if not busy.
+   * Note: the timestamp is set on turn start and never reset — once a turn
+   * has run, idle agents still report that (stale) turn's start. Readers
+   * must gate on `isBusy` for "is this turn live" semantics; the pool does.
+   *
+   * @returns ms epoch of the most recent turn's start, or 0 if no turn has
+   * started.
    */
   get turnStartedAtMs(): number {
     return this.turnStartedAtMsPrivate;

@@ -771,6 +771,40 @@ describe('PrimaryAgentPool', () => {
       pool.evictIdleAgents(t0 + 5100);
       expect(agent.stop).toHaveBeenCalledOnce();
     });
+
+    it('Issue #4620 (review fix): same-millisecond turns in different chats do not collide on the stop-guard', () => {
+      // Group broadcast shape: two chats' turns start at the SAME epoch ms.
+      // With a bare-timestamp guard key, chat A's over-cap stop would mark
+      // the shared timestamp as handled, silently skipping chat B's stop
+      // (and A going idle could even delete B's guard → double stop).
+      const pool = new PrimaryAgentPool({ idleTimeoutMs: 1000, busyTurnHardCapMs: 5000 });
+      const callbacks = createMockCallbacks();
+      pool.getOrCreateChatAgent('chat-collide-a', callbacks);
+      pool.getOrCreateChatAgent('chat-collide-b', callbacks);
+      const agentA = mockAgents.get('chat-collide-a')!;
+      const agentB = mockAgents.get('chat-collide-b')!;
+
+      const t0 = Date.now();
+      agentA.isBusy = true;
+      agentA.turnStartedAtMs = t0;
+      agentB.isBusy = true;
+      agentB.turnStartedAtMs = t0; // same millisecond as A
+
+      // Both turns exceed the cap — BOTH must be stopped despite the
+      // identical turnStartedAtMs.
+      pool.evictIdleAgents(t0 + 5100);
+      expect(agentA.stop).toHaveBeenCalledOnce();
+      expect(agentA.stop).toHaveBeenCalledWith('chat-collide-a');
+      expect(agentB.stop).toHaveBeenCalledOnce();
+      expect(agentB.stop).toHaveBeenCalledWith('chat-collide-b');
+
+      // The guard must also not leak across chats: A going idle must not
+      // clear B's guard (B still busy → repeated sweeps must not re-stop B).
+      agentA.isBusy = false; // A's turn ended; B's (stopped) turn continues
+      pool.evictIdleAgents(t0 + 5100 + 60000);
+      expect(agentA.stop).toHaveBeenCalledOnce(); // unchanged
+      expect(agentB.stop).toHaveBeenCalledOnce(); // NOT re-stopped by idle-A cleanup
+    });
   });
 
   describe('pool stats / leak diagnostics (Issue #4256)', () => {
