@@ -390,6 +390,116 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
     });
   });
 
+  describe('401 token refresh via onUnauthorized (#4395 part 3)', () => {
+    // mockResolvedValueOnce bypasses the base implementation, so those calls
+    // are NOT recorded in `calls` — use this wrapper to queue a canned response
+    // while still capturing the request (headers are what these tests assert on).
+    function respondOnce(status: number, body: unknown): void {
+      mockFetch.mockImplementationOnce((url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        return Promise.resolve(fakeResponse(status, body));
+      });
+    }
+
+    function makeRefreshingClient(onUnauthorized: () => Promise<string>) {
+      return new FeishuCardKitClient({
+        tenantAccessToken: 'stale-token',
+        fetchImpl: mockFetch,
+        onUnauthorized,
+      });
+    }
+
+    it('createCard: 401 → calls onUnauthorized once, retries with the new token, succeeds', async () => {
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      respondOnce(200, { code: 0, msg: 'ok', data: { card_id: 'card_after_refresh' } });
+      const refresh = vi.fn(() => Promise.resolve('fresh-token'));
+      const client = makeRefreshingClient(refresh);
+
+      const result = await client.createCard({ schema: '2.0' });
+
+      expect(result.cardId).toBe('card_after_refresh');
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(calls).toHaveLength(2); // original + one retry
+      expect((calls[0].init.headers as Record<string, string>).Authorization).toBe(
+        'Bearer stale-token'
+      );
+      expect((calls[1].init.headers as Record<string, string>).Authorization).toBe(
+        'Bearer fresh-token'
+      );
+    });
+
+    it('the refreshed token sticks for subsequent operations (no second refresh)', async () => {
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      respondOnce(200, { code: 0, msg: 'ok', data: { card_id: 'c1' } });
+      const refresh = vi.fn(() => Promise.resolve('fresh-token'));
+      const client = makeRefreshingClient(refresh);
+
+      await client.createCard({});
+      // Second op: plain 200 — must carry the refreshed token, refresh NOT called again.
+      const result = await client.updateCard('c1', {}, 1);
+
+      expect(result.ok).toBe(true);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect((calls[2].init.headers as Record<string, string>).Authorization).toBe(
+        'Bearer fresh-token'
+      );
+    });
+
+    it('refreshes only once per client: a second 401 propagates (stale refresh)', async () => {
+      respondOnce(401, { code: 99991663, msg: 'still stale' });
+      respondOnce(401, { code: 99991663, msg: 'still stale' });
+      const refresh = vi.fn(() => Promise.resolve('not-fresh-either'));
+      const client = makeRefreshingClient(refresh);
+
+      await expect(client.createCard({})).rejects.toMatchObject({
+        name: 'CardKitClientError',
+        status: 401,
+      });
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(calls).toHaveLength(2);
+    });
+
+    it('update ops share the refresh path (updateCard 401 → retry succeeds)', async () => {
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      respondOnce(200, { code: 0, msg: 'ok' });
+      const refresh = vi.fn(() => Promise.resolve('fresh-token'));
+      const client = makeRefreshingClient(refresh);
+
+      await expect(client.updateCard(CARD_ID, {}, 1)).resolves.toMatchObject({ ok: true });
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('hook resolving empty rethrows the ORIGINAL 401 (actionable message kept)', async () => {
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      const client = makeRefreshingClient(() => Promise.resolve(''));
+
+      await expect(client.createCard({})).rejects.toMatchObject({
+        name: 'CardKitClientError',
+        status: 401,
+        message: expect.stringContaining('Refresh LARKSUITE_CLI_TENANT_ACCESS_TOKEN'),
+      });
+      expect(calls).toHaveLength(1);
+    });
+
+    it('hook throwing propagates its error (not swallowed as a 401)', async () => {
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      const client = makeRefreshingClient(() => {
+        throw new Error('token endpoint down');
+      });
+
+      await expect(client.createCard({})).rejects.toThrow('token endpoint down');
+    });
+
+    it('non-401 errors never trigger the refresh hook', async () => {
+      respondOnce(429, { msg: 'rate limited' });
+      const refresh = vi.fn(() => Promise.resolve('fresh-token'));
+      const client = makeRefreshingClient(refresh);
+
+      await expect(client.createCard({})).rejects.toMatchObject({ status: 429 });
+      expect(refresh).not.toHaveBeenCalled();
+    });
+  });
+
   describe('createCardKitClientFromEnv', () => {
     const origToken = process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
 

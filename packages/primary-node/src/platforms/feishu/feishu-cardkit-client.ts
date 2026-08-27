@@ -31,14 +31,15 @@
  * plumbing carries it in `process.env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN`
  * (see feishu-channel.ts); `createCardKitClientFromEnv()` reuses that.
  *
- * Scope (this file = #4395 parts 1 + 2): the create + update/finalize
- * operations. `createCard` (part 2) was deferred from #4411 until the create
- * path was settled — decision #4208 (2026-08-03) settled it on Card Kit native
- * POST /cards. The message-send step that makes a created card appear in a
- * conversation is wiring (ChatAgent / #4399 / #4400), NOT this client — but
- * see `createCard()` JSDoc for the IM delivery format pitfall (card_json
- * envelope vs {type:'card',data:{card_id}}). Nothing in disclaude wires
- * this client yet (pure infrastructure).
+ * Scope (this file = #4395 parts 1–3): the create + update/finalize operations,
+ * plus the once-per-client 401 token refresh (part 3 — `onUnauthorized`). Part 2
+ * `createCard` was deferred from #4411 until the create path was settled —
+ * decision #4208 (2026-08-03) settled it on Card Kit native POST /cards. The
+ * message-send step that makes a created card appear in a conversation is
+ * wiring (ChatAgent / #4399 / #4400), NOT this client — but see `createCard()`
+ * JSDoc for the IM delivery format pitfall (card_json envelope vs
+ * {type:'card',data:{card_id}}). Nothing in disclaude passes `onUnauthorized`
+ * yet (pure infrastructure).
  */
 
 import { createLogger } from '@disclaude/core';
@@ -102,6 +103,16 @@ export interface CardKitClientOptions {
   timeoutMs?: number;
   /** External AbortSignal; aborting it cancels any in-flight request. */
   signal?: AbortSignal;
+  /**
+   * Refresh the tenant_access_token on a 401 (#4395 scope: "token refresh on
+   * 401"). Called at most once per client instance; its resolved value
+   * replaces the Bearer token for the single retried request and thereafter.
+   * When omitted (or when it resolves empty), the original
+   * `CardKitClientError(status=401)` propagates unchanged — callers without
+   * a way to mint a new token see the same actionable "refresh
+   * LARKSUITE_CLI_TENANT_ACCESS_TOKEN" error as before.
+   */
+  onUnauthorized?: () => Promise<string>;
 }
 
 /**
@@ -111,11 +122,14 @@ export interface CardKitClientOptions {
  * @see #4395, #4411, #4208
  */
 export class FeishuCardKitClient {
-  private readonly token: string;
+  private token: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
   private readonly signal?: AbortSignal;
+  private readonly onUnauthorized?: () => Promise<string>;
+  /** Set after the single 401-triggered refresh (see `requestWithRefresh`). */
+  private refreshed = false;
 
   constructor(options: CardKitClientOptions) {
     if (!options || !options.tenantAccessToken) {
@@ -129,6 +143,7 @@ export class FeishuCardKitClient {
     }
     this.timeoutMs = options.timeoutMs ?? DEFAULT_CARDKIT_TIMEOUT_MS;
     this.signal = options.signal;
+    this.onUnauthorized = options.onUnauthorized;
   }
 
   /**
@@ -159,7 +174,7 @@ export class FeishuCardKitClient {
   async createCard(card: unknown): Promise<CardKitCreateResult> {
     // Create has no uuid/sequence (those are update-op fields, verified against
     // the Feishu create-card doc — POST /cards body is {type, data} only).
-    const result = await this.request('POST', '/cards', {
+    const result = await this.requestWithRefresh('POST', '/cards', {
       type: 'card_json',
       data: JSON.stringify(card),
     });
@@ -185,7 +200,7 @@ export class FeishuCardKitClient {
     sequence: number,
     uuid?: string
   ): Promise<CardKitResult> {
-    return this.request(
+    return this.requestWithRefresh(
       'PUT',
       `/cards/${encodeURIComponent(cardId)}/elements/${encodeURIComponent(elementId)}/content`,
       { content, sequence, uuid: uuid ?? randomUuid() }
@@ -208,7 +223,7 @@ export class FeishuCardKitClient {
     sequence: number,
     uuid?: string
   ): Promise<CardKitResult> {
-    return this.request('PUT', `/cards/${encodeURIComponent(cardId)}`, {
+    return this.requestWithRefresh('PUT', `/cards/${encodeURIComponent(cardId)}`, {
       card: { type: 'card_json', data: JSON.stringify(card) },
       sequence,
       uuid: uuid ?? randomUuid(),
@@ -233,11 +248,45 @@ export class FeishuCardKitClient {
     uuid?: string,
     settings: Record<string, unknown> = { config: { streaming_mode: false } }
   ): Promise<CardKitResult> {
-    return this.request('PATCH', `/cards/${encodeURIComponent(cardId)}/settings`, {
+    return this.requestWithRefresh('PATCH', `/cards/${encodeURIComponent(cardId)}/settings`, {
       settings: JSON.stringify(settings),
       sequence,
       uuid: uuid ?? randomUuid(),
     });
+  }
+
+  /**
+   * `request` + the once-per-client 401 refresh (#4395 scope: "token refresh
+   * on 401"). Every Card Kit operation — `createCard` included — goes through
+   * here, so a long-lived client survives exactly one token expiry: the first
+   * 401 calls `onUnauthorized`, swaps in the fresh token, and retries the
+   * request once; a second 401 (refresh itself stale) propagates. Without a
+   * hook, this is a pass-through and the 401 surfaces unchanged.
+   */
+  private async requestWithRefresh(
+    method: 'POST' | 'PUT' | 'PATCH',
+    path: string,
+    body: unknown
+  ): Promise<CardKitResult> {
+    if (this.refreshed || !this.onUnauthorized) {
+      return this.request(method, path, body);
+    }
+    try {
+      return await this.request(method, path, body);
+    } catch (err) {
+      if (!(err instanceof CardKitClientError) || err.status !== 401) {
+        throw err;
+      }
+      const freshToken = await this.onUnauthorized();
+      if (!freshToken) {
+        // Hook declined to provide a token — surface the original 401 (its
+        // message already tells the operator which env var to refresh).
+        throw err;
+      }
+      this.token = freshToken;
+      this.refreshed = true;
+      return this.request(method, path, body);
+    }
   }
 
   /**
