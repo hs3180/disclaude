@@ -105,12 +105,18 @@ export interface CardKitClientOptions {
   signal?: AbortSignal;
   /**
    * Refresh the tenant_access_token on a 401 (#4395 scope: "token refresh on
-   * 401"). Called at most once per client instance; its resolved value
-   * replaces the Bearer token for the single retried request and thereafter.
-   * When omitted (or when it resolves empty), the original
-   * `CardKitClientError(status=401)` propagates unchanged — callers without
-   * a way to mint a new token see the same actionable "refresh
-   * LARKSUITE_CLI_TENANT_ACCESS_TOKEN" error as before.
+   * 401"). Called **at most once per client instance** — concurrent 401s are
+   * coalesced into a single hook invocation via single-flight. Its resolved
+   * value replaces the Bearer token for all retried requests and thereafter.
+   *
+   * - **Success** (`non-empty string`): token swapped in, retry proceeds.
+   * - **Empty string**: hook declined; the original 401 propagates.
+   * - **Throws**: error surfaces to every waiting caller; the client is left
+   *   free to call the hook again on a later operation.
+   *
+   * When omitted, the original `CardKitClientError(status=401)` propagates
+   * unchanged — callers without a way to mint a new token see the same
+   * actionable "refresh LARKSUITE_CLI_TENANT_ACCESS_TOKEN" error as before.
    */
   onUnauthorized?: () => Promise<string>;
 }
@@ -128,8 +134,17 @@ export class FeishuCardKitClient {
   private readonly timeoutMs: number;
   private readonly signal?: AbortSignal;
   private readonly onUnauthorized?: () => Promise<string>;
-  /** Set after the single 401-triggered refresh (see `requestWithRefresh`). */
+  /**
+   * Set once a refresh has succeeded (see `requestWithRefresh`). Gates the
+   * "at most one refresh per client" contract for every later operation.
+   */
   private refreshed = false;
+  /**
+   * In-flight refresh shared by all concurrent 401 catchers (single-flight).
+   * Awaiting this promise — instead of calling the hook again — is what makes
+   * `refreshed`'s assignment timing race-free under concurrent 401s.
+   */
+  private refreshPromise?: Promise<string>;
 
   constructor(options: CardKitClientOptions) {
     if (!options || !options.tenantAccessToken) {
@@ -260,8 +275,13 @@ export class FeishuCardKitClient {
    * on 401"). Every Card Kit operation — `createCard` included — goes through
    * here, so a long-lived client survives exactly one token expiry: the first
    * 401 calls `onUnauthorized`, swaps in the fresh token, and retries the
-   * request once; a second 401 (refresh itself stale) propagates. Without a
-   * hook, this is a pass-through and the 401 surfaces unchanged.
+   * request once; a second 401 (refresh itself stale) propagates.
+   *
+   * **Concurrent 401 safety**: multiple operations hitting 401 simultaneously
+   * are coalesced into **one** hook call via single-flight (`refreshPromise`),
+   * so the "at most once per client" contract holds even under race conditions.
+   *
+   * Without a hook, this is a pass-through and the 401 surfaces unchanged.
    */
   private async requestWithRefresh(
     method: 'POST' | 'PUT' | 'PATCH',
@@ -277,14 +297,27 @@ export class FeishuCardKitClient {
       if (!(err instanceof CardKitClientError) || err.status !== 401) {
         throw err;
       }
-      const freshToken = await this.onUnauthorized();
+      // Single-flight: every concurrent 401 catcher awaits the SAME hook
+      // call. Assigning this.refreshed only after the await is otherwise a
+      // race — two ops failing together would each invoke the hook.
+      const freshToken = await (this.refreshPromise ??= this.onUnauthorized().then(
+        (token) => {
+          this.refreshed = true;
+          return token;
+        },
+        (err) => {
+          // Let the hook's error surface to this op, but leave the client
+          // free to retry the hook on a later operation.
+          this.refreshPromise = undefined;
+          throw err;
+        }
+      ));
       if (!freshToken) {
         // Hook declined to provide a token — surface the original 401 (its
         // message already tells the operator which env var to refresh).
         throw err;
       }
       this.token = freshToken;
-      this.refreshed = true;
       return this.request(method, path, body);
     }
   }

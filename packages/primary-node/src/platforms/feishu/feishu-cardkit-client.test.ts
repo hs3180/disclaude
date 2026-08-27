@@ -469,6 +469,78 @@ describe('FeishuCardKitClient (Issue #4395)', () => {
       expect(refresh).toHaveBeenCalledTimes(1);
     });
 
+    it('concurrent 401s coalesce into ONE hook call (single-flight, no race)', async () => {
+      // Regression: `refreshed` used to be set only AFTER `await
+      // onUnauthorized()`, so two ops failing together each invoked the hook.
+      // Real exposure: feishu-channel's getCardKitClient() is a channel-level
+      // singleton — concurrent streaming sessions share one client instance.
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      respondOnce(200, { code: 0, msg: 'ok' });
+      respondOnce(200, { code: 0, msg: 'ok' });
+      const refresh = vi.fn(
+        () => new Promise<string>((resolve) => setImmediate(() => resolve('fresh-token')))
+      );
+      const client = makeRefreshingClient(refresh);
+
+      const [a, b] = await Promise.all([
+        client.updateCard(CARD_ID, {}, 1),
+        client.updateCard(CARD_ID, {}, 2),
+      ]);
+
+      expect(a.ok).toBe(true);
+      expect(b.ok).toBe(true);
+      expect(refresh).toHaveBeenCalledTimes(1); // ← the race, when present, gives 2
+      expect(calls).toHaveLength(4); // 2 originals + 2 retries
+      // Both retries carry the fresh token.
+      expect((calls[2].init.headers as Record<string, string>).Authorization).toBe(
+        'Bearer fresh-token'
+      );
+      expect((calls[3].init.headers as Record<string, string>).Authorization).toBe(
+        'Bearer fresh-token'
+      );
+    });
+
+    it('concurrent 401s where the refresh throws: error surfaces to all waiters, next op may retry the hook', async () => {
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      const refresh = vi.fn(
+        () =>
+          new Promise<string>((_resolve, reject) =>
+            setImmediate(() => reject(new Error('token endpoint down')))
+          )
+      );
+      const client = makeRefreshingClient(refresh);
+
+      const [errA, errB] = await Promise.allSettled([
+        client.updateCard(CARD_ID, {}, 1),
+        client.updateCard(CARD_ID, {}, 2),
+      ]);
+      expect(errA.status).toBe('rejected');
+      expect(errB.status).toBe('rejected');
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      // Failure clears the in-flight promise → a later op can retry the hook.
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      respondOnce(200, { code: 0, msg: 'ok' });
+      refresh.mockClear();
+      refresh.mockResolvedValueOnce('fresh-token');
+      await expect(client.updateCard(CARD_ID, {}, 3)).resolves.toMatchObject({ ok: true });
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('401 retry reuses the SAME uuid (idempotency-friendly for server dedup)', async () => {
+      respondOnce(401, { code: 99991663, msg: 'invalid token' });
+      respondOnce(200, { code: 0, msg: 'ok' });
+      const client = makeRefreshingClient(() => Promise.resolve('fresh-token'));
+
+      await client.updateCard(CARD_ID, {}, 7);
+
+      const firstUuid = JSON.parse(calls[0].init.body as string).uuid;
+      const retryUuid = JSON.parse(calls[1].init.body as string).uuid;
+      expect(retryUuid).toBe(firstUuid);
+    });
+
     it('hook resolving empty rethrows the ORIGINAL 401 (actionable message kept)', async () => {
       respondOnce(401, { code: 99991663, msg: 'invalid token' });
       const client = makeRefreshingClient(() => Promise.resolve(''));
