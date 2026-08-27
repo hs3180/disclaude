@@ -17,7 +17,8 @@
  * Preconditions (cannot be met from CI — operator shell only, same split as
  * the Card Kit bench #4398/#4416):
  *   - ANTHROPIC_API_KEY (or --api-key / provider config in disclaude.config.yaml)
- *   - a reachable CDP Chromium endpoint (docker compose --profile playwright up)
+ *   - a reachable CDP Chromium endpoint (docker compose --profile chromium up,
+ *     #4613)
  *   - `browser-use` CLI on PATH for the agent subprocess (see
  *     skills/browser-use/SKILL.md "Environment")
  *
