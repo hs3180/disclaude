@@ -499,13 +499,20 @@ async function main(): Promise<void> {
 
     // Issue #3857 Phase 2: Start HTTP API server if --api-port is specified
     if (options.apiPort) {
-      const apiPortReady = await isPortAvailable(options.apiPort, 'localhost');
+      // #4608: bind explicitly to IPv4 loopback, NOT 'localhost'. A 'localhost'
+      // bind can resolve ::1-first and end up IPv6-only, while undici fetch
+      // (the REST IPC client) tries 127.0.0.1 first — the exact family split
+      // observed in docs/channel-skill-rest-live-verification.md §"loopback
+      // only". REST IPC is loopback-only by design, so the IPv4 pin is always
+      // correct; mirror it client-side via DISCLAUDE_REST_IPC_BASE_URL.
+      const apiHost = '127.0.0.1';
+      const apiPortReady = await isPortAvailable(options.apiPort, apiHost);
       if (!apiPortReady) {
         console.error(`Error: API port ${options.apiPort} is already in use. Exiting.`);
         processLock?.release();
         process.exit(1);
       }
-      httpApiServer = new HttpApiServer({ port: options.apiPort, apiToken: options.apiToken });
+      httpApiServer = new HttpApiServer({ port: options.apiPort, host: apiHost, apiToken: options.apiToken });
       httpApiServer.setNodeId(primaryNode.getNodeId());
 
       // Issue #3857 Phase 2: Wire push handler to InputMessageRouter

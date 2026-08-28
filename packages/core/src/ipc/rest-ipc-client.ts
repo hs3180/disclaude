@@ -86,7 +86,7 @@ const ROUTES: Readonly<Record<string, Route>> = {
 };
 
 export interface RestIpcClientOptions {
-  /** Base URL of the HttpApiServer (e.g. http://localhost:9200). */
+  /** Base URL of the HttpApiServer (e.g. http://localhost:19200). */
   baseUrl: string;
   /** Optional bearer token for POST endpoints (GET routes are token-exempt). */
   apiToken?: string;

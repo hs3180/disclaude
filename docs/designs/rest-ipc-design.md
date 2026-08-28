@@ -94,7 +94,7 @@ equivalent inline construction in `push-cli.ts`. There is no transport toggle.
 
 | Env var | Required | Default | Description |
 |---------|----------|---------|-------------|
-| `DISCLAUDE_REST_IPC_BASE_URL` | No | `http://localhost:9200` | HttpApiServer URL. |
+| `DISCLAUDE_REST_IPC_BASE_URL` | No | `http://localhost:19200` | HttpApiServer URL. |
 | `DISCLAUDE_REST_IPC_API_TOKEN` | No | unset | Bearer token for POST endpoints. |
 
 (`DISCLAUDE_REST_IPC_ENABLED` is gone with the dual path — REST is unconditional.)

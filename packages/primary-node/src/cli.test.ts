@@ -113,9 +113,9 @@ describe('parseArgs', () => {
   });
 
   it('should parse --api-port flag with value (Issue #3857)', () => {
-    const result = parseArgs(['start', '--api-port', '9200']);
+    const result = parseArgs(['start', '--api-port', '19200']);
     expect(result.command).toBe('start');
-    expect(result.apiPort).toBe(9200);
+    expect(result.apiPort).toBe(19200);
   });
 
   it('should leave apiPort undefined when not specified', () => {

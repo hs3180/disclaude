@@ -46,7 +46,12 @@ services:
 
     # Command: run Primary Node directly
     # Docker restart policy handles process management
-    command: ["node", "packages/primary-node/dist/cli.js", "start"]
+    # --api-port starts the HttpApiServer (REST IPC). Since #4168 Phase 3
+    # removed the Unix-socket transport, REST is the ONLY IPC path: channel
+    # MCP tools (send_interactive_message, upload_file, send-card, ...) reach
+    # PrimaryNode via DISCLAUDE_REST_IPC_BASE_URL, whose default matches this
+    # port (http://localhost:19200). Port is not published to the host.
+    command: ["node", "packages/primary-node/dist/cli.js", "start", "--api-port", "19200"]
 
     # Uses bridge network (disclaude-net) for container-to-container communication
     # (e.g., CDP endpoint from chromium service). Re-add `network_mode: host`
@@ -60,6 +65,12 @@ services:
       - DISCLAUDE_MODE=primary
       - HOST=0.0.0.0
       - DISCLAUDE_WORKSPACE_DIR=/data/workspace
+      # #4608: pin the REST IPC client to IPv4 loopback, matching the
+      # HttpApiServer bind (cli.ts pins 127.0.0.1). Avoids the localhost
+      # ::1-vs-127.0.0.1 resolution split between server bind and undici fetch
+      # (docs/channel-skill-rest-live-verification.md). Propagates to the
+      # in-container channel MCP server and disclaude-push via env inheritance.
+      - DISCLAUDE_REST_IPC_BASE_URL=http://127.0.0.1:19200
       # Issue #4181: re-enable Claude Code's built-in (session-only) cron/loop
       # tools (CronCreate/CronList/CronDelete/ScheduleWakeup), disallowed for
       # chat agents by default. Set DISCLAUDE_ALLOW_BUILTIN_CRON=1 in .env to

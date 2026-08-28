@@ -9,7 +9,7 @@
 > `@disclaude/mcp-server` import, so every send path — including `send_card`'s
 > local-image upload (`resolveCardImages` → `getIpcClient()`) — selects
 > `RestIpcClient`. Base URL: `--base-url` > `DISCLAUDE_REST_IPC_BASE_URL` >
-> `http://localhost:9200`. Bearer token: `DISCLAUDE_REST_IPC_API_TOKEN` (unset
+> `http://localhost:19200`. Bearer token: `DISCLAUDE_REST_IPC_API_TOKEN` (unset
 > is fine when the PrimaryNode runs without `--api-token`). When the REST face
 > is unreachable, the CLI emits an actionable "start the main service" hint
 > instead of a raw `fetch` ECONNREFUSED (#4532 scope 3). The #4521 chatId
@@ -161,7 +161,7 @@ Every command prints **exactly one JSON object** to stdout and nothing else
 {"ok":false,"command":"send_card","error":"Invalid card JSON: Unexpected token ...","hint":"pass --card <json>, --card-file <path>, or pipe card JSON on stdin"}
 {"ok":false,"command":"send_card","error":"Invalid card structure: ..."}
 {"ok":false,"command":"push_to_agent","error":"Missing message content","hint":"pass --message <string>, --message-file <path>, or pipe content on stdin"}
-{"ok":false,"command":"send_text","error":"IPC service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://localhost:9200 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL"}
+{"ok":false,"command":"send_text","error":"IPC service unavailable. Please ensure Primary Node is running.","hint":"PrimaryNode REST http://localhost:19200 unreachable — start the main service (disclaude-primary start --api-port <port>) or pass --base-url / DISCLAUDE_REST_IPC_BASE_URL"}
 {"ok":false,"command":"send_text","error":"Failed to load @disclaude/mcp-server: ...","hint":"run inside a disclaude workspace with packages built (npm run build); ..."}
 ```
 
@@ -190,8 +190,8 @@ create/lazily-resume the target chat's agent.)
 | Dependency | Source | How to satisfy |
 |---|---|---|
 | `@disclaude/mcp-server` (exports `send_text`, `send_file`, `send_card`, `push_to_agent`, `send_interactive`, + card helpers) | workspace package | build the monorepo (`npm run build`) |
-| disclaude PrimaryNode (**REST API**, #4532) | runtime | start it with `--api-port` (e.g. `9200`); the CLI POSTs to `/api/*` — no Unix socket involved |
-| REST base URL | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:9200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361) |
+| disclaude PrimaryNode (**REST API**, #4532) | runtime | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved |
+| REST base URL | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361) |
 | REST bearer token | `DISCLAUDE_REST_IPC_API_TOKEN` env | required only when the PrimaryNode was started with `--api-token` (pass the same secret) |
 | Feishu credentials | `disclaude.config.yaml` / env | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` (validated inside `send_text` / `send_file` / `send_card` / `push_to_agent` / `send_interactive`) |
 

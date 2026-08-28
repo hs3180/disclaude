@@ -25,7 +25,7 @@
  * a single send.
  *
  * Transport wiring (#4532 scope 1+2): base URL from --base-url >
- * DISCLAUDE_REST_IPC_BASE_URL > http://localhost:9200; bearer token from
+ * DISCLAUDE_REST_IPC_BASE_URL > http://localhost:19200; bearer token from
  * DISCLAUDE_REST_IPC_API_TOKEN (passed through to POST routes; the PrimaryNode
  * started without --api-token accepts any request). One-shot CLI processes
  * inherit these env vars from the agent's runtime env (.runtime-env is merged
@@ -177,7 +177,7 @@ Transport (all subcommands):
   The CLI talks to the PrimaryNode's REST API — no Unix-socket IPC (#4532).
   --base-url <url>            Base URL of the PrimaryNode REST API. Default:
                               $DISCLAUDE_REST_IPC_BASE_URL or
-                              http://localhost:9200.
+                              http://localhost:19200.
   The bearer token for POST routes comes from DISCLAUDE_REST_IPC_API_TOKEN
   (unset is fine when the PrimaryNode runs without --api-token).
 
@@ -284,7 +284,7 @@ async function withStdoutToStderr(fn) {
 // ---------------------------------------------------------------------------
 
 /** Default REST base URL of the PrimaryNode HttpApiServer (#4168 decision 3). */
-const DEFAULT_REST_BASE_URL = "http://localhost:9200";
+const DEFAULT_REST_BASE_URL = "http://localhost:19200";
 
 /**
  * Force the REST IPC transport for this one-shot process (#4532 scope 1: the
