@@ -229,9 +229,9 @@ interface Route {
  *
  * @example
  * ```typescript
- * const server = new HttpApiServer({ port: 9200 });
+ * const server = new HttpApiServer({ port: 19200 });
  * server.start();
- * // GET http://localhost:9200/api/status → { status: "ok", ... }
+ * // GET http://localhost:19200/api/status → { status: "ok", ... }
  * ```
  */
 export class HttpApiServer {

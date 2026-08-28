@@ -72,9 +72,9 @@ deployer reproducing this verification can hit it:
   first and failed with `ECONNREFUSED` — repeatedly, deterministically (no
   happy-eyeballs fallback across families within the 2s probe timeout).
   `curl` succeeded because its resolver ordered `::1` first.
-- Consequence: with `DISCLAUDE_REST_IPC_BASE_URL=http://localhost:9200` (the
+- Consequence: with `DISCLAUDE_REST_IPC_BASE_URL=http://localhost:19200` (the
   #4168 decision-3 default) on such a host, `isIpcAvailable()` and every REST
-  call fail while `curl http://localhost:9200/api/ping` succeeds — a confusing
+  call fail while `curl http://localhost:19200/api/ping` succeeds — a confusing
   split.
 - Workarounds verified in this run: pass `--base-url 'http://[::1]:9201'`
   (used for all five successful sends above), or set

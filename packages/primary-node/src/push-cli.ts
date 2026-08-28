@@ -70,7 +70,7 @@ Transport (REST only, Issue #4543):
   PrimaryNode must be started with --api-port (recommend also --api-token).
 
   DISCLAUDE_REST_IPC_BASE_URL   PrimaryNode HTTP API base URL
-                                 (default http://localhost:9200)
+                                 (default http://localhost:19200)
   DISCLAUDE_REST_IPC_API_TOKEN  Bearer token, required when PrimaryNode
                                  is started with --api-token
 
@@ -139,7 +139,7 @@ export async function main(): Promise<void> {
   // never via the central dual-path facade (which still builds a Unix-socket
   // client by default), and no env var selects the transport.
   // Base URL / token come from the documented REST env vars.
-  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:9200';
+  const baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:19200';
   const apiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
   const client = new RestIpcClient({ baseUrl, apiToken });
 

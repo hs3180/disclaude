@@ -79,7 +79,7 @@ describe('push-cli (real RestIpcClient route, Issue #4543 part 2)', () => {
     await main();
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe('http://localhost:9200/api/push');
+    expect(calls[0].url).toBe('http://localhost:19200/api/push');
     expect(calls[0].init.method).toBe('POST');
     expect(calls[0].init.headers).toMatchObject({
       'content-type': 'application/json',
@@ -129,7 +129,7 @@ describe('push-cli (real RestIpcClient route, Issue #4543 part 2)', () => {
     // and the CLI's #4543 scope-3 guidance keys off exactly that type.
     const out = errorSpy.mock.calls.map((args: unknown[]) => String(args[0])).join('\n');
     expect(out).toContain('ipc_unavailable');
-    expect(out).toContain('http://localhost:9200');
+    expect(out).toContain('http://localhost:19200');
     expect(out).toContain('--api-port');
   });
 

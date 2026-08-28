@@ -172,7 +172,7 @@ async function main(): Promise<void> {
   logger.info({
     nodeVersion: process.version,
     cwd: process.cwd(),
-    restBaseUrl: process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:9200',
+    restBaseUrl: process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:19200',
     hasConfig: !!options.configPath,
   }, 'MCP Server startup environment');
 

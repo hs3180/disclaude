@@ -138,7 +138,7 @@ describe('push-cli', () => {
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
       await main();
       expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
-      expect(MockRestIpcClient).toHaveBeenCalledWith({ baseUrl: 'http://localhost:9200', apiToken: undefined });
+      expect(MockRestIpcClient).toHaveBeenCalledWith({ baseUrl: 'http://localhost:19200', apiToken: undefined });
       expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
     });
 
@@ -199,7 +199,7 @@ describe('push-cli', () => {
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
       await expect(main()).rejects.toThrow('process.exit');
       const calls = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-      expect(calls.some(c => c.includes('http://localhost:9200'))).toBe(true);
+      expect(calls.some(c => c.includes('http://localhost:19200'))).toBe(true);
       expect(calls.some(c => c.includes('--api-port'))).toBe(true);
       expect(calls.some(c => c.includes('DISCLAUDE_REST_IPC_BASE_URL'))).toBe(true);
     });

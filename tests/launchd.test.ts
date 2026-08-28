@@ -2,10 +2,10 @@
 //
 // Since #4280 Phase 3 the MCP tools' only transport is the PrimaryNode HTTP
 // API server (`--api-port`); the generated launchd plist used to pass bare
-// `start`, so nothing listened on 9200 and every channel-mcp send tool
+// `start`, so nothing listened on 19200 and every channel-mcp send tool
 // (send_card / send_text / send_file / send_interactive) failed with
 // 「IPC 服务不可用」in launchd production deployments. The fix makes
-// `buildProgramArguments` append `--api-port <port>` (default 9200, override
+// `buildProgramArguments` append `--api-port <port>` (default 19200, override
 // via DISCLAUDE_LAUNCHD_API_PORT) and `--api-token` when
 // DISCLAUDE_LAUNCHD_API_TOKEN is set.
 //
@@ -57,9 +57,9 @@ function snapshotEnv() {
 }
 
 describe('resolveApiPort (#4576)', () => {
-  it('defaults to 9200 when no env override is set', () => {
+  it('defaults to 19200 when no env override is set', () => {
     snapshotEnv();
-    expect(resolveApiPort()).toBe(9200);
+    expect(resolveApiPort()).toBe(19200);
   });
 
   it('accepts a valid override in 1-65535', () => {
@@ -72,7 +72,7 @@ describe('resolveApiPort (#4576)', () => {
     snapshotEnv();
     for (const bad of ['0', '99999', '-1']) {
       process.env.DISCLAUDE_LAUNCHD_API_PORT = bad;
-      expect(resolveApiPort()).toBe(9200);
+      expect(resolveApiPort()).toBe(19200);
     }
   });
 
@@ -82,24 +82,24 @@ describe('resolveApiPort (#4576)', () => {
     // CLI parser (packages/primary-node/src/cli.ts); only NaN cases here.
     for (const bad of ['abc', '']) {
       process.env.DISCLAUDE_LAUNCHD_API_PORT = bad;
-      expect(resolveApiPort()).toBe(9200);
+      expect(resolveApiPort()).toBe(19200);
     }
   });
 });
 
 describe('buildProgramArguments REST API wiring (#4576)', () => {
-  it('appends --api-port 9200 by default (REST-only MCP tools need it)', () => {
+  it('appends --api-port 19200 by default (REST-only MCP tools need it)', () => {
     snapshotEnv();
     const args = buildProgramArguments(NODE, null);
-    // Without caffeinate: [node, cli, 'start', '--api-port', '9200']
-    expect(args).toEqual([NODE, expect.any(String), 'start', '--api-port', '9200']);
+    // Without caffeinate: [node, cli, 'start', '--api-port', '19200']
+    expect(args).toEqual([NODE, expect.any(String), 'start', '--api-port', '19200']);
   });
 
   it('keeps the caffeinate wrapper and still appends --api-port', () => {
     snapshotEnv();
     const args = buildProgramArguments(NODE, CAFFEINATE);
     expect(args.slice(0, 2)).toEqual([CAFFEINATE, '-s']);
-    expect(args.slice(-3)).toEqual(['start', '--api-port', '9200']);
+    expect(args.slice(-3)).toEqual(['start', '--api-port', '19200']);
   });
 
   it('honours DISCLAUDE_LAUNCHD_API_PORT in the generated args', () => {
@@ -115,15 +115,15 @@ describe('buildProgramArguments REST API wiring (#4576)', () => {
 
     process.env.DISCLAUDE_LAUNCHD_API_TOKEN = 'secret-token';
     const args = buildProgramArguments(NODE, null);
-    // args = [node, cli, 'start', '--api-port', '9200', '--api-token', token]
-    expect(args.slice(-4)).toEqual(['--api-port', '9200', '--api-token', 'secret-token']);
+    // args = [node, cli, 'start', '--api-port', '19200', '--api-token', token]
+    expect(args.slice(-4)).toEqual(['--api-port', '19200', '--api-token', 'secret-token']);
   });
 });
 
 describe('resolveRestIpcBaseUrl (port-override propagation, #4578 review nit 1)', () => {
   it('stays null at the default port — plist gains no env entry', () => {
     snapshotEnv();
-    expect(resolveRestIpcBaseUrl(9200)).toBeNull();
+    expect(resolveRestIpcBaseUrl(19200)).toBeNull();
   });
 
   it('mirrors a non-default port so MCP tools probe the override', () => {
@@ -145,8 +145,8 @@ describe('xmlEscape (plist safety, #4578 review nit 2)', () => {
 
   it('passes safe values (paths, numbers, URLs) through unchanged', () => {
     expect(xmlEscape('/usr/local/bin/node')).toBe('/usr/local/bin/node');
-    expect(xmlEscape('9200')).toBe('9200');
-    expect(xmlEscape('http://localhost:9200')).toBe('http://localhost:9200');
+    expect(xmlEscape('19200')).toBe('19200');
+    expect(xmlEscape('http://localhost:19200')).toBe('http://localhost:19200');
   });
 
   it('renders a token with markup chars into parseable plist content', () => {

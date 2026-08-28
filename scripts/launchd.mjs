@@ -55,18 +55,18 @@ const CLI_ENTRY = resolve(PROJECT_ROOT, 'packages/primary-node/dist/cli.js');
 // Issue #4576: since #4280 Phase 3 the MCP tools' only transport is the
 // PrimaryNode REST API (GET /api/ping on the HTTP API server). A launchd
 // deployment started with bare `start` has no --api-port, so nothing listens
-// on 9200 and every channel-mcp send tool reports「IPC 服务不可用」. The
+// on 19200 and every channel-mcp send tool reports「IPC 服务不可用」. The
 // plist therefore enables the HTTP API server by default. The server binds
 // localhost only (HttpApiServerConfig.host default) and GET routes are
 // token-exempt, so this matches the security posture of interactive runs.
 // Override with DISCLAUDE_LAUNCHD_API_PORT / DISCLAUDE_LAUNCHD_API_TOKEN.
-const DEFAULT_API_PORT = 9200;
+const DEFAULT_API_PORT = 19200;
 
 /**
  * Resolve the --api-port value for the plist (Issue #4576).
  *
  * Reads DISCLAUDE_LAUNCHD_API_PORT; valid range 1-65535 (same bounds as the
- * CLI parser in packages/primary-node/src/cli.ts). Falls back to 9200 — the
+ * CLI parser in packages/primary-node/src/cli.ts). Falls back to 19200 — the
  * same default DISCLAUDE_REST_IPC_BASE_URL already assumes.
  *
  * @returns {number} port for --api-port
@@ -163,7 +163,7 @@ function getCaffeinatePath() {
  * service, caffeinate terminates automatically (along with the node child),
  * so no separate cleanup is needed.
  *
- * Issue #4576: appends --api-port (default 9200) so the PrimaryNode HTTP API
+ * Issue #4576: appends --api-port (default 19200) so the PrimaryNode HTTP API
  * server is up for the REST-only MCP tools; --api-token only when provided
  * via DISCLAUDE_LAUNCHD_API_TOKEN (mirrors the interactive-run posture — GET
  * routes stay token-exempt, write routes gain Bearer auth).
@@ -188,9 +188,9 @@ export function buildProgramArguments(nodePath, caffeinatePath = getCaffeinatePa
 }
 
 /**
- * Review of #4578: when the port override differs from 9200, the MCP tools'
+ * Review of #4578: when the port override differs from 19200, the MCP tools'
  * REST probe (ipc-utils.ts in core and mcp-server) would still default to
- * http://localhost:9200 unless DISCLAUDE_REST_IPC_BASE_URL is set. The plist
+ * http://localhost:19200 unless DISCLAUDE_REST_IPC_BASE_URL is set. The plist
  * must propagate the override into the service's EnvironmentVariables so
  * both sides agree.
  *
@@ -275,7 +275,7 @@ ${restIpcBaseUrl ? `    <key>DISCLAUDE_REST_IPC_BASE_URL</key>\n    <string>${xm
   console.log(`  Entry: ${CLI_ENTRY}`);
   console.log(`  Caffeinate: ${caffeinatePath ? `enabled (${caffeinatePath} -s)` : 'not available'}`);
   console.log(`  API server: --api-port ${apiPort} (REST IPC for MCP tools; Issue #4576)`);
-  console.log(`  REST IPC base URL env: ${restIpcBaseUrl ? `${restIpcBaseUrl} (injected so MCP tools probe the override)` : 'not set (default http://localhost:9200 already matches)'}`);
+  console.log(`  REST IPC base URL env: ${restIpcBaseUrl ? `${restIpcBaseUrl} (injected so MCP tools probe the override)` : 'not set (default http://localhost:19200 already matches)'}`);
   console.log(`  API token: ${process.env.DISCLAUDE_LAUNCHD_API_TOKEN ? 'enabled (--api-token)' : 'not set (GET-only routes are token-exempt)'}`);
   console.log(`  CWD: ${PROJECT_ROOT}`);
   console.log(`  App log: ${APP_LOG} (use newsyslog for rotation)`);
