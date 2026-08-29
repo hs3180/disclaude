@@ -14,7 +14,7 @@
  * docs/codex-backend.md §7) or before trusting the codex backend in
  * production:
  *
- *   npx tsx scripts/codex-e2e.ts
+ *   npx tsx scripts/codex-e2e.mts
  *
  * Exit code 0 = all phases passed; 1 = at least one failed. Everything is
  * self-contained: temp workspace/config are created under the OS tmpdir and
@@ -25,11 +25,12 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
 import type { AgentMessage } from '../packages/core/src/sdk/types.js';
 
-const REPO_ROOT = join(import.meta.dirname, '..');
+const REPO_ROOT = join(fileURLToPath(new URL('..', import.meta.url)));
 const PHASE_TIMEOUT_MS = 240_000; // one codex turn can take ~1-2 min
 
 /** Phase results collected for the final summary table. */
@@ -43,11 +44,11 @@ function record(phase: string, pass: boolean, detail: string): void {
 async function main(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'codex-e2e-'));
   const workspaceDir = join(root, 'workspace');
-  // The workspace dir must EXIST before any spawn — codex runs with
-  // options.cwd = workspaceDir and a missing cwd is an ENOENT spawn error.
-  mkdirSync(workspaceDir, { recursive: true });
   const configFile = join(root, 'e2e.config.yaml');
   try {
+    // The workspace dir must EXIST before any spawn — codex runs with
+    // options.cwd = workspaceDir and a missing cwd is an ENOENT spawn error.
+    mkdirSync(workspaceDir, { recursive: true });
     // ── Phase 0: environment (actionable fail-fast, same contract as S1) ──
     const codexOnPath = spawnSync('codex', ['--version'], { encoding: 'utf8' });
     if (codexOnPath.status !== 0 || !/codex-cli \d/.test(codexOnPath.stdout)) {
@@ -102,7 +103,7 @@ async function main(): Promise<void> {
     const runTurns = async (
       p: CodexAgentProvider,
       prompts: string[],
-      opts: { sandboxOverride?: 'read-only' } = {},
+      opts: { sandboxOverride?: 'read-only'; permissionMode?: 'default' } = {},
     ): Promise<{ texts: string[]; errors: string[]; sawActivity: boolean; sessionId?: string }> => {
       const queue = [...prompts];
       let release: () => void = () => {};
@@ -119,23 +120,35 @@ async function main(): Promise<void> {
         permissionMode: 'bypassPermissions',
         sessionKey: `e2e-${Math.random().toString(36).slice(2, 8)}`,
         ...opts,
-      } as never);
+      } satisfies never as Parameters<typeof p.queryStream>[1]);
       const texts: string[] = [];
       const errors: string[] = [];
       let sawActivity = false;
+      let settled = false;
       const collect = (async () => {
-        for await (const m of result.iterator as AsyncIterable<AgentMessage>) {
-          sawActivity = true;
-          if (m.type === 'text') texts.push(m.content);
-          if (m.type === 'error') errors.push(m.content);
+        try {
+          for await (const m of result.iterator as AsyncIterable<AgentMessage>) {
+            sawActivity = true;
+            if (m.type === 'text') texts.push(m.content);
+            if (m.type === 'error') errors.push(m.content);
+          }
+        } finally {
+          settled = true;
         }
       })();
-      const deadline = Date.now() + PHASE_TIMEOUT_MS;
-      while (texts.length + errors.length < prompts.length && Date.now() < deadline) {
+      // Deadline scales per turn (S2 review of this script: a 2-turn phase
+      // legitimately takes 2× a 1-turn one on slow days).
+      const deadline = Date.now() + PHASE_TIMEOUT_MS * prompts.length;
+      while (!settled && texts.length + errors.length < prompts.length && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 500));
       }
       release();
-      await Promise.race([collect, new Promise((r) => setTimeout(r, 10_000))]);
+      await Promise.race([collect.catch(() => {}), new Promise((r) => setTimeout(r, 10_000))]);
+      // ALWAYS close the handle (e2e review): on the timeout path the run
+      // may still be in flight — without close() the codex child lingers
+      // until its own 600s timeout and the session stays registered in the
+      // governor (slot leak), and the process can hang on open stdio pipes.
+      result.handle.close();
       return { texts, errors, sawActivity, sessionId: result.handle.sessionId };
     };
 
@@ -153,9 +166,12 @@ async function main(): Promise<void> {
 
     // ── Phase 4: sandbox write allowed (S4, workspace-write via config) ──
     const writeFile = join(workspaceDir, 'e2e-probe.txt');
+    // permissionMode 'default' would infer read-only — the write only
+    // succeeds because the CONFIG's codexSandbox override reaches the
+    // provider through the factory (pins the yaml→Config→factory chain).
     const writeRun = await runTurns(provider, [
       'Create a file named e2e-probe.txt containing exactly: hello-e2e. Then reply: done',
-    ]);
+    ], { permissionMode: 'default' } as never);
     const writeOk = writeRun.sawActivity &&
       existsSync(writeFile) && readFileSync(writeFile, 'utf8').trim() === 'hello-e2e';
     record('sandbox workspace-write (S4)', writeOk,
@@ -173,7 +189,10 @@ async function main(): Promise<void> {
     const roRun = await runTurns(roProvider, [
       'Create a file named e2e-ro-probe.txt containing hello. You must actually create it.',
     ]);
-    const roOk = roRun.sawActivity && !existsSync(roFile);
+    // texts >= 1 proves the model actually answered (sandbox denial is an
+    // in-band tool failure — the model still replies); error-only activity
+    // (401, limit degrade, flag rejection on schema drift) must NOT pass.
+    const roOk = roRun.sawActivity && roRun.texts.length >= 1 && !existsSync(roFile);
     record('sandbox read-only blocks write (S4)', roOk,
       roOk ? 'run executed; write rejected by the OS sandbox'
         : `sawActivity=${roRun.sawActivity} fileExists=${existsSync(roFile)} errors=${JSON.stringify(roRun.errors)}`);
@@ -182,7 +201,10 @@ async function main(): Promise<void> {
     const quota = provider.getQuotaStats();
     const gov = provider.getGovernanceStats();
     const quotaOk = quota.turnsCompleted >= 3; // memory×2 + write×1 (ro runs on a separate provider)
-    const govOk = gov.maxConcurrentRuns === 1 && gov.maxActiveSessions === 2;
+    const govOk =
+      gov.maxConcurrentRuns === 1 &&
+      gov.maxActiveSessions === 2 &&
+      gov.activeSessions === 0; // all streams closed cleanly — no slot leak
     record('quota telemetry (S5)', quotaOk, JSON.stringify(quota));
     record('governance caps from config (S7)', govOk, JSON.stringify(gov));
   } finally {
