@@ -178,6 +178,19 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     }
   }
 
+  // Issue #4631 (S4 of #4627): validate agent.codexSandbox — the explicit
+  // codex exec sandbox override. Same UX as the agentBackend check above.
+  if (config.agent?.codexSandbox !== undefined) {
+    const allowedSandbox = ['read-only', 'workspace-write', 'danger-full-access'] as const;
+    if (!allowedSandbox.includes(config.agent.codexSandbox)) {
+      logger.error(
+        `agent.codexSandbox must be one of: ${allowedSandbox.join(', ')} (got "${config.agent.codexSandbox}"). ` +
+          'It is the codex exec sandbox level, only meaningful with agentBackend: codex.',
+      );
+      return false;
+    }
+  }
+
   // Validate logging config if present
   if (config.logging?.level && typeof config.logging.level !== 'string') {
     logger.error('logging.level must be a string');
