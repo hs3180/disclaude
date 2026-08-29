@@ -989,6 +989,7 @@ cat <<'JSONL'
 {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
 {"type":"turn.completed"}
 JSONL
+echo done > "$CODEX_HOME/turn-$n.done"
 `;
     fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
     const provider = governedProvider(fixtures, { maxActiveSessions: 1 });
@@ -1013,16 +1014,27 @@ JSONL
       }
       return out;
     })();
-    await waitFor(() => existsSync(join(fixtures.codexHome, 'argv-1')));
+    // Wait for turn COMPLETION, not argv-1: the argv file exists at process
+    // start, before the run finishes — under load the old wait let chat-b
+    // evict chat-a BEFORE the anchor latched (S7 review flaky).
+    await waitFor(() => existsSync(join(fixtures.codexHome, 'turn-1.done')));
 
     // chat-b registers → cap 1 → chat-a is evicted (LRU: the only session).
     await drainStream(provider, ['b1'], { sessionKey: 'chat-b' });
     const messagesA = await collectedA;
-    // chat-a's FIRST turn completed normally; the eviction then ends its
-    // stream BETWEEN turns (silent — like a /reset the user never asked for,
-    // which is exactly why the stash must restore the conversation).
+    // chat-a's FIRST turn completed normally; the eviction then ends the
+    // stream with a CLEAN terminator — type result + terminatedReason
+    // 'evicted' (S7 review: ChatAgent must not auto-restart the victim,
+    // which cascaded evictions into the circuit breaker).
     const typesA = (messagesA as Array<{ type: string }>).map((m) => m.type);
-    expect(typesA).toEqual(['text', 'result']);
+    expect(typesA).toEqual(['text', 'result', 'result']);
+    const evictedMsg = (messagesA as Array<{
+      type: string;
+      content: string;
+      metadata?: { terminatedReason?: string };
+    }>).at(-1);
+    expect(evictedMsg?.metadata?.terminatedReason).toBe('evicted');
+    expect(evictedMsg?.content).toMatch(/让位/);
     releaseA();
 
     // chat-a's NEXT stream must resume the stashed thread (eviction ≠ reset).

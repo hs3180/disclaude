@@ -161,3 +161,34 @@ describe('CodexSessionGovernor run cap (Issue #4634)', () => {
     expect(g.getStats().activeSessions).toBe(1);
   });
 });
+
+describe('CodexSessionGovernor review hardening (S7 review)', () => {
+  it('setLimits rejects non-positive caps (event-loop freeze guard)', () => {
+    const g = new CodexSessionGovernor({ maxActiveSessions: 2 });
+    expect(() => g.setLimits({ maxActiveSessions: 0 })).toThrow(/positive number/);
+    expect(() => g.setLimits({ maxConcurrentRuns: -1 })).toThrow(/positive number/);
+    // Valid change still applies.
+    g.setLimits({ maxActiveSessions: 1 });
+    expect(g.getStats().maxActiveSessions).toBe(1);
+  });
+
+  it('pumpQueue re-checks the cap — a lowered run cap is not refilled by releases', async () => {
+    const g = new CodexSessionGovernor({ maxConcurrentRuns: 2 });
+    const a = await g.acquireRun();
+    const b = await g.acquireRun();
+    g.setLimits({ maxConcurrentRuns: 1 }); // tighten below current usage
+    const waiter = g.acquireRun();
+    a.release();
+    b.release();
+    await new Promise((r) => setTimeout(r, 20));
+    // Both slots freed, but the cap is 1: exactly one run may be in flight.
+    const stats = g.getStats();
+    expect(stats.runningRuns).toBe(1);
+    expect(stats.queuedRuns).toBe(0);
+    // Drain cleanly.
+    const lease = await waiter;
+    lease.release();
+    const c = await g.acquireRun(); // fast path — slot free under cap 1
+    c.release();
+  });
+});

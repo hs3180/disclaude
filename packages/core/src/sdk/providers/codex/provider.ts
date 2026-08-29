@@ -108,6 +108,15 @@ const RESUME_TARGET_GONE_NOTICE =
  * turn latches nothing, the conversation anchor survives, and the next
  * message after the window reset resumes the same session.
  */
+/**
+ * Eviction notice (S7, #4634): LRU-governed teardown, delivered as a
+ * result with terminatedReason 'evicted' so ChatAgent finishes cleanly and
+ * does NOT auto-restart (the evicted chat re-registers lazily on its next
+ * message and resumes the stashed thread).
+ */
+const EVICTED_NOTICE =
+  '♻️ Codex 会话因并发上限暂时让位（LRU 驱逐）——无需任何操作：下一条消息发出时会自动恢复原对话上下文。';
+
 const USAGE_LIMIT_NOTICE =
   '📊 Codex 用量已达上限（ChatGPT 订阅的 5 小时/周滚动窗口限额）。无需重启——窗口重置后直接重发消息即可自动恢复，当前对话上下文会保留。';
 
@@ -311,8 +320,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Instance-level quota sink (S5, #4632): the bridge closures below are
     // `this: void`, so they aggregate through this captured reference.
     const quotaSink = this.quota;
-    // Same capture for the S7 governor (this: void closures below).
+    // Same capture for the S7 governor + stash (this: void closures below).
     const governorSink = this.governor;
+    const stashSink = this.threadStash;
     const timeoutLabel = this.execTimeoutMs
       ? `${this.execTimeoutMs}ms`
       : `${DEFAULT_TIMEOUT_MS}ms (default)`;
@@ -349,16 +359,21 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // chat's next queryStream) and abort via the same path as user cancel.
     const sessionKey =
       options.sessionKey ?? `anon-${++this.anonSessionCounter}`;
-    const stashedThread = this.threadStash.get(sessionKey);
+    // Anonymous streams (no options.sessionKey — one-shot runOnce queries)
+    // never resume, so stashing their anchor would leak the map forever.
+    const stashable = options.sessionKey !== undefined;
+    let wasEvicted = false;
+    const stashedThread = stashable ? this.threadStash.get(sessionKey) : undefined;
     this.threadStash.delete(sessionKey); // consume-on-read: /reset after an eviction-resume must not resurrect the old thread later
     resumeThreadId = stashedThread;
     const registration = this.governor.registerSession(sessionKey, {
       evict: () => {
-        if (resumeThreadId) {
+        wasEvicted = true;
+        if (resumeThreadId && stashable) {
           this.threadStash.set(sessionKey, resumeThreadId);
         }
         logger.warn(
-          { sessionKey },
+          { sessionKey, stashed: Boolean(resumeThreadId && stashable) },
           'codex session evicted (session cap reached) — thread anchor stashed; the chat resumes its conversation on the next message (Issue #4634)',
         );
         requestAbort();
@@ -741,8 +756,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             }
           } finally {
             // Release the run lease FIRST so the longest-queued run starts
-            // before this turn's post-processing finishes.
+            // before this turn's post-processing finishes; touch AFTER so a
+            // session finishing a long run is never LRU-evicted as "idlest"
+            // based on its stale start timestamp (S7 review).
             lease.release();
+            governorSink.touchSession(sessionKey);
             currentRun = null;
             runActive = false;
             openToolItems = 0;
@@ -813,6 +831,21 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             };
             return;
           }
+          if (wasEvicted) {
+            // Governance teardown, not an error: a clean terminator with
+            // terminatedReason 'evicted' tells ChatAgent to finish WITHOUT
+            // auto-restarting — the victim re-registers on its next message
+            // (and resumes the stashed thread). Without this, the restart
+            // loop re-registered the SAME sessionKey while still at cap and
+            // cascaded evictions into the circuit breaker (S7 review high).
+            yield {
+              type: 'result',
+              content: EVICTED_NOTICE,
+              role: 'system',
+              metadata: { terminatedReason: 'evicted' },
+            };
+            return;
+          }
         } finally {
           // Teardown: kill any in-flight run; later inputs become no-ops.
           // Normal teardown unregisters the session WITHOUT stashing its
@@ -821,6 +854,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           currentRun?.abort();
           clearStallTimers();
           registration.unregister();
+          if (!wasEvicted && stashable) {
+            // Normal teardown (user /reset, idle GC, stream end): drop any
+            // stash residue for this key so a later stream for the same
+            // chat never resumes a conversation the user reset away
+            // (S7 review — the eviction-window /reset hole).
+            stashSink.delete(sessionKey);
+          }
         }
       };
 
