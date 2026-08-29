@@ -33,6 +33,7 @@ import type {
 } from '../../types.js';
 import {
   CodexExecRunner,
+  DEFAULT_TIMEOUT_MS,
   type CodexExecRunHandle,
   type CodexExecRunResult,
 } from './codex-runner.js';
@@ -151,7 +152,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const providerEnv = this.env;
     const timeoutLabel = this.execTimeoutMs
       ? `${this.execTimeoutMs}ms`
-      : 'the default timeout';
+      : `${DEFAULT_TIMEOUT_MS}ms (default)`;
 
     // Abort plumbing (mirrors pi: early-cancel latch + late onAbort wake).
     let currentRun: CodexExecRunHandle | null = null;
@@ -207,6 +208,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         let stallForceCloseTimer: ReturnType<typeof setTimeout> | null = null;
         let openToolItems = 0;
         let sawTurnTerminator = false;
+        let sawTurnFailed = false;
         const armTimer = (
           fn: () => void,
           ms: number,
@@ -284,6 +286,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             event.type === 'turn.failed'
           ) {
             sawTurnTerminator = true;
+            if (event.type === 'turn.failed') {
+              // turn.failed is a terminator for bookkeeping, but the TURN
+              // still needs a synthetic result (see runInput) — the adapter
+              // emits only an error for it, and ChatAgent resolves a turn
+              // exclusively on type==='result' (cf. #4378 error_max_* pitfall).
+              sawTurnFailed = true;
+            }
           }
           touchStallWatchdog();
           const adapted = adaptCodexEvent(event);
@@ -301,6 +310,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         const runInput = async (prompt: string): Promise<void> => {
           runActive = true;
           sawTurnTerminator = false;
+          sawTurnFailed = false;
           touchStallWatchdog();
           const { promise, handle } = runner.run(
             {
@@ -360,9 +370,26 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               });
             }
             // A failed run still ends the TURN so ChatAgent's turn accounting
-            // completes (synthetic result mirrors turn.completed).
-            if (!sawTurnTerminator) {
-              pushSynthetic({ type: 'result', content: '', role: 'assistant' });
+            // completes (synthetic result mirrors turn.completed) — and the
+            // result carries terminatedReason:'turn_failed' so ChatAgent
+            // records FAILURE (like 'stall'), never a masked success; this
+            // also covers turn.failed, whose adapter output is error-only
+            // and would otherwise leave the turn unresolved forever (#4378
+            // error_max_* pitfall, flagged in the S2 review).
+            const runFailed =
+              Boolean(result.spawnError) ||
+              result.timedOut ||
+              result.exitCode !== 0 ||
+              !sawTurnTerminator;
+            if (!sawTurnTerminator || sawTurnFailed) {
+              pushSynthetic({
+                type: 'result',
+                content: '',
+                role: 'assistant',
+                ...(runFailed || sawTurnFailed
+                  ? { metadata: { terminatedReason: 'turn_failed' } }
+                  : {}),
+              });
             }
           } finally {
             currentRun = null;
@@ -372,6 +399,15 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             wakeAll();
           }
         };
+
+        // Early-cancel window (S2 review): handle.cancel()/close() called
+        // between queryStream() returning and the first next() sees onAbort
+        // === null — without this check the consumer would park forever
+        // (pi parity: its bridge returns immediately for the same window).
+        if (cancelRequested) {
+          aborted = true;
+          return;
+        }
 
         // ── Input pump: user inputs arrive over the session lifetime ──────
         // Between turns it parks in inputIterator.next(); the input

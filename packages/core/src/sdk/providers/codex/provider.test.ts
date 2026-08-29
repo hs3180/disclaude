@@ -345,3 +345,101 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// S2 review follow-ups: turn termination guarantees + stall watchdog.
+// ---------------------------------------------------------------------------
+
+describe('CodexAgentProvider turn termination (S2 review)', () => {
+  let fixtures: Fixtures;
+
+  afterEach(() => {
+    fixtures?.cleanup();
+    // Restore stall env knobs mutated by the watchdog test.
+    delete process.env.DISCLAUDE_STALL_TIMEOUT_MS;
+    delete process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS;
+  });
+
+  const makeProvider = (fx: Fixtures) =>
+    new CodexAgentProvider({
+      env: {
+        PATH: `${fx.binDir}:${process.env.PATH ?? ''}`,
+        CODEX_HOME: fx.codexHome,
+      },
+    });
+
+  it('ends a turn.failed turn with error + result(terminatedReason: turn_failed)', async () => {
+    // #4378 pitfall (S2 review high): turn.failed maps to an error-only
+    // message; without a synthetic result the turn NEVER resolves and
+    // ChatAgent stays "processing" forever.
+    fixtures = makeFixtures({
+      withBinary: true,
+      withAuth: true,
+      body: `cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-f"}
+{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"model stream ended"}}
+JSONL
+exit 1
+`,
+    });
+    const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
+    const types = (messages as Array<{ type: string }>).map((m) => m.type);
+    expect(types).toContain('error'); // the adapter's turn.failed message
+    const last = (messages as Array<{ type: string; metadata?: { terminatedReason?: string } }>)
+      .find((m) => m.type === 'result');
+    expect(types[types.length - 1]).toBe('result'); // turn resolved
+    expect(last?.metadata?.terminatedReason).toBe('turn_failed'); // recorded as FAILURE
+  }, 15_000);
+
+  it('tags synthetic results after failed runs with turn_failed (never masked success)', async () => {
+    fixtures = makeFixtures({
+      withBinary: true,
+      withAuth: true,
+      body: 'echo "boom" >&2\nexit 2',
+    });
+    const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
+    const result = (messages as Array<{ type: string; metadata?: { terminatedReason?: string } }>)
+      .find((m) => m.type === 'result');
+    expect(result?.metadata?.terminatedReason).toBe('turn_failed');
+  }, 15_000);
+
+  it('ends the stream when cancel() fires before the generator starts', async () => {
+    // Early-cancel window (S2 review): requestAbort between queryStream()
+    // and the first next() must still end the iterator (pi parity).
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body: 'sleep 30 &\nwait $!' });
+    const provider = makeProvider(fixtures);
+    async function* input(): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'x' };
+    }
+    const result = provider.queryStream(input(), { settingSources: [] } as AgentQueryOptions);
+    result.handle.cancel(); // BEFORE any next()
+    const collected: unknown[] = [];
+    for await (const m of result.iterator) {
+      collected.push(m);
+    }
+    expect(collected).toEqual([]); // stream ends, nothing parks forever
+  }, 15_000);
+
+  it('fires the stall watchdog on a silent run and terminates with reason stall', async () => {
+    // S2 review: the watchdog's control flow had zero direct coverage.
+    process.env.DISCLAUDE_STALL_TIMEOUT_MS = '800';
+    process.env.DISCLAUDE_STALL_FORCE_CLOSE_GRACE_MS = '400';
+    fixtures = makeFixtures({
+      withBinary: true,
+      withAuth: true,
+      // thread.started then silence forever.
+      body: `cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-s"}
+{"type":"turn.started"}
+JSONL
+sleep 30 &\nwait $!`,
+    });
+    const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
+    const last = (messages as Array<{ type: string; content: string; metadata?: { terminatedReason?: string } }>)
+      .at(-1);
+    expect(last?.type).toBe('result');
+    expect(last?.metadata?.terminatedReason).toBe('stall');
+    expect(last?.content).toMatch(/超时/);
+  }, 20_000);
+});

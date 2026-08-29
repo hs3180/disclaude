@@ -66,7 +66,8 @@ export interface IteratorYieldResult {
       | 'stall'
       | 'max_turns'
       | 'max_budget_usd'
-      | 'max_structured_output_retries';
+      | 'max_structured_output_retries'
+    | 'turn_failed';
     /**
      * provider 据本轮 stderr 标记:SDK 在上游 overloaded_error / 5xx 重试耗尽后仍发
      * subtype=success result,ChatAgent 据此改报 ❌ Failed + recordFailure(Issue #4322)。
