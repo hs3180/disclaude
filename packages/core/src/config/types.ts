@@ -42,10 +42,14 @@ export interface AgentConfig {
   /**
    * Agent SDK backend — which agent runtime boots (Issue #4388).
    * Orthogonal to the model-layer `provider` above: `agentBackend` selects the
-   * agent runtime (claude-code CLI vs pi.dev), `provider` selects the LLM API.
-   * The two compose (e.g. pi backend + GLM model). Default: 'claude'.
+   * agent runtime (claude-code CLI vs pi.dev vs Codex CLI), `provider` selects
+   * the LLM API. The two compose (e.g. pi backend + GLM model). Default: 'claude'.
+   *
+   * 'codex' (Issue #4629, S1 of #4627): runs the official Codex CLI in exec
+   * mode, powering agents with the ChatGPT subscription quota instead of an
+   * API key. Currently a registered skeleton — queryStream lands in #4630.
    */
-  agentBackend?: 'claude' | 'pi';
+  agentBackend?: 'claude' | 'pi' | 'codex';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */

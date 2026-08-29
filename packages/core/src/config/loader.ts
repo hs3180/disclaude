@@ -166,12 +166,13 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   }
 
   // Issue #4388: validate agent.agentBackend (agent SDK runtime selection).
+  // 'codex' added in #4629 (S1 of #4627).
   if (config.agent?.agentBackend !== undefined) {
-    const allowed = ['claude', 'pi'] as const;
+    const allowed = ['claude', 'pi', 'codex'] as const;
     if (!allowed.includes(config.agent.agentBackend)) {
       logger.error(
         `agent.agentBackend must be one of: ${allowed.join(', ')} (got "${config.agent.agentBackend}"). ` +
-          'It selects the agent runtime (claude-code vs pi.dev), separate from the model-layer provider.',
+          'It selects the agent runtime (claude-code vs pi.dev vs Codex CLI), separate from the model-layer provider.',
       );
       return false;
     }

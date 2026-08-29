@@ -52,6 +52,8 @@ import {
   Config,
   // Issue #4388: select Agent SDK backend from config at boot.
   setDefaultProvider,
+  // Issue #4629: fail-fast availability probe of the selected backend.
+  getProvider,
   type ScheduledTask,
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
@@ -347,6 +349,19 @@ export class PrimaryNode extends EventEmitter {
       try {
         setDefaultProvider(agentBackend);
         logger.info({ agentBackend }, 'Agent SDK backend selected from config');
+
+        // Issue #4629: probe the backend's environment NOW (e.g. codex CLI
+        // missing on PATH / OAuth not completed) so misconfiguration surfaces
+        // as an actionable error at startup, not at the first message. Boot
+        // continues — the surrounding philosophy is degrade, don't crash.
+        const backendInfo = getProvider(agentBackend).getInfo();
+        if (!backendInfo.available) {
+          logger.error(
+            { agentBackend, unavailableReason: backendInfo.unavailableReason },
+            `Agent backend "${agentBackend}" is not available — fix the issue above, ` +
+              'or agent queries will fail when they arrive.',
+          );
+        }
       } catch (error) {
         // Don't crash boot — fall back to the default 'claude' backend.
         logger.error(

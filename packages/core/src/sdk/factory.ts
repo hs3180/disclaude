@@ -7,12 +7,12 @@
 
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
 import type { ProviderInfo } from './types.js';
-import { ClaudeSDKProvider, PiAgentProvider } from './providers/index.js';
+import { ClaudeSDKProvider, PiAgentProvider, CodexAgentProvider } from './providers/index.js';
 
 /**
  * 已注册的 Provider 类型
  */
-export type ProviderType = 'claude' | 'pi' | string;
+export type ProviderType = 'claude' | 'pi' | 'codex' | string;
 
 /**
  * Provider 注册表
@@ -20,6 +20,7 @@ export type ProviderType = 'claude' | 'pi' | string;
 const providerRegistry = new Map<ProviderType, ProviderFactory>([
   ['claude', () => new ClaudeSDKProvider()],
   ['pi', () => new PiAgentProvider()],
+  ['codex', () => new CodexAgentProvider()], // Issue #4629 (S1 of #4627)
 ]);
 
 /**
