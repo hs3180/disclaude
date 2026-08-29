@@ -187,11 +187,15 @@ export class CodexSessionGovernor {
 
   /** Hand the freed slot to the longest-waiting run, if any. */
   private pumpQueue(): void {
+    // RE-CHECK the cap (S7 review): a runtime-lowered cap must not let
+    // every release refill concurrency back to the old level.
+    if (this.runningRuns >= this.maxConcurrentRuns) {
+      return;
+    }
     const next = this.runWaiters.shift();
     if (!next) {
       return;
     }
-    // queuedBehind = how many were ahead of THIS waiter when it queued.
     next.resolve(this.makeLease(next.position));
   }
 
@@ -212,6 +216,21 @@ export class CodexSessionGovernor {
    * registration; run cap applies to future acquisitions immediately.
    */
   setLimits(limits: { maxActiveSessions?: number; maxConcurrentRuns?: number }): void {
+    // Same fail-closed contract as config-load validation (S7 review): a
+    // zero session cap would spin registerSession's eviction loop forever
+    // (evictIdlest returns undefined on an empty map) on the SYNCHRONOUS
+    // queryStream path — an event-loop freeze; a zero run cap queues every
+    // turn forever.
+    for (const [name, value] of [
+      ['maxActiveSessions', limits.maxActiveSessions],
+      ['maxConcurrentRuns', limits.maxConcurrentRuns],
+    ] as const) {
+      if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+        throw new Error(
+          `CodexSessionGovernor.setLimits: ${name} must be a positive number (got ${value})`,
+        );
+      }
+    }
     if (limits.maxActiveSessions !== undefined) {
       this.maxActiveSessions = limits.maxActiveSessions;
     }
