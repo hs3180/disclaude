@@ -50,6 +50,16 @@ export interface AgentConfig {
    * API key. Currently a registered skeleton — queryStream lands in #4630.
    */
   agentBackend?: 'claude' | 'pi' | 'codex';
+  /**
+   * Codex exec sandbox level override (Issue #4631, S4 of #4627).
+   * Only meaningful when `agentBackend: 'codex'`. Unset → derived from
+   * permissionMode ('bypassPermissions' → workspace-write, 'default'/ask →
+   * read-only, fail closed: headless exec has no approver). An explicit
+   * value wins over that inference, but the disallowedTools mutation cap
+   * still outranks it (security policy > convenience preference).
+   * `danger-full-access` is reachable ONLY through this override.
+   */
+  codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */

@@ -21,6 +21,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 import { createLogger } from '../../../utils/logger.js';
+import type { CodexSandboxLevel } from './sandbox-policy.js';
 import type { CodexThreadEvent } from './exec-adapter.js';
 
 const logger = createLogger('CodexExecRunner');
@@ -51,6 +52,14 @@ export interface CodexExecRunOptions {
    * The id is the thread_id captured from a prior run's thread.started.
    */
   resumeSessionId?: string;
+  /**
+   * Sandbox level for this run (Issue #4631, S4). Passed uniformly as
+   * `-c sandbox_mode=<level>` on BOTH fresh and resume runs: `-s <level>`
+   * is rejected by `codex exec resume` ("unexpected argument '-s'",
+   * verified 0.132.0) while the config-override form is accepted by both
+   * and enforces identically (read-only write-block verified live).
+   */
+  sandboxMode?: CodexSandboxLevel;
   /** Environment for the child (merged over the provider env). */
   env?: Record<string, string | undefined>;
   /** Per-call timeout override (ms). */
@@ -128,7 +137,8 @@ export class CodexExecRunner {
     // `codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]` (0.132.0): the
     // session id is the FIRST positional, the prompt the second; `--` keeps
     // a leading-dash prompt positional. Flags are shared with plain exec
-    // (--json / -m / --skip-git-repo-check all verified on resume's help).
+    // (--json / -m / --skip-git-repo-check all verified on resume's help),
+    // EXCEPT -s (sandbox) which resume rejects — hence the -c form below.
     const args: string[] = options.resumeSessionId
       ? [
           'exec',
@@ -136,6 +146,7 @@ export class CodexExecRunner {
           '--json',
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
+          ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
           options.resumeSessionId,
           '--',
           options.prompt,
@@ -145,6 +156,7 @@ export class CodexExecRunner {
           '--json',
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
+          ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
           '--',
           options.prompt,
         ];
