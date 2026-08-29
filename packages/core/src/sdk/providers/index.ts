@@ -7,3 +7,7 @@ export type { ProcessListenerSnapshot, ProcessEventListener } from './claude/ind
 
 // Issue #4385: pi.dev provider skeleton (stubbed loop; real lifecycle)
 export { PiAgentProvider } from './pi/index.js';
+
+// Issue #4629: Codex CLI provider skeleton (stubbed loop; real lifecycle)
+export { CodexAgentProvider } from './codex/index.js';
+export type { CodexAgentProviderOptions } from './codex/index.js';
