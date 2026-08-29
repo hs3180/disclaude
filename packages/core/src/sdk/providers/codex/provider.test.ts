@@ -326,7 +326,7 @@ echo "$*" > "$CODEX_HOME/argv-$n"
     it('resumes the latched thread on follow-up turns (exec resume <id>)', async () => {
       // Run 1 (fresh) → latches t-abc; run 2 must carry `resume … t-abc`.
       const body = `${ARGV_RECORDER}
-if grep -q resume "$CODEX_HOME/argv-$n"; then
+if grep -q "exec resume " "$CODEX_HOME/argv-$n"; then
 cat <<'JSONL'
 {"type":"thread.started","thread_id":"t-abc"}
 {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"resumed turn"}}
@@ -416,7 +416,7 @@ exit 1
       // Run 1 latches t-abc; run 2 (resume) hits the real captured error
       // "no rollout found for thread id" (0.132.0); run 3 must be FRESH.
       const body = `${ARGV_RECORDER}
-if grep -q resume "$CODEX_HOME/argv-$n"; then
+if grep -q "exec resume " "$CODEX_HOME/argv-$n"; then
 echo "Error: thread/resume: thread/resume failed: no rollout found for thread id t-abc (code -32600)" >&2
 exit 1
 else
@@ -604,4 +604,94 @@ sleep 30 &\nwait $!`,
     expect(last?.metadata?.terminatedReason).toBe('stall');
     expect(last?.content).toMatch(/超时/);
   }, 20_000);
+});
+
+// ---------------------------------------------------------------------------
+// S3 review follow-ups: detection gating + anchor survival across a 401.
+// ---------------------------------------------------------------------------
+
+describe('CodexAgentProvider detection hardening (S3 review)', () => {
+  let fixtures: Fixtures;
+  afterEach(() => fixtures?.cleanup());
+  const makeProvider = (fx: Fixtures) =>
+    new CodexAgentProvider({
+      env: { PATH: `${fx.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fx.codexHome },
+    });
+
+  it('does NOT report 401 on a SUCCESSFUL turn whose stderr carries unrelated 401 noise', async () => {
+    // The gate: signature detection runs only when the run actually failed.
+    fixtures = makeFixtures({
+      withBinary: true,
+      withAuth: true,
+      body: `echo "[mcp-server] HTTP error: 401 Unauthorized (ignored noise)" >&2
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-ok"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"answer delivered"}}
+{"type":"turn.completed"}
+JSONL
+`,
+    });
+    const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
+    const errors = (messages as Array<{ type: string; content: string }>)
+      .filter((m) => m.type === 'error');
+    expect(errors).toEqual([]); // no spurious re-auth notice after success
+    const text = (messages as Array<{ type: string; content: string }>).find((m) => m.type === 'text');
+    expect(text?.content).toBe('answer delivered');
+  }, 15_000);
+
+  it('detects 401 carried by turn.failed error messages (raw-events arm)', async () => {
+    // Coverage for the turn.failed collection arm of runFailureText.
+    fixtures = makeFixtures({
+      withBinary: true,
+      withAuth: true,
+      body: `cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-401b"}
+{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: token expired"}}
+JSONL
+exit 1
+`,
+    });
+    const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
+    // The adapter surfaces turn.failed's own text first; the provider's
+    // re-auth notice follows — assert the NOTICE is present among errors.
+    const errors = (messages as Array<{ type: string; content: string }>)
+      .filter((m) => m.type === 'error')
+      .map((m) => m.content)
+      .join('\n');
+    expect(errors).toMatch(/codex login/);
+  }, 15_000);
+
+  it('keeps the latched anchor across a mid-conversation 401 — relogin resumes the same thread', async () => {
+    // The REAL "keeps the chat resumable" semantics (S3 review): turn 1
+    // latches t-keep; turn 2 fails with 401 (anchor must SURVIVE so the
+    // post-relogin resend resumes); turn 3 must carry `resume t-keep`.
+    const body = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+if [ "$n" -eq 2 ]; then
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-keep"}
+{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}
+JSONL
+exit 1
+else
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-keep"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed"}
+JSONL
+fi
+`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+    const { messages } = await drainStream(makeProvider(fixtures), ['a', 'b', 'c']);
+    const argv3 = readFileSync(join(fixtures.codexHome, 'argv-3'), 'utf-8').trim();
+    expect(argv3).toContain('resume');
+    expect(argv3).toContain('t-keep');
+    const errors = (messages as Array<{ type: string; content: string }>)
+      .filter((m) => m.type === 'error')
+      .map((m) => m.content)
+      .join('\n');
+    expect(errors).toMatch(/codex login/);
+  }, 25_000);
 });
