@@ -32,7 +32,7 @@ agent:
 
   # Agent SDK backend — which agent runtime boots (Issue #4388).
   # Options: claude (default), pi, codex
-  # - claude/pi: orthogonal to `provider` below — backend selects the agent
+  # - claude/pi: orthogonal to `provider` above — backend selects the agent
   #   runtime, `provider` selects the LLM API; they compose (e.g. pi + GLM).
   # - codex: runs the official Codex CLI in exec mode, powered by your
   #   ChatGPT subscription quota instead of an API key. NOT composable with

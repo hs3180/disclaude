@@ -2,7 +2,7 @@
 
 Disclaude 的 Agent 运行时（agent runtime）可通过配置切换。默认使用 `claude`（claude-code CLI）；本页介绍如何启用 `codex` 后端（OpenAI 官方 [Codex CLI](https://developers.openai.com/codex/cli) 的 `codex exec` 非交互模式），以及它当前的边界。
 
-与 claude/pi 后端的本质区别：**codex 后端用 ChatGPT 订阅额度（而非 API key）驱动 agent**——社区测算 Plus（$20/月）饱和使用约合每周 $100–110 的 API 等效算力（~20× 杠率）。
+与 claude/pi 后端的本质区别：**codex 后端用 ChatGPT 订阅额度（而非 API key）驱动 agent**——社区测算的量级约为 Plus（$20/月）饱和使用 ≈ 每周 $100–110 API 等效算力（约 20×，非官方数字、随政策变动；ToS 姿态与风险见第 8 节）。
 
 > 配置项随 Issue [#4629](https://github.com/hs3180/disclaude/issues/4629)（S1）落地；exec 桥接/会话/权限/配额分别为 #4630 / #4628 / #4631 / #4632。父特性：[#4627](https://github.com/hs3180/disclaude/issues/4627)。行为实证基于 **codex-cli 0.132.0**。
 
@@ -51,11 +51,11 @@ npm install -g @openai/codex
 codex login
 ```
 
-- 登录凭据由 codex 自己保存在 `~/.codex/auth.json`（`CODEX_HOME` 可重定位）。**disclaude 不存储、不读取、不刷新任何凭据**。
+- 登录凭据由 codex 自己保存在 `~/.codex/auth.json`（`CODEX_HOME` 可重定位）。**disclaude 不存储、不解析、不刷新任何凭据**（仅探测 auth.json 是否存在做环境自检）。
 - 登录过期/失效时（401），bot 会收到可操作的重新授权提示（`codex login`），不会静默失败。
 - 网络要求：与 `api.openai.com` / `wss://api.openai.com` 的出站连通。
 
-环境自检：provider 的 `validateConfig()` 会 fail-fast 检查二进制在 PATH 上 + auth.json 存在；`getInfo().unavailableReason` 会分别给出安装提示与登录提示。缺前置条件时**不会自动回退 claude**——codex 仍是所选后端，首次查询即抛可操作错误。
+环境自检：provider 的 `validateConfig()` 会同步检查二进制在 PATH 上 + auth.json 存在（返回 boolean，不中断启动）；`getInfo().unavailableReason` 会分别给出安装提示与登录提示。缺前置条件时**不会自动回退 claude**——codex 仍是所选后端，首次查询即抛可操作错误。另：API-key 方式认证（`OPENAI_API_KEY`，不落 auth.json）的用户会收到登录提示，属当前探测的已知边界。
 
 ## 3. 与 provider（模型层）的关系——不正交
 
@@ -75,6 +75,7 @@ codex login
 - **空闲回收**：沿用 ChatAgent 的按 chatId 空闲清理（默认 30 分钟）——回收即断开，下条消息开新会话。
 - **重启**：会话映射在内存中，进程重启后所有对话开新 thread（rollout 文件仍在 `~/.codex/sessions`，由 codex 自有管理，disclaude 不读不删）。
 - **自愈**：resume 目标丢失（如 rollout 被清理）时自动降级为新会话并告知用户，无需手动 `/reset`。
+- **磁盘与隐私**：续接需要会话落盘（S3 起 `--ephemeral` 已移除）——每个对话的完整内容会写进 `~/.codex/sessions/` 且**长期保留**（disclaude 与 codex CLI 默认都不清理）。长期运行的 bot 请知悉该增长，并考虑为 codex 后端设置独立的 `CODEX_HOME`（隔离 bot 会话与个人会话、便于按需清理）。
 
 ## 5. 权限映射
 
@@ -93,7 +94,7 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 
 ## 6. 配额可观测与限额降级
 
-- **可观测**：每个完成的 turn 产生一条结构化 info 日志（`codex quota usage`），含当轮 input/cached/output/reasoning tokens 与进程级累计；Kibana/Loki 可直接检索。`getQuotaStats()` 暴露累计值（`/status` 接线待 stack 合入 main）。
+- **可观测**：每个完成的 turn 产生一条结构化 info 日志（`codex quota usage`），含当轮 input/cached/output/reasoning tokens 与进程级累计；Kibana/Loki 可直接检索。`getQuotaStats()` 已就绪；接入 `/status` 展示是后续工作（本 stack 不含）。
 - **限额降级**：撞上 ChatGPT 滚动窗口限额（5 小时/周）时，用户收到友好提示（含 codex 自己的 "Try again at \<时间\>" 重置时间），而非原始报错。
 - **免重启恢复**：限额失败的 turn 不改变会话锚点——窗口重置后**直接重发消息**即自动 resume 原会话，无需重启服务或 `/reset`。
 
@@ -108,7 +109,7 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 
 ## 8. ToS 姿态
 
-- **支持的形态**：**单一所有者**用自己的 ChatGPT 订阅做个人自动化。订阅额度（Plus/Pro）本就包含 Codex 使用权，disclaude 只是通过官方 CLI 非交互模式消费它。
+- **支持的形态**：**单一所有者**用自己的 ChatGPT 订阅做个人自动化。按 OpenAI 当期条款（[Codex 使用条款](https://openai.com/policies)），订阅额度包含 Codex 使用权；条款可能变化，以官方当期表述为准。disclaude 只是通过官方 CLI 非交互模式消费它。
 - **明确不支持**（与父特性 [#4627](https://github.com/hs3180/disclaude/issues/4627) Non-goals 一致）：
   - **账户池化 / 多人共享一个订阅**（account pooling / group sharing）；
   - 社区「codex-to-api」代理（违反 ToS 且不稳定）。
