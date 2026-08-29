@@ -68,6 +68,13 @@ export type CodexItem =
       tool: string;
       arguments?: unknown;
       error?: { message?: string } | null;
+      /**
+       * Successful MCP tool payload (0.132.0 cheatsheet): `result.content`
+       * is an array of content blocks; `structured_content` may accompany
+       * it. Mirrored so successful calls surface their output instead of
+       * an empty tool_result (S2 review finding).
+       */
+      result?: { content?: unknown; structured_content?: unknown } | null;
       status?: string;
     }
   | { id: string; type: 'web_search'; query: string }
@@ -117,6 +124,30 @@ function stringifyPayload(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+/**
+ * Render a successful MCP tool payload for the tool_result content: content
+ * blocks' text parts joined by newline; anything else (missing, non-array,
+ * exotic blocks) falls back to JSON stringification (S2 review).
+ */
+function mcpResultText(
+  result: { content?: unknown; structured_content?: unknown } | null | undefined,
+): string {
+  if (Array.isArray(result?.content)) {
+    const texts = result.content
+      .map((block) =>
+        block !== null && typeof block === 'object' && 'text' in block &&
+        typeof (block as { text: unknown }).text === 'string'
+          ? (block as { text: string }).text
+          : '',
+      )
+      .filter((text) => text.length > 0);
+    if (texts.length > 0) {
+      return texts.join('\n');
+    }
+  }
+  return stringifyPayload(result?.content);
 }
 
 /**
@@ -179,10 +210,10 @@ export function adaptCodexEvent(event: CodexThreadEvent): AgentMessage | null {
         const errMsg = item.error?.message;
         return makeMessage(
           'tool_result',
-          errMsg ? `Error: ${errMsg}` : '',
+          errMsg ? `Error: ${errMsg}` : mcpResultText(item.result),
           {
             toolName: `${item.server}.${item.tool}`,
-            toolOutput: item.error ?? null,
+            toolOutput: item.error ?? item.result ?? null,
             messageId: item.id,
           },
         );
@@ -191,7 +222,7 @@ export function adaptCodexEvent(event: CodexThreadEvent): AgentMessage | null {
       if (isItemEvent(event, 'item.completed', 'file_change')) {
         const changes = item.changes ?? [];
         const content = changes
-          .map((c) => `${c.kind}: ${c.path}`)
+          .map((c: { path: string; kind: string }) => `${c.kind}: ${c.path}`)
           .join('\n');
         return makeMessage('tool_result', content, {
           toolName: 'file_change',

@@ -30,7 +30,13 @@ const STDERR_TAIL_BYTES = 8 * 1024;
 /** Grace between SIGTERM and SIGKILL on timeout/abort. */
 const KILL_GRACE_MS = 5_000;
 /** Default per-run timeout (env-tunable, constructor-overridable). */
-const DEFAULT_TIMEOUT_MS = 600_000;
+export const DEFAULT_TIMEOUT_MS = 600_000;
+/**
+ * Prompt argv guard (S2 review): argv single-argument limits are ~128KB
+ * (Linux MAX_ARG_STRLEN) / ~256KB (macOS); beyond that spawn fails with a
+ * cryptic E2BIG. Reject earlier with an actionable message instead.
+ */
+const MAX_PROMPT_CHARS = 120_000;
 
 export interface CodexExecRunOptions {
   /** The user prompt (passed as the trailing positional argument). */
@@ -94,6 +100,24 @@ export class CodexExecRunner {
     options: CodexExecRunOptions,
     onEvent: (event: CodexThreadEvent) => void,
   ): { promise: Promise<CodexExecRunResult>; handle: CodexExecRunHandle } {
+    if (options.prompt.length > MAX_PROMPT_CHARS) {
+      // Fail with a clear message instead of a cryptic spawn E2BIG.
+      const tooLong = new Error(
+        `prompt too long for argv: ${options.prompt.length} chars ` +
+        `(max ${MAX_PROMPT_CHARS}) — reduce the message/context size`,
+      );
+      return {
+        promise: Promise.resolve({
+          exitCode: null,
+          timedOut: false,
+          aborted: false,
+          spawnError: tooLong,
+          stderrTail: '',
+        }),
+        handle: { abort: (): void => {} },
+      };
+    }
+
     const args: string[] = [
       'exec',
       '--json',
@@ -111,6 +135,12 @@ export class CodexExecRunner {
     let settled = false;
     let timedOut = false;
     let aborted = false;
+    // Two independent timers (S2 review): the run timeout and the
+    // SIGTERM→SIGKILL escalation grace. Sharing one slot let abort()'s
+    // escalation timer overwrite the pending timeout timer's handle (the
+    // timeout then fired mid-abort and mislabeled timedOut, and its handle
+    // was unclerachable).
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
     const stderrTail = createRollingTail(STDERR_TAIL_BYTES);
@@ -135,12 +165,17 @@ export class CodexExecRunner {
       killTimer.unref?.();
     };
 
-    const clearKillTimer = (): void => {
+    const clearTimers = (): void => {
       if (killTimer) {
         clearTimeout(killTimer);
         killTimer = null;
       }
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
     };
+    const clearKillTimer = clearTimers;
 
     const promise = new Promise<CodexExecRunResult>((resolve) => {
       try {
@@ -165,19 +200,23 @@ export class CodexExecRunner {
       const currentChild = child;
 
       // ── stdout: JSONL → ThreadEvents ───────────────────────────────────
-      const readline = createInterface({ input: currentChild.stdout });
-      readline.on('line', (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          return;
-        }
-        try {
-          onEvent(JSON.parse(trimmed) as CodexThreadEvent);
-        } catch {
-          // Non-JSON line (banner, stray output): tolerate, never fatal.
-          logger.debug({ line: trimmed.slice(0, 200) }, 'codex exec: non-JSON stdout line skipped');
-        }
-      });
+      // stdio is ['ignore', 'pipe', 'pipe'], so stdout is always present at
+      // runtime; the guard satisfies the Readable | null spawn typing.
+      if (currentChild.stdout) {
+        const readline = createInterface({ input: currentChild.stdout });
+        readline.on('line', (line: string) => {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            return;
+          }
+          try {
+            onEvent(JSON.parse(trimmed) as CodexThreadEvent);
+          } catch {
+            // Non-JSON line (banner, stray output): tolerate, never fatal.
+            logger.debug({ line: trimmed.slice(0, 200) }, 'codex exec: non-JSON stdout line skipped');
+          }
+        });
+      }
 
       // ── stderr: forward + rolling tail ─────────────────────────────────
       currentChild.stderr?.on('data', (chunk: Buffer) => {
@@ -220,14 +259,14 @@ export class CodexExecRunner {
 
       // ── per-run timeout ────────────────────────────────────────────────
       if (timeoutMs > 0) {
-        killTimer = setTimeout(() => {
+        timeoutTimer = setTimeout(() => {
           if (settled) {
             return;
           }
           timedOut = true;
           killWithEscalation(currentChild);
         }, timeoutMs);
-        killTimer.unref?.();
+        timeoutTimer.unref?.();
       }
     });
 

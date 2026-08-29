@@ -228,3 +228,39 @@ describe('userInputText (Issue #4630)', () => {
     );
   });
 });
+
+describe('mcp_tool_call result payload (S2 review)', () => {
+  it('surfaces successful MCP results instead of an empty tool_result', () => {
+    const msg = adaptCodexEvent({
+      type: 'item.completed',
+      item: {
+        id: 'item_m1',
+        type: 'mcp_tool_call',
+        server: 'docs',
+        tool: 'search',
+        arguments: { q: 'x' },
+        result: { content: [{ type: 'text', text: 'found 3 hits' }] },
+        status: 'completed',
+      },
+    });
+    expect(msg).toMatchObject({
+      type: 'tool_result',
+      content: 'found 3 hits',
+      metadata: { toolName: 'docs.search' },
+    });
+  });
+
+  it('still maps error results with the Error prefix', () => {
+    const msg = adaptCodexEvent({
+      type: 'item.completed',
+      item: {
+        id: 'item_m2',
+        type: 'mcp_tool_call',
+        server: 'docs',
+        tool: 'search',
+        error: { message: 'timeout' },
+      },
+    });
+    expect(msg).toMatchObject({ type: 'tool_result', content: 'Error: timeout' });
+  });
+});

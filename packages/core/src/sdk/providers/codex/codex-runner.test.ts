@@ -118,12 +118,10 @@ describe('CodexExecRunner (Issue #4630)', () => {
   });
 
   it('forwards stderr chunks and keeps a tail for error mapping', async () => {
-    const chunks: string[] = [];
     const { promise } = runWith('echo "auth expired" >&2\nexit 3');
     const result = await promise;
     expect(result.exitCode).toBe(3);
     expect(result.stderrTail).toContain('auth expired');
-    void chunks; // forwarded via options.stderr (covered in provider tests)
   });
 
   it('maps spawn failure (ENOENT) onto spawnError, not a throw', async () => {
@@ -141,33 +139,74 @@ describe('CodexExecRunner (Issue #4630)', () => {
     const result = await promise;
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).toBe(143); // the trap's graceful exit
-    expect(existsSyncSafe(fixture.markerPath)).toBe(true);
+    expect(existsSync(fixture.markerPath)).toBe(true);
   }, 15_000);
 
-  it('escalates to SIGKILL when the child ignores SIGTERM', async () => {
-    // Real escalation path: TERM is trapped-ignored, so only the grace
-    // timer's KILL can end the run.
+  it('escalates to SIGKILL when the child SURVIVES SIGTERM', async () => {
+    // S2 review: the old `trap '' TERM` variant was a false positive —
+    // /bin/sh (bash 3.2) still dies to SIGTERM itself within ~ms under
+    // background+wait, so the escalation timer never ran and every
+    // assertion passed on the wrong path. This body PROVES survival: the
+    // trap touches SURVIVED without exiting, and the loop keeps waiting,
+    // so only the grace timer's SIGKILL can end the run.
     fixture.cleanup();
-    const ignoring = makeScriptedBinary(`trap '' TERM\n${  SLEEP_BODY}`);
-    fixture = ignoring;
-    const runner = new CodexExecRunner({ binary: ignoring.binaryPath, timeoutMs: 300 });
+    const root = mkdtempSync(join(tmpdir(), 'codex-runner-kill-'));
+    const binDir = join(root, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const binaryPath = join(binDir, 'codex');
+    const survivedPath = join(root, 'survived.marker');
+    const readyPath = join(root, 'ready.marker');
+    writeFileSync(
+      binaryPath,
+      `#!/bin/sh\nSURVIVED="${survivedPath}"\nREADY="${readyPath}"\n` +
+        // trap that does NOT exit: the shell survives SIGTERM…
+        'trap \'touch "$SURVIVED"\' TERM\n' +
+        // READY marks the trap INSTALLED — the TERM must only be sent
+        // after this, else the default disposition kills the shell before
+        // the trap exists (same lesson as the READY pattern above).
+        'touch "$READY"\n' +
+        // …and keeps waiting, so the escalation must be SIGKILL.
+        'while true; do sleep 30 >/dev/null 2>&1 & wait $!; done\n',
+      { mode: 0o755 },
+    );
+    chmodSync(binaryPath, 0o755);
+    fixture = {
+      binDir,
+      binaryPath,
+      markerPath: join(root, 'killed.marker'),
+      readyPath,
+      cleanup: () => rmSync(root, { recursive: true, force: true }),
+    };
+    const runner = new CodexExecRunner({ binary: binaryPath, timeoutMs: 5_000 });
     const { promise } = runner.run({ prompt: 'hi' }, () => {});
+    // TERM fires at t=5s; by then READY (written before the loop) is long
+    // established even under load.
+    await waitFor(() => existsSync(readyPath));
     const result = await promise;
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).toBeNull(); // SIGKILL — no graceful exit code
-    expect(existsSyncSafe(ignoring.markerPath)).toBe(false); // trap never ran
+    expect(existsSync(survivedPath)).toBe(true); // PROOF it survived TERM
   }, 15_000);
+
+  it('rejects an argv-overflowing prompt with an actionable spawnError', async () => {
+    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+    const { promise } = runner.run({ prompt: 'x'.repeat(200_000) }, () => {});
+    const result = await promise;
+    expect(result.spawnError).toBeInstanceOf(Error);
+    expect(result.spawnError?.message).toMatch(/prompt too long/i);
+    expect(result.exitCode).toBeNull();
+  });
 
   it('abort() kills the in-flight run and reports aborted', async () => {
     const run = runWith(SLEEP_BODY);
     // Wait until the trap is actually installed (READY marker) — under
     // loaded CI a fixed delay races the script's signal-readiness.
-    await waitFor(() => existsSyncSafe(fixture.readyPath));
+    await waitFor(() => existsSync(fixture.readyPath));
     run.handle.abort();
     const result = await run.promise;
     expect(result.aborted).toBe(true);
     expect(result.timedOut).toBe(false);
-    expect(existsSyncSafe(fixture.markerPath)).toBe(true);
+    expect(existsSync(fixture.markerPath)).toBe(true);
   }, 15_000);
 
   it('passes the prompt as the trailing argv (visible to the script)', async () => {
@@ -186,9 +225,6 @@ describe('CodexExecRunner (Issue #4630)', () => {
   });
 });
 
-function existsSyncSafe(p: string): boolean {
-  return existsSync(p);
-}
 
 async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
