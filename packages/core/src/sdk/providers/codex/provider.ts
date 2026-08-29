@@ -79,7 +79,7 @@ const REAUTH_NOTICE =
  * drops the dead thread id and the NEXT turn starts a fresh session.
  */
 const RESUME_TARGET_GONE_NOTICE =
-  '⚠️ Codex 会话记录已不存在（可能被清理），已自动开始新会话——本次回复丢失了之前的上下文，请重发你的问题。';
+  '⚠️ Codex 会话记录已不存在（可能被清理），已自动切换新会话——请重发你的问题，将从全新上下文开始（无此前对话内容）。';
 
 /** Actionable binary-missing error (thrown synchronously by queryStream). */
 const BINARY_MISSING = (pathValue: string): string =>
@@ -386,14 +386,26 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               // abort ends the stream without a turn terminator (pi parity).
               return;
             }
-            // Failure-signature detection (#4628) over BOTH surfaces: raw
-            // top-level error / turn.failed text (collected in enqueue) and
-            // the stderr tail.
-            const failureText = `${runFailureText}\n${result.stderrTail}`;
-            const authFailed = isCodexAuthFailure(failureText);
+            // Failure-signature detection (#4628, S3 review hardened):
+            // - gated on runFailed — a SUCCESSFUL turn (exit 0 + terminator)
+            //   must never be followed by a spurious 401/limit notice just
+            //   because stderr carries unrelated text (e.g. an MCP server's
+            //   own 401 noise that codex forwarded);
+            // - per-surface: the conjunction (401 + unauthorized) must hit
+            //   WITHIN one surface, not across the raw-events/stderr splice.
+            const runFailed =
+              Boolean(result.spawnError) ||
+              result.timedOut ||
+              result.exitCode !== 0 ||
+              !sawTurnTerminator;
+            const authFailed =
+              runFailed &&
+              (isCodexAuthFailure(runFailureText) || isCodexAuthFailure(result.stderrTail));
             const resumeTargetGone =
+              runFailed &&
               resumeTarget !== undefined &&
-              isCodexResumeTargetMissing(failureText);
+              (isCodexResumeTargetMissing(runFailureText) ||
+                isCodexResumeTargetMissing(result.stderrTail));
             if (authFailed) {
               // Most actionable diagnosis wins: exit-code noise around a 401
               // would bury the one thing the user can actually do.
@@ -478,11 +490,6 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             // also covers turn.failed, whose adapter output is error-only
             // and would otherwise leave the turn unresolved forever (#4378
             // error_max_* pitfall, flagged in the S2 review).
-            const runFailed =
-              Boolean(result.spawnError) ||
-              result.timedOut ||
-              result.exitCode !== 0 ||
-              !sawTurnTerminator;
             if (!sawTurnTerminator || sawTurnFailed) {
               pushSynthetic({
                 type: 'result',
