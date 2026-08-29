@@ -21,8 +21,13 @@ export type ProviderType = 'claude' | 'pi' | 'codex' | string;
 const providerRegistry = new Map<ProviderType, ProviderFactory>([
   ['claude', () => new ClaudeSDKProvider()],
   ['pi', () => new PiAgentProvider()],
-  // Issue #4629 (S1 of #4627); sandbox override wired in #4631 (S4).
-  ['codex', () => new CodexAgentProvider({ sandboxOverride: Config.CODEX_SANDBOX })],
+  // Issue #4629 (S1 of #4627); sandbox override #4631 (S4); governance
+  // caps wired in #4634 (S7).
+  ['codex', () => new CodexAgentProvider({
+    sandboxOverride: Config.CODEX_SANDBOX,
+    maxActiveSessions: Config.CODEX_MAX_ACTIVE_SESSIONS,
+    maxConcurrentRuns: Config.CODEX_MAX_CONCURRENT_RUNS,
+  })],
 ]);
 
 /**
