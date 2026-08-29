@@ -14,7 +14,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { adaptCodexEvent, userInputText } from './exec-adapter.js';
+import {
+  adaptCodexEvent,
+  isCodexAuthFailure,
+  isCodexResumeTargetMissing,
+  userInputText,
+} from './exec-adapter.js';
 
 describe('adaptCodexEvent (Issue #4630)', () => {
   // ── captured wire shapes (0.132.0) ────────────────────────────────────
@@ -262,5 +267,58 @@ describe('mcp_tool_call result payload (S2 review)', () => {
       },
     });
     expect(msg).toMatchObject({ type: 'tool_result', content: 'Error: timeout' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Failure-signature detectors (Issue #4628, S3) — locked against the strings
+// captured live from codex-cli 0.132.0 (auth removed / unknown resume id).
+// ---------------------------------------------------------------------------
+
+describe('isCodexAuthFailure (Issue #4628)', () => {
+  // Real stdout top-level error event message (auth removed, 0.132.0).
+  const CAPTURED_STDOUT_ERROR =
+    'Reconnecting... 2/5 (unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, ' +
+    'url: wss://api.openai.com/v1/responses, cf-ray: a32b45315b75b359-NRT)';
+  // Real stderr line (auth removed, 0.132.0).
+  const CAPTURED_STDERR =
+    '2026-08-29T11:38:32.883835Z ERROR codex_api::endpoint::responses_websocket: ' +
+    'failed to connect to websocket: HTTP error: 401 Unauthorized, url: wss://api.openai.com/v1/responses';
+
+  it('matches the captured stdout 401 error event text', () => {
+    expect(isCodexAuthFailure(CAPTURED_STDOUT_ERROR)).toBe(true);
+  });
+
+  it('matches the captured stderr 401 line', () => {
+    expect(isCodexAuthFailure(CAPTURED_STDERR)).toBe(true);
+  });
+
+  it('matches token/session expiry wording (refresh-token expiry variants)', () => {
+    expect(isCodexAuthFailure('Error: token expired, please log in again')).toBe(true);
+    expect(isCodexAuthFailure('codex: session expired')).toBe(true);
+  });
+
+  it('does not match ordinary failures (no false positives on exit noise)', () => {
+    expect(isCodexAuthFailure('codex exec exited with code 2: usage limit reached')).toBe(false);
+    expect(isCodexAuthFailure('Error: thread/resume failed (code -32600)')).toBe(false);
+    expect(isCodexAuthFailure('')).toBe(false);
+    // 401 alone (e.g. an unrelated id/line number) without "unauthorized".
+    expect(isCodexAuthFailure('item 401 completed')).toBe(false);
+  });
+});
+
+describe('isCodexResumeTargetMissing (Issue #4628)', () => {
+  // Real stderr (unknown resume id, 0.132.0).
+  const CAPTURED =
+    'Error: thread/resume: thread/resume failed: no rollout found for thread id ' +
+    '00000000-0000-0000-0000-000000000000 (code -32600)';
+
+  it('matches the captured resume-failure stderr', () => {
+    expect(isCodexResumeTargetMissing(CAPTURED)).toBe(true);
+  });
+
+  it('does not match unrelated failures', () => {
+    expect(isCodexResumeTargetMissing('HTTP error: 401 Unauthorized')).toBe(false);
+    expect(isCodexResumeTargetMissing('')).toBe(false);
   });
 });

@@ -15,7 +15,7 @@
  * - Lifecycle: dispose() flips state, is idempotent, forces checks false.
  */
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -132,11 +132,11 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // Properties
   // --------------------------------------------------------------------------
 
-  it("exposes name 'codex' and the exec-bridge version", () => {
+  it("exposes name 'codex' and the sessions-auth version", () => {
     fixtures = makeFixtures({ withBinary: false, withAuth: false });
     const provider = makeProvider(fixtures);
     expect(provider.name).toBe('codex');
-    expect(provider.version).toBe('0.1.0-exec-bridge');
+    expect(provider.version).toBe('0.2.0-sessions-auth');
   });
 
   // --------------------------------------------------------------------------
@@ -300,6 +300,168 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
       expect(() => provider.queryStream(undefined as never, { settingSources: [] } as AgentQueryOptions))
         .toThrow(/disposed/i);
     });
+  });
+
+  // --------------------------------------------------------------------------
+  // queryStream — S3 sessions & auth (#4628): resume per turn, latch rules,
+  // 401 re-auth detection, resume-target-gone self-heal. The fake `codex`
+  // counts invocations via $CODEX_HOME (injected through the provider env)
+  // and records its argv per invocation so tests assert the EXACT argv the
+  // bridge built — real subprocesses, no mocks.
+  // --------------------------------------------------------------------------
+
+  describe('queryStream resume & auth (Issue #4628)', () => {
+    /** Script prefix: count invocations, record argv into CODEX_HOME. */
+    const ARGV_RECORDER = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+`;
+
+    const argvOf = (fx: Fixtures, invocation: number): string => {
+      const raw = readFileSync(join(fx.codexHome, `argv-${invocation}`), 'utf-8');
+      return raw.trim();
+    };
+
+    it('resumes the latched thread on follow-up turns (exec resume <id>)', async () => {
+      // Run 1 (fresh) → latches t-abc; run 2 must carry `resume … t-abc`.
+      const body = `${ARGV_RECORDER}
+if grep -q resume "$CODEX_HOME/argv-$n"; then
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-abc"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"resumed turn"}}
+{"type":"turn.completed"}
+JSONL
+else
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-abc"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"first turn"}}
+{"type":"turn.completed"}
+JSONL
+fi
+`;
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+      const { messages, sessionId } = await drainStream(makeProvider(fixtures), ['a', 'b']);
+      expect(argvOf(fixtures, 1)).not.toContain('resume');
+      expect(argvOf(fixtures, 2)).toContain('exec resume --json --skip-git-repo-check t-abc -- b');
+      const texts = (messages as Array<{ type: string; content: string }>)
+        .filter((m) => m.type === 'text')
+        .map((m) => m.content);
+      expect(texts).toEqual(['first turn', 'resumed turn']);
+      expect(sessionId).toBe('t-abc');
+    }, 20_000);
+
+    it('does NOT latch a thread from a failed turn (thread.started fires on failures)', async () => {
+      // Verified live (0.132.0): even a 401-failed run emits thread.started —
+      // the anchor must come from a COMPLETED turn only.
+      fixtures = makeFixtures({
+        withBinary: true,
+        withAuth: true,
+        body: `${ARGV_RECORDER}
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-x"}
+{"type":"turn.started"}
+JSONL
+echo "boom" >&2
+exit 3
+`,
+      });
+      const { messages } = await drainStream(makeProvider(fixtures), ['a', 'b']);
+      expect(argvOf(fixtures, 2)).not.toContain('resume');
+      const error = (messages as Array<{ type: string; content: string }>).find(
+        (m) => m.type === 'error',
+      );
+      expect(error?.content).toMatch(/exited with code 3/);
+    }, 20_000);
+
+    it('maps a 401 run onto the actionable re-login notice and keeps the chat resumable', async () => {
+      // Real captured shape (auth removed, 0.132.0): reconnect error events
+      // with "unexpected status 401 Unauthorized" + exit 1. The adapter
+      // downgrades Reconnecting… to status, so detection must read raw text.
+      fixtures = makeFixtures({
+        withBinary: true,
+        withAuth: true,
+        body: `${ARGV_RECORDER}
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-401"}
+{"type":"turn.started"}
+{"type":"error","message":"Reconnecting... 2/5 (unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: wss://api.openai.com/v1/responses)"}
+JSONL
+exit 1
+`,
+      });
+      const { messages } = await drainStream(makeProvider(fixtures), ['a', 'b']);
+      const error = (messages as Array<{ type: string; content: string }>).find(
+        (m) => m.type === 'error',
+      );
+      expect(error?.content).toMatch(/codex login/);
+      expect(error?.content).not.toMatch(/exited with code/); // 401 wins over exit noise
+      expect(argvOf(fixtures, 2)).not.toContain('resume'); // no anchor latched
+    }, 20_000);
+
+    it('detects 401 from stderr alone (no stdout error events)', async () => {
+      fixtures = makeFixtures({
+        withBinary: true,
+        withAuth: true,
+        body: 'echo "HTTP error: 401 Unauthorized, url: wss://api.openai.com/v1/responses" >&2\nexit 1',
+      });
+      const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
+      const error = (messages as Array<{ type: string; content: string }>).find(
+        (m) => m.type === 'error',
+      );
+      expect(error?.content).toMatch(/codex login/);
+    }, 15_000);
+
+    it('self-heals when the resume target is gone: clears the id, next turn starts fresh', async () => {
+      // Run 1 latches t-abc; run 2 (resume) hits the real captured error
+      // "no rollout found for thread id" (0.132.0); run 3 must be FRESH.
+      const body = `${ARGV_RECORDER}
+if grep -q resume "$CODEX_HOME/argv-$n"; then
+echo "Error: thread/resume: thread/resume failed: no rollout found for thread id t-abc (code -32600)" >&2
+exit 1
+else
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-abc"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"turn ok"}}
+{"type":"turn.completed"}
+JSONL
+fi
+`;
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+      const { messages } = await drainStream(makeProvider(fixtures), ['a', 'b', 'c']);
+      expect(argvOf(fixtures, 2)).toContain('resume'); // latched from run 1
+      expect(argvOf(fixtures, 3)).not.toContain('resume'); // self-healed
+      const errors = (messages as Array<{ type: string; content: string }>)
+        .filter((m) => m.type === 'error')
+        .map((m) => m.content);
+      expect(errors.join('\n')).toMatch(/新会话/); // user told about the reset
+    }, 25_000);
+
+    it('keeps the conversation anchor across a transient failed resume-able run (timeout)', async () => {
+      // A mid-conversation timeout must NOT drop the anchor — the retry
+      // resumes into the same thread instead of silently restarting context.
+      const body = `${ARGV_RECORDER}
+if [ "$n" -eq 1 ]; then
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-keep"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"first"}}
+{"type":"turn.completed"}
+JSONL
+else
+sleep 30 >/dev/null 2>&1 &
+wait $!
+fi
+`;
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+      const provider = makeProvider(fixtures, 1_500); // 1.5s per-run timeout
+      const { messages } = await drainStream(provider, ['a', 'b', 'c']);
+      expect(argvOf(fixtures, 2)).toContain('resume'); // after turn 1 success
+      expect(argvOf(fixtures, 3)).toContain('resume'); // anchor survived the timeout
+      const errors = (messages as Array<{ type: string; content: string }>)
+        .filter((m) => m.type === 'error')
+        .map((m) => m.content);
+      expect(errors.join('\n')).toMatch(/timed out/);
+    }, 30_000);
   });
 
   // --------------------------------------------------------------------------
