@@ -18,7 +18,6 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
   it("maps permissionMode 'bypassPermissions' → workspace-write", () => {
     const d = resolveCodexSandboxPolicy({ permissionMode: 'bypassPermissions' });
     expect(d.sandbox).toBe('workspace-write');
-    expect(d.configOverrides).toEqual(['sandbox_mode=workspace-write']);
   });
 
   it('maps absent permissionMode → workspace-write (ChatAgent bypass default)', () => {
@@ -116,13 +115,28 @@ describe('resolveCodexSandboxPolicy (Issue #4631)', () => {
 
   // ── decision shape ───────────────────────────────────────────────────
 
-  it('returns the runner-ready argv fragment and ordered reasons', () => {
+  it('returns ordered reasons (base inference + denylist cap)', () => {
     const d = resolveCodexSandboxPolicy(
       { permissionMode: 'default', disallowedTools: ['Bash'] },
     );
-    expect(d.configOverrides).toEqual(['sandbox_mode=read-only']);
-    expect(d.reasons.length).toBe(2); // base inference + denylist cap
+    expect(d.reasons.length).toBe(2);
     expect(d.reasons[0]).toMatch(/permissionMode/);
     expect(d.reasons[1]).toMatch(/disallowedTools/);
+  });
+
+  it('normalizes denylist RULE FORMS — Bash(rm:*) caps, WebSearch(a:b) throws', () => {
+    // Claude Code rule forms must not silently skip the policy (S4 review).
+    expect(
+      resolveCodexSandboxPolicy({ disallowedTools: ['Bash(rm:*)'] }).sandbox,
+    ).toBe('read-only');
+    expect(() =>
+      resolveCodexSandboxPolicy({ disallowedTools: ['WebSearch(domain:example.com)'] }),
+    ).toThrow(/web search/i);
+  });
+
+  it('throws on an out-of-enum permissionMode instead of widening (fail closed)', () => {
+    expect(() =>
+      resolveCodexSandboxPolicy({ permissionMode: 'acceptEdits' as never }),
+    ).toThrow(/unknown permissionMode.*fail closed/s);
   });
 });

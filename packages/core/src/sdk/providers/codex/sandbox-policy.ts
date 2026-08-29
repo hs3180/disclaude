@@ -58,6 +58,7 @@ const MUTATION_TOOL_NAMES = new Set([
   'bash',
   'write',
   'edit',
+  'multiedit',
   'notebookedit',
   'notebookeditfile',
   'str_replace_editor',
@@ -81,8 +82,6 @@ const WEB_SEARCH_TOOL_NAMES = new Set(['websearch', 'web_search']);
 export interface CodexSandboxDecision {
   /** The level to pass as `-c sandbox_mode=<level>`. */
   sandbox: CodexSandboxLevel;
-  /** argv fragment for codex-runner (CodexExecRunOptions.configOverrides). */
-  configOverrides: string[];
   /** Human-readable mapping rationale, in decision order (logged, tested). */
   reasons: string[];
 }
@@ -104,8 +103,22 @@ export function resolveCodexSandboxPolicy(
   // 1) Base level: explicit config wins; else infer from permissionMode.
   //    'default' means "ask the user" — headless exec has no asker, and the
   //    safe degradation is read-only, NOT a silently wider sandbox.
-  let sandbox: CodexSandboxLevel =
-    configSandbox ?? (options.permissionMode === 'default' ? 'read-only' : 'workspace-write');
+  // Allowlist the inference (S4 review): this resolver IS the security
+  // boundary, and `!== 'default' ? wider` would silently widen the sandbox
+  // for any out-of-enum value a future caller passes — fail closed instead.
+  let sandbox: CodexSandboxLevel;
+  if (configSandbox) {
+    sandbox = configSandbox;
+  } else if (options.permissionMode === 'default') {
+    sandbox = 'read-only';
+  } else if (options.permissionMode === 'bypassPermissions' || options.permissionMode === undefined) {
+    sandbox = 'workspace-write';
+  } else {
+    throw new Error(
+      `CodexAgentProvider: unknown permissionMode "${String(options.permissionMode)}" — ` +
+      'refusing to infer a sandbox level (fail closed, #4631).',
+    );
+  }
   reasons.push(
     configSandbox
       ? `agent.codexSandbox=${configSandbox} (explicit override)`
@@ -117,7 +130,14 @@ export function resolveCodexSandboxPolicy(
   // 2) Denylist cap: mutation-blocking entries cap the sandbox at read-only
   //    even under an explicit override — a security denylist outranks a
   //    convenience preference.
-  const denylist = (options.disallowedTools ?? []).map((name) => name.toLowerCase());
+  // Normalize to the bare tool name (S4 review): Claude Code's
+  // disallowedTools legitimately accepts rule forms (`Bash(rm:*)`,
+  // `WebSearch(domain:...)`) — an exact-match on the raw string would let
+  // those entries silently skip both the mutation cap and the WebSearch
+  // throw, the exact policy hole this module promises never to leave.
+  const denylist = (options.disallowedTools ?? []).map((name) =>
+    name.split('(')[0].trim().toLowerCase(),
+  );
   const mutationHits = denylist.filter((name) => MUTATION_TOOL_NAMES.has(name));
   if (mutationHits.length > 0) {
     sandbox = 'read-only';
@@ -141,7 +161,6 @@ export function resolveCodexSandboxPolicy(
 
   return {
     sandbox,
-    configOverrides: [`sandbox_mode=${sandbox}`],
     reasons,
   };
 }
