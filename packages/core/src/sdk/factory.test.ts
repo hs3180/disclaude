@@ -323,9 +323,21 @@ describe('Provider Factory', () => {
       expect(provider.name).toBe('pi');
     });
 
+    it("setDefaultProvider('codex') makes getProvider() return the codex backend", () => {
+      // Issue #4629 (S1 of #4627): the Codex CLI skeleton registers the same
+      // way — registry membership is the S1 deliverable; availability is
+      // environment-dependent and covered in providers/codex/provider.test.ts.
+      setDefaultProvider('codex');
+      expect(getDefaultProviderType()).toBe('codex');
+
+      const provider = getProvider();
+      expect(provider.name).toBe('codex');
+      clearProviderCache('codex');
+    });
+
     it('throws a helpful error listing registered backends for an unknown type', () => {
       expect(() => setDefaultProvider('mistral')).toThrow(
-        /Unknown provider type: mistral.*Available:.*claude.*pi/s,
+        /Unknown provider type: mistral.*Available:.*claude.*pi.*codex/s,
       );
     });
   });
