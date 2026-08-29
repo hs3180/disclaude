@@ -44,6 +44,8 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /** Session identity key (Issue #4634, S7) — ChatAgent passes chatId */
+  sessionKey?: string;
 }
 
 /**
@@ -186,6 +188,7 @@ export abstract class BaseAgent implements Disposable {
     const options: AgentQueryOptions = {
       cwd: effectiveCwd,
       permissionMode: this.permissionMode,
+      ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],

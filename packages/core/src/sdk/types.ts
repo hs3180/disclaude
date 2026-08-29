@@ -286,6 +286,12 @@ export interface AgentQueryOptions {
    */
   stderr?: (data: string) => void;
   /**
+   * 会话身份键（Issue #4634，S7）：调用方（ChatAgent 传 chatId）用来标识
+   * "哪个会话"拥有这条流。并发治理类 provider（codex）用它做会话上限的
+   * LRU 身份与逐 chat 续接；不传时 provider 退化为匿名会话（仍计上限）。
+   */
+  sessionKey?: string;
+  /**
    * Agent Teams mode (SDK 0.3.177+).
    * When set, enables teammate spawning via the SDK's teammateMode Settings field.
    * - `'in-process'` — Teammates run in the same process

@@ -787,6 +787,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // follow-up).
       disallowedTools: buildDisallowedTools(),
       mcpServers,
+      // Issue #4634 (S7): chatId as session identity for concurrency
+      // governance on backends that bound active sessions (codex).
+      sessionKey: chatId,
     });
 
     this.logger.info(

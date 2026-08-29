@@ -33,6 +33,11 @@ agent:
   #   default（ask）→ read-only（无头模式没有审批人，保守降级）
   # danger-full-access 只能通过此配置显式开启。
   # codexSandbox: "workspace-write"
+
+  # 并发治理（S7，#4634）——每进程上限，默认 3 / 2：
+  # codex:
+  #   maxActiveSessions: 3    # 同时存活的 codex 会话数
+  #   maxConcurrentRuns: 2    # 同时执行的 codex exec 子进程数
 ```
 
 完整示例见 `disclaude.config.example.yaml`（搜索 `agentBackend`）。
@@ -76,6 +81,7 @@ codex login
 - **重启**：会话映射在内存中，进程重启后所有对话开新 thread（rollout 文件仍在 `~/.codex/sessions`，由 codex 自有管理，disclaude 不读不删）。
 - **自愈**：resume 目标丢失（如 rollout 被清理）时自动降级为新会话并告知用户，无需手动 `/reset`。
 - **磁盘与隐私**：续接需要会话落盘（S3 起 `--ephemeral` 已移除）——每个对话的完整内容会写进 `~/.codex/sessions/` 且**长期保留**（disclaude 与 codex CLI 默认都不清理）。长期运行的 bot 请知悉该增长，并考虑为 codex 后端设置独立的 `CODEX_HOME`（隔离 bot 会话与个人会话、便于按需清理）。
+- **并发治理（S7，#4634）**：每进程默认最多 **3 个活跃会话**（`agent.codex.maxActiveSessions`）、**2 个并发 exec 子进程**（`agent.codex.maxConcurrentRuns`）。会话满时按 LRU 驱逐最闲的会话——**被驱逐的 chat 下一条消息自动续接原会话**（thread 锚点被暂存），只有用户主动 `/reset` 才真正开新会话。排队的 turn 会收到「⏳ 排队中，前面还有 N 个」提示，绝不静默。
 
 ## 5. 权限映射
 
