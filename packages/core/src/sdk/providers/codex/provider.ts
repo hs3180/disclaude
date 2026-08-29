@@ -1,5 +1,6 @@
 /**
- * Codex CLI Agent Provider (Issue #4629 skeleton + #4630 exec bridge).
+ * Codex CLI Agent Provider (Issue #4629 skeleton + #4630 exec bridge +
+ * #4628 sessions & auth).
  *
  * S1 (#4629): registry/config/validation — fail-fast environment checks
  * (binary on PATH, OAuth auth.json under CODEX_HOME).
@@ -9,11 +10,22 @@
  * the pi queryStream architecture (#4386 part 3/5): queue+wake consumer
  * loop, detached input pump, and the shared no-content-progress stall
  * watchdog seam (#4550 pattern, env-tunable DISCLAUDE_STALL_TIMEOUT_MS).
+ * S3 (#4628): multi-turn continuity + auth lifecycle. Session semantics:
+ * ChatAgent keeps ONE queryStream per chatId and `/reset` closes its input
+ * generator, so the chatId→session map IS this queryStream's closure state —
+ * the thread_id of the last SUCCESSFUL turn (`resumeThreadId`) is replayed
+ * as `codex exec resume <id>` on every follow-up turn; tearing the stream
+ * down (reset, idle GC via ChatAgent's per-chatId agent cleanup) drops it,
+ * and the next queryStream starts a fresh session. Rollout files live in
+ * codex's own storage (~/.codex/sessions) — disclaude passes the id through
+ * and never reads/GCs them. If codex reports the rollout gone
+ * (isCodexResumeTargetMissing), the target is cleared so the next turn
+ * self-heals into a fresh session instead of bricking the chat until /reset.
  *
- * Session semantics: S2 runs are STATELESS per turn (`--ephemeral`) —
- * multi-turn continuity via `codex exec resume` lands in S3 (#4628), which
- * will also consume the thread_id captured from thread.started onto
- * handle.sessionId here.
+ * Auth: codex owns credentials entirely (auth.json under CODEX_HOME, written
+ * by the one-time interactive `codex login`) — disclaude stores nothing and
+ * only detects failure signatures (isCodexAuthFailure: stdout error events +
+ * stderr 401/token-expired) to tell the user to re-run `codex login`.
  */
 
 import { accessSync, constants, existsSync } from 'node:fs';
@@ -39,6 +51,8 @@ import {
 } from './codex-runner.js';
 import {
   adaptCodexEvent,
+  isCodexAuthFailure,
+  isCodexResumeTargetMissing,
   userInputText,
   type CodexThreadEvent,
 } from './exec-adapter.js';
@@ -51,6 +65,21 @@ const logger = createLogger('CodexAgentProvider');
  */
 const STALL_TERMINATE_NOTICE =
   '⚠️ 上游模型响应超时（疑似 stall），已自动取消本次响应。请稍后重试。';
+
+/**
+ * Actionable re-auth notice (#4628): codex's ChatGPT login expired/revoked —
+ * only a human re-running the interactive `codex login` can fix it, so the
+ * message says exactly that (disclaude never touches credentials itself).
+ */
+const REAUTH_NOTICE =
+  '🔴 Codex 登录已失效（401 / 令牌过期）——请在运行 disclaude 的机器上执行 `codex login` 重新完成 Sign in with ChatGPT 授权，然后重发消息即可（当前消息未被处理）。';
+
+/**
+ * Notice when the resume target vanished on codex's side (#4628): the bridge
+ * drops the dead thread id and the NEXT turn starts a fresh session.
+ */
+const RESUME_TARGET_GONE_NOTICE =
+  '⚠️ Codex 会话记录已不存在（可能被清理），已自动开始新会话——本次回复丢失了之前的上下文，请重发你的问题。';
 
 /** Actionable binary-missing error (thrown synchronously by queryStream). */
 const BINARY_MISSING = (pathValue: string): string =>
@@ -75,7 +104,7 @@ const AUTH_FILE = 'auth.json';
 
 export class CodexAgentProvider implements IAgentSDKProvider {
   readonly name = 'codex';
-  readonly version = '0.1.0-exec-bridge';
+  readonly version = '0.2.0-sessions-auth';
 
   private readonly env: Record<string, string | undefined>;
   private readonly execTimeoutMs: number | undefined;
@@ -167,8 +196,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       onAbort?.();
     };
 
-    // thread.started → handle.sessionId (consumed by S3 resume, #4628).
+    // thread.started → handle.sessionId (observed thread id, even on failed
+    // runs). resumeThreadId below is the stricter S3 notion: the anchor of
+    // the conversation, latched ONLY from a completed turn.
     let latestSessionId: string | undefined;
+    // S3 (#4628): the thread_id the NEXT turn resumes into. This closure IS
+    // the chatId→session map — ChatAgent owns one queryStream per chatId, so
+    // tearing it down (/reset, idle GC) drops the map entry for free.
+    let resumeThreadId: string | undefined;
 
     const adaptIterator =
       async function* (this: void): AsyncGenerator<AgentMessage> {
@@ -209,7 +244,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         let openToolItems = 0;
         let sawTurnTerminator = false;
         let sawTurnFailed = false;
-        const armTimer = (
+        // S3 (#4628): completed-turn marker (vs. sawTurnTerminator, which
+        // turn.failed also sets) + raw failure text for the detectors. The
+        // adapter downgrades transient "Reconnecting..." errors to status,
+        // so signature detection must read the RAW event text, not adapted
+        // messages.
+        let sawTurnCompleted = false;
+        let runFailureText = '';        const armTimer = (
           fn: () => void,
           ms: number,
         ): ReturnType<typeof setTimeout> => {
@@ -286,14 +327,20 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             event.type === 'turn.failed'
           ) {
             sawTurnTerminator = true;
-            if (event.type === 'turn.failed') {
+            if (event.type === 'turn.completed') {
+              sawTurnCompleted = true;
+            } else if (event.type === 'turn.failed') {
               // turn.failed is a terminator for bookkeeping, but the TURN
               // still needs a synthetic result (see runInput) — the adapter
               // emits only an error for it, and ChatAgent resolves a turn
               // exclusively on type==='result' (cf. #4378 error_max_* pitfall).
               sawTurnFailed = true;
             }
+          } else if (event.type === 'error') {
+            runFailureText += `\n${event.message}`;
           }
+          if (event.type === 'turn.failed') {
+            runFailureText += `\n${event.error?.message ?? ''}`;          }
           touchStallWatchdog();
           const adapted = adaptCodexEvent(event);
           if (adapted) {
@@ -307,14 +354,19 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         };
 
         // ── Turn runner: one user input → one codex exec run ──────────────
+        // First turn runs `codex exec … -- <prompt>`; every follow-up runs
+        // `codex exec resume <thread_id> … -- <prompt>` (S3, #4628).
         const runInput = async (prompt: string): Promise<void> => {
           runActive = true;
           sawTurnTerminator = false;
           sawTurnFailed = false;
-          touchStallWatchdog();
+          sawTurnCompleted = false;
+          runFailureText = '';
+          const resumeTarget = resumeThreadId;          touchStallWatchdog();
           const { promise, handle } = runner.run(
             {
               prompt,
+              resumeSessionId: resumeTarget,
               cwd: options.cwd,
               model: options.model,
               env: { ...providerEnv, ...options.env },
@@ -334,7 +386,23 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               // abort ends the stream without a turn terminator (pi parity).
               return;
             }
-            if (result.spawnError) {
+            // Failure-signature detection (#4628) over BOTH surfaces: raw
+            // top-level error / turn.failed text (collected in enqueue) and
+            // the stderr tail.
+            const failureText = `${runFailureText}\n${result.stderrTail}`;
+            const authFailed = isCodexAuthFailure(failureText);
+            const resumeTargetGone =
+              resumeTarget !== undefined &&
+              isCodexResumeTargetMissing(failureText);
+            if (authFailed) {
+              // Most actionable diagnosis wins: exit-code noise around a 401
+              // would bury the one thing the user can actually do.
+              pushSynthetic({
+                type: 'error',
+                content: REAUTH_NOTICE,
+                role: 'assistant',
+              });
+            } else if (result.spawnError) {
               pushSynthetic({
                 type: 'error',
                 content:
@@ -350,11 +418,25 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                   'try a smaller task or raise the timeout.',
                 role: 'assistant',
               });
+            } else if (resumeTargetGone) {
+              // Self-heal (#4628): the rollout vanished on codex's side —
+              // drop the dead id so the NEXT turn starts fresh instead of
+              // bricking this chat until /reset.
+              resumeThreadId = undefined;
+              logger.warn(
+                { threadId: resumeTarget },
+                'codex resume target missing (no rollout found); cleared — next turn starts a fresh session (Issue #4628)',
+              );
+              pushSynthetic({
+                type: 'error',
+                content: RESUME_TARGET_GONE_NOTICE,
+                role: 'assistant',
+              });
             } else if (result.exitCode !== 0) {
               pushSynthetic({
                 type: 'error',
                 content:
-                  `codex exec exited with code ${result.exitCode}${ 
+                  `codex exec exited with code ${result.exitCode}${
                   result.stderrTail
                     ? `: ${result.stderrTail.trim().slice(-500)}`
                     : ''}`,
@@ -369,6 +451,26 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                 role: 'assistant',
               });
             }
+            // Latch the resume anchor ONLY off a completed turn: thread.started
+            // fires even on a 401-failed run (verified 0.132.0), so a failed
+            // first turn must not become the conversation anchor; an already-
+            // latched conversation survives transient failures (retry after a
+            // timeout resumes where it left off). turn.completed may carry a
+            // NEW thread_id if codex forks the thread on resume — latching
+            // latestSessionId handles both shapes.
+            if (sawTurnCompleted && latestSessionId) {
+              resumeThreadId = latestSessionId;
+            }
+            logger.debug(
+              {
+                resumed: resumeTarget !== undefined,
+                threadId: resumeThreadId,
+                authFailed,
+                resumeTargetGone,
+                exitCode: result.exitCode,
+              },
+              'codex turn boundary (exec run finished)',
+            );
             // A failed run still ends the TURN so ChatAgent's turn accounting
             // completes (synthetic result mirrors turn.completed) — and the
             // result carries terminatedReason:'turn_failed' so ChatAgent

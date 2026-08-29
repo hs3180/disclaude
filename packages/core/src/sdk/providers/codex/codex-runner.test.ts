@@ -219,8 +219,26 @@ describe('CodexExecRunner (Issue #4630)', () => {
       (ev) => events.push(ev),
     );
     const result = await promise;
+    // S3 (#4628): fresh runs are NOT --ephemeral — the rollout file they
+    // write under codex's session storage is what later turns resume.
     expect(result.stderrTail).toContain(
-      'argv:exec --json --skip-git-repo-check --ephemeral -- do the thing',
+      'argv:exec --json --skip-git-repo-check -- do the thing',
+    );
+  });
+
+  it('builds a resume argv: session id positional before the prompt', async () => {
+    // `codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]` (0.132.0) — the
+    // thread id is the FIRST positional; flags stay shared with plain exec.
+    fixture.cleanup();
+    fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
+    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+    const { promise } = runner.run(
+      { prompt: 'next turn', resumeSessionId: 't-abc', model: 'gpt-5.1' },
+      () => {},
+    );
+    const result = await promise;
+    expect(result.stderrTail).toContain(
+      'argv:exec resume --json --skip-git-repo-check -m gpt-5.1 t-abc -- next turn',
     );
   });
 });
