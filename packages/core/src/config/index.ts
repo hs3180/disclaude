@@ -206,6 +206,11 @@ export class Config {
           // undefined ⇒ 'claude' default. Consumed by PrimaryNode.start().
           static readonly AGENT_BACKEND = fileConfigOnly.agent?.agentBackend;
 
+          // Codex exec sandbox override (Issue #4631, S4 of #4627). Only
+          // meaningful with AGENT_BACKEND === 'codex'; consumed by the
+          // provider factory. undefined ⇒ derived from permissionMode.
+          static readonly CODEX_SANDBOX = fileConfigOnly.agent?.codexSandbox;
+
           // Tier model configuration (Issue #3059)
           private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
           private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';

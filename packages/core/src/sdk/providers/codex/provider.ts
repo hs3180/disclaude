@@ -26,6 +26,14 @@
  * by the one-time interactive `codex login`) — disclaude stores nothing and
  * only detects failure signatures (isCodexAuthFailure: stdout error events +
  * stderr 401/token-expired) to tell the user to re-run `codex login`.
+ *
+ * S4 (#4631): permission gate → sandbox mapping. codex exec is headless
+ * (no approval axis), so the disclaude permission policy maps onto the one
+ * available axis — sandbox_mode — via sandbox-policy.ts: bypassPermissions
+ * → workspace-write, 'default' (ask) → read-only (fail closed), explicit
+ * `agent.codexSandbox` override honored, mutation denylist entries cap at
+ * read-only, and policies codex cannot honor (WebSearch deny) throw with a
+ * clear error instead of silently violating policy.
  */
 
 import { accessSync, constants, existsSync } from 'node:fs';
@@ -49,6 +57,10 @@ import {
   type CodexExecRunHandle,
   type CodexExecRunResult,
 } from './codex-runner.js';
+import {
+  resolveCodexSandboxPolicy,
+  type CodexSandboxLevel,
+} from './sandbox-policy.js';
 import {
   adaptCodexEvent,
   isCodexAuthFailure,
@@ -97,6 +109,12 @@ export interface CodexAgentProviderOptions {
   env?: Record<string, string | undefined>;
   /** Per-run codex exec timeout (default 600s). */
   execTimeoutMs?: number;
+  /**
+   * Explicit sandbox override from `agent.codexSandbox` (Issue #4631, S4).
+   * Wins over permissionMode inference; the denylist mutation cap still
+   * outranks it (security policy > convenience preference).
+   */
+  sandboxOverride?: CodexSandboxLevel;
 }
 
 /** The file Codex CLI writes after a successful `codex login` (OAuth). */
@@ -104,16 +122,18 @@ const AUTH_FILE = 'auth.json';
 
 export class CodexAgentProvider implements IAgentSDKProvider {
   readonly name = 'codex';
-  readonly version = '0.2.0-sessions-auth';
+  readonly version = '0.3.0-sandbox-policy';
 
   private readonly env: Record<string, string | undefined>;
   private readonly execTimeoutMs: number | undefined;
+  private readonly sandboxOverride: CodexSandboxLevel | undefined;
 
   private disposed = false;
 
   constructor(options: CodexAgentProviderOptions = {}) {
     this.env = options.env ?? process.env;
     this.execTimeoutMs = options.execTimeoutMs;
+    this.sandboxOverride = options.sandboxOverride;
   }
 
   // --------------------------------------------------------------------------
@@ -171,6 +191,20 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     if (!binary) {
       throw new Error(BINARY_MISSING(this.env.PATH ?? ''));
     }
+
+    // Permission gate → sandbox level (Issue #4631, S4): resolved once per
+    // stream (options are constant across turns); throws synchronously with
+    // an actionable message when the policy cannot be honored headlessly
+    // (e.g. a WebSearch denylist entry) — same fail-fast contract as the
+    // binary check above.
+    const sandboxDecision = resolveCodexSandboxPolicy(options, this.sandboxOverride);
+    logger.info(
+      {
+        sandbox: sandboxDecision.sandbox,
+        reasons: sandboxDecision.reasons,
+      },
+      'codex sandbox policy resolved (Issue #4631): permission gate → codex exec sandbox',
+    );
 
     const runner = new CodexExecRunner({
       binary,
@@ -367,6 +401,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             {
               prompt,
               resumeSessionId: resumeTarget,
+              sandboxMode: sandboxDecision.sandbox,
               cwd: options.cwd,
               model: options.model,
               env: { ...providerEnv, ...options.env },

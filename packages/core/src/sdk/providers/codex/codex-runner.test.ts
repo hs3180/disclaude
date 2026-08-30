@@ -241,6 +241,27 @@ describe('CodexExecRunner (Issue #4630)', () => {
       'argv:exec resume --json --skip-git-repo-check -m gpt-5.1 t-abc -- next turn',
     );
   });
+
+  it('passes the sandbox level as -c sandbox_mode= on BOTH fresh and resume runs', async () => {
+    // `-s` is rejected by `codex exec resume` (verified 0.132.0) while the
+    // config-override form is accepted by both subcommands and enforces
+    // identically — so the runner uses the -c form uniformly.
+    fixture.cleanup();
+    fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
+    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+    const fresh = await runner.run(
+      { prompt: 'a', sandboxMode: 'read-only' },
+      () => {},
+    ).promise;
+    expect(fresh.stderrTail).toContain('-c sandbox_mode=read-only');
+    const resume = await runner.run(
+      { prompt: 'b', resumeSessionId: 't-abc', sandboxMode: 'workspace-write' },
+      () => {},
+    ).promise;
+    expect(resume.stderrTail).toContain(
+      'argv:exec resume --json --skip-git-repo-check -c sandbox_mode=workspace-write t-abc -- b',
+    );
+  });
 });
 
 
