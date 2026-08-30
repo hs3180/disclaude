@@ -44,6 +44,8 @@ export interface SdkOptionsExtra {
   mcpServers?: Record<string, unknown>;
   /** Custom working directory */
   cwd?: string;
+  /** Session identity key (Issue #4634, S7) — ChatAgent passes chatId */
+  sessionKey?: string;
 }
 
 /**
@@ -69,7 +71,8 @@ export interface IteratorYieldResult {
       | 'max_turns'
       | 'max_budget_usd'
       | 'max_structured_output_retries'
-    | 'turn_failed';
+    | 'turn_failed'
+    | 'evicted';
     /**
      * provider 据本轮 stderr 标记:SDK 在上游 overloaded_error / 5xx 重试耗尽后仍发
      * subtype=success result,ChatAgent 据此改报 ❌ Failed + recordFailure(Issue #4322)。
@@ -188,6 +191,7 @@ export abstract class BaseAgent implements Disposable {
     const options: AgentQueryOptions = {
       cwd: effectiveCwd,
       permissionMode: this.permissionMode,
+      ...(extra.sessionKey !== undefined ? { sessionKey: extra.sessionKey } : {}),
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],

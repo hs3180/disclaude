@@ -1,0 +1,27 @@
+workspace:
+  dir: ./workspace
+agent:
+  provider: glm
+  model: gpt-5.5
+  permissionMode: bypassPermissions
+feishu:
+  appId: cli_a90ff5f186f9dcc9
+  appSecret: NYKesbFVE2ORhcO3B2USpch60wdhvu3q
+  cliChatId: ''
+  deduplication:
+    maxIds: 1000
+    maxAgeMs: 60000
+glm:
+  apiKey: sk-litellm-glm-proxy-20260506
+  model: gpt-5.5
+  apiBaseUrl: http://localhost:4000
+logging:
+  level: info
+  pretty: true
+  rotate: true
+tools:
+  mcpServers:
+    china-stock:
+      command: uvx
+      args:
+      - china-stock-mcp

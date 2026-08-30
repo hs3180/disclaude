@@ -68,6 +68,7 @@ import {
   resolveCodexSandboxPolicy,
   type CodexSandboxLevel,
 } from './sandbox-policy.js';
+import { CodexSessionGovernor } from './session-governor.js';
 import {
   adaptCodexEvent,
   isCodexAuthFailure,
@@ -107,6 +108,15 @@ const RESUME_TARGET_GONE_NOTICE =
  * turn latches nothing, the conversation anchor survives, and the next
  * message after the window reset resumes the same session.
  */
+/**
+ * Eviction notice (S7, #4634): LRU-governed teardown, delivered as a
+ * result with terminatedReason 'evicted' so ChatAgent finishes cleanly and
+ * does NOT auto-restart (the evicted chat re-registers lazily on its next
+ * message and resumes the stashed thread).
+ */
+const EVICTED_NOTICE =
+  '♻️ Codex 会话因并发上限暂时让位（LRU 驱逐）——无需任何操作：下一条消息发出时会自动恢复原对话上下文。';
+
 const USAGE_LIMIT_NOTICE =
   '📊 Codex 用量已达上限（ChatGPT 订阅的 5 小时/周滚动窗口限额）。无需重启——窗口重置后直接重发消息即可自动恢复，当前对话上下文会保留。';
 
@@ -150,6 +160,13 @@ export interface CodexAgentProviderOptions {
    * outranks it (security policy > convenience preference).
    */
   sandboxOverride?: CodexSandboxLevel;
+  /**
+   * Concurrency governance caps (Issue #4634, S7): max concurrently-alive
+   * sessions (queryStreams) and max simultaneously-executing codex exec
+   * children per process. Defaults in session-governor.ts (3 / 2).
+   */
+  maxActiveSessions?: number;
+  maxConcurrentRuns?: number;
 }
 
 /** The file Codex CLI writes after a successful `codex login` (OAuth). */
@@ -157,7 +174,7 @@ const AUTH_FILE = 'auth.json';
 
 export class CodexAgentProvider implements IAgentSDKProvider {
   readonly name = 'codex';
-  readonly version = '0.4.0-quota-observability';
+  readonly version = '0.5.0-concurrency-governance';
 
   private readonly env: Record<string, string | undefined>;
   private readonly execTimeoutMs: number | undefined;
@@ -170,6 +187,20 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     outputTokens: 0,
     reasoningOutputTokens: 0,
   };
+  /**
+   * Process-wide session/run governor (S7, #4634). The provider is a cached
+   * singleton per process (factory), so its caps bound the whole process.
+   */
+  private readonly governor: CodexSessionGovernor;
+  /**
+   * Evicted-session thread stash (S7): sessionKey → thread_id, written ONLY
+   * by the eviction hook. An evicted chat's next queryStream resumes its
+   * codex conversation instead of losing context. Normal teardown (user
+   * /reset, idle GC) deliberately does NOT stash — reset means reset.
+   */
+  private readonly threadStash = new Map<string, string>();
+  /** Anonymous-stream key counter (queryStream without options.sessionKey). */
+  private anonSessionCounter = 0;
 
   private disposed = false;
 
@@ -177,6 +208,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.env = options.env ?? process.env;
     this.execTimeoutMs = options.execTimeoutMs;
     this.sandboxOverride = options.sandboxOverride;
+    this.governor = new CodexSessionGovernor({
+      maxActiveSessions: options.maxActiveSessions,
+      maxConcurrentRuns: options.maxConcurrentRuns,
+    });
   }
 
   // --------------------------------------------------------------------------
@@ -225,6 +260,23 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     return { ...this.quota };
   }
 
+  /**
+   * Session/run governance snapshot for this process (Issue #4634, S7):
+   * active sessions, running/queued exec children, eviction count, caps.
+   * /status-ready; also the runtime admin surface via setGovernanceLimits.
+   */
+  getGovernanceStats() {
+    return this.governor.getStats();
+  }
+
+  /** Runtime cap change (admin/test surface, Issue #4634). */
+  setGovernanceLimits(limits: {
+    maxActiveSessions?: number;
+    maxConcurrentRuns?: number;
+  }): void {
+    this.governor.setLimits(limits);
+  }
+
   // --------------------------------------------------------------------------
   // Query — Issue #4630 (S2): codex exec subprocess bridge
   // --------------------------------------------------------------------------
@@ -268,6 +320,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Instance-level quota sink (S5, #4632): the bridge closures below are
     // `this: void`, so they aggregate through this captured reference.
     const quotaSink = this.quota;
+    // Same capture for the S7 governor + stash (this: void closures below).
+    const governorSink = this.governor;
+    const stashSink = this.threadStash;
     const timeoutLabel = this.execTimeoutMs
       ? `${this.execTimeoutMs}ms`
       : `${DEFAULT_TIMEOUT_MS}ms (default)`;
@@ -292,7 +347,44 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // S3 (#4628): the thread_id the NEXT turn resumes into. This closure IS
     // the chatId→session map — ChatAgent owns one queryStream per chatId, so
     // tearing it down (/reset, idle GC) drops the map entry for free.
+    // S7 exception: an EVICTED session's anchor is stashed (see below) so
+    // the same chat resumes its conversation after eviction.
     let resumeThreadId: string | undefined;
+
+    // ── Session governance (S7, #4634) ──────────────────────────────────
+    // One queryStream = one codex session. Anonymous streams (no
+    // options.sessionKey) get a unique key so they still count toward the
+    // cap — only their LRU identity is unknown. The eviction hook runs in
+    // the VICTIM's closure: stash its conversation anchor (consumed by this
+    // chat's next queryStream) and abort via the same path as user cancel.
+    const sessionKey =
+      options.sessionKey ?? `anon-${++this.anonSessionCounter}`;
+    // Anonymous streams (no options.sessionKey — one-shot runOnce queries)
+    // never resume, so stashing their anchor would leak the map forever.
+    const stashable = options.sessionKey !== undefined;
+    let wasEvicted = false;
+    const stashedThread = stashable ? this.threadStash.get(sessionKey) : undefined;
+    this.threadStash.delete(sessionKey); // consume-on-read: /reset after an eviction-resume must not resurrect the old thread later
+    resumeThreadId = stashedThread;
+    const registration = this.governor.registerSession(sessionKey, {
+      evict: () => {
+        wasEvicted = true;
+        if (resumeThreadId && stashable) {
+          this.threadStash.set(sessionKey, resumeThreadId);
+        }
+        logger.warn(
+          { sessionKey, stashed: Boolean(resumeThreadId && stashable) },
+          'codex session evicted (session cap reached) — thread anchor stashed; the chat resumes its conversation on the next message (Issue #4634)',
+        );
+        requestAbort();
+      },
+    });
+    if (registration.evictedKey) {
+      logger.info(
+        { evictedKey: registration.evictedKey, sessionKey },
+        'codex session cap reached — evicted the idlest session (LRU, #4634)',
+      );
+    }
 
     const adaptIterator =
       async function* (this: void): AsyncGenerator<AgentMessage> {
@@ -472,13 +564,35 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         // ── Turn runner: one user input → one codex exec run ──────────────
         // First turn runs `codex exec … -- <prompt>`; every follow-up runs
         // `codex exec resume <thread_id> … -- <prompt>` (S3, #4628).
+        // S7 (#4634): each run holds a global lease — at most
+        // maxConcurrentRuns codex exec children process-wide; excess turns
+        // queue FIFO across chats with a backpressure notice.
         const runInput = async (prompt: string): Promise<void> => {
+          const resumeTarget = resumeThreadId;
+          governorSink.touchSession(sessionKey);
+          // Backpressure UX (#4634): announce the wait BEFORE it happens —
+          // never silence. (Also announce when merely joining the queue.)
+          const pre = governorSink.getStats();
+          if (pre.runningRuns >= pre.maxConcurrentRuns || pre.queuedRuns > 0) {
+            pushSynthetic({
+              type: 'status',
+              content:
+                `⏳ Codex 并发已满（${pre.runningRuns}/${pre.maxConcurrentRuns} 运行中）` +
+                `——排队等候，前面还有 ${pre.queuedRuns} 个任务…`,
+              role: 'assistant',
+            });
+          }
+          const lease = await governorSink.acquireRun();
+          if (aborted || terminated) {
+            // Cancelled/finished while queued — don't spawn a zombie run.
+            lease.release();
+            return;
+          }
           runActive = true;
           sawTurnTerminator = false;
           sawTurnFailed = false;
           sawTurnCompleted = false;
           runFailureText = '';
-          const resumeTarget = resumeThreadId;
           touchStallWatchdog();
           const { promise, handle } = runner.run(
             {
@@ -641,6 +755,12 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               });
             }
           } finally {
+            // Release the run lease FIRST so the longest-queued run starts
+            // before this turn's post-processing finishes; touch AFTER so a
+            // session finishing a long run is never LRU-evicted as "idlest"
+            // based on its stale start timestamp (S7 review).
+            lease.release();
+            governorSink.touchSession(sessionKey);
             currentRun = null;
             runActive = false;
             openToolItems = 0;
@@ -711,11 +831,36 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             };
             return;
           }
+          if (wasEvicted) {
+            // Governance teardown, not an error: a clean terminator with
+            // terminatedReason 'evicted' tells ChatAgent to finish WITHOUT
+            // auto-restarting — the victim re-registers on its next message
+            // (and resumes the stashed thread). Without this, the restart
+            // loop re-registered the SAME sessionKey while still at cap and
+            // cascaded evictions into the circuit breaker (S7 review high).
+            yield {
+              type: 'result',
+              content: EVICTED_NOTICE,
+              role: 'system',
+              metadata: { terminatedReason: 'evicted' },
+            };
+            return;
+          }
         } finally {
           // Teardown: kill any in-flight run; later inputs become no-ops.
+          // Normal teardown unregisters the session WITHOUT stashing its
+          // anchor — /reset means reset (stash happens only on eviction).
           terminated = true;
           currentRun?.abort();
           clearStallTimers();
+          registration.unregister();
+          if (!wasEvicted && stashable) {
+            // Normal teardown (user /reset, idle GC, stream end): drop any
+            // stash residue for this key so a later stream for the same
+            // chat never resumes a conversation the user reset away
+            // (S7 review — the eviction-window /reset hole).
+            stashSink.delete(sessionKey);
+          }
         }
       };
 

@@ -36,6 +36,18 @@ export type ModelTier = 'high' | 'low' | 'multimodal';
  * Note: model is configured per-provider (glm.model for GLM, agent.model for Anthropic).
  * This avoids confusion about which model takes precedence.
  */
+/**
+ * Codex backend governance caps (Issue #4634, S7).
+ * Bounded so one busy chat / burst of chats cannot drain the shared
+ * ChatGPT subscription or fork unbounded codex exec children.
+ */
+export interface CodexAgentGovernanceConfig {
+  /** Max concurrently-alive codex sessions (queryStreams) per process. Default 3. */
+  maxActiveSessions?: number;
+  /** Max simultaneously-executing codex exec children. Default 2. */
+  maxConcurrentRuns?: number;
+}
+
 export interface AgentConfig {
   /** API provider preference (anthropic, glm) */
   provider?: 'anthropic' | 'glm';
@@ -60,6 +72,11 @@ export interface AgentConfig {
    * `danger-full-access` is reachable ONLY through this override.
    */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /**
+   * Codex backend concurrency governance (Issue #4634, S7). Only meaningful
+   * with `agentBackend: 'codex'`; caps are per process.
+   */
+  codex?: CodexAgentGovernanceConfig;
   /** Permission mode for SDK */
   permissionMode?: 'default' | 'bypassPermissions';
   /** Maximum concurrent tasks */
