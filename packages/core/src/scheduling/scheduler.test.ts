@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { CronJob } from 'cron';
 import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './scheduler.js';
+import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -829,6 +830,139 @@ describe('Scheduler', () => {
         }, { timeout: 3000 });
       });
     });
+
+    describe('Issue #4649 (review ①②): superseded turns and timeouts are neutral, not failures', () => {
+      /** Typed view of the scheduler's private streak map (same trick as the #4648 tests above). */
+      function streakMap(): Map<string, number> {
+        return (scheduler as unknown as {
+          consecutiveTaskFailures: Map<string, number>;
+        }).consecutiveTaskFailures;
+      }
+
+      it('superseded turn: no ❌ notification and streak untouched (①)', async () => {
+        // The interjection shape: a user message lands in the chat while the
+        // scheduled turn is still running, so the turn promise rejects with
+        // TurnSupersededError. That is alive-chat concurrency — treating it
+        // as failure spammed ❌ into every busy group chat.
+        const task = createTask({ id: 'superseded-1' });
+        scheduler.addTask(task);
+
+        mockRouterAsMock.route.mockRejectedValueOnce(new TurnSupersededError());
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(scheduler.isTaskRunning('superseded-1')).toBe(false);
+        }, { timeout: 2000 });
+
+        // Only the ⏰ start notification may exist — never a failure notice.
+        for (const call of vi.mocked(mockCallbacks.sendMessage).mock.calls) {
+          expect(String(call[1])).not.toContain('执行失败');
+        }
+        expect(streakMap().has('superseded-1')).toBe(false);
+
+        // The superseded run neither incremented nor reset the streak: the
+        // next REAL failure counts as 1.
+        mockRouterAsMock.route.mockRejectedValueOnce(new Error('turn died'));
+        vi.mocked(mockCallbacks.sendMessage).mockClear();
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+            'oc_test',
+            expect.stringContaining('执行失败'),
+          );
+        }, { timeout: 2000 });
+        expect(streakMap().get('superseded-1')).toBe(1);
+      });
+
+      it('superseded run does not reset an existing failure streak (①)', async () => {
+        // Neutral ≠ reset: two real failures, one superseded run, then a
+        // real failure → the streak reflects the three REAL failures, so a
+        // supersession cannot mask chronic breakage.
+        const task = createTask({ id: 'streak-neutral' });
+        scheduler.addTask(task);
+        mockRouterAsMock.route.mockRejectedValue(new Error('turn died'));
+
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => expect(streakMap().get('streak-neutral')).toBe(1), { timeout: 2000 });
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => expect(streakMap().get('streak-neutral')).toBe(2), { timeout: 2000 });
+
+        mockRouterAsMock.route.mockRejectedValueOnce(new TurnSupersededError());
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(scheduler.isTaskRunning('streak-neutral')).toBe(false);
+        }, { timeout: 2000 });
+        expect(streakMap().get('streak-neutral')).toBe(2);
+
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => expect(streakMap().get('streak-neutral')).toBe(3), { timeout: 2000 });
+      });
+
+      it('timeout: outcome unknown — not counted toward the streak, notification teaches timeoutMs (②)', async () => {
+        // The timeout bounds the WAIT; the turn is not cancelled and may
+        // still finish. Counting it as failure made every legitimately-long
+        // task a guaranteed ❌ and eventually a false chronic-failure alert.
+        const task = createTask({ id: 'timeout-neutral', timeoutMs: 50 });
+        scheduler.addTask(task);
+
+        mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {})); // turn never settles
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+            'oc_test',
+            expect.stringContaining('已停止等待'),
+          );
+        }, { timeout: 3000 });
+        expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+          'oc_test',
+          expect.stringContaining('timeoutMs'),
+        );
+        expect(streakMap().has('timeout-neutral')).toBe(false);
+
+        // …and the timeout didn't mask real failures either: the next real
+        // error counts as 1, not 2.
+        mockRouterAsMock.route.mockRejectedValueOnce(new Error('turn died'));
+        vi.mocked(mockCallbacks.sendMessage).mockClear();
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+            'oc_test',
+            expect.stringContaining('执行失败'),
+          );
+        }, { timeout: 2000 });
+        expect(streakMap().get('timeout-neutral')).toBe(1);
+      });
+
+      it('default timeout is 2 hours — above the pool busy-turn cap so stuck turns stay countable (②)', async () => {
+        // DEFAULT_TASK_TIMEOUT_MS is deliberately larger than the agent
+        // pool's 90-min busy-turn hard cap (#4577): a genuinely stuck turn
+        // is killed by the pool cap and lands in the catch as a REAL
+        // (countable) error before this timeout fires. Pin the default so a
+        // future "just lower it" tweak can't silently re-break that order.
+        vi.useFakeTimers();
+        try {
+          const task = createTask({ id: 'timeout-default-2h' }); // no timeoutMs
+          scheduler.addTask(task);
+          mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
+
+          fireJob(scheduler.getActiveJobs());
+          await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000 - 1);
+          expect(scheduler.isTaskRunning('timeout-default-2h')).toBe(true);
+
+          await vi.advanceTimersByTimeAsync(1);
+          // (No flushPending() here: it parks on setImmediate, which fake
+          // timers freeze — advanceTimersByTimeAsync already drains the
+          // microtask chain the catch path needs.)
+          expect(scheduler.isTaskRunning('timeout-default-2h')).toBe(false);
+          expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+            'oc_test',
+            expect.stringContaining('120分钟'), // formatTimeout(2h) renders in minutes
+          );
+          expect(streakMap().has('timeout-default-2h')).toBe(false);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    });
   });
 
   describe('executeTask with cooldown', () => {
@@ -1215,7 +1349,7 @@ describe('Scheduler', () => {
       expect(scheduler.isTaskRunning('timeout-1')).toBe(false);
     });
 
-    it('should use default 5-minute timeout when task has no timeoutMs', async () => {
+    it('should use default timeout when task has no timeoutMs', async () => {
       mockRouterAsMock.route.mockResolvedValueOnce(undefined);
 
       const task = createTask({ id: 'timeout-default' });

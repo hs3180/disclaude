@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { TurnSupersededError } from '@disclaude/core';
 import { AgentPoolMessageHandler, type AgentPoolHandlerOptions } from './agent-pool-handler.js';
 import type { ChatAgent } from '../agents/chat-agent.js';
 import type { ChatAgentCallbacks } from '../agents/types.js';
@@ -345,6 +346,23 @@ describe('AgentPoolMessageHandler', () => {
         await expect(
           handler.handleSystemMessage('chat-1', 'system payload', 'msg-sys-1', { waitForCompletion: true }),
         ).rejects.toThrow('Request failed with status code 400');
+      });
+
+      it('propagates TurnSupersededError unwrapped so the scheduler can neutralize it (#4649 ①)', async () => {
+        // Identity matters: the Scheduler branches on instanceof — a wrapped
+        // or re-created error would fall into the generic failure path and
+        // reintroduce the false-❌-on-interjection regression the typed error
+        // exists to fix.
+        const superseded = new TurnSupersededError();
+        const mockAgent = {
+          ...createMockAgent(),
+          turnComplete: Promise.reject(superseded),
+        } as unknown as ChatAgent;
+        vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
+
+        await expect(
+          handler.handleSystemMessage('chat-1', 'system payload', 'msg-sys-1', { waitForCompletion: true }),
+        ).rejects.toBe(superseded);
       });
 
       it('resolves with a warning when the agent exposes no turnComplete', async () => {

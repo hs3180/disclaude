@@ -47,6 +47,7 @@ import {
   forceCleanupLeakedListeners,
   tagErrorCategory,
   StreamingReplyDriver,
+  TurnSupersededError,
   type StreamingUserMessage,
   type QueryHandle,
   type ChatAgent as ChatAgentInterface,
@@ -389,9 +390,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /**
    * Set up a new turn completion promise (Issue #4063).
    * Call this when pushing a message to the channel.
+   *
+   * Issue #4649 (review ①): the previous turn's pending promise is rejected
+   * with the typed TurnSupersededError (message unchanged) so awaiters —
+   * the Scheduler's waitForCompletion path, the Loop Runner — can recognize
+   * "a newer message took over" as a neutral outcome via instanceof instead
+   * of string-matching the message.
    */
   private setTurnPending(): void {
-    this.turnCompletionReject?.(new Error('Turn superseded by new message'));
+    this.turnCompletionReject?.(new TurnSupersededError());
     this.turnCompletionPromise = new Promise<void>((resolve, reject) => {
       this.turnCompletionResolve = resolve;
       this.turnCompletionReject = reject;

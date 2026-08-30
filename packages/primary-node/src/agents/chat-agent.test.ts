@@ -56,6 +56,10 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     BaseAgent,
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
     StreamingReplyDriver: actual.StreamingReplyDriver,
+    // Issue #4649 (review ①): real class — ChatAgent throws it from
+    // setTurnPending and the tests below assert instanceof on the exact
+    // class the production import resolves to.
+    TurnSupersededError: actual.TurnSupersededError,
     // Issue #4391: real policy — the reset+replay bounding under test.
     EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
     MessageBuilder: vi.fn().mockImplementation(() => ({
