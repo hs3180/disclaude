@@ -191,6 +191,24 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     }
   }
 
+  // Issue #4634 (S7 of #4627): validate agent.codex governance caps —
+  // non-positive values are rejected at load time (fail closed).
+  if (config.agent?.codex !== undefined) {
+    const { maxActiveSessions, maxConcurrentRuns } = config.agent.codex;
+    for (const [name, value] of [
+      ['maxActiveSessions', maxActiveSessions],
+      ['maxConcurrentRuns', maxConcurrentRuns],
+    ] as const) {
+      if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+        logger.error(
+          `agent.codex.${name} must be a positive number (got ${value}). ` +
+            'It bounds concurrent codex sessions/runs per process.',
+        );
+        return false;
+      }
+    }
+  }
+
   // Validate logging config if present
   if (config.logging?.level && typeof config.logging.level !== 'string') {
     logger.error('logging.level must be a string');

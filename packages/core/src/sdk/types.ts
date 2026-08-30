@@ -130,7 +130,13 @@ export interface AgentMessageMetadata {
      * 退出/turn.failed)时合成 result 的标记——ChatAgent 据此按失败收尾
      * (recordFailure),不被合成 error 的 user-visible 文本误记为成功。
      */
-    | 'turn_failed';
+    | 'turn_failed'
+    /**
+     * codex 后端 (Issue #4634, S7): 会话因并发上限被 LRU 驱逐。治理行为
+     * 而非失败——ChatAgent 干净收尾且不自动重启;受害 chat 的下一条消息
+     * 惰性重注册并 resume 被暂存的 thread。
+     */
+    | 'evicted';
   /**
    * 上游 API 错误标记(Issue #4322)。SDK 在上游返回 overloaded_error / 5xx 并重试
    * 耗尽后,把错误只打到 stderr,却仍发一个 subtype=success 的 result —— 会让
@@ -325,6 +331,12 @@ export interface AgentQueryOptions {
    * Provider 层将其传递给 SDK 的 stderr 选项。
    */
   stderr?: (data: string) => void;
+  /**
+   * 会话身份键（Issue #4634，S7）：调用方（ChatAgent 传 chatId）用来标识
+   * "哪个会话"拥有这条流。并发治理类 provider（codex）用它做会话上限的
+   * LRU 身份与逐 chat 续接；不传时 provider 退化为匿名会话（仍计上限）。
+   */
+  sessionKey?: string;
   /**
    * Agent Teams mode (SDK 0.3.177+).
    * When set, enables teammate spawning via the SDK's teammateMode Settings field.

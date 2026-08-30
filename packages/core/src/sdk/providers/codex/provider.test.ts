@@ -15,7 +15,7 @@
  * - Lifecycle: dispose() flips state, is idempotent, forces checks false.
  */
 
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -134,11 +134,11 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // Properties
   // --------------------------------------------------------------------------
 
-  it("exposes name 'codex' and the quota-observability version", () => {
+  it("exposes name 'codex' and the concurrency-governance version", () => {
     fixtures = makeFixtures({ withBinary: false, withAuth: false });
     const provider = makeProvider(fixtures);
     expect(provider.name).toBe('codex');
-    expect(provider.version).toBe('0.4.0-quota-observability');
+    expect(provider.version).toBe('0.5.0-concurrency-governance');
   });
 
   // --------------------------------------------------------------------------
@@ -890,3 +890,195 @@ fi
     expect(errors).toMatch(/codex login/);
   }, 25_000);
 });
+
+// ---------------------------------------------------------------------------
+// Session governance (Issue #4634, S7) — integration against real
+// subprocesses: run mutual exclusion + backpressure notice, session cap
+// eviction + thread-stash resume, and the /reset no-stash semantics.
+// ---------------------------------------------------------------------------
+
+describe('CodexAgentProvider governance (Issue #4634)', () => {
+  let fixtures: Fixtures;
+
+  afterEach(() => {
+    fixtures?.cleanup();
+  });
+
+  const governedProvider = (
+    fx: Fixtures,
+    caps: { maxActiveSessions?: number; maxConcurrentRuns?: number },
+  ) =>
+    new CodexAgentProvider({
+      env: {
+        PATH: `${fx.binDir}:${process.env.PATH ?? ''}`,
+        CODEX_HOME: fx.codexHome,
+      },
+      ...caps,
+    });
+
+  it('serializes concurrent runs across streams (maxConcurrentRuns=1) and notifies the queued one', async () => {
+    // The fake codex logs S<n>/E<n> markers around a slow run — mutual
+    // exclusion ⇔ the marker stream alternates (never S,S).
+    const body = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+echo "S$n" >> "$CODEX_HOME/runs.log"
+sleep 0.5
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-$n"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok$n"}}
+{"type":"turn.completed"}
+JSONL
+echo "E$n" >> "$CODEX_HOME/runs.log"
+`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+    const provider = governedProvider(fixtures, { maxConcurrentRuns: 1 });
+
+    // Stream one: park after its message so the session stays alive while
+    // stream two queues behind its (slow) run.
+    let releaseOne: () => void = () => {};
+    const oneParked = new Promise<void>((r) => {
+      releaseOne = r;
+    });
+    async function* inputOne(): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'one' };
+      await oneParked;
+    }
+    const resultOne = provider.queryStream(inputOne(), {
+      settingSources: [],
+      sessionKey: 'chat-one',
+    } as AgentQueryOptions);
+    const collectedOne = (async () => {
+      const out: unknown[] = [];
+      for await (const m of resultOne.iterator) {
+        out.push(m);
+      }
+      return out;
+    })();
+
+    await waitFor(() => existsSync(join(fixtures.codexHome, 'runs.log')) &&
+      readFileSync(join(fixtures.codexHome, 'runs.log'), 'utf-8').includes('S1'));
+
+    const { messages: messagesTwo } = await drainStream(provider, ['two'], {
+      sessionKey: 'chat-two',
+    });
+    releaseOne();
+    await collectedOne;
+
+    const markers = readFileSync(join(fixtures.codexHome, 'runs.log'), 'utf-8')
+      .trim()
+      .split('\n');
+    expect(markers).toEqual(['S1', 'E1', 'S2', 'E2']); // strictly serialized
+    const statuses = (messagesTwo as Array<{ type: string; content: string }>)
+      .filter((m) => m.type === 'status')
+      .map((m) => m.content);
+    expect(statuses.join('\n')).toMatch(/排队/); // backpressure notice (#4634)
+    const stats = provider.getGovernanceStats();
+    expect(stats.runningRuns).toBe(0);
+    expect(stats.queuedRuns).toBe(0);
+  }, 25_000);
+
+  it('evicts the idlest session at cap and the evicted chat RESUMES its thread next message', async () => {
+    const body = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-keep"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed"}
+JSONL
+echo done > "$CODEX_HOME/turn-$n.done"
+`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+    const provider = governedProvider(fixtures, { maxActiveSessions: 1 });
+
+    // chat-a: one turn (latches t-keep), then parks — alive at eviction time.
+    let releaseA: () => void = () => {};
+    const aParked = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    async function* inputA(): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'a1' };
+      await aParked;
+    }
+    const resultA = provider.queryStream(inputA(), {
+      settingSources: [],
+      sessionKey: 'chat-a',
+    } as AgentQueryOptions);
+    const collectedA = (async () => {
+      const out: unknown[] = [];
+      for await (const m of resultA.iterator) {
+        out.push(m);
+      }
+      return out;
+    })();
+    // Wait for turn COMPLETION, not argv-1: the argv file exists at process
+    // start, before the run finishes — under load the old wait let chat-b
+    // evict chat-a BEFORE the anchor latched (S7 review flaky).
+    await waitFor(() => existsSync(join(fixtures.codexHome, 'turn-1.done')));
+
+    // chat-b registers → cap 1 → chat-a is evicted (LRU: the only session).
+    await drainStream(provider, ['b1'], { sessionKey: 'chat-b' });
+    const messagesA = await collectedA;
+    // chat-a's FIRST turn completed normally; the eviction then ends the
+    // stream with a CLEAN terminator — type result + terminatedReason
+    // 'evicted' (S7 review: ChatAgent must not auto-restart the victim,
+    // which cascaded evictions into the circuit breaker).
+    const typesA = (messagesA as Array<{ type: string }>).map((m) => m.type);
+    expect(typesA).toEqual(['text', 'result', 'result']);
+    const evictedMsg = (messagesA as Array<{
+      type: string;
+      content: string;
+      metadata?: { terminatedReason?: string };
+    }>).at(-1);
+    expect(evictedMsg?.metadata?.terminatedReason).toBe('evicted');
+    expect(evictedMsg?.content).toMatch(/让位/);
+    releaseA();
+
+    // chat-a's NEXT stream must resume the stashed thread (eviction ≠ reset).
+    await drainStream(provider, ['a2'], { sessionKey: 'chat-a' });
+    const argv3 = readFileSync(join(fixtures.codexHome, 'argv-3'), 'utf-8').trim();
+    expect(argv3).toContain('resume');
+    expect(argv3).toContain('t-keep');
+    expect(provider.getGovernanceStats().evictedSessions).toBe(1);
+  }, 25_000);
+
+  it('normal teardown does NOT stash — /reset keeps meaning reset', async () => {
+    // Same scripted happy body; the stream ends normally after one turn.
+    const body = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-r"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed"}
+JSONL
+`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+    const provider = governedProvider(fixtures, {});
+
+    // First conversation completes and ends normally (input exhausted = the
+    // same stream-death path a /reset takes).
+    await drainStream(provider, ['r1'], { sessionKey: 'chat-r' });
+    // Same chat comes back → must start FRESH (no stashed resume).
+    await drainStream(provider, ['r2'], { sessionKey: 'chat-r' });
+    const argv2 = readFileSync(join(fixtures.codexHome, 'argv-2'), 'utf-8').trim();
+    expect(argv2).not.toContain('resume');
+    expect(provider.getGovernanceStats().evictedSessions).toBe(0);
+  }, 20_000);
+});
+
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error('waitFor: condition not met within timeout');
+}

@@ -49,6 +49,16 @@ agent:
   # still cap at read-only regardless.
   # codexSandbox: "workspace-write"
 
+  # Codex backend concurrency governance (only with agentBackend: codex,
+  # Issue #4634). Per-process caps: at most N alive codex sessions and N
+  # simultaneously-executing codex exec children; excess turns queue FIFO
+  # with a backpressure notice. At the session cap the idlest session is
+  # evicted (LRU) — the evicted chat resumes its conversation on its next
+  # message; only a user /reset truly starts fresh.
+  # codex:
+  #   maxActiveSessions: 3    # Default: 3
+  #   maxConcurrentRuns: 2    # Default: 2
+
   # Model to use for AI operations (fallback default)
   # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)
   model: "glm-4.7"

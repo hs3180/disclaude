@@ -211,6 +211,10 @@ export class Config {
           // provider factory. undefined ⇒ derived from permissionMode.
           static readonly CODEX_SANDBOX = fileConfigOnly.agent?.codexSandbox;
 
+          // Codex concurrency governance caps (Issue #4634, S7 of #4627).
+          static readonly CODEX_MAX_ACTIVE_SESSIONS = fileConfigOnly.agent?.codex?.maxActiveSessions;
+          static readonly CODEX_MAX_CONCURRENT_RUNS = fileConfigOnly.agent?.codex?.maxConcurrentRuns;
+
           // Tier model configuration (Issue #3059)
           private static readonly CLAUDE_HIGH_MODEL = fileConfigOnly.agent?.highModel || '';
           private static readonly CLAUDE_LOW_MODEL = fileConfigOnly.agent?.lowModel || '';

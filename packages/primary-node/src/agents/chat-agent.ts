@@ -962,6 +962,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // follow-up).
       disallowedTools: buildDisallowedTools(),
       mcpServers,
+      // Issue #4634 (S7): chatId as session identity for concurrency
+      // governance on backends that bound active sessions (codex).
+      sessionKey: chatId,
     });
 
     this.logger.info(
@@ -1376,6 +1379,40 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               this.clearTaskCompletion();
             }
             continue;
+          }
+
+          if (parsed.terminatedReason === 'evicted') {
+            // Issue #4634 (S7 review): LRU eviction is GOVERNANCE, not an
+            // error — finish the turn cleanly and DO NOT auto-restart:
+            // re-registering the same sessionKey while still at cap would
+            // evict the next victim and cascade evictions into the circuit
+            // breaker. The evicted chat lazily re-registers on its next
+            // message and resumes its stashed codex thread.
+            this.logger.info(
+              { chatId, messageCount },
+              'Codex session evicted (concurrency cap) — ending stream without auto-restart (Issue #4634)',
+            );
+            this.isProcessingMessage = false;
+            this.resolveTurn();
+            if (this.callbacks.onDone) {
+              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              await this.callbacks.onDone(chatId, threadRoot);
+            }
+            if (this.onceMode) {
+              this.isSessionActive = false;
+              this.channel?.close();
+              this.taskCompletionResolve?.();
+              this.clearTaskCompletion();
+            }
+            continue;
+          }
+
+          if (parsed.terminatedReason === 'turn_failed') {
+            // Issue #4630 review (S2): the provider's synthetic result after
+            // a failed run (spawn error / timeout / non-zero exit /
+            // turn.failed) — record FAILURE so chronic codex outages trip
+            // the restart circuit breaker instead of counting as successes.
+            this.restartManager.recordFailure(chatId, 'turn_failed');
           }
 
           // Issue #3003: Log timing summary on completion
