@@ -31,10 +31,23 @@ agent:
   provider: "glm"
 
   # Agent SDK backend — which agent runtime boots (Issue #4388).
-  # Orthogonal to `provider` above: this selects the agent runtime
-  # (claude-code CLI vs pi.dev), `provider` selects the LLM API; they compose.
-  # Options: claude (default), pi
-  # agentBackend: "pi"
+  # Options: claude (default), pi, codex
+  # - claude/pi: orthogonal to `provider` above — backend selects the agent
+  #   runtime, `provider` selects the LLM API; they compose (e.g. pi + GLM).
+  # - codex: runs the official Codex CLI in exec mode, powered by your
+  #   ChatGPT subscription quota instead of an API key. NOT composable with
+  #   glm/anthropic config (the login governs the model) — see
+  #   docs/codex-backend.md and #4637. Requires: npm install -g @openai/codex
+  #   + one-time interactive `codex login`.
+  # agentBackend: "codex"
+
+  # Codex exec sandbox level (only with agentBackend: codex, Issue #4631).
+  # Options: read-only, workspace-write, danger-full-access
+  # Unset → derived from permissionMode (bypassPermissions → workspace-write;
+  # default/ask → read-only, fail closed). danger-full-access is reachable
+  # ONLY through this explicit override; disallowedTools mutation entries
+  # still cap at read-only regardless.
+  # codexSandbox: "workspace-write"
 
   # Model to use for AI operations (fallback default)
   # Default: claude-3-5-sonnet-20241022 (Anthropic) or glm-4.7 (GLM)
