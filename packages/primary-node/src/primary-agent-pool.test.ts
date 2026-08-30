@@ -331,6 +331,49 @@ describe('PrimaryAgentPool', () => {
         { messageBuilderOptions: undefined, cwdProvider: undefined, cwdResolver: undefined, skipHistory: false },
       );
     });
+
+    it('forgets provider-side session state on reset — keyed by the PLAIN chatId (#4644)', () => {
+      const forgotten: string[] = [];
+      const pool = new PrimaryAgentPool({
+        forgetProviderSession: (chatId) => forgotten.push(chatId),
+      });
+      const callbacks = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('chat-ev', callbacks);
+      pool.reset('chat-ev');
+
+      // The provider stash is keyed by the plain chatId (what ChatAgent passes
+      // as the SDK sessionKey), NOT this pool's composite thread key.
+      expect(forgotten).toEqual(['chat-ev']);
+    });
+
+    it('forgets provider session state even when NO agent exists — the eviction-stash window (#4644)', () => {
+      const forgotten: string[] = [];
+      const pool = new PrimaryAgentPool({
+        forgetProviderSession: (chatId) => forgotten.push(chatId),
+      });
+
+      // No ChatAgent instance: the chat was idle-evicted from the pool while
+      // its codex evicted-thread stash lived on in the provider. A /reset now
+      // must still clear that stash — pool disposal alone cannot reach it.
+      expect(() => pool.reset('chat-gone')).not.toThrow();
+      expect(forgotten).toEqual(['chat-gone']);
+    });
+
+    it('forgets with the plain chatId on a THREAD reset too — matching the SDK sessionKey wiring (#4644)', () => {
+      const forgotten: string[] = [];
+      const pool = new PrimaryAgentPool({
+        forgetProviderSession: (chatId) => forgotten.push(chatId),
+      });
+      const callbacks = createMockCallbacks();
+
+      pool.getOrCreateChatAgent('chat-t', callbacks, 'om_root');
+      pool.reset('chat-t', false, 'om_root');
+
+      // Pool slot key is chat-t::om_root, but the codex stash is keyed by the
+      // plain chatId the stream registered with — the forget must use that.
+      expect(forgotten).toEqual(['chat-t']);
+    });
   });
 
   // ==========================================================================

@@ -11,7 +11,7 @@
  * @see Issue #1040 - Separate Primary Node code to @disclaude/primary-node
  */
 
-import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, buildSessionKey, chatIdOfSessionKey, createLogger } from '@disclaude/core';
+import { type MessageBuilderOptions, type CwdProvider, type CwdResolution, buildSessionKey, chatIdOfSessionKey, createLogger, getProvider } from '@disclaude/core';
 import { AgentFactory } from './agents/factory.js';
 import type { ChatAgentCallbacks } from './agents/types.js';
 import type { ChatAgent } from './agents/chat-agent.js';
@@ -87,6 +87,16 @@ export interface PrimaryAgentPoolOptions {
    * When omitted, only the structured warn log is emitted.
    */
   onBusyCapExceeded?: (chatId: string, busyMinutes: number) => Promise<void> | void;
+
+  /**
+   * Issue #4644: provider-session forgetter invoked by reset() — clears the
+   * SDK provider's per-chat session state (codex: governor registration +
+   * evicted-thread stash) so a /reset cannot be undone by the eviction-resume
+   * mechanism. Injectable for tests; default resolves the process-wide cached
+   * provider (the same singleton BaseAgent agents use) and no-ops on
+   * providers without the optional capability (claude/pi).
+   */
+  forgetProviderSession?: (chatId: string) => void;
 }
 
 const logger = createLogger('PrimaryAgentPool');
@@ -199,9 +209,20 @@ export class PrimaryAgentPool {
    * `disposeAll()` disposals are NOT included.
    */
   private totalEvictions = 0;
+  /**
+   * Issue #4644: reset() hook into provider-side session state. Defaults to
+   * the process-wide cached SDK provider (the same singleton every BaseAgent
+   * agent resolves) so pool resets and agent-level resets hit one provider.
+   */
+  private readonly forgetProviderSession: (chatId: string) => void;
 
   constructor(options: PrimaryAgentPoolOptions = {}) {
     this.options = options;
+    this.forgetProviderSession =
+      options.forgetProviderSession ??
+      ((chatId: string): void => {
+        getProvider().forgetSession?.(chatId);
+      });
   }
 
   /**
@@ -351,6 +372,12 @@ export class PrimaryAgentPool {
       // drop its history.
       this.skipHistoryChatIds.delete(sessionKey);
     }
+    // Issue #4644: clear provider-side session state BEFORE the agent lookup —
+    // it must fire even when no ChatAgent instance exists (the chat may have
+    // been idle-evicted from this pool while its codex stash lived on). Keyed
+    // by the PLAIN chatId, matching what ChatAgent passes as the SDK
+    // sessionKey (S7 wiring) — not this pool's composite thread key.
+    this.forgetProviderSession(chatId);
     const agent = this.agents.get(sessionKey);
     if (agent) {
       this.agents.delete(sessionKey);

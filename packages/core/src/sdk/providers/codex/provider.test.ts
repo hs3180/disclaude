@@ -134,11 +134,11 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // Properties
   // --------------------------------------------------------------------------
 
-  it("exposes name 'codex' and the concurrency-governance version", () => {
+  it("exposes name 'codex' and the forget-session version", () => {
     fixtures = makeFixtures({ withBinary: false, withAuth: false });
     const provider = makeProvider(fixtures);
     expect(provider.name).toBe('codex');
-    expect(provider.version).toBe('0.5.0-concurrency-governance');
+    expect(provider.version).toBe('0.6.0-forget-session');
   });
 
   // --------------------------------------------------------------------------
@@ -1069,6 +1069,129 @@ JSONL
     expect(argv2).not.toContain('resume');
     expect(provider.getGovernanceStats().evictedSessions).toBe(0);
   }, 20_000);
+
+  it('forgetSession() closes the eviction window: /reset after eviction starts fresh, not resurrected (Issue #4644)', async () => {
+    const body = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-old"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed"}
+JSONL
+echo done > "$CODEX_HOME/turn-$n.done"
+`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+    const provider = governedProvider(fixtures, { maxActiveSessions: 1 });
+
+    // chat-a: one turn latches t-old, then parks — alive at eviction time.
+    let releaseA: () => void = () => {};
+    const aParked = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    async function* inputA(): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'a1' };
+      await aParked;
+    }
+    const resultA = provider.queryStream(inputA(), {
+      settingSources: [],
+      sessionKey: 'chat-a',
+    } as AgentQueryOptions);
+    const collectedA = (async () => {
+      const out: unknown[] = [];
+      for await (const m of resultA.iterator) {
+        out.push(m);
+      }
+      return out;
+    })();
+    await waitFor(() => existsSync(join(fixtures.codexHome, 'turn-1.done')));
+
+    // chat-b registers → cap 1 → chat-a evicted → its thread anchor is
+    // STASHED (the eviction-resume feature: without a reset, chat-a's next
+    // message would resume t-old — see the test above).
+    await drainStream(provider, ['b1'], { sessionKey: 'chat-b' });
+    await collectedA;
+    releaseA();
+
+    // THE #4644 WINDOW: the user issues /reset AFTER the eviction (stream
+    // already torn down with wasEvicted=true — the teardown stash-clear
+    // deliberately does not fire) and BEFORE the next message. Without
+    // forgetSession the stash survives and the next stream resurrects the
+    // reset-away conversation.
+    provider.forgetSession('chat-a');
+
+    // chat-a's next message must start FRESH — no `resume t-old`.
+    await drainStream(provider, ['a2'], { sessionKey: 'chat-a' });
+    const argv3 = readFileSync(join(fixtures.codexHome, 'argv-3'), 'utf-8').trim();
+    expect(argv3).not.toContain('resume');
+    expect(argv3).not.toContain('t-old');
+  }, 25_000);
+
+  it('forgetSession() also drops a live governor registration — the chat cannot be evicted (re-stashed) after a reset', async () => {
+    const body = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-live"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed"}
+JSONL
+echo done > "$CODEX_HOME/turn-$n.done"
+`;
+    fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+    const provider = governedProvider(fixtures, { maxActiveSessions: 2 });
+
+    // chat-a parks after its turn (still registered in the governor).
+    let releaseA: () => void = () => {};
+    const aParked = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    async function* inputA(): AsyncGenerator<UserInput> {
+      yield { role: 'user', content: 'a1' };
+      await aParked;
+    }
+    const resultA = provider.queryStream(inputA(), {
+      settingSources: [],
+      sessionKey: 'chat-a',
+    } as AgentQueryOptions);
+    const collectedA = (async () => {
+      const out: unknown[] = [];
+      for await (const m of resultA.iterator) {
+        out.push(m);
+      }
+      return out;
+    })();
+    await waitFor(() => existsSync(join(fixtures.codexHome, 'turn-1.done')));
+
+    // /reset while the stream is alive: the provider-level forget must
+    // deregister chat-a so a LATER cap eviction cannot fire its hook and
+    // re-stash the anchor after the reset (the exact resurrection shape the
+    // #4644 fix guards against — governor clearing is required, not hygiene).
+    provider.forgetSession('chat-a');
+    releaseA();
+    await collectedA;
+
+    // chat-b and chat-c fill the cap (2) — chat-a must NOT be among the
+    // victims: it was forgotten, so no eviction hook (no re-stash) fired.
+    await drainStream(provider, ['b1'], { sessionKey: 'chat-b' });
+    await drainStream(provider, ['c1'], { sessionKey: 'chat-c' });
+    expect(provider.getGovernanceStats().evictedSessions).toBe(0);
+
+    // And the reset-away conversation stays dead: chat-a's next message
+    // starts fresh.
+    await drainStream(provider, ['a2'], { sessionKey: 'chat-a' });
+    const argv4 = readFileSync(join(fixtures.codexHome, 'argv-4'), 'utf-8').trim();
+    expect(argv4).not.toContain('resume');
+  }, 25_000);
+
+  it('forgetSession() on an unknown key is a no-op (idempotent reset surface)', () => {
+    fixtures = makeFixtures({ withBinary: true, withAuth: true });
+    const provider = governedProvider(fixtures, {});
+    expect(() => provider.forgetSession('never-registered')).not.toThrow();
+    expect(provider.getGovernanceStats().activeSessions).toBe(0);
+  });
 });
 
 
