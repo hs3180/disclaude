@@ -10,8 +10,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { CronJob } from 'cron';
+import * as fsPromises from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 import { Scheduler, TaskTimeoutError, type SchedulerCallbacks } from './scheduler.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
+import { TaskFailureStore } from './task-failure-store.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import type { ScheduledTask } from './scheduled-task.js';
 import type { CooldownManager } from './cooldown-manager.js';
@@ -998,6 +1002,190 @@ describe('Scheduler', () => {
 
         expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(1);
         expect(mockCallbacks.resetAgent).not.toHaveBeenCalledWith('oc_test', false);
+      });
+    });
+
+    describe('Issue #4648 residual ⑥: failure streaks survive restarts via TaskFailureStore', () => {
+      let tempDir: string;
+
+      beforeEach(async () => {
+        tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'scheduler-streak-test-'));
+      });
+
+      afterEach(async () => {
+        await fsPromises.rm(tempDir, { recursive: true, force: true }).catch(() => {
+          /* teardown must never fail a test */
+        });
+      });
+
+      /**
+       * Build a Scheduler with a file-backed store over `tempDir`.
+       * Returns both so tests can assert via the store's async API.
+       */
+      function makeSchedulerWithStore() {
+        const store = new TaskFailureStore({ dir: tempDir });
+        const sched = new Scheduler({
+          scheduleManager: mockScheduleManager,
+          callbacks: mockCallbacks,
+          inputMessageRouter: mockRouter,
+          jobFactory: testJobFactory,
+          failureStore: store,
+        });
+        return { store, sched };
+      }
+
+      it('a restarted process keeps counting — crash-loop alert threshold is reachable', async () => {
+        // The pre-⑥ defect: the streak lived in a Map, so every restart
+        // zeroed it. A task failing on every tick under frequent
+        // restarts/redeploys NEVER reached threshold 3 — the #4648 alert
+        // was structurally unable to fire for exactly the (crash-loop)
+        // scenario it was built for.
+        const { store, sched } = makeSchedulerWithStore();
+        try {
+          sched.addTask(createTask({ id: 'persist-1' }));
+          mockRouterAsMock.route.mockRejectedValue(new Error('turn died'));
+
+          fireJob(sched.getActiveJobs());
+          await vi.waitFor(() => expect(store.getStreak('persist-1')).resolves.toBe(1), { timeout: 2000 });
+          fireJob(sched.getActiveJobs());
+          await vi.waitFor(() => expect(store.getStreak('persist-1')).resolves.toBe(2), { timeout: 2000 });
+
+          // The streak is genuinely on disk (not instance cache):
+          await expect(
+            fsPromises.readFile(path.join(tempDir, 'persist-1.json'), 'utf-8'),
+          ).resolves.toContain('"consecutiveFailures": 2');
+        } finally {
+          await sched.stop(0).catch(() => {});
+        }
+
+        // "Restart": a NEW store instance re-reads disk; the new Scheduler
+        // has no in-memory state. The third failure must cross threshold 3.
+        const restarted = makeSchedulerWithStore();
+        try {
+          restarted.sched.addTask(createTask({ id: 'persist-1' }));
+          fireJob(restarted.sched.getActiveJobs());
+          await vi.waitFor(
+            () => expect(restarted.store.getStreak('persist-1')).resolves.toBe(3),
+            { timeout: 2000 },
+          );
+        } finally {
+          await restarted.sched.stop(0).catch(() => {});
+        }
+      });
+
+      it('a healthy run on the restarted process clears the persisted streak', async () => {
+        const { store, sched } = makeSchedulerWithStore();
+        try {
+          sched.addTask(createTask({ id: 'persist-2' }));
+          mockRouterAsMock.route.mockRejectedValue(new Error('turn died'));
+
+          fireJob(sched.getActiveJobs());
+          await vi.waitFor(() => expect(store.getStreak('persist-2')).resolves.toBe(1), { timeout: 2000 });
+        } finally {
+          await sched.stop(0).catch(() => {});
+        }
+
+        const restarted = makeSchedulerWithStore();
+        try {
+          restarted.sched.addTask(createTask({ id: 'persist-2' }));
+          mockRouterAsMock.route.mockResolvedValueOnce(undefined); // healthy run
+          fireJob(restarted.sched.getActiveJobs());
+          await vi.waitFor(() => expect(restarted.store.getStreak('persist-2')).resolves.toBe(0), { timeout: 2000 });
+          await expect(
+            fsPromises.readFile(path.join(tempDir, 'persist-2.json'), 'utf-8'),
+          ).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally {
+          await restarted.sched.stop(0).catch(() => {});
+        }
+      });
+
+      it('without a store wired the in-memory fallback still works (back-compat)', async () => {
+        // Embedders (and the pre-⑥ tests above) that pass no failureStore
+        // keep the exact old behavior: Map-based counting in this process.
+        const task = createTask({ id: 'fallback-1' });
+        scheduler.addTask(task);
+        mockRouterAsMock.route.mockRejectedValue(new Error('turn died'));
+
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(
+            (scheduler as unknown as { consecutiveTaskFailures: Map<string, number> })
+              .consecutiveTaskFailures.get('fallback-1'),
+          ).toBe(1);
+        }, { timeout: 2000 });
+      });
+    });
+
+    describe('Issue #4648 residual ⑧: channel I/O inside the catch must not escape', () => {
+      /**
+       * The hazard: executeTask runs as a fire-and-forget cron onTick, so a
+       * throw from the catch's sendMessage (channel down, WS reconnect
+       * window) becomes an unhandledRejection — potentially crashing the
+       * process over a NOTIFICATION, after the failure was already handled
+       * and logged. These tests capture process-level unhandled rejections
+       * to pin the containment.
+       */
+      async function expectNoUnhandledRejection(run: () => Promise<void>): Promise<void> {
+        const unhandled: unknown[] = [];
+        const onUnhandled = (err: unknown) => unhandled.push(err);
+        process.on('unhandledRejection', onUnhandled);
+        try {
+          await run();
+          // Give an escaped rejection a few macrotask turns to surface.
+          await flushPending(6);
+          expect(unhandled).toEqual([]);
+        } finally {
+          process.off('unhandledRejection', onUnhandled);
+        }
+      }
+
+      /** Replace the shared sendMessage mock: succeed except for `marker`. */
+      function rejectSendOn(marker: string): void {
+        mockCallbacks.sendMessage = vi.fn((_chatId: string, text: string) =>
+          String(text).includes(marker)
+            ? Promise.reject(new Error('channel down'))
+            : Promise.resolve(undefined),
+        );
+      }
+
+      it('❌ failure notification failing does not reject executeTask past onTick', async () => {
+        rejectSendOn('执行失败');
+        const task = createTask({ id: 'notify-fail-1' });
+        scheduler.addTask(task);
+        mockRouterAsMock.route.mockRejectedValue(new Error('turn died'));
+
+        await expectNoUnhandledRejection(async () => {
+          fireJob(scheduler.getActiveJobs());
+          // The catch still finished its full duty: tracking cleaned up…
+          await vi.waitFor(() => {
+            expect(scheduler.isTaskRunning('notify-fail-1')).toBe(false);
+          }, { timeout: 2000 });
+          // …and the failure was still counted (streak bookkeeping happens
+          // before the best-effort notification).
+          expect(
+            (scheduler as unknown as { consecutiveTaskFailures: Map<string, number> })
+              .consecutiveTaskFailures.get('notify-fail-1'),
+          ).toBe(1);
+        });
+      });
+
+      it('timeout notification failing does not reject executeTask past onTick', async () => {
+        rejectSendOn('执行超时');
+        const task = createTask({ id: 'notify-fail-2', timeoutMs: 50 });
+        scheduler.addTask(task);
+        mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {})); // turn never settles
+
+        await expectNoUnhandledRejection(async () => {
+          fireJob(scheduler.getActiveJobs());
+          await vi.waitFor(() => {
+            expect(scheduler.isTaskRunning('notify-fail-2')).toBe(false);
+          }, { timeout: 3000 });
+          // Timeout stays neutral: no streak entry even with channel down.
+          expect(
+            (scheduler as unknown as { consecutiveTaskFailures: Map<string, number> })
+              .consecutiveTaskFailures.has('notify-fail-2'),
+          ).toBe(false);
+        });
       });
     });
   });
