@@ -789,6 +789,195 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  describe('Issue #4626: sendMessage failure isolated from the agent loop', () => {
+    /** Axios-style Feishu 400 (invalid receive_id) — the incident's error shape. */
+    function feishu400(): Error {
+      const err = new Error('Request failed with status code 400');
+      (err as any).response = {
+        status: 400,
+        data: { code: 230001, msg: 'receive_id is invalid' },
+      };
+      return err;
+    }
+
+    /** Build an agent whose SDK iterator yields the given parsed messages. */
+    function makeAgent(
+      parsedMessages: Array<Record<string, unknown>>,
+      sendMessageImpl: () => Promise<void>
+    ) {
+      const localCallbacks = createMockCallbacks();
+      (localCallbacks.sendMessage as ReturnType<typeof vi.fn>).mockImplementation(sendMessageImpl);
+      const agent = new ChatAgent({
+        chatId: 'oc_sendfail',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      async function* scriptedIterator() {
+        for (const parsed of parsedMessages) {
+          yield { parsed, raw: {} };
+        }
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: scriptedIterator(),
+      });
+      // The result branch consults isAgentTeamsEnabled() (chat-agent.ts),
+      // whose real impl needs a runtime context these tests never build —
+      // override it like every other result-reaching test in this file does.
+      (agent as any).isAgentTeamsEnabled = () => false;
+      return { agent, localCallbacks };
+    }
+
+    it('a 4xx loop-send failure opens the delivery circuit immediately; the turn completes instead of dying (incident kill #1)', async () => {
+      const { agent, localCallbacks } = makeAgent(
+        [
+          { type: 'text', content: 'working...' },
+          { type: 'result', content: '✅ Complete (test)', subtype: 'success' },
+        ],
+        () => Promise.reject(feishu400())
+      );
+
+      void agent.processMessage({ chatId: 'oc_sendfail', payload: 'hello', messageId: 'msg_1' });
+
+      // The circuit-open error log is the deterministic marker that the loop
+      // reached (and survived) the failing send.
+      await vi.waitFor(() => {
+        expect(
+          (agent as any).logger.error.mock.calls.some((c: any[]) =>
+            String(c[c.length - 1]).includes('delivery circuit OPENED')
+          )
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      const send = localCallbacks.sendMessage as ReturnType<typeof vi.fn>;
+      // Exactly ONE send attempted (the text): the ✅ Complete marker send is
+      // skipped by the open circuit — retrying a rejected target is futile.
+      expect(send.mock.calls.filter((c: any[]) => c[0] === 'oc_sendfail')).toHaveLength(1);
+      // The SDK stream was consumed to completion — the turn was recorded as a
+      // SUCCESS, not killed by the send failure. In the incident this same
+      // scenario logged "Iterator error" and tore the session down.
+      const rm = (agent as any).restartManager;
+      expect(rm.recordSuccess).toHaveBeenCalled();
+      expect(rm.recordFailure).not.toHaveBeenCalled();
+      const errorLogs = (agent as any).logger.error.mock.calls.map((c: any[]) =>
+        String(c[c.length - 1])
+      );
+      expect(errorLogs.some((m: string) => m.includes('Iterator error'))).toBe(false);
+    });
+
+    it('a transient (statusless) failure is counted but does not open the circuit; success resets the counter', async () => {
+      let call = 0;
+      const { agent, localCallbacks } = makeAgent(
+        [
+          { type: 'text', content: 'attempt 1' },
+          { type: 'text', content: 'attempt 2' },
+          { type: 'result', content: '✅ Complete (test)', subtype: 'success' },
+        ],
+        () => {
+          call++;
+          // First send: transient network error (no HTTP status). Rest succeed.
+          return call === 1 ? Promise.reject(new Error('read ECONNRESET')) : Promise.resolve();
+        }
+      );
+
+      void agent.processMessage({ chatId: 'oc_sendfail', payload: 'hello', messageId: 'msg_1' });
+
+      await vi.waitFor(() => {
+        expect((agent as any).restartManager.recordSuccess).toHaveBeenCalled();
+      }, { timeout: 1000, interval: 20 });
+
+      const send = localCallbacks.sendMessage as ReturnType<typeof vi.fn>;
+      // All three scripted user-visible sends attempted (no circuit opened).
+      // (A 4th send may follow: the test generator just ends, which routes
+      // into the unexpected-end path's 🚫 circuit-breaker notice — a mock
+      // artifact, the persistent-session generator in production does not
+      // end after a result.)
+      const scripted = send.mock.calls.filter((c: any[]) =>
+        ['attempt 1', 'attempt 2', '✅ Complete (test)'].includes(c[1])
+      );
+      expect(scripted).toHaveLength(3);
+      expect((agent as any).sendCircuitOpen).toBe(false);
+      expect((agent as any).consecutiveSendFailures).toBe(0);
+      const errorLogs = (agent as any).logger.error.mock.calls.map((c: any[]) =>
+        String(c[c.length - 1])
+      );
+      expect(errorLogs.some((m: string) => m.includes('delivery circuit OPENED'))).toBe(false);
+    });
+
+    it('three consecutive transient failures open the circuit and skip further sends', async () => {
+      const { agent, localCallbacks } = makeAgent(
+        [
+          { type: 'text', content: 'a' },
+          { type: 'text', content: 'b' },
+          { type: 'text', content: 'c' },
+          { type: 'text', content: 'd' },
+          { type: 'result', content: '✅ Complete (test)', subtype: 'success' },
+        ],
+        () => Promise.reject(new Error('read ECONNRESET'))
+      );
+
+      void agent.processMessage({ chatId: 'oc_sendfail', payload: 'hello', messageId: 'msg_1' });
+
+      await vi.waitFor(() => {
+        expect((agent as any).restartManager.recordSuccess).toHaveBeenCalled();
+      }, { timeout: 1000, interval: 20 });
+
+      const send = localCallbacks.sendMessage as ReturnType<typeof vi.fn>;
+      // Sends 1-3 fail transiently → circuit opens on the 3rd; text 4 and the
+      // result marker are skipped.
+      expect(send.mock.calls.filter((c: any[]) => c[0] === 'oc_sendfail')).toHaveLength(3);
+      expect((agent as any).sendCircuitOpen).toBe(true);
+    });
+
+    it('a failing error-notice after an iterator error does not cascade into the outer Agent-loop handler (incident kill #2)', async () => {
+      let call = 0;
+      // Streamed text (send #1) succeeds; every later send — the ❌ Session
+      // error notice, then the restart/circuit-breaker notices — hits the same
+      // 400 the incident had.
+      const { agent, localCallbacks } = makeAgent(
+        [{ type: 'text', content: 'partial output' }],
+        () => {
+          call++;
+          return call === 1 ? Promise.resolve() : Promise.reject(feishu400());
+        }
+      );
+      // The SDK stream itself breaks AFTER producing output (messageCount ≥ 1,
+      // so this is a runtime error, not a startup failure).
+      const scripted = ((agent as any).createQueryStream as () => {
+        iterator: AsyncGenerator;
+      }).call(agent);
+      async function* throwingIterator() {
+        yield* scripted.iterator;
+        throw new Error('upstream exploded');
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: throwingIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_sendfail', payload: 'hello', messageId: 'msg_1' });
+
+      // processIterator survived its catch path: the rejecting error-notice
+      // was isolated, so execution reached the restart decision.
+      await vi.waitFor(() => {
+        expect((agent as any).restartManager.shouldRestart).toHaveBeenCalled();
+      }, { timeout: 1000, interval: 20 });
+
+      // The incident cascade marker: processIterator itself throwing lands in
+      // the outer startAgentLoop catch ("Agent loop error"). Must be absent.
+      const errorLogs = (agent as any).logger.error.mock.calls.map((c: any[]) =>
+        String(c[c.length - 1])
+      );
+      expect(errorLogs.some((m: string) => m.includes('Agent loop error'))).toBe(false);
+      // Text sent OK (1) + error notice attempted and 400-rejected (2). The
+      // circuit-breaker notice is skipped: that 400 opened the circuit.
+      const send = localCallbacks.sendMessage as ReturnType<typeof vi.fn>;
+      expect(send.mock.calls.filter((c: any[]) => c[0] === 'oc_sendfail')).toHaveLength(2);
+    });
+  });
+
   describe('Issue #4322: upstream-API-error turn reported as failed, not ✅ Complete', () => {
     it('should send ❌ Failed notice (with request_id) and recordFailure when provider tags the result', async () => {
       const localCallbacks = createMockCallbacks();

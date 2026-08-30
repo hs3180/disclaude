@@ -69,6 +69,32 @@ type UserInput = AgentUserInput;
 export type { ChatAgentCallbacks, ChatAgentConfig, MessageData } from './types.js';
 
 /**
+ * Issue #4626: consecutive user-visible send failures tolerated before the
+ * per-session delivery circuit opens. Transient channel trouble (5xx / network)
+ * gets a small retry budget; 4xx opens the circuit immediately (see
+ * {@link extractSendHttpStatus}).
+ */
+const MAX_CONSECUTIVE_SEND_FAILURES = 3;
+
+/**
+ * Issue #4626: best-effort HTTP status extraction from a channel send error.
+ *
+ * The Feishu/lark SDK surfaces axios-style errors where the status lives on
+ * `.response.status` (see extractFeishuApiError in feishu-channel.ts for the
+ * full body-shape normalization); other channels may set `.status` directly.
+ * `undefined` means no status is known (network error / bare Error) — callers
+ * treat that as transient.
+ */
+function extractSendHttpStatus(err: unknown): number | undefined {
+  if (!err || typeof err !== 'object') {
+    return undefined;
+  }
+  const e = err as { response?: { status?: unknown }; status?: unknown };
+  const status = e.response?.status ?? e.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+/**
  * ChatAgent - Platform-agnostic direct chat abstraction with Streaming Input.
  *
  * Issue #644: Each ChatAgent instance is bound to a single chatId.
@@ -146,6 +172,15 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // and superseded mid-flight (empty-turn reset+replay) — see the interception
   // next to the stalledTerminated check in processIterator.
   private sessionGeneration = 0;
+
+  // Issue #4626: user-visible delivery isolation state. A channel sendMessage
+  // failure (invalid receive_id → 400, transient 5xx, network blip) used to
+  // propagate out of the for-await loop in processIterator → "Iterator error"
+  // → "Agent loop error" → session teardown, killing healthy in-flight work
+  // (a scheduled audit ran 38 days silently dead on one typo'd chatId).
+  // Both fields are session-scoped: reset on every startAgentLoop().
+  private consecutiveSendFailures = 0;
+  private sendCircuitOpen = false;
 
   // Issue #4391 (#4194 follow-up ②): empty-turn session-reset + bounded replay.
   // The policy locks eligibility (real-user messages only — synthetic sched-*/push_*
@@ -996,6 +1031,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.queryHandle = handle;
     this.isSessionActive = true;
+    // Issue #4626: fresh session generation — re-arm user-visible delivery.
+    // A restart after a transient channel outage deserves a clean retry, and
+    // a permanently-invalid target re-trips the circuit on its first send
+    // (one wasted attempt per session, bounded by construction).
+    this.consecutiveSendFailures = 0;
+    this.sendCircuitOpen = false;
     // Issue #4391 (part 2 review): this query is a new session generation.
     // Any still-draining processIterator from a previous generation reads the
     // bump and exits as a superseded session instead of "unexpected end".
@@ -1073,6 +1114,119 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           'Failed to send agent loop error notification'
         );
       }
+    });
+  }
+
+  /**
+   * Issue #4626: send a user-visible message from the agent loop WITHOUT
+   * letting a channel failure kill the agent session.
+   *
+   * Previously every awaited `callbacks.sendMessage` inside the for-await
+   * loop (and in the catch-path error notices) could throw straight through
+   * processIterator — one failed notice (e.g. Feishu 400 on a typo'd chatId)
+   * tore down a session whose SDK stream was perfectly healthy. This wrapper
+   * never throws:
+   *
+   * - success resets the consecutive-failure counter;
+   * - a 4xx response (target rejected the message — invalid receive_id /
+   *   chatId typo / no permission) opens the delivery circuit IMMEDIATELY:
+   *   retrying or replaying cannot fix a bad target, so further sends to this
+   *   chat are skipped for the rest of the session while the agent keeps
+   *   working (history/logs still capture the output);
+   * - 5xx / unknown (network) failures are counted; MAX_CONSECUTIVE_SEND_
+   *   FAILURES in a row opens the circuit.
+   *
+   * When the circuit opens, an error-level log with `sendCircuitOpen: true`
+   * is emitted (alertable via log search) and the debug group — the one
+   * channel that may still be reachable — gets a fire-and-forget notice.
+   *
+   * @returns a Promise that always resolves (never rejects).
+   */
+  private async deliverUserVisible(
+    chatId: string,
+    content: string,
+    threadRoot?: string
+  ): Promise<void> {
+    if (this.sendCircuitOpen) {
+      this.logger.debug(
+        { chatId, contentLength: content.length },
+        'Send skipped: delivery circuit open for this session (Issue #4626)'
+      );
+      return;
+    }
+    try {
+      await this.callbacks.sendMessage(chatId, content, threadRoot);
+      this.consecutiveSendFailures = 0;
+    } catch (err) {
+      this.consecutiveSendFailures++;
+      const httpStatus = extractSendHttpStatus(err);
+      const isPermanentTargetError =
+        httpStatus !== undefined && httpStatus >= 400 && httpStatus < 500;
+      if (isPermanentTargetError || this.consecutiveSendFailures >= MAX_CONSECUTIVE_SEND_FAILURES) {
+        this.sendCircuitOpen = true;
+        this.logger.error(
+          {
+            chatId,
+            err,
+            httpStatus,
+            consecutiveSendFailures: this.consecutiveSendFailures,
+            isPermanentTargetError,
+            sendCircuitOpen: true,
+          },
+          'User-visible delivery circuit OPENED — agent output can no longer reach this chat ' +
+            '(invalid target or repeated channel failures). The agent session stays alive; ' +
+            'fix the chatId / channel config, then /reset. (Issue #4626)'
+        );
+        this.notifyDebugGroupOfDeliveryFailure(chatId, err, httpStatus, isPermanentTargetError);
+      } else {
+        this.logger.warn(
+          {
+            err,
+            chatId,
+            httpStatus,
+            consecutiveSendFailures: this.consecutiveSendFailures,
+          },
+          'sendMessage failed in agent loop — isolated, session continues (Issue #4626)'
+        );
+      }
+    }
+  }
+
+  /**
+   * Issue #4626: when the delivery circuit opens, try to surface it on the
+   * debug group — the only destination that may still be reachable (the
+   * failing chat obviously cannot be notified about itself). Fire-and-forget:
+   * a missing debug group or a failing forward must never propagate.
+   */
+  private notifyDebugGroupOfDeliveryFailure(
+    chatId: string,
+    err: unknown,
+    httpStatus: number | undefined,
+    isPermanentTargetError: boolean
+  ): void {
+    let debugChatId: string | undefined;
+    try {
+      const debugGroup = getDebugGroupService().getDebugGroup();
+      // Never forward back into the chat that just failed.
+      debugChatId = debugGroup && debugGroup.chatId !== chatId ? debugGroup.chatId : undefined;
+    } catch {
+      // Debug group service unavailable — the error-level structured log
+      // above is the remaining alert channel.
+    }
+    if (!debugChatId) {
+      return;
+    }
+    const reason = isPermanentTargetError
+      ? `HTTP ${httpStatus} — 目标疑似无效（chatId 配置错误？）`
+      : '连续投递失败';
+    const message =
+      `🚫 [投递熔断] Agent 输出无法送达 chat ${chatId}（${reason}），会话保持存活。` +
+      `错误: ${err instanceof Error ? err.message : String(err)} (Issue #4626)`;
+    void this.callbacks.sendMessage(debugChatId, message).catch((fwdErr) => {
+      this.logger.debug(
+        { err: fwdErr, debugChatId },
+        'Failed to forward delivery-circuit notice to debug group (Issue #4626)'
+      );
     });
   }
 
@@ -1303,7 +1457,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             if (streamDriver && isAssistantReplyText) {
               await streamDriver.pushText(visibleContent, threadRoot);
             } else {
-              await this.callbacks.sendMessage(chatId, visibleContent, threadRoot);
+              // Issue #4626: route through the isolation wrapper — a channel
+              // failure here must degrade delivery, never kill the loop. (The
+              // streaming driver above already swallows its own fallback
+              // failures; this path had no such protection.)
+              await this.deliverUserVisible(chatId, visibleContent, threadRoot);
             }
             // Issue #4194: the ✅ Complete result marker is sent as the result
             // message itself — exclude it so empty turns (no real reply) are
@@ -1871,7 +2029,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           'Startup failure detected — skipping retry/circuit-breaker'
         );
 
-        await this.callbacks.sendMessage(
+        // Issue #4626: isolated delivery — this catch-path notice throwing
+        // used to escape processIterator into the outer "Agent loop error"
+        // handler, which was the second kill in the incident chain (the same
+        // invalid target rejects the error notice too).
+        await this.deliverUserVisible(
           chatId,
           `❌ Agent 启动失败: ${diagnosticMessage}\n\n` +
             '这是一次配置或环境错误，重试无法解决。\n' +
@@ -1899,7 +2061,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Notify user about the error
       {
         const threadRoot = resolveReplyThreadRoot();
-        await this.callbacks.sendMessage(
+        // Issue #4626: isolated delivery (see the startup-failure notice above
+        // for why a throwing error-notice must not escape processIterator).
+        await this.deliverUserVisible(
           chatId,
           `❌ Session error: ${iteratorError.message}`,
           threadRoot
@@ -2060,7 +2224,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           decision.reason === 'max_restarts_exceeded'
             ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
             : `🚫 会话已暂停，请发送 /reset 重置。\n\n原因: ${decision.reason}`;
-        await this.callbacks.sendMessage(chatId, blockMessage, threadRoot);
+        // Issue #4626: isolated delivery — a failing channel here must not
+        // throw processIterator into the outer "Agent loop error" handler.
+        await this.deliverUserVisible(chatId, blockMessage, threadRoot);
       }
       return;
     }
@@ -2081,7 +2247,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     const restartMessage = iteratorError
       ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
       : '⚠️ 会话意外断开，正在重新连接...';
-    await this.callbacks.sendMessage(chatId, restartMessage, threadRoot);
+    // Issue #4626: isolated delivery (same rationale as the notices above).
+    await this.deliverUserVisible(chatId, restartMessage, threadRoot);
 
     // Restart the agent loop to preserve context for future messages
     this.startAgentLoop();
