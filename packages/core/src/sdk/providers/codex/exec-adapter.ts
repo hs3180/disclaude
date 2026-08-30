@@ -298,6 +298,45 @@ function makeMessage(
   return { type, content, role: 'assistant', metadata };
 }
 
+// ---------------------------------------------------------------------------
+// Failure-signature detection (Issue #4628, S3) — pure text predicates over
+// the two failure surfaces the bridge sees (top-level `error` event messages
+// + turn.failed messages on stdout, and the stderr tail). Signatures captured
+// live against codex-cli 0.132.0; detection is deliberately substring-based
+// so wording drift degrades to the generic error path, never a false match.
+// ---------------------------------------------------------------------------
+
+/**
+ * Auth failure ⇔ the ChatGPT login is gone/expired and `codex login` must be
+ * re-run. Captured surfaces (0.132.0, auth removed):
+ * - stdout error events: "Reconnecting... 2/5 (unexpected status 401
+ *   Unauthorized: Missing bearer or basic authentication in header, url:
+ *   wss://api.openai.com/v1/responses, cf-ray: …)"
+ * - stderr: "ERROR codex_api::endpoint::responses_websocket: failed to
+ *   connect to websocket: HTTP error: 401 Unauthorized, url: …"
+ *
+ * Refresh-token expiry funnels to the same 401 surface; explicit
+ * token/session-expired wording is matched as a belt-and-braces fallback.
+ */
+export function isCodexAuthFailure(text: string): boolean {
+  if (/\b401\b/.test(text) && /unauthorized/i.test(text)) {
+    return true;
+  }
+  return /token[ _-]?expir/i.test(text) || /session expired/i.test(text);
+}
+
+/**
+ * Resume target missing ⇔ the thread rollout file codex would resume no
+ * longer exists (session pruned/rotated on codex's side, CODEX_HOME wiped,
+ * …). Captured (0.132.0): stderr "Error: thread/resume: thread/resume
+ * failed: no rollout found for thread id <uuid> (code -32600)", exit 1.
+ * The provider clears its resume target on this signature so the NEXT turn
+ * starts a fresh session instead of bricking the chat until /reset.
+ */
+export function isCodexResumeTargetMissing(text: string): boolean {
+  return /no rollout found for thread/i.test(text);
+}
+
 /**
  * Extract the plain-text prompt from a UserInput content (string or blocks).
  * Mirrors base-agent's convertInput exactly: strings pass through, anything
