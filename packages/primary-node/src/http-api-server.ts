@@ -16,6 +16,7 @@
  * - `POST /api/send-card` — Send a Feishu card to a chat (REST parity with IPC sendCard; #4279)
  * - `POST /api/send-interactive` — Send an interactive card (buttons) to a chat (REST parity with IPC sendInteractive; #4279)
  * - `POST /api/upload-image` — Upload a local image by filePath, returns image_key for card embedding (REST parity with IPC uploadImage; #4279)
+ * - `POST /api/mark-chat-responded` — Mark a temp chat as responded (REST parity with IPC markChatResponded; #4281)
  *
  * Authentication:
  * - When `apiToken` is configured, non-GET routes require `Authorization: Bearer <token>`
@@ -28,8 +29,6 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent, type FeishuCard } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
-// Issue #4063: reuse the canonical loop types instead of re-declaring them inline.
-import type { LoopStartParams, LoopStatus } from './loop/loop-runner.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -182,6 +181,28 @@ export type UploadImageResponse = { success: boolean; imageKey?: string };
 export type UploadImageHandler = (filePath: string) => Promise<UploadImageResponse>;
 
 /**
+ * Params for markChatResponded (mirrors the IPC markChatResponded payload).
+ */
+export type MarkChatRespondedParams = {
+  chatId: string;
+  response: {
+    selectedValue: string;
+    responder: string;
+    repliedAt: string;
+  };
+};
+
+/**
+ * Handler for markChatResponded requests. Delegates to the channel's
+ * markChatResponded capability (temp-chat lifecycle, Issue #1703) — REST
+ * parity with the IPC method (Issue #4281).
+ */
+export type MarkChatRespondedHandler = (
+  chatId: string,
+  response: MarkChatRespondedParams['response'],
+) => Promise<{ success: boolean }>;
+
+/**
  * Route handler type.
  */
 type RouteHandler = (
@@ -208,9 +229,9 @@ interface Route {
  *
  * @example
  * ```typescript
- * const server = new HttpApiServer({ port: 9200 });
+ * const server = new HttpApiServer({ port: 19200 });
  * server.start();
- * // GET http://localhost:9200/api/status → { status: "ok", ... }
+ * // GET http://localhost:19200/api/status → { status: "ok", ... }
  * ```
  */
 export class HttpApiServer {
@@ -226,9 +247,7 @@ export class HttpApiServer {
   private sendInteractiveHandler?: SendInteractiveHandler;
   private listTempChatsHandler?: ListTempChatsHandler;
   private uploadImageHandler?: UploadImageHandler;
-  private loopStartHandler?: (params: LoopStartParams) => { loopId: string };
-  private loopStopHandler?: (loopId: string) => void;
-  private loopStatusHandler?: (loopId: string) => LoopStatus | null;
+  private markChatRespondedHandler?: MarkChatRespondedHandler;
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
   /** Heartbeat interval timer for SSE keepalive */
@@ -298,14 +317,11 @@ export class HttpApiServer {
     this.uploadImageHandler = handler;
   }
 
-  setLoopHandlers(handlers: {
-    start: (params: LoopStartParams) => { loopId: string };
-    stop: (loopId: string) => void;
-    status: (loopId: string) => LoopStatus | null;
-  }): void {
-    this.loopStartHandler = handlers.start;
-    this.loopStopHandler = handlers.stop;
-    this.loopStatusHandler = handlers.status;
+  /**
+   * Set the handler for POST /api/mark-chat-responded (Issue #4281).
+   */
+  setMarkChatRespondedHandler(handler: MarkChatRespondedHandler): void {
+    this.markChatRespondedHandler = handler;
   }
 
   /**
@@ -497,13 +513,11 @@ export class HttpApiServer {
 
     // Issue #4279: REST parity with IPC uploadImage.
     this.addRoute('POST', '/api/upload-image', this.handleUploadImage.bind(this));
+    // Issue #4281: REST parity with IPC markChatResponded (temp-chat lifecycle).
+    this.addRoute('POST', '/api/mark-chat-responded', this.handleMarkChatResponded.bind(this));
     this.addRoute('POST', '/api/push', this.handlePush.bind(this));
     // Issue #4031: SSE endpoint for topic group message notifications
     this.addRoute('GET', '/api/topic-stream', this.handleTopicStream.bind(this));
-    // Issue #4075: Loop Runner REST endpoints
-    this.addRoute('POST', '/api/loop/start', this.handleLoopStart.bind(this));
-    this.addRoute('POST', '/api/loop/stop', this.handleLoopStop.bind(this));
-    this.addRoute('GET', '/api/loop/status/:loopId', this.handleLoopStatus.bind(this));
   }
 
   /**
@@ -1047,49 +1061,76 @@ export class HttpApiServer {
     }
   }
 
-  // Issue #4075: Loop Runner REST endpoints
-
-  private async handleLoopStart(req: IncomingMessage, res: ServerResponse, _params: Record<string, string>): Promise<void> {
-    if (!this.loopStartHandler) { this.sendJson(res, 503, { ok: false, message: 'Loop handler not configured' }); return; }
-    let body: string;
-    try { body = await readBody(req); } catch { this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' }); return; }
-    let parsed: unknown;
-    try { parsed = JSON.parse(body); } catch { this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' }); return; }
-    if (typeof parsed !== 'object' || parsed === null || typeof (parsed as Record<string, unknown>).chatId !== 'string' || typeof (parsed as Record<string, unknown>).prompt !== 'string') {
-      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), prompt (string)' }); return;
+  /**
+   * POST /api/mark-chat-responded handler (Issue #4281).
+   *
+   * Accepts `{ chatId, response: { selectedValue, responder, repliedAt } }` and
+   * delegates to the channel's markChatResponded capability (temp-chat lifecycle,
+   * Issue #1703). Mirrors the IPC markChatResponded method. Response:
+   * `{ ok: true, success }`.
+   */
+  private async handleMarkChatResponded(
+    req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>,
+  ): Promise<void> {
+    if (!this.markChatRespondedHandler) {
+      this.sendJson(res, 503, { ok: false, message: 'markChatResponded handler not configured' });
+      return;
     }
-    const p = parsed as { chatId: string; prompt: string; maxSteps?: number; maxDurationMs?: number; stepIntervalMs?: number };
-    if (!p.chatId || !p.prompt) { this.sendJson(res, 400, { ok: false, message: 'chatId and prompt must be non-empty' }); return; }
-    if (p.maxSteps !== undefined && typeof p.maxSteps !== 'number') { this.sendJson(res, 400, { ok: false, message: 'maxSteps must be a number' }); return; }
-    if (p.maxDurationMs !== undefined && typeof p.maxDurationMs !== 'number') { this.sendJson(res, 400, { ok: false, message: 'maxDurationMs must be a number' }); return; }
-    if (p.stepIntervalMs !== undefined && typeof p.stepIntervalMs !== 'number') { this.sendJson(res, 400, { ok: false, message: 'stepIntervalMs must be a number' }); return; }
-    try {
-      const result = this.loopStartHandler({ chatId: p.chatId, prompt: p.prompt, ...(p.maxSteps !== undefined && { maxSteps: p.maxSteps }), ...(p.maxDurationMs !== undefined && { maxDurationMs: p.maxDurationMs }), ...(p.stepIntervalMs !== undefined && { stepIntervalMs: p.stepIntervalMs }) });
-      this.sendJson(res, 200, { ok: true, loopId: result.loopId });
-    } catch (err) { this.sendJson(res, 500, { ok: false, message: err instanceof Error ? err.message : 'Loop start failed' }); }
-  }
 
-  private async handleLoopStop(req: IncomingMessage, res: ServerResponse, _params: Record<string, string>): Promise<void> {
-    if (!this.loopStopHandler) { this.sendJson(res, 503, { ok: false, message: 'Loop handler not configured' }); return; }
     let body: string;
-    try { body = await readBody(req); } catch { this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' }); return; }
-    let parsed: unknown;
-    try { parsed = JSON.parse(body); } catch { this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' }); return; }
-    if (typeof parsed !== 'object' || parsed === null || typeof (parsed as Record<string, unknown>).loopId !== 'string') { this.sendJson(res, 400, { ok: false, message: 'Required field: loopId (string)' }); return; }
-    const { loopId } = parsed as { loopId: string };
-    if (!loopId) { this.sendJson(res, 400, { ok: false, message: 'loopId must be non-empty' }); return; }
-    this.loopStopHandler(loopId);
-    this.sendJson(res, 200, { ok: true, message: `Loop stopped: ${loopId}` });
-  }
+    try {
+      body = await readBody(req);
+    } catch {
+      this.sendJson(res, 413, { ok: false, message: 'Request body too large (max 1 MB)' });
+      return;
+    }
 
-  private handleLoopStatus(_req: IncomingMessage, res: ServerResponse, params: Record<string, string>): Promise<void> {
-    if (!this.loopStatusHandler) { this.sendJson(res, 503, { ok: false, message: 'Loop handler not configured' }); return Promise.resolve(); }
-    const { loopId } = params;
-    if (!loopId) { this.sendJson(res, 400, { ok: false, message: 'loopId parameter is required' }); return Promise.resolve(); }
-    const status = this.loopStatusHandler(loopId);
-    if (!status) { this.sendJson(res, 404, { ok: false, message: `Loop not found: ${loopId}` }); }
-    else { this.sendJson(res, 200, { ok: true, status }); }
-    return Promise.resolve();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      this.sendJson(res, 400, { ok: false, message: 'Invalid JSON body' });
+      return;
+    }
+
+    const raw = parsed as Record<string, unknown> | null;
+    if (
+      typeof raw !== 'object' || raw === null ||
+      typeof raw.chatId !== 'string' || !raw.chatId
+    ) {
+      this.sendJson(res, 400, { ok: false, message: 'Required: chatId (non-empty string)' });
+      return;
+    }
+
+    // REST is the trust boundary: validate the response payload shape that the
+    // IPC path casts unchecked (mirror of normalizeMentions' rationale, #4279).
+    const r = raw.response as Record<string, unknown> | undefined;
+    if (
+      typeof r !== 'object' || r === null || Array.isArray(r) ||
+      typeof r.selectedValue !== 'string' ||
+      typeof r.responder !== 'string' ||
+      typeof r.repliedAt !== 'string'
+    ) {
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'Required: response { selectedValue (string), responder (string), repliedAt (string) }',
+      });
+      return;
+    }
+
+    try {
+      const result = await this.markChatRespondedHandler(
+        raw.chatId,
+        { selectedValue: r.selectedValue, responder: r.responder, repliedAt: r.repliedAt },
+      );
+      this.sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      logger.error({ err, chatId: raw.chatId }, 'markChatResponded handler error');
+      const msg = err instanceof Error ? err.message : 'markChatResponded failed';
+      this.sendJson(res, 500, { ok: false, message: msg });
+    }
   }
 
   /**

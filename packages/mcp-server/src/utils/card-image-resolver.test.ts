@@ -11,7 +11,16 @@ import { isLocalImagePath, resolveCardImages } from './card-image-resolver.js';
 // Mock @disclaude/core
 // Issue #4129: uploadImage is now a standalone function exported from @disclaude/core.
 // Production calls uploadImage(client, ...). Delegate to the current test's mock client.
-const { ipcClientRef } = vi.hoisted(() => ({ ipcClientRef: { current: null as unknown as { uploadImage: (...args: unknown[]) => unknown } } }));
+const { ipcClientRef, mockGetRestIpcClient } = vi.hoisted(() => ({
+  ipcClientRef: { current: null as unknown as { uploadImage: (...args: unknown[]) => unknown } },
+  mockGetRestIpcClient: vi.fn(),
+}));
+// Issue #4280 (Phase 3, part 3): production constructs the REST client via
+// tools/ipc-utils.getRestIpcClient — mock it to return the per-test client.
+vi.mock('../tools/ipc-utils.js', () => ({
+  getRestIpcClient: () => mockGetRestIpcClient(),
+}));
+
 vi.mock('@disclaude/core', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -19,11 +28,8 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  getIpcClient: vi.fn(),
   uploadImage: (...args: unknown[]) => ipcClientRef.current.uploadImage(...args.slice(1)),
 }));
-
-import { getIpcClient } from '@disclaude/core';
 
 // Helper to access elements from the result card with proper typing
 function getElements(result: { card: Record<string, unknown> }): any[] {
@@ -130,7 +136,7 @@ describe('resolveCardImages', () => {
     mockIpcClient = {
       uploadImage: vi.fn(),
     };
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     // Issue #4129: wire the per-test mock client into the standalone uploadImage mock.
     ipcClientRef.current = mockIpcClient;
   });
@@ -377,5 +383,93 @@ describe('resolveCardImages', () => {
     expect(result.failedCount).toBe(1);
     // File doesn't exist, upload is not called, gracefully degraded
     expect(mockIpcClient.uploadImage).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// Issue #4568: per-image upload progress (onProgress)
+// ============================================================================
+
+describe('resolveCardImages progress reporting (#4568)', () => {
+  let mockIpcClient: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIpcClient = {
+      uploadImage: vi.fn(),
+    };
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
+    ipcClientRef.current = mockIpcClient;
+    mockIpcClient.uploadImage.mockResolvedValue({
+      success: true,
+      imageKey: 'img_v3_uploaded',
+    });
+  });
+
+  it('reports done/total once per settled upload', async () => {
+    const img1 = createTestImage('chart1.png');
+    const img2 = createTestImage('chart2.png');
+    const onProgress = vi.fn();
+
+    const card = {
+      elements: [
+        { tag: 'img', img_key: img1 },
+        { tag: 'img', img_key: img2 },
+      ],
+    };
+
+    await resolveCardImages(card, onProgress);
+
+    expect(onProgress).toHaveBeenCalledTimes(2);
+    // done advances 1→2; total is the unique-path count
+    expect(onProgress).toHaveBeenNthCalledWith(1, {
+      done: 1,
+      total: 2,
+      message: 'Uploading card images (1/2)…',
+    });
+    expect(onProgress).toHaveBeenNthCalledWith(2, {
+      done: 2,
+      total: 2,
+      message: 'Uploading card images (2/2)…',
+    });
+  });
+
+  it('counts failed uploads as settled progress too', async () => {
+    const img = createTestImage('chart.png');
+    mockIpcClient.uploadImage.mockResolvedValue({
+      success: false,
+      error: 'Upload failed',
+    });
+    const onProgress = vi.fn();
+
+    const card = { elements: [{ tag: 'img', img_key: img }] };
+    await resolveCardImages(card, onProgress);
+
+    expect(onProgress).toHaveBeenCalledTimes(1);
+    expect(onProgress).toHaveBeenCalledWith({
+      done: 1,
+      total: 1,
+      message: 'Uploading card images (1/1)…',
+    });
+  });
+
+  it('does not call onProgress when there are no images to upload', async () => {
+    const onProgress = vi.fn();
+    const card = { elements: [{ tag: 'img', img_key: 'img_v3_existing' }] };
+
+    await resolveCardImages(card, onProgress);
+
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
+  it('behaves identically without a callback (back-compat, Claude backend)', async () => {
+    const img = createTestImage('chart.png');
+
+    const card = { elements: [{ tag: 'img', img_key: img }] };
+    // No onProgress arg at all — must not throw.
+    const result = await resolveCardImages(card);
+
+    expect(result.uploadedCount).toBe(1);
+    expect(getElements(result)[0].img_key).toBe('img_v3_uploaded');
   });
 });

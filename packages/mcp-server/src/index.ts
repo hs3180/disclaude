@@ -27,6 +27,7 @@ export type {
 export {
   isIpcAvailable,
   getIpcErrorMessage,
+  buildIpcFallbackHint,
   getFeishuCredentials,
   getWorkspaceDir,
   setMessageSentCallback,
@@ -47,28 +48,33 @@ export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
 
 // Tools - Interactive Message
+// Issue #4280 (part 4): the mcp-server's UnixSocketIpcServer lifecycle
+// exports are removed — dead code since part 3 made every tool a REST client.
 export {
   send_interactive_message,
   send_interactive,
-  startIpcServer,
-  stopIpcServer,
-  isIpcServerRunning,
-  getIpcServerSocketPath,
-  registerFeishuHandlers,
-  unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 
 // Utils - Card Validator
 export { isValidFeishuCard, getCardValidationError } from './utils/card-validator.js';
 
+// Utils - Card send preprocessing helpers.
+// These transforms live in the channel-mcp ENTRY handler (not inside the
+// first-party `send_card` fn — see tools/send-card.ts), so a CLI that reuses
+// `send_card` directly would silently drop them. Exporting them lets the
+// channel CLI Skill (skills/channel/cli.mjs, Issue #4459) replicate the exact
+// MCP handler pipeline and reach feature parity: GFM-table → column_set
+// auto-conversion (#2340), local-image auto-upload (#2951), chatId-format and
+// card-structure validation. No behavior change for existing callers.
+export { transformCardTables } from './utils/table-converter.js';
+export { resolveCardImages } from './utils/card-image-resolver.js';
+export { getChatIdValidationError } from './utils/chat-id-validator.js';
+export { detectMarkdownTableWarnings } from './utils/card-validator.js';
+
 // IPC Client (re-exported from @disclaude/core for convenience)
-export {
-  UnixSocketIpcClient,
-  getIpcClient,
-  resetIpcClient,
-  type IpcAvailabilityStatus,
-  type IpcUnavailableReason,
-} from '@disclaude/core';
+// Issue #4168 (Phase 3): REST-only — the Unix-socket client and the
+// getIpcClient facade are gone; the REST client is the transport.
+export { RestIpcClient, type RestIpcClientOptions } from '@disclaude/core';
 
 // Channel MCP Server (platform-agnostic messaging tools via IPC)
 export {

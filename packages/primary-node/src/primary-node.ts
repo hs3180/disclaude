@@ -32,20 +32,18 @@
  */
 
 import * as path from 'path';
-import { promises as fsp } from 'node:fs';
 import { EventEmitter } from 'events';
 import {
   createLogger,
   type IChannel,
   type OutgoingMessage,
-  UnixSocketIpcServer,
-  createInteractiveMessageHandler,
-  generateSocketPath,
-  IPC_SOCKET_PATH_FILE,
+  // Issue #4280 (part 5): the IPC server import is gone — PrimaryNode serves
+  // REST-only via its HttpApiServer (cli.ts --api-port). Only the handler-
+  // container types remain: resolveApiHandlers still routes REST-facing calls
+  // to the owning channel's handlers.
   type FeishuHandlersContainer,
   type FeishuApiHandlers,
   type ChannelApiHandlers,
-  type ChannelHandlersContainer,
   // Issue #1377: Scheduler integration
   Scheduler,
   ScheduleManager,
@@ -60,8 +58,6 @@ import {
   type SchedulerCallbacks,
   // Issue #3582: Input MessageRouter for unified routing
   MessageRouter as InputMessageRouter,
-  // Issue #4283: LOOP.md file watcher consumer bridge
-  LOOP_MD_DIR,
   // Issue #4279: FeishuCard type for REST sendCard parity.
   type FeishuCard,
 } from '@disclaude/core';
@@ -70,8 +66,6 @@ import { DebugGroupService, getDebugGroupService } from './services/debug-group-
 import { ChannelManager } from './channel-manager.js';
 import { InteractiveContextStore } from './interactive-context.js';
 import { AgentPoolMessageHandler } from './messaging/agent-pool-handler.js';
-import { LoopRunner } from './loop/loop-runner.js';
-import { LoopFileWatcher } from './loop/loop-file-watcher.js';
 
 const logger = createLogger('PrimaryNode');
 
@@ -156,10 +150,12 @@ export class PrimaryNode extends EventEmitter {
   // Channel management (Issue #1594: unified channel lifecycle)
   protected channelManager: ChannelManager;
 
-  // IPC Server for MCP Server connections (Issue #1042)
-  protected ipcServer: UnixSocketIpcServer | null = null;
+  // Issue #4280 (part 5): the UnixSocketIpcServer field is gone — PrimaryNode
+  // no longer starts an IPC server; MCP tools / push-cli reach it over the
+  // REST API (--api-port). The handler containers below stay: REST-facing
+  // methods (uploadFile/sendCard/… via resolveApiHandlers) route through them.
   protected feishuHandlersContainer: FeishuHandlersContainer = { handlers: undefined };
-  // Issue #3814: Multi-channel IPC handler routing
+  // Issue #3814: Multi-channel handler routing (chatId ownership)
   protected channelHandlersMap = new Map<string, { handlers: ChannelApiHandlers; channel: IChannel }>();
 
   // Scheduler (Issue #1377)
@@ -173,8 +169,10 @@ export class PrimaryNode extends EventEmitter {
 
   // Issue #4206: stashed in initInputMessageRouter() so the scheduler's
   // clearContext callback can reset a chat's agent before a scheduled task.
+  // Issue #4587 (part 2): getOrCreateChatAgent takes an optional threadRootId
+  // (topic-group thread session keying).
   protected agentPool?: {
-    getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
+    getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks, threadRootId?: string) => import('./agents/chat-agent.js').ChatAgent;
     reset: (chatId: string, skipContext?: boolean) => void;
   };
   // Issue #4199: optional busy-state provider used to gate blocking scheduled
@@ -183,11 +181,6 @@ export class PrimaryNode extends EventEmitter {
 
   // Interactive context store (Issue #1572: Phase 3 of #1568)
   protected interactiveContextStore: InteractiveContextStore;
-
-  // Loop Runner (Issue #4075: lazy-initialized on first loopStart)
-  protected loopRunner?: LoopRunner;
-  /** Issue #4283: LOOP.md file watcher — starts loops from skill-written LOOP.md files. */
-  protected loopFileWatcher?: LoopFileWatcher;
 
   constructor(config: PrimaryNodeOptions = {}) {
     super();
@@ -286,218 +279,38 @@ export class PrimaryNode extends EventEmitter {
   }
 
   // ============================================================================
-  // IPC Server (Issue #1042)
+  // Channel handler registration (Issue #1042 → #4280 part 5)
   // ============================================================================
 
   /**
-   * Start the IPC server for MCP Server connections.
+   * Register Feishu API handlers.
    *
-   * The IPC server accepts connections from MCP Server child processes
-   * and allows them to call Feishu API handlers directly (no WebSocket bridging needed
-   * since Primary Node has direct access to the channels).
-   */
-  protected async startIpcServer(): Promise<void> {
-    if (this.ipcServer) {
-      logger.warn('IPC server already running');
-      return;
-    }
-
-    // Issue #1572: Use real InteractiveContextStore for prompt registration (Phase 3 of #1568).
-    // Issue #1573: Phase 4 — simplified to a single registerActionPrompts callback.
-    // State management dispatch cases removed from IPC; only the callback for
-    // sendInteractive's internal prompt registration remains.
-    const contextStore = this.interactiveContextStore;
-
-    // Create the request handler with channel handlers container.
-    // Issue #3814: Use composite container that routes IPC requests to the
-    // correct channel's handlers based on chatId ownership.
-    const compositeContainer = this.createCompositeHandlersContainer();
-    const requestHandler = createInteractiveMessageHandler(
-      (messageId: string, chatId: string, actionPrompts: Record<string, string>) => {
-        contextStore.register(messageId, chatId, actionPrompts);
-      },
-      compositeContainer
-    );
-
-    this.ipcServer = new UnixSocketIpcServer(requestHandler, {
-      socketPath: generateSocketPath(),
-    });
-
-    await this.ipcServer.start();
-
-    // Set environment variable for child processes (MCP Server)
-    const socketPath = this.ipcServer.getSocketPath();
-    process.env.DISCLAUDE_WORKER_IPC_SOCKET = socketPath;
-
-    // Issue #3808: Write socket path to well-known file for external processes.
-    // External scripts (e.g., cron jobs) read this file to discover the IPC socket.
-    // Includes PID for stale file detection by CLI consumers.
-    try {
-      const content = `${socketPath}\n${process.pid}`;
-      await fsp.writeFile(IPC_SOCKET_PATH_FILE, content, 'utf-8');
-      logger.debug({ path: IPC_SOCKET_PATH_FILE }, 'IPC socket path written to discovery file');
-    } catch (error) {
-      logger.warn({ err: error }, 'Failed to write IPC socket path discovery file');
-    }
-
-    logger.info({ socketPath }, 'IPC server started for MCP Server connections');
-  }
-
-  /**
-   * Stop the IPC server.
-   */
-  protected async stopIpcServer(): Promise<void> {
-    if (!this.ipcServer) {
-      return;
-    }
-
-    await this.ipcServer.stop();
-    this.ipcServer = null;
-
-    // Clear environment variable
-    delete process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-
-    // Issue #3808: Clean up socket path discovery file
-    try {
-      await fsp.unlink(IPC_SOCKET_PATH_FILE);
-    } catch {
-      // Ignore cleanup errors (file may not exist)
-    }
-
-    logger.info('IPC server stopped');
-  }
-
-  /**
-   * Register Feishu API handlers for IPC calls.
-   *
-   * This method should be called after FeishuChannel starts to enable
-   * MCP Server tools to send messages via IPC.
+   * This method should be called after FeishuChannel starts so the
+   * REST-facing methods (sendMessage/sendCard/uploadFile/…) can reach it.
    */
   registerFeishuHandlers(handlers: FeishuApiHandlers): void {
     this.feishuHandlersContainer.handlers = handlers;
-    logger.info('Feishu API handlers registered for IPC');
+    logger.info('Feishu API handlers registered');
   }
 
   /**
-   * Register channel API handlers for IPC routing.
-   * Issue #3814: Generalized handler registration for multi-channel IPC.
+   * Register channel API handlers.
+   * Issue #3814: Generalized handler registration for multi-channel routing.
    *
    * Handlers are stored with their channel instance for chatId-based routing.
-   * The IPC dispatch resolves the correct handlers by checking which channel
+   * resolveApiHandlers resolves the correct handlers by checking which channel
    * owns a given chatId via `channel.ownsChatId(chatId)`.
    */
   registerChannelHandlers(channelType: string, handlers: ChannelApiHandlers, channel: IChannel): void {
     this.channelHandlersMap.set(channelType, { handlers, channel });
-    logger.info({ channelType }, 'Channel API handlers registered for IPC');
+    logger.info({ channelType }, 'Channel API handlers registered');
   }
 
-  /**
-   * Create a composite ChannelHandlersContainer that routes IPC requests
-   * to the correct channel's handlers based on chatId ownership.
-   *
-   * Issue #3814: Multi-channel IPC routing.
-   *
-   * Resolution order:
-   * 1. Check registered channel handlers (channelHandlersMap) for chatId ownership
-   * 2. Fall back to feishuHandlersContainer for backward compatibility
-   */
-  protected createCompositeHandlersContainer(): ChannelHandlersContainer {
-    const container: ChannelHandlersContainer = { handlers: undefined };
-
-    const resolveHandlers = (chatId?: string): ChannelApiHandlers | undefined =>
-      this.resolveApiHandlers(chatId);
-
-    // Create proxy handlers that delegate to the resolved channel
-    container.handlers = {
-      sendMessage: (chatId, text, threadId, mentions) => {
-        const h = resolveHandlers(chatId);
-        if (!h) {throw new Error('No channel handlers available');}
-        return h.sendMessage(chatId, text, threadId, mentions);
-      },
-      sendCard: (chatId, card, threadId, description) => {
-        const h = resolveHandlers(chatId);
-        if (!h) {throw new Error('No channel handlers available');}
-        return h.sendCard(chatId, card, threadId, description);
-      },
-      uploadFile: (chatId, filePath, threadId) => {
-        const h = resolveHandlers(chatId);
-        if (!h) {throw new Error('No channel handlers available');}
-        return h.uploadFile(chatId, filePath, threadId);
-      },
-      sendInteractive: (chatId, params) => {
-        const h = resolveHandlers(chatId);
-        if (!h?.sendInteractive) {
-          throw new Error('sendInteractive not supported by this channel');
-        }
-        return h.sendInteractive(chatId, params);
-      },
-
-      // Issue #3814 fix: proxy all optional handlers to prevent regression
-      pushToAgent: (chatId, message) => {
-        const h = resolveHandlers(chatId);
-        if (!h?.pushToAgent) {
-          throw new Error('pushToAgent not supported by this channel');
-        }
-        return h.pushToAgent(chatId, message);
-      },
-
-      uploadImage: (filePath) => {
-        // uploadImage is channel-agnostic (no chatId routing needed)
-        const h = resolveHandlers();
-        if (!h?.uploadImage) {
-          throw new Error('uploadImage not supported by this channel');
-        }
-        return h.uploadImage(filePath);
-      },
-
-      // Delegates to resolveChannelTempChats (shared with the REST-facing
-      // listTempChats() public method) — returns the raw chat list; the IPC
-      // server wraps it into its { success, payload: { success, chats } } response.
-      listTempChats: () => this.resolveChannelTempChats(),
-
-      markChatResponded: (chatId, response) => {
-        const h = resolveHandlers(chatId);
-        if (!h?.markChatResponded) {
-          throw new Error('markChatResponded not supported by this channel');
-        }
-        return h.markChatResponded(chatId, response);
-      },
-
-      // Issue #4075/#4063: Loop Runner IPC handlers. The runner is shared with
-      // the REST /api/loop/* endpoints (see cli.ts) via getOrCreateLoopRunner().
-      loopStart: (params) => {
-        try {
-          const result = this.getOrCreateLoopRunner().start(params);
-          return Promise.resolve({ success: true, loopId: result.loopId });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          return Promise.resolve({ success: false, error: errorMessage });
-        }
-      },
-      loopStop: (loopId) => {
-        if (!this.loopRunner) {
-          return Promise.resolve({ success: false, error: 'No loops have been started' });
-        }
-        const found = this.loopRunner.stop(loopId);
-        if (!found) {
-          return Promise.resolve({ success: false, error: 'Loop not found' });
-        }
-        return Promise.resolve({ success: true });
-      },
-      loopStatus: (loopId) => {
-        if (!this.loopRunner) {
-          return Promise.resolve({ success: false, error: 'No loops have been started' });
-        }
-        const status = this.loopRunner.status(loopId);
-        if (!status) {
-          return Promise.resolve({ success: false, error: 'Loop not found' });
-        }
-        return Promise.resolve({ success: true, status });
-      },
-    };
-
-    return container;
-  }
+  // Issue #4280 (part 5): createCompositeHandlersContainer() is removed with
+  // the IPC server — it existed to adapt the registered handlers into the
+  // UnixSocketIpcServer's ChannelHandlersContainer shape. The REST-facing
+  // public methods (uploadFile/sendMessage/sendCard/sendInteractive/
+  // listTempChats/markChatResponded/…) call resolveApiHandlers directly.
 
   /**
    * Get all registered channels.
@@ -559,8 +372,10 @@ export class PrimaryNode extends EventEmitter {
       }
     }
 
-    // Start IPC server for MCP Server connections (Issue #1042)
-    await this.startIpcServer();
+    // Issue #4280 (part 5): no IPC server is started anymore — PrimaryNode
+    // serves REST-only via the HttpApiServer wired in cli.ts (--api-port).
+    // MCP tools and push-cli connect as REST clients (see mcp-server
+    // tools/ipc-utils.ts getRestIpcClient and push-cli.ts createRestClient).
 
     // Initialize Scheduler (Issue #1377)
     // Issue #3361: Wrap in try-catch to prevent scheduler failure from
@@ -595,8 +410,7 @@ export class PrimaryNode extends EventEmitter {
     // Stop Scheduler (Issue #1377)
     await this.stopScheduler();
 
-    // Stop IPC server (Issue #1042)
-    await this.stopIpcServer();
+    // Issue #4280 (part 5): no IPC server to stop — REST-only serving.
 
     this.running = false;
     this.emit('stopped');
@@ -694,36 +508,6 @@ export class PrimaryNode extends EventEmitter {
       { schedulesDir, activeJobCount },
       'Scheduler fully initialized'
     );
-
-    // Issue #4283: Start LOOP.md file watcher — the consumer bridge that
-    // starts loops from skill-written LOOP.md files (mirrors SCHEDULE.md →
-    // ScheduleFileWatcher → SchedulerService). On LOOP.md create/change, read
-    // it, call startFromLoopMd, and surface the loopId to the chat.
-    const loopDir = path.join(workspaceDir, LOOP_MD_DIR);
-    this.loopFileWatcher = new LoopFileWatcher({
-      loopDir,
-      onLoopMd: (filePath: string) => {
-        try {
-          // startFromLoopMd dedups by loopMdPath (one loop per LOOP.md) and
-          // reads the file once internally, returning chatId + a `started`
-          // flag so we only announce genuinely new loops — not duplicate
-          // events for an already-running LOOP.md, whose prompt is re-read
-          // each iteration by the runner itself.
-          const { loopId, chatId, started } = this.getOrCreateLoopRunner().startFromLoopMd(filePath);
-          if (!started) {
-            logger.debug({ loopId, filePath }, 'LoopFileWatcher: LOOP.md already running, skipped');
-            return;
-          }
-          const h = this.resolveApiHandlers(chatId);
-          void h?.pushToAgent?.(chatId, `🔧 Loop started: ${loopId} (from LOOP.md). Use loop_stop/loop_status with this ID.`);
-          logger.info({ loopId, chatId, filePath }, 'LoopFileWatcher: started loop from LOOP.md');
-        } catch (err) {
-          logger.error({ err, filePath }, 'LoopFileWatcher: failed to start loop from LOOP.md');
-        }
-      },
-    });
-    await this.loopFileWatcher.start();
-    logger.info({ loopDir }, 'LoopFileWatcher started');
   }
 
   /**
@@ -732,7 +516,6 @@ export class PrimaryNode extends EventEmitter {
    */
   protected async stopScheduler(): Promise<void> {
     this.scheduleFileWatcher?.stop();
-    this.loopFileWatcher?.stop();
     await this.scheduler?.stop();
     logger.info('Scheduler stopped');
   }
@@ -872,12 +655,11 @@ export class PrimaryNode extends EventEmitter {
   /**
    * Resolve and invoke the channel's listTempChats capability (Issue #1703).
    *
-   * Shared by the IPC composite handler (which returns the raw chat list) and
-   * the REST-facing `listTempChats()` public method below (which wraps it into
-   * `{ success, chats }`). Throws if the active channel does not support
-   * temp-chat tracking. Returns the raw chat list — each caller wraps it into
-   * the response shape appropriate for its transport (IPC payload / REST body),
-   * so the two call sites keep their distinct return contracts.
+   * Issue #4280 (part 5): with the IPC server gone this has a single caller —
+   * the REST-facing `listTempChats()` public method below (which wraps the raw
+   * chat list into `{ success, chats }`). Throws if the active channel does
+   * not support temp-chat tracking. Returns the raw chat list so the caller
+   * can wrap it into the REST response shape.
    */
   private async resolveChannelTempChats(): Promise<Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }>> {
     const h = this.resolveApiHandlers();
@@ -904,9 +686,30 @@ export class PrimaryNode extends EventEmitter {
   }
 
   /**
+   * Mark a tracked temporary chat as responded — delegates to the channel's
+   * markChatResponded capability (temp-chat lifecycle, Issue #1703). REST
+   * parity with the IPC markChatResponded method (Issue #4281); throws
+   * "not supported by this channel" when the active channel lacks the
+   * capability.
+   *
+   * @returns { success: boolean }
+   */
+  async markChatResponded(
+    chatId: string,
+    response: { selectedValue: string; responder: string; repliedAt: string },
+  ): Promise<{ success: boolean }> {
+    const h = this.resolveApiHandlers(chatId);
+    if (!h?.markChatResponded) {
+      throw new Error('markChatResponded not supported by this channel');
+    }
+    return await h.markChatResponded(chatId, response);
+  }
+
+  /**
    * Resolve the channel API handlers for a chatId.
    *
-   * Shared by the composite IPC handlers and the LoopRunner push callback.
+   * Shared by the REST-facing public methods (uploadFile/sendMessage/…) and
+   * the scheduler push callbacks.
    * 1. Check registered channel handlers (channelHandlersMap) for chatId ownership
    * 2. Fall back to feishuHandlersContainer for backward compatibility
    */
@@ -919,29 +722,6 @@ export class PrimaryNode extends EventEmitter {
       }
     }
     return this.feishuHandlersContainer.handlers;
-  }
-
-  /**
-   * Get the shared LoopRunner, lazily creating it on first use.
-   *
-   * Issue #4063 (part 2): shared between the IPC composite handlers (loopStart)
-   * and the REST API (cli.ts /api/loop/*) so a loop started from either entry
-   * point is visible to both. Each step pushes the instruction to the owning
-   * channel's pushToAgent *without* waitForCompletion — by design
-   * (fire-and-forget cadence), so stepIntervalMs paces dispatch, not
-   * agent-turn completion.
-   */
-  getOrCreateLoopRunner(): LoopRunner {
-    if (!this.loopRunner) {
-      this.loopRunner = new LoopRunner(async (chatId, message) => {
-        const h = this.resolveApiHandlers(chatId);
-        if (!h?.pushToAgent) {
-          throw new Error('pushToAgent not supported by this channel');
-        }
-        await h.pushToAgent(chatId, message);
-      });
-    }
-    return this.loopRunner;
   }
 
   /**
@@ -990,7 +770,11 @@ export class PrimaryNode extends EventEmitter {
    */
   initInputMessageRouter(
     agentPool: {
-      getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks) => import('./agents/chat-agent.js').ChatAgent;
+      /**
+       * Issue #4587 (part 2): optional threadRootId (topic-group messages)
+       * selects that thread's agent — per-thread session keying.
+       */
+      getOrCreateChatAgent: (chatId: string, callbacks: import('./agents/types.js').ChatAgentCallbacks, threadRootId?: string) => import('./agents/chat-agent.js').ChatAgent;
       reset: (chatId: string, skipContext?: boolean) => void;
       isAgentBusy?: (chatId: string) => boolean;
     },

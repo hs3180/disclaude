@@ -6,9 +6,10 @@
  * Phase 2 part 1: the channel-method surface (ping/sendMessage/sendCard/
  * uploadFile/uploadImage/sendInteractive/listTempChats/markChatResponded).
  *
- * The full IpcClientLike drop-in (adding pushToAgent → /api/push and loop
- * methods → /api/loop/* with their distinct response shapes) is a follow-up —
- * the mcp-server currently calls those via the Unix-socket IPC client.
+ * The full IpcClientLike drop-in (adding pushToAgent → /api/push) is a
+ * follow-up — the mcp-server currently calls that via the Unix-socket IPC
+ * client. (The former loop methods → /api/loop/* were removed with the loop
+ * system, #4430.)
  *
  * Routing is table-driven and response shaping is a generic strip-`ok` envelope
  * (REST responses are `{ ok: true, ...IpcResponsePayload }`; IPC payloads are
@@ -22,9 +23,6 @@ import { createLogger } from '../utils/logger.js';
 import type { IpcRequestType, IpcRequestPayloads, IpcResponsePayloads } from './protocol.js';
 import {
   type IpcClientLike,
-  loopStart as facadeLoopStart,
-  loopStop as facadeLoopStop,
-  loopStatus as facadeLoopStatus,
 } from './ipc-client-facade.js';
 
 const logger = createLogger('RestIpcClient');
@@ -46,7 +44,7 @@ interface Route {
   method: 'GET' | 'POST';
   /** Static path (e.g. `/api/send-message`). */
   path?: string;
-  /** Dynamic path builder (e.g. for path-param routes like loopStatus). */
+  /** Dynamic path builder (e.g. for path-param routes). */
   pathBuilder?: (payload: Record<string, unknown>) => string;
   /**
    * Per-route success predicate (default: `res.ok && json.ok === true`).
@@ -65,18 +63,15 @@ const defaultSuccess = (json: Record<string, unknown>, res: Response): boolean =
   res.ok && json.ok === true;
 
 /**
- * Route table: IPC method → REST endpoint. Covers all 12 IPC methods:
+ * Route table: IPC method → REST endpoint. Covers the 9 IPC methods:
  * - 8 channel methods + ping → #4279 Phase 1 endpoints (strip-ok shaping).
  * - pushToAgent → /api/push (REST {ok,message} → IPC {success}).
- * - loopStart/loopStop/loopStatus → /api/loop/* (REST shapes adapted to IPC).
  */
 const ROUTES: Readonly<Record<string, Route>> = {
-  // Channel methods (Issue #4279 Phase 1 endpoints). 6/8 are on `main`:
-  // ping/sendMessage/sendCard/uploadFile/sendInteractive/tempChats (PRs
-  // #4341/#4343/#4344/#4346/#4345/#4348). The two below are still pending:
-  //   - uploadImage: PR #4347 (OPEN) — endpoint not yet on `main`.
-  //   - markChatResponded: PR #4342 (CLOSED w/o merge) — endpoint not on `main`.
-  // Routes are kept for IPC-method parity; they 404 only until those land.
+  // Channel methods (Issue #4279 Phase 1 endpoints). 8/9 routes are on `main`:
+  // ping/sendMessage/sendCard/uploadFile/uploadImage/sendInteractive/tempChats
+  // (PRs #4341/#4343/#4344/#4347/#4346/#4345/#4348) and markChatResponded
+  // (Issue #4281 — port of the closed-unmerged PR #4342 blueprint).
   // ping returns `{ pong: true }` (no `ok` envelope) — see handlePing server-side.
   ping: { method: 'GET', path: '/api/ping', success: (json, res) => res.ok && json.pong === true },
   sendMessage: { method: 'POST', path: '/api/send-message' },
@@ -88,21 +83,10 @@ const ROUTES: Readonly<Record<string, Route>> = {
   markChatResponded: { method: 'POST', path: '/api/mark-chat-responded' },
   // pushToAgent → /api/push (REST returns {ok, message}; IPC expects {success})
   pushToAgent: { method: 'POST', path: '/api/push', shape: (b) => ({ success: b.ok === true }) },
-  // Loop Runner → /api/loop/* (REST shapes adapted to IPC payloads)
-  loopStart: {
-    method: 'POST', path: '/api/loop/start',
-    shape: (b) => ({ success: b.ok === true, ...(b.loopId ? { loopId: b.loopId } : {}) }),
-  },
-  loopStop: { method: 'POST', path: '/api/loop/stop', shape: (b) => ({ success: b.ok === true }) },
-  loopStatus: {
-    method: 'GET',
-    pathBuilder: (p) => `/api/loop/status/${p.loopId}`,
-    shape: (b) => ({ success: b.ok === true, ...(b.status ? { status: b.status } : {}) }),
-  },
 };
 
 export interface RestIpcClientOptions {
-  /** Base URL of the HttpApiServer (e.g. http://localhost:9200). */
+  /** Base URL of the HttpApiServer (e.g. http://localhost:19200). */
   baseUrl: string;
   /** Optional bearer token for POST endpoints (GET routes are token-exempt). */
   apiToken?: string;
@@ -242,21 +226,5 @@ export class RestIpcClient implements IpcClientLike {
   disconnect(): Promise<void> {
     this.close();
     return Promise.resolve();
-  }
-
-  // Convenience methods mirroring UnixSocketIpcClient (delegating to facade
-  // functions which call request<T> internally). This ensures full method
-  // parity so callers that use these directly work with either client.
-
-  async loopStart(params: Parameters<typeof facadeLoopStart>[1]) {
-    return await facadeLoopStart(this, params);
-  }
-
-  async loopStop(loopId: string) {
-    return await facadeLoopStop(this, loopId);
-  }
-
-  async loopStatus(loopId: string) {
-    return await facadeLoopStatus(this, loopId);
   }
 }

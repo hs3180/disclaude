@@ -36,7 +36,8 @@
  * equivalent at this layer:
  * - `model` string → `Model<any>` object: provider.ts (part 3), via pi `Models`.
  * - `mcpServers`: the MCP→`AgentHarnessTool` converter, #4417 (S4b).
- * - `permissionMode` / permission gating: #4389 (S6); pi has no built-in perms.
+ * - `permissionMode` / permission gating: #4389 (S6); pi has no built-in perms
+ *   (the `disallowedTools` deny gate itself landed in tool-permission-gate.ts).
  * - Claude-only fields with no pi agentLoop-level meaning: `cwd`, `settingSources`
  *   (required on the disclaude type but a Claude-Code-settings concept),
  *   `stderr` (Claude subprocess capture), `teammateMode` (Claude Agent Teams),

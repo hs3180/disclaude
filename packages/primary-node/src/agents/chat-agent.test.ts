@@ -26,7 +26,11 @@ vi.mock('@disclaude/core', async (importOriginal) => {
         /* empty */
       })(),
     }));
-    this.initialized = true;
+    // Issue #4391 (part 2 review): deliberately NOT forcing
+    // `this.initialized = true` here — production BaseAgent never sets it
+    // true, and forcing it in this mock masked the dead `!this.initialized`
+    // disposed-guard in the empty-turn replay (the guard only ever worked
+    // under this mock).
     this.dispose = vi.fn();
     this.logger = {
       info: vi.fn(),
@@ -48,13 +52,30 @@ vi.mock('@disclaude/core', async (importOriginal) => {
         historyDays: 1,
         maxContextLength: 50000,
       })),
-      getMcpServersConfig: vi.fn(() => null),
     },
     BaseAgent,
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
     StreamingReplyDriver: actual.StreamingReplyDriver,
+    // Issue #4391: real policy — the reset+replay bounding under test.
+    EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
     MessageBuilder: vi.fn().mockImplementation(() => ({
-      buildEnhancedContent: vi.fn((input: any) => input.text),
+      // Issue #4391 (§6 history re-injection): append the chat-history
+      // context (when present) to the built content so tests can verify the
+      // consume-once stash actually flowed into the pushed payload.
+      // Issue #4391 (part 3 review nit): mirror the production builder's TWO
+      // history sections (chat history + persisted history) so tests can also
+      // catch duplicated context in the pushed payload — the single-section
+      // stub below rendered persistedHistoryContext invisible here.
+      buildEnhancedContent: vi.fn((input: any) => {
+        const sections = [input.text];
+        if (input.persistedHistoryContext) {
+          sections.push(`## Previous Session Context\n\n${input.persistedHistoryContext}`);
+        }
+        if (input.chatHistoryContext) {
+          sections.push(`## Recent Chat History\n\n${input.chatHistoryContext}`);
+        }
+        return sections.join('\n');
+      }),
     })),
     MessageChannel: vi.fn().mockImplementation(() => ({
       push: vi.fn().mockReturnValue(true),
@@ -389,6 +410,170 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 
+  // Issue #4448 (direction #1): a chat bound to a directory that does not
+  // exist silently falls back to the workspace cwd. The structured cwdResolver
+  // must turn that into a user-visible warning pushed to the chat — the plain
+  // cwdProvider can't distinguish bound-missing from unbound.
+  describe('bound-missing cwd fallback warning (Issue #4448 direction #1)', () => {
+    // `resolverStates` lets the mutating tests flip the resolution between
+    // startAgentLoop() calls (restart cycles) — the closures read the current
+    // state on each call, like ProjectManager.resolveCwd re-checking the disk.
+    const mkAgent = (
+      reason: 'unbound' | 'bound' | 'bound-missing',
+      resolverStates?: Array<'unbound' | 'bound' | 'bound-missing'>
+    ) => {
+      const states = resolverStates ?? [reason];
+      let call = 0;
+      const stateAt = () => states[Math.min(call, states.length - 1)];
+      return new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdProvider: (chatId: string) =>
+          chatId === 'oc_test_chat' && stateAt() === 'bound' ? '/bound/project/dir' : undefined,
+        cwdResolver: (_chatId: string) => {
+          const current = stateAt();
+          call += 1;
+          return {
+            effectiveCwd: current === 'bound' ? '/bound/project/dir' : undefined,
+            boundWorkingDir: current === 'unbound' ? undefined : '/gone/project/dir',
+            reason: current,
+          };
+        },
+      });
+    };
+
+    it('pushes a user-visible warning when the bound directory is missing', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('bound-missing');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+      const [chatId, text] = callbacks.sendMessage.mock.calls[0] as unknown as [
+        string,
+        string,
+      ];
+      expect(chatId).toBe('oc_test_chat');
+      expect(text).toContain('/gone/project/dir');
+      expect(text).toContain('回退');
+    });
+
+    it('does not warn when the binding resolves cleanly (bound)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('bound');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when the chat is unbound (workspace is expected)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const agent = mkAgent('unbound');
+      (agent as any).startAgentLoop();
+
+      expect(callbacks.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('a rejecting sendMessage does not break the agent loop start', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+      const sendErr = callbacks.sendMessage as unknown as ReturnType<typeof vi.fn>;
+      sendErr.mockRejectedValueOnce(new Error('channel down'));
+
+      const agent = mkAgent('bound-missing');
+      // Must not throw despite the rejected warning send (fire-and-forget).
+      expect(() => (agent as any).startAgentLoop()).not.toThrow();
+    });
+
+    // Nit (restart re-announce): startAgentLoop() re-runs on restart cycles —
+    // the same missing target must not warn the chat twice per agent instance.
+    it('does not re-warn the same missing directory on a restart cycle', () => {
+      const mockServer = () =>
+        vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+          type: 'sdk',
+          name: 'channel-mcp',
+          instance: { close: vi.fn().mockResolvedValue(undefined) },
+        });
+      mockServer();
+      mockServer();
+
+      const agent = mkAgent('bound-missing', ['bound-missing', 'bound-missing']);
+      (agent as any).startAgentLoop(); // first spawn → warns
+      (agent as any).startAgentLoop(); // restart cycle → same target, stays quiet
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns again after the binding recovers and the target goes missing again', () => {
+      const mockServer = () =>
+        vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+          type: 'sdk',
+          name: 'channel-mcp',
+          instance: { close: vi.fn().mockResolvedValue(undefined) },
+        });
+      mockServer();
+      mockServer();
+      mockServer();
+
+      const agent = mkAgent('bound-missing', ['bound-missing', 'bound', 'bound-missing']);
+      (agent as any).startAgentLoop(); // missing → warns
+      (agent as any).startAgentLoop(); // recovered (bound) → no warn, fingerprint cleared
+      (agent as any).startAgentLoop(); // missing again → warns again
+
+      expect(callbacks.sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    // Nit (double resolveCwd): when cwdResolver is present it subsumes
+    // cwdProvider — the provider must not be consulted at all.
+    it('uses cwdResolver alone and does not call cwdProvider (no double resolveCwd)', () => {
+      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
+        type: 'sdk',
+        name: 'channel-mcp',
+        instance: { close: vi.fn().mockResolvedValue(undefined) },
+      });
+
+      const cwdProvider = vi.fn(() => '/bound/project/dir');
+      const agent = new ChatAgent({
+        chatId: 'oc_test_chat',
+        callbacks,
+        apiKey: 'test-key',
+        model: 'test-model',
+        provider: 'anthropic',
+        apiBaseUrl: 'https://api.example.com',
+        cwdProvider,
+        cwdResolver: () => ({
+          effectiveCwd: '/bound/project/dir',
+          boundWorkingDir: '/bound/project/dir',
+          reason: 'bound',
+        }),
+      });
+      (agent as any).startAgentLoop();
+
+      expect(cwdProvider).not.toHaveBeenCalled();
+    });
+  });
+
   describe('shutdown', () => {
     it('should complete shutdown without throwing', async () => {
       await expect(chatAgent.shutdown()).resolves.toBeUndefined();
@@ -438,8 +623,14 @@ describe('ChatAgent (primary-node)', () => {
       resolveTask();
       (chatAgent as any).taskCompletionPromise = undefined;
 
-      // Wait for deferred update to apply
-      await new Promise<void>((r) => setTimeout(r, 50));
+      // Wait for deferred update to apply (Issue #4394: deterministic wait
+      // instead of a fixed 50ms wall-clock setTimeout).
+      await vi.waitFor(
+        () => {
+          expect((chatAgent as any).callbacks).toBe(busyCallbacks);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Verify callbacks were applied (check via processMessage which uses callbacks)
       // The agent should use busyCallbacks now
@@ -519,14 +710,19 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_stall', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 150));
 
-      // Notice delivered
-      expect(
-        localCallbacks.sendMessage.mock.calls.some(
-          (c: any[]) => typeof c[1] === 'string' && c[1].includes('stall')
-        )
-      ).toBe(true);
+      // Notice delivered (Issue #4394: deterministic wait for the stall notice
+      // instead of a fixed 150ms wall-clock setTimeout).
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (c: any[]) => typeof c[1] === 'string' && c[1].includes('stall')
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
       // recordFailure called (not recordSuccess)
       const rm = (agent as any).restartManager;
       expect(rm.recordFailure).toHaveBeenCalledWith('oc_stall', 'stall');
@@ -534,6 +730,61 @@ describe('ChatAgent (primary-node)', () => {
       // Session inactive (restart suppressed)
       expect(agent.hasActiveSession()).toBe(false);
       // Context preserved (deleteThreadRoot NOT called)
+      expect((agent as any).conversationOrchestrator.deleteThreadRoot).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Empty-stream termination (Issue #4442 part 3)', () => {
+    it('should deliver the ❌ notice, recordFailure, resolve the turn, and not auto-restart', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_empty_stream',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      // Provider-level synthesized terminal result: the SDK query ended cleanly
+      // with zero messages and the in-request retries were exhausted
+      // (terminatedReason 'empty-stream' hoisted to top-level parsed field by
+      // convertToLegacyFormat, same shape as the stall path).
+      async function* emptyStreamResultIterator() {
+        yield {
+          parsed: {
+            type: 'result',
+            content: '❌ 上游返回了空响应（200 但零内容事件），本次会话未产生任何输出。请稍后重试。',
+            terminatedReason: 'empty-stream',
+          },
+          raw: {},
+        };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: emptyStreamResultIterator(),
+      });
+
+      void agent.processMessage({ chatId: 'oc_empty_stream', payload: 'hello', messageId: 'msg_1' });
+
+      // The ❌ notice is delivered through the generic content-send path.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (c: any[]) => typeof c[1] === 'string' && c[1].includes('空响应')
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+      // recordFailure called with the empty-stream reason (not recordSuccess).
+      const rm = (agent as any).restartManager;
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_empty_stream', 'empty-stream');
+      expect(rm.shouldRestart).not.toHaveBeenCalled();
+      // Session inactive (restart suppressed)
+      expect(agent.hasActiveSession()).toBe(false);
+      // Context preserved (deleteThreadRoot NOT called).
       expect((agent as any).conversationOrchestrator.deleteThreadRoot).not.toHaveBeenCalled();
     });
   });
@@ -763,14 +1014,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'do something',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 150));
-
       // Gap D: the 'Result received, turn complete' log carries stopReason
-      // threaded from parsed.metadata.stopReason.
+      // threaded from parsed.metadata.stopReason. (Issue #4394: deterministic
+      // wait for the log instead of a fixed 150ms wall-clock setTimeout.)
       const { logger } = agent as any;
-      expect(logger.info).toHaveBeenCalledWith(
-        expect.objectContaining({ stopReason: 'tool_use' }),
-        'Result received, turn complete'
+      await vi.waitFor(
+        () => {
+          expect(logger.info).toHaveBeenCalledWith(
+            expect.objectContaining({ stopReason: 'tool_use' }),
+            'Result received, turn complete'
+          );
+        },
+        { timeout: 1000, interval: 20 }
       );
     });
 
@@ -801,15 +1056,21 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'do something',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 150));
-
       // When no stopReason is present the field is undefined (key present, value
-      // absent) — an explicit marker rather than an omitted field.
+      // absent) — an explicit marker rather than an omitted field. (Issue #4394:
+      // deterministic wait instead of a fixed 150ms wall-clock setTimeout.)
       const { logger } = agent as any;
+      await vi.waitFor(
+        () => {
+          expect(
+            logger.info.mock.calls.find((c: any[]) => c[1] === 'Result received, turn complete')
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
       const turnCompleteCall = logger.info.mock.calls.find(
         (c: any[]) => c[1] === 'Result received, turn complete'
       );
-      expect(turnCompleteCall).toBeDefined();
       expect((turnCompleteCall as any[])[0].stopReason).toBeUndefined();
     });
 
@@ -844,14 +1105,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'do something',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 150));
-
       // Part 2: turn-level observability is surfaced alongside stopReason so a
       // premature end_turn (few round-trips / low API time) is diagnosable.
+      // (Issue #4394: deterministic wait instead of a fixed 150ms setTimeout.)
       const { logger } = agent as any;
-      expect(logger.info).toHaveBeenCalledWith(
-        expect.objectContaining({ numTurns: 3, durationMs: 4200, durationApiMs: 3100 }),
-        'Result received, turn complete'
+      await vi.waitFor(
+        () => {
+          expect(logger.info).toHaveBeenCalledWith(
+            expect.objectContaining({ numTurns: 3, durationMs: 4200, durationApiMs: 3100 }),
+            'Result received, turn complete'
+          );
+        },
+        { timeout: 1000, interval: 20 }
       );
     });
   });
@@ -884,8 +1149,19 @@ describe('ChatAgent (primary-node)', () => {
         messageId: 'msg_1',
       });
 
-      // Wait for processIterator to handle the error
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Wait for processIterator to handle the error (Issue #4394:
+      // deterministic wait for the diagnostic instead of a fixed 100ms
+      // wall-clock setTimeout).
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.find(
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
+            )
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should show startup failure message
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
@@ -932,7 +1208,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'hello',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the diagnostic instead of a fixed
+      // 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.find(
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
+            )
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should show stderr content in the diagnostic message
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
@@ -968,7 +1255,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'hello',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the startup-failure diagnostic
+      // (which proves the error path ran) instead of a fixed 100ms setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.find(
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Agent 启动失败')
+            )
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Session should be inactive (not restarted)
       expect(agent.hasActiveSession()).toBe(false);
@@ -997,10 +1295,14 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Iterator that yields messages before throwing (runtime error)
+      // Iterator that yields messages before throwing (runtime error).
+      // Issue #4394: no real 20ms setTimeout — the gap between the yielded
+      // message and the throw is irrelevant to the assertion (messageCount > 0
+      // is what classifies this as a runtime error, not a startup failure), so
+      // the iterator throws immediately after yielding. Deterministic, zero
+      // wall-clock dependency.
       async function* runtimeErrorIterator() {
         yield { parsed: { type: 'text', content: 'Hello from agent' } };
-        await new Promise<void>((r) => setTimeout(r, 20));
         throw new Error('Runtime crash after messages');
       }
 
@@ -1014,7 +1316,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'hello',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 150));
+      // Issue #4394: deterministic wait for the Session-error diagnostic
+      // instead of a fixed 150ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.find(
+              (call: any[]) => typeof call[1] === 'string' && call[1].includes('Session error')
+            )
+          ).toBeDefined();
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should show Session error (not startup failure)
       const sendMessageCalls = localCallbacks.sendMessage.mock.calls;
@@ -1045,29 +1358,56 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      // Create an iterator that yields messages with a delay
-      async function* slowIterator() {
+      // Iterator that parks after the first yield until close() is called.
+      // Issue #4394: no real 10ms setTimeout gaps — a real-timer gap made
+      // "when does the pending next() settle" a host-load race; parking on a
+      // promise that the mock handle's close() resolves makes it
+      // deterministic: reset() calls queryHandle.close() synchronously →
+      // every remaining next() settles immediately.
+      // NOTE: the loop-head abort check (chat-agent.ts:1059) does NOT fire on
+      // the reset() path — reset() nulls this.abortController after aborting
+      // (chat-agent.ts:1670), so the check reads null and stays false. The
+      // iterator therefore drains all 20 messages and the loop exits via the
+      // explicit-close path (isSessionActive=false set before close). The
+      // assertion only checks session-inactive, which that path satisfies.
+      let releaseIterator!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        releaseIterator = resolve;
+      });
+      async function* parkingIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>((r) => setTimeout(r, 10));
+          await parked; // park until close(); no real timer
         }
       }
 
       // Override createQueryStream on the instance
       (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: slowIterator(),
+        handle: { close: vi.fn(() => releaseIterator()), cancel: vi.fn() },
+        iterator: parkingIterator(),
       });
 
       // Start the session by sending a message
       void agent.processMessage({ chatId: 'oc_abort_test', payload: 'hello', messageId: 'msg_1' });
 
-      // Wait a bit for some messages to process, then reset
-      await new Promise<void>((r) => setTimeout(r, 50));
+      // Wait until the session is active (streaming has started), then reset.
+      // (Issue #4394: deterministic wait instead of a fixed 50ms setTimeout.)
+      await vi.waitFor(
+        () => {
+          expect(agent.hasActiveSession()).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
       agent.reset();
 
-      // Wait for processIterator to complete
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Wait for processIterator to complete after the reset (Issue #4394:
+      // deterministic wait instead of a fixed 100ms setTimeout).
+      await vi.waitFor(
+        () => {
+          expect(agent.hasActiveSession()).toBe(false);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // The agent should have stopped - verify session is not active
       expect(agent.hasActiveSession()).toBe(false);
@@ -1082,22 +1422,37 @@ describe('ChatAgent (primary-node)', () => {
         provider: 'anthropic',
       });
 
-      async function* slowIterator() {
+      // Issue #4394: same parking-iterator shape as the reset() test above.
+      // Unlike reset(), stop() does NOT null abortController — the loop-head
+      // abort check (chat-agent.ts:1059) fires on the first settled next(),
+      // so this exercises the real abort-break path (verified: the abort log
+      // fires and only msg-1 is processed before the break).
+      let releaseIterator!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        releaseIterator = resolve;
+      });
+      async function* parkingIterator() {
         for (let i = 1; i <= 20; i++) {
           yield { parsed: { type: 'text', content: `msg-${i}` } };
-          await new Promise<void>((r) => setTimeout(r, 10));
+          await parked; // park until close(); no real timer
         }
       }
 
       (agent as any).createQueryStream = () => ({
-        handle: { close: vi.fn(), cancel: vi.fn() },
-        iterator: slowIterator(),
+        handle: { close: vi.fn(() => releaseIterator()), cancel: vi.fn() },
+        iterator: parkingIterator(),
       });
 
       void agent.processMessage({ chatId: 'oc_stop_test', payload: 'hello', messageId: 'msg_1' });
 
-      // Wait then stop
-      await new Promise<void>((r) => setTimeout(r, 50));
+      // Wait until the session is active (streaming has started), then stop.
+      // (Issue #4394: deterministic wait instead of a fixed 50ms setTimeout.)
+      await vi.waitFor(
+        () => {
+          expect(agent.hasActiveSession()).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
       const stopped = agent.stop();
 
       expect(stopped).toBe(true);
@@ -1203,7 +1558,19 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'read file',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout — all forwarding
+      // has settled by the time the result marker is logged.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should forward to debug group with prefix
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
@@ -1247,7 +1614,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'read file',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
         (call: any[]) => call[0] === 'oc_debug_group'
@@ -1283,7 +1661,18 @@ describe('ChatAgent (primary-node)', () => {
         payload: 'run command',
         messageId: 'msg_1',
       });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
         (call: any[]) => call[0] === 'oc_debug_group'
@@ -1315,7 +1704,18 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_user_chat', payload: 'hello', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // No messages should go to debug group
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
@@ -1348,7 +1748,18 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_user_chat', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // No messages to debug group
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
@@ -1381,7 +1792,18 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_debug_group', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Should only send to user chat (which is the same as debug group)
       // but NOT double-forward
@@ -1415,7 +1837,18 @@ describe('ChatAgent (primary-node)', () => {
       });
 
       void agent.processMessage({ chatId: 'oc_topic_chat', payload: 'test', messageId: 'msg_1' });
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Issue #4394: deterministic wait for the unconditional turn-complete
+      // log instead of a fixed 100ms wall-clock setTimeout.
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
 
       // Debug group should still get the forwarded message
       const debugCalls = localCallbacks.sendMessage.mock.calls.filter(
@@ -1432,6 +1865,183 @@ describe('ChatAgent (primary-node)', () => {
           call[1].includes('Using tool')
       );
       expect(userCalls.length).toBe(0);
+    });
+
+    it('anchors topic-thread replies to the message threadRootId, not the orchestrator last-seen id (Issue #4587 part 1)', async () => {
+      // Two threads share this chat-scoped agent. The orchestrator mock's
+      // getThreadRoot returns a constant ('thread-root-123' = whichever
+      // message was seen last across ALL threads). A reply turn triggered by
+      // thread A's message must anchor to thread A's root even if thread B's
+      // message arrived after — the turn's own threadRootId wins.
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_topic_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      (agent as any).chatType = 'topic';
+
+      async function* replyIterator() {
+        yield { parsed: { type: 'text', content: 'Reply in thread A' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: replyIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_topic_chat',
+        payload: 'question in thread A',
+        messageId: 'msg_thread_a_2',
+        chatType: 'topic',
+        threadRootId: 'omt_thread_a',
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      // The assistant reply went out with thread A's root, not the
+      // orchestrator's last-seen id (thread-root-123).
+      const replyCall = localCallbacks.sendMessage.mock.calls.find(
+        (call: any[]) => call[1] === 'Reply in thread A'
+      );
+      expect(replyCall).toBeDefined();
+      expect(replyCall![2]).toBe('omt_thread_a');
+
+      // A subsequent message WITHOUT threadRootId (plain group / synthetic)
+      // clears the stale anchor and falls back to the orchestrator value.
+      async function* replyIterator2() {
+        yield { parsed: { type: 'text', content: 'Reply without thread' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: replyIterator2(),
+      });
+      void agent.processMessage({
+        chatId: 'oc_topic_chat',
+        payload: 'follow-up',
+        messageId: 'msg_no_thread',
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (call: any[]) => call[1] === 'Reply without thread'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+      const plainCall = localCallbacks.sendMessage.mock.calls.find(
+        (call: any[]) => call[1] === 'Reply without thread'
+      );
+      expect(plainCall![2]).toBe('thread-root-123');
+    });
+
+    it('freezes the reply anchor per turn — thread B arriving MID-TURN of thread A cannot hijack A\'s tail output (Issue #4587 part 1 review fix)', async () => {
+      // The original part-1 shape resolved the anchor live at each output site
+      // (currentThreadRootId ?? orchestrator). But processMessage(B) overwrites
+      // currentThreadRootId synchronously, and B can arrive while A's iterator
+      // is still draining — so A's post-B outputs anchored to B's thread, the
+      // exact cross-thread hijack the PR set out to fix. The fix snapshots the
+      // anchor at turn start (turnThreadRootAnchor) and every reply site reads
+      // the frozen value.
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_topic_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      (agent as any).chatType = 'topic';
+
+      // Thread A's iterator: first chunk goes out, then a real async gap
+      // (timeout) during which thread B's processMessage lands, then A's
+      // second chunk + result.
+      async function* threadAIterator() {
+        yield { parsed: { type: 'text', content: 'A chunk 1' } };
+        await new Promise<void>((r) => setTimeout(r, 50));
+        yield { parsed: { type: 'text', content: 'A chunk 2 after B arrived' } };
+        yield { parsed: { type: 'result', content: 'Done A' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: threadAIterator(),
+      });
+
+      // Start thread A's turn — do NOT await; it must be in flight.
+      void agent.processMessage({
+        chatId: 'oc_topic_chat',
+        payload: 'question in thread A',
+        messageId: 'msg_a_1',
+        chatType: 'topic',
+        threadRootId: 'omt_thread_a',
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (call: any[]) => call[1] === 'A chunk 1'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 10 }
+      );
+
+      // Thread B's message arrives MID-TURN of A (same chat-scoped agent).
+      // This overwrites currentThreadRootId synchronously.
+      async function* threadBIterator() {
+        yield { parsed: { type: 'text', content: 'B chunk 1' } };
+        yield { parsed: { type: 'result', content: 'Done B' } };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: threadBIterator(),
+      });
+      void agent.processMessage({
+        chatId: 'oc_topic_chat',
+        payload: 'question in thread B',
+        messageId: 'msg_b_1',
+        chatType: 'topic',
+        threadRootId: 'omt_thread_b',
+      });
+
+      // Wait for A's post-B chunk and let everything settle.
+      await vi.waitFor(
+        () => {
+          expect(
+            localCallbacks.sendMessage.mock.calls.some(
+              (call: any[]) => call[1] === 'A chunk 2 after B arrived'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 10 }
+      );
+      await new Promise((r) => setTimeout(r, 100));
+
+      const a2 = localCallbacks.sendMessage.mock.calls.find(
+        (call: any[]) => call[1] === 'A chunk 2 after B arrived'
+      );
+      expect(a2).toBeDefined();
+      // A's post-B output must still anchor to A's thread root — not B's.
+      expect(a2![2]).toBe('omt_thread_a');
     });
   });
 
@@ -1519,8 +2129,14 @@ describe('ChatAgent (primary-node)', () => {
       });
       expect(chatAgent.isBusy).toBe(true);
 
-      // Wait for the result to be processed
-      await new Promise<void>((r) => setTimeout(r, 100));
+      // Wait for the result to be processed (Issue #4394: deterministic wait
+      // instead of a fixed 100ms wall-clock setTimeout).
+      await vi.waitFor(
+        () => {
+          expect(chatAgent.isBusy).toBe(false);
+        },
+        { timeout: 1000, interval: 20 }
+      );
       expect(chatAgent.isBusy).toBe(false);
     });
   });
@@ -1566,7 +2182,12 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn2',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): a real-user ID would now be granted
+        // the one-shot reset+replay, whose deferred session teardown interferes
+        // with the two-turn persistent-iterator premise of this test. The
+        // synthetic ID keeps this test about what it asserts — the #4194
+        // per-turn counter reset — while the retry path has its own tests below.
+        messageId: 'sched-empty-turn-2',
       });
 
       // The #4194 warn must fire on turn 2. Without the per-turn counter reset
@@ -1615,7 +2236,10 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn_notify',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): synthetic empty turns are never
+        // retried, so this test still exercises the ⚠️ notice fallback — the
+        // exact behavior a scheduled task sees (no reset, no replay, notify).
+        messageId: 'sched-empty-notify',
       });
 
       // The diagnostic notice must be sent via sendMessage so the user is told
@@ -1688,7 +2312,9 @@ describe('ChatAgent (primary-node)', () => {
       void agent.processMessage({
         chatId: 'oc_empty_turn_system',
         payload: 'hi',
-        messageId: 'msg_1',
+        // sched-* synthetic ID (Issue #4391): keep this test on the
+        // non-retryable branch so the ⚠️ notice (the assertion) still fires.
+        messageId: 'sched-empty-system',
       });
 
       // The empty-turn diagnostic notice must fire despite the empty-content
@@ -1707,6 +2333,658 @@ describe('ChatAgent (primary-node)', () => {
         // as the sibling #4258 diagnostic-notice test.
         expect(diagnosticCall![2]).toBe('thread-root-123');
       }, { timeout: 1000, interval: 20 });
+    });
+  });
+
+  describe('Issue #4391: empty-turn session-reset + bounded replay', () => {
+    // Shared harness for the #4391 matrix (design doc §5). createQueryStream
+    // is stubbed per-test; the mock channel (in the @disclaude/core mock) has
+    // push() → true, so processMessage always accepts.
+    function makeRetryAgent(chatId: string, callbacks = createMockCallbacks()) {
+      const agent = new ChatAgent({
+        chatId,
+        callbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      return agent;
+    }
+
+    it('real-user empty turn → schedules one reset + replay (fresh session), suppresses the ⚠️ notice', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_ok', localCallbacks);
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        // Query 1 (the broken session): result-only — empty turn.
+        // Query 2 (the replay's fresh session): a real reply, then the marker
+        // — the retried turn recovers, so no ⚠️ notice may fire.
+        const recovered = queryCount >= 2;
+        return {
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            if (recovered) {
+              yield { parsed: { type: 'text', content: 'Recovered reply!' }, raw: {} };
+            }
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        };
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_ok',
+        payload: 'please answer',
+        messageId: 'om_real_user_1',
+      });
+
+      // The scheduling warn fires when the empty turn is granted its retry…
+      await vi.waitFor(() => {
+        const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+        expect(
+          warnSpy.mock.calls.some((c: unknown[]) =>
+            typeof c[1] === 'string' && (c[1] as string).includes('scheduling one-shot')
+          )
+        ).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+
+      // …and after the deferred setTimeout(0) callback runs, the session was
+      // torn down (queryHandle closed) and processMessage replayed the original
+      // params — visible as a SECOND createQueryStream call (fresh session for
+      // the replay; startAgentLoop only fires when !isSessionActive).
+      await vi.waitFor(() => {
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000, interval: 20 });
+
+      // No ⚠️ empty-turn notice on the retrying attempt (suppressed while
+      // recovery is in flight — design §4.5).
+      const noticed = localCallbacks.sendMessage.mock.calls.find(
+        (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+      );
+      expect(noticed).toBeUndefined();
+
+      // The empty turn was still accounted as a failure (circuit keeps
+      // counting chronic empty turns; retry is NOT success).
+      const rm = (agent as any).restartManager as { recordFailure: ReturnType<typeof vi.fn> };
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_retry_ok', 'empty-turn');
+    });
+
+    it('sched-* synthetic empty turn → no retry (no second query, notice still sent)', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_sched', localCallbacks);
+
+      const createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield {
+            parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+            raw: {},
+          };
+        })(),
+      }));
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_sched',
+        payload: 'scheduled prompt',
+        messageId: 'sched-1800000000-issue-solver',
+      });
+
+      // The ⚠️ notice fires (fallback path — synthetic turns never retry)…
+      await vi.waitFor(() => {
+        const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
+          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+        );
+        expect(diagnosticCall).toBeDefined();
+      }, { timeout: 1000, interval: 20 });
+
+      // …and no replay is scheduled: the session was NOT torn down, so the
+      // persistent iterator keeps running (no second query).
+      await new Promise((r) => setTimeout(r, 50));
+      expect(createQueryStream).toHaveBeenCalledTimes(1);
+    });
+
+    it('retry bounded to 1: a second consecutive empty turn gets no reset+replay and notifies', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_bounded', localCallbacks);
+
+      const createQueryStream = vi.fn(() => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: (async function* () {
+          yield {
+            parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+            raw: {},
+          };
+        })(),
+      }));
+      (agent as any).createQueryStream = createQueryStream;
+
+      // Turn 1: real-user empty turn — granted the one retry (session 1 → 2).
+      void agent.processMessage({
+        chatId: 'oc_retry_bounded',
+        payload: 'first attempt',
+        messageId: 'om_real_user_a',
+      });
+      await vi.waitFor(() => {
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000, interval: 20 });
+
+      // Turn 2 (the replay): ALSO empty. canRetry is now false (bounded to 1),
+      // so no third session — the ⚠️ notice fires instead.
+      await vi.waitFor(() => {
+        const diagnosticCall = localCallbacks.sendMessage.mock.calls.find(
+          (call: unknown[]) => typeof call[1] === 'string' && (call[1] as string).includes('未产生任何可见输出')
+        );
+        expect(diagnosticCall).toBeDefined();
+      }, { timeout: 1000, interval: 20 });
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(createQueryStream).toHaveBeenCalledTimes(2);
+      const rm = (agent as any).restartManager as { recordFailure: ReturnType<typeof vi.fn> };
+      expect(rm.recordFailure).toHaveBeenCalledWith('oc_retry_bounded', 'empty-turn');
+      expect((rm as unknown as { recordSuccess: ReturnType<typeof vi.fn> }).recordSuccess).not.toHaveBeenCalled();
+    });
+
+    // Issue #4391 (part 2 review regression 1): real SDK persistent streams
+    // PARK after a turn's result (the iterator stays alive awaiting the next
+    // SDK message); the earlier matrix used naturally-ending generators, which
+    // hid the park-drain race on the superseded iterator.
+    it('parked old iterator: replay must not trip the unexpected-end / circuit-breaker path', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = makeRetryAgent('oc_retry_parked', localCallbacks);
+
+      // A production-shaped iterator: yields its turn, then PARKS on a
+      // promise that only resolves when handle.close() is called — exactly
+      // how a persistent SDK stream behaves between turns and at teardown.
+      function parkedIterator(events: { type: string; content: string }[]) {
+        let release: () => void = () => {};
+        const parked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const handle = {
+          close: vi.fn(() => release()),
+          cancel: vi.fn(() => release()),
+        };
+        const iterator = (async function* () {
+          for (const event of events) {
+            yield { parsed: event, raw: {} };
+          }
+          await parked; // park like a real persistent stream
+        })();
+        return { handle, iterator };
+      }
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        if (queryCount === 1) {
+          // Session 1 (the broken one): empty turn, then parks.
+          return parkedIterator([
+            { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+          ]);
+        }
+        // Session 2 (the replay): a real reply + result, then also parks —
+        // the persistent session keeps running after a successful replay.
+        return parkedIterator([
+          { type: 'text', content: 'Recovered reply!' },
+          { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+        ]);
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      void agent.processMessage({
+        chatId: 'oc_retry_parked',
+        payload: 'please answer',
+        messageId: 'om_real_user_parked',
+      });
+
+      // The replay's fresh session ran and recovered…
+      const recoveredCall = await vi.waitFor(
+        () => {
+          const call = localCallbacks.sendMessage.mock.calls.find(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('Recovered reply!')
+          );
+          expect(call).toBeDefined();
+          return call;
+        },
+        { timeout: 1000, interval: 20 }
+      );
+      expect(recoveredCall).toBeDefined();
+
+      // …and give the drained OLD iterator (released by endEmptyTurnSession's
+      // close) a chance to run its post-loop path.
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Exactly two sessions: the broken one and the replay. A third would
+      // mean the old loop's exit ran the auto-restart path.
+      expect(createQueryStream).toHaveBeenCalledTimes(2);
+
+      // The superseded iterator's exit must be intercepted: no unexpected-end
+      // warn, no ⚠️ reconnect notice, no 🚫 circuit-breaker notice — the replay
+      // succeeded, so the user must not see any of them.
+      const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+      const unexpectedWarn = warnSpy.mock.calls.find(
+        (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('ended unexpectedly')
+      );
+      expect(unexpectedWarn).toBeUndefined();
+
+      const badNotice = localCallbacks.sendMessage.mock.calls.find(
+        (call: unknown[]) =>
+          typeof call[1] === 'string' &&
+          ((call[1] as string).includes('会话多次异常中断') ||
+            (call[1] as string).includes('会话已暂停') ||
+            (call[1] as string).includes('意外断开'))
+      );
+      expect(badNotice).toBeUndefined();
+
+      // The interception is visible as an info log, not silence.
+      const infoSpy = (agent as any).logger.info as ReturnType<typeof vi.fn>;
+      const interceptInfo = infoSpy.mock.calls.find(
+        (c: unknown[]) =>
+          typeof c[1] === 'string' && (c[1] as string).includes('superseded session iterator ended')
+      );
+      expect(interceptInfo).toBeDefined();
+
+      // The replay recovered → healthy-turn accounting re-arms the retry.
+      const rm = (agent as any).restartManager as { recordSuccess: ReturnType<typeof vi.fn> };
+      expect(rm.recordSuccess).toHaveBeenCalledWith('oc_retry_parked');
+    });
+
+    // Issue #4391 (part 2 review regression 2): a disposed agent must never
+    // fire the replay. Uses the production-faithful BaseAgent mock (no forced
+    // initialized=true), so this only passes with a real disposed check.
+    it('agent disposed before the timer fires → replay skipped (no second query)', async () => {
+      vi.useFakeTimers();
+      try {
+        const localCallbacks = createMockCallbacks();
+        const agent = makeRetryAgent('oc_retry_disposed', localCallbacks);
+
+        const createQueryStream = vi.fn(() => ({
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        }));
+        (agent as any).createQueryStream = createQueryStream;
+
+        void agent.processMessage({
+          chatId: 'oc_retry_disposed',
+          payload: 'please answer',
+          messageId: 'om_real_user_dispose',
+        });
+
+        // Drain microtasks until the empty-turn retry is scheduled. With fake
+        // timers the setTimeout(0) callback stays pending, giving a
+        // deterministic window to dispose before it fires.
+        const warnSpy = (agent as any).logger.warn as ReturnType<typeof vi.fn>;
+        for (let i = 0; i < 10_000; i++) {
+          const scheduled = warnSpy.mock.calls.some(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('scheduling one-shot')
+          );
+          if (scheduled) {break;}
+          await Promise.resolve();
+        }
+
+        // Dispose inside the window: sync flag set, teardown fire-and-forget.
+        // The BaseAgent mock sets an instance `this.dispose = vi.fn()` that
+        // shadows ChatAgent.prototype.dispose, so invoke the real method.
+        (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(agent);
+
+        // Fire the pending replay timer.
+        await vi.advanceTimersByTimeAsync(0);
+        await Promise.resolve();
+
+        // The guard skipped the replay — no fresh session was created…
+        expect(createQueryStream).toHaveBeenCalledTimes(1);
+        // …and said so in the skip log.
+        const infoSpy = (agent as any).logger.info as ReturnType<typeof vi.fn>;
+        const skipInfo = infoSpy.mock.calls.find(
+          (c: unknown[]) =>
+            typeof c[1] === 'string' && (c[1] as string).includes('Empty-turn replay skipped')
+        );
+        expect(skipInfo).toBeDefined();
+        expect((skipInfo![0] as Record<string, unknown>).disposed).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // Issue #4391 (§6 history re-injection follow-up): the replayed message
+    // must carry the re-loaded chat history, so the fresh session does not
+    // start blind. Asserts on what each session's channel actually received.
+    it('replay re-injects chat history into the fresh session (first-message consume-once)', async () => {
+      const localCallbacks = createMockCallbacks();
+      // History source. NOTE: getChatHistory backs BOTH history loads — the
+      // persisted-history load (session restore, fire-and-forget at
+      // startAgentLoop) and the first-message load — plus the replay's
+      // re-injection fetch. Rather than pin a brittle call sequence, make the
+      // history AVAILABLE on every fetch and assert the re-injection made it
+      // into the replay's payload (the consume-once stash did its job).
+      const RECENT_HISTORY = '👤 [earlier] what is the ETF flow?\n\n---\n\n';
+      const getChatHistory = vi.fn().mockResolvedValue(RECENT_HISTORY);
+      localCallbacks.getChatHistory = getChatHistory;
+      const agent = makeRetryAgent('oc_retry_hist', localCallbacks);
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        const recovered = queryCount >= 2;
+        return {
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            if (recovered) {
+              yield { parsed: { type: 'text', content: 'Recovered with context!' }, raw: {} };
+            }
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        };
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      // Capture what each session's channel actually received. The mocked
+      // MessageChannel is constructed per startAgentLoop; hook push() so the
+      // replay query's payload can be inspected for the re-injected history.
+      const channelInstances: Array<{ push: ReturnType<typeof vi.fn> }> = [];
+      const coreModule = await import('@disclaude/core');
+      const MessageChannelCtor = coreModule.MessageChannel as unknown as ReturnType<typeof vi.fn>;
+      // Issue #4391 (part 3 review nit): mockImplementation replaces the
+      // factory-level implementation for the REST OF THE FILE
+      // (vi.clearAllMocks clears calls, not implementations) — save the
+      // original and restore it in a finally below.
+      const originalImpl = MessageChannelCtor.getMockImplementation();
+      MessageChannelCtor.mockImplementation(function (this: {
+        push: ReturnType<typeof vi.fn>;
+        close: ReturnType<typeof vi.fn>;
+        generator: ReturnType<typeof vi.fn>;
+      }) {
+        this.push = vi.fn((_payload: unknown) => {
+          return true;
+        });
+        this.close = vi.fn();
+        this.generator = vi.fn(() =>
+          (async function* () {
+            /* empty */
+          })()
+        );
+        channelInstances.push(this as never);
+        return this;
+      });
+
+      try {
+      void agent.processMessage({
+        chatId: 'oc_retry_hist',
+        payload: 'please answer',
+        messageId: 'om_real_user_hist',
+      });
+
+      // The replay ran and recovered…
+      await vi.waitFor(() => {
+        expect(createQueryStream).toHaveBeenCalledTimes(2);
+      }, { timeout: 1000, interval: 20 });
+      await vi.waitFor(() => {
+        const call = localCallbacks.sendMessage.mock.calls.find(
+          (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('Recovered with context!')
+        );
+        expect(call).toBeDefined();
+      }, { timeout: 1000, interval: 20 });
+
+      // …and the re-injection fetch actually happened, with the re-stash logged.
+      expect(getChatHistory.mock.calls.length).toBeGreaterThanOrEqual(2);
+      const infoSpy = (agent as any).logger.info as ReturnType<typeof vi.fn>;
+      const reinjectInfo = infoSpy.mock.calls.find(
+        (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('Re-injected chat history')
+      );
+      expect(reinjectInfo).toBeDefined();
+
+      // The replay's pushed payload (second session's message) embeds the
+      // re-injected history — the fresh session did NOT start blind. (The
+      // mock supplies history on every fetch, so the broken session's payload
+      // may carry its own first-message load too; the assertion that matters
+      // is the REPLAY's payload includes it via the re-injection stash.)
+      expect(channelInstances.length).toBe(2);
+      const replayPushed = channelInstances[1].push.mock.calls.map((c: unknown[]) => JSON.stringify(c[0]));
+      expect(replayPushed.some((p) => p.includes('what is the ETF flow?'))).toBe(true);
+      } finally {
+        // Restore the factory-level implementation (undefined when nothing
+        // was set — restore that too; mockImplementation(undefined) is
+        // rejected by typings, so cast through the generic mock shape).
+        if (originalImpl) {
+          MessageChannelCtor.mockImplementation(originalImpl);
+        } else {
+          (MessageChannelCtor as unknown as { mockImplementation: (i?: unknown) => unknown })
+            .mockImplementation(undefined);
+        }
+      }
+    });
+
+    // Issue #4391 (part 3 review nit): the replayed message rendered TWO
+    // history sections — the session-start persistedHistoryContext snapshot
+    // ("Previous Session Context") AND the fresh re-injection stash ("Recent
+    // Chat History"). Both come from the same getChatHistory source, and the
+    // re-injection fetch happens strictly LATER, so it is a superset of the
+    // session-start snapshot: keeping both only doubles the token cost. The
+    // replay payload must carry the fresh section alone (the log-paths hint
+    // from the persisted section stays — only the duplicated CONTENT drops).
+    it('replay payload renders the fresh history once, not duplicated as both persisted and fresh sections', async () => {
+      const localCallbacks = createMockCallbacks();
+      // First fetch = the session-start snapshot (persisted history); every
+      // later fetch (first-message load, re-injection) returns history that
+      // strictly contains it plus turns logged since.
+      const SESSION_START = '👤 [day 1] earlier turns';
+      const FRESH = '👤 [day 1] earlier turns\n👤 [day 2] turns logged after session start';
+      let fetchCount = 0;
+      const getChatHistory = vi.fn(() => {
+        fetchCount++;
+        return Promise.resolve(fetchCount === 1 ? SESSION_START : FRESH);
+      });
+      localCallbacks.getChatHistory = getChatHistory;
+      const agent = makeRetryAgent('oc_retry_dedup', localCallbacks);
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        const recovered = queryCount >= 2;
+        return {
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            if (recovered) {
+              yield { parsed: { type: 'text', content: 'Recovered once!' }, raw: {} };
+            }
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        };
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      const channelInstances: Array<{ push: ReturnType<typeof vi.fn> }> = [];
+      const coreModule = await import('@disclaude/core');
+      const MessageChannelCtor = coreModule.MessageChannel as unknown as ReturnType<typeof vi.fn>;
+      const originalImpl = MessageChannelCtor.getMockImplementation();
+      MessageChannelCtor.mockImplementation(function (this: {
+        push: ReturnType<typeof vi.fn>;
+        close: ReturnType<typeof vi.fn>;
+        generator: ReturnType<typeof vi.fn>;
+      }) {
+        this.push = vi.fn((_payload: unknown) => true);
+        this.close = vi.fn();
+        this.generator = vi.fn(() =>
+          (async function* () {
+            /* empty */
+          })()
+        );
+        channelInstances.push(this as never);
+        return this;
+      });
+
+      try {
+        void agent.processMessage({
+          chatId: 'oc_retry_dedup',
+          payload: 'please answer',
+          messageId: 'om_real_user_dedup',
+        });
+
+        await vi.waitFor(() => {
+          expect(createQueryStream).toHaveBeenCalledTimes(2);
+        }, { timeout: 1000, interval: 20 });
+        await vi.waitFor(() => {
+          const call = localCallbacks.sendMessage.mock.calls.find(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('Recovered once!')
+          );
+          expect(call).toBeDefined();
+        }, { timeout: 1000, interval: 20 });
+
+        // The replay payload embeds the fresh history…
+        expect(channelInstances.length).toBe(2);
+        const replayPushed = channelInstances[1].push.mock.calls
+          .map((c: unknown[]) => JSON.stringify(c[0]))
+          .join('\n');
+        expect(replayPushed.includes('turns logged after session start')).toBe(true);
+        // …exactly once: the day-1 turns appear in the fresh section only, not
+        // a second time through the stale persisted section.
+        expect(replayPushed.split('👤 [day 1]').length - 1).toBe(1);
+      } finally {
+        if (originalImpl) {
+          MessageChannelCtor.mockImplementation(originalImpl);
+        } else {
+          (MessageChannelCtor as unknown as { mockImplementation: (i?: unknown) => unknown })
+            .mockImplementation(undefined);
+        }
+      }
+    });
+
+    // Issue #4391 (§6 review follow-up): trigger-mode @mentions carry a
+    // receive-time chatHistoryContext param (message-handler snapshot), and
+    // processMessage prefers the param over the consume-once stash. If the
+    // replay re-passes those params unchanged, the re-injection stash is
+    // never consumed by the replayed message — and then leaks onto the NEXT
+    // param-less message as a stray "Recent Chat History" section. When
+    // re-injection succeeded, the replay must drop the stale param so the
+    // fresh fetch wins; a failed fetch keeps the stale param (v1 behavior).
+    it('replay with trigger-mode chatHistoryContext param → re-injection stash wins, no leak to later messages', async () => {
+      const localCallbacks = createMockCallbacks();
+      // Stale receive-time snapshot rides on the original params (trigger
+      // mode); the re-injection fetch returns fresher history.
+      const STALE_SNAPSHOT = '👤 [stale] old receive-time snapshot\n\n---\n\n';
+      const FRESH_HISTORY = '👤 [fresh] turn logged after the snapshot\n\n---\n\n';
+      const getChatHistory = vi.fn().mockResolvedValue(FRESH_HISTORY);
+      localCallbacks.getChatHistory = getChatHistory;
+      const agent = makeRetryAgent('oc_retry_param', localCallbacks);
+
+      let queryCount = 0;
+      const createQueryStream = vi.fn(() => {
+        queryCount++;
+        const recovered = queryCount >= 2;
+        return {
+          handle: { close: vi.fn(), cancel: vi.fn() },
+          iterator: (async function* () {
+            if (recovered) {
+              yield { parsed: { type: 'text', content: 'Recovered fresh!' }, raw: {} };
+            }
+            yield {
+              parsed: { type: 'result', content: '✅ Complete | Cost: $0.00 | Tokens: 0.5k' },
+              raw: {},
+            };
+          })(),
+        };
+      });
+      (agent as any).createQueryStream = createQueryStream;
+
+      // Capture each session's pushed payloads (same MessageChannel hook as
+      // the re-injection test above).
+      const channelInstances: Array<{ push: ReturnType<typeof vi.fn> }> = [];
+      const coreModule = await import('@disclaude/core');
+      const MessageChannelCtor = coreModule.MessageChannel as unknown as ReturnType<typeof vi.fn>;
+      const originalImpl = MessageChannelCtor.getMockImplementation();
+      MessageChannelCtor.mockImplementation(function (this: {
+        push: ReturnType<typeof vi.fn>;
+        close: ReturnType<typeof vi.fn>;
+        generator: ReturnType<typeof vi.fn>;
+      }) {
+        this.push = vi.fn((_payload: unknown) => true);
+        this.close = vi.fn();
+        this.generator = vi.fn(() =>
+          (async function* () {
+            /* empty */
+          })()
+        );
+        channelInstances.push(this as never);
+        return this;
+      });
+
+      try {
+        // The original turn is a trigger-mode mention: params carry the
+        // receive-time snapshot.
+        void agent.processMessage({
+          chatId: 'oc_retry_param',
+          payload: 'please answer',
+          messageId: 'om_real_user_param',
+          chatHistoryContext: STALE_SNAPSHOT,
+        });
+
+        await vi.waitFor(() => {
+          expect(createQueryStream).toHaveBeenCalledTimes(2);
+        }, { timeout: 1000, interval: 20 });
+        await vi.waitFor(() => {
+          const call = localCallbacks.sendMessage.mock.calls.find(
+            (c: unknown[]) => typeof c[1] === 'string' && (c[1] as string).includes('Recovered fresh!')
+          );
+          expect(call).toBeDefined();
+        }, { timeout: 1000, interval: 20 });
+
+        // The replay's payload carries the FRESH re-injected history, not the
+        // stale receive-time snapshot the original params carried.
+        expect(channelInstances.length).toBe(2);
+        const replayPushed = channelInstances[1].push.mock.calls.map((c: unknown[]) =>
+          JSON.stringify(c[0])
+        );
+        expect(replayPushed.some((p) => p.includes('turn logged after the snapshot'))).toBe(true);
+        expect(replayPushed.some((p) => p.includes('old receive-time snapshot'))).toBe(false);
+
+        // The stash was consumed by the replay — a later param-less message
+        // must NOT receive a stray history section (consume-once respected).
+        const consumed = (agent as any).historyManager.firstMessageHistoryContext;
+        expect(consumed).toBeUndefined();
+
+        void agent.processMessage({
+          chatId: 'oc_retry_param',
+          payload: 'follow-up without history param',
+          messageId: 'om_real_user_param_2',
+        });
+        await vi.waitFor(() => {
+          expect(createQueryStream).toHaveBeenCalledTimes(3);
+        }, { timeout: 1000, interval: 20 });
+        const thirdPushed = channelInstances[2].push.mock.calls.map((c: unknown[]) =>
+          JSON.stringify(c[0])
+        );
+        expect(
+          thirdPushed.some((p) => p.includes('turn logged after the snapshot'))
+        ).toBe(false);
+      } finally {
+        // Restore the factory-level implementation (it may be undefined when
+        // nothing was set — restore that too, mockImplementation(undefined)
+        // is rejected by typings, so cast through the generic mock shape).
+        if (originalImpl) {
+          MessageChannelCtor.mockImplementation(originalImpl);
+        } else {
+          (MessageChannelCtor as unknown as { mockImplementation: (i?: unknown) => unknown })
+            .mockImplementation(undefined);
+        }
+      }
     });
   });
 
@@ -1904,7 +3182,7 @@ describe('ChatAgent (primary-node)', () => {
       });
       (agent as any).isAgentTeamsEnabled = () => false;
 
-      void agent.processMessage({ chatId: 'oc_stream', payload: 'hi', messageId: 'msg_1' });
+      void agent.processMessage({ chatId: 'oc_stream', payload: 'hi', messageId: 'msg_1', chatType: 'p2p' });
 
       // The streaming callbacks fire once the turn flows.
       await vi.waitFor(() => {
@@ -1965,6 +3243,108 @@ describe('ChatAgent (primary-node)', () => {
       expect(localCallbacks.startStreaming).not.toHaveBeenCalled();
       expect(localCallbacks.streamText).not.toHaveBeenCalled();
       expect(localCallbacks.finalizeStreaming).not.toHaveBeenCalled();
+    });
+  });
+
+  // Issue #4510 (part 2, 2026-08-16 revision): the p2p-first gray rollout is
+  // built-in, not a config scope — streaming cards are only constructed for
+  // single chats; group/topic turns always keep the per-chunk sendMessage
+  // path bit-identically, regardless of how the channel advertises
+  // supportsStreaming.
+  describe('Issue #4510: p2p-only streaming (built-in chat-type gate)', () => {
+    const capsStreaming = (supportsStreaming: boolean) => ({
+      supportsCard: true,
+      supportsThread: true,
+      supportsFile: true,
+      supportsMarkdown: true,
+      supportsMention: true,
+      supportsUpdate: true,
+      supportsStreaming,
+    });
+
+    async function runTurn(chatType: string | undefined, supportsStreaming: boolean) {
+      const localCallbacks = {
+        ...createMockCallbacks(),
+        getCapabilities: vi.fn(() => capsStreaming(supportsStreaming)),
+        startStreaming: vi.fn(() => Promise.resolve('card-99')),
+        streamText: vi.fn(() => Promise.resolve()),
+        finalizeStreaming: vi.fn(() => Promise.resolve()),
+      };
+      const agent = new ChatAgent({
+        chatId: 'oc_scope',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+
+      async function* scopedIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'Chunk' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 3' }, raw: {} };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: scopedIterator(),
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+
+      void agent.processMessage({ chatId: 'oc_scope', payload: 'hi', messageId: 'msg_1', chatType });
+      await vi.waitFor(() => {
+        expect(localCallbacks.sendMessage.mock.calls.some(
+          (c: any[]) => typeof c[1] === 'string' && c[1].startsWith('✅ Complete')
+        )).toBe(true);
+      }, { timeout: 1000, interval: 20 });
+      return localCallbacks;
+    }
+
+    it('streams for a p2p chat when the flag is on', async () => {
+      const cb = await runTurn('p2p', true);
+      expect(cb.startStreaming).toHaveBeenCalledTimes(1);
+      expect(cb.finalizeStreaming).toHaveBeenCalledWith('card-99');
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(false);
+    });
+
+    it('falls back to sendMessage for a group chat even when the flag is on (built-in p2p narrowing)', async () => {
+      const cb = await runTurn('group', true);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.streamText).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    it('falls back to sendMessage for a topic chat even when the flag is on (thread groups stay non-streaming)', async () => {
+      const cb = await runTurn('topic', true);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    it('does not stream for a p2p chat when the flag is off (default-off unchanged)', async () => {
+      const cb = await runTurn('p2p', false);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    // Issue #4510 acceptance #5: the full 3 chatType × 2 flag matrix. The two
+    // flag-off cells below are logically short-circuited before the chatType
+    // check (supportsStreaming=false → no driver), but pin them so the matrix
+    // is explicitly covered against future gate reordering.
+    it.each([
+      ['group', 'group chat'],
+      ['topic', 'topic chat'],
+    ])('does not stream for a %s when the flag is off', async (chatType) => {
+      const cb = await runTurn(chatType, false);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.streamText).not.toHaveBeenCalled();
+      expect(cb.finalizeStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
+    });
+
+    it('degrades to sendMessage when the flag is on and chatType is unknown (fail-safe)', async () => {
+      const cb = await runTurn(undefined, true);
+      expect(cb.startStreaming).not.toHaveBeenCalled();
+      expect(cb.sendMessage.mock.calls.some((c: any[]) => c[1] === 'Chunk')).toBe(true);
     });
   });
 });

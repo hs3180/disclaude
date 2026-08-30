@@ -361,7 +361,11 @@ describe('WeChatApiClient', () => {
       mockFetch.mockImplementation((_url, _opts) => {
         // The AbortController signal should be passed through
         return new Promise((_, reject) => {
-          setTimeout(() => reject(abortError), 10);
+          // Issue #4394 (part 17): reject on a deterministic next-tick instead
+          // of a real 10ms setTimeout. The test only needs fetch to reject
+          // asynchronously (matching real fetch behavior) — not after a real
+          // wall-clock delay that slows/flakes the suite.
+          setImmediate(() => reject(abortError));
         });
       });
 

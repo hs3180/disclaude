@@ -20,7 +20,6 @@ import type {
   DisclaudeConfig,
   ConfigValidationError,
   TransportConfig,
-  McpServerConfig,
   DebugConfig,
   SessionTimeoutConfig,
 } from './types.js';
@@ -175,7 +174,22 @@ export class Config {
   static readonly FEISHU_CLI_CHAT_ID = fileConfigOnly.feishu?.cliChatId || '';
   // Issue #4400 / #4208: gray-rollout flag for native streaming replies.
   // Plumbed through to FeishuChannelConfig.streamingCard in resolveChannelConfigs.
-  static readonly FEISHU_STREAMING_CARD = fileConfigOnly.feishu?.streamingCard ?? false;
+  // Issue #4510 (part 2): the 'p2p' scope enum was removed — streaming is
+  // narrowed to single chats by the ChatAgent gate. A leftover non-boolean
+  // value (e.g. `streamingCard: 'p2p'` from the part-1 rollout) would
+  // otherwise silently disable streaming, so warn and treat it as off.
+  static readonly FEISHU_STREAMING_CARD = (() => {
+    const raw = fileConfigOnly.feishu?.streamingCard;
+    if (raw !== undefined && typeof raw !== 'boolean') {
+      logger.warn(
+        { streamingCard: raw },
+        'feishu.streamingCard must be a boolean — the \'p2p\' scope was removed in #4510 part 2 '
+          + '(p2p-first narrowing is built-in). Treating this value as false.'
+      );
+      return false;
+    }
+    return raw ?? false;
+  })();
 
   // GLM configuration (from config file)
           // No fallback defaults - model must be explicitly configured
@@ -511,15 +525,6 @@ export class Config {
    */
   static getToolConfig(): DisclaudeConfig['tools'] {
     return fileConfigOnly.tools;
-  }
-
-  /**
-   * Get MCP servers configuration from config file.
-   *
-   * @returns MCP servers configuration or undefined
-   */
-  static getMcpServersConfig(): Record<string, McpServerConfig> | undefined {
-    return fileConfigOnly.tools?.mcpServers;
   }
 
   /**

@@ -9,8 +9,8 @@
  * @module mcp-server/tools/push-to-agent
  */
 
-import { createLogger, getIpcClient, pushToAgent } from '@disclaude/core';
-import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import { createLogger, pushToAgent } from '@disclaude/core';
+import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient } from './ipc-utils.js';
 import type { SendMessageResult } from './types.js';
 
 const logger = createLogger('PushToAgent');
@@ -52,7 +52,8 @@ export async function push_to_agent(params: {
     }
 
     logger.debug({ chatId }, 'Using IPC for push_to_agent');
-    const ipcClient = getIpcClient();
+    // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
+    const ipcClient = getRestIpcClient();
     const result = await pushToAgent(ipcClient, chatId, message);
     if (!result.success) {
       const errorMsg = getIpcErrorMessage(result.errorType, result.error);

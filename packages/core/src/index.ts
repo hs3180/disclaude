@@ -23,7 +23,7 @@ export * from './utils/index.js';
 // IPC Protocol (shared between Primary Node and MCP Server)
 export * from './ipc/index.js';
 
-// Config (exports McpServerConfig for config)
+// Config
 export * from './config/index.js';
 
 // Agent SDK abstraction layer (Issue #1040)
@@ -67,6 +67,12 @@ export type {
   ToolUseBlock as SdkToolUseBlock,
   ToolResultBlock as SdkToolResultBlock,
   InlineToolDefinition as SdkInlineToolDefinition,
+  ToolProgressPayload as SdkToolProgressPayload,
+  ToolProgressCallback as SdkToolProgressCallback,
+  // #4568: also exported unprefixed — consumers (mcp-server tools) import the
+  // callback by its own name, matching how they already consume zod etc.
+  ToolProgressPayload,
+  ToolProgressCallback,
   // MCP types
   StdioMcpServerConfig,
   InlineMcpServerConfig,
@@ -116,6 +122,7 @@ export {
   type SessionManagerConfig,
   SessionManager,
   buildSessionKey,
+  chatIdOfSessionKey,
 } from './agents/session-manager.js';
 
 // Restart manager
@@ -140,17 +147,6 @@ export {
   McpHealthTracker,
 } from './agents/mcp-health-tracker.js';
 
-// LOOP.md loop definition file: spec + parser (Issue #4193 part A)
-export {
-  type LoopMdParams,
-  type LoopMdDefinition,
-  LOOP_MD_DIR,
-  LOOP_MD_FILENAME,
-  parseLoopMd,
-  parseDuration,
-  readLoopMd,
-  loopMdPath,
-} from './loop/loop-md.js';
 // Agent pool
 export {
   type ChatAgentFactory,
@@ -336,6 +332,8 @@ export { InternalEventBus, eventBus, type InternalEventMap } from './event-bus.j
 // Project module — simplified per-chatId working directory binding (Issue #3519)
 export type {
   CwdProvider,
+  CwdResolution,
+  CwdResolutionReason,
   IssueTriageStatus,
   ProjectContextConfig,
   ProjectManagerOptions,

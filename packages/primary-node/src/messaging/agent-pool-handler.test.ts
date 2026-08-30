@@ -75,6 +75,7 @@ describe('AgentPoolMessageHandler', () => {
       expect(options.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
         'chat-1',
         expect.any(Object),
+        undefined, // Issue #4587 (part 2): no threadRootId → chat-scoped agent
       );
     });
 
@@ -180,6 +181,45 @@ describe('AgentPoolMessageHandler', () => {
         );
       });
     });
+
+    // Issue #4587 (part 2): topic-group thread messages route to that
+    // thread's own agent (pool keys on chatId::threadRoot).
+    it('should pass threadRootId to the pool for a topic-group thread message (#4587 part 2)', async () => {
+      const mockAgent = createMockAgent();
+      vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
+
+      await handler.handleUserMessage({
+        chatId: 'oc_topic',
+        payload: '研报问题',
+        messageId: 'om_1',
+        threadRootId: 'om_root',
+      });
+
+      expect(options.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
+        'oc_topic',
+        expect.any(Object),
+        'om_root',
+      );
+      // The agent still receives the full params — processMessage's
+      // threadRootId drives the reply anchor (part 1), unchanged here.
+      expect(mockAgent.processMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: 'oc_topic', messageId: 'om_1', threadRootId: 'om_root' }),
+      );
+    });
+
+    it('should omit the thread argument for messages without threadRootId (#4587 part 2)', async () => {
+      const mockAgent = createMockAgent();
+      vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
+
+      await handler.handleUserMessage({ chatId: 'chat-1', payload: 'Hello', messageId: 'msg-1' });
+
+      // undefined threadRootId → chat-scoped agent, exactly as before.
+      expect(options.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
+        'chat-1',
+        expect.any(Object),
+        undefined,
+      );
+    });
   });
 
   describe('handleSystemMessage', () => {
@@ -192,6 +232,7 @@ describe('AgentPoolMessageHandler', () => {
       expect(options.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
         'chat-1',
         expect.any(Object),
+        undefined, // Issue #4587 (part 2): system messages stay chat-scoped
       );
       expect(mockAgent.processMessage).toHaveBeenCalledWith({
         chatId: 'chat-1',
@@ -244,6 +285,21 @@ describe('AgentPoolMessageHandler', () => {
           'Agent processMessage failed for system message',
         );
       });
+    });
+
+    // Issue #4587 (part 2): system messages have no thread identity
+    // (scheduler / loop tasks) and stay chat-scoped by design.
+    it('should stay chat-scoped for system messages (no thread keying, #4587 part 2)', async () => {
+      const mockAgent = createMockAgent();
+      vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
+
+      await handler.handleSystemMessage('oc_topic', 'scheduled payload', 'msg-sched');
+
+      expect(options.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
+        'oc_topic',
+        expect.any(Object),
+        undefined,
+      );
     });
   });
 });

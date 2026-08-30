@@ -39,6 +39,15 @@ export interface SessionManagerConfig {
 }
 
 /**
+ * Separator between chatId and threadRoot in a session key.
+ *
+ * Feishu chat ids (`oc_…`) and message/thread ids (`om_…`) never contain `::`,
+ * so the composite key is unambiguous. Single source of truth for both
+ * {@link buildSessionKey} and its inverse {@link chatIdOfSessionKey}.
+ */
+const SESSION_KEY_SEPARATOR = '::';
+
+/**
  * Build the SessionManager map key for a session.
  *
  * Issue #4305: today sessions are keyed by `chatId` alone, so every thread in a
@@ -66,7 +75,25 @@ export function buildSessionKey(chatId: string, threadRoot?: string): string {
   if (!threadRoot) {
     return chatId;
   }
-  return `${chatId}::${threadRoot}`;
+  return `${chatId}${SESSION_KEY_SEPARATOR}${threadRoot}`;
+}
+
+/**
+ * Recover the plain chatId from a session key built by {@link buildSessionKey}.
+ *
+ * Issue #4587 (part 2): the agent pool keys its internal maps on the composite
+ * session key, but boundary notifications (busy-cap, eviction) must address the
+ * plain chatId. This is the inverse — `chatId::threadRoot` → `chatId`, and a
+ * key without the separator (p2p / chat-scoped) passes through unchanged.
+ * Feishu chat ids (`oc_…`) and thread ids (`om_…`) never contain `::`, so the
+ * first separator is unambiguously the key boundary.
+ *
+ * Lives next to `buildSessionKey` so the separator constant has a single
+ * source of truth (PR #4590 review N4 — no cross-package re-implementation).
+ */
+export function chatIdOfSessionKey(sessionKey: string): string {
+  const sep = sessionKey.indexOf(SESSION_KEY_SEPARATOR);
+  return sep === -1 ? sessionKey : sessionKey.slice(0, sep);
 }
 
 /**

@@ -14,7 +14,7 @@ are not affected.
 > **Scope**: the GPU config applies to `primary`, the only compute service. The
 > `worker` / `test-primary` services and `Dockerfile.worker` were removed in
 > [#2964](https://github.com/hs3180/disclaude/pull/2964), so the current compose
-> has only `primary`, `playwright`, and `filebeat`. (If a worker service is ever
+> has only `primary`, `chromium`, and `filebeat`. (If a worker service is ever
 > reintroduced, it should follow the same env-var pattern.)
 
 ## Prerequisites

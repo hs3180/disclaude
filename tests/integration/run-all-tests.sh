@@ -38,6 +38,21 @@ RETRY_BACKOFF="${RETRY_BACKOFF:-2}"
 # Track whether user explicitly set --timeout (to avoid overriding per-suite defaults)
 _USER_TIMEOUT=""
 
+# Issue #4552: set when a suite failure is identified as account-level quota
+# exhaustion (GLM code 1308 / usage cap). Once set, remaining suites run a
+# single attempt each — the quota resets hours later, so a full retry chain
+# per suite just burns wall clock (#4552's "28-minute slow round").
+QUOTA_EXHAUSTED=false
+
+# Issue #4552: current suite's captured output (set by run_test_script;
+# removed on every exit path — the normal ones inline, and this trap for
+# Ctrl-C / set -e aborts — so mktemp files don't linger in $TMPDIR).
+_SUITE_OUTPUT_FILE=""
+
+_suite_output_cleanup() {
+    [ -n "$_SUITE_OUTPUT_FILE" ] && rm -f "$_SUITE_OUTPUT_FILE"
+}
+
 source "$SCRIPT_DIR/common.sh"
 parse_common_args "$@"
 register_cleanup
@@ -107,6 +122,15 @@ run_test_script() {
     local name="$2"
     local args=()
 
+    # Issue #4552: after quota exhaustion was detected, each remaining suite
+    # gets exactly one attempt (a cheap probe for a pass-through window) —
+    # not a full retry chain against a quota that resets hours later.
+    local max_retries="$MAX_RETRIES"
+    if [ "$QUOTA_EXHAUSTED" = true ]; then
+        max_retries=0
+        log_info "$name: single attempt (quota exhausted earlier this run, Issue #4552)"
+    fi
+
     args+=("--port" "$REST_PORT")
     # Only pass --timeout if user explicitly set it; otherwise let each sub-script
     # use its own default (e.g., mcp-tools-test.sh uses 120s, rest-channel-test.sh uses 30s).
@@ -123,7 +147,13 @@ run_test_script() {
     args+=("${FILTER_ARGS[@]}")
 
     local attempt=1
-    local max_attempts=$((MAX_RETRIES + 1))
+    local max_attempts=$((max_retries + 1))
+    # Issue #4552: capture each attempt's output so failure evidence (HTTP
+    # status lines, server-log excerpts) survives for quota detection below.
+    # Tracked in _SUITE_OUTPUT_FILE for the abort-trap cleanup above.
+    local output_file
+    output_file="$(mktemp "${TMPDIR:-/tmp}/suite-output.XXXXXX")"
+    _SUITE_OUTPUT_FILE="$output_file"
 
     while [ $attempt -le $max_attempts ]; do
         echo ""
@@ -131,13 +161,31 @@ run_test_script() {
         echo "  Running: $name (attempt ${attempt}/${max_attempts})"
         echo "=========================================="
 
-        if bash "$script" "${args[@]}"; then
+        if bash "$script" "${args[@]}" 2>&1 | tee "$output_file" \
+            && [ "${PIPESTATUS[0]}" -eq 0 ]; then
             if [ $attempt -gt 1 ]; then
                 log_warn "$name passed on attempt ${attempt}/${max_attempts}"
                 RETRIED_SUCCESSES=$((RETRIED_SUCCESSES + 1))
             fi
+            rm -f "$output_file"
+            _SUITE_OUTPUT_FILE=""
             return 0
         else
+            # Issue #4552: account-level quota exhaustion (GLM code 1308,
+            # 「已达到 5 小时的使用上限」) resets hours later — retrying this
+            # suite (or letting later suites retry) cannot succeed and burns
+            # the run's wall clock (#4552's 3-wave multimodal failure and
+            # "28-minute slow round"). Fail the suite fast and mark the whole
+            # run so remaining suites make a single attempt each (an
+            # occasional pass-through window was observed in #4552 — one
+            # cheap probe is worth it; blind 3x chains are not).
+            if detect_quota_exhaustion "$output_file" "$script" "$output_file"; then
+                log_error "$name failed: account-level quota exhausted (rate-limit code 1308 / usage cap) — retries cannot succeed until the quota window resets; skipping remaining retries for this suite (Issue #4552)"
+                QUOTA_EXHAUSTED=true
+                rm -f "$output_file"
+                _SUITE_OUTPUT_FILE=""
+                return 1
+            fi
             if [ $attempt -lt $max_attempts ]; then
                 local delay=$((RETRY_INITIAL_DELAY * RETRY_BACKOFF ** (attempt - 1)))
                 log_warn "$name failed (attempt ${attempt}/${max_attempts}), retrying in ${delay}s (exponential backoff)..."
@@ -184,8 +232,10 @@ run_test_script() {
         attempt=$((attempt + 1))
     done
 
+    rm -f "$output_file"
+    _SUITE_OUTPUT_FILE=""
     log_error "$name failed after ${max_attempts} attempt(s)"
-    TOTAL_RETRIES=$((TOTAL_RETRIES + MAX_RETRIES))
+    TOTAL_RETRIES=$((TOTAL_RETRIES + max_retries))
     return 1
 }
 
@@ -236,6 +286,14 @@ check_server_health_detailed() {
 # Issue #3777: Added retry with exponential backoff and fail-fast behavior.
 # When the API is unreachable (HTTP 000 on all retries), the test suite
 # fails immediately instead of letting every test time out individually.
+# Issue #4595: a failed warm-up attempt now consults the #4552 quota-
+# exhaustion detector before retrying. #4595 burned the whole 4-attempt
+# chain (10+20+40s sleeps) against a GLM code-1308 5-hour usage cap — the
+# signature sat in the SDK debug log the entire time, but the warm-up path
+# never looked, then aborted with the misleading "API appears unreachable".
+# A quota-exhausted warm-up now fails fast on attempt 1 with the
+# environmental diagnosis. Only reached on a FAILED attempt — the success
+# path is bit-identical to before.
 # Returns: 0 on success, 1 on failure (fatal — test suite aborts)
 warmup_agent() {
     local max_retries="${WARMUP_MAX_RETRIES:-3}"
@@ -260,6 +318,24 @@ warmup_agent() {
             # Record baseline exit listener count after warm-up
             check_server_health_detailed
             return 0
+        fi
+
+        # Issue #4595: failed attempt — before sleeping/retrying (and before
+        # the generic unreachable diagnosis), check whether the failure is
+        # account-level quota exhaustion. The quota resets hours later
+        # (#4552), so the remaining warm-up attempts AND every later suite
+        # are pre-doomed; retrying only burns wall clock. Mirror run_suite:
+        # set QUOTA_EXHAUSTED so any later suite single-attempts.
+        # Tier 1 has no warm-up output file yet (""), so detection rides on
+        # the server log / SDK debug log tiers — exactly where #4595's
+        # evidence lived.
+        if detect_quota_exhaustion "" "" ""; then
+            log_error "Agent warm-up failed: account-level quota exhausted (rate-limit code 1308 / usage cap, Issue #4595)"
+            log_error "This is environmental, not a code failure — the quota window resets hours later; retries cannot succeed."
+            log_error "Re-run the full suite after the quota resets (see the reset time in the SDK log below)."
+            show_server_logs
+            QUOTA_EXHAUSTED=true
+            return 1
         fi
 
         # Attempt failed
@@ -357,8 +433,15 @@ main() {
 
     # Issue #3378: Warm up agent before first AI test to prevent cold-start issues
     # Issue #3777: Fail fast if API is unreachable instead of letting tests time out
+    # Issue #4595: when warmup_agent flagged quota exhaustion, the abort line
+    # must NOT say "API appears unreachable" — that misdiagnosis is what the
+    # #4595 report had to manually root-cause against the SDK debug log.
     warmup_agent || {
-        log_error "Agent warm-up failed — API appears unreachable. Aborting tests."
+        if [ "$QUOTA_EXHAUSTED" = true ]; then
+            log_error "Agent warm-up failed — account-level quota exhausted (environmental, Issue #4595). Aborting tests; re-run after the quota resets."
+        else
+            log_error "Agent warm-up failed — API appears unreachable. Aborting tests."
+        fi
         cleanup
         exit 1
     }
@@ -366,36 +449,31 @@ main() {
     local failed=0
     local RETRIED_SUCCESSES=0
     local TOTAL_RETRIES=0
+    # Issue #4584: remember WHICH suites failed so the summary names them —
+    # a bare "1 test suite(s) failed" forces the operator to dig through
+    # (often truncated) background-run output to find the suite.
+    local FAILED_SUITE_NAMES=()
 
-    if ! run_suite "$SCRIPT_DIR/rest-channel-test.sh" "REST Channel Tests"; then
-        failed=$((failed + 1))
-    fi
+    local script name
+    for spec in \
+        "rest-channel-test.sh|REST Channel Tests" \
+        "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply" \
+        "use-case-2-task-execution.sh|Use Case 2 - Task Execution" \
+        "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation" \
+        "mcp-tools-test.sh|MCP Tools Tests" \
+        "multimodal-test.sh|Multimodal Tests"; do
+        script="${spec%%|*}"
+        name="${spec##*|}"
+        if ! run_suite "$SCRIPT_DIR/$script" "$name"; then
+            failed=$((failed + 1))
+            FAILED_SUITE_NAMES+=("$name")
+        fi
+    done
 
-    if ! run_suite "$SCRIPT_DIR/use-case-1-basic-reply.sh" "Use Case 1 - Basic Reply"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/use-case-2-task-execution.sh" "Use Case 2 - Task Execution"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/use-case-3-multi-turn.sh" "Use Case 3 - Multi-turn Conversation"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/mcp-tools-test.sh" "MCP Tools Tests"; then
-        failed=$((failed + 1))
-    fi
-
-    if ! run_suite "$SCRIPT_DIR/multimodal-test.sh" "Multimodal Tests"; then
-        failed=$((failed + 1))
-    fi
-
-    # Feishu IPC tests don't need a running server (uses mock handlers)
-    log_info "Running Feishu IPC transport tests (no server needed)..."
-    if ! run_suite "$SCRIPT_DIR/feishu-ipc-test.sh" "Feishu IPC Transport Tests"; then
-        failed=$((failed + 1))
-    fi
+    # Feishu IPC transport suite removed with the Unix-socket transport itself
+    # (#4168 Phase 3, PR #4583): its 7 test files exercised the deleted
+    # UnixSocketIpcServer↔Client round-trip. REST IPC coverage lives in the
+    # unit suites (rest-ipc-client.test.ts, http-api-server tests).
 
     echo ""
     echo "=========================================="
@@ -403,9 +481,19 @@ main() {
         log_info "All test suites passed!"
     else
         log_error "$failed test suite(s) failed"
+        # Issue #4584: name the failing suites right after the count, so
+        # tail-truncated output (#4584's CI report lost the suite lines)
+        # still identifies them.
+        log_error "Failed suite(s): ${FAILED_SUITE_NAMES[*]}"
     fi
     if [ $RETRIED_SUCCESSES -gt 0 ]; then
         log_warn "${RETRIED_SUCCESSES} suite(s) passed after retry"
+    fi
+    # Issue #4552: surface the root cause when failures were quota-driven, so
+    # a red run isn't misread as a code regression (the triggering commit in
+    # #4552 was docs-only).
+    if [ "$QUOTA_EXHAUSTED" = true ]; then
+        log_warn "Account-level quota exhaustion detected (rate-limit code 1308 / usage cap). Failures above are environmental, not code regressions — re-run after the quota window resets."
     fi
 
     # Issue #3378: Report exit listener growth for leak detection

@@ -41,6 +41,7 @@ import {
   MessageChannel,
   RestartManager,
   ConversationOrchestrator,
+  EmptyTurnRetryPolicy,
   getErrorStderr,
   isStartupFailure,
   forceCleanupLeakedListeners,
@@ -53,6 +54,7 @@ import {
   type AgentMessage,
   type IteratorYieldResult,
   type UserMessageParams,
+  type CwdResolution,
 } from '@disclaude/core';
 import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
@@ -91,6 +93,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // Issue #1916: Dynamic cwd resolution for project-scoped Agent context switching
   private readonly cwdProvider?: (chatId: string) => string | undefined;
 
+  // Issue #4448 (direction #1): structured cwd resolution — same inputs as
+  // cwdProvider but distinguishes unbound from bound-missing, so the workspace
+  // fallback can be surfaced to the user instead of only logger.warn.
+  private readonly cwdResolver?: (chatId: string) => CwdResolution;
+
+  // Issue #4448 (nit): the bound-missing target already warned to this chat
+  // (per agent instance), so restart cycles don't re-announce the same missing
+  // directory. Cleared when the binding resolves cleanly again.
+  private warnedMissingWorkingDir?: string;
+
   // Single Query and Channel for this chatId (Issue #644: no longer using SessionManager)
   private queryHandle?: QueryHandle;
   private channel?: MessageChannel;
@@ -103,10 +115,57 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // between "session exists but idle" and "actively processing a message".
   private isProcessingMessage = false;
 
+  // Issue #4620: When the current turn started (ms epoch), set at the same
+  // moment isProcessingMessage flips true. Lets the pool's busy-turn cap
+  // measure the CURRENT turn, not the accumulated wall-clock of many
+  // back-to-back turns (the observation-based busySince marker survived
+  // turn boundaries whenever every sweep tick landed mid-turn).
+  private turnStartedAtMsPrivate = 0;
+
   // Issue #3706 (GLM stall): set when the provider's no-content-progress watchdog
   // terminated the stream. Checked at the iterator-end/restart decision point to
   // suppress the auto-restart (would immediately re-stall) while keeping context.
   private stalledTerminated = false;
+
+  // Issue #4442 (part 3): set when the provider terminated the stream with the
+  // synthetic empty-stream result (200-OK-zero-content after in-request retries
+  // exhausted). Same interception role as stalledTerminated: suppress the
+  // unexpected-end auto-restart while keeping context — the failure is already
+  // accounted via recordFailure('empty-stream') in the result branch.
+  private emptyStreamTerminated = false;
+
+  // Issue #4391 (part 2 review): ChatAgent's own disposed marker. BaseAgent's
+  // `initialized` is never set to true on any production path (only test mocks
+  // force it), so a `!this.initialized` disposed-check would be dead in
+  // production. Set synchronously at the top of dispose() so a replay timer
+  // racing an in-flight dispose sees it.
+  private disposed = false;
+
+  // Issue #4391 (part 2 review): bumped on every startAgentLoop() and reset().
+  // Lets a processIterator invocation detect that its session was torn down
+  // and superseded mid-flight (empty-turn reset+replay) — see the interception
+  // next to the stalledTerminated check in processIterator.
+  private sessionGeneration = 0;
+
+  // Issue #4391 (#4194 follow-up ②): empty-turn session-reset + bounded replay.
+  // The policy locks eligibility (real-user messages only — synthetic sched-*/push_*
+  // IDs are never replayed, they are not valid reply roots) and bounding (exactly
+  // one retry per chat until a successful turn resets it). See
+  // packages/core/src/agents/empty-turn-retry-policy.ts (part 1) and
+  // docs/designs/empty-turn-session-reset-design.md.
+  private readonly emptyTurnRetryPolicy = new EmptyTurnRetryPolicy();
+
+  // Issue #4391: the params of the most recent processMessage() call (the turn
+  // currently in flight once pushed). Stashed for EVERY message — synthetic
+  // included — because eligibility is decided from its messageId by the policy
+  // (a synthetic turn must not replay an older stashed real message either).
+  private lastTurnMessage?: UserMessageParams;
+
+  // Issue #4391: monotonically increasing sequence stamped on each
+  // processMessage() call. A scheduled replay captures the seq at schedule time
+  // and is dropped if a newer message arrived in between — the replay must
+  // never clobber or reorder behind the user's newer input.
+  private messageSeq = 0;
 
   // Issue #4302: inline (in-process) MCP server instances created for this
   // agent (e.g. channel-mcp), retained so dispose() can close them explicitly
@@ -132,6 +191,26 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   private chatType?: string;
 
+  /**
+   * Issue #4587 (part 1, review fix): FIFO of reply anchors for user messages
+   * pushed onto the CURRENT session's channel but not yet consumed by an SDK
+   * turn. Entry order = push order; `undefined` entries (plain-group /
+   * synthetic messages) keep their slot so turn↔message pairing stays aligned.
+   *
+   * Why a queue and not a single field: one processIterator (session) serves
+   * MANY turns. processMessage(B) runs synchronously even while A's turn is
+   * mid-flight (no busy-gating on the user path), so any single mutable
+   * "current anchor" field is overwritten by B before A's tail outputs are
+   * emitted — re-introducing exactly the cross-thread hijack part 1 set out
+   * to fix (A's reply landing in B's thread). The iterator instead consumes
+   * one anchor per turn at the turn's first event (see processIterator), so
+   * each turn replies into its own thread even with interleaved arrivals.
+   *
+   * Reset on startAgentLoop (fresh session) and reset(); bounded to avoid
+   * unbounded growth if turns never drain (iterator parked/dead session).
+   */
+  private pendingTurnAnchors: (string | undefined)[] = [];
+
   // Issue #3124: One-shot mode & task completion
   // When onceMode is true, processIterator closes the channel after the first
   // `result` message and resolves the completion promise, enabling blocking
@@ -153,6 +232,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     this.boundChatId = config.chatId;
     this.callbacks = config.callbacks;
     this.cwdProvider = config.cwdProvider;
+    // Issue #4448 (direction #1)
+    this.cwdResolver = config.cwdResolver;
 
     // Initialize history manager (Issue #955, #1230, #3996)
     this.historyManager = new HistoryManager({
@@ -317,6 +398,29 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    */
   get isBusy(): boolean {
     return this.isProcessingMessage;
+  }
+
+  /**
+   * When the most recent turn started (ms epoch), or 0 if no turn has
+   * started yet.
+   *
+   * Issue #4620: the pool's busy-turn hard cap measures the CURRENT turn
+   * from this authoritative timestamp. The previous observation-based
+   * marker (set when the idle sweep first saw isBusy, cleared when a sweep
+   * saw !isBusy) silently accumulated across back-to-back turns — whenever
+   * every sweep tick landed mid-turn, the marker never cleared, and after
+   * 90 min of session wall-clock a brand-new turn was insta-killed with a
+   * misleading "running for 90 minutes" message.
+   *
+   * Note: the timestamp is set on turn start and never reset — once a turn
+   * has run, idle agents still report that (stale) turn's start. Readers
+   * must gate on `isBusy` for "is this turn live" semantics; the pool does.
+   *
+   * @returns ms epoch of the most recent turn's start, or 0 if no turn has
+   * started.
+   */
+  get turnStartedAtMs(): number {
+    return this.turnStartedAtMsPrivate;
   }
 
   /**
@@ -554,6 +658,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       chatHistoryContext,
       chatType,
       threadContext,
+      threadRootId,
     } = params;
     // Issue #644: Verify chatId matches bound chatId
     if (chatId !== this.boundChatId) {
@@ -583,6 +688,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.chatType = chatType;
     }
 
+    // Issue #4391: stash the params of the message being processed so an empty
+    // turn can replay the exact original input against a fresh session.
+    // Stashed for synthetic messages too — eligibility is decided later from
+    // the messageId by EmptyTurnRetryPolicy (synthetic turns never replay).
+    this.messageSeq++;
+    this.lastTurnMessage = params;
+
     // Track thread root
     this.conversationOrchestrator.setThreadRoot(chatId, messageId);
 
@@ -590,6 +702,22 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (!this.isSessionActive) {
       this.logger.info({ chatId }, 'No active session, starting agent loop');
       this.startAgentLoop();
+    }
+
+    // Issue #4587 (part 1, review fix): enqueue this turn's reply anchor —
+    // AFTER startAgentLoop() (which clears anchors left over from the previous
+    // session; clearing must never eat this message's own anchor) and BEFORE
+    // the channel push below (the anchor must be queued no later than the
+    // message becomes visible to the iterator). Fallback resolved NOW, not at
+    // consumption time, so a later message's setThreadRoot cannot change what
+    // this turn falls back to.
+    this.pendingTurnAnchors.push(
+      threadRootId ?? this.conversationOrchestrator.getThreadRoot(chatId)
+    );
+    // Bounded: a dead/parked session with no iterator draining would otherwise
+    // grow this unboundedly (anchors for messages the session never answers).
+    if (this.pendingTurnAnchors.length > 50) {
+      this.pendingTurnAnchors.splice(0, this.pendingTurnAnchors.length - 50);
     }
 
     // Issue #1863: Wait for first message history to load before building content.
@@ -650,6 +778,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     if (this.channel) {
       // Issue #3985: Mark as processing when a user message is pushed to the channel.
       this.isProcessingMessage = true;
+      // Issue #4620: authoritative turn-start timestamp for the pool's
+      // busy-turn cap — see turnStartedAtMs getter.
+      this.turnStartedAtMsPrivate = Date.now();
       // Issue #4063: Set up per-turn completion promise
       this.setTurnPending();
       const accepted = this.channel.push(userMessage);
@@ -777,7 +908,51 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
-    const projectCwd = this.cwdProvider?.(chatId);
+    // Issue #4448 (direction #1): when the structured resolver reports the
+    // bound directory as missing, the agent silently falls back to the workspace
+    // below (`cwd: undefined` → BaseAgent uses workspaceDir) while `/project info`
+    // still shows the stale target. Push a user-visible warning to the chat so
+    // the mismatch is no longer silent — the plain cwdProvider can't distinguish
+    // this from "unbound" (both yield undefined).
+    // Nit: the resolver subsumes cwdProvider (same resolveCwd() underneath,
+    // effectiveCwd is the plain provider's return value) — call it once and use
+    // the result for both the cwd and the warning check, instead of running
+    // resolveCwd() (existsSync + map lookup) twice per spawn.
+    const resolution = this.cwdResolver?.(chatId);
+    if (resolution?.reason === 'bound-missing' && resolution.boundWorkingDir) {
+      // Nit: startAgentLoop() re-runs on restart cycles (processIterator →
+      // startAgentLoop once the previous query ends), which would re-announce
+      // the same missing directory to a chat that already saw the warning.
+      // Warn once per missing target per agent instance; a rebind (or the
+      // directory reappearing then vanishing again) clears the fingerprint
+      // and warns again, matching the "re-resolve on restart" semantics.
+      if (this.warnedMissingWorkingDir !== resolution.boundWorkingDir) {
+        this.warnedMissingWorkingDir = resolution.boundWorkingDir;
+        this.callbacks
+          .sendMessage(
+            chatId,
+            [
+              `⚠️ **项目绑定目录不存在**: \`${resolution.boundWorkingDir}\``,
+              '',
+              '本次会话将**回退到工作空间根目录**运行（而非绑定的项目目录）。',
+              '可能原因：容器重启时 volume 尚未就绪 / 目录被移动或卸载 / 路径大小写或规范化差异。',
+              '可用 `/project reset` 回到默认，或 `/project use <dir>` 重新绑定。',
+            ].join('\n')
+          )
+          .catch((err) => {
+            this.logger.error(
+              { err, chatId },
+              'Failed to send bound-missing cwd fallback warning'
+            );
+          });
+      }
+    } else if (this.warnedMissingWorkingDir !== undefined) {
+      // Binding recovered (bound or unbound now) — allow a future
+      // bound-missing for a different (or re-vanished) target to warn again.
+      this.warnedMissingWorkingDir = undefined;
+    }
+    const projectCwd = resolution?.effectiveCwd ?? this.cwdProvider?.(chatId);
+
     const sdkOptions = this.createSdkOptions({
       cwd: projectCwd,
       // Issue #4181: the built-in (session-only) cron/loop tools are disallowed
@@ -818,6 +993,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
     this.queryHandle = handle;
     this.isSessionActive = true;
+    // Issue #4391 (part 2 review): this query is a new session generation.
+    // Any still-draining processIterator from a previous generation reads the
+    // bump and exits as a superseded session instead of "unexpected end".
+    this.sessionGeneration++;
+
+    // Issue #4587 (part 1, review fix): fresh session — anchors queued for the
+    // OLD session's channel are dead (that channel is closed above). Safe
+    // because processMessage enqueues AFTER startAgentLoop() returns (see the
+    // enqueue site), so a live anchor is never eaten here.
+    this.pendingTurnAnchors = [];
 
     // Issue #3378: Log process exit listener count for leak monitoring.
     // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
@@ -947,6 +1132,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     iterator: AsyncGenerator<IteratorYieldResult>
   ): Promise<void> {
     const chatId = this.boundChatId;
+    // Issue #4391 (part 2 review): the session generation this invocation
+    // belongs to. If the bump happens while this iterator is still parked
+    // (endEmptyTurnSession → replay's startAgentLoop), this invocation was
+    // superseded mid-flight and must exit as an intercepted teardown below,
+    // not as an "unexpected end".
+    const myGeneration = this.sessionGeneration;
     let iteratorError: Error | null = null;
     let messageCount = 0;
     const startTime = Date.now(); // Issue #2920: 追踪启动时间
@@ -959,21 +1150,50 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // (excludes the ✅ Complete result marker) so empty turns are detectable.
     let userVisibleOutputCount = 0;
 
+    // Issue #4587 (part 1, review fix): per-turn reply anchor, consumed from
+    // the pendingTurnAnchors FIFO. The original part-1 shape read the live
+    // currentThreadRootId at each output site; processMessage(B) overwrites it
+    // while A's iterator is still draining, so A's tail outputs anchored to
+    // B's thread — the exact cross-thread hijack the PR set out to fix. Here
+    // the anchor is frozen for the whole turn at the turn's FIRST event
+    // (loop head below), and re-armed after each result so the next turn
+    // (next queued message) picks up its own anchor.
+    let turnAnchorConsumed = false;
+    let currentTurnAnchor: string | undefined;
+    const consumeTurnAnchor = (): string | undefined => {
+      if (!turnAnchorConsumed) {
+        turnAnchorConsumed = true;
+        currentTurnAnchor = this.pendingTurnAnchors.shift();
+      }
+      return currentTurnAnchor;
+    };
+    // Issue #4587 (part 1, review fix): resolve this turn's reply anchor once.
+    const resolveReplyThreadRoot = (): string | undefined =>
+      consumeTurnAnchor() ?? this.conversationOrchestrator.getThreadRoot(chatId);
+
     // Issue #4399 (#4208 P2-b): streaming-card state machine. Only constructed
     // when the channel advertises supportsStreaming AND provides all three
     // streaming callbacks; otherwise `streamDriver` is null and the assistant
     // dispatch below is bit-identical to today (sendMessage per chunk). The
     // driver owns the reply-never-lost guarantee (start-decline / flush-failure
     // → sendMessage fallback) and is finalized on every turn-exit path below.
+    // Issue #4510 (part 2): the p2p-first gray rollout is built-in, not a
+    // config option — streaming cards are only constructed for single chats;
+    // group/topic turns skip the driver entirely and keep the per-chunk
+    // sendMessage path, so the rollout never changes group behavior.
+    // `this.chatType` is set by processMessage (#3641, with #4401/#4428 topic
+    // normalization), so an unset value degrades to non-streaming
+    // (fail-safe: unknown type → no card).
     const streamCapabilities = this.callbacks.getCapabilities?.(chatId);
     const streamDriver =
       !!streamCapabilities?.supportsStreaming &&
+      this.chatType === 'p2p' &&
       !!this.callbacks.startStreaming &&
       !!this.callbacks.streamText &&
       !!this.callbacks.finalizeStreaming
         ? new StreamingReplyDriver({
             chatId,
-            parentMessageId: this.conversationOrchestrator.getThreadRoot(chatId) ?? undefined,
+            parentMessageId: resolveReplyThreadRoot() ?? undefined,
             startStreaming: this.callbacks.startStreaming,
             streamText: this.callbacks.streamText,
             finalizeStreaming: this.callbacks.finalizeStreaming,
@@ -995,6 +1215,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           );
           break;
         }
+
+        // Issue #4587 (part 1, review fix): this event's turn adopts its
+        // anchor from the FIFO on the turn's FIRST event. Harmless no-op for
+        // the leading system/status events of a turn (they don't reply), and
+        // it guarantees the anchor is frozen before any text/result of the
+        // turn is dispatched, even when an interleaved processMessage pushed
+        // a second anchor mid-turn.
+        consumeTurnAnchor();
 
         messageCount++;
 
@@ -1056,7 +1284,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
               'Filtered intermediate message in topic thread'
             );
           } else {
-            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+            const threadRoot = resolveReplyThreadRoot();
             // Capture as a local so the marker check stays type-safe after the
             // awaited sendMessage (which defeats parsed.content narrowing).
             const visibleContent = parsed.content;
@@ -1104,7 +1332,41 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.isProcessingMessage = false;
             this.resolveTurn();
             if (this.callbacks.onDone) {
-              const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const threadRoot = resolveReplyThreadRoot();
+              await this.callbacks.onDone(chatId, threadRoot);
+            }
+            if (this.onceMode) {
+              this.isSessionActive = false;
+              this.channel?.close();
+              this.taskCompletionResolve?.();
+              this.clearTaskCompletion();
+            }
+            continue;
+          }
+
+          // Issue #4442 (part 3): provider exhausted the in-request retries on
+          // an empty stream (200-OK-zero-content) and synthesized a terminal
+          // result. Same interception shape as the GLM-stall branch above: the
+          // generic content-send block already delivered the ❌ notice
+          // (parsed.content carries EMPTY_STREAM_TERMINATE_NOTICE), so here we
+          // only do control flow — record failure (chronic empty streams trip
+          // the circuit), resolve the turn, and skip the normal recordSuccess
+          // path. The session is NOT torn down here: the ChatAgent-level
+          // one-shot empty-turn reset+replay (#4391) and the session-reset
+          // advice in the ⚠️ #4258 notice remain the recovery levers above
+          // this provider-level retry.
+          if (parsed.terminatedReason === 'empty-stream') {
+            this.emptyStreamTerminated = true;
+            this.logger.warn(
+              { chatId, messageCount },
+              'Empty stream: turn terminated by provider after in-request retries exhausted '
+                + '(Issue #4442); recording failure, resolving turn'
+            );
+            this.restartManager.recordFailure(chatId, 'empty-stream');
+            this.isProcessingMessage = false;
+            this.resolveTurn();
+            if (this.callbacks.onDone) {
+              const threadRoot = resolveReplyThreadRoot();
               await this.callbacks.onDone(chatId, threadRoot);
             }
             if (this.onceMode) {
@@ -1175,6 +1437,27 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // produced no reliable work product, so it must be reported as failed,
           // not masked as ✅ Complete.
           const upstreamApiError = parsed.upstreamApiError === true;
+          // Issue #4391 (#4194 follow-up ②): on a real-user empty turn, decide
+          // whether to consume this chat's single reset+replay attempt. The
+          // policy returns false for synthetic IDs (sched-*/push_* — not valid
+          // reply roots, #4259) and for chats that already used their one
+          // retry (bounded to 1, cannot loop). When retrying, the ⚠️ notice
+          // below is suppressed — we are actively recovering, not giving up
+          // (no double-notify, design §4.5). The turn is still counted by
+          // recordFailure('empty-turn') below so the restartManager circuit
+          // keeps accounting chronic empty turns. A turn whose emptiness comes
+          // from an upstream API error (#4322) is not retried here — that is
+          // transient upstream trouble, not a corrupted session, and already
+          // has its own ❌ notice + failure accounting.
+          const turnMessage = this.lastTurnMessage;
+          const willRetryEmptyTurn =
+            isEmptyTurn &&
+            !upstreamApiError &&
+            !!turnMessage &&
+            this.emptyTurnRetryPolicy.canRetry(chatId, turnMessage.messageId, true);
+          if (willRetryEmptyTurn) {
+            this.emptyTurnRetryPolicy.markRetried(chatId);
+          }
           // Issue #4322 edge case: when a turn is empty BECAUSE of an upstream
           // API error, the more specific ❌ upstream notice below (with the
           // upstream request_id and the correct "transient overload — retry
@@ -1182,7 +1465,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           // notice here, whose "session may be invalid, try resetting" advice is
           // wrong for a transient upstream overload and would otherwise
           // double-notify. The upstream warn/notice still fires below.
-          if (isEmptyTurn && !upstreamApiError) {
+          // Issue #4391: also suppressed when the turn is being retried — the
+          // reset+replay below IS the "try again"; telling the user to resend
+          // would be wrong (and noisy) while recovery is already in flight.
+          if (isEmptyTurn && !upstreamApiError && !willRetryEmptyTurn) {
             this.logger.warn(
               {
                 chatId,
@@ -1204,7 +1490,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // below). The surrounding try/catch only guards the synchronous
             // setup (getThreadRoot) for the same reason.
             try {
-              const emptyTurnThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const emptyTurnThreadRoot = resolveReplyThreadRoot();
               void this.callbacks
                 .sendMessage(
                   chatId,
@@ -1223,6 +1509,147 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'Failed to send empty-turn diagnostic notice (Issue #4258)'
               );
             }
+          }
+
+          // Issue #4391 (#4194 follow-up ②): schedule the deferred reset+replay
+          // for a real-user empty turn that was granted its single retry. This
+          // is the self-heal: the empty turn's root cause is typically a stale
+          // / corrupted persistent session, so the replay runs against a FRESH
+          // session, not the broken one (that is what distinguishes this from
+          // #4314's in-place transient replay).
+          //
+          // Timing: processIterator is still unwinding this turn's result
+          // (resolveTurn / onDone run below), and resetting the session right
+          // here would close the very channel this iterator is consuming
+          // mid-loop. So the replay is deferred via setTimeout(0): after this
+          // iteration ends, the loop parks on the channel generator's wait,
+          // and only then does the scheduled callback tear the session down
+          // (endEmptyTurnSession) and re-invoke processMessage with the
+          // ORIGINAL params. processMessage sees !isSessionActive and calls
+          // startAgentLoop() — a fresh SDK query with a fresh channel — so the
+          // replay never re-enters this iterator. v1 replayed only the single
+          // message (no fresh history re-injection, design §4.1 — the replay
+          // still carried the session-start persistedHistoryContext snapshot);
+          // the deferred callback now also re-stashes recent chat history so
+          // the replayed message — the fresh session's first — carries a FRESH
+          // context snapshot (the §6 history re-injection follow-up, see the
+          // callback body).
+          //
+          // Seq guard: if a NEWER message arrives before the timer fires (the
+          // user resend, or anything else), the replay is dropped — it must
+          // never clobber or run behind fresher input.
+          if (willRetryEmptyTurn && turnMessage) {
+            const replaySeq = this.messageSeq;
+            const replayParams = turnMessage;
+            this.logger.warn(
+              { chatId, messageId: turnMessage.messageId, replaySeq },
+              'Empty turn on a real-user message (Issue #4391): scheduling one-shot ' +
+                'session reset + replay of the original input'
+            );
+            setTimeout(() => {
+              // Async for the §6 history re-injection await below (the await
+              // yields to the event loop; guards are re-checked after it).
+              (async () => {
+                // Issue #4391 (part 2 review): the disposed check is
+                // ChatAgent's own `disposed` flag, NOT `!this.initialized` —
+                // BaseAgent.initialized has no production path setting it
+                // true, so that reading was always true in production (only
+                // test mocks force it), silently disabling the replay.
+                if (this.disposed || this.messageSeq !== replaySeq) {
+                  this.logger.info(
+                    {
+                      chatId,
+                      replaySeq,
+                      currentSeq: this.messageSeq,
+                      disposed: this.disposed,
+                    },
+                    'Empty-turn replay skipped (agent disposed or a newer message arrived) (Issue #4391)'
+                  );
+                  return;
+                }
+                // Issue #4391 (§6 history re-injection): re-stash recent chat
+                // history BEFORE the teardown so the replayed message — the
+                // fresh session's first — picks it up via the existing
+                // consume-once first-message path in processMessage(). Without
+                // this the fresh session's first message carries only the
+                // session-start persistedHistoryContext snapshot: turns logged
+                // after that snapshot are lost, exactly while recovering from
+                // a stale session (long-lived chats lose the most). Best-effort:
+                // on failure reloadFirstMessageHistory() logs and returns false,
+                // and the replay proceeds on the stale snapshot (v1 behavior) —
+                // re-injection must never block recovery.
+                const reInjected = await this.historyManager.reloadFirstMessageHistory();
+                // Re-check the guards AFTER the await: the fetch yields the
+                // event loop, so a newer message (or dispose) may have landed
+                // while re-injection was in flight. Without this second check
+                // the teardown below would clobber that fresher input — the
+                // exact hazard the seq guard exists to prevent. If we bail
+                // here, the teardown never ran, so the newer message went into
+                // the still-active OLD session — and it will consume the
+                // re-stashed context on its next processMessage (the consume
+                // runs on every message; the once-semantics come from the
+                // stash being filled once). That is benign — the newer message
+                // gets a fresh history snapshot attached — and the disposed
+                // sub-case is trivially safe (no processMessage can follow).
+                if (this.disposed || this.messageSeq !== replaySeq) {
+                  this.logger.info(
+                    {
+                      chatId,
+                      replaySeq,
+                      currentSeq: this.messageSeq,
+                      disposed: this.disposed,
+                    },
+                    'Empty-turn replay skipped after history re-injection ' +
+                      '(agent disposed or a newer message arrived) (Issue #4391)'
+                  );
+                  return;
+                }
+                // Issue #4391 (§6 review follow-up): processMessage prefers an
+                // incoming chatHistoryContext param over the consume-once
+                // stash. Trigger-mode @mentions — the primary empty-turn
+                // scenario this recovery targets — carry a receive-time
+                // snapshot param, so replaying the original params unchanged
+                // would leave the fresh stash unconsumed (and leaking onto a
+                // later param-less message). When re-injection succeeded,
+                // replay a COPY of the params with the stale param stripped so
+                // the fresh fetch wins. Copy, never mutate: replayParams is
+                // lastTurnMessage by reference. On a failed fetch keep the
+                // param (v1 behavior — the snapshot beats context-less).
+                const effectiveReplayParams = reInjected
+                  ? (() => {
+                      const { chatHistoryContext: _staleSnapshot, ...rest } = replayParams;
+                      return rest as UserMessageParams;
+                    })()
+                  : replayParams;
+                if (reInjected) {
+                  this.logger.info(
+                    { chatId, messageId: replayParams.messageId },
+                    'Re-injected chat history into empty-turn replay context ' +
+                      '(stale receive-time snapshot param dropped) (Issue #4391)'
+                  );
+                  // Issue #4391 (part 3 review nit): the fresh stash supersedes
+                  // the session-start persisted snapshot (same getChatHistory
+                  // source, fetched later). Drop the snapshot CONTENT so the
+                  // replay's message renders one history section instead of two;
+                  // the log-paths hint survives inside history-manager.
+                  this.historyManager.dropPersistedHistoryContent();
+                }
+                // Session-only teardown: close query+channel, keep this agent
+                // (history, restartManager accounting, thread roots) intact.
+                this.endEmptyTurnSession();
+                void this.processMessage(effectiveReplayParams).catch((replayErr) => {
+                  this.logger.error(
+                    { err: replayErr, chatId },
+                    'Empty-turn replay processMessage failed (Issue #4391)'
+                  );
+                });
+              })().catch((schedErr) => {
+                this.logger.error(
+                  { err: schedErr, chatId },
+                  'Empty-turn replay scheduling callback failed (Issue #4391)'
+                );
+              });
+            }, 0);
           }
 
           // Issue #4322: a turn killed by an upstream API error (overloaded_error
@@ -1252,7 +1679,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
                 'Reporting as failed instead of ✅ Complete.'
             );
             try {
-              const upstreamThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+              const upstreamThreadRoot = resolveReplyThreadRoot();
               // Surface the upstream request_id from the stderr tail if present,
               // so the failure is actionable (Issue #4322 direction 3).
               const stderrTail = (parsed.upstreamApiErrorStderr ?? '').trim();
@@ -1322,6 +1749,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           } else {
             // Record success to reset restart state
             this.restartManager.recordSuccess(chatId);
+            // Issue #4391: a non-empty turn means the session is healthy —
+            // re-arm the empty-turn retry for this chat (both when the retried
+            // replay succeeded and when an ordinary turn just produced output).
+            this.emptyTurnRetryPolicy.reset(chatId);
           }
 
           // Issue #3985: Mark as not processing after receiving result.
@@ -1332,9 +1763,17 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
           this.resolveTurn();
 
           if (this.callbacks.onDone) {
-            const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+            const threadRoot = resolveReplyThreadRoot();
             await this.callbacks.onDone(chatId, threadRoot);
           }
+
+          // Issue #4587 (part 1, review fix): turn boundary — re-arm the FIFO
+          // consumption so the NEXT queued message's anchor (possibly another
+          // thread's, pushed while this turn was draining) is adopted at the
+          // next turn's first event. currentTurnAnchor keeps this turn's value
+          // for the tail paths below (onDone above already ran; error paths
+          // after a result are not expected but read the frozen value).
+          turnAnchorConsumed = false;
 
           // Issue #3124: In once-mode, close channel after result to end the iterator.
           // This enables blocking one-shot execution via processMessage + taskComplete.
@@ -1374,7 +1813,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // 重试无法解决，直接向用户展示具体错误。
       if (isStartupFailure(messageCount, elapsedMs)) {
         const stderr = getErrorStderr(iteratorError);
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
 
         // 提取有用的错误信息：优先使用 stderr 内容
         let diagnosticMessage = iteratorError.message;
@@ -1422,7 +1861,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Notify user about the error
       {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         await this.callbacks.sendMessage(
           chatId,
           `❌ Session error: ${iteratorError.message}`,
@@ -1438,7 +1877,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.clearTaskCompletion();
 
       if (this.callbacks.onDone) {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         await this.callbacks.onDone(chatId, threadRoot);
       }
     } finally {
@@ -1447,7 +1886,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // when streaming never started or the channel doesn't stream — the
       // driver's finish() is idempotent and only acts in the streaming state.
       if (streamDriver) {
-        const finishThreadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const finishThreadRoot = resolveReplyThreadRoot();
         await streamDriver.finish(finishThreadRoot);
       }
     }
@@ -1467,6 +1906,44 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.logger.info(
         { chatId, messageCount },
         'GLM stall: terminated turn ended; suppressing auto-restart, context preserved'
+      );
+      return;
+    }
+
+    // Issue #4442 (part 3): the provider's synthetic empty-stream result ended
+    // the turn — same interception as the stall path above. recordFailure was
+    // already recorded in the result branch; an auto-restart here would just
+    // re-run the turn without a user prompt. Flip isSessionActive so the next
+    // user message starts a fresh turn, context preserved.
+    if (this.emptyStreamTerminated) {
+      this.emptyStreamTerminated = false;
+      this.isSessionActive = false;
+      this.isProcessingMessage = false;
+      this.logger.info(
+        { chatId, messageCount },
+        'Empty stream: terminated turn ended; suppressing auto-restart, context preserved (Issue #4442)'
+      );
+      return;
+    }
+
+    // Issue #4391 (part 2 review): this invocation's session was torn down by
+    // the empty-turn reset+replay. Timing: endEmptyTurnSession() closes this
+    // iterator's query+channel, then the same timer callback synchronously
+    // runs the replay's processMessage → startAgentLoop(), which re-sets
+    // isSessionActive=true — BEFORE this parked iterator wakes from the close.
+    // So the wasExplicitClose read above races and can be false even though
+    // the teardown was deliberate; falling through would misroute this exit
+    // into the unexpected-end / auto-restart path (false ⚠️ reconnect or 🚫
+    // circuit-breaker notice per empty turn, plus clobbering the replay's
+    // fresh session). Detect it structurally — the generation bumped past
+    // myGeneration — and exit silently, the same interception shape as the
+    // GLM-stall stalledTerminated path above. Touch no session state: the
+    // replay's loop already owns it (isSessionActive, isProcessingMessage,
+    // queryHandle, channel).
+    if (this.sessionGeneration !== myGeneration && !wasExplicitClose) {
+      this.logger.info(
+        { chatId, messageCount, myGeneration, currentGeneration: this.sessionGeneration },
+        'Empty-turn reset+replay: superseded session iterator ended; suppressing unexpected-end path (Issue #4391)'
       );
       return;
     }
@@ -1541,7 +2018,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
 
       // Notify user that circuit breaker opened
       {
-        const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+        const threadRoot = resolveReplyThreadRoot();
         const blockMessage =
           decision.reason === 'max_restarts_exceeded'
             ? `🚫 会话多次异常中断，已暂停处理。请发送 /reset 重置会话。\n\n最近错误: ${errorMessage}`
@@ -1563,7 +2040,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     }
 
     // Notify user about the restart
-    const threadRoot = this.conversationOrchestrator.getThreadRoot(chatId);
+    const threadRoot = resolveReplyThreadRoot();
     const restartMessage = iteratorError
       ? `⚠️ 会话遇到错误，正在重新连接... (${iteratorError.message})`
       : '⚠️ 会话意外断开，正在重新连接...';
@@ -1572,6 +2049,42 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Restart the agent loop to preserve context for future messages
     this.startAgentLoop();
     this.logger.info({ chatId }, 'Agent loop restarted');
+  }
+
+  /**
+   * Issue #4391 (#4194 follow-up ②): session-only teardown for the empty-turn
+   * reset+replay. Closes the current query + channel and marks the session
+   * inactive so the NEXT processMessage() starts a fresh SDK session — the
+   * replay runs against a clean session instead of the corrupted one.
+   *
+   * Deliberately narrower than `reset()`: history context, the restartManager
+   * accounting, the thread root, and the inline MCP instances all survive, and
+   * the still-running processIterator is NOT aborted (its channel closes, so
+   * its generator drains and the iterator ends as a superseded session —
+   * intercepted via the sessionGeneration check in processIterator, because
+   * the replay's startAgentLoop() re-sets isSessionActive=true before the
+   * parked iterator wakes, so the wasExplicitClose read alone would race;
+   * same interception shape as the GLM-stall path, `stalledTerminated`).
+   * startAgentLoop() rebuilds everything it needs on the replay.
+   */
+  private endEmptyTurnSession(): void {
+    const chatId = this.boundChatId;
+    this.logger.info({ chatId }, 'Ending session for empty-turn reset+replay (Issue #4391)');
+
+    // Mark inactive BEFORE closing so the iterator end is read as an explicit
+    // close (wasExplicitClose), not an unexpected loop end that would trigger
+    // the auto-restart path below.
+    this.isSessionActive = false;
+    this.isProcessingMessage = false;
+
+    if (this.queryHandle) {
+      this.queryHandle.close();
+      this.queryHandle = undefined;
+    }
+    if (this.channel) {
+      this.channel.close();
+      this.channel = undefined;
+    }
   }
 
   /**
@@ -1629,7 +2142,18 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // Issue #3124: Clear once-mode and task completion state
     this.onceMode = false;
     this.stalledTerminated = false; // Issue #3706: clear stall flag
+    this.emptyStreamTerminated = false; // Issue #4442: clear empty-stream flag
+    // Issue #4391 (part 2 review): a reset also supersedes any still-draining
+    // iterator from the previous session (defense-in-depth alongside the
+    // isSessionActive=false set above, which already reads as explicit close).
+    this.sessionGeneration++;
     this.clearTaskCompletion();
+
+    // Issue #4587 (part 1, review fix): drop pending turn anchors too — the
+    // aborted iterator's finally block may still emit its error notice, and it
+    // must not reply into a pre-reset thread; queued messages are gone with
+    // the session.
+    this.pendingTurnAnchors = [];
 
     // Issue #4063: Clear per-turn completion state
     this.rejectTurn(new Error('Agent reset'));
@@ -1726,6 +2250,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Implements Disposable interface (Issue #328).
    */
   dispose(): void {
+    // Issue #4391 (part 2 review): mark disposed synchronously first, so a
+    // replay timer firing mid-dispose (or right after) sees the flag.
+    this.disposed = true;
     // Issue #3745: Synchronously close queryHandle and channel to prevent
     // exit listener leaks. The previous fire-and-forget pattern (dispose →
     // shutdown() without await) meant shutdown()'s `await Promise.resolve()`

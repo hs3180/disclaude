@@ -309,6 +309,28 @@ async function main(): Promise<void> {
   const agentPool = new PrimaryAgentPool({
     messageBuilderOptions: createFeishuMessageBuilderOptions(),
     cwdProvider: projectManager.createCwdProvider(),
+    // Issue #4448 (direction #1): structured resolver alongside the plain
+    // provider, so ChatAgent can warn the chat when the bound directory is
+    // missing and the agent falls back to the workspace.
+    cwdResolver: (chatId: string) => projectManager.resolveCwd(chatId),
+    // Issue #4577: busy-turn hard cap. The idle sweep this pool runs never
+    // evicts mid-turn agents — correct, but unbounded: a runaway 2h+ turn
+    // held its whole subprocess tree uncollectable (issue evidence A/B).
+    // With the cap, an over-long busy turn is stopped (same path as /stop)
+    // and the chat notified. 90 min sits in the 60~90min band the issue
+    // recommends for its runaway evidence (2h10m / 13k SDK messages /
+    // $18.90 — judged a runaway loop, not an expected turn). Set 0 to
+    // disable.
+    busyTurnHardCapMs: 90 * 60 * 1000,
+    // Issue #4577: user-facing notice after a hard-cap stop — same feedback
+    // the /stop command gives, so the chat isn't silently cut off.
+    onBusyCapExceeded: async (chatId, busyMinutes) => {
+      await primaryNode.sendMessage(
+        chatId,
+        `⏹️ **响应已超过时长上限被停止**（已运行 ${busyMinutes} 分钟，上限 90 分钟）\n\n` +
+          '会话保持活跃，您可以继续发送消息。'
+      );
+    },
   });
   // Issue #4169: Reclaim inactive agents (releasing their query handle, channel,
   // MCP connections, listeners) so the per-chatId pool doesn't grow unbounded.
@@ -322,6 +344,11 @@ async function main(): Promise<void> {
     agentPool: {
       reset: (chatId: string, skipContext?: boolean) => agentPool.reset(chatId, skipContext),
       stop: (chatId: string) => agentPool.stop(chatId),
+      // Issue #4587 (part 3): thread-scoped reset/stop for commands typed
+      // inside a topic-group thread — the pool's part-2 slots, previously
+      // reachable only from the message path.
+      resetThread: (chatId, skipContext, threadRootId) => agentPool.reset(chatId, skipContext, threadRootId),
+      stopThread: (chatId, threadRootId) => agentPool.stop(chatId, threadRootId),
     },
     node: {
       nodeId: primaryNode.getNodeId(),
@@ -472,13 +499,20 @@ async function main(): Promise<void> {
 
     // Issue #3857 Phase 2: Start HTTP API server if --api-port is specified
     if (options.apiPort) {
-      const apiPortReady = await isPortAvailable(options.apiPort, 'localhost');
+      // #4608: bind explicitly to IPv4 loopback, NOT 'localhost'. A 'localhost'
+      // bind can resolve ::1-first and end up IPv6-only, while undici fetch
+      // (the REST IPC client) tries 127.0.0.1 first — the exact family split
+      // observed in docs/channel-skill-rest-live-verification.md §"loopback
+      // only". REST IPC is loopback-only by design, so the IPv4 pin is always
+      // correct; mirror it client-side via DISCLAUDE_REST_IPC_BASE_URL.
+      const apiHost = '127.0.0.1';
+      const apiPortReady = await isPortAvailable(options.apiPort, apiHost);
       if (!apiPortReady) {
         console.error(`Error: API port ${options.apiPort} is already in use. Exiting.`);
         processLock?.release();
         process.exit(1);
       }
-      httpApiServer = new HttpApiServer({ port: options.apiPort, apiToken: options.apiToken });
+      httpApiServer = new HttpApiServer({ port: options.apiPort, host: apiHost, apiToken: options.apiToken });
       httpApiServer.setNodeId(primaryNode.getNodeId());
 
       // Issue #3857 Phase 2: Wire push handler to InputMessageRouter
@@ -496,17 +530,6 @@ async function main(): Promise<void> {
           await router.route(systemMessage);
         });
       }
-
-      // Issue #4063 (part 2): wire REST /api/loop/* to the shared LoopRunner so
-      // loops started via REST are visible to the IPC composite handlers and
-      // vice versa (builds on #4148, which wired the IPC path). The runner is
-      // lazy-initialized on first start from either entry point.
-      const loopRunner = primaryNode.getOrCreateLoopRunner();
-      httpApiServer.setLoopHandlers({
-        start: (params) => loopRunner.start(params),
-        stop: (loopId) => { loopRunner.stop(loopId); },
-        status: (loopId) => loopRunner.status(loopId),
-      });
 
       // Issue #4279: wire REST /api/upload-file to the channel's uploadFile
       // capability (REST parity with the IPC method).
@@ -539,6 +562,13 @@ async function main(): Promise<void> {
       // Issue #4279: wire REST /api/upload-image to the channel's uploadImage
       // capability (REST parity with the IPC method).
       httpApiServer.setUploadImageHandler((filePath) => primaryNode.uploadImage(filePath));
+
+      // Issue #4281: wire REST /api/mark-chat-responded to the channel's
+      // markChatResponded capability (temp-chat lifecycle; REST parity with
+      // the IPC method).
+      httpApiServer.setMarkChatRespondedHandler(
+        (chatId, response) => primaryNode.markChatResponded(chatId, response),
+      );
 
       await httpApiServer.start();
       console.log(`HTTP API server started on http://localhost:${options.apiPort}`);

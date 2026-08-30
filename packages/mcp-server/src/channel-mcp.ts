@@ -2,8 +2,8 @@
  * Channel MCP Tools - In-process tool implementation.
  *
  * This module provides MCP tools that communicate with the Primary Node
- * via IPC. The IPC server is managed by the Primary Node, not by this
- * module. Tools use getIpcClient() to connect to the parent's IPC server.
+ * over REST (Issue #4168 Phase 3: the Unix-socket IPC transport is removed;
+ * tools construct a RestIpcClient via tools/ipc-utils getRestIpcClient()).
  *
  * @module mcp-server/channel-mcp
  */
@@ -14,6 +14,7 @@ import {
   createLogger,
   withTiming,
   type SdkInlineToolDefinition,
+  type ToolProgressCallback,
 } from '@disclaude/core';
 import {
   send_text,
@@ -21,9 +22,6 @@ import {
   send_interactive,
   send_file,
   push_to_agent,
-  loop_start,
-  loop_stop,
-  loop_status,
   setMessageSentCallback,
 } from './tools/index.js';
 import {
@@ -45,18 +43,14 @@ export { send_text } from './tools/send-message.js';
 export { send_card } from './tools/send-card.js';
 export { send_file } from './tools/send-file.js';
 export { push_to_agent } from './tools/push-to-agent.js';
-// Loop Runner operations (Issue #4075)
-export { loop_start } from './tools/loop-start.js';
-export { loop_stop } from './tools/loop-stop.js';
-export { loop_status } from './tools/loop-status.js';
+// Issue #4280 (part 4): the IPC-server lifecycle re-exports
+// (startIpcServer/stopIpcServer/isIpcServerRunning/
+// getIpcServerSocketPath/registerFeishuHandlers/unregisterFeishuHandlers)
+// are removed with the mcp-server's own UnixSocketIpcServer — dead code
+// since part 3.
 export {
   send_interactive,
   send_interactive_message,
-  startIpcServer,
-  stopIpcServer,
-  isIpcServerRunning,
-  registerFeishuHandlers,
-  unregisterFeishuHandlers,
 } from './tools/interactive-message.js';
 
 function toolSuccess(text: string): { content: Array<{ type: 'text'; text: string }> } {
@@ -200,50 +194,6 @@ For display-only cards, use send_card instead.`,
       required: ['chatId', 'message'],
     },
     handler: push_to_agent,
-  },
-  loop_start: {
-    description:
-      'Start a loop that repeatedly pushes an instruction to a chat agent at a configured interval. Returns a loopId for stop/status operations.',
-    parameters: {
-      type: 'object',
-      properties: {
-        chatId: { type: 'string', description: 'Target chat ID' },
-        prompt: { type: 'string', description: 'The instruction pushed to the agent each step' },
-        maxSteps: { type: 'number', description: 'Maximum loop iterations (default: 10)' },
-        maxDurationMs: {
-          type: 'number',
-          description: 'Maximum total duration in ms (default: 3600000)',
-        },
-        stepIntervalMs: {
-          type: 'number',
-          description: 'Interval between steps in ms (default: 30000)',
-        },
-      },
-      required: ['chatId', 'prompt'],
-    },
-    handler: loop_start,
-  },
-  loop_stop: {
-    description: 'Stop a running loop by its loopId.',
-    parameters: {
-      type: 'object',
-      properties: {
-        loopId: { type: 'string', description: 'The loop ID returned by loop_start' },
-      },
-      required: ['loopId'],
-    },
-    handler: loop_stop,
-  },
-  loop_status: {
-    description: 'Get the current status of a loop by its loopId.',
-    parameters: {
-      type: 'object',
-      properties: {
-        loopId: { type: 'string', description: 'The loop ID returned by loop_start' },
-      },
-      required: ['loopId'],
-    },
-    handler: loop_status,
   },
 };
 
@@ -409,15 +359,18 @@ When building tables with \`column_set\`, follow these rules:
         .optional()
         .describe('Optional parent message ID for thread reply'),
     }),
-    handler: async ({
-      card,
-      chatId,
-      parentMessageId,
-    }: {
-      card: Record<string, unknown>;
-      chatId: string;
-      parentMessageId?: string;
-    }) =>
+    handler: async (
+      {
+        card,
+        chatId,
+        parentMessageId,
+      }: {
+        card: Record<string, unknown>;
+        chatId: string;
+        parentMessageId?: string;
+      },
+      onProgress?: ToolProgressCallback
+    ) =>
       await withTiming(timingLogger, 'mcp:send_card', chatId, async () => {
         // Issue #1355: Pre-validation to prevent message sending on invalid params
         // Validate card type
@@ -442,8 +395,10 @@ When building tables with \`column_set\`, follow these rules:
           // Issue #2340: Auto-convert GFM tables in markdown elements to column_set
           let processedCard = transformCardTables(card);
 
-          // Issue #2951: Auto-upload local image paths and replace with Feishu image_keys
-          const imageResult = await resolveCardImages(processedCard);
+          // Issue #2951: Auto-upload local image paths and replace with Feishu image_keys.
+          // Issue #4568: forward the progress callback — each settled upload
+          // reports done/total, keeping the silent upload window observable.
+          const imageResult = await resolveCardImages(processedCard, onProgress);
           processedCard = imageResult.card;
 
           const result = await send_card({ card: processedCard, chatId, parentMessageId });
@@ -605,15 +560,18 @@ For display-only cards, use send_card instead.
       chatId: z.string(),
       parentMessageId: z.string().optional(),
     }),
-    handler: async ({
-      filePath,
-      chatId,
-      parentMessageId,
-    }: {
-      filePath: string;
-      chatId: string;
-      parentMessageId?: string;
-    }) =>
+    handler: async (
+      {
+        filePath,
+        chatId,
+        parentMessageId,
+      }: {
+        filePath: string;
+        chatId: string;
+        parentMessageId?: string;
+      },
+      onProgress?: ToolProgressCallback
+    ) =>
       await withTiming(timingLogger, 'mcp:send_file', chatId, async () => {
         // Issue #1641 P1: Validate chatId format before IPC call
         const chatIdError = getChatIdValidationError(chatId);
@@ -622,7 +580,9 @@ For display-only cards, use send_card instead.
         }
 
         try {
-          const result = await send_file({ filePath, chatId, parentMessageId });
+          // Issue #4568: forward the progress callback — send_file reports the
+          // file size right before the (single, long-silent) REST upload.
+          const result = await send_file({ filePath, chatId, parentMessageId, onProgress });
           return result.success ? toolSuccess(result.message) : toolError(result.message);
         } catch (error) {
           return toolError(

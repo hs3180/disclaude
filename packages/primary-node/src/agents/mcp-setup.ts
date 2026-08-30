@@ -3,10 +3,15 @@
  *
  * Extracted from chat-agent.ts (Issue #4125 part 1).
  *
+ * Issue #4459 (part 10): the external stdio MCP-server loader was removed —
+ * config `tools.mcpServers` is no longer read and external servers are no
+ * longer merged. Only the inline channel MCP server remains (its retirement
+ * to a Skill is tracked separately in #4459 Scope 3). Migrate external tools
+ * to a CLI Skill (docs/skill-format-spec.md).
+ *
  * @module agents/mcp-setup
  */
 
-import { Config } from '@disclaude/core';
 import { createChannelMcpServer } from '@disclaude/mcp-server';
 import type { Logger } from 'pino';
 
@@ -22,7 +27,6 @@ export interface McpCapabilitiesProvider {
  *
  * Combines:
  * - Channel MCP server (inline transport, for send_text/send_card/etc.)
- * - Externally configured MCP servers from config file (stdio transport)
  *
  * @param chatId - The bound chat ID for capability lookup
  * @param callbacks - Callbacks providing capability info
@@ -52,22 +56,11 @@ export function buildMcpServers(
     if (shouldIncludeContextMcp) {
       mcpServers['channel-mcp'] = createChannelMcpServer();
 
-      logger.info({
-        ipcSocket: process.env.DISCLAUDE_WORKER_IPC_SOCKET,
-      }, 'Configured channel MCP server (inline transport)');
-    }
-  }
-
-  // Merge configured external MCP servers from config file
-  const configuredMcpServers = Config.getMcpServersConfig();
-  if (configuredMcpServers) {
-    for (const [name, config] of Object.entries(configuredMcpServers)) {
-      mcpServers[name] = {
-        type: 'stdio',
-        command: config.command,
-        args: config.args || [],
-        ...(config.env && { env: config.env }),
-      };
+      // Issue #4280 (part 5): the ipcSocket env field is gone — PrimaryNode
+      // no longer sets DISCLAUDE_WORKER_IPC_SOCKET (no IPC server). The MCP
+      // tools inside this server reach PrimaryNode over REST
+      // (DISCLAUDE_REST_IPC_BASE_URL / getRestIpcClient).
+      logger.info('Configured channel MCP server (inline transport)');
     }
   }
 

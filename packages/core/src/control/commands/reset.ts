@@ -4,19 +4,28 @@ import type { ControlHandlerContext, CommandHandler } from '../types.js';
 /**
  * /reset 命令处理
  * Issue #3696: support --no-context flag to skip history loading
+ * Issue #4587 (part 3): a reset issued inside a topic-group thread resets
+ * that thread's agent slot, not the chat-scoped one.
  */
 export const handleReset: CommandHandler = (
   command: ControlCommand,
   context: ControlHandlerContext
 ): ControlResponse => {
   const skipContext = (command.data as { skipContext?: boolean } | undefined)?.skipContext;
-  context.agentPool.reset(command.chatId, skipContext);
+  if (command.threadRootId && context.agentPool.resetThread) {
+    context.agentPool.resetThread(command.chatId, skipContext, command.threadRootId);
+  } else {
+    context.agentPool.reset(command.chatId, skipContext);
+  }
   const suffix = skipContext
     ? '\n\n⚠️ 历史上下文已跳过，将以空白状态开始。'
     : '';
+  const threadSuffix = command.threadRootId
+    ? '\n\n🧵 已重置当前话题（thread）的会话；其他话题不受影响。'
+    : '';
   return {
     success: true,
-    message: `✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。${suffix}`,
+    message: `✅ **对话已重置**\n\n新的会话已启动，之前的上下文已清除。${suffix}${threadSuffix}`,
   };
 };
 

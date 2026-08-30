@@ -27,9 +27,21 @@
  * @module agents/factory
  */
 
-import { Config, type BaseAgentConfig, type AgentProvider, type SchedulerCallbacks, type MessageBuilderOptions, type ModelTier, type CwdProvider } from '@disclaude/core';
+import {
+  Config,
+  createLogger,
+  type BaseAgentConfig,
+  type AgentProvider,
+  type SchedulerCallbacks,
+  type MessageBuilderOptions,
+  type ModelTier,
+  type CwdProvider,
+  type CwdResolution,
+} from '@disclaude/core';
 import { ChatAgent } from './chat-agent.js';
 import type { ChatAgentConfig, ChatAgentCallbacks } from './types.js';
+
+const logger = createLogger('AgentFactory');
 
 // ============================================================================
 // Issue #1412: Helper function for converting SchedulerCallbacks to ChatAgentCallbacks
@@ -100,6 +112,11 @@ export interface AgentCreateOptions {
    * @see Issue #1916
    */
   cwdProvider?: CwdProvider;
+  /**
+   * Structured cwd resolver for surfacing the bound-missing fallback
+   * (Issue #4448 direction #1). See ChatAgentConfig.cwdResolver.
+   */
+  cwdResolver?: (chatId: string) => CwdResolution;
   /**
    * Skip history loading on agent startup (Issue #3696).
    * Used by /reset --no-context to create a truly fresh agent.
@@ -199,6 +216,20 @@ export class AgentFactory {
         options = opt || {};
       }
 
+      // Issue #4448 (direction #4, observation B): mirror the `createAgent`
+      // guard on the long-lived pilot path. `cwdProvider` is optional, but
+      // omitting it silently runs the pilot in the workspace cwd, ignoring any
+      // `/project` binding for this chat. The single production caller
+      // (PrimaryAgentPool.getOrCreateChatAgent) always injects one when wired
+      // from cli.ts; warn so a pool/options path that omits it (or a future
+      // caller) does not silently trip the workspace fallback.
+      if (!options.cwdProvider) {
+        logger.warn(
+          { chatId },
+          'AgentFactory.createChatAgent called without cwdProvider; agent will run in the workspace cwd and ignore any /project binding'
+        );
+      }
+
       const baseConfig = this.getBaseConfig(options);
       const config: ChatAgentConfig = {
         ...baseConfig,
@@ -206,6 +237,7 @@ export class AgentFactory {
         callbacks,
         messageBuilderOptions: options.messageBuilderOptions,
         cwdProvider: options.cwdProvider,
+        cwdResolver: options.cwdResolver,
         skipHistory: options.skipHistory,
       };
 
@@ -246,12 +278,26 @@ export class AgentFactory {
     options: AgentCreateOptions = {}
   ): ChatAgent {
     const baseConfig = this.getBaseConfig(options);
+
+    // Issue #4448 (direction #4): `cwdProvider` is optional, but omitting it
+    // silently runs the agent in the workspace cwd, ignoring any `/project`
+    // binding for this chat. There is currently no production caller that
+    // omits it (every spawn path injects one via PrimaryAgentPool); warn so a
+    // future caller does not silently trip the workspace fallback.
+    if (!options.cwdProvider) {
+      logger.warn(
+        { chatId },
+        'AgentFactory.createAgent called without cwdProvider; agent will run in the workspace cwd and ignore any /project binding'
+      );
+    }
+
     const config: ChatAgentConfig = {
       ...baseConfig,
       chatId,
       callbacks,
       messageBuilderOptions: options.messageBuilderOptions,
       cwdProvider: options.cwdProvider,
+      cwdResolver: options.cwdResolver,
       skipHistory: options.skipHistory,
     };
 

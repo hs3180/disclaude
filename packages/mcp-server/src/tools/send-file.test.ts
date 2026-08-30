@@ -11,10 +11,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Issue #4129: uploadFile is now a standalone function exported from @disclaude/core.
 // Production calls uploadFile(client, ...). Mock it to drop the client arg and delegate
 // to the same spy as the legacy client.uploadFile(...) instance method.
-const { mockIpcClient, mockUploadFile } = vi.hoisted(() => {
+const { mockIpcClient, mockUploadFile, mockGetRestIpcClient } = vi.hoisted(() => {
   const mockUploadFile = vi.fn();
   const mockIpcClient = { uploadFile: mockUploadFile };
-  return { mockIpcClient, mockUploadFile };
+  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
+  return { mockIpcClient, mockUploadFile, mockGetRestIpcClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -24,7 +25,6 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  getIpcClient: vi.fn(),
   uploadFile: (...args: unknown[]) => mockUploadFile(...args.slice(1)),
 }));
 
@@ -34,7 +34,14 @@ vi.mock('./credentials.js', () => ({
 }));
 
 vi.mock('./ipc-utils.js', () => ({
+  // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
+  getRestIpcClient: () => mockGetRestIpcClient(),
   isIpcAvailable: vi.fn(),
+  // Issue #4576: deterministic stub — the unavailable-branch tests assert the
+  // fallback hint (thread-preserving +messages-reply) is appended. Mirrors
+  // the real signature: filePath rides along as --file.
+  buildIpcFallbackHint: (parentMessageId?: string, options?: { filePath?: string }) =>
+    `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}${options?.filePath ? ` --file ${options.filePath}` : ''}`,
 }));
 
 vi.mock('fs/promises', () => ({
@@ -42,14 +49,13 @@ vi.mock('fs/promises', () => ({
 }));
 
 import { send_file } from './send-file.js';
-import { getIpcClient } from '@disclaude/core';
 import { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 
 describe('send_file', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: 'test-secret' });
     vi.mocked(getWorkspaceDir).mockReturnValue('/workspace');
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
@@ -114,6 +120,27 @@ describe('send_file', () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain('IPC connection');
     });
+
+    it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const result = await send_file({
+        filePath: '/test/file.txt',
+        chatId: 'oc_test',
+        parentMessageId: 'om_parent123',
+      });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('+messages-reply --message-id om_parent123');
+    });
+
+    it('should pass the original filePath into the hint as --file (Issue #4576 review nit)', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const result = await send_file({
+        filePath: './report.pdf',
+        chatId: 'oc_test',
+        parentMessageId: 'om_parent123',
+      });
+      expect(result.message).toContain('--file ./report.pdf');
+    });
   });
 
   describe('successful send', () => {
@@ -135,6 +162,41 @@ describe('send_file', () => {
       });
       const result = await send_file({ filePath: '/test/file.txt', chatId: 'oc_test' });
       expect(result.sizeMB).toBe('0.49');
+    });
+  });
+
+  describe('progress reporting (#4568)', () => {
+    it('reports the file size once before the upload starts', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'file_key_123', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048000,
+      });
+      const onProgress = vi.fn();
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', onProgress });
+
+      expect(result.success).toBe(true);
+      expect(onProgress).toHaveBeenCalledTimes(1);
+      // stat is mocked to 1 MB — the pre-upload report carries name + size
+      expect(onProgress).toHaveBeenCalledWith({
+        message: 'Uploading doc.pdf (1.00 MB)…',
+      });
+    });
+
+    it('does not report progress when IPC is unavailable', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const onProgress = vi.fn();
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test', onProgress });
+
+      expect(result.success).toBe(false);
+      expect(onProgress).not.toHaveBeenCalled();
+    });
+
+    it('behaves identically without a callback (back-compat, Claude backend)', async () => {
+      mockIpcClient.uploadFile.mockResolvedValue({
+        success: true, fileKey: 'file_key_123', fileType: 'pdf', fileName: 'doc.pdf', fileSize: 2048000,
+      });
+      // No onProgress arg — must not throw.
+      const result = await send_file({ filePath: '/test/doc.pdf', chatId: 'oc_test' });
+      expect(result.success).toBe(true);
     });
   });
 

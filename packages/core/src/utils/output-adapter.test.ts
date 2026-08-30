@@ -80,6 +80,13 @@ describe('FeishuOutputAdapter', () => {
     adapter = new FeishuOutputAdapter(options);
   });
 
+  // Issue #4394 (part 6): leak guard — the throttle test below uses fake timers
+  // to drive the throttle interval deterministically; restore real timers after
+  // every test so the clock never leaks into siblings.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   describe('write', () => {
     it('should skip empty content', async () => {
       await adapter.write('');
@@ -110,6 +117,7 @@ describe('FeishuOutputAdapter', () => {
     });
 
     it('should throttle progress messages', async () => {
+      vi.useFakeTimers();
       // First progress message should be sent
       await adapter.write('Using Read: reading file...', 'tool_progress');
       expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -118,8 +126,11 @@ describe('FeishuOutputAdapter', () => {
       await adapter.write('Using Read: still reading...', 'tool_progress');
       expect(sendMessage).toHaveBeenCalledTimes(1);
 
-      // Wait for throttle interval to pass
-      await new Promise(resolve => setTimeout(resolve, 1100));
+      // Advance past the 1000ms throttle interval deterministically.
+      // Replaces a real 1100ms wall-clock wait (Issue #4394 test hygiene: the
+      // throttle is a Date.now()-based expiry decision, so a fake clock drives
+      // it without a host-load-dependent real sleep).
+      vi.advanceTimersByTime(1100);
 
       // Third message after interval should be sent
       await adapter.write('Using Read: done reading', 'tool_progress');

@@ -1,83 +1,122 @@
 /**
  * IPC utility functions for MCP tools.
  *
- * Shared utilities for IPC availability checking and error message generation.
+ * Shared utilities for transport availability checking and error message
+ * generation.
+ *
+ * Issue #4280 (Phase 3, part 3): the transport is REST, unconditionally.
+ * The Unix-socket availability probe and `getIpcSocketPath` discovery are
+ * removed with it — `GET /api/ping` on the PrimaryNode HTTP API server is
+ * the only liveness signal. `DISCLAUDE_REST_IPC_ENABLED` is no longer read:
+ * it had no effect once REST became the only transport.
  *
  * @module mcp-server/tools/ipc-utils
  */
 
-import { existsSync } from 'fs';
-import { createConnection } from 'net';
-import { getIpcSocketPath, createLogger } from '@disclaude/core';
+import { createLogger, RestIpcClient } from '@disclaude/core';
 
 const logger = createLogger('IpcUtils');
 
 /**
- * Check if IPC is available for Feishu API calls.
- * Issue #1035: Prefer IPC when available for unified client management.
- * Issue #1042: Use the IPC socket path (legacy DISCLAUDE_WORKER_IPC_SOCKET name;
- *   Worker Node architecture removed in #2964) if available.
- * Issue #1355: Use actual connection probing instead of file-existence check.
- *   The socket file may disappear while the process still holds the fd,
- *   or the file may exist but the server is not listening.
+ * Resolve the PrimaryNode REST base URL from the standard env wiring.
  *
- * This function performs a file-existence check first (fast path),
- * then attempts an actual connection to verify the server is alive.
+ * `DISCLAUDE_REST_IPC_BASE_URL` (default `http://localhost:19200`), with a
+ * trailing slash stripped — shared by `getRestIpcClient` and the
+ * `isIpcAvailable` probe so the two can't drift apart on env handling.
+ * (`RestIpcClient`'s constructor also strips; that one stays as defense for
+ * direct constructions elsewhere.)
+ */
+function resolveRestBaseUrl(): string {
+  return (process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:19200').replace(/\/$/, '');
+}
+
+/**
+ * Build a REST IPC client from the standard env wiring.
  *
- * @returns Promise resolving to true if IPC server is reachable
+ * - `DISCLAUDE_REST_IPC_BASE_URL` — PrimaryNode HTTP API server URL
+ *   (default `http://localhost:19200`)
+ * - `DISCLAUDE_REST_IPC_API_TOKEN` — bearer token for POST endpoints
+ *   (must match the PrimaryNode `--api-token`)
+ *
+ * Issue #4280 (Phase 3, part 3): every MCP tool that previously reached for
+ * the dual-path `getIpcClient()` facade (default Unix socket) constructs the
+ * `RestIpcClient` directly here. No transport toggle remains.
+ */
+export function getRestIpcClient(): RestIpcClient {
+  const baseUrl = resolveRestBaseUrl();
+  const apiToken = process.env.DISCLAUDE_REST_IPC_API_TOKEN;
+  return new RestIpcClient({ baseUrl, apiToken });
+}
+
+/**
+ * Check if the PrimaryNode REST API is available for channel calls.
+ *
+ * Issue #1355: probe the real endpoint (`GET /api/ping`), not a file —
+ * a socket file can disappear while the server still holds the fd, or
+ * exist while nothing is listening. REST carries the same requirement:
+ * only a 200 with `{ pong: true }` counts as available.
+ *
+ * Every MCP tool that gates on this (`send-card`, `interactive-message`,
+ * `push-to-agent`, …) reports "IPC 服务不可用" when it returns false, so
+ * the failure must be actionable on the REST wiring, not the socket path.
+ *
+ * @returns Promise resolving to true if the PrimaryNode REST API is reachable
  */
 export async function isIpcAvailable(): Promise<boolean> {
-  const socketPath = getIpcSocketPath();
-
-  // Fast path: socket file must exist
-  if (!existsSync(socketPath)) {
-    logger.debug({ socketPath, reason: 'socket_not_found' }, 'IPC availability check: not available');
-    return false;
-  }
-
-  // Issue #1355: Attempt actual connection to verify server is alive.
-  // This detects cases where:
-  // - Socket file exists but server is not listening (stale file)
-  // - Socket file was cleaned up by OS while process holds the fd
+  const baseUrl = resolveRestBaseUrl();
   try {
-    const available = await new Promise<boolean>((resolve) => {
-      const client = createConnection(socketPath);
-
-      const timeoutId = setTimeout(() => {
-        // Connection timeout — server likely not listening
-        try { client.destroy(); } catch { /* ignore */ }
-        resolve(false);
-      }, 1000);
-
-      client.on('connect', () => {
-        clearTimeout(timeoutId);
-        try { client.destroy(); } catch { /* ignore */ }
-        resolve(true);
-      });
-
-      client.on('error', () => {
-        clearTimeout(timeoutId);
-        try { client.destroy(); } catch { /* ignore */ }
-        resolve(false);
-      });
+    const res = await fetch(`${baseUrl}/api/ping`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(2000),
     });
-
-    if (available) {
-      logger.debug({ socketPath }, 'IPC availability check: available (connection probe succeeded)');
-    } else {
-      logger.debug({ socketPath, reason: 'probe_failed' }, 'IPC availability check: not available (connection probe failed)');
+    if (!res.ok) {
+      logger.debug({ baseUrl, status: res.status, reason: 'rest_ping_not_ok' }, 'IPC availability check: REST ping non-OK');
+      return false;
     }
-
+    const json = (await res.json()) as { pong?: boolean };
+    const available = json.pong === true;
+    logger.debug({ baseUrl, available }, `IPC availability check: REST ${available ? 'available (ping ok)' : 'not available (no pong)'}`);
     return available;
   } catch (error) {
-    logger.debug({ socketPath, reason: 'exception', err: error }, 'IPC availability check: not available (probe exception)');
+    logger.debug({ baseUrl, reason: 'rest_ping_exception', err: error }, 'IPC availability check: REST ping failed');
     return false;
   }
 }
 
 /**
- * Generate user-friendly error message based on IPC error type.
+ * Build the lark-cli fallback hint appended to IPC-unavailable errors.
+ *
+ * Issue #4576: when the PrimaryNode REST API is down, agents fall back to
+ * `lark-cli im +messages-send` — which has no reply/thread flag, so in topic
+ * groups the fallback reply "escapes" the thread and starts a new topic at
+ * the group root. The actionable hint tells the agent to use
+ * `+messages-reply` instead, which preserves thread attribution.
+ *
+ * @param parentMessageId - The message id the caller was asked to reply to,
+ *   when known. Embedded in the hint so the agent has a concrete command;
+ *   omitted (generic hint) when the send was not a thread reply.
+ * @param options - Optional extras: `filePath` (send_file only) appends
+ *   `--file <path>` to the suggested command — `+messages-reply` requires a
+ *   content flag, so without it an agent copying the hint would send an empty
+ *   reply. lark-cli only accepts cwd-relative paths, so pass the original
+ *   `filePath` argument, not the workspace-resolved absolute path.
+ * @returns The fallback hint string (empty-context callers append nothing).
+ */
+export function buildIpcFallbackHint(
+  parentMessageId?: string,
+  options?: { filePath?: string }
+): string {
+  const target = parentMessageId ?? '<om_...>';
+  const fileFlag = options?.filePath ? ` --file ${options.filePath}` : '';
+  return `IPC 不可用期间发送消息会丢失话题归属：lark-cli im +messages-send 没有 reply/thread 参数。请改用 \`lark-cli im +messages-reply --message-id ${target}${fileFlag}\` 回到原话题（Issue #4576），或等 PrimaryNode REST 恢复后重试。`;
+}
+
+/**
+ * Generate user-facing error message based on IPC error type.
  * Issue #1088: Provide actionable error messages.
+ * Issue #4280 (Phase 3, part 3): the service behind these errors is the
+ * PrimaryNode REST API (`--api-port`, not a Unix socket), so the
+ * unavailable case points at the REST startup requirement.
  *
  * @param errorType - The type of IPC error
  * @param originalError - The original error message
@@ -91,11 +130,11 @@ export function getIpcErrorMessage(
 ): string {
   switch (errorType) {
     case 'ipc_unavailable':
-      return '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。';
+      return '❌ PrimaryNode REST 服务不可用。请检查主服务是否以 --api-port 启动，以及 DISCLAUDE_REST_IPC_BASE_URL 是否指向正确地址。';
     case 'ipc_timeout':
-      return '❌ IPC 请求超时。服务可能过载，请稍后重试。';
+      return '❌ PrimaryNode 请求超时。服务可能过载，请稍后重试。';
     case 'ipc_request_failed':
-      return `❌ IPC 请求失败: ${originalError ?? '未知错误'}`;
+      return `❌ PrimaryNode 请求失败: ${originalError ?? '未知错误'}`;
     default:
       return defaultMessage ?? `❌ 操作失败: ${originalError ?? '未知错误'}`;
   }

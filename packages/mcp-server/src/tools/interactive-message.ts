@@ -14,14 +14,9 @@
 
 import {
   createLogger,
-  getIpcClient,
   sendInteractive,
-  UnixSocketIpcServer,
-  createInteractiveMessageHandler,
-  type FeishuApiHandlers,
-  type FeishuHandlersContainer,
 } from '@disclaude/core';
-import { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+import { isIpcAvailable, getIpcErrorMessage, getRestIpcClient, buildIpcFallbackHint } from './ipc-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
 import type { SendInteractiveResult, ActionPromptMap, InteractiveOption } from './types.js';
 
@@ -131,14 +126,17 @@ export async function send_interactive_message(params: {
       return {
         success: false,
         error: errorMsg,
-        message: '❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。',
+        // Issue #4576: actionable fallback — +messages-send loses thread
+        // attribution in topic groups; +messages-reply preserves it.
+        message: `❌ IPC 服务不可用。请检查 Primary Node 服务是否正在运行。${buildIpcFallbackHint(parentMessageId)}`,
       };
     }
 
     // Issue #1571: Forward raw params via sendInteractive IPC.
     // Primary Node builds the card, sends it, and registers action prompts.
     logger.debug({ chatId, parentMessageId }, 'Forwarding raw params via sendInteractive IPC');
-    const ipcClient = getIpcClient();
+    // Issue #4280 (Phase 3, part 3): REST-only — direct RestIpcClient.
+    const ipcClient = getRestIpcClient();
     const result = await sendInteractive(ipcClient, chatId, {
       question,
       options,
@@ -181,113 +179,17 @@ export async function send_interactive_message(params: {
 }
 
 // ============================================================================
-// IPC Server for Cross-Process Communication
+// IPC Server for Cross-Process Communication — REMOVED (Issue #4280 part 4)
 // ============================================================================
-
-let ipcServer: UnixSocketIpcServer | null = null;
-
-/**
- * Issue #1120: Mutable container for Feishu API handlers.
- * Allows dynamic registration of handlers after IPC server starts.
- */
-const feishuHandlersContainer: FeishuHandlersContainer = {
-  handlers: undefined,
-};
-
-/**
- * Register Feishu API handlers for IPC-based operations.
- * Issue #1120: Allows FeishuChannel to register handlers after IPC server starts.
- *
- * @param handlers - The Feishu API handlers to register.
- */
-export function registerFeishuHandlers(handlers: FeishuApiHandlers): void {
-  feishuHandlersContainer.handlers = handlers;
-  logger.info('Feishu API handlers registered for IPC server');
-}
-
-/**
- * Unregister Feishu API handlers.
- * Issue #1120: Cleanup function for when FeishuChannel stops.
- */
-export function unregisterFeishuHandlers(): void {
-  feishuHandlersContainer.handlers = undefined;
-  logger.debug('Feishu API handlers unregistered from IPC server');
-}
-
-/**
- * Start the IPC server for cross-process communication.
- *
- * IMPORTANT: This function should only be called by the Primary Node,
- * NOT by MCP Server child processes. MCP Server processes should connect
- * as clients using getIpcClient().
- *
- * Issue #1572: Interactive context handlers are now no-op stubs since
- * context management has moved to Primary Node's InteractiveContextStore.
- * The IPC server is only used for Feishu API operations (send, card, file).
- *
- * @param feishuHandlers - Optional handlers for Feishu API operations.
- *                         When provided, IPC clients can send messages/cards
- *                         through the Primary Node's LarkClientService.
- */
-export async function startIpcServer(feishuHandlers?: FeishuApiHandlers): Promise<void> {
-  if (ipcServer) {
-    logger.debug('IPC server already running');
-    // Issue #1120: Still try to register handlers if provided
-    if (feishuHandlers) {
-      registerFeishuHandlers(feishuHandlers);
-    }
-    return;
-  }
-
-  // Issue #1120: Register initial handlers if provided
-  if (feishuHandlers) {
-    feishuHandlersContainer.handlers = feishuHandlers;
-  }
-
-  // Issue #1573: Phase 4 — No-op registerActionPrompts callback.
-  // In MCP Server mode, interactive context management is handled by Primary Node.
-  // The IPC server here is only used for Feishu API operations.
-  const handler = createInteractiveMessageHandler(
-    () => {}, // no-op: MCP Server doesn't manage interactive contexts
-    feishuHandlersContainer
-  );
-
-  ipcServer = new UnixSocketIpcServer(handler);
-
-  try {
-    await ipcServer.start();
-    logger.info({ path: ipcServer.getSocketPath() }, 'IPC server started for cross-process communication');
-  } catch (error) {
-    logger.error({ err: error }, 'Failed to start IPC server');
-    ipcServer = null;
-    throw error;
-  }
-}
-
-/**
- * Stop the IPC server.
- */
-export async function stopIpcServer(): Promise<void> {
-  if (ipcServer) {
-    await ipcServer.stop();
-    ipcServer = null;
-    logger.info('IPC server stopped');
-  }
-}
-
-/**
- * Check if the IPC server is running.
- */
-export function isIpcServerRunning(): boolean {
-  return ipcServer?.isRunning() ?? false;
-}
-
-/**
- * Get the IPC server socket path.
- */
-export function getIpcServerSocketPath(): string | null {
-  return ipcServer?.getSocketPath() ?? null;
-}
+// The mcp-server package no longer hosts a UnixSocketIpcServer. It was the
+// pre-#4280 sibling of PrimaryNode's own IPC server and had zero production
+// callers once part 3 (#4547) moved every MCP tool to the REST client:
+// PrimaryNode serves `/api/*` via HttpApiServer and registers channel
+// handlers on its own instance (primary-node.ts startIpcServer), while MCP
+// Server processes (stdio CLI, inline channel-mcp) connect as REST clients
+// via getRestIpcClient(). The startIpcServer/stopIpcServer/
+// isIpcServerRunning/getIpcServerSocketPath/registerFeishuHandlers/
+// unregisterFeishuHandlers exports were dead code and are gone.
 
 /**
  * Alias for send_interactive_message for consistency with other tool names.

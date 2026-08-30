@@ -3,35 +3,42 @@
  *
  * Covers argument parsing, error handling, and the disconnect cleanup path.
  *
+ * Issue #4543: push-cli is REST-only — the client is a directly-constructed
+ * RestIpcClient, so the tests assert the transport is unconditional REST
+ * (no getIpcClient facade, no UnixSocketIpcClient, no DISCLAUDE_REST_IPC_ENABLED
+ * read, no socket fast-fail probe).
+ *
  * @module primary-node/push-cli.test
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // vi.hoisted runs before vi.mock factories, so mockPushToAgent is available.
-const { mockPushToAgent, mockDisconnect } = vi.hoisted(() => ({
+const { mockPushToAgent, mockDisconnect, MockRestIpcClient } = vi.hoisted(() => ({
   mockPushToAgent: vi.fn(),
   mockDisconnect: vi.fn().mockResolvedValue(undefined),
+  // Issue #4543: capture constructor options so tests can assert the transport
+  // wiring (baseUrl from env, token from env) without a live HTTP server.
+  MockRestIpcClient: vi.fn().mockImplementation((opts: unknown) => ({
+    pushToAgent: mockPushToAgent,
+    disconnect: mockDisconnect,
+    __opts: opts,
+  })),
 }));
 
 vi.mock('@disclaude/core', () => ({
-  UnixSocketIpcClient: vi.fn().mockImplementation(() => ({
-    pushToAgent: mockPushToAgent,
-    disconnect: mockDisconnect,
-  })),
-  // Issue #4129: pushToAgent is now also a standalone function re-exported from ipc-client-facade.
-  // The production code imports it directly, so the mock must provide it too.
+  RestIpcClient: MockRestIpcClient,
+  // Issue #4129: pushToAgent is a standalone function re-exported from
+  // ipc-client-facade. The production code imports it directly, so the mock
+  // must provide it too.
   pushToAgent: mockPushToAgent,
-  getIpcSocketPath: vi.fn(({ override }: { override?: string }) => override ?? '/tmp/test.ipc'),
-}));
-
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn().mockReturnValue(true),
+  // Issue #4168 (Phase 3): the Unix-socket symbols (getIpcClient /
+  // getIpcSocketPath / UnixSocketIpcClient) are removed from @disclaude/core —
+  // a bare import of them would now fail at module load, which is itself the
+  // anti-regression. The mock no longer needs to stub them.
 }));
 
 import { parseArgs, main } from './push-cli.js';
-import { getIpcSocketPath } from '@disclaude/core';
-import { existsSync } from 'node:fs';
 
 describe('push-cli', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
@@ -43,14 +50,18 @@ describe('push-cli', () => {
     // Clear call history without resetting implementations
     mockPushToAgent.mockClear();
     mockDisconnect.mockClear();
+    MockRestIpcClient.mockClear();
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); }) as any;
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     originalArgv = process.argv;
-    // Ensure default return values
-    vi.mocked(existsSync).mockReturnValue(true);
     mockDisconnect.mockResolvedValue(undefined);
     mockPushToAgent.mockResolvedValue({ success: true });
+    // Issue #4543: transport must not depend on any env — start from a clean
+    // slate each test; specific tests set what they need.
+    delete process.env.DISCLAUDE_REST_IPC_ENABLED;
+    delete process.env.DISCLAUDE_REST_IPC_BASE_URL;
+    delete process.env.DISCLAUDE_REST_IPC_API_TOKEN;
   });
 
   afterEach(() => {
@@ -63,12 +74,21 @@ describe('push-cli', () => {
   describe('parseArgs', () => {
     it('should parse long-form args', () => {
       const result = parseArgs(['--chat-id', 'oc_123', '--message', 'hello']);
-      expect(result).toEqual({ chatId: 'oc_123', message: 'hello', socketPath: undefined });
+      expect(result).toEqual({ chatId: 'oc_123', message: 'hello' });
     });
 
     it('should parse short-form args', () => {
+      const result = parseArgs(['-c', 'oc_abc', '-m', 'world']);
+      expect(result).toEqual({ chatId: 'oc_abc', message: 'world' });
+    });
+
+    // Issue #4280 (Phase 3): --socket/-s is removed along with the direct
+    // UnixSocketIpcClient construction. Unknown flags are ignored by the
+    // parser (pre-existing behaviour), so the flag no longer changes the
+    // result — the options carry no socketPath at all.
+    it('should ignore the removed --socket flag without a socketPath field', () => {
       const result = parseArgs(['-c', 'oc_abc', '-m', 'world', '-s', '/tmp/x.ipc']);
-      expect(result).toEqual({ chatId: 'oc_abc', message: 'world', socketPath: '/tmp/x.ipc' });
+      expect(result).toEqual({ chatId: 'oc_abc', message: 'world' });
     });
 
     it('should call process.exit(1) when --chat-id is missing', () => {
@@ -112,26 +132,98 @@ describe('push-cli', () => {
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
-    it('should exit(1) when socket file does not exist', async () => {
-      vi.mocked(existsSync).mockReturnValue(false);
+    // ── Issue #4543: unconditional REST transport ──────────────────────────
+
+    it('constructs a RestIpcClient directly with all env unset (no IPC fallback)', async () => {
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      await main();
+      expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
+      expect(MockRestIpcClient).toHaveBeenCalledWith({ baseUrl: 'http://localhost:19200', apiToken: undefined });
+      expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
+    });
+
+    it('never constructs a Unix-socket client — the socket symbols no longer exist in @disclaude/core (#4168 Phase 3)', async () => {
+      // Issue #4168 (Phase 3): UnixSocketIpcClient / getIpcClient /
+      // getIpcSocketPath were deleted from the package surface. Asserting on
+      // the mock registry would require stubbing them back into existence;
+      // the module-surface deletion is pinned instead by the import above
+      // resolving without them and by the direct-client assertions here.
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      await main();
+      expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
+    });
+
+    it('is unaffected by DISCLAUDE_REST_IPC_ENABLED (env has no influence on transport)', async () => {
+      process.env.DISCLAUDE_REST_IPC_ENABLED = 'false';
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      await main();
+      // Still the direct REST client — the flag neither enables nor disables anything.
+      expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
+
+      MockRestIpcClient.mockClear();
+      process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
+      await main();
+      expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
+    });
+
+    it('wires DISCLAUDE_REST_IPC_BASE_URL / DISCLAUDE_REST_IPC_API_TOKEN into the client', async () => {
+      process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://primary.internal:9300/';
+      process.env.DISCLAUDE_REST_IPC_API_TOKEN = 'sekret';
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      await main();
+      // Trailing slash is the client's own normalization concern; the CLI
+      // passes the env value through verbatim.
+      expect(MockRestIpcClient).toHaveBeenCalledWith({ baseUrl: 'http://primary.internal:9300/', apiToken: 'sekret' });
+    });
+
+    it('help text documents REST-only transport and drops socket discovery', async () => {
+      process.argv = ['node', 'push-cli'];
+      await expect(main()).rejects.toThrow('process.exit');
+      const usage = logSpy.mock.calls.map((args: unknown[]) => String(args[0])).join('\n');
+      expect(usage).toContain('REST only');
+      expect(usage).toContain('DISCLAUDE_REST_IPC_BASE_URL');
+      expect(usage).toContain('DISCLAUDE_REST_IPC_API_TOKEN');
+      expect(usage).toContain('--api-port');
+      expect(usage).not.toContain('--socket');
+      expect(usage).not.toContain('Socket Discovery');
+    });
+
+    // ── Error paths ────────────────────────────────────────────────────────
+
+    it('prints an actionable error with startup guidance when REST is unreachable (ipc_unavailable)', async () => {
+      mockPushToAgent.mockResolvedValue({
+        success: false,
+        error: 'IPC_NOT_AVAILABLE: REST pushToAgent (fetch failed)',
+        errorType: 'ipc_unavailable',
+      });
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
       await expect(main()).rejects.toThrow('process.exit');
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('IPC socket not found'));
+      const calls = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+      expect(calls.some(c => c.includes('http://localhost:19200'))).toBe(true);
+      expect(calls.some(c => c.includes('--api-port'))).toBe(true);
+      expect(calls.some(c => c.includes('DISCLAUDE_REST_IPC_BASE_URL'))).toBe(true);
     });
 
-    it('should use --socket override when provided', async () => {
+    it('includes the configured base URL in the unreachable guidance', async () => {
+      process.env.DISCLAUDE_REST_IPC_BASE_URL = 'http://primary.internal:9300';
+      mockPushToAgent.mockResolvedValue({
+        success: false,
+        error: 'IPC_NOT_AVAILABLE: REST pushToAgent (fetch failed)',
+        errorType: 'ipc_unavailable',
+      });
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      await expect(main()).rejects.toThrow('process.exit');
+      const calls = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+      expect(calls.some(c => c.includes('http://primary.internal:9300'))).toBe(true);
+    });
+
+    // Issue #4280 (Phase 3) kept on #4543's REST-only ground: even when a
+    // removed --socket flag is passed, the client is still the direct REST
+    // client — no facade, no Unix socket, no socket fast-fail probe.
+    it('routes through the direct REST client even when a removed --socket flag is passed', async () => {
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello', '-s', '/custom.ipc'];
       await main();
-      expect(getIpcSocketPath).toHaveBeenCalledWith({ override: '/custom.ipc' });
-    });
-
-    it('should log success on successful push and call disconnect', async () => {
-      mockPushToAgent.mockResolvedValue({ success: true });
-      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
-      // main() resolves normally on success (no process.exit)
-      await main();
-      expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
-      expect(mockDisconnect).toHaveBeenCalled();
+      expect(MockRestIpcClient).toHaveBeenCalledTimes(1);
     });
 
     it('should exit(1) on pushToAgent failure with error details', async () => {
@@ -143,17 +235,6 @@ describe('push-cli', () => {
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
       await expect(main()).rejects.toThrow('process.exit');
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('push_to_agent failed [ipc_request_failed]'));
-    });
-
-    it('should show Primary Node hint on ipc_unavailable', async () => {
-      mockPushToAgent.mockResolvedValue({
-        success: false,
-        error: 'IPC unavailable',
-        errorType: 'ipc_unavailable',
-      });
-      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
-      await expect(main()).rejects.toThrow('process.exit');
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Primary Node'));
     });
 
     it('should show timeout hint on ipc_timeout', async () => {
@@ -181,6 +262,15 @@ describe('push-cli', () => {
       process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
       await expect(main()).rejects.toThrow('process.exit');
       expect(errorSpy).toHaveBeenCalledWith('Error: string error');
+    });
+
+    it('should log success on successful push and call disconnect', async () => {
+      mockPushToAgent.mockResolvedValue({ success: true });
+      process.argv = ['node', 'push-cli', '-c', 'oc_test', '-m', 'hello'];
+      // main() resolves normally on success (no process.exit)
+      await main();
+      expect(logSpy).toHaveBeenCalledWith('Message pushed successfully.');
+      expect(mockDisconnect).toHaveBeenCalled();
     });
 
     it('should call disconnect in finally block after success', async () => {

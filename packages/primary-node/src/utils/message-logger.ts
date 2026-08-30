@@ -46,14 +46,27 @@ function getDateString(date: Date = new Date()): string {
 export const CARD_ACTION_DEDUP_PREFIX = 'card_action:';
 
 /**
+ * Maximum processed-id cache size before FIFO eviction (issue #4544).
+ *
+ * The registry only guards against Feishu event redelivery, whose window is
+ * minutes — far smaller than what 10k entries span. Same bound as the WeChat
+ * listener's dedup cache (message-listener.ts).
+ */
+const MAX_PROCESSED_IDS_SIZE = 10_000;
+
+/** Number of entries to evict when the processed-id cache is full. */
+const PROCESSED_IDS_EVICTION_COUNT = 5_000;
+
+/**
  * Message logger class for persistent chat history logging.
  * Handles message deduplication and chat history logging.
  */
 export class MessageLogger {
   private chatDir: string;
 
-  // In-memory cache for immediate deduplication (no size limit)
-  // Only tracks message IDs seen in current session
+  // In-memory cache for immediate deduplication. Bounded with FIFO eviction
+  // (issue #4544): an unbounded Set grows for the process lifetime; the
+  // redelivery window it guards against is far shorter than 10k entries.
   private processedMessageIds = new Set<string>();
   private initialized = false;
 
@@ -96,12 +109,12 @@ export class MessageLogger {
 
       // Find legacy flat .md files (not in subdirectories)
       const legacyFlatFiles = entries.filter(
-        entry => entry.isFile() && entry.name.endsWith('.md')
+        (entry) => entry.isFile() && entry.name.endsWith('.md')
       );
 
       // Find legacy chatId directories with date files inside
       const legacyChatDirs = entries.filter(
-        entry => entry.isDirectory() && !/^\d{4}-\d{2}-\d{2}$/.test(entry.name)
+        (entry) => entry.isDirectory() && !/^\d{4}-\d{2}-\d{2}$/.test(entry.name)
       );
 
       if (legacyFlatFiles.length === 0 && legacyChatDirs.length === 0) {
@@ -154,7 +167,10 @@ export class MessageLogger {
           const newPath = path.join(newDateDir, `${dir.name}.md`);
           await fs.rename(oldPath, newPath);
 
-          logger.info({ from: `${dir.name}/${dateStr}.md`, to: `${dateStr}/${dir.name}.md` }, 'Migrated file');
+          logger.info(
+            { from: `${dir.name}/${dateStr}.md`, to: `${dateStr}/${dir.name}.md` },
+            'Migrated file'
+          );
           migratedCount++;
         }
 
@@ -201,8 +217,8 @@ export class MessageLogger {
 
     await this.appendToLog(entry);
 
-    // Add to in-memory cache
-    this.processedMessageIds.add(messageId);
+    // Add to in-memory cache (bounded, FIFO eviction)
+    this.rememberProcessedId(messageId);
   }
 
   /**
@@ -223,7 +239,7 @@ export class MessageLogger {
     senderId: string,
     chatId: string,
     content: string,
-    timestamp?: string | number,
+    timestamp?: string | number
   ): Promise<void> {
     const entry: LogEntry = {
       messageId,
@@ -240,7 +256,7 @@ export class MessageLogger {
     // Namespace the dedup key so the click does not pollute the receive-dedup
     // registry — a bare message_id here would make a later im.message.receive
     // for the same card message be skipped as a duplicate.
-    this.processedMessageIds.add(`${CARD_ACTION_DEDUP_PREFIX}${messageId}`);
+    this.rememberProcessedId(`${CARD_ACTION_DEDUP_PREFIX}${messageId}`);
   }
 
   /**
@@ -304,10 +320,7 @@ export class MessageLogger {
    *   being silently capped at the session default.
    * @returns Concatenated chat history or undefined if no history found
    */
-  async getChatHistory(
-    chatId: string,
-    maxLengthOverride?: number,
-  ): Promise<string | undefined> {
+  async getChatHistory(chatId: string, maxLengthOverride?: number): Promise<string | undefined> {
     try {
       const sessionConfig = Config.getSessionRestoreConfig();
       const maxDays = sessionConfig.historyDays;
@@ -317,7 +330,7 @@ export class MessageLogger {
 
       // Filter to date directories, sorted descending (newest first)
       const dateDirs = entries
-        .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
+        .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
         .sort((a, b) => b.name.localeCompare(a.name));
 
       // Collect day segments oldest-first (iterate the newest-first list in
@@ -358,7 +371,7 @@ export class MessageLogger {
    */
   private renderHistorySegments(
     segments: { date: string; content: string }[],
-    maxLength: number,
+    maxLength: number
   ): string {
     const separator = (date: string): string => `\n--- *${date}* ---\n\n`;
     // Render newest-first. The first (newest) segment has no separator.
@@ -420,7 +433,7 @@ export class MessageLogger {
       const entries = await fs.readdir(this.chatDir, { withFileTypes: true });
 
       const dateDirs = entries
-        .filter(e => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
+        .filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name))
         .sort((a, b) => b.name.localeCompare(a.name));
 
       const maxDays = Config.getSessionRestoreConfig().historyDays;
@@ -450,6 +463,35 @@ export class MessageLogger {
     this.processedMessageIds.clear();
   }
 
+  /**
+   * Register an id in the processed cache, evicting oldest entries once the
+   * cache exceeds MAX_PROCESSED_IDS_SIZE (issue #4544).
+   *
+   * Uses FIFO eviction — a JS Set iterates in insertion order, so removing the
+   * first entries drops the oldest. Duplicate re-registration (an id already
+   * present) does not change eviction order.
+   */
+  private rememberProcessedId(id: string): void {
+    this.processedMessageIds.add(id);
+
+    if (this.processedMessageIds.size <= MAX_PROCESSED_IDS_SIZE) {
+      return;
+    }
+
+    let count = 0;
+    for (const oldest of this.processedMessageIds) {
+      this.processedMessageIds.delete(oldest);
+      count++;
+      if (count >= PROCESSED_IDS_EVICTION_COUNT) {
+        break;
+      }
+    }
+    logger.debug(
+      { evicted: count, remaining: this.processedMessageIds.size },
+      'Trimmed processed-message dedup cache'
+    );
+  }
+
   private async appendToLog(entry: LogEntry): Promise<void> {
     if (!this.initialized) {
       await this.init();
@@ -460,9 +502,10 @@ export class MessageLogger {
     await fs.mkdir(dateDir, { recursive: true });
 
     const logPath = path.join(dateDir, `${entry.chatId}.md`);
-    const timestamp = typeof entry.timestamp === 'number'
-      ? new Date(entry.timestamp).toISOString()
-      : entry.timestamp;
+    const timestamp =
+      typeof entry.timestamp === 'number'
+        ? new Date(entry.timestamp).toISOString()
+        : entry.timestamp;
 
     const direction = entry.direction === 'incoming' ? '👤' : '🤖';
     const logLine = `${direction} [${timestamp}] (${entry.messageId})\n${entry.content}\n\n---\n\n`;

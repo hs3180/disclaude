@@ -2227,6 +2227,596 @@ describe('MessageHandler', () => {
       expect(msg.metadata.chatHistoryContext).toBeUndefined();
     });
 
+    it('emits threadRootId = walked chain root for topic-group reply (Issue #4587 part 1)', async () => {
+      mockState.isBotMentioned = true;
+      // Same chain shape as the thread-context test above: parent → root.
+      // The walked root (msg_root) — not parent_id (msg_parent) and not the
+      // incoming message_id — is the stable per-thread identity.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // 2nd call: getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // 3rd call: getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_root');
+    });
+
+    it('emits threadRootId = message_id for a topic-group message without parent_id (Issue #4587 part 1)', async () => {
+      // A topic post that starts a new thread IS the thread root.
+      mockState.isBotMentioned = true;
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_thread_start',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'New thread' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_thread_start');
+    });
+
+    it('routes a /reset typed in a topic-group thread to that thread (Issue #4587 part 3)', async () => {
+      // A /reset inside a thread must carry the thread root on the control
+      // command so it resets the chatId::threadRoot slot, not the chat-scoped
+      // agent. Thread-start form (no parent_id): message_id IS the root.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_thread',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('reset');
+      expect(cmd.threadRootId).toBe('msg_cmd_thread');
+      // The command was consumed — no message forwarded to the agent
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('routes a /stop reply inside a topic-group thread to the walked root (Issue #4587 part 3)', async () => {
+      // Reply form (parent_id set): the command's threadRootId uses the same
+      // walked-root resolution as the message path, so /stop in a reply hits
+      // the same thread slot the original question landed in.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // Issue #4587 part 3 review fix: the quoted-context fetch is
+              // skipped for slash commands, so the walk starts at call 1.
+              // 1st call: getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // 2nd call: getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/stop' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('stop');
+      expect(cmd.threadRootId).toBe('msg_root');
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+    });
+
+    it('a consumed command replying to a file message does NOT download it (Issue #4587 part 3 review fix)', async () => {
+      // The command dispatch moved after the quoted-context fetch, so a reply
+      // to a file message used to eagerly download the file (lark-cli + disk
+      // write) only for the download to be dropped when the command was
+      // consumed. The slash guard must keep the quoted fetch off the consumed
+      // path — lock it so reordering the dispatch turns this red.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // getThreadContext(parent_id) — parent itself (text, has root)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      handler.setControlHandler(true);
+      const downloadSpy = vi.spyOn(handler as any, 'handleQuotedFileMessage').mockResolvedValue(undefined);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_cmd_file_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/reset' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Command consumed with the right thread slot …
+      expect(mockState.emitControl).toHaveBeenCalledTimes(1);
+      expect(firstCallArg(mockState.emitControl).threadRootId).toBe('msg_root');
+      expect(mockState.emitMessage).not.toHaveBeenCalled();
+      // … and the quoted-context fetch (the only handleQuotedFileMessage entry
+      // point on this path) never ran — no eager download for a dropped command.
+      expect(downloadSpy).not.toHaveBeenCalled();
+      // The mock parent chain above is text-only, so also prove the quoted
+      // fetch itself never started: only the two thread-walk calls happened.
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('an UNrecognized slash command replying to a message still gets quoted context (Issue #4587 part 3 review fix)', async () => {
+      // Unrecognized `/xxx` (e.g. a skill invocation like /mineru-pdf) falls
+      // through as a normal message and NEEDS the quoted reply context. The
+      // slash guard must not permanently starve it — the deferred fetch after
+      // the router declines restores main's dispatch-then-fetch ordering.
+      mockState.hasControlHandler = true;
+      mockState.isBotMentioned = true;
+      // Control handler declines the command → router returns false.
+      mockState.emitControl.mockResolvedValue({ success: false });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // getThreadContext(parent_id) — parent itself
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // getThreadContext walks to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // Deferred getQuotedMessageContext(parent_id) after router decline
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_skill_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: '/mineru-pdf parse this' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      // Fell through to the agent with the deferred quoted context intact.
+      expect(mockState.emitMessage).toHaveBeenCalledTimes(1);
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.quotedMessage).toContain('First reply');
+      expect(msg.metadata.threadRootId).toBe('msg_root');
+    });
+
+    it('leaves commands in non-topic chats chat-scoped (Issue #4587 part 3)', async () => {
+      mockState.hasControlHandler = true;
+      mockState.emitControl.mockResolvedValue({ success: true, message: 'done' });
+      const { handler } = createHandler();
+      handler.setControlHandler(true);
+
+      await handler.handleMessageReceive(textEvent('/reset'));
+
+      const cmd = firstCallArg(mockState.emitControl);
+      expect(cmd.type).toBe('reset');
+      expect(cmd.threadRootId).toBeUndefined();
+    });
+
+    it('emits threadRootId = message_id for a topic-group FILE message without parent_id (Issue #4587 part 1 review fix)', async () => {
+      // Review fix: the file/image path originally had no no-parent_id branch,
+      // so a thread-starting media message emitted NO threadRootId while the
+      // text path emitted message_id — part 2's session keying would treat
+      // media thread-starts as chat-scoped. Same rule, second path.
+      const { handler } = createHandler();
+      mockState.isBotMentioned = true;
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_thread_start',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_1', file_name: 'a.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('msg_file_thread_start');
+    });
+
+    it('does NOT emit threadRootId for non-topic chats (Issue #4587 part 1)', async () => {
+      // Session keying stays chat-scoped for p2p/plain groups — no thread
+      // identity must leak into their metadata.
+      mockState.isBotMentioned = true;
+      mockState.getChatHistory.mockResolvedValue('some history');
+      const { handler } = createHandler();
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_group_reply',
+            chat_id: 'chat_plain_group',
+            chat_type: 'group',
+            content: JSON.stringify({ text: 'Plain group reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_group_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBeUndefined();
+    });
+
+    it('falls back to parent_id when the walk hits the depth cap (Issue #4591 fix 1 — deep-chain unification)', async () => {
+      // A chain deeper than maxDepth must not resolve a mid-chain node as the
+      // thread root: shallow replies to the true root walk 1 step and get the
+      // real root, deep replies used to cap out and get lastVisitedWithParent —
+      // two different keys for one thread. On an incomplete walk we now fall
+      // back to parent_id (identical to the total-failure fallback).
+      mockState.isBotMentioned = true;
+      const deepMsg = (id: string, parent: string) => ({
+        data: {
+          message: {
+            message_type: 'text',
+            content: JSON.stringify({ text: `msg ${id}` }),
+            message_id: id,
+            parent_id: parent,
+            sender: { sender_type: 'user' },
+          },
+        },
+      });
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'msg d9' }), message_id: 'd9' } },
+              })
+              // getThreadContext walk: d9 → d8 → ... → d0 → (parent of d0,
+              // never fetched) — 10 nodes visited, cap hit before the root.
+              .mockResolvedValueOnce(deepMsg('d9', 'd8'))
+              .mockResolvedValueOnce(deepMsg('d8', 'd7'))
+              .mockResolvedValueOnce(deepMsg('d7', 'd6'))
+              .mockResolvedValueOnce(deepMsg('d6', 'd5'))
+              .mockResolvedValueOnce(deepMsg('d5', 'd4'))
+              .mockResolvedValueOnce(deepMsg('d4', 'd3'))
+              .mockResolvedValueOnce(deepMsg('d3', 'd2'))
+              .mockResolvedValueOnce(deepMsg('d2', 'd1'))
+              .mockResolvedValueOnce(deepMsg('d1', 'd0'))
+              .mockResolvedValueOnce(deepMsg('d0', 'd_root_unfetched')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_deep',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'Deep reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'd9',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Incomplete walk → parent_id, NOT the mid-chain d0 the old code resolved.
+      expect(msg.metadata.threadRootId).toBe('d9');
+      // Context text still assembled from the walked part of the chain.
+      expect(msg.metadata.threadContext).toContain('msg d0');
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(11);
+    });
+
+    it('retries a transient fetch failure and reports the true root (Issue #4591 fix 2)', async () => {
+      // One transient im.message.get blip must not abort the walk: the retry
+      // succeeds and the session key still lands on the true root — same key
+      // as a sibling reply whose walk never blipped.
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // 2nd call: getThreadContext(parent_id) — transient failure
+              .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+              // retry of the same node succeeds
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent', parent_id: 'msg_root', sender: { sender_type: 'user' } } },
+              })
+              // walk continues to root
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'Root message' }), message_id: 'msg_root', sender: { sender_type: 'user' } } },
+              }),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_blip',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Retry rode out the blip → walk completed → true root, not parent_id.
+      expect(msg.metadata.threadRootId).toBe('msg_root');
+      expect(msg.metadata.threadContext).toContain('Root message');
+    });
+
+    it('falls back to parent_id when the fetch fails even after the retry (Issue #4591 fix 2 — unified failure path)', async () => {
+      // A persistent failure aborts the walk (undefined) — the text path then
+      // falls back to parent_id, the same key a depth-capped walk now uses:
+      // both incomplete-walk flavors converge on ONE fallback instead of two.
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              // 1st call: getQuotedMessageContext(parent_id)
+              .mockResolvedValueOnce({
+                data: { message: { message_type: 'text', content: JSON.stringify({ text: 'First reply' }), message_id: 'msg_parent' } },
+              })
+              // getThreadContext(parent_id) — fails, retry fails, walk aborts
+              .mockRejectedValue(new Error('ECONNRESET')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_current_hardfail',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ text: 'My reply' }),
+            message_type: 'text',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Walk aborted → parent_id fallback (unchanged behavior), and exactly
+      // one retry was attempted (2 thread-walk calls + 1 quoted-context call).
+      expect(msg.metadata.threadRootId).toBe('msg_parent');
+      expect(msg.metadata.threadContext).toBeUndefined();
+      expect(mockClient.im.message.get).toHaveBeenCalledTimes(3);
+    });
+
+    it('FILE path: walk failure falls back to parent_id, not message_id (Issue #4591 fix 1 — call-site parity)', async () => {
+      // The media call site used message_id as its failure fallback — a value
+      // unique to this message, so no other message in the thread could ever
+      // share the key: a guaranteed split. Now both paths use parent_id.
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockRejectedValue(new Error('ECONNRESET')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+      mockState.isBotMentioned = true;
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_reply',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_deep', file_name: 'b.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+            parent_id: 'msg_parent',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      // Same key the text path resolves for a sibling reply of msg_parent.
+      expect(msg.metadata.threadRootId).toBe('msg_parent');
+      expect(msg.metadata.threadRootId).not.toBe('msg_file_reply');
+    });
+
+    it('FILE path: depth-capped walk also falls back to parent_id (Issue #4591 fix 1)', async () => {
+      // Media reply in an over-cap chain — must not resolve the mid-chain
+      // node either; identical rule to the text path.
+      const deepMsg = (id: string, parent: string) => ({
+        data: {
+          message: {
+            message_type: 'text',
+            content: JSON.stringify({ text: `msg ${id}` }),
+            message_id: id,
+            parent_id: parent,
+            sender: { sender_type: 'user' },
+          },
+        },
+      });
+      // Topic chats are group chats: without a @mention the message is filtered
+      // before the thread walk (trigger mode off).
+      mockState.isBotMentioned = true;
+      const mockClient = {
+        im: {
+          message: {
+            get: vi.fn()
+              .mockResolvedValueOnce(deepMsg('d9', 'd8'))
+              .mockResolvedValueOnce(deepMsg('d8', 'd7'))
+              .mockResolvedValueOnce(deepMsg('d7', 'd6'))
+              .mockResolvedValueOnce(deepMsg('d6', 'd5'))
+              .mockResolvedValueOnce(deepMsg('d5', 'd4'))
+              .mockResolvedValueOnce(deepMsg('d4', 'd3'))
+              .mockResolvedValueOnce(deepMsg('d3', 'd2'))
+              .mockResolvedValueOnce(deepMsg('d2', 'd1'))
+              .mockResolvedValueOnce(deepMsg('d1', 'd0'))
+              .mockResolvedValueOnce(deepMsg('d0', 'd_root_unfetched')),
+          },
+        },
+      };
+
+      const { handler } = createHandler();
+      handler.initialize(mockClient as any);
+
+      await handler.handleMessageReceive({
+        event: {
+          message: {
+            message_id: 'msg_file_deep',
+            chat_id: 'chat_topic',
+            chat_type: 'topic',
+            content: JSON.stringify({ file_key: 'file_key_cap', file_name: 'c.pdf' }),
+            message_type: 'file',
+            create_time: Date.now(),
+            parent_id: 'd9',
+          },
+          sender: { sender_type: 'user', sender_id: { open_id: 'user_001' } },
+        },
+      });
+
+      const msg = firstCallArg(mockState.emitMessage);
+      expect(msg.metadata.threadRootId).toBe('d9');
+      expect(msg.metadata.threadRootId).not.toBe('d0');
+    });
+
     it('should NOT set chatHistoryContext for topic-group text messages without parent_id (Issue #4304 part 2)', async () => {
       // Issue #4304 part 2: a topic message with NO parent_id must not fall back
       // to flat chat history (which mixes messages across threads). Mock non-empty
@@ -2488,16 +3078,18 @@ describe('MessageHandler', () => {
       expect(result).toBeDefined();
       // Read-only: no eager download happened while building context.
       expect(downloadSpy).not.toHaveBeenCalled();
+      // Issue #4587 (part 1): shape is now { text, rootId }.
+      expect(result.text).toBeDefined();
       // Actionable download guidance is surfaced — the resource key + the
       // message_id it points at + a ready-to-run download command — not the
       // opaque placeholder, and not a pre-downloaded local path.
-      expect(result).toContain('img_test123');
-      expect(result).toContain('msg_image');
-      expect(result).toContain('messages-resources-download');
-      expect(result).not.toContain('[未解析的 image 消息]');
-      expect(result).not.toMatch(/已下载到本地/);
+      expect(result.text).toContain('img_test123');
+      expect(result.text).toContain('msg_image');
+      expect(result.text).toContain('messages-resources-download');
+      expect(result.text).not.toContain('[未解析的 image 消息]');
+      expect(result.text).not.toMatch(/已下载到本地/);
       // Non-media (text) message is still extracted normally
-      expect(result).toContain('See this screenshot');
+      expect(result.text).toContain('See this screenshot');
     });
 
     it('should use the real filename (with extension) as the download target (review nit #3)', () => {
@@ -2646,13 +3238,14 @@ describe('MessageHandler', () => {
       const result = await (handler as any).getThreadContext('msg_no_key');
 
       expect(result).toBeDefined();
+      // Issue #4587 (part 1): shape is now { text, rootId }.
       // Honest placeholder retained; no fabricated download guidance / command.
-      expect(result).toContain('[未解析的 image 消息]');
-      expect(result).not.toContain('messages-resources-download');
+      expect(result.text).toContain('[未解析的 image 消息]');
+      expect(result.text).not.toContain('messages-resources-download');
       // Read-only: still no eager download on the fallback path.
       expect(downloadSpy).not.toHaveBeenCalled();
       // Non-media ancestor still extracted normally.
-      expect(result).toContain('thread root');
+      expect(result.text).toContain('thread root');
     });
 
     it('should not fetch thread context for non-topic groups', async () => {
