@@ -301,5 +301,65 @@ describe('AgentPoolMessageHandler', () => {
         undefined,
       );
     });
+
+    // Issue #4648: the Scheduler now sets waitForCompletion on every
+    // scheduled SystemMessage, so this branch (#4063, previously only the
+    // Loop Runner) is on the critical path for ALL scheduled tasks — the
+    // scheduler's "completed"/"failed" status is only as truthful as this
+    // await. These tests pin the contract.
+    describe('waitForCompletion: true (Issue #4648)', () => {
+      it('waits for agent.turnComplete before resolving — not just processMessage queueing', async () => {
+        let releaseTurn!: () => void;
+        const turnComplete = new Promise<void>((resolve) => { releaseTurn = resolve; });
+        const mockAgent = { ...createMockAgent(), turnComplete } as unknown as ChatAgent;
+        vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
+
+        let settled = false;
+        const result = handler
+          .handleSystemMessage('chat-1', 'system payload', 'msg-sys-1', { waitForCompletion: true })
+          .then(() => { settled = true; });
+
+        // processMessage (queueing) has resolved, but the turn is still
+        // running — the handler must NOT settle yet.
+        await new Promise((r) => setImmediate(r));
+        expect(mockAgent.processMessage).toHaveBeenCalledTimes(1);
+        expect(settled).toBe(false);
+
+        releaseTurn();
+        await result;
+        expect(settled).toBe(true);
+      });
+
+      it('propagates a failed turn so the scheduler failure path fires (#4648)', async () => {
+        // The incident shape: the turn dies mid-stream and the per-turn
+        // promise rejects. The handler must rethrow — that rejection is
+        // exactly what turns the scheduler log into "failed" instead of the
+        // premature "completed" that hid 38 days of dead runs.
+        const turnError = new Error('Request failed with status code 400');
+        const mockAgent = {
+          ...createMockAgent(),
+          turnComplete: Promise.reject(turnError),
+        } as unknown as ChatAgent;
+        vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
+
+        await expect(
+          handler.handleSystemMessage('chat-1', 'system payload', 'msg-sys-1', { waitForCompletion: true }),
+        ).rejects.toThrow('Request failed with status code 400');
+      });
+
+      it('resolves with a warning when the agent exposes no turnComplete', async () => {
+        const mockAgent = createMockAgent(); // no turnComplete property
+        vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
+
+        await expect(
+          handler.handleSystemMessage('chat-1', 'system payload', 'msg-sys-1', { waitForCompletion: true }),
+        ).resolves.toBeUndefined();
+
+        expect(silentLogger.warn).toHaveBeenCalledWith(
+          { chatId: 'chat-1', messageId: 'msg-sys-1' },
+          expect.stringContaining('turnComplete not available'),
+        );
+      });
+    });
   });
 });

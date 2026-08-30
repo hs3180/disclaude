@@ -44,6 +44,15 @@ function formatTimeout(ms: number): string {
 const DEFAULT_TASK_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
+ * Issue #4648: alert threshold — a scheduled task failing this many times in
+ * a row emits an error-level structured log carrying
+ * `scheduleConsecutiveFailures`, so chronic silent failures (the 38-day
+ * #4626/#4648 incident) become detectable via log search instead of
+ * surfacing as an endless stream of identical single-run failures.
+ */
+const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3;
+
+/**
  * Error thrown when a scheduled task execution times out.
  *
  * Issue #3894: Used to distinguish timeout errors from other failures,
@@ -217,6 +226,15 @@ export class Scheduler {
    */
   private _drainPromise: Promise<void> | null = null;
   private _drainResolve: (() => void) | null = null;
+
+  /**
+   * Issue #4648: per-task consecutive-failure counter. Incremented in the
+   * executeTask catch, deleted on success (a healthy run resets the streak).
+   * Entries for deleted tasks are left to be GC'd with the instance — the
+   * map is bounded by the number of distinct task ids over a process
+   * lifetime, which is small.
+   */
+  private readonly consecutiveTaskFailures = new Map<string, number>();
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -523,6 +541,11 @@ ${task.prompt}`;
     // task fails before its turn consumes it.
     let contextCleared = false;
 
+    // Issue #4648: elapsed-time anchor for the truthful completion/failure
+    // logs below (previously "completed" was logged at routing time, ~0.3s
+    // BEFORE the agent even produced its first token).
+    const taskStartedAt = Date.now();
+
     try {
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
@@ -587,6 +610,18 @@ ${task.prompt}`;
             model: task.model,
           },
           createdAt: new Date().toISOString(),
+          // Issue #4648: await the agent turn's REAL outcome. The
+          // waitForCompletion plumbing (#4063, built for the Loop Runner)
+          // makes route() resolve only after the ChatAgent's per-turn
+          // promise settles — and reject when the turn dies (startup
+          // failure, iterator error). Without it, route() resolved the
+          // moment processMessage QUEUED the prompt, so "completed" was
+          // logged before the agent did any work and a session that died
+          // 9s later was indistinguishable from a healthy run for 38 days.
+          // The #3894 timeout above still bounds the wait (turns longer
+          // than timeoutMs are marked failed; long-running tasks should
+          // set timeoutMs).
+          waitForCompletion: true,
         };
 
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
@@ -609,12 +644,51 @@ ${task.prompt}`;
           }
         }
 
-        logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
+        // Issue #4648: this log is now written only after the agent turn
+        // actually finished (see waitForCompletion above) — the task's real
+        // end state, not its routing ack.
+        this.consecutiveTaskFailures.delete(task.id);
+        logger.info(
+          {
+            taskId: task.id,
+            name: task.name,
+            chatId: task.chatId,
+            elapsedMs: Date.now() - taskStartedAt,
+          },
+          'Scheduled task completed (agent turn finished)'
+        );
       }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
+      // Issue #4648: track consecutive failures per task. With
+      // waitForCompletion the turn's real outcome now lands here — including
+      // the "Iterator error"-class deaths that previously surfaced as an
+      // instant "completed" — so a failing streak is finally countable.
+      const consecutiveFailures = (this.consecutiveTaskFailures.get(task.id) ?? 0) + 1;
+      this.consecutiveTaskFailures.set(task.id, consecutiveFailures);
+      const failureContext = {
+        taskId: task.id,
+        name: task.name,
+        chatId: task.chatId,
+        consecutiveFailures,
+        elapsedMs: Date.now() - taskStartedAt,
+      };
+      logger.error(
+        { err: error, ...failureContext },
+        'Scheduled task failed (agent turn ended with an error)'
+      );
+      if (consecutiveFailures >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD) {
+        // Issue #4648: dedicated alertable marker — a task failing this many
+        // runs in a row is chronic (bad chatId, broken prompt environment,
+        // persistent upstream errors) and deserves to stand out in log
+        // search beyond the per-run failure stream.
+        logger.error(
+          { ...failureContext, scheduleConsecutiveFailures: consecutiveFailures },
+          `Scheduled task has failed ${consecutiveFailures} consecutive runs — ` +
+            'check its chatId / agent health (Issue #4648 alert)'
+        );
+      }
 
       // Issue #4206 (review nit): if we cleared context for this task but it
       // then failed before its turn consumed the skip-history flag, clear that
@@ -638,8 +712,12 @@ ${task.prompt}`;
       }
 
       // Issue #3894: Send specific timeout notification
+      // Issue #4648: wording honesty — with waitForCompletion the timeout
+      // fires when the agent TURN didn't finish in time; the abandoned await
+      // does not (and never did) cancel the agent, so say that instead of
+      // claiming the task was "terminated".
       const userMessage = error instanceof TaskTimeoutError
-        ? `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已自动终止`
+        ? `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已标记为失败（agent 轮次可能仍在后台继续）`
         : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`;
 
       await this.callbacks.sendMessage(task.chatId, userMessage);

@@ -743,6 +743,92 @@ describe('Scheduler', () => {
       const startCall = calls.find(c => c[1].includes('开始执行'));
       expect(startCall).toBeUndefined();
     });
+
+    describe('Issue #4648: completion status hooks the turn\'s real outcome', () => {
+      /** Helper: fire the job and wait until its ❌ failure notification landed. */
+      async function fireAndExpectFailure() {
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+            'oc_test',
+            expect.stringContaining('执行失败'),
+          );
+        }, { timeout: 2000 });
+      }
+
+      it('routes the scheduled SystemMessage with waitForCompletion: true', async () => {
+        // The core fix: without this flag route() resolved the moment
+        // processMessage QUEUED the prompt, so "completed" was logged before
+        // the agent did any work (see the 38-day #4626 incident).
+        const task = createTask({ id: 'wait-1' });
+        scheduler.addTask(task);
+
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(mockRouterAsMock.route).toHaveBeenCalledTimes(1);
+        }, { timeout: 2000 });
+
+        expect(getRoutedMessage().waitForCompletion).toBe(true);
+      });
+
+      it('counts consecutive failures per task and resets the streak on success', async () => {
+        const task = createTask({ id: 'streak-1' });
+        scheduler.addTask(task);
+        const counters = (scheduler as unknown as {
+          consecutiveTaskFailures: Map<string, number>;
+        }).consecutiveTaskFailures;
+
+        // Persistent rejection as the mock default; the success run below
+        // overrides it once.
+        mockRouterAsMock.route.mockRejectedValue(new Error('turn died'));
+
+        await fireAndExpectFailure();
+        expect(counters.get('streak-1')).toBe(1);
+        // Reset the call count so the next failure notification is
+        // distinguishable (waitFor on the count, not just any-call).
+        vi.mocked(mockCallbacks.sendMessage).mockClear();
+
+        await fireAndExpectFailure();
+        expect(counters.get('streak-1')).toBe(2);
+        vi.mocked(mockCallbacks.sendMessage).mockClear();
+
+        // Third failure crosses the alert threshold (CONSECUTIVE_FAILURE_
+        // ALERT_THRESHOLD = 3) — asserted via the counter the threshold
+        // reads from.
+        await fireAndExpectFailure();
+        expect(counters.get('streak-1')).toBe(3);
+        vi.mocked(mockCallbacks.sendMessage).mockClear();
+
+        // A healthy run wipes the streak entirely (map delete, not 0), so a
+        // later failure starts counting from 1 again.
+        mockRouterAsMock.route.mockResolvedValueOnce(undefined);
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(scheduler.isTaskRunning('streak-1')).toBe(false);
+        }, { timeout: 2000 });
+        expect(counters.has('streak-1')).toBe(false);
+      });
+
+      it('timeout notification is honest about the turn still running in the background', async () => {
+        // With waitForCompletion the timeout now bounds the agent TURN, not
+        // just routing — and the abandoned await does not cancel the agent.
+        // The old wording claimed 已自动终止 (terminated), which was never
+        // true and matters more now.
+        mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {}));
+
+        const task = createTask({ id: 'timeout-wording', timeoutMs: 50 });
+        scheduler.addTask(task);
+
+        fireJob(scheduler.getActiveJobs());
+
+        await vi.waitFor(() => {
+          expect(mockCallbacks.sendMessage).toHaveBeenCalledWith(
+            'oc_test',
+            expect.stringContaining('可能仍在后台继续'),
+          );
+        }, { timeout: 3000 });
+      });
+    });
   });
 
   describe('executeTask with cooldown', () => {
