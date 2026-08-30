@@ -34,6 +34,13 @@
  * `agent.codexSandbox` override honored, mutation denylist entries cap at
  * read-only, and policies codex cannot honor (WebSearch deny) throw with a
  * clear error instead of silently violating policy.
+ *
+ * S5 (#4632): quota observability + limit degrade. Every turn.completed
+ * usage lands in one structured info log (per-turn + process-wide
+ * cumulative, getQuotaStats()); usage-limit failures (isCodexUsageLimit)
+ * degrade to a friendly window-reset notice instead of raw exit noise, and
+ * the failed turn latches nothing — the anchor survives, so the next
+ * message after the window reset resumes the same conversation, no restart.
  */
 
 import { accessSync, constants, existsSync } from 'node:fs';
@@ -65,6 +72,7 @@ import {
   adaptCodexEvent,
   isCodexAuthFailure,
   isCodexResumeTargetMissing,
+  isCodexUsageLimit,
   userInputText,
   type CodexThreadEvent,
 } from './exec-adapter.js';
@@ -92,6 +100,33 @@ const REAUTH_NOTICE =
  */
 const RESUME_TARGET_GONE_NOTICE =
   '⚠️ Codex 会话记录已不存在（可能被清理），已自动切换新会话——请重发你的问题，将从全新上下文开始（无此前对话内容）。';
+
+/**
+ * Friendly usage-limit degrade (#4632, S5): the ChatGPT plan's rolling
+ * window (5h + weekly) is spent. Recovers WITHOUT a restart — the failed
+ * turn latches nothing, the conversation anchor survives, and the next
+ * message after the window reset resumes the same session.
+ */
+const USAGE_LIMIT_NOTICE =
+  '📊 Codex 用量已达上限（ChatGPT 订阅的 5 小时/周滚动窗口限额）。无需重启——窗口重置后直接重发消息即可自动恢复，当前对话上下文会保留。';
+
+/**
+ * Process-wide cumulative quota counters (Issue #4632, S5). The provider is
+ * a cached singleton per process (factory), so these aggregate across every
+ * chatId/stream — the searchable, `/status`-ready view of consumption.
+ */
+export interface CodexQuotaStats {
+  /** Completed turns that carried a usage payload (turn.completed WITH usage). */
+  turnsCompleted: number;
+  /** Cumulative input tokens (includes the cached portion). */
+  inputTokens: number;
+  /** Cumulative cached input tokens (cache hits — free-ish on subscription). */
+  cachedInputTokens: number;
+  /** Cumulative output tokens. */
+  outputTokens: number;
+  /** Cumulative reasoning output tokens (subset of output). */
+  reasoningOutputTokens: number;
+}
 
 /** Actionable binary-missing error (thrown synchronously by queryStream). */
 const BINARY_MISSING = (pathValue: string): string =>
@@ -122,11 +157,19 @@ const AUTH_FILE = 'auth.json';
 
 export class CodexAgentProvider implements IAgentSDKProvider {
   readonly name = 'codex';
-  readonly version = '0.3.0-sandbox-policy';
+  readonly version = '0.4.0-quota-observability';
 
   private readonly env: Record<string, string | undefined>;
   private readonly execTimeoutMs: number | undefined;
   private readonly sandboxOverride: CodexSandboxLevel | undefined;
+  /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
+  private readonly quota: CodexQuotaStats = {
+    turnsCompleted: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+  };
 
   private disposed = false;
 
@@ -173,6 +216,15 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     return info;
   }
 
+  /**
+   * Cumulative quota counters for this process (Issue #4632, S5) —
+   * turn/token consumption across every chatId, ready for /status wiring.
+   * Returns a copy; the caller cannot mutate provider state.
+   */
+  getQuotaStats(): Readonly<CodexQuotaStats> {
+    return { ...this.quota };
+  }
+
   // --------------------------------------------------------------------------
   // Query — Issue #4630 (S2): codex exec subprocess bridge
   // --------------------------------------------------------------------------
@@ -213,6 +265,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Captured at queryStream call time — the constructor-injected env the
     // binary was resolved from (tests: PATH fixtures; prod: process.env).
     const providerEnv = this.env;
+    // Instance-level quota sink (S5, #4632): the bridge closures below are
+    // `this: void`, so they aggregate through this captured reference.
+    const quotaSink = this.quota;
     const timeoutLabel = this.execTimeoutMs
       ? `${this.execTimeoutMs}ms`
       : `${DEFAULT_TIMEOUT_MS}ms (default)`;
@@ -363,7 +418,33 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             sawTurnTerminator = true;
             if (event.type === 'turn.completed') {
               sawTurnCompleted = true;
-            } else if (event.type === 'turn.failed') {
+              if (event.usage) {
+                // ── Quota observability (S5, #4632) ───────────────────────
+                // Accumulate + log AT the event (no cross-closure state):
+                // one structured info line per completed turn with per-turn
+                // and process-wide cumulative fields (full-content logging
+                // guideline). No USD — a subscription has no per-call price.
+                const {usage} = event;
+                quotaSink.turnsCompleted += 1;
+                quotaSink.inputTokens += usage.input_tokens ?? 0;
+                quotaSink.cachedInputTokens += usage.cached_input_tokens ?? 0;
+                quotaSink.outputTokens += usage.output_tokens ?? 0;
+                quotaSink.reasoningOutputTokens +=
+                  usage.reasoning_output_tokens ?? 0;
+                logger.info(
+                  {
+                    threadId: latestSessionId,
+                    resumed: resumeThreadId !== undefined,
+                    inputTokens: usage.input_tokens,
+                    cachedInputTokens: usage.cached_input_tokens,
+                    outputTokens: usage.output_tokens,
+                    reasoningOutputTokens: usage.reasoning_output_tokens,
+                    cumulative: { ...quotaSink },
+                  },
+                  'codex quota usage (turn.completed)',
+                );
+              }
+            } else {
               // turn.failed is a terminator for bookkeeping, but the TURN
               // still needs a synthetic result (see runInput) — the adapter
               // emits only an error for it, and ChatAgent resolves a turn
@@ -374,7 +455,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             runFailureText += `\n${event.message}`;
           }
           if (event.type === 'turn.failed') {
-            runFailureText += `\n${event.error?.message ?? ''}`;          }
+            runFailureText += `\n${event.error?.message ?? ''}`;
+          }
           touchStallWatchdog();
           const adapted = adaptCodexEvent(event);
           if (adapted) {
@@ -396,7 +478,8 @@ export class CodexAgentProvider implements IAgentSDKProvider {
           sawTurnFailed = false;
           sawTurnCompleted = false;
           runFailureText = '';
-          const resumeTarget = resumeThreadId;          touchStallWatchdog();
+          const resumeTarget = resumeThreadId;
+          touchStallWatchdog();
           const { promise, handle } = runner.run(
             {
               prompt,
@@ -421,13 +504,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               // abort ends the stream without a turn terminator (pi parity).
               return;
             }
-            // Failure-signature detection (#4628, S3 review hardened):
+            // Failure-signature detection (#4628/#4632, review hardened):
             // - gated on runFailed — a SUCCESSFUL turn (exit 0 + terminator)
             //   must never be followed by a spurious 401/limit notice just
             //   because stderr carries unrelated text (e.g. an MCP server's
-            //   own 401 noise that codex forwarded);
-            // - per-surface: the conjunction (401 + unauthorized) must hit
-            //   WITHIN one surface, not across the raw-events/stderr splice.
+            //   own 401 noise, or retry-and-recover 429 lines codex leaves
+            //   on stderr);
+            // - per-surface: a conjunction must hit WITHIN the raw-events
+            //   text OR within stderr, not across the splice of the two.
             const runFailed =
               Boolean(result.spawnError) ||
               result.timedOut ||
@@ -436,6 +520,9 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             const authFailed =
               runFailed &&
               (isCodexAuthFailure(runFailureText) || isCodexAuthFailure(result.stderrTail));
+            const usageLimited =
+              runFailed &&
+              (isCodexUsageLimit(runFailureText) || isCodexUsageLimit(result.stderrTail));
             const resumeTargetGone =
               runFailed &&
               resumeTarget !== undefined &&
@@ -447,6 +534,24 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               pushSynthetic({
                 type: 'error',
                 content: REAUTH_NOTICE,
+                role: 'assistant',
+              });
+            } else if (usageLimited) {
+              // Friendly degrade (#4632): quote codex's own reset hint when
+              // present. Anchored to `try again (at|in)` — a bare "try
+              // again later" from unrelated stderr must not displace the
+              // real timestamp, and `[^.\n]+` after (at|in) tolerates
+              // decimals ("in 2.5 hours"). The failed turn latches nothing,
+              // so the conversation anchor survives into the next window —
+              // recovery needs no restart, only a resend after the reset.
+              const resetHint =
+                /try again (?:at|in) [^.\n]+/i.exec(runFailureText)?.[0] ??
+                /try again (?:at|in) [^.\n]+/i.exec(result.stderrTail)?.[0];
+              pushSynthetic({
+                type: 'error',
+                content: resetHint
+                  ? `${USAGE_LIMIT_NOTICE}\n上游提示: ${resetHint}`
+                  : USAGE_LIMIT_NOTICE,
                 role: 'assistant',
               });
             } else if (result.spawnError) {
