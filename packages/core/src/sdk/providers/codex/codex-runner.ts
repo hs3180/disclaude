@@ -45,8 +45,12 @@ export interface CodexExecRunOptions {
   cwd?: string;
   /** Model passthrough (`-m`). */
   model?: string;
-  /** Extra argv appended before the prompt (e.g. S3's `resume <id>`). */
-  extraArgs?: string[];
+  /**
+   * Resume an existing codex session instead of starting a new one
+   * (Issue #4628, S3): argv becomes `codex exec resume <id> -- <prompt>`.
+   * The id is the thread_id captured from a prior run's thread.started.
+   */
+  resumeSessionId?: string;
   /** Environment for the child (merged over the provider env). */
   env?: Record<string, string | undefined>;
   /** Per-call timeout override (ms). */
@@ -93,8 +97,11 @@ export class CodexExecRunner {
    * queueing cannot drop events between consumer await-points (same contract
    * as pi's subscribe/enqueue, #4386 part 3).
    *
-   * `--ephemeral` keeps S2 runs session-less on disk; S3 (resume per chatId)
-   * will make this conditional.
+   * Session persistence (S3, #4628): runs are NOT `--ephemeral` — turn 1
+   * must write a rollout file under codex's own session storage (~/.codex/
+   * sessions) so follow-up turns can `exec resume <thread_id>` into the same
+   * conversation. disclaude only passes the id through; it never reads or
+   * GCs codex's session files (codex owns that storage, same as auth.json).
    */
   run(
     options: CodexExecRunOptions,
@@ -118,17 +125,29 @@ export class CodexExecRunner {
       };
     }
 
-    const args: string[] = [
-      'exec',
-      '--json',
-      '--skip-git-repo-check',
-      '--ephemeral',
-      ...(options.model ? ['-m', options.model] : []),
-      ...(options.extraArgs ?? []),
-      '--',
-      options.prompt,
-    ];
-
+    // `codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]` (0.132.0): the
+    // session id is the FIRST positional, the prompt the second; `--` keeps
+    // a leading-dash prompt positional. Flags are shared with plain exec
+    // (--json / -m / --skip-git-repo-check all verified on resume's help).
+    const args: string[] = options.resumeSessionId
+      ? [
+          'exec',
+          'resume',
+          '--json',
+          '--skip-git-repo-check',
+          ...(options.model ? ['-m', options.model] : []),
+          options.resumeSessionId,
+          '--',
+          options.prompt,
+        ]
+      : [
+          'exec',
+          '--json',
+          '--skip-git-repo-check',
+          ...(options.model ? ['-m', options.model] : []),
+          '--',
+          options.prompt,
+        ];
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
 
     let child: ReturnType<typeof spawn> | null = null;
