@@ -26,6 +26,10 @@ const silentLogger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.f
 function createMockAgent(): ChatAgent {
   return {
     processMessage: vi.fn().mockResolvedValue(undefined),
+    // Issue #4649 (review ③⑤): the handler's waitForCompletion path pins the
+    // turn via turnCompleteFor(messageId) — undefined by default so tests can
+    // override per-case.
+    turnCompleteFor: vi.fn(() => undefined),
   } as unknown as ChatAgent;
 }
 
@@ -309,10 +313,13 @@ describe('AgentPoolMessageHandler', () => {
     // scheduler's "completed"/"failed" status is only as truthful as this
     // await. These tests pin the contract.
     describe('waitForCompletion: true (Issue #4648)', () => {
-      it('waits for agent.turnComplete before resolving — not just processMessage queueing', async () => {
+      it('waits for THIS message\'s turn (turnCompleteFor) before resolving — not just processMessage queueing (#4649 ③)', async () => {
         let releaseTurn!: () => void;
         const turnComplete = new Promise<void>((resolve) => { releaseTurn = resolve; });
-        const mockAgent = { ...createMockAgent(), turnComplete } as unknown as ChatAgent;
+        const mockAgent = {
+          ...createMockAgent(),
+          turnCompleteFor: vi.fn(() => turnComplete),
+        } as unknown as ChatAgent;
         vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
 
         let settled = false;
@@ -325,6 +332,11 @@ describe('AgentPoolMessageHandler', () => {
         await new Promise((r) => setImmediate(r));
         expect(mockAgent.processMessage).toHaveBeenCalledTimes(1);
         expect(settled).toBe(false);
+
+        // Issue #4649 (review ③): per-message pin — the handler must look up
+        // THIS message's turn, not whichever promise a getter happens to
+        // expose (under interleaving that is another message's turn).
+        expect(mockAgent.turnCompleteFor).toHaveBeenCalledWith('msg-sys-1');
 
         releaseTurn();
         await result;
@@ -339,7 +351,7 @@ describe('AgentPoolMessageHandler', () => {
         const turnError = new Error('Request failed with status code 400');
         const mockAgent = {
           ...createMockAgent(),
-          turnComplete: Promise.reject(turnError),
+          turnCompleteFor: vi.fn(() => Promise.reject(turnError)),
         } as unknown as ChatAgent;
         vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
 
@@ -356,7 +368,7 @@ describe('AgentPoolMessageHandler', () => {
         const superseded = new TurnSupersededError();
         const mockAgent = {
           ...createMockAgent(),
-          turnComplete: Promise.reject(superseded),
+          turnCompleteFor: vi.fn(() => Promise.reject(superseded)),
         } as unknown as ChatAgent;
         vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
 
@@ -365,18 +377,41 @@ describe('AgentPoolMessageHandler', () => {
         ).rejects.toBe(superseded);
       });
 
-      it('resolves with a warning when the agent exposes no turnComplete', async () => {
-        const mockAgent = createMockAgent(); // no turnComplete property
+      it('rejects when the agent exposes no turn for this message — never-started is a failure, not completed (#4649 ⑤)', async () => {
+        // Pre-#4649-review-⑤ this logged a warning and RESOLVED, so chronic
+        // infrastructure failures (no session channel after session start)
+        // were recorded as "completed" and stayed invisible to the #4648
+        // consecutive-failure alert. The handler must reject instead.
+        const mockAgent = createMockAgent(); // turnCompleteFor → undefined
         vi.mocked(options.agentPool.getOrCreateChatAgent).mockReturnValue(mockAgent);
 
         await expect(
           handler.handleSystemMessage('chat-1', 'system payload', 'msg-sys-1', { waitForCompletion: true }),
-        ).resolves.toBeUndefined();
+        ).rejects.toThrow('Agent turn never started');
 
-        expect(silentLogger.warn).toHaveBeenCalledWith(
-          { chatId: 'chat-1', messageId: 'msg-sys-1' },
-          expect.stringContaining('turnComplete not available'),
+        expect(silentLogger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ chatId: 'chat-1', messageId: 'msg-sys-1' }),
+          expect.stringContaining('waitForCompletion'),
         );
+      });
+
+      it('rejects when ChatAgent creation fails — agent-creation outage is countable, not "completed" (#4649 ⑤)', async () => {
+        // Same reasoning as above for the no-agent path: the pool throwing
+        // must reach the scheduler's failure branch. (getAgentSafely already
+        // sent the user-facing "⚠️ Agent 创建失败" notice; the rejection is
+        // the countable signal.) Without waitForCompletion the promise still
+        // resolves — fire-and-forget callers keep their old contract.
+        vi.mocked(options.agentPool.getOrCreateChatAgent).mockImplementation(() => {
+          throw new Error('spawn failed');
+        });
+
+        await expect(
+          handler.handleSystemMessage('chat-1', 'system payload', 'msg-sys-1', { waitForCompletion: true }),
+        ).rejects.toThrow('ChatAgent creation failed');
+
+        await expect(
+          handler.handleSystemMessage('chat-1', 'system payload', 'msg-sys-1'),
+        ).resolves.toBeUndefined();
       });
     });
   });

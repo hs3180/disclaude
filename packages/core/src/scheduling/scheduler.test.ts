@@ -963,6 +963,43 @@ describe('Scheduler', () => {
         }
       });
     });
+
+    describe('Issue #4649 (review ④): clearContext cleanup never disposes a possibly-live turn', () => {
+      // The catch's contextCleared cleanup calls resetAgent(chatId, false),
+      // which disposes the agent and aborts any running turn. The two
+      // "the turn may still be running" outcomes — superseded and timeout —
+      // must skip it; only genuinely-dead-session errors reach the cleanup.
+      it('superseded outcome skips the contextCleared cleanup', async () => {
+        const task = createTask({ id: 'clear-skip-superseded', clearContext: true });
+        scheduler.addTask(task);
+
+        mockRouterAsMock.route.mockRejectedValueOnce(new TurnSupersededError());
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(scheduler.isTaskRunning('clear-skip-superseded')).toBe(false);
+        }, { timeout: 2000 });
+
+        // resetAgent was called exactly once — the pre-turn clearContext
+        // reset (chatId, true). The (chatId, false) cleanup never ran.
+        expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(1);
+        expect(mockCallbacks.resetAgent).toHaveBeenCalledWith('oc_test', true);
+        expect(mockCallbacks.resetAgent).not.toHaveBeenCalledWith('oc_test', false);
+      });
+
+      it('timeout outcome skips the contextCleared cleanup', async () => {
+        const task = createTask({ id: 'clear-skip-timeout', clearContext: true, timeoutMs: 50 });
+        scheduler.addTask(task);
+
+        mockRouterAsMock.route.mockReturnValueOnce(new Promise(() => {})); // turn never settles
+        fireJob(scheduler.getActiveJobs());
+        await vi.waitFor(() => {
+          expect(scheduler.isTaskRunning('clear-skip-timeout')).toBe(false);
+        }, { timeout: 3000 });
+
+        expect(mockCallbacks.resetAgent).toHaveBeenCalledTimes(1);
+        expect(mockCallbacks.resetAgent).not.toHaveBeenCalledWith('oc_test', false);
+      });
+    });
   });
 
   describe('executeTask with cooldown', () => {

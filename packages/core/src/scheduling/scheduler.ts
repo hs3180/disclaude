@@ -698,6 +698,13 @@ ${task.prompt}`;
         // - no contextCleared cleanup below: the superseded turn may still
         //   be draining in the background, and resetAgent→dispose would
         //   abort the SUPERSEDING message's turn (review finding ④ shape).
+        //
+        // Issue #4649 (review ③) note: with per-message turn completions an
+        // ordinary interjection no longer produces this error at all (each
+        // awaiter now gets its own turn's real outcome — see
+        // ChatAgent.createTurnCompletion). The remaining producer is the
+        // same-messageId re-push guard (empty-turn replay), which is exactly
+        // the neutral shape this branch describes.
         logger.info(
           outcomeContext,
           'Scheduled task turn superseded by a newer message (neutral — not counted as failure)',
@@ -763,6 +770,16 @@ ${task.prompt}`;
       // normally. Otherwise a failed clearContext run would leak skip-history
       // to a subsequent, unrelated user message. resetAgent(chatId, false)
       // disposes any partial fresh agent and restores the with-history default.
+      //
+      // Issue #4649 (reviews ③④⑤): the dispose inside this cleanup is safe
+      // here and ONLY here — every error that reaches the generic branch now
+      // means THIS chat's agent session is dead or was never started (turn
+      // death, channel closed at push, agent creation failure, session
+      // replacement), so there is no live turn to abort. The two "the turn
+      // may still be running" outcomes — timeout and superseded — return in
+      // their own branches above and deliberately skip this cleanup (review
+      // finding ④: dispose would kill the very turn the notification says
+      // might still finish).
       if (contextCleared && task.chatId && this.callbacks.resetAgent) {
         try {
           this.callbacks.resetAgent(task.chatId, false);

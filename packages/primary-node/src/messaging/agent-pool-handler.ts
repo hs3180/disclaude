@@ -99,20 +99,44 @@ export class AgentPoolMessageHandler implements IAgentMessageHandler {
 
     // Unified path: use persistent agent from pool (RFC #3329)
     const agent = this.getAgentSafely(chatId, messageId, 'system message');
-    if (!agent) {return Promise.resolve();}
+    if (!agent) {
+      if (options?.waitForCompletion) {
+        // Issue #4649 (review ⑤): with waitForCompletion the caller
+        // (Scheduler, Loop Runner) derives its completion status from this
+        // promise — resolving here recorded "completed" for a message that
+        // never reached an agent, making chronic agent-creation failures
+        // invisible to the #4648 consecutive-failure alert. Reject instead.
+        // (The user-facing "⚠️ Agent 创建失败" notice was already sent by
+        // getAgentSafely; the rejection is the countable signal.)
+        return Promise.reject(
+          new Error('ChatAgent creation failed — system message not processed'),
+        );
+      }
+      return Promise.resolve();
+    }
 
     if (options?.waitForCompletion) {
       // Issue #4063: Wait for agent turn to complete (for Loop Runner).
       // Uses turnComplete (per-turn) instead of taskComplete (session-level),
       // because pool agents run in persistent mode where taskComplete never resolves.
       return agent.processMessage({ chatId, payload, messageId })
-        .then(async () => {
-          const turnDone = agent.turnComplete;
-          if (turnDone) {
-            await turnDone;
-          } else {
-            this.log.warn({ chatId, messageId }, 'turnComplete not available after processMessage — agent may not support turn detection');
+        .then(() => {
+          // Issue #4649 (review ③): per-MESSAGE lookup — the agent.turnComplete
+          // getter returns whichever message pushed LAST, which under
+          // interleaving is a different message's promise (fake "completed"
+          // for this one). turnCompleteFor pins this message's own outcome.
+          const turnDone = agent.turnCompleteFor(messageId);
+          if (!turnDone) {
+            // Issue #4649 (review ⑤): no promise = the message never entered
+            // a turn (no session channel). This previously logged a warning
+            // and resolved — recording "completed" for infrastructure
+            // failures, exactly the chronic class the #4648 alert exists to
+            // catch. Reject so the failure path fires.
+            throw new Error(
+              'Agent turn never started — message was not processed (no active session channel)',
+            );
           }
+          return turnDone;
         })
         .catch((err) => {
           this.log.error({ err, chatId, messageId }, 'Agent processMessage or turnComplete failed for system message (waitForCompletion)');
