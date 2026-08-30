@@ -68,5 +68,8 @@ disclaude-test-server*.log
 *_REPORT.md
 *_SUMMARY.md
 
+# Browser-use smoke test artifacts
+browser-use-smoke/
+
 # Test data
 data/

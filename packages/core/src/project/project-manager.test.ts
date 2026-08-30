@@ -14,7 +14,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
+import {
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  chmodSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProjectManager } from './project-manager.js';
@@ -245,8 +253,8 @@ describe('ProjectManager', () => {
 
       const bindings = pm.listBindings();
       expect(bindings).toHaveLength(2);
-      expect(bindings.find(b => b.chatId === 'chat-1')?.workingDir).toBe('/project-a');
-      expect(bindings.find(b => b.chatId === 'chat-2')?.workingDir).toBe('/project-b');
+      expect(bindings.find((b) => b.chatId === 'chat-1')?.workingDir).toBe('/project-a');
+      expect(bindings.find((b) => b.chatId === 'chat-2')?.workingDir).toBe('/project-b');
     });
   });
 
@@ -292,6 +300,62 @@ describe('ProjectManager', () => {
     });
   });
 
+  describe('resolveCwd() (Issue #4448)', () => {
+    it('should report unbound for default chatId', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+
+      const resolution = pm.resolveCwd('chat-1');
+      expect(resolution.reason).toBe('unbound');
+      expect(resolution.effectiveCwd).toBeUndefined();
+      expect(resolution.boundWorkingDir).toBeUndefined();
+    });
+
+    it('should report bound when the directory exists', () => {
+      const opts = createOptions();
+      const projectDir = join(opts.workspaceDir, 'my-project');
+      mkdirSync(projectDir, { recursive: true });
+      const pm = new ProjectManager(opts);
+      pm.use('chat-1', projectDir);
+
+      const resolution = pm.resolveCwd('chat-1');
+      expect(resolution.reason).toBe('bound');
+      expect(resolution.effectiveCwd).toBe(projectDir);
+      expect(resolution.boundWorkingDir).toBe(projectDir);
+    });
+
+    it('should report bound-missing when the bound directory does not exist', () => {
+      const opts = createOptions();
+      const pm = new ProjectManager(opts);
+      // A path that is almost certainly absent on disk
+      pm.use('chat-1', '/nonexistent/project-dir-4448');
+
+      const resolution = pm.resolveCwd('chat-1');
+      // Distinguishable from unbound — this is the core of #4448
+      expect(resolution.reason).toBe('bound-missing');
+      expect(resolution.effectiveCwd).toBeUndefined();
+      expect(resolution.boundWorkingDir).toBe('/nonexistent/project-dir-4448');
+    });
+
+    it('createCwdProvider should stay consistent with resolveCwd', () => {
+      const opts = createOptions();
+      const projectDir = join(opts.workspaceDir, 'existing');
+      mkdirSync(projectDir, { recursive: true });
+      const pm = new ProjectManager(opts);
+      const cwdProvider = pm.createCwdProvider();
+
+      pm.use('chat-missing', '/nonexistent/project-dir-4448');
+      pm.use('chat-bound', projectDir);
+
+      // unbound
+      expect(cwdProvider('chat-none')).toBe(pm.resolveCwd('chat-none').effectiveCwd);
+      // bound-missing
+      expect(cwdProvider('chat-missing')).toBe(pm.resolveCwd('chat-missing').effectiveCwd);
+      // bound
+      expect(cwdProvider('chat-bound')).toBe(pm.resolveCwd('chat-bound').effectiveCwd);
+    });
+  });
+
   describe('persistence', () => {
     it('should persist and restore bindings', () => {
       const opts = createOptions();
@@ -328,10 +392,13 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const dataDir = join(opts.workspaceDir, '.disclaude');
       mkdirSync(dataDir, { recursive: true });
-      writeFileSync(join(dataDir, 'project-bindings.json'), JSON.stringify({
-        version: 99,
-        bindings: {},
-      }));
+      writeFileSync(
+        join(dataDir, 'project-bindings.json'),
+        JSON.stringify({
+          version: 99,
+          bindings: {},
+        })
+      );
 
       const pm = new ProjectManager(opts);
       expect(pm.getActive('chat-1').name).toBe('default');
@@ -341,14 +408,17 @@ describe('ProjectManager', () => {
       const opts = createOptions();
       const dataDir = join(opts.workspaceDir, '.disclaude');
       mkdirSync(dataDir, { recursive: true });
-      writeFileSync(join(dataDir, 'project-bindings.json'), JSON.stringify({
-        version: 1,
-        bindings: {
-          'chat-1': '/valid/path',
-          'chat-2': '',
-          'chat-3': 123,
-        },
-      }));
+      writeFileSync(
+        join(dataDir, 'project-bindings.json'),
+        JSON.stringify({
+          version: 1,
+          bindings: {
+            'chat-1': '/valid/path',
+            'chat-2': '',
+            'chat-3': 123,
+          },
+        })
+      );
 
       const pm = new ProjectManager(opts);
       expect(pm.getActive('chat-1').workingDir).toBe('/valid/path');
@@ -362,7 +432,7 @@ describe('ProjectManager', () => {
       pm.use('chat-1', '/project');
 
       // .tmp file should not remain
-      const tmpPath = `${pm.getPersistPath()  }.tmp`;
+      const tmpPath = `${pm.getPersistPath()}.tmp`;
       expect(existsSync(tmpPath)).toBe(false);
       // Final file should exist
       expect(existsSync(pm.getPersistPath())).toBe(true);

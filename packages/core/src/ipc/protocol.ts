@@ -1,13 +1,15 @@
 /**
  * IPC Protocol definitions for cross-process communication.
  *
- * Defines the message format and types for Unix Socket IPC.
+ * Defines the channel-method request/response payload types shared by the
+ * REST IPC client (`rest-ipc-client.ts`) and the protocol facade
+ * (`ipc-client-facade.ts`). The Unix-socket wire format that also lived here
+ * is gone with the transport (#4168 Phase 3); what remains is the
+ * method/payload surface the REST routes mirror.
  *
  * @module core/ipc/protocol
  */
 
-import { tmpdir } from 'os';
-import { join } from 'path';
 import type { FeishuCard } from '../types/platform.js';
 
 /**
@@ -26,23 +28,17 @@ export type IpcRequestType =
   | 'listTempChats'
   | 'markChatResponded'
   // Push instruction to a chat agent (Issue #631)
-  | 'pushToAgent'
-  // Loop Runner operations (Issue #4075)
-  | 'loopStart'
-  | 'loopStop'
-  | 'loopStatus';
+  | 'pushToAgent';
 
 /**
- * IPC request payload types.
+ * IPC request payloads.
  */
 export interface IpcRequestPayloads {
   ping: Record<string, never>;
-  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
   sendMessage: {
     chatId: string;
     text: string;
     threadId?: string;
-    /** Mention targets for @mentioning users/bots (Issue #1742) */
     mentions?: Array<{ openId: string; name?: string }>;
   };
   sendCard: {
@@ -56,194 +52,42 @@ export interface IpcRequestPayloads {
     filePath: string;
     threadId?: string;
   };
-  // Issue #2951: Upload image for card embedding (returns image_key)
   uploadImage: {
     filePath: string;
   };
-  // Raw-param interactive card (Issue #1570)
   sendInteractive: {
     chatId: string;
     question: string;
-    options: Array<{
-      text: string;
-      value: string;
-      type?: 'primary' | 'default' | 'danger';
-    }>;
+    options: Array<{ text: string; value: string; type?: 'primary' | 'default' | 'danger' }>;
     title?: string;
     context?: string;
     threadId?: string;
     actionPrompts?: Record<string, string>;
   };
-  // Temporary chat lifecycle management (Issue #1703)
   listTempChats: Record<string, never>;
   markChatResponded: {
     chatId: string;
-    response: {
-      selectedValue: string;
-      responder: string;
-      repliedAt: string;
-    };
+    response: { selectedValue: string; responder: string; repliedAt: string };
   };
-  // Push instruction to a chat agent (Issue #631)
-  // waitForCompletion: await agent turn completion before responding (Issue #4063)
   pushToAgent: {
     chatId: string;
     message: string;
-    /** If true, IPC response waits for agent turn to complete before returning. */
+    /** If true, the response waits for the agent turn to complete before returning. */
     waitForCompletion?: boolean;
   };
-  // Loop Runner operations (Issue #4075)
-  loopStart: {
-    chatId: string;
-    prompt: string;
-    maxSteps?: number;
-    maxDurationMs?: number;
-    stepIntervalMs?: number;
-  };
-  loopStop: {
-    loopId: string;
-  };
-  loopStatus: {
-    loopId: string;
-  };
 }
 
 /**
- * IPC response payload types.
+ * IPC response payloads.
  */
 export interface IpcResponsePayloads {
-  ping: { pong: true };
-  // Platform-agnostic messaging operations (Issue #1574: Phase 5 of IPC refactor)
-  sendMessage: { success: boolean; messageId?: string };
-  sendCard: { success: boolean; messageId?: string };
-  uploadFile: {
-    success: boolean;
-    fileKey?: string;
-    fileType?: string;
-    fileName?: string;
-    fileSize?: number;
-    error?: string;
-    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
-  };
-  // Issue #2951: Upload image response (returns Feishu image_key for card embedding)
-  uploadImage: {
-    success: boolean;
-    imageKey?: string;
-    error?: string;
-    errorType?: 'ipc_unavailable' | 'ipc_timeout' | 'ipc_request_failed';
-  };
-  // Raw-param interactive card (Issue #1570)
-  sendInteractive: {
-    success: boolean;
-    messageId?: string;
-  };
-  // Temporary chat lifecycle management (Issue #1703)
-  listTempChats: {
-    success: boolean;
-    chats?: Array<{
-      chatId: string;
-      createdAt: string;
-      expiresAt: string;
-      creatorChatId?: string;
-      responded: boolean;
-    }>;
-  };
-  markChatResponded: {
-    success: boolean;
-  };
-  // Push instruction to a chat agent (Issue #631)
-  pushToAgent: {
-    success: boolean;
-  };
-  // Loop Runner operations (Issue #4075)
-  loopStart: {
-    success: boolean;
-    loopId?: string;
-    error?: string;
-  };
-  loopStop: {
-    success: boolean;
-    error?: string;
-  };
-  loopStatus: {
-    success: boolean;
-    status?: {
-      loopId: string;
-      state: 'running' | 'completed' | 'stopped' | 'error';
-      currentStep: number;
-      totalSteps: number;
-      startedAt: string;
-    };
-    error?: string;
-  };
-}
-
-/**
- * Generic IPC request structure.
- */
-export interface IpcRequest<T extends IpcRequestType = IpcRequestType> {
-  type: T;
-  id: string;
-  payload: IpcRequestPayloads[T];
-}
-
-/**
- * Generic IPC response structure.
- */
-export interface IpcResponse<T extends IpcRequestType = IpcRequestType> {
-  id: string;
-  success: boolean;
-  payload?: IpcResponsePayloads[T];
-  error?: string;
-}
-
-/**
- * IPC configuration.
- */
-export interface IpcConfig {
-  /** Unix socket file path */
-  socketPath: string;
-  /** Connection timeout in milliseconds */
-  timeout: number;
-  /** Maximum retry attempts */
-  maxRetries: number;
-}
-
-/**
- * Default IPC configuration.
- *
- * Note: The socketPath here is a fallback default. In production,
- * Primary Node generates a random socket path
- * via `generateSocketPath()` to avoid multi-instance conflicts (Issue #1355).
- */
-export const DEFAULT_IPC_CONFIG: IpcConfig = {
-  socketPath: '/tmp/disclaude-interactive.ipc',
-  timeout: 5000,
-  maxRetries: 3,
-};
-
-/**
- * Well-known file path where the Primary Node writes its IPC socket path.
- *
- * Issue #3808: External processes (e.g., cron scripts) read this file to
- * discover the IPC socket path and call push_to_agent.
- *
- * Location: /tmp/disclaude-ipc-socket (OS temp directory).
- */
-export const IPC_SOCKET_PATH_FILE = join(tmpdir(), 'disclaude-ipc-socket');
-
-/**
- * Generate a unique random socket path for IPC server.
- *
- * Issue #1355: Fixed path `/tmp/disclaude-worker.ipc` causes conflicts when
- * multiple instances run simultaneously or after PM2 restarts. This generates
- * a unique path per process to avoid such issues.
- *
- * @returns Unique socket file path in the system temp directory
- */
-export function generateSocketPath(): string {
-  return join(
-    tmpdir(),
-    `disclaude-ipc-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.sock`
-  );
+  ping: { pong: boolean };
+  sendMessage: { success: boolean };
+  sendCard: { success: boolean };
+  uploadFile: { success: boolean; fileKey: string; fileType: string; fileName: string; fileSize: number };
+  uploadImage: { success: boolean; imageKey: string };
+  sendInteractive: { success: boolean; messageId?: string };
+  listTempChats: { success: boolean; chats: Array<{ chatId: string; createdAt: string; expiresAt: string; creatorChatId?: string; responded: boolean }> };
+  markChatResponded: { success: boolean };
+  pushToAgent: { success: boolean };
 }

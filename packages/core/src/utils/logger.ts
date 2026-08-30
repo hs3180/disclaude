@@ -128,7 +128,12 @@ function setupSyncFilePassthrough(): { passthrough: PassThrough; dest: NodeJS.Wr
 
   const logFile = path.join(logsPath, 'disclaude-combined.log');
   const passthrough = new PassThrough();
-  const dest = pino.destination({ dest: logFile, sync: false, mkdir: true });
+  // sync:true — the fd is opened synchronously in the constructor. With
+  // sync:false the file open is async, and a short-lived process that calls
+  // process.exit() before the open completes triggers pino's on-exit
+  // flushSync() while fd is still -1 → "sonic boom is not ready yet".
+  // CLI entry points (push-cli) hit exactly this window on error exits.
+  const dest = pino.destination({ dest: logFile, sync: true, mkdir: true });
 
   // Handle PassThrough errors to prevent silent log loss
   passthrough.on('error', (err: Error) => {
@@ -206,11 +211,11 @@ function getProductionConfig(): LoggerOptions {
     serializers: {
       err: pino.stdSerializers.err,
       error: pino.stdSerializers.err
-    },
-    base: {
-      pid: true,
-      hostname: true
     }
+    // No `base` override: pino's default base emits the real process pid
+    // and hostname on every entry. Overriding base (as this config once did
+    // with literal `true` values) replaces those fields with the boolean,
+    // making multi-instance logs unattributable (issue #4577).
   };
 }
 
@@ -234,7 +239,9 @@ function setupFileLogging(
     }
 
     const logFile = path.join(logsPath, 'disclaude-combined.log');
-    const dest = pino.destination({ dest: logFile, sync: false, mkdir: true });
+    // sync:true — see setupSyncFilePassthrough() for why async open is unsafe
+    // for short-lived processes ("sonic boom is not ready yet" on exit).
+    const dest = pino.destination({ dest: logFile, sync: true, mkdir: true });
 
     return dest as unknown as NodeJS.WritableStream;
   } catch (error) {

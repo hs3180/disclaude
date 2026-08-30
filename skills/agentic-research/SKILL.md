@@ -133,6 +133,37 @@ Bad: "I'll use some sample data to demonstrate..."
 2. **Verify accuracy**: Are sources cited correctly?
 3. **Get feedback**: Does the output meet user needs?
 
+## Handling User Feedback During Research
+
+> Issue #4017. Research runs in a separate execution chat driven by scheduled runs on the schedule base (cron + chatId; the loop system is deprecated, see #4430). User feedback — corrections, intent changes, scope or source-preference adjustments — originates in the **initial conversation** with the user, *not* in the research execution chat. The execution chat carries progress updates and delivery; it is not a feedback channel. Feedback reaches the running research **only through the shared state file** — never by reading the initial conversation's messages.
+
+The mechanism is a safe, append-only write to `RESEARCH.md`: the conversation Agent captures feedback there, and the research Agent re-reads it at the start of each run. There is **no cross-conversation message reading and no `sourceChatId` wiring** — the earlier cross-conversation approach was reviewed and rejected (see closed PR #4030); the agreed direction is direct, safe `RESEARCH.md` modification.
+
+### Write side — capture feedback into RESEARCH.md (conversation Agent)
+
+When the user gives feedback in the initial conversation while research is running, **directly modify `RESEARCH.md`** in the research workdir:
+
+1. Append a timestamped entry to a dedicated `## User Feedback` section (create the section if it does not yet exist). Keep it **append-only** — never rewrite or delete prior entries.
+2. One feedback point per entry. In 1–3 lines state **what** the user wants changed (intent / correction / new constraint / source preference) and, if given, **why**. Quote the user's words where it removes ambiguity.
+3. Do not pre-filter or editorialize — capture the user's intent faithfully; the research Agent decides whether and how to apply it.
+
+Example entry:
+
+- **2026-08-04 14:05 — narrow scope**: User said "Drop the EU comparison; focus only on US and China." → limit geography to US + China; EU section out of scope.
+
+Only the `## User Feedback` section is written from the conversation side; the research Agent owns every other section of `RESEARCH.md`.
+
+### Read side — let feedback adjust direction (research Agent)
+
+At the **start of each scheduled run**, re-read the `## User Feedback` section of `RESEARCH.md` alongside the rest of the state file. Treat new entries as **suggestive, not authoritative**: evaluate each against the current findings before acting, acknowledge what you applied in the next progress card, and do not retroactively rewrite already-delivered sections unless the feedback explicitly asks for it.
+
+When writing `RESEARCH.md` back at the end of a run, carry the `## User Feedback` section forward **verbatim** — it is written from the conversation side and is not yours to rewrite or drop, so a feedback entry appended mid-run is never lost.
+
+### Properties
+
+- **Non-blocking.** Writing feedback never interrupts the running execution; it takes effect at the next run's read. Never block a run waiting for feedback.
+- **Single channel.** The `## User Feedback` section of `RESEARCH.md` is the only feedback path into the running research — the user should not need to repeat themselves in the execution chat.
+
 ## Quality Checklist
 
 Before completing a research task:
@@ -227,12 +258,61 @@ Choose the delivery format based on context:
 |--------|-------------|-----|
 | **Feishu doc** | Long reports (>500 words), user may want to share/edit | Create doc via `lark-cli docs +create`, paste rendered Markdown |
 | **Group message card** | Short summaries, Executive Summary format | Send as structured card via `send_card` |
-| **Markdown file** | Research loop output, archival | Write to `STATE.md` or `RESEARCH.md` in the loop workdir |
+| **Markdown file** | Multi-step research output, archival | Write to `STATE.md` or `RESEARCH.md` in the research workdir |
 
-For async research (loop execution), deliver via Feishu doc and post a summary card in both the research group and the source chat.
+For scheduled-task-driven research, deliver via Feishu doc and post a summary card in both the research group and the source chat.
+
+## Research Canvas (Human-AI Shared Outline)
+
+Issue #4016 (Sub-E). For research spanning multiple steps, create a Feishu doc as
+the **Research Canvas** — a shared space where the user can edit the research
+outline (add/remove questions, adjust priorities, annotate) and the Agent
+publishes progress. It complements the `RESEARCH.md` feedback channel: feedback
+is *captured* in `RESEARCH.md`, while the outline is *co-edited* on the Canvas.
+
+The full template, lark-cli commands, and sync/failure rules live in the
+[canvas template reference](./canvas-template.md). In short:
+
+- **Create** on the first scheduled run — this is step 3 of [Per-step behavior](#per-step-behavior) when no `canvasUrl` exists yet (`lark-cli docs +create` from the template), store the URL as `canvasUrl` in `RESEARCH.md`, and post the link
+  to the user (grant access — bot docs are not user-visible by default).
+- **Sync at the start of every run** (`docs +fetch`): merge user Canvas edits
+  into `RESEARCH.md` first (user edits win on conflict; annotations append to
+  the `## User Feedback` section), then push progress to the Canvas
+  (`docs +update` targeted edits — never whole-doc overwrites).
+- **Never block a run on the Canvas** — a sync failure is logged in `STATE.md`
+  and the research continues.
+- **RESEARCH.md stays the state source**; the Canvas is its editable projection.
+
+## Research Discipline (Scheduled-Task Driven)
+
+Research runs in **one mode** (Issue #4006): every step is driven the same way — a scheduled task fires (per its `SCHEDULE.md` cron) and routes the step to the chat's persistent agent. Whether the user happens to be at the keyboard for a given step changes nothing: do not wait for them, do not branch behavior on their presence. Treat the guidance below as applying to **every** step.
+
+### Key decision points (where research drifts)
+
+No one is watching each step by default, so catch these explicitly and record the decision in `STATE.md`:
+
+| Decision point | What to check | If uncertain (safe default) |
+|----------------|---------------|-----------------------------------|
+| **Goal clarification** | Does this step still serve the user's original question? | Keep the original goal; note the ambiguity. Do not silently redefine scope. |
+| **Data source selection** | Is the source authoritative, and the one the user asked for? | Prefer the user-specified source; only switch with a recorded reason. |
+| **Analysis direction** | Is the analysis drifting away from the core ask? | Re-anchor to the original question; flag the drift in `STATE.md`. |
+| **Conclusion validity** | Does the conclusion actually answer what was asked? | State explicitly what is answered vs. out-of-scope. |
+
+### Per-step behavior
+
+At the **start of every step**, before doing anything else:
+
+1. **Read the latest state** — re-read `STATE.md` and `RESEARCH.md` from the workdir. Do not rely on memory of a previous step; state files are the source of truth and may have changed since your last turn.
+2. **Check for user feedback** — new entries in the `## User Feedback` section of `RESEARCH.md` (appended by the conversation Agent, per #4017) are the single feedback channel. Read that section as part of re-reading the state files, treat entries as suggestive rather than authoritative, and let them adjust this step's direction.
+3. **Create or sync the Research Canvas** — if a `canvasUrl` exists in `RESEARCH.md`, follow the [canvas template](./canvas-template.md) sync flow: fetch the doc, merge user edits back into `RESEARCH.md` (user edits win), then publish this step's progress to the Canvas. A sync failure never blocks the step. If no `canvasUrl` exists **and** this research spans multiple steps (first run), **create** the Canvas now (Sub-E.1): instantiate the [canvas template](./canvas-template.md) from the plan in `RESEARCH.md`, run its create flow (`lark-cli docs +create`), store the doc URL as `canvasUrl` in `RESEARCH.md`, and post the link to the user. A create failure never blocks the step — log it and retry next run. Single-step research skips the Canvas entirely.
+4. **Carry the thread forward** — write the step's outcome, open questions, and intended next action back into `STATE.md` so the next step picks up cleanly.
+5. **Be decisive, flag uncertainty** — make the most reasonable decision and proceed rather than stalling. Record what you decided and what you are unsure about (`⚠️ uncertain: …`) so the user can correct it later. Do **not** block the whole research on a question the user has not answered yet.
+6. **Deliver incrementally** — write the shared artifact to a Feishu doc and post a summary card in both the research group and the source chat, so the user sees progress whenever they look.
 
 ## Related
 
 - Issue #1021: Research task common complaints and improvements
 - Issue #963: GLM-5 infinite loop (extreme case of source selection issues)
 - Issue #1339: Agentic Research interactive workflow (parent feature)
+- Issue #4006: Research discipline guidance for scheduled runs (the Research Discipline section above)
+- Issue #4016: Research Canvas (the Research Canvas section above)

@@ -22,7 +22,6 @@ vi.mock('@disclaude/core', () => ({
   }),
   loadConfigFile: vi.fn(),
   setLoadedConfig: vi.fn(),
-  getIpcSocketPath: vi.fn(() => '/tmp/test-ipc.sock'),
 }));
 
 vi.mock('./index.js', () => ({
@@ -33,10 +32,6 @@ vi.mock('./index.js', () => ({
 // Dispatch/validation is covered directly in tools/tool-dispatch.test.ts.
 vi.mock('./tools/tool-dispatch.js', () => ({
   dispatchToolCall: vi.fn(),
-}));
-
-vi.mock('fs', () => ({
-  existsSync: vi.fn(() => false),
 }));
 
 // Import after mocks are set up

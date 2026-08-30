@@ -2,17 +2,18 @@
  * Tests for send_interactive_message tool (packages/mcp-server/src/tools/interactive-message.ts)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock dependencies
 // Issue #4129: sendInteractive is now a standalone function exported from @disclaude/core.
 // The production code calls sendInteractive(client, ...) — mock it to delegate to the
 // same spy as the legacy client.sendInteractive(...) instance method so existing
 // test assertions (mockIpcClient.sendInteractive) keep working unchanged.
-const { mockIpcClient, mockSendInteractive } = vi.hoisted(() => {
+const { mockIpcClient, mockSendInteractive, mockGetRestIpcClient } = vi.hoisted(() => {
   const mockSendInteractive = vi.fn();
   const mockIpcClient = { sendInteractive: mockSendInteractive };
-  return { mockIpcClient, mockSendInteractive };
+  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
+  return { mockIpcClient, mockSendInteractive, mockGetRestIpcClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -22,22 +23,20 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  getIpcClient: vi.fn(),
   // Standalone facade function (Issue #4129). Production calls sendInteractive(client, chatId, params).
   // Drop the leading client arg so the spy sees (chatId, params), matching the
   // legacy client.sendInteractive(chatId, params) assertions in this suite.
   sendInteractive: (_client: unknown, ...rest: unknown[]) => mockSendInteractive(...rest),
-  UnixSocketIpcServer: vi.fn().mockImplementation(() => ({
-    start: vi.fn(),
-    stop: vi.fn(),
-    getSocketPath: vi.fn(() => '/tmp/test.sock'),
-    isRunning: vi.fn(() => true),
-  })),
-  createInteractiveMessageHandler: vi.fn(() => vi.fn()),
 }));
 
 vi.mock('./ipc-utils.js', () => ({
+  // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
+  getRestIpcClient: () => mockGetRestIpcClient(),
   isIpcAvailable: vi.fn(),
+  // Issue #4576: deterministic stub — the unavailable-branch tests assert the
+  // fallback hint (thread-preserving +messages-reply) is appended.
+  buildIpcFallbackHint: (parentMessageId?: string) =>
+    `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}`,
   getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
     if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
     return `❌ 操作失败: ${originalError ?? '未知错误'}`;
@@ -48,24 +47,21 @@ vi.mock('./callback-manager.js', () => ({
   getMessageSentCallback: vi.fn(),
 }));
 
+// Issue #4280 (part 4): the IPC-server lifecycle exports
+// (startIpcServer/stopIpcServer/isIpcServerRunning/getIpcServerSocketPath/
+// registerFeishuHandlers/unregisterFeishuHandlers) and their tests are gone
+// with the mcp-server's own UnixSocketIpcServer.
 import {
   send_interactive_message,
   send_interactive,
-  registerFeishuHandlers,
-  unregisterFeishuHandlers,
-  isIpcServerRunning,
-  getIpcServerSocketPath,
-  startIpcServer,
-  stopIpcServer,
 } from './interactive-message.js';
-import { getIpcClient, UnixSocketIpcServer, createInteractiveMessageHandler } from '@disclaude/core';
 import { isIpcAvailable } from './ipc-utils.js';
 import { getMessageSentCallback } from './callback-manager.js';
 
 describe('send_interactive_message', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
     vi.mocked(getMessageSentCallback).mockReturnValue(null);
   });
@@ -183,6 +179,18 @@ describe('send_interactive_message', () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain('IPC');
     });
+
+    it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const result = await send_interactive_message({
+        question: 'Q?',
+        options: [{ text: 'A', value: 'a' }],
+        chatId: 'oc_test',
+        parentMessageId: 'om_parent123',
+      });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('+messages-reply --message-id om_parent123');
+    });
   });
 
   describe('successful send', () => {
@@ -263,7 +271,7 @@ describe('send_interactive_message', () => {
 
   describe('error handling', () => {
     it('should catch unexpected errors and return error result', async () => {
-      vi.mocked(getIpcClient).mockImplementation(() => { throw new Error('Unexpected'); });
+      mockGetRestIpcClient.mockImplementation(() => { throw new Error('Unexpected'); });
       const result = await send_interactive_message({
         question: 'Q?', options: [{ text: 'A', value: 'a' }], chatId: 'oc_test',
       });
@@ -279,150 +287,10 @@ describe('send_interactive alias', () => {
   });
 });
 
-describe('Feishu handler registration', () => {
-  it('should register feishu handlers', () => {
-    const handlers = { sendMessage: vi.fn() };
-    expect(() => registerFeishuHandlers(handlers as any)).not.toThrow();
-  });
-
-  it('should unregister feishu handlers', () => {
-    expect(() => unregisterFeishuHandlers()).not.toThrow();
-  });
-});
-
-describe('IPC server helpers', () => {
-  it('should return false when IPC server is not running', () => {
-    expect(isIpcServerRunning()).toBe(false);
-  });
-
-  it('should return null when IPC server socket path is not available', () => {
-    expect(getIpcServerSocketPath()).toBeNull();
-  });
-});
-
-describe('IPC server lifecycle', () => {
-  afterEach(async () => {
-    await stopIpcServer();
-    unregisterFeishuHandlers();
-  });
-
-  describe('startIpcServer', () => {
-    beforeEach(() => {
-      vi.clearAllMocks();
-    });
-
-    it('should create and start a new IPC server', async () => {
-      await startIpcServer();
-
-      expect(UnixSocketIpcServer).toHaveBeenCalledTimes(1);
-      expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
-
-      const mockInstance = vi.mocked(UnixSocketIpcServer).mock.results[0].value;
-      expect(mockInstance.start).toHaveBeenCalledTimes(1);
-
-      expect(isIpcServerRunning()).toBe(true);
-      expect(getIpcServerSocketPath()).toBe('/tmp/test.sock');
-    });
-
-    it('should be idempotent when server already exists', async () => {
-      await startIpcServer();
-      vi.clearAllMocks();
-      await startIpcServer();
-
-      expect(UnixSocketIpcServer).not.toHaveBeenCalled();
-    });
-
-    it('should register handlers on first call when provided', async () => {
-      const handlers = { sendMessage: vi.fn() } as any;
-      await startIpcServer(handlers);
-
-      expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
-       
-      const [, container] = vi.mocked(createInteractiveMessageHandler).mock.calls[0]!;
-      expect(container!.handlers).toBe(handlers);
-    });
-
-    it('should update handlers on idempotent call when provided', async () => {
-      const handlers1 = { sendMessage: vi.fn() } as any;
-      await startIpcServer(handlers1);
-
-      const handlers2 = { sendMessage: vi.fn(), sendCard: vi.fn() } as any;
-      await startIpcServer(handlers2);
-
-      expect(UnixSocketIpcServer).toHaveBeenCalledTimes(1);
-       
-      const [, container] = vi.mocked(createInteractiveMessageHandler).mock.calls[0]!;
-      expect(container!.handlers).toBe(handlers2);
-    });
-
-    it('should pass no-op callback to createInteractiveMessageHandler', async () => {
-      await startIpcServer();
-
-      expect(createInteractiveMessageHandler).toHaveBeenCalledTimes(1);
-      // eslint-disable-next-line prefer-destructuring
-      const [callback] = vi.mocked(createInteractiveMessageHandler).mock.calls[0];
-      expect(typeof callback).toBe('function');
-      expect((callback as any)()).toBeUndefined();
-    });
-
-    it('should reset ipcServer to null on start failure and re-throw', async () => {
-      const startError = new Error('Server start failed');
-      vi.mocked(UnixSocketIpcServer).mockImplementation((() => ({
-        start: vi.fn().mockRejectedValue(startError),
-        stop: vi.fn(),
-        getSocketPath: vi.fn(() => '/tmp/test.sock'),
-        isRunning: vi.fn(() => false),
-      })) as any);
-
-      try {
-        await expect(startIpcServer()).rejects.toThrow('Server start failed');
-        expect(isIpcServerRunning()).toBe(false);
-        expect(getIpcServerSocketPath()).toBeNull();
-      } finally {
-        vi.mocked(UnixSocketIpcServer).mockImplementation((() => ({
-          start: vi.fn(),
-          stop: vi.fn(),
-          getSocketPath: vi.fn(() => '/tmp/test.sock'),
-          isRunning: vi.fn(() => true),
-        })) as any);
-      }
-    });
-
-    it('should not register handlers when none are provided', async () => {
-      await startIpcServer();
-
-       
-      const [, container] = vi.mocked(createInteractiveMessageHandler).mock.calls[0]!;
-      expect(container!.handlers).toBeUndefined();
-    });
-  });
-
-  describe('stopIpcServer', () => {
-    beforeEach(() => {
-      vi.clearAllMocks();
-    });
-
-    it('should stop the running server and clear state', async () => {
-      await startIpcServer();
-
-      const mockInstance = vi.mocked(UnixSocketIpcServer).mock.results[0].value;
-      await stopIpcServer();
-
-      expect(mockInstance.stop).toHaveBeenCalledTimes(1);
-      expect(isIpcServerRunning()).toBe(false);
-      expect(getIpcServerSocketPath()).toBeNull();
-    });
-
-    it('should be a no-op when server is not running', async () => {
-      await expect(stopIpcServer()).resolves.toBeUndefined();
-    });
-  });
-});
-
 describe('send_interactive_message edge cases', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
     vi.mocked(getMessageSentCallback).mockReturnValue(null);
   });

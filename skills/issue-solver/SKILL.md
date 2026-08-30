@@ -70,6 +70,14 @@ cp skills/issue-solver/scan.mjs schedules/{scheduleDir}/scan.mjs
 
 脚本位置：`skills/issue-solver/scan.mjs`
 
+可选开关 `--verify-shipped`（#4373 part 4）：在候选列表后追加一段
+「已实现未关闭」类候选的批量核实结果——对每个此类 issue 的全部关联 PR，
+在本仓库 `main` 的完整历史上执行 part-3 清单（`git log --grep`，MISS 时
+`gh pr view --json mergeCommit` 兜底），输出 `confirmed-shipped` /
+`unverified` 判定。前置条件：克隆必须有完整历史（浅克隆会全部报 `error`
+并提示 `git fetch --unshallow`）。默认输出与不带开关时逐字节一致（关掉
+零影响），但在有完整历史的克隆里，可省去每轮手工 clone+grep 的重复环节。
+
 ## 关联
 
 - Parent: #2945

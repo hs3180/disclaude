@@ -27,6 +27,11 @@ type ProjectCommand = ControlCommand<'project'>;
 
 /**
  * `/project info` — Show current chat's active project.
+ *
+ * Issue #4448: resolve the *effective* cwd (what the agent will actually run
+ * in), not just the bound target. When the bound directory is missing the
+ * agent silently falls back to the workspace; surface that mismatch here
+ * instead of reporting only the (stale) target.
  */
 function handleInfo(command: ProjectCommand, context: ControlHandlerContext): ControlResponse {
   const pm = context.projectManager;
@@ -37,17 +42,41 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
     };
   }
 
-  const active = pm.getActive(command.chatId);
+  const resolution = pm.resolveCwd(command.chatId);
 
-  if (active.name === 'default') {
+  if (resolution.reason === 'unbound') {
     return {
       success: true,
-      message: `📂 **当前项目**: default（工作空间根目录）\n\`${active.workingDir}\``,
+      message: `📂 **当前项目**: default（工作空间根目录）\n\`${pm.getWorkspaceDir()}\``,
     };
   }
 
-  // Try to read project state
-  const state = readProjectState(active.workingDir);
+  // resolution.reason === 'bound' | 'bound-missing'
+  const boundDir = resolution.boundWorkingDir as string;
+
+  if (resolution.reason === 'bound-missing') {
+    // Issue #4448: bound dir gone → agent silently falls back to workspace.
+    // Show both the (stale) target and the actual run dir so the mismatch is
+    // visible. Delivered via `message` (not `error`) because the chat command
+    // router only relays `message` to the user.
+    return {
+      success: true,
+      message: [
+        `⚠️ **绑定目录不存在**: \`${boundDir}\``,
+        '',
+        `当前 chat 已绑定 \`${basename(boundDir)}\`，但该目录在磁盘上不可用，`,
+        'Agent 实际将**回退到工作空间根目录**运行：',
+        `- 绑定目标: \`${boundDir}\``,
+        `- 实际运行: \`${pm.getWorkspaceDir()}\`（回退）`,
+        '',
+        '可能原因：容器重启时 volume 尚未就绪 / 目录被移动或卸载 / 路径大小写或规范化差异。',
+        '可用 `/project reset` 回到默认，或 `/project use <dir>` 重新绑定。',
+      ].join('\n'),
+    };
+  }
+
+  // resolution.reason === 'bound' (directory exists)
+  const state = readProjectState(boundDir);
   const issueCount = state ? Object.keys(state.issues).length : 0;
   const prCount = state ? Object.keys(state.prs).length : 0;
   const lastSync = state?.sync?.issues ?? '从不';
@@ -55,8 +84,9 @@ function handleInfo(command: ProjectCommand, context: ControlHandlerContext): Co
   return {
     success: true,
     message: [
-      `📂 **当前项目**: ${basename(active.workingDir)}`,
-      `**工作目录**: \`${active.workingDir}\``,
+      `📂 **当前项目**: ${basename(boundDir)}`,
+      `**工作目录**: \`${boundDir}\``,
+      `**实际运行**: \`${resolution.effectiveCwd}\` ✅`,
       '',
       '**状态摘要**:',
       `- Issues: ${issueCount} 个已追踪`,
@@ -149,7 +179,7 @@ function handleReset(command: ProjectCommand, context: ControlHandlerContext): C
  */
 export const handleProject: CommandHandler<'project'> = (
   command: ControlCommand<'project'>,
-  context: ControlHandlerContext,
+  context: ControlHandlerContext
 ): ControlResponse => {
   const subcommand = command.data?.subcommand ?? 'info';
 

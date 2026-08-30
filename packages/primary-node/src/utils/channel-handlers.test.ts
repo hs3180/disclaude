@@ -271,6 +271,7 @@ describe('createDefaultMessageHandler', () => {
         sendFile: expect.any(Function),
         onDone: expect.any(Function),
       }),
+      undefined, // Issue #4587 (part 2): no threadRootId → chat-scoped agent
     );
   });
 
@@ -337,6 +338,24 @@ describe('createDefaultMessageHandler', () => {
         senderOpenId: 'user-001',
         chatHistoryContext: 'Previous conversation context',
       }),
+    );
+  });
+
+  // Issue #4587 (part 2): a topic-group thread message's metadata.threadRootId
+  // selects that thread's agent on the direct (non-router) path.
+  it('should pass metadata.threadRootId to the pool for session keying (#4587 part 2)', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Test channel',
+    });
+    const message = createMockMessage({
+      metadata: { chatType: 'topic', threadRootId: 'om_root' },
+    });
+    await handler(message);
+
+    expect(context.agentPool.getOrCreateChatAgent).toHaveBeenCalledWith(
+      'chat-001',
+      expect.anything(),
+      'om_root',
     );
   });
 
@@ -617,6 +636,28 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
     );
   });
 
+  it('should pass threadRootId from metadata in UserMessage (Issue #4587 part 1)', async () => {
+    const handler = createDefaultMessageHandler(channel, context, {
+      channelName: 'Feishu channel',
+    });
+    const message = createMockMessage({
+      metadata: { chatType: 'topic', threadRootId: 'om_thread_root' },
+    });
+    await handler(message);
+
+    expect(mockRouter.route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadRootId: 'om_thread_root',
+      }),
+    );
+    // Absent threadRootId must NOT be stringified 'undefined' — plain chats
+    // keep the field truly unset so part 2's session keying stays chat-scoped.
+    const plain = createMockMessage({ metadata: { chatType: 'group' } });
+    await handler(plain);
+    const routedPlain = mockRouter.route.mock.lastCall?.[0] as Record<string, unknown>;
+    expect(routedPlain.threadRootId).toBeUndefined();
+  });
+
   it('should pass attachments from extractAttachments in UserMessage', async () => {
     const fileRefs = [{
       id: 'file-001',
@@ -736,6 +777,7 @@ describe('createDefaultMessageHandler with InputMessageRouter', () => {
       expect.objectContaining({
         sendMessage: expect.any(Function),
       }),
+      undefined, // Issue #4587 (part 2): no threadRootId → chat-scoped agent
     );
   });
 });

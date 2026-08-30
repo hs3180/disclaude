@@ -13,6 +13,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 | [5 分钟接入飞书](docs/quickstart.md) | 极简快速上手指南 |
 | [飞书应用配置指南](docs/feishu-setup.md) | 完整的飞书机器人配置教程（创建应用、权限、事件订阅等） |
 | [GitHub App 配置指南](docs/github-app-guide.md) | GitHub App 认证配置教程 |
+| [CDP Endpoint（无头主机浏览器）](docs/cdp-endpoint.md) | 无头主机的容器化 Chromium / CDP endpoint 契约与接入 |
 
 ## Features
 
@@ -21,7 +22,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 - **Persistent conversations** - Per-user session management (in-memory)
 - **Slash commands** - `/reset`, `/status`, `/help` for quick actions
 - **Multi-model support** - Anthropic Claude or GLM (Zhipu AI)
-- **Browser automation** - Playwright MCP tools for web interaction
+- **Browser automation** - browser-use Skill (CLI + shared CDP endpoint; the Playwright MCP server is retired)
 - **Custom skills** - Extensible workflow system (`.claude/skills/`)
 - **Message deduplication** - Prevents duplicate responses in WebSocket mode
 - **PM2 production ready** - Background service with log management
@@ -37,7 +38,7 @@ A multi-platform AI agent bot that bridges messaging platforms (Feishu/Lark, Rul
 | Code reading/editing/writing | ✅ Full support via chat |
 | Bash command execution | ✅ Real-time feedback |
 | File system operations | ✅ Glob, grep, read, write |
-| Browser automation | ✅ Playwright MCP (15+ tools) |
+| Browser automation | ✅ browser-use Skill (CDP attach, script injection) |
 | Custom skills | ✅ `implement-feature`, `deep-search` |
 | Session management | ✅ In-memory per user |
 | Message deduplication | ✅ WebSocket event handling |
@@ -267,13 +268,48 @@ Ruliu (Baidu InfoFlow) is supported via HTTP Webhook. Configuration:
 
 > **Note**: Web tools (`WebSearch`, `WebFetch`) are disabled by default for security. To enable, modify `allowedTools` in `src/agent/client.ts`.
 
-### MCP Tools (Playwright)
+### Browser Automation (browser-use Skill)
 
-Browser automation capabilities:
-- Navigation: `browser_navigate`, `browser_navigate_back`
-- Interaction: `browser_click`, `browser_type`, `browser_fill_form`
-- Information: `browser_snapshot`, `browser_take_screenshot`
-- Advanced: `browser_evaluate`, `browser_drag`, `browser_wait_for`
+The Playwright MCP server is **removed** (#4460). Browser automation goes through the
+[browser-use Skill](skills/browser-use/SKILL.md) — pipe Python on stdin to the
+`browser-use` CLI; first-class `js()` / `cdp()` for script injection:
+- Navigation / interaction: `new_tab(url)`, `goto_url(url)`, `click_at_xy(x, y)`, `type_text`, `fill_input`
+- Information: `print(page_info())` (a11y snapshot), `capture_screenshot()` → path
+- Advanced: `js(code)` (eval), `cdp(method, …)` (raw CDP), tab management
+
+### Browser on Headless Hosts (CDP Endpoint)
+
+Pulling Chromium on a headless host is fragile (missing shared libs,
+sandbox/seccomp friction). The supported path is an **external CDP endpoint** —
+the containerized Chromium compose service (service name `chromium`, #4613;
+Chromium ships via the official Playwright image, #4604) that any browser driver
+attaches to over [CDP](https://chromedevtools.org/docs/chrome-devtools-protocol/).
+The primary consumer is the **browser-use Skill**; other CDP drivers (e.g. the
+Playwright library) may also attach — full contract:
+[`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) (#4496).
+
+**① Point drivers/skills at the endpoint:**
+
+```bash
+docker compose --profile chromium up -d   # optional profile; loopback-only publish
+# from a peer container:
+http://disclaude-chromium:${CDP_PORT:-9222}
+# from the host:
+http://localhost:${CDP_PORT:-9222}
+```
+
+**② Skill CDP config + attach/fallback semantics:** set `BU_CDP_URL` (or
+`BU_CDP_WS`) — the browser-use Skill/CLI then **attaches** to the external
+Chromium instead of self-launching. With neither set, it falls back to native
+self-launch (portable default). Attach failure is a **hard error**, never a
+silent fallback to self-launch — a silent fallback would mask a dead container.
+Priority: `BU_CDP_URL` > `BU_CDP_WS` > skill config field (details in
+[`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) Scope-3).
+
+**③ Sandbox tradeoff:** Chrome runs `--no-sandbox` inside the container,
+compensated by loopback-only port publishing, an opt-in compose profile, and
+1 CPU / 2 GB resource ceilings — reasoning and hardening path in
+[`docs/cdp-endpoint.md`](docs/cdp-endpoint.md) Scope-4.
 
 ### Custom Skills
 
@@ -497,13 +533,13 @@ This architecture enables:
 | Model not found | Verify model name in `disclaude.config.yaml` |
 | Rate limited | Check API quota/billing |
 
-### MCP tools not working
+### Browser automation not working
 
 | Symptom | Solution |
 |---------|----------|
-| Tool not found | Ensure `@playwright/mcp` is installed |
-| Access denied | Check tool is in `allowedTools` list in `src/agent/client.ts` |
-| Browser errors | Run `npm install playwright` (if standalone) |
+| `browser-use: command not found` | Rebuild the image (`docker compose up -d --build`) — the CLI is baked into `Dockerfile.primary` (#4599). On non-Docker installs, see `skills/browser-use/README.md` → Runtime |
+| CDP attach fails | Start the endpoint (`docker compose --profile chromium up -d`) — `BU_CDP_URL` defaults to it in `docker-compose.yml` — see `docs/cdp-endpoint.md` |
+| Browser errors | Check the CDP endpoint is reachable: `curl http://disclaude-chromium:9222/json/version` |
 
 ### PM2 issues
 
@@ -532,7 +568,7 @@ npm run pm2:stop && npm run pm2:start
 ### Current Status
 
 - ✅ Feishu/Lark integration (WebSocket bot)
-- ✅ MCP tool support (Playwright)
+- ✅ Browser automation via browser-use Skill (Playwright MCP retired)
 - ✅ Custom skills system
 - ✅ Session management (in-memory)
 - 🔜 Working toward autonomous task completion milestones

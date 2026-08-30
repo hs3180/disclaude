@@ -10,6 +10,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { promisify } from 'util';
+import { setTimeout as sleep } from 'timers/promises';
 import { execFile } from 'child_process';
 import type * as lark from '@larksuiteoapi/node-sdk';
 import {
@@ -133,6 +134,14 @@ interface QuotedMessageResult {
  * placeholder. getThreadContext itself stays read-only and does NOT download.
  */
 const MEDIA_MESSAGE_TYPES = new Set(['image', 'file', 'audio', 'media', 'video']);
+
+/**
+ * Issue #4591 (fix 2): backoff before the single retry of a failed per-node
+ * im.message.get in the thread walk. Short on purpose — the retry only needs
+ * to ride out a transient blip, not a sustained outage (a still-failing retry
+ * aborts the walk and the caller falls back, same as before).
+ */
+const THREAD_WALK_RETRY_DELAY_MS = 200;
 
 /** Issue #4319: short Chinese label for a media message type (thread-context display). */
 function mediaThreadLabel(messageType?: string): string {
@@ -484,8 +493,24 @@ export class MessageHandler {
    * the full conversation context within the thread.
    *
    * Issue #3641 sub-problem 1: Thread context retrieval for topic groups.
+   * Issue #4587 (part 1): also returns `rootId` — the top ancestor's message
+   * ID reached by the walk. Unlike `parent_id ?? message_id` (which differs
+   * between replies in the same thread), the walked root is the stable
+   * per-thread identity part 2 will key agent sessions on. No extra API
+   * calls — the root is already fetched for the context text.
+   * Issue #4591: also returns `incomplete` — false only when the walk reached
+   * the true root (a message with no parent_id). When true, `rootId` is a
+   * mid-chain node that other replies of the same thread may resolve
+   * differently, so callers must NOT key sessions on it (they fall back to
+   * parent_id instead).
    */
-  private async getThreadContext(parentId: string, maxDepth: number = 10): Promise<string | undefined> {
+  private async getThreadContext(
+    parentId: string,
+    maxDepth: number = 10
+  ): Promise<
+    | { text: string | undefined; rootId: string | undefined; incomplete: boolean }
+    | undefined
+  > {
     if (!this.client) {
       return undefined;
     }
@@ -495,14 +520,44 @@ export class MessageHandler {
       const threadMessages: Array<{ messageId: string; content: string; senderType: string }> = [];
       const visitedIds = new Set<string>();
       let currentId: string | undefined = parentId;
+      // Issue #4587 (part 1): thread-root tracking (see return-site comment)
+      let rootId: string | undefined;
+      let lastVisitedWithParent: string | undefined;
+      // Issue #4591 (fix 1): whether the walk reached the true root (a message
+      // with no parent_id). When it did not (depth cap or a fetch that stayed
+      // failed after retry), resolvedRootId is a mid-chain node — a per-message
+      // value that two replies in the same thread may disagree on. Callers use
+      // the flag to fall back to a uniform per-thread key instead.
+      let walkComplete = false;
 
-      while (currentId && threadMessages.length < maxDepth && !visitedIds.has(currentId)) {
+      // Issue #4591 (fix 1): count visited nodes, not assembled texts. The old
+      // `threadMessages.length < maxDepth` guard counted only messages with
+      // text, so a chain of media placeholders could silently walk past the
+      // intended cap; and capping mid-chain left different replies resolving
+      // different roots.
+      let visitedCount = 0;
+      while (currentId && visitedCount < maxDepth && !visitedIds.has(currentId)) {
         visitedIds.add(currentId);
+        visitedCount++;
 
-        const response = await this.client.im.message.get({
-          path: { message_id: currentId },
-          params: { user_id_type: 'open_id' },
-        });
+        // Issue #4591 (fix 2): one retry with a short backoff on the per-node
+        // fetch. A transient im.message.get failure used to abort the whole
+        // walk (→ undefined → caller falls back to parent_id) while other
+        // messages in the same thread walked fine — splitting the session key.
+        let response;
+        try {
+          response = await this.client.im.message.get({
+            path: { message_id: currentId },
+            params: { user_id_type: 'open_id' },
+          });
+        } catch (fetchError) {
+          logger.debug({ err: fetchError, messageId: currentId }, 'Thread-walk fetch failed, retrying once');
+          await sleep(THREAD_WALK_RETRY_DELAY_MS);
+          response = await this.client.im.message.get({
+            path: { message_id: currentId },
+            params: { user_id_type: 'open_id' },
+          });
+        }
 
         const msg = response.data as {
           message?: {
@@ -549,12 +604,34 @@ export class MessageHandler {
           });
         }
 
+        // Issue #4587 (part 1): remember the last message that still has a
+        // parent — when the walk ends (no parent_id), the previously visited
+        // message is the thread root. Tracked on a non-text message too (the
+        // root may be a media message whose text is a placeholder).
+        lastVisitedWithParent = currentId;
+        if (msg.message.parent_id) {
+          rootId = msg.message.parent_id;
+        } else {
+          // The current node has no parent — it IS the true root and the walk
+          // is complete (Issue #4591 fix 1).
+          walkComplete = true;
+        }
+
         // Walk to parent
         currentId = msg.message.parent_id;
       }
 
+      // Issue #4587 (part 1): the walk stopped either at the root (no
+      // parent_id — rootId was set on the previous iteration) or at a fetch
+      // failure / depth cap (rootId may point past what we actually fetched).
+      // Only report a root we have seen: the last id we visited that itself
+      // has a parent, i.e. the highest real message in the chain.
+      const resolvedRootId = rootId && visitedIds.has(rootId) ? rootId : lastVisitedWithParent;
+
       if (threadMessages.length === 0) {
-        return undefined;
+        // No text assembled, but the root is still known — surface it so
+        // session keying (part 2) works even when context text is empty.
+        return { text: undefined, rootId: resolvedRootId, incomplete: !walkComplete };
       }
 
       // Reverse to get chronological order (oldest first)
@@ -566,7 +643,7 @@ export class MessageHandler {
         return `${label} ${m.content}`;
       });
 
-      return lines.join('\n\n');
+      return { text: lines.join('\n\n'), rootId: resolvedRootId, incomplete: !walkComplete };
     } catch (error) {
       logger.debug({ err: error, parentId }, 'Failed to get thread context');
       return undefined;
@@ -1019,7 +1096,23 @@ export class MessageHandler {
       }
       let fileThreadContext: string | undefined;
       if (chat_type === 'topic' && parent_id) {
-        fileThreadContext = await this.getThreadContext(parent_id);
+        // Issue #4587 (part 1): capture the walked thread root for session keying
+        const threadInfo = await this.getThreadContext(parent_id);
+        fileThreadContext = threadInfo?.text;
+        // Issue #4591 (fix 1): same rule as the text path — trust the walked
+        // root only when the walk completed; otherwise fall back to parent_id.
+        // (The old fallback here was message_id, a per-message value no other
+        // message in the thread could ever share — a guaranteed session-key
+        // split that even a successful walk on the next message would hit.)
+        fileMetadata.threadRootId = threadInfo && !threadInfo.incomplete && threadInfo.rootId
+          ? threadInfo.rootId
+          : parent_id;
+      } else if (chat_type === 'topic') {
+        // Issue #4587 (part 1, review fix): a topic media message with no
+        // parent_id starts a new thread — same rule as the text path. Without
+        // this, part 2's session keying would treat thread-starting media as
+        // chat-scoped (no identity), diverging from the text path.
+        fileMetadata.threadRootId = message_id;
       }
       if (fileThreadContext) {
         fileMetadata.threadContext = fileThreadContext;
@@ -1173,9 +1266,68 @@ export class MessageHandler {
     // Add typing reaction
     await this.addTypingReaction(message_id);
 
+    // Issue #4587 (part 3) review fix: slash-prefixed text skips the reply and
+    // history fetches below. A recognized command is consumed by the router
+    // before those results are ever read — for a file parent the quoted fetch
+    // downloads the real resource via lark-cli and the download is immediately
+    // dropped. An UNrecognized `/xxx` still falls through as a normal message
+    // (skill invocations such as /mineru-pdf rely on quoted context), so it is
+    // fetched after the router declines — matching main's dispatch-then-fetch
+    // ordering. getThreadContext stays at thread-root resolution: commands in
+    // topic groups need threadRootId to address the right agent slot.
+    const isSlashCommand = textWithoutMentions.startsWith('/');
+    // Get quoted/replied message context if this is a reply
+    let quotedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
+    if (parent_id && !isSlashCommand) {
+      quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+    }
+
+    // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
+    // Issue #3989: For topic groups, use thread context only (not flat chat history)
+    // to avoid mixing messages from different threads.
+    const isTriggerModeMention = isGroupChat(chat_type) && botMentioned;
+    let chatHistoryContext: string | undefined;
+    let threadContext: string | undefined;
+    // Issue #4587 (part 1): thread root for topic-group session keying (part 2)
+    let threadRootId: string | undefined;
+
+    if (chat_type === 'topic') {
+      if (parent_id) {
+        // Topic groups: build thread context from parent chain only
+        const threadInfo = await this.getThreadContext(parent_id);
+        threadContext = threadInfo?.text;
+        // Issue #4591 (fix 1): a walked root is only trustworthy when the walk
+        // reached the true root. On an incomplete walk (depth cap / fetch that
+        // stayed failed after retry) the resolved root is a mid-chain node that
+        // differs between replies of the same thread — fall back to parent_id,
+        // the same uniform fallback the total-failure path uses, so every
+        // message in the thread still lands on ONE session key.
+        threadRootId = threadInfo && !threadInfo.incomplete
+          ? threadInfo.rootId ?? parent_id
+          : parent_id;
+      } else {
+        // A topic message without parent_id starts a new thread — it IS the root
+        threadRootId = message_id;
+      }
+    } else if (isTriggerModeMention && chat_type !== 'topic') {
+      // Regular groups: use flat chat history.
+      // Issue #4304 (part 2): topic groups never use flat chat history — it
+      // mixes messages across threads. A topic message without parent_id gets
+      // no injected context here, matching the file/image path.
+      // Issue #4587 (part 3) review fix: skipped for slash commands — a
+      // consumed command never reads it, and an unrecognized one re-fetches
+      // below after the router declines.
+      if (!isSlashCommand) {
+        chatHistoryContext = await this.getChatHistoryContext(chat_id);
+      }
+    }
+
     // Handle commands (Issue #4126 part 2: extracted to channels/feishu/command-router.ts)
+    // Issue #4587 (part 3): resolve thread identity BEFORE dispatching, so a
+    // /reset or /stop typed inside a topic-group thread addresses that
+    // thread's agent slot rather than the chat-scoped one.
     const commandHandled = await tryHandleSlashCommand(
-      { textWithoutMentions, chatId: chat_id },
+      { textWithoutMentions, chatId: chat_id, threadRootId },
       {
         hasControlHandler: this.controlHandler,
         emitControl: (command) => this.callbacks.emitControl(command),
@@ -1186,28 +1338,17 @@ export class MessageHandler {
       return;
     }
 
-    // Get quoted/replied message context if this is a reply
-    let quotedMessageResult: { text: string; attachment?: MessageAttachment } | undefined;
-    if (parent_id) {
-      quotedMessageResult = await this.getQuotedMessageContext(parent_id);
-    }
-
-    // Get chat history context for trigger mode (Issue #2193: renamed from passive mode)
-    // Issue #3989: For topic groups, use thread context only (not flat chat history)
-    // to avoid mixing messages from different threads.
-    const isTriggerModeMention = isGroupChat(chat_type) && botMentioned;
-    let chatHistoryContext: string | undefined;
-    let threadContext: string | undefined;
-
-    if (chat_type === 'topic' && parent_id) {
-      // Topic groups: build thread context from parent chain only
-      threadContext = await this.getThreadContext(parent_id);
-    } else if (isTriggerModeMention && chat_type !== 'topic') {
-      // Regular groups: use flat chat history.
-      // Issue #4304 (part 2): topic groups never use flat chat history — it
-      // mixes messages across threads. A topic message without parent_id gets
-      // no injected context here, matching the file/image path.
-      chatHistoryContext = await this.getChatHistoryContext(chat_id);
+    // Issue #4587 (part 3) review fix: the router declined — this is an
+    // unrecognized `/xxx` (e.g. a skill invocation) processed as a normal
+    // message. Fetch the context we skipped above so reply/history context
+    // behaves exactly as it did before the dispatch moved (main ordering).
+    if (isSlashCommand) {
+      if (parent_id) {
+        quotedMessageResult = await this.getQuotedMessageContext(parent_id);
+      }
+      if (isTriggerModeMention && chat_type !== 'topic') {
+        chatHistoryContext = await this.getChatHistoryContext(chat_id);
+      }
     }
 
     // Build metadata
@@ -1223,6 +1364,10 @@ export class MessageHandler {
     }
     if (threadContext) {
       metadata.threadContext = threadContext;
+    }
+    if (threadRootId) {
+      // Issue #4587 (part 1): stable thread identity for session keying
+      metadata.threadRootId = threadRootId;
     }
 
     // Build attachments from quoted message if available

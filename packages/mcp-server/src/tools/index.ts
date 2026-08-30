@@ -14,7 +14,7 @@ export type {
 } from './types.js';
 
 // Shared utilities
-export { isIpcAvailable, getIpcErrorMessage } from './ipc-utils.js';
+export { isIpcAvailable, getIpcErrorMessage, buildIpcFallbackHint } from './ipc-utils.js';
 export { getFeishuCredentials, getWorkspaceDir } from './credentials.js';
 export {
   setMessageSentCallback,
@@ -34,21 +34,14 @@ export { send_file } from './send-file.js';
 // Push to Agent (Issue #631)
 export { push_to_agent } from './push-to-agent.js';
 
-// Loop Runner operations (Issue #4075)
-export { loop_start } from './loop-start.js';
-export { loop_stop } from './loop-stop.js';
-export { loop_status } from './loop-status.js';
-
 // Interactive Message
+// Issue #4280 (part 4): the mcp-server's own UnixSocketIpcServer lifecycle
+// exports (startIpcServer/stopIpcServer/isIpcServerRunning/
+// getIpcServerSocketPath/registerFeishuHandlers/unregisterFeishuHandlers)
+// are removed — dead code since part 3 made every tool a REST client.
 export {
   send_interactive_message,
   send_interactive,
-  startIpcServer,
-  stopIpcServer,
-  isIpcServerRunning,
-  getIpcServerSocketPath,
-  registerFeishuHandlers,
-  unregisterFeishuHandlers,
 } from './interactive-message.js';
 
 // Tool definitions and dispatch (Issue #4128)

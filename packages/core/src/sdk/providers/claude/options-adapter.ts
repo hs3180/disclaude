@@ -165,8 +165,10 @@ function adaptInlineMcpServer(config: InlineMcpServerConfig): unknown {
 
   // 将统一工具定义转换为 SDK 工具
   // 使用双重类型断言来处理 Zod schema 类型兼容性
+  // #4568：丢弃 handler 可选的 onProgress 第二参——Claude SDK tool() 通道
+  // 无进度管道（该位置传的是 SDK 自己的 extra 上下文），进度上报仅 pi 后端支持。
   const sdkTools = config.tools.map(t =>
-    tool(t.name, t.description, t.parameters as unknown as Parameters<typeof tool>[2], t.handler)
+    tool(t.name, t.description, t.parameters as unknown as Parameters<typeof tool>[2], (params) => t.handler(params))
   );
 
   return createSdkMcpServer({

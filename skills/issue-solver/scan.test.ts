@@ -1,0 +1,551 @@
+// Regression guard for the scan.mjs phantom-filter reference extraction.
+//
+// Issue #4376 (part 1): standalone deliverable = lock in regression test cases
+// that keep legitimately-open epics in the candidate pool. The concern: any
+// future "broadening" of shipped-work matching (e.g. #4373 direction #1 "any
+// #N", or dropping the willCloseTarget requirement) would silently exclude
+// open epics that merged part-series PRs mention purely as context/parent —
+// the opposite of the phantom-pool problem, and harder to notice (missing
+// candidates are invisible).
+//
+// Since #4499 (#4375 part 1), the phantom filter resolves per open issue via
+// GitHub's authoritative closing links (timelineItems.willCloseTarget from a
+// MERGED PR), replacing the capped merged-PR regex window. The guard therefore
+// pins BOTH extraction surfaces of the current contract:
+//  - extractShippedIssueNums: only a willCloseTarget link from a MERGED PR
+//    marks an issue as shipped; context-only cross-refs never do.
+//  - extractOpenPRRefs: keyword-prefixed refs + branch-name numbers.
+// A future broadening PR either updates these expectations deliberately or
+// fails CI loudly.
+//
+// #4374's repro table (part-N merged PRs vs their closing refs) is pinned in
+// the same describe block: #4495 (direction 1) dropped #4350's PART_PATTERN
+// title skip, and the four rows lock in both edges — a part-N title must not
+// suppress a formal will-close link, and part-N weak refs must stay advisory.
+// (Provenance note: the true-row is synthetic, not live state — GitHub's
+// willCloseTarget flips false once the source PR merges; see PART_N_XREFS.)
+//
+// #4373 part 2 adds titleMentionsIssue — the tiering heuristic behind the
+// weak-ref advisory caveat's "likely shipped" vs "context-only" split. It is
+// deliberately still advisory (no auto-exclusion), but the tier assignment is
+// load-bearing for reader attention, so the boundary cases are pinned too.
+//
+// #4373 part 3 adds buildVerificationQueue + renderVerificationBlock — the
+// same tier-1 data reshaped as a copy-paste batch-verification checklist
+// (git log --grep per issue). Still advisory; the queue shape and grep lines
+// are pinned so a solver tick can rely on them.
+//
+// Scope notes (why adding this file is safe — mirrors skills/channel/cli.test.ts,
+// the precedent set by #4467):
+//  - `npm run lint` only targets the packages source dirs, so this file is NOT
+//    linted (no risk to the lint gate).
+//  - root tsconfig has an empty `files` list + package references only, so
+//    skills/ is NOT type-checked; importing a .mjs without type decls is fine.
+//  - vitest.config.ts `include` covers `skills/**/*.test.ts`, so this DOES run.
+//  - coverage `include` covers only `src` and `packages` ts files, so skills/ is
+//    NOT measured — this test cannot drag the 70% coverage thresholds.
+//  - scan.mjs is ESM with an entry guard (`isMainEntry`), so importing it here
+//    does NOT trigger its `main()` (no GitHub auth, no network).
+
+import { describe, it, expect } from "vitest";
+// The extractors are pure functions exported from scan.mjs.
+// @ts-expect-error — .mjs module has no type declarations; skills/ is not type-checked.
+import { extractOpenPRRefs, extractShippedIssueNums, titleMentionsIssue, buildVerificationQueue, renderVerificationBlock, verifyShippedAnchors } from "./scan.mjs";
+
+/** Cross-referenced event as shaped by GRAPHQL_QUERY's timelineItems nodes. */
+const xref = (sourceNumber: number, state: string, willCloseTarget: boolean) => ({
+  willCloseTarget,
+  source: { number: sourceNumber, state },
+});
+
+describe("scan.mjs extractOpenPRRefs", () => {
+  it("covers keyword-prefixed mentions in body/title (work in progress)", () => {
+    const refs = extractOpenPRRefs([
+      { title: "wip: something", body: "Related #4168. Closes #4001 eventually." },
+    ]);
+    expect(refs.has(4168)).toBe(true);
+    expect(refs.has(4001)).toBe(true);
+  });
+
+  it("covers branch-name numbers (fix/issue-123)", () => {
+    const refs = extractOpenPRRefs([{ title: "", body: "", headRefName: "fix/issue-4168" }]);
+    expect(refs.has(4168)).toBe(true);
+  });
+
+  it("does NOT cover bare #N without a keyword in body/title (but still via branch)", () => {
+    const refs = extractOpenPRRefs([{ title: "see #4168 for context", body: "Refs #4039" }]);
+    // No "related/closes/fix/resolve" prefix in body/title → not covered by keywords.
+    expect(refs.has(4168)).toBe(false);
+    expect(refs.has(4039)).toBe(false);
+  });
+
+  it("is case-insensitive across keyword variants", () => {
+    const refs = extractOpenPRRefs([
+      { title: "RELATED #10", body: "related #20\nFix #30" },
+    ]);
+    expect(refs.has(10)).toBe(true);
+    expect(refs.has(20)).toBe(true);
+    expect(refs.has(30)).toBe(true);
+  });
+});
+
+describe("scan.mjs extractShippedIssueNums (#4499 per-issue willCloseTarget filter)", () => {
+  // The three epics named in #4376's proof table (real-world refs reproduced
+  // from the issue). #4168/#4039 are still OPEN; #4040 was closed 2026-07
+  // out-of-band — by hand, not via any ref below (none carries
+  // willCloseTarget). It stays in the fixture because the extractor reads only
+  // this table's structure, not live issue state: context-only xrefs must not
+  // mark an issue shipped regardless of what closed it since.
+  const EPIC_CONTEXT_XREFS = [
+    // #4168 (REST API to replace IPC, OPEN) ← the #4279 part-series merged PRs
+    {
+      number: 4168,
+      timelineItems: {
+        totalCount: 8,
+        nodes: [4341, 4343, 4344, 4345, 4346, 4347, 4348, 4349].map((n) => xref(n, "MERGED", false)),
+      },
+    },
+    // #4040 (Phase 1: loop skill, closed out-of-band — see above) ← loop part-series merged PRs
+    {
+      number: 4040,
+      timelineItems: {
+        totalCount: 6,
+        nodes: [4232, 4239, 4277, 4286, 4287, 4243].map((n) => xref(n, "MERGED", false)),
+      },
+    },
+    // #4039 (Loop System, OPEN) ← referenced by loop PRs as lineage
+    {
+      number: 4039,
+      timelineItems: {
+        totalCount: 2,
+        nodes: [4232, 4277].map((n) => xref(n, "MERGED", false)),
+      },
+    },
+  ];
+
+  it("REGRESSION (#4376): context-only mentions of these epics are NOT shipped", () => {
+    const refs = extractShippedIssueNums(EPIC_CONTEXT_XREFS);
+    expect(refs.has(4168)).toBe(false);
+    expect(refs.has(4040)).toBe(false);
+    expect(refs.has(4039)).toBe(false);
+  });
+
+  // The four part-N PRs named in #4374's repro table (real refs, verbatim
+  // shape). #4350's PART_PATTERN used to skip such PRs before closing-ref
+  // extraction, so even an explicit `fix #N` body keyword was discarded and
+  // the covered issue leaked back as a false candidate. #4495 (direction 1)
+  // dropped the skip; these cases pin that it stays dropped under the current
+  // per-issue willCloseTarget filter (#4499).
+  //
+  // Live-state honesty (re-verified 2026-08-24): the issue-side timeline reads
+  // willCloseTarget=false for ALL FOUR rows today, and a full-repo sweep (998
+  // issues) found zero MERGED-source true events — the flag is future-tense
+  // and flips false once the source merges (even #4281 ← PR 4563, whose body
+  // carries a real `close #4281`, reads false; the only true events live on
+  // still-OPEN sources). The `true` on the 4227 row below is therefore
+  // synthetic by design: it pins the extractor's contract (a part-N title
+  // must not suppress a formal link), not a reproducible live state — do not
+  // "fix" it to false to match a live query. The weak-ref half IS
+  // live-accurate: 4292/4178/4303 bodies carry only `Related #N`, and 4227's
+  // current body explicitly negates a closing keyword ("Related #4192. Not a
+  // `fix #4192`") — all four targets closed via their series completing, not
+  // by a single keyword.
+  const PART_N_XREFS = [
+    // #4192 ← PR 4227 "refactor #4192 (part 2)". The #4374 table (filed
+    // 2026-07-22) recorded a closing keyword in its body; today the body ends
+    // "Related #4192. Not a `fix #4192`" and GitHub holds no closing link
+    // (closingIssuesReferences: 0). willCloseTarget=true below is the
+    // synthetic contract row — see the block comment above.
+    { number: 4192, timelineItems: { totalCount: 1, nodes: [xref(4227, "MERGED", true)] } },
+    // #4256 ← PR 4292 "fix #4256 (part 2)", body says `Related #4256` only.
+    { number: 4256, timelineItems: { totalCount: 1, nodes: [xref(4292, "MERGED", false)] } },
+    // #4169 ← PR 4178 "fix #4169 (part 1)", body says `Related #4169` only.
+    { number: 4169, timelineItems: { totalCount: 1, nodes: [xref(4178, "MERGED", false)] } },
+    // #4302 ← PR 4303 "fix #4302 (part 1)", body says `Related #4302` only.
+    { number: 4302, timelineItems: { totalCount: 1, nodes: [xref(4303, "MERGED", false)] } },
+  ];
+
+  it("REGRESSION (#4374): a part-N merged PR with a will-close link marks its issue shipped", () => {
+    // The PART_PATTERN skip used to discard this closing ref wholesale — the
+    // exact over-pruning #4374 filed. A "part 2" title must not suppress a
+    // formal will-close link. (Synthetic row: no MERGED-source true event is
+    // observable live — flag semantics per the PART_N_XREFS block comment.)
+    const refs = extractShippedIssueNums(PART_N_XREFS);
+    expect(refs.has(4192)).toBe(true);
+  });
+
+  it("REGRESSION (#4374): part-N refs without a will-close link stay weak (not shipped)", () => {
+    // The other three repro rows referenced their targets as `Related #N` —
+    // context-only under the current filter, surfaced by the #4373 caveat
+    // rather than excluded. A future re-introduction of title-based skipping
+    // (or a broadening to any-#N) must flip these deliberately, not silently.
+    const refs = extractShippedIssueNums(PART_N_XREFS);
+    expect(refs.has(4256)).toBe(false);
+    expect(refs.has(4169)).toBe(false);
+    expect(refs.has(4302)).toBe(false);
+  });
+
+  it("marks an issue shipped only when a MERGED PR carries a will-close link", () => {
+    const refs = extractShippedIssueNums([
+      {
+        number: 4001,
+        timelineItems: { totalCount: 1, nodes: [xref(4002, "MERGED", true)] },
+      },
+    ]);
+    expect(refs.has(4001)).toBe(true);
+  });
+
+  it("a will-close link from a still-OPEN PR is not shipped work yet", () => {
+    const refs = extractShippedIssueNums([
+      {
+        number: 4001,
+        timelineItems: { totalCount: 1, nodes: [xref(4002, "OPEN", true)] },
+      },
+    ]);
+    expect(refs.has(4001)).toBe(false);
+  });
+
+  it("one will-close merged ref among many context refs still marks shipped (some() semantics)", () => {
+    const refs = extractShippedIssueNums([
+      {
+        number: 4001,
+        timelineItems: {
+          totalCount: 3,
+          nodes: [xref(4341, "MERGED", false), xref(4343, "MERGED", false), xref(4002, "MERGED", true)],
+        },
+      },
+    ]);
+    expect(refs.has(4001)).toBe(true);
+  });
+
+  it("tolerates issues without timelineItems (no crash, not shipped)", () => {
+    const refs = extractShippedIssueNums([{ number: 4001 }, { number: 4002, timelineItems: {} }]);
+    expect(refs.size).toBe(0);
+  });
+
+  it("warns via logFn when cross-ref events exceed the fetched window", () => {
+    const warnings: string[] = [];
+    extractShippedIssueNums(
+      [
+        {
+          number: 4168,
+          timelineItems: { totalCount: 150, nodes: Array.from({ length: 100 }, (_, i) => xref(4300 + i, "MERGED", false)) },
+        },
+      ],
+      (msg: string) => warnings.push(msg),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("#4168");
+    expect(warnings[0]).toContain("150");
+  });
+
+  it("does not warn when all cross-ref events fit the fetched window", () => {
+    const warnings: string[] = [];
+    extractShippedIssueNums(EPIC_CONTEXT_XREFS, (msg: string) => warnings.push(msg));
+    expect(warnings).toHaveLength(0);
+  });
+});
+
+describe("scan.mjs titleMentionsIssue (#4373 part 2 advisory tiering)", () => {
+  // Real titles, verbatim from the repo's merged-PR history. Tier 1 ("likely
+  // shipped") is a weak-ref merged PR whose title carries the issue's own #N —
+  // this repo's covering-PR convention. Tier 2 ("context-only") is epic
+  // lineage: the title names a DIFFERENT issue's number.
+  it("tier 1: covering-PR title conventions match their own issue number", () => {
+    // "fix(message-builder): inject lark-cli self-service guidance by isTopicThread (#4402)"
+    expect(titleMentionsIssue("fix(message-builder): inject lark-cli self-service guidance by isTopicThread (#4402)", 4402)).toBe(true);
+    // "feat(config): agentBackend selector for agent SDK runtime (claude|pi), default claude (#4388 part 1)"
+    expect(titleMentionsIssue("feat(config): agentBackend selector for agent SDK runtime (claude|pi), default claude (#4388 part 1)", 4388)).toBe(true);
+    // "docs #4388 (part 2): pi backend (agentBackend) guide page"
+    expect(titleMentionsIssue("docs #4388 (part 2): pi backend (agentBackend) guide page", 4388)).toBe(true);
+  });
+
+  it("tier 2: epic-lineage titles name a different issue's number, not the epic's", () => {
+    // #4168's #4376-proof refs: part-series PRs titled after sub-issue #4279.
+    expect(titleMentionsIssue("feat #4279 (part 1): add GET /api/ping REST health endpoint", 4168)).toBe(false);
+    expect(titleMentionsIssue("feat #4280 (part 1): make isIpcAvailable REST-aware (probe REST /api/ping)", 4168)).toBe(false);
+    // #4039's refs: loop PRs titled after #4193.
+    expect(titleMentionsIssue("feat #4193 (part A): LOOP.md loop definition file — spec, parser, runner startFromLoopMd", 4039)).toBe(false);
+  });
+
+  it("does not prefix-match a longer number sharing the digits (#44 vs #440)", () => {
+    expect(titleMentionsIssue("fix #4402: something", 44)).toBe(false);
+    expect(titleMentionsIssue("fix #4402: something", 4402)).toBe(true);
+  });
+
+  it("does not match the number without a # prefix", () => {
+    expect(titleMentionsIssue("fix 4402: plain digits are not refs", 4402)).toBe(false);
+  });
+
+  it("tolerates null/undefined/empty titles", () => {
+    expect(titleMentionsIssue(undefined, 4402)).toBe(false);
+    expect(titleMentionsIssue(null, 4402)).toBe(false);
+    expect(titleMentionsIssue("", 4402)).toBe(false);
+  });
+});
+
+describe("scan.mjs buildVerificationQueue (#4373 part 3 batch checklist)", () => {
+  // Mirrors the weakRefsByIssue shape main() builds from the per-issue
+  // cross-ref table: titleHit refs are the tier-1 ("likely shipped") signal.
+  const weakRefs = (entries: Array<[number, Array<{ pr: number; title?: string }>, unknown[]]>) =>
+    new Map(entries.map(([n, titleHit, contextOnly]) => [n, { titleHit, contextOnly }]));
+
+  it("collects only candidates with title-hit refs, merged PRs newest-first", () => {
+    const candidates = [
+      { number: 4448, title: "cwd bug" },
+      { number: 4399, title: "streaming state machine" },
+      { number: 4001, title: "no weak refs at all" },
+    ];
+    const map = weakRefs([
+      [4448, [{ pr: 4450, title: "fix #4448 (part 1)" }, { pr: 4475, title: "feat #4448 (part 3)" }], []],
+      [4399, [{ pr: 4438, title: "feat #4399 (part 2)" }], []],
+    ]);
+    const queue = buildVerificationQueue(candidates, map);
+    expect(queue).toEqual([
+      { number: 4448, title: "cwd bug", mergedPRs: [4475, 4450] },
+      { number: 4399, title: "streaming state machine", mergedPRs: [4438] },
+    ]);
+  });
+
+  it("REGRESSION (#4376): context-only refs stay out of the queue", () => {
+    // #4168-style epic: only context-only lineage, no title-hit ref.
+    const map = weakRefs([[4168, [], [{ pr: 4341 }, { pr: 4343 }]]]);
+    const queue = buildVerificationQueue([{ number: 4168, title: "REST epic" }], map);
+    expect(queue).toEqual([]);
+  });
+
+  it("skips issues absent from the map entirely", () => {
+    expect(buildVerificationQueue([{ number: 4001, title: "x" }], new Map())).toEqual([]);
+  });
+
+  it("sorts the queue newest issue first (stable work order for a tick)", () => {
+    const map = weakRefs([
+      [4306, [{ pr: 4335 }], []],
+      [4528, [{ pr: 4529 }], []],
+      [4374, [{ pr: 4495 }], []],
+    ]);
+    const queue = buildVerificationQueue(
+      [{ number: 4306, title: "a" }, { number: 4374, title: "b" }, { number: 4528, title: "c" }],
+      map,
+    );
+    expect(queue.map((q) => q.number)).toEqual([4528, 4374, 4306]);
+  });
+});
+
+describe("scan.mjs renderVerificationBlock (#4373 part 3 batch checklist)", () => {
+  it("renders one copy-paste grep line per issue, capped at 3 greps", () => {
+    const md = renderVerificationBlock([
+      { number: 4510, title: "p2p-only", mergedPRs: [4527, 4511] },
+      { number: 4496, title: "CDP container", mergedPRs: [4530, 4515, 4506, 4490] },
+    ]);
+    expect(md).toContain("#### Batch verification (#4373 part 3)");
+    expect(md).toContain("- **#4510** (merged: 4527, 4511):");
+    // 4 merged PRs — the grep chain caps at the newest 3.
+    expect(md).toContain("(merged: 4530, 4515, 4506, 4490): git log --oneline --grep=\"#4530[^0-9]\" | head -1 && git log --oneline --grep=\"#4515[^0-9]\" | head -1 && git log --oneline --grep=\"#4506[^0-9]\" | head -1");
+    // The 4th (oldest) PR is not in the grep chain.
+    expect(md).not.toContain("--grep=\"#4490");
+  });
+
+  it("anchors each grep to its PR number, not the issue number", () => {
+    // The grep targets the merged PR (e.g. #99); the issue number (#44) only
+    // labels the line — a suffix-digits issue number must not leak into greps.
+    const md = renderVerificationBlock([{ number: 44, title: "x", mergedPRs: [99] }]);
+    expect(md).toContain("--grep=\"#99[^0-9]\"");
+    expect(md).not.toContain("--grep=\"#44");
+  });
+
+  it("header pins the two grep traps seen in live verification (review #4559)", () => {
+    // Trap 1: a --depth 1 clone has no history to grep — the header must say
+    // the clone needs full history. Trap 2: a squash merge may retitle the
+    // commit away from the PR number (live case: #4407's squash subject reads
+    // "(#4396, #4208 P1-b)" — grep "#4407" MISses on a merged PR), so the
+    // header must route a MISS to gh pr view --json mergeCommit instead.
+    const md = renderVerificationBlock([{ number: 4407, title: "placeholder card", mergedPRs: [4407] }]);
+    expect(md).toContain("unshallowed");
+    expect(md).toContain("gh pr view N --repo");
+    expect(md).toContain("A grep MISS is not proof of absence");
+  });
+
+  it("returns an empty string for an empty queue (no stray header)", () => {
+    expect(renderVerificationBlock([])).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4373 part 4: verifyShippedAnchors — the part-3 checklist EXECUTED.
+//
+// Both process runners (git + gh pr view) are injected, so these tests are
+// hermetic: no clone on disk, no network, no token. The fakes mirror the
+// spawnSync return shape ({ status, stdout, stderr }) so the code under test
+// exercises its real result-parsing branches.
+// ---------------------------------------------------------------------------
+describe("scan.mjs verifyShippedAnchors (#4373 part 4 --verify-shipped)", () => {
+  /** git fake: routes by argv substring, returns spawnSync-shaped results. */
+  const fakeGit = (routes: Array<[string, { status?: number; stdout?: string; stderr?: string; error?: Error }]>) => {
+    const calls: string[][] = [];
+    const fn = (args: string[], _repoDir?: string) => {
+      calls.push(args);
+      const hit = routes.find(([needle]) => args.join(" ").includes(needle));
+      if (!hit) return { status: 0, stdout: "", stderr: "" };
+      return { status: 0, stdout: "", stderr: "", ...hit[1] };
+    };
+    return Object.assign(fn, { calls });
+  };
+
+  it("all merges grep-present => confirmed-shipped (the close-hygiene verdict)", async () => {
+    const git = fakeGit([
+      ["--grep=#4527", { stdout: "69f900a1 feat #4520 (part 2): p2p gate (#4527)\n" }],
+      ["--grep=#4511", { stdout: "27997e9c feat #4510: streamingCard p2p (#4511)\n" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4510, title: "p2p-only", mergedPRs: [4527, 4511] }],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(res.details[0].verdict).toBe("confirmed-shipped");
+    expect(res.details[0].results.map((r: any) => r.outcome)).toEqual(["present", "present"]);
+    // The fallback must NOT fire when grep already hit (no wasted gh call).
+    expect(res.summary).toContain("all 1 tier-1 candidates confirmed shipped");
+  });
+
+  it("grep MISS falls back to the merge commit (squash-retitle trap, #4407 case)", async () => {
+    // PR 4407's squash subject reads "(#4396, #4208 P1-b)" — grep misses on a
+    // genuinely merged PR. The gh fallback must rescue it to `present`.
+    const git = fakeGit([
+      ["--grep=#4407", { stdout: "" }],
+      ["cat-file -e", { status: 0, stdout: "", stderr: "" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4407, title: "placeholder card", mergedPRs: [4407] }],
+      { git, prMergeCommits: async () => "abc123def4567890abc123def4567890abc123de" },
+    );
+    expect(res.details[0].verdict).toBe("confirmed-shipped");
+    expect(res.details[0].results[0]).toMatchObject({ outcome: "present", via: "mergeCommit" });
+    // The cat-file probe received the resolved merge commit sha.
+    expect((git as any).calls.some((c: string[]) => c.includes("abc123def4567890abc123def4567890abc123de^{commit}"))).toBe(true);
+  });
+
+  it("grep MISS + merge commit absent from log => absent => issue unverified", async () => {
+    const git = fakeGit([
+      ["--grep=#99", { stdout: "" }],
+      ["cat-file -e", { status: 128, stderr: "fatal: Not a valid object name" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 44, title: "x", mergedPRs: [99] }],
+      { git, prMergeCommits: async () => "dead00000000000000000000000000000000dead" },
+    );
+    expect(res.details[0].verdict).toBe("unverified");
+    expect(res.details[0].results[0]).toMatchObject({ pr: 99, outcome: "absent", via: "mergeCommit" });
+    expect(res.summary).toContain("0/1");
+  });
+
+  it("gh fallback unavailable (null) => error, never counted as absence (no false all-clear)", async () => {
+    const git = fakeGit([["--grep=#99", { stdout: "" }]]);
+    const res = await verifyShippedAnchors(
+      [{ number: 44, title: "x", mergedPRs: [99] }],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(res.details[0].results[0]).toMatchObject({ outcome: "error", via: "mergeCommit", detail: "gh pr view unavailable" });
+    expect(res.details[0].verdict).toBe("unverified");
+  });
+
+  it("git itself fails (no repo / bad dir) => error, not absence", async () => {
+    const git = fakeGit([["--grep=#99", { status: 128, stderr: "fatal: not a git repository" }]]);
+    const res = await verifyShippedAnchors(
+      [{ number: 44, title: "x", mergedPRs: [99] }],
+      { git, prMergeCommits: async () => "abc123def4567890abc123def4567890abc123de" },
+    );
+    expect(res.details[0].results[0].outcome).toBe("error");
+    expect(res.details[0].verdict).toBe("unverified");
+    // The gh fallback must NOT fire when the primary errored (different from MISS).
+    expect((git as any).calls.filter((c: string[]) => c[0] === "cat-file").length).toBe(0);
+  });
+
+  it("one absent merge keeps the whole issue unverified (all-present required)", async () => {
+    const git = fakeGit([
+      ["--grep=#4527", { stdout: "69f900a1 (#4527)\n" }],
+      ["--grep=#4999", { stdout: "" }],
+      ["cat-file -e", { status: 128, stderr: "fatal: not a valid object" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4510, title: "p2p-only", mergedPRs: [4527, 4999] }],
+      { git, prMergeCommits: async () => "1111111111111111111111111111111111111111" },
+    );
+    expect(res.details[0].verdict).toBe("unverified");
+    expect(res.summary).toContain("0/1 tier-1 candidates confirmed shipped");
+  });
+
+  it("empty queue => empty details, explicit no-work summary", async () => {
+    const res = await verifyShippedAnchors([], { git: fakeGit([]), prMergeCommits: async () => null });
+    expect(res.details).toEqual([]);
+    expect(res.summary).toBe("no tier-1 weak-ref candidates to verify");
+  });
+
+  it("non-numeric / malformed entries degrade to unverified without throwing", async () => {
+    const git = fakeGit([]);
+    const res = await verifyShippedAnchors(
+      [
+        { number: "abc;rm -rf /", title: "injected", mergedPRs: [1] },
+        { number: 12, title: "x", mergedPRs: "not-an-array" },
+        { number: 13, title: "x", mergedPRs: [NaN as any] },
+      ],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(res.details.map((d: any) => d.verdict)).toEqual(["unverified", "unverified", "unverified"]);
+    // The injection-shaped issue number never reached git argv — the only git
+    // call is the shallow-repo probe that precedes the per-PR loop.
+    expect(git.calls.filter((c: string[]) => c[0] !== "rev-parse").length).toBe(0);
+    expect(res.summary).toContain("0/3");
+  });
+
+  it("greps anchor to the PR number with the same suffix-digit guard as part 3", async () => {
+    // #45 must not match "#451" — the regex carries `[^0-9]`, same as the
+    // rendered part-3 command. (calls[0] is the shallow-repo probe.)
+    const git = fakeGit([["--grep=#4510[^0-9]", { stdout: "abc1234 (#4510)\n" }]]);
+    await verifyShippedAnchors(
+      [{ number: 9, title: "x", mergedPRs: [4510] }],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(git.calls[1].join(" ")).toContain("--grep=#4510[^0-9]");
+  });
+
+  it("shallow clone (--depth 1) => error with unshallow hint, never `absent` (part-3 trap #1)", async () => {
+    // The #4559 live-tick trap: a depth-1 clone has no history, so grep and
+    // cat-file both "miss" on genuinely merged PRs. Every PR must report
+    // `error` with the remedy, not a misleading absence verdict.
+    const ghCalls: number[] = [];
+    const git = fakeGit([["is-shallow-repository", { stdout: "true\n" }]]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4510, title: "x", mergedPRs: [4527, 4511] }],
+      {
+        git,
+        prMergeCommits: async (pr: number) => {
+          ghCalls.push(pr);
+          return "abc123def4567890abc123def4567890abc123de";
+        },
+      },
+    );
+    expect(res.details[0].results.map((r: any) => r.outcome)).toEqual(["error", "error"]);
+    expect(res.details[0].results[0].detail).toContain("shallow clone");
+    expect(res.details[0].results[0].detail).toContain("git fetch --unshallow");
+    expect(res.details[0].verdict).toBe("unverified");
+    // The gh fallback and the cat-file probe must NOT fire — there is nothing
+    // to verify against until the clone has history.
+    expect(ghCalls).toEqual([]);
+    expect(git.calls.some((c: string[]) => c[0] === "cat-file")).toBe(false);
+  });
+
+  it("shallow-probe failure (git unusable) degrades to probing-null, not a false shallow verdict", async () => {
+    // If rev-parse itself fails we can't know shallowness — proceed with the
+    // normal path rather than blanket-erroring (the per-PR grep still reports
+    // its own error if git really is broken).
+    const git = fakeGit([
+      ["is-shallow-repository", { status: 128, stderr: "fatal: not a git repository" }],
+      ["--grep=#4527", { stdout: "69f900a1 (#4527)\n" }],
+    ]);
+    const res = await verifyShippedAnchors(
+      [{ number: 4510, title: "x", mergedPRs: [4527] }],
+      { git, prMergeCommits: async () => null },
+    );
+    expect(res.details[0].results[0].outcome).toBe("present");
+  });
+});

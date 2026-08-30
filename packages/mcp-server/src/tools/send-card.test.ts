@@ -8,10 +8,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Issue #4129: sendCard is now a standalone function exported from @disclaude/core.
 // Production calls sendCard(client, ...). Mock it to drop the client arg and delegate
 // to the same spy as the legacy client.sendCard(...) instance method.
-const { mockIpcClient, mockSendCard } = vi.hoisted(() => {
+const { mockIpcClient, mockSendCard, mockGetRestIpcClient } = vi.hoisted(() => {
   const mockSendCard = vi.fn();
   const mockIpcClient = { sendCard: mockSendCard };
-  return { mockIpcClient, mockSendCard };
+  const mockGetRestIpcClient = vi.fn().mockReturnValue(mockIpcClient);
+  return { mockIpcClient, mockSendCard, mockGetRestIpcClient };
 });
 
 vi.mock('@disclaude/core', () => ({
@@ -21,7 +22,6 @@ vi.mock('@disclaude/core', () => ({
     error: vi.fn(),
     debug: vi.fn(),
   }),
-  getIpcClient: vi.fn(),
   sendCard: (...args: unknown[]) => mockSendCard(...args.slice(1)),
 }));
 
@@ -35,7 +35,13 @@ vi.mock('./credentials.js', () => ({
 }));
 
 vi.mock('./ipc-utils.js', () => ({
+  // Issue #4280 (Phase 3, part 3): REST client factory — returns the shared mock.
+  getRestIpcClient: () => mockGetRestIpcClient(),
   isIpcAvailable: vi.fn(),
+  // Issue #4576: deterministic stub — the unavailable-branch tests assert the
+  // fallback hint (thread-preserving +messages-reply) is appended.
+  buildIpcFallbackHint: (parentMessageId?: string) =>
+    `HINT:lark-cli im +messages-reply --message-id ${parentMessageId ?? '<om_...>'}`,
   getIpcErrorMessage: vi.fn((type?: string, originalError?: string) => {
     if (type === 'ipc_unavailable') {return '❌ IPC 服务不可用。';}
     return `❌ 操作失败: ${originalError ?? '未知错误'}`;
@@ -47,7 +53,6 @@ vi.mock('./callback-manager.js', () => ({
 }));
 
 import { send_card } from './send-card.js';
-import { getIpcClient } from '@disclaude/core';
 import { getFeishuCredentials } from './credentials.js';
 import { isIpcAvailable } from './ipc-utils.js';
 import { isValidFeishuCard } from '../utils/card-validator.js';
@@ -62,7 +67,7 @@ const validCard = {
 describe('send_card', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIpcClient).mockReturnValue(mockIpcClient as any);
+    mockGetRestIpcClient.mockReturnValue(mockIpcClient);
     vi.mocked(getFeishuCredentials).mockReturnValue({ appId: 'test-app-id', appSecret: 'test-secret' });
     vi.mocked(isIpcAvailable).mockResolvedValue(true);
     vi.mocked(isValidFeishuCard).mockReturnValue(true);
@@ -107,6 +112,17 @@ describe('send_card', () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain('IPC');
     });
+
+    it('should append the thread-preserving lark-cli fallback hint (Issue #4576)', async () => {
+      vi.mocked(isIpcAvailable).mockResolvedValue(false);
+      const result = await send_card({
+        card: validCard,
+        chatId: 'oc_test',
+        parentMessageId: 'om_parent123',
+      });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('+messages-reply --message-id om_parent123');
+    });
   });
 
   describe('successful send', () => {
@@ -138,7 +154,7 @@ describe('send_card', () => {
 
   describe('error handling', () => {
     it('should catch unexpected errors and return error result', async () => {
-      vi.mocked(getIpcClient).mockImplementation(() => { throw new Error('Unexpected'); });
+      mockGetRestIpcClient.mockImplementation(() => { throw new Error('Unexpected'); });
       const result = await send_card({ card: validCard, chatId: 'oc_test' });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Unexpected');

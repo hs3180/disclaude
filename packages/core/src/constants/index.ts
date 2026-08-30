@@ -6,14 +6,8 @@
  * Message deduplication constants
  */
 export const DEDUPLICATION = {
-  /** Maximum number of message IDs to keep in memory */
-  MAX_PROCESSED_IDS: 1000,
-
   /** Maximum age of messages to process (milliseconds) */
   MAX_MESSAGE_AGE: 60 * 1000, // 1 minute
-
-  /** Message deduplication record expiration time (milliseconds) */
-  RECORD_EXPIRATION_MS: 2 * 60 * 1000, // 2 minutes
 } as const;
 
 /**

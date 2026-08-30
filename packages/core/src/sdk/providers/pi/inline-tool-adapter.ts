@@ -22,10 +22,24 @@
  * the structural-mirror approach used for the rest of pi's types here. The
  * model now sees the real parameter shape; execute still validates inputs
  * authoritatively through Zod at runtime.
+ *
+ * #4568 (progress plumbing): the execute wrapper forwards pi's `onUpdate`
+ * callback into the disclaude handler's optional second parameter
+ * (`onProgress`). Without it, a silently-running tool emits no events for its
+ * whole execution — which starves the stall watchdog (#4550) and hides
+ * intermediate progress from the stream (event-adapter already maps
+ * `tool_execution_update` → `tool_progress`; only the adapter side was
+ * missing). Handlers that ignore the parameter behave exactly as before.
+ *
+ * #4389 (permission gating) is NOT enforced here: it lives one level up, in
+ * queryStream's `beforeToolCall` hook (tool-permission-gate.ts), which the
+ * pi loop consults after argument validation and before EVERY tool
+ * execution — inline tools included — with per-query scoping. An earlier
+ * execute-level gate (#4538) was removed in favor of that single seam.
  */
 
 import { z } from 'zod';
-import type { InlineToolDefinition } from '../../types.js';
+import type { InlineToolDefinition, ToolProgressCallback } from '../../types.js';
 
 /** Mirror of pi's `TextContent` (`{ type: 'text', text }`). */
 export interface PiTextContent {
@@ -148,12 +162,28 @@ function zodToJsonSchema(parameters: z.ZodType): PiToolParameters {
  * 4. Shapes the success value as a pi `AgentToolResult` (`content` +
  *    `details`).
  *
+ * Progress (#4568): when pi supplies an `onUpdate` callback, it is wrapped
+ * and handed to the disclaude handler as its optional `onProgress` second
+ * argument. Each `onProgress(payload)` call becomes an
+ * `onUpdate({ content, details })` (the same `AgentToolResult` shape pi's
+ * loop reads), which pi re-emits as a `tool_execution_update` event — the
+ * event-adapter maps that to `tool_progress` and (under #4550) the stall
+ * watchdog re-arms. An `onUpdate` throw (e.g. pi rejecting progress after
+ * run settlement) must not fail the handler itself — it is swallowed, same
+ * posture as pi's own tools.
+ *
  * Per pi's `AgentTool.execute` contract, failures (abort, param-validation
  * errors, handler errors) are THROWN rather than encoded in `content`: pi's
  * agent loop catches a thrown execute error and synthesizes an `isError` tool
  * result from the message (see `executePreparedToolCall` in pi-agent-core).
- * Keeping the success return always in the `{ content, details }` shape is what
- * lets the model consume tool output correctly.
+ * Keeping the success return always in the `{ content, details }` shape is
+ * what lets the model consume tool output correctly.
+ *
+ * Permission enforcement (#4389) is NOT in this adapter — see the module
+ * header: the `beforeToolCall` hook in queryStream gates every tool call
+ * before any `execute` is reached.
+ *
+ * @param definition - the disclaude tool to wrap.
  */
 export function adaptInlineTool(definition: InlineToolDefinition): PiAgentHarnessTool {
   return {
@@ -162,14 +192,27 @@ export function adaptInlineTool(definition: InlineToolDefinition): PiAgentHarnes
     description: definition.description,
     parameters: zodToJsonSchema(definition.parameters),
 
-    execute: async (_toolCallId, params, signal, _onUpdate, _context) => {
+    execute: async (_toolCallId, params, signal, onUpdate, _context) => {
       if (signal?.aborted) {
         throw new Error('aborted before execution');
       }
       // Authoritative param validation via the disclaude Zod schema.
       // Throws on invalid input — pi converts to an isError tool result.
       const parsed = definition.parameters.parse(params);
-      const result = await definition.handler(parsed);
+      // Bridge pi's progress channel into the disclaude handler (#4568):
+      // handler(params, onProgress) → onUpdate({content, details}) → pi
+      // `tool_execution_update` → stream `tool_progress` + watchdog re-arm.
+      const onProgress: ToolProgressCallback | undefined = onUpdate
+        ? (progress) => {
+            try {
+              onUpdate({ content: toContent(progress), details: progress });
+            } catch {
+              // Progress is best-effort: a rejected update (e.g. the run
+              // already settled) must not fail the tool execution itself.
+            }
+          }
+        : undefined;
+      const result = await definition.handler(parsed, onProgress);
       return { content: toContent(result), details: result };
     },
   };

@@ -18,9 +18,7 @@ import {
   loadConfigFile,
   setLoadedConfig,
   createLogger,
-  getIpcSocketPath,
 } from '@disclaude/core';
-import { existsSync } from 'fs';
 import { setMessageSentCallback } from './index.js';
 import { toolDefinitions } from './tools/tool-definitions.js';
 import { dispatchToolCall } from './tools/tool-dispatch.js';
@@ -166,17 +164,15 @@ async function main(): Promise<void> {
 
   logger.info('Starting MCP Server (stdio mode)');
 
-  // Log startup environment for debugging MCP server spawn issues
-  const ipcSocket = process.env.DISCLAUDE_WORKER_IPC_SOCKET;
-  const ipcSocketPath = getIpcSocketPath();
-  const ipcAvailable = existsSync(ipcSocketPath);
-
+  // Log startup environment for debugging MCP server spawn issues.
+  // Issue #4280 (part 5): the Unix-socket discovery fields (ipcSocket env /
+  // socket-path file / existsSync probe) are gone — PrimaryNode no longer
+  // starts an IPC server, so the only transport is the REST API probed at
+  // call time via GET /api/ping (tools/ipc-utils.ts isIpcAvailable).
   logger.info({
     nodeVersion: process.version,
     cwd: process.cwd(),
-    ipcSocket,
-    ipcSocketPath,
-    ipcAvailable,
+    restBaseUrl: process.env.DISCLAUDE_REST_IPC_BASE_URL || 'http://localhost:19200',
     hasConfig: !!options.configPath,
   }, 'MCP Server startup environment');
 

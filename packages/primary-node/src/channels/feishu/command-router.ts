@@ -38,6 +38,12 @@ export interface CommandRouterInput {
   /** Message text with leading @mentions stripped. */
   textWithoutMentions: string;
   chatId: string;
+  /**
+   * Thread root when the command is typed inside a topic-group thread
+   * (Issue #4587 part 3) — routes /reset and /stop to that thread's agent
+   * slot instead of the chat-scoped one. Absent elsewhere.
+   */
+  threadRootId?: string;
 }
 
 /**
@@ -67,10 +73,13 @@ export async function tryHandleSlashCommand(
   const cmd = command.toLowerCase();
 
   // Control-handler path (Issue #3529: typed command data).
+  // Issue #4587 (part 3): threadRootId rides along so /reset and /stop
+  // address the thread's agent slot when typed inside a topic-group thread.
   if (deps.hasControlHandler) {
     const rawData = { args };
     const response = await deps.emitControl(
-      createControlCommand(cmd as ControlCommandType, input.chatId, rawData),
+      createControlCommand(cmd as ControlCommandType, input.chatId, rawData,
+        input.threadRootId ? { threadRootId: input.threadRootId } : undefined),
     );
 
     // Issue #1562: relay both success and error messages from the control handler.

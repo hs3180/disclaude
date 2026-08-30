@@ -1,0 +1,23 @@
+{
+  "name": "@disclaude/voice-orchestrator",
+  "version": "0.0.1",
+  "description": "Voice Orchestrator — intent snapshot store and lifecycle (MVP foundation, design v0.2)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.9.3"
+  }
+}

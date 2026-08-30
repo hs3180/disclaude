@@ -79,9 +79,19 @@ describe('withTiming', () => {
   });
 
   it('should report positive elapsedMs for slow operations', async () => {
-    await withTiming(logger, 'test:slow', 'chat_1', async () => {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    });
+    // Drive the elapsed-time clock with fake timers instead of a real 50ms wall-
+    // clock wait. withTiming measures Date.now() deltas, so advancing the fake
+    // clock by 50ms produces a deterministic positive elapsedMs — no host-load-
+    // dependent sleep that gets amplified under coverage instrumentation
+    // (Issue #4394 test hygiene).
+    vi.useFakeTimers();
+    try {
+      await withTiming(logger, 'test:slow', 'chat_1', async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
 
     const successCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
     expect(successCall.elapsedMs).toBeGreaterThanOrEqual(40); // Allow some tolerance

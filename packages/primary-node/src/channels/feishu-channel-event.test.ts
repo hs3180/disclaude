@@ -474,6 +474,18 @@ describe('FeishuChannel getCapabilities', () => {
     const channel = new FeishuChannel({ appId: 'test', appSecret: 'test', streamingCard: true });
     expect(channel.getCapabilities().supportsStreaming).toBe(true);
   });
+
+  // Issue #4510 (part 2): p2p-first is built into the ChatAgent chatType gate,
+  // not a scope capability — the channel only reports the raw boolean flag and
+  // no streamingScope field exists.
+  it('exposes no streamingScope capability (Issue #4510 part 2: zero-config gate)', () => {
+    const on = new FeishuChannel({ appId: 'test', appSecret: 'test', streamingCard: true });
+    expect(on.getCapabilities().supportsStreaming).toBe(true);
+    expect('streamingScope' in on.getCapabilities()).toBe(false);
+    const off = new FeishuChannel({ appId: 'test', appSecret: 'test' });
+    expect('streamingScope' in off.getCapabilities()).toBe(false);
+    expect(off.getCapabilities().supportsStreaming).toBe(false);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

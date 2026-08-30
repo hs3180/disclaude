@@ -100,12 +100,12 @@ describe('McpHealthTracker', () => {
 
   it('getDegradedTools returns sorted names of all degraded tools', () => {
     const tracker = new McpHealthTracker();
-    // Degrade web_reader (2 failures) and playwright (fast-trip)
+    // Degrade web_reader (2 failures) and fetcher (fast-trip)
     tracker.recordFailure('web_reader');
     tracker.recordFailure('web_reader');
-    tracker.trip('playwright');
+    tracker.trip('fetcher');
     tracker.recordFailure('searxng'); // only 1 — not degraded
-    expect(tracker.getDegradedTools()).toEqual(['playwright', 'web_reader']);
+    expect(tracker.getDegradedTools()).toEqual(['fetcher', 'web_reader']);
   });
 
   it('getHealth returns a defensive copy (mutations do not leak)', () => {
@@ -126,9 +126,9 @@ describe('McpHealthTracker', () => {
 
   it('trip manually marks a tool degraded without recording a failure', () => {
     const tracker = new McpHealthTracker({ now: () => new Date('2026-07-11T00:00:00.000Z') });
-    tracker.trip('playwright');
-    expect(tracker.isDegraded('playwright')).toBe(true);
-    const health = tracker.getHealth('playwright');
+    tracker.trip('fetcher');
+    expect(tracker.isDegraded('fetcher')).toBe(true);
+    const health = tracker.getHealth('fetcher');
     expect(health?.totalFailures).toBe(0); // manual trip does not inflate counts
     expect(health?.degradedAt).toBe('2026-07-11T00:00:00.000Z');
   });
@@ -143,10 +143,10 @@ describe('McpHealthTracker', () => {
         return d;
       },
     });
-    tracker.trip('playwright');
-    const firstAt = tracker.getHealth('playwright')?.degradedAt;
-    tracker.trip('playwright'); // second trip must not overwrite timestamp
-    expect(tracker.getHealth('playwright')?.degradedAt).toBe(firstAt);
+    tracker.trip('fetcher');
+    const firstAt = tracker.getHealth('fetcher')?.degradedAt;
+    tracker.trip('fetcher'); // second trip must not overwrite timestamp
+    expect(tracker.getHealth('fetcher')?.degradedAt).toBe(firstAt);
   });
 
   it('clear removes a single tool, leaving others intact', () => {
@@ -165,7 +165,7 @@ describe('McpHealthTracker', () => {
     const tracker = new McpHealthTracker();
     tracker.recordFailure('searxng');
     tracker.recordFailure('searxng');
-    tracker.trip('playwright');
+    tracker.trip('fetcher');
     tracker.reset();
     expect(tracker.getDegradedTools()).toEqual([]);
     expect(tracker.getHealth('searxng')).toBeUndefined();

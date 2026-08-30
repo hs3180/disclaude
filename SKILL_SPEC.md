@@ -622,10 +622,8 @@ hooks:
 - `Glob` - 搜索文件路径
 - `Task` - 启动子代理
 
-**MCP 工具**（如 Playwright）：
-- `mcp__playwright__browser_navigate`
-- `mcp__playwright__browser_click`
-- `mcp__playwright__browser_snapshot`
+**MCP 工具命名格式**（如历史 Playwright MCP；disclaude 正在退役 MCP server，浏览器自动化改用 browser-use skill，见 `skills/browser-use/SKILL.md`）：
+- `mcp__<server>__<tool>`（如 `mcp__playwright__browser_navigate`）
 
 ### D. 参考资源
 
