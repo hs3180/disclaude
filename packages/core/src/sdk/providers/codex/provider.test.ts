@@ -82,6 +82,7 @@ JSONL
 async function drainStream(
   provider: CodexAgentProvider,
   prompts: string[],
+  extraOptions: Partial<AgentQueryOptions> = {},
 ): Promise<{ messages: unknown[]; sessionId?: string }> {
   const queue = [...prompts];
   async function* input(): AsyncGenerator<UserInput> {
@@ -91,6 +92,7 @@ async function drainStream(
   }
   const result = provider.queryStream(input(), {
     settingSources: [],
+    ...extraOptions,
   } as AgentQueryOptions);
   const messages: unknown[] = [];
   for await (const message of result.iterator) {
@@ -132,11 +134,11 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // Properties
   // --------------------------------------------------------------------------
 
-  it("exposes name 'codex' and the sessions-auth version", () => {
+  it("exposes name 'codex' and the sandbox-policy version", () => {
     fixtures = makeFixtures({ withBinary: false, withAuth: false });
     const provider = makeProvider(fixtures);
     expect(provider.name).toBe('codex');
-    expect(provider.version).toBe('0.2.0-sessions-auth');
+    expect(provider.version).toBe('0.3.0-sandbox-policy');
   });
 
   // --------------------------------------------------------------------------
@@ -343,7 +345,10 @@ fi
       fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
       const { messages, sessionId } = await drainStream(makeProvider(fixtures), ['a', 'b']);
       expect(argvOf(fixtures, 1)).not.toContain('resume');
-      expect(argvOf(fixtures, 2)).toContain('exec resume --json --skip-git-repo-check t-abc -- b');
+      // S4 (#4631): every run now carries the resolved sandbox level.
+      expect(argvOf(fixtures, 2)).toContain(
+        'exec resume --json --skip-git-repo-check -c sandbox_mode=workspace-write t-abc -- b',
+      );
       const texts = (messages as Array<{ type: string; content: string }>)
         .filter((m) => m.type === 'text')
         .map((m) => m.content);
@@ -462,6 +467,108 @@ fi
         .map((m) => m.content);
       expect(errors.join('\n')).toMatch(/timed out/);
     }, 30_000);
+  });
+
+  // --------------------------------------------------------------------------
+  // queryStream — S4 permission mapping (#4631): disclaude policy → codex
+  // exec sandbox. The fake `codex` records its argv per invocation into
+  // CODEX_HOME so tests assert the exact -c sandbox_mode= the bridge built.
+  // --------------------------------------------------------------------------
+
+  describe('queryStream sandbox mapping (Issue #4631)', () => {
+    const ARGV_BODY = `
+echo "$*" > "$CODEX_HOME/argv-1"
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-sb"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed"}
+JSONL
+`;
+    const argvOf = (fx: Fixtures): string =>
+      readFileSync(join(fx.codexHome, 'argv-1'), 'utf-8').trim();
+
+    const sandboxedFixtures = (): void => {
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body: ARGV_BODY });
+    };
+
+    it("derives workspace-write from permissionMode 'bypassPermissions'/unset (bot default)", async () => {
+      sandboxedFixtures();
+      await drainStream(makeProvider(fixtures), ['hi']);
+      expect(argvOf(fixtures)).toContain('-c sandbox_mode=workspace-write');
+    }, 15_000);
+
+    it("derives read-only from permissionMode 'default' (ask) — no headless approver, fail closed", async () => {
+      sandboxedFixtures();
+      await drainStream(makeProvider(fixtures), ['hi'], { permissionMode: 'default' });
+      expect(argvOf(fixtures)).toContain('-c sandbox_mode=read-only');
+    }, 15_000);
+
+    it('caps at read-only when the denylist blocks mutation tools', async () => {
+      sandboxedFixtures();
+      await drainStream(makeProvider(fixtures), ['hi'], {
+        permissionMode: 'bypassPermissions',
+        disallowedTools: ['Bash'],
+      });
+      expect(argvOf(fixtures)).toContain('-c sandbox_mode=read-only');
+    }, 15_000);
+
+    it('runs unrestricted with ChatAgent’s actual default denylist (claude-only names)', async () => {
+      // buildDisallowedTools() output (#4181) — every entry names a
+      // claude-only tool, so none of it may degrade the codex backend.
+      sandboxedFixtures();
+      await drainStream(makeProvider(fixtures), ['hi'], {
+        permissionMode: 'bypassPermissions',
+        disallowedTools: [
+          'EnterPlanMode',
+          'AskUserQuestion',
+          'CronCreate',
+          'CronList',
+          'CronDelete',
+          'ScheduleWakeup',
+        ],
+      });
+      expect(argvOf(fixtures)).toContain('-c sandbox_mode=workspace-write');
+    }, 15_000);
+
+    it('throws (fail closed, actionable) for a WebSearch denylist entry', () => {
+      // Verified live on 0.132.0: codex exec has NO working web-search off
+      // switch — a policy demanding it must not run silently weakened.
+      sandboxedFixtures();
+      const provider = makeProvider(fixtures);
+      expect(() =>
+        provider.queryStream(undefined as never, {
+          settingSources: [],
+          disallowedTools: ['WebSearch'],
+        } as AgentQueryOptions),
+      ).toThrow(/cannot disable its built-in web search.*fail closed/s);
+    });
+
+    it('honors the explicit sandboxOverride constructor option over permissionMode', async () => {
+      sandboxedFixtures();
+      const provider = new CodexAgentProvider({
+        env: {
+          PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`,
+          CODEX_HOME: fixtures.codexHome,
+        },
+        sandboxOverride: 'danger-full-access',
+      });
+      await drainStream(provider, ['hi'], { permissionMode: 'default' });
+      expect(argvOf(fixtures)).toContain('-c sandbox_mode=danger-full-access');
+    }, 15_000);
+
+    it('the denylist mutation cap outranks an explicit danger-full-access override', async () => {
+      // Security policy (denylist) > convenience preference (explicit config).
+      sandboxedFixtures();
+      const provider = new CodexAgentProvider({
+        env: {
+          PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`,
+          CODEX_HOME: fixtures.codexHome,
+        },
+        sandboxOverride: 'danger-full-access',
+      });
+      await drainStream(provider, ['hi'], { disallowedTools: ['Write'] });
+      expect(argvOf(fixtures)).toContain('-c sandbox_mode=read-only');
+    }, 15_000);
   });
 
   // --------------------------------------------------------------------------

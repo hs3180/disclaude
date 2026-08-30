@@ -8,6 +8,7 @@
 import type { IAgentSDKProvider, ProviderFactory, ProviderConstructor } from './interface.js';
 import type { ProviderInfo } from './types.js';
 import { ClaudeSDKProvider, PiAgentProvider, CodexAgentProvider } from './providers/index.js';
+import { Config } from '../config/index.js';
 
 /**
  * 已注册的 Provider 类型
@@ -20,7 +21,8 @@ export type ProviderType = 'claude' | 'pi' | 'codex' | string;
 const providerRegistry = new Map<ProviderType, ProviderFactory>([
   ['claude', () => new ClaudeSDKProvider()],
   ['pi', () => new PiAgentProvider()],
-  ['codex', () => new CodexAgentProvider()], // Issue #4629 (S1 of #4627)
+  // Issue #4629 (S1 of #4627); sandbox override wired in #4631 (S4).
+  ['codex', () => new CodexAgentProvider({ sandboxOverride: Config.CODEX_SANDBOX })],
 ]);
 
 /**
