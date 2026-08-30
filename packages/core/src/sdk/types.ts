@@ -124,7 +124,13 @@ export interface AgentMessageMetadata {
     | 'empty-stream'
     | 'max_turns'
     | 'max_budget_usd'
-    | 'max_structured_output_retries';
+    | 'max_structured_output_retries'
+    /**
+     * codex 后端 (Issue #4630 review): run 以失败告终(spawn 错误/超时/非零
+     * 退出/turn.failed)时合成 result 的标记——ChatAgent 据此按失败收尾
+     * (recordFailure),不被合成 error 的 user-visible 文本误记为成功。
+     */
+    | 'turn_failed';
   /**
    * 上游 API 错误标记(Issue #4322)。SDK 在上游返回 overloaded_error / 5xx 并重试
    * 耗尽后,把错误只打到 stderr,却仍发一个 subtype=success 的 result —— 会让
