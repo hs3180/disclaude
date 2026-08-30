@@ -32,6 +32,11 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     // disposed-guard in the empty-turn replay (the guard only ever worked
     // under this mock).
     this.dispose = vi.fn();
+    // Issue #4644: real BaseAgent always resolves a provider singleton —
+    // mirror it so reset()'s optional forgetSession capability is callable.
+    this.sdkProvider = {
+      forgetSession: vi.fn(),
+    };
     this.logger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -241,6 +246,18 @@ describe('ChatAgent (primary-node)', () => {
     it('should clear session state', () => {
       chatAgent.reset();
       expect(chatAgent.hasActiveSession()).toBe(false);
+    });
+
+    it('should forget provider-side session state keyed by the bound chatId (#4644)', () => {
+      chatAgent.reset();
+      // The codex provider's forgetSession clears the governor registration +
+      // evicted-thread stash so a /reset cannot be undone by eviction-resume.
+      expect((chatAgent as any).sdkProvider.forgetSession).toHaveBeenCalledWith('oc_test_chat');
+    });
+
+    it('should NOT forget provider session state when reset targets another chatId', () => {
+      chatAgent.reset('oc_wrong');
+      expect((chatAgent as any).sdkProvider.forgetSession).not.toHaveBeenCalled();
     });
 
     it('should ignore reset for wrong chatId', () => {

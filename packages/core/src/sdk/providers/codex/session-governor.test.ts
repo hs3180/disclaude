@@ -192,3 +192,45 @@ describe('CodexSessionGovernor review hardening (S7 review)', () => {
     c.release();
   });
 });
+
+describe('CodexSessionGovernor forgetSession (Issue #4644)', () => {
+  it('drops a registered session — it can never be evicted (re-stashed) afterwards', () => {
+    const g = new CodexSessionGovernor({ maxActiveSessions: 2 });
+    const evicted: string[] = [];
+    g.registerSession('a', { evict: () => evicted.push('a') });
+    g.registerSession('b', { evict: () => evicted.push('b') });
+
+    // /reset on 'a': forget it while still registered.
+    expect(g.forgetSession('a')).toBe(true);
+    expect(g.getStats().activeSessions).toBe(1);
+
+    // 'c' arrives — under the cap now (a forgotten), no eviction at all.
+    g.registerSession('c', { evict: () => evicted.push('c') });
+    expect(evicted).toEqual([]);
+    // 'd' pushes to the cap: WITHOUT the forget, 'a' (idle since t=1000,
+    // older than b) would have been the LRU victim and its hook would
+    // re-stash the reset-away anchor (#4644 window). With 'a' gone, only
+    // 'b' is evictable — the forgotten session can never come back as a
+    // victim.
+    g.registerSession('d', { evict: () => evicted.push('d') });
+    expect(evicted).toEqual(['b']);
+  });
+
+  it('is idempotent and returns false for unknown keys', () => {
+    const g = new CodexSessionGovernor();
+    expect(g.forgetSession('nobody')).toBe(false);
+    g.registerSession('a', { evict: NOOP });
+    expect(g.forgetSession('a')).toBe(true);
+    expect(g.forgetSession('a')).toBe(false); // already forgotten
+    expect(g.getStats().activeSessions).toBe(0);
+  });
+
+  it('leaves the cumulative eviction counter untouched (history, not state)', () => {
+    const g = new CodexSessionGovernor({ maxActiveSessions: 1 });
+    g.registerSession('a', { evict: NOOP });
+    g.registerSession('b', { evict: NOOP }); // evicts 'a'
+    expect(g.getStats().evictedSessions).toBe(1);
+    g.forgetSession('b');
+    expect(g.getStats().evictedSessions).toBe(1);
+  });
+});

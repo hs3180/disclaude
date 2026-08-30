@@ -103,6 +103,26 @@ export interface IAgentSDKProvider {
    * 释放 Provider 占用的资源。
    */
   dispose(): void;
+
+  // ==========================================================================
+  // 可选能力（Optional capabilities）
+  // ==========================================================================
+
+  /**
+   * 忘记指定会话的 Provider 侧状态（可选能力，Issue #4644）。
+   *
+   * 由 /reset 路径（ChatAgent.reset / agent pool reset）在 provider 暴露此
+   * 方法时调用（可选调用形状：`provider.forgetSession?.(key)`），未实现的
+   * provider（claude/pi）无需任何改动。
+   *
+   * codex 语义：清除 session/run governor 中该 sessionKey 的注册（使其不可
+   * 能再被 LRU 驱逐后重新 stash），并清除 eviction thread stash —— 保证
+   * /reset 之后该会话的下一条消息从全新 codex 会话开始，而不是复活已被
+   * 重置的对话（#4644：victim-drain 窗口内的 reset 复活漏洞）。
+   *
+   * @param sessionKey - 会话标识（ChatAgent 侧即 chatId，见 AgentQueryOptions.sessionKey）
+   */
+  forgetSession?(sessionKey: string): void;
 }
 
 /**

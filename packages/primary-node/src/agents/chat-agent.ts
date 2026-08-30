@@ -2334,6 +2334,16 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.queryHandle = undefined;
     }
 
+    // Issue #4644: forget provider-side session state as well. Stream
+    // teardown alone cannot cover it: the codex backend stashes an EVICTED
+    // chat's thread anchor (so its next message resumes the conversation),
+    // and eviction teardown deliberately keeps that stash — so a /reset while
+    // the chat has no live stream (the eviction drain window, or after the
+    // pool already disposed the agent) would otherwise resurrect the
+    // conversation the user reset away. Optional capability — claude/pi
+    // providers don't implement it and stay untouched.
+    this.sdkProvider.forgetSession?.(this.boundChatId);
+
     // Clear conversation context
     this.conversationOrchestrator.deleteThreadRoot(this.boundChatId);
 
