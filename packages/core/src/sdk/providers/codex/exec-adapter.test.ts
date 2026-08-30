@@ -18,6 +18,7 @@ import {
   adaptCodexEvent,
   isCodexAuthFailure,
   isCodexResumeTargetMissing,
+  isCodexUsageLimit,
   userInputText,
 } from './exec-adapter.js';
 
@@ -320,5 +321,77 @@ describe('isCodexResumeTargetMissing (Issue #4628)', () => {
   it('does not match unrelated failures', () => {
     expect(isCodexResumeTargetMissing('HTTP error: 401 Unauthorized')).toBe(false);
     expect(isCodexResumeTargetMissing('')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Usage-limit detector (Issue #4632, S5) — locked against the official
+// wording reported across OpenAI issues ("You've hit your usage limit.
+// Try again at <ts>"). The conjunction arm exists so the S2-era generic
+// exit test ("usage limit reached" stderr, no recovery cue) does NOT match.
+// ---------------------------------------------------------------------------
+
+describe('isCodexUsageLimit (Issue #4632)', () => {
+  it('matches the official limit wording with a reset timestamp', () => {
+    expect(
+      isCodexUsageLimit("You've hit your usage limit. Try again at Apr 30th, 2026 11:21 AM"),
+    ).toBe(true);
+  });
+
+  it('matches the upgrade-escalation variant', () => {
+    expect(
+      isCodexUsageLimit("You've hit your usage limit. Upgrade to Plus to continue using Codex."),
+    ).toBe(true);
+  });
+
+  it('matches 429 rate-limit surfaces', () => {
+    expect(isCodexUsageLimit('unexpected status 429 rate_limit_exceeded')).toBe(true);
+  });
+
+  it('does NOT match bare "usage limit" exit noise without a recovery cue', () => {
+    // This is the S2 generic-exit test's stderr — it must keep hitting the
+    // generic exit-code mapping, not the limit degrade.
+    expect(isCodexUsageLimit('usage limit reached')).toBe(false);
+  });
+
+  it('does not confuse the 401 auth signature with a usage limit', () => {
+    const AUTH_401 =
+      'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header';
+    expect(isCodexUsageLimit(AUTH_401)).toBe(false);
+  });
+});
+
+describe('usage-limit adapter dedupe (S5 review)', () => {
+  it('maps limit error events to null (provider synthesizes the friendly notice)', () => {
+    expect(
+      adaptCodexEvent({
+        type: 'error',
+        message: "You've hit your usage limit. Try again at Apr 30th, 2026 11:21 AM",
+      }),
+    ).toBeNull();
+  });
+
+  it('maps limit-carrying turn.failed to null (same dedupe rationale)', () => {
+    expect(
+      adaptCodexEvent({
+        type: 'turn.failed',
+        error: { message: 'usage limit reached, try again after reset' },
+      }),
+    ).toBeNull();
+    // Non-limit turn.failed keeps its error mapping.
+    expect(
+      adaptCodexEvent({ type: 'turn.failed', error: { message: 'boom' } }),
+    ).toMatchObject({ type: 'error', content: 'boom' });
+  });
+
+  it('tightened conjunctions reject cross-sentence noise', () => {
+    // argparse "usage:" prefix + stray 429 record count (S5 review case ①).
+    expect(isCodexUsageLimit('processed 429 records\nusage: mytool.py [-h] --verbose')).toBe(false);
+    // "upgrade" and "usage limit" in different sentences (case ②).
+    expect(isCodexUsageLimit('WARN … please upgrade\n…\nError: disk usage limit check failed')).toBe(false);
+    // 429 without rate-limit wording in the same sentence.
+    expect(isCodexUsageLimit('unexpected status 429 too many items in list')).toBe(false);
+    // Genuine same-sentence 429 still matches.
+    expect(isCodexUsageLimit('unexpected status 429 rate_limit_exceeded')).toBe(true);
   });
 });

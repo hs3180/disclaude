@@ -274,14 +274,27 @@ export function adaptCodexEvent(event: CodexThreadEvent): AgentMessage | null {
     }
 
     case 'turn.failed': {
-      return makeMessage('error', event.error?.message ?? 'codex turn failed');
+      const message = event.error?.message ?? 'codex turn failed';
+      // Limit wording → null: the provider's friendly notice covers it
+      // (same dedupe rationale as the top-level error case, S5 review).
+      if (isCodexUsageLimit(message)) {
+        return null;
+      }
+      return makeMessage('error', message);
     }
 
     case 'error': {
-      // Transient reconnect notices are non-fatal per the codex docs —
-      // surface as status, everything else as an error message.
-      const transient = /^reconnecting/i.test(event.message ?? '');
-      return makeMessage(transient ? 'status' : 'error', event.message ?? '');
+      // Transient reconnect notices are non-fatal per the codex docs →
+      // status. Usage-limit events return NULL (S5 review): the provider
+      // synthesizes the FRIENDLY degrade from raw text collected in
+      // enqueue (independent of adapter output), and a status mapping still
+      // duplicated it — ChatAgent sendMessage's status messages too.
+      const message = event.message ?? '';
+      if (isCodexUsageLimit(message)) {
+        return null;
+      }
+      const transient = /^reconnecting/i.test(message);
+      return makeMessage(transient ? 'status' : 'error', message);
     }
 
     // thread.started / turn.started / item.updated / unknown top-level types
@@ -335,6 +348,37 @@ export function isCodexAuthFailure(text: string): boolean {
  */
 export function isCodexResumeTargetMissing(text: string): boolean {
   return /no rollout found for thread/i.test(text);
+}
+
+/**
+ * Usage limit exhausted ⇔ the ChatGPT plan's rolling-window quota (5h +
+ * weekly) is spent; recovers by itself when the window resets. Official
+ * wording (multiple OpenAI issues/reports, cross-checked 2026-08-29):
+ *   "You've hit your usage limit. Try again at Apr 30th, 2026 11:21 AM"
+ *   "… Upgrade to Plus to continue using Codex …"
+ * The bare phrase "usage limit" also appears in unrelated exit noise (e.g.
+ * a user's own stderr), so the fallback arm requires a recovery/escalation
+ * cue ("try again" / "resets" / "upgrade") alongside it — the S2-era
+ * provider test uses "usage limit reached" stderr deliberately and must
+ * keep hitting the GENERIC exit mapping, not this one.
+ */
+export function isCodexUsageLimit(text: string): boolean {
+  if (/you'?ve hit your usage limit/i.test(text)) {
+    return true;
+  }
+  // Proximity window (S5 review): both cues must sit in the SAME sentence
+  // (~120 chars) — "usage limit" on one line and "upgrade" 8KB later is
+  // noise, and argparse's "usage:" prefix must not pair with stray digits.
+  if (/usage limit[^.\n]{0,120}(try again|resets?|upgrade)/i.test(text)) {
+    return true;
+  }
+  if (/(try again|resets?|upgrade)[^.\n]{0,120}usage limit/i.test(text)) {
+    return true;
+  }
+  // 429 must co-occur with rate-limit wording in the same sentence — a
+  // bare "processed 429 records" is not a quota signal.
+  return /\b429\b[^.\n]{0,80}rate.?limit/i.test(text) ||
+    /rate.?limit[^.\n]{0,80}\b429\b/i.test(text);
 }
 
 /**

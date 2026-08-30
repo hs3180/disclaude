@@ -21,7 +21,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { CodexAgentProvider } from './provider.js';
+import { CodexAgentProvider, type CodexQuotaStats } from './provider.js';
 import type { AgentQueryOptions, UserInput } from '../../types.js';
 
 /** Temp fixtures: a bin dir with a fake executable `codex`, and a CODEX_HOME. */
@@ -134,11 +134,11 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
   // Properties
   // --------------------------------------------------------------------------
 
-  it("exposes name 'codex' and the sandbox-policy version", () => {
+  it("exposes name 'codex' and the quota-observability version", () => {
     fixtures = makeFixtures({ withBinary: false, withAuth: false });
     const provider = makeProvider(fixtures);
     expect(provider.name).toBe('codex');
-    expect(provider.version).toBe('0.3.0-sandbox-policy');
+    expect(provider.version).toBe('0.4.0-quota-observability');
   });
 
   // --------------------------------------------------------------------------
@@ -568,6 +568,94 @@ JSONL
       });
       await drainStream(provider, ['hi'], { disallowedTools: ['Write'] });
       expect(argvOf(fixtures)).toContain('-c sandbox_mode=read-only');
+    }, 15_000);
+  });
+
+  // --------------------------------------------------------------------------
+  // queryStream — S5 quota observability + limit degrade (#4632)
+  // --------------------------------------------------------------------------
+
+  describe('queryStream quota & limit (Issue #4632)', () => {
+    it('accumulates per-turn usage into process-wide quota stats', async () => {
+      // HAPPY_BODY's turn.completed carries {input:10, output:2} per turn.
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body: HAPPY_BODY });
+      const provider = makeProvider(fixtures);
+      await drainStream(provider, ['a', 'b']);
+      const stats = provider.getQuotaStats();
+      expect(stats.turnsCompleted).toBe(2);
+      expect(stats.inputTokens).toBe(20);
+      expect(stats.outputTokens).toBe(4);
+      // Copy semantics: mutating the returned object must not leak back.
+      const copy = provider.getQuotaStats() as CodexQuotaStats;
+      copy.turnsCompleted = 99;
+      expect(provider.getQuotaStats().turnsCompleted).toBe(2);
+    }, 20_000);
+
+    it('degrades a usage-limit failure to the friendly window-reset notice', async () => {
+      // Official wording (OpenAI issues): "You've hit your usage limit.
+      // Try again at <ts>" — as a top-level error event, then exit 1.
+      fixtures = makeFixtures({
+        withBinary: true,
+        withAuth: true,
+        body: `cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-lim"}
+{"type":"turn.started"}
+{"type":"error","message":"You've hit your usage limit. Try again at Apr 30th, 2026 11:21 AM"}
+JSONL
+exit 1
+`,
+      });
+      const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
+      const error = (messages as Array<{ type: string; content: string }>).find(
+        (m) => m.type === 'error',
+      );
+      expect(error?.content).toMatch(/5 小时\/周滚动窗口/);
+      expect(error?.content).toMatch(/Try again at Apr 30th, 2026 11:21 AM/); // codex's own reset hint quoted
+      expect(error?.content).not.toMatch(/exited with code/); // limit wins over exit noise
+    }, 15_000);
+
+    it('keeps the conversation anchor across a limit failure — recovery needs no restart', async () => {
+      // Turn 1 succeeds (latches t-keep); turn 2 hits the limit (latches
+      // nothing); turn 3 must RESUME the same thread — the window reset
+      // only requires resending, not a session restart (#4632 acceptance).
+      const body = `
+n=$(cat "$CODEX_HOME/count" 2>/dev/null || echo 0)
+n=$((n+1)); echo "$n" > "$CODEX_HOME/count"
+echo "$*" > "$CODEX_HOME/argv-$n"
+if [ "$n" -eq 2 ]; then
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-keep"}
+{"type":"error","message":"You've hit your usage limit. Try again at 5:00 PM"}
+JSONL
+exit 1
+else
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-keep"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":5,"output_tokens":1}}
+JSONL
+fi
+`;
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body });
+      const { messages } = await drainStream(makeProvider(fixtures), ['a', 'b', 'c']);
+      const argv3 = readFileSync(join(fixtures.codexHome, 'argv-3'), 'utf-8').trim();
+      expect(argv3).toContain('resume');
+      expect(argv3).toContain('t-keep');
+      const results = (messages as Array<{ type: string }>).filter((m) => m.type === 'result');
+      expect(results.length).toBe(3); // every turn terminated, session alive
+    }, 25_000);
+
+    it('prefers the re-auth diagnosis when a failure carries both 401 and limit wording', async () => {
+      fixtures = makeFixtures({
+        withBinary: true,
+        withAuth: true,
+        body: 'echo "unexpected status 401 Unauthorized; You\'ve hit your usage limit. Try again at 5 PM" >&2\nexit 1',
+      });
+      const { messages } = await drainStream(makeProvider(fixtures), ['hi']);
+      const error = (messages as Array<{ type: string; content: string }>).find(
+        (m) => m.type === 'error',
+      );
+      expect(error?.content).toMatch(/codex login/); // auth is the actionable one
     }, 15_000);
   });
 
