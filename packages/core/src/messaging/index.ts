@@ -43,6 +43,10 @@ export {
   MessageRoutingError,
 } from './message-router.js';
 
+// Typed turn-outcome error (Issue #4649 review ①: thrown by ChatAgent when
+// a newer message supersedes the awaited turn; consumers branch on instanceof)
+export { TurnSupersededError } from './turn-superseded-error.js';
+
 export type {
   IAgentMessageHandler,
   MessageRouterConfig,

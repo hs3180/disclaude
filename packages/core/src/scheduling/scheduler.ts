@@ -20,6 +20,7 @@ import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import { DEFAULT_TIMEZONE, type ScheduledTask } from './scheduled-task.js';
 import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
+import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
 
 const logger = createLogger('Scheduler');
@@ -37,11 +38,34 @@ function formatTimeout(ms: number): string {
 }
 
 /**
- * Default task execution timeout (5 minutes).
- * Issue #3894: Prevents indefinitely hung scheduled tasks from blocking
- * subsequent executions.
+ * Default timeout bounding how long executeTask waits for the agent TURN to
+ * finish (Issue #3894 introduced it; #4648 widened it from routing to the
+ * whole turn via waitForCompletion).
+ *
+ * Issue #4649 (review ②): 5 minutes was calibrated for the OLD semantics
+ * (bounding the route/queue call, which completes in well under a second);
+ * applied to whole turns it falsely failed every legitimately long task.
+ * The new default is deliberately ABOVE the agent pool's busy-turn hard cap
+ * (90 min default, Issue #4577, wired in cli.ts): a genuinely stuck turn is
+ * killed by the pool cap first and lands in the catch as a REAL error —
+ * countable toward the #4648 consecutive-failure alert — while this timeout
+ * only fires for turns legitimately longer than 2 hours, which are expected
+ * to declare their duration via `timeoutMs` in SCHEDULE.md.
+ *
+ * When this timeout fires the agent is NOT cancelled (the abandoned await
+ * never could), so the outcome is unknown rather than failed — see the
+ * TaskTimeoutError branch in executeTask's catch.
  */
-const DEFAULT_TASK_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_TASK_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Issue #4648: alert threshold — a scheduled task failing this many times in
+ * a row emits an error-level structured log carrying
+ * `scheduleConsecutiveFailures`, so chronic silent failures (the 38-day
+ * #4626/#4648 incident) become detectable via log search instead of
+ * surfacing as an endless stream of identical single-run failures.
+ */
+const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 3;
 
 /**
  * Error thrown when a scheduled task execution times out.
@@ -217,6 +241,15 @@ export class Scheduler {
    */
   private _drainPromise: Promise<void> | null = null;
   private _drainResolve: (() => void) | null = null;
+
+  /**
+   * Issue #4648: per-task consecutive-failure counter. Incremented in the
+   * executeTask catch, deleted on success (a healthy run resets the streak).
+   * Entries for deleted tasks are left to be GC'd with the instance — the
+   * map is bounded by the number of distinct task ids over a process
+   * lifetime, which is small.
+   */
+  private readonly consecutiveTaskFailures = new Map<string, number>();
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -523,6 +556,11 @@ ${task.prompt}`;
     // task fails before its turn consumes it.
     let contextCleared = false;
 
+    // Issue #4648: elapsed-time anchor for the truthful completion/failure
+    // logs below (previously "completed" was logged at routing time, ~0.3s
+    // BEFORE the agent even produced its first token).
+    const taskStartedAt = Date.now();
+
     try {
       // Build wrapped prompt with anti-recursion instructions
       const wrappedPrompt = this.buildScheduledTaskPrompt(task);
@@ -587,6 +625,19 @@ ${task.prompt}`;
             model: task.model,
           },
           createdAt: new Date().toISOString(),
+          // Issue #4648: await the agent turn's REAL outcome. The
+          // waitForCompletion plumbing (#4063, built for the Loop Runner)
+          // makes route() resolve only after the ChatAgent's per-turn
+          // promise settles — and reject when the turn dies (startup
+          // failure, iterator error). Without it, route() resolved the
+          // moment processMessage QUEUED the prompt, so "completed" was
+          // logged before the agent did any work and a session that died
+          // 9s later was indistinguishable from a healthy run for 38 days.
+          // The #3894 timeout above still bounds this wait. Issue #4649
+          // (review ②): a timeout is a NEUTRAL outcome (the turn is not
+          // cancelled and may still finish — see the TaskTimeoutError
+          // branch in the catch); long-running tasks should set timeoutMs.
+          waitForCompletion: true,
         };
 
         logger.debug({ taskId: task.id, chatId: task.chatId }, 'Routing scheduled task via InputMessageRouter');
@@ -609,12 +660,109 @@ ${task.prompt}`;
           }
         }
 
-        logger.info({ taskId: task.id }, 'Scheduled task completed (via InputMessageRouter)');
+        // Issue #4648: this log is now written only after the agent turn
+        // actually finished (see waitForCompletion above) — the task's real
+        // end state, not its routing ack.
+        this.consecutiveTaskFailures.delete(task.id);
+        logger.info(
+          {
+            taskId: task.id,
+            name: task.name,
+            chatId: task.chatId,
+            elapsedMs: Date.now() - taskStartedAt,
+          },
+          'Scheduled task completed (agent turn finished)'
+        );
       }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error({ err: error, taskId: task.id }, 'Scheduled task failed');
+      const outcomeContext = {
+        taskId: task.id,
+        name: task.name,
+        chatId: task.chatId,
+        elapsedMs: Date.now() - taskStartedAt,
+      };
+
+      if (error instanceof TurnSupersededError) {
+        // Issue #4649 (review ①): a newer message (typically a user reply
+        // landing mid-turn in the same chat) superseded this turn's
+        // completion promise. That is normal concurrency in an active chat,
+        // not a task failure — the chat is demonstrably alive and the newer
+        // message's turn runs in this turn's place:
+        // - no ❌ notification (previously every interjection in a group
+        //   chat spammed one, plus a false consecutive-failure count),
+        // - streak deliberately untouched: a superseded run is neither
+        //   evidence of health (resetting would mask real failures) nor of
+        //   breakage,
+        // - no contextCleared cleanup below: the superseded turn may still
+        //   be draining in the background, and resetAgent→dispose would
+        //   abort the SUPERSEDING message's turn (review finding ④ shape).
+        //
+        // Issue #4649 (review ③) note: with per-message turn completions an
+        // ordinary interjection no longer produces this error at all (each
+        // awaiter now gets its own turn's real outcome — see
+        // ChatAgent.createTurnCompletion). The remaining producer is the
+        // same-messageId re-push guard (empty-turn replay), which is exactly
+        // the neutral shape this branch describes.
+        logger.info(
+          outcomeContext,
+          'Scheduled task turn superseded by a newer message (neutral — not counted as failure)',
+        );
+        return;
+      }
+
+      if (error instanceof TaskTimeoutError) {
+        // Issue #4649 (review ②): this timeout bounds the WAIT — the agent
+        // is not cancelled (#4648 wording), so the outcome is UNKNOWN: the
+        // turn may still complete successfully after the bound. Counting it
+        // as failure made every legitimately-long task a guaranteed ❌ and,
+        // past the alert threshold, a false chronic-failure alarm. So:
+        // - streak untouched (a slow task must neither mask real failures
+        //   nor fake them); genuinely stuck turns are caught earlier by the
+        //   pool's busy-turn hard cap and land here as countable REAL
+        //   errors (see DEFAULT_TASK_TIMEOUT_MS),
+        // - no contextCleared cleanup below — the turn may STILL be running
+        //   (review finding ④: dispose would kill the live turn the
+        //   notification below says might continue),
+        // - the notification keeps the honest wording and teaches the knob.
+        logger.warn(
+          { ...outcomeContext, timeoutMs: error.timeoutMs },
+          'Scheduled task timed out waiting for the agent turn (turn not cancelled, outcome unknown — not counted as failure)',
+        );
+        await this.callbacks.sendMessage(
+          task.chatId,
+          `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已停止等待` +
+            '（agent 轮次可能仍在后台继续）。若该任务确需更长运行时间，请在 SCHEDULE.md 设置 timeoutMs。',
+        );
+        return;
+      }
+
+      // Issue #4648: track consecutive failures per task. With
+      // waitForCompletion the turn's real outcome now lands here — including
+      // the "Iterator error"-class deaths that previously surfaced as an
+      // instant "completed" — so a failing streak is finally countable.
+      const consecutiveFailures = (this.consecutiveTaskFailures.get(task.id) ?? 0) + 1;
+      this.consecutiveTaskFailures.set(task.id, consecutiveFailures);
+      const failureContext = {
+        ...outcomeContext,
+        consecutiveFailures,
+      };
+      logger.error(
+        { err: error, ...failureContext },
+        'Scheduled task failed (agent turn ended with an error)'
+      );
+      if (consecutiveFailures >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD) {
+        // Issue #4648: dedicated alertable marker — a task failing this many
+        // runs in a row is chronic (bad chatId, broken prompt environment,
+        // persistent upstream errors) and deserves to stand out in log
+        // search beyond the per-run failure stream.
+        logger.error(
+          { ...failureContext, scheduleConsecutiveFailures: consecutiveFailures },
+          `Scheduled task has failed ${consecutiveFailures} consecutive runs — ` +
+            'check its chatId / agent health (Issue #4648 alert)'
+        );
+      }
 
       // Issue #4206 (review nit): if we cleared context for this task but it
       // then failed before its turn consumed the skip-history flag, clear that
@@ -622,6 +770,16 @@ ${task.prompt}`;
       // normally. Otherwise a failed clearContext run would leak skip-history
       // to a subsequent, unrelated user message. resetAgent(chatId, false)
       // disposes any partial fresh agent and restores the with-history default.
+      //
+      // Issue #4649 (reviews ③④⑤): the dispose inside this cleanup is safe
+      // here and ONLY here — every error that reaches the generic branch now
+      // means THIS chat's agent session is dead or was never started (turn
+      // death, channel closed at push, agent creation failure, session
+      // replacement), so there is no live turn to abort. The two "the turn
+      // may still be running" outcomes — timeout and superseded — return in
+      // their own branches above and deliberately skip this cleanup (review
+      // finding ④: dispose would kill the very turn the notification says
+      // might still finish).
       if (contextCleared && task.chatId && this.callbacks.resetAgent) {
         try {
           this.callbacks.resetAgent(task.chatId, false);
@@ -637,12 +795,13 @@ ${task.prompt}`;
         }
       }
 
-      // Issue #3894: Send specific timeout notification
-      const userMessage = error instanceof TaskTimeoutError
-        ? `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已自动终止`
-        : `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`;
-
-      await this.callbacks.sendMessage(task.chatId, userMessage);
+      // Timeout notifications are handled in the TaskTimeoutError branch
+      // above (Issue #4649 review ②: timeout is an unknown outcome, not a
+      // failure); only real turn errors reach this ❌.
+      await this.callbacks.sendMessage(
+        task.chatId,
+        `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
+      );
     } finally {
       // Always remove from running tasks
       this.cleanupTaskTracking(task);

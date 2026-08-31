@@ -56,12 +56,19 @@ export interface ScheduledTask {
    */
   clearContext?: boolean;
   /**
-   * Timeout in milliseconds for task execution.
-   * When set, the task will be forcefully terminated after this duration,
-   * preventing indefinitely hung tasks from blocking subsequent executions.
-   * Defaults to DEFAULT_TASK_TIMEOUT_MS (5 minutes) when not specified.
+   * Timeout in milliseconds for how long the scheduler waits for the task's
+   * agent TURN to finish (Issue #4648 widened the #3894 timeout from routing
+   * to the whole turn via waitForCompletion).
    *
-   * Issue #3894: Timeout protection for scheduled tasks.
+   * The agent is NOT cancelled when the timeout fires — the scheduler stops
+   * waiting and records a neutral timeout outcome (the turn may still finish
+   * in the background); genuinely stuck turns are killed separately by the
+   * agent pool's busy-turn hard cap (#4577).
+   *
+   * Defaults to DEFAULT_TASK_TIMEOUT_MS (2 hours) when not specified. Tasks
+   * that legitimately run longer (long experiments, multi-step waits) should
+   * declare their duration here to avoid premature timeout notices
+   * (Issue #4649 review ②).
    */
   timeoutMs?: number;
   /** Cooldown period in milliseconds (prevents re-execution for this duration after execution) */

@@ -279,6 +279,9 @@ export {
   MessageRoutingError,
 } from './messaging/index.js';
 
+// Typed turn-outcome error (Issue #4649 review ①)
+export { TurnSupersededError } from './messaging/index.js';
+
 export type {
   IAgentMessageHandler,
   MessageRouterConfig,
