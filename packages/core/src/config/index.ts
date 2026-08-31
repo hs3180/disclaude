@@ -14,6 +14,7 @@ import {
   loadConfigFile,
   getConfigFromFile,
   validateConfig,
+  isCodexModel,
   getPreloadedConfig,
 } from './loader.js';
 import type {
@@ -356,6 +357,23 @@ export class Config {
   private static validateRequiredConfig(): void {
     const errors: ConfigValidationError[] = [];
 
+    // Codex owns authentication through the ChatGPT CLI session. Do not make
+    // unrelated GLM/Anthropic API keys a prerequisite for this backend.
+    if (this.AGENT_BACKEND === 'codex') {
+      if (this.CLAUDE_MODEL && !isCodexModel(this.CLAUDE_MODEL)) {
+        errors.push({
+          field: 'agent.model',
+          message: 'agent.model must be a Codex/ChatGPT model (expected gpt-5.x)',
+        });
+      }
+      if (errors.length > 0) {
+        const messages = errors.map(e => `  ❌ ${e.field}: ${e.message}`).join('\n');
+        logger.error({ errors }, 'Configuration validation failed');
+        throw new Error(`Configuration validation failed:\n\n${messages}`);
+      }
+      return;
+    }
+
     // Get provider preference from config file
     const provider = fileConfigOnly.agent?.provider;
 
@@ -439,6 +457,16 @@ export class Config {
     apiBaseUrl?: string;
     provider: 'anthropic' | 'glm';
   } {
+    // Codex uses ChatGPT OAuth and does not require an API key in disclaude.
+    if (this.AGENT_BACKEND === 'codex') {
+      this.validateRequiredConfig();
+      return {
+        apiKey: '',
+        model: this.CLAUDE_MODEL || 'gpt-5',
+        provider: 'anthropic',
+      };
+    }
+
     // Validate required configuration first
     this.validateRequiredConfig();
 
