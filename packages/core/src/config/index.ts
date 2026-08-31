@@ -462,7 +462,10 @@ export class Config {
       this.validateRequiredConfig();
       return {
         apiKey: '',
-        model: this.CLAUDE_MODEL || 'gpt-5',
+        // Leave model selection to the Codex CLI when no explicit model is
+        // configured. The bare `gpt-5` identifier is not available to Codex
+        // when authenticated with a ChatGPT account.
+        model: this.CLAUDE_MODEL,
         provider: 'anthropic',
       };
     }
