@@ -19,6 +19,7 @@ import { createLogger } from '../utils/logger.js';
 import { CooldownManager } from './cooldown-manager.js';
 import type { ScheduleManager } from './schedule-manager.js';
 import { DEFAULT_TIMEZONE, type ScheduledTask } from './scheduled-task.js';
+import type { TaskFailureStore } from './task-failure-store.js';
 import type { MessageRouter as InputMessageRouter } from '../messaging/message-router.js';
 import { TurnSupersededError } from '../messaging/turn-superseded-error.js';
 import type { SystemMessage } from '../types/message.js';
@@ -181,6 +182,13 @@ export interface SchedulerOptions {
   /** CooldownManager for cooldown period management */
   cooldownManager?: CooldownManager;
   /**
+   * File-backed store for consecutive-failure streaks (Issue #4648 residual ⑥).
+   * When wired, streaks survive restarts (crash-loop alerting becomes possible);
+   * when absent, the Scheduler falls back to its in-memory map (previous
+   * behavior — streaks zero on restart).
+   */
+  failureStore?: TaskFailureStore;
+  /**
    * Input MessageRouter for routing scheduled tasks as SystemMessage.
    * Issue #3582: Routes through existing agents via AgentPool.
    */
@@ -248,8 +256,14 @@ export class Scheduler {
    * Entries for deleted tasks are left to be GC'd with the instance — the
    * map is bounded by the number of distinct task ids over a process
    * lifetime, which is small.
+   *
+   * Issue #4648 residual ⑥: this map is only the FALLBACK used when no
+   * {@link TaskFailureStore} is injected; with a store wired, all streak
+   * reads/writes go through it so the count survives restarts.
    */
   private readonly consecutiveTaskFailures = new Map<string, number>();
+  /** Issue #4648 residual ⑥: optional file-backed streak store. */
+  private readonly failureStore?: TaskFailureStore;
 
   constructor(options: SchedulerOptions) {
     this.scheduleManager = options.scheduleManager;
@@ -257,6 +271,7 @@ export class Scheduler {
     this.cooldownManager = options.cooldownManager;
     this.inputMessageRouter = options.inputMessageRouter;
     this.jobFactory = options.jobFactory;
+    this.failureStore = options.failureStore;
     logger.info('Scheduler created');
   }
 
@@ -437,6 +452,36 @@ Scheduled task creation is blocked during scheduled task execution to prevent in
 
 **Task Prompt:**
 ${task.prompt}`;
+  }
+
+  /**
+   * Issue #4648 residual ⑥: break a task's failure streak on success.
+   * Routes through the injected TaskFailureStore when present (also clears
+   * the persisted file), otherwise the in-memory fallback map.
+   */
+  private async clearFailureStreak(taskId: string): Promise<void> {
+    if (this.failureStore) {
+      await this.failureStore.recordSuccess(taskId);
+      return;
+    }
+    this.consecutiveTaskFailures.delete(taskId);
+  }
+
+  /**
+   * Issue #4648 residual ⑥: count a failure and return the new streak length.
+   * The store path restores any streak persisted by previous process
+   * lifetimes before incrementing (lazy init on first use).
+   *
+   * (Non-async on purpose: the in-memory fallback branch is synchronous, and
+   * an `async` keyword there trips require-await.)
+   */
+  private recordTaskFailure(taskId: string): Promise<number> {
+    if (this.failureStore) {
+      return this.failureStore.recordFailure(taskId);
+    }
+    const streak = (this.consecutiveTaskFailures.get(taskId) ?? 0) + 1;
+    this.consecutiveTaskFailures.set(taskId, streak);
+    return Promise.resolve(streak);
   }
 
   /**
@@ -662,8 +707,9 @@ ${task.prompt}`;
 
         // Issue #4648: this log is now written only after the agent turn
         // actually finished (see waitForCompletion above) — the task's real
-        // end state, not its routing ack.
-        this.consecutiveTaskFailures.delete(task.id);
+        // end state, not its routing ack. Issue #4648 residual ⑥: a healthy
+        // run breaks the streak via the store/file path when wired.
+        await this.clearFailureStreak(task.id);
         logger.info(
           {
             taskId: task.id,
@@ -730,11 +776,22 @@ ${task.prompt}`;
           { ...outcomeContext, timeoutMs: error.timeoutMs },
           'Scheduled task timed out waiting for the agent turn (turn not cancelled, outcome unknown — not counted as failure)',
         );
-        await this.callbacks.sendMessage(
-          task.chatId,
-          `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已停止等待` +
-            '（agent 轮次可能仍在后台继续）。若该任务确需更长运行时间，请在 SCHEDULE.md 设置 timeoutMs。',
-        );
+        // Issue #4648 residual ⑧: channel I/O inside a catch must not throw —
+        // a Feishu send failing here would replace the handled timeout and
+        // reject executeTask past the fire-and-forget cron onTick (unhandled
+        // rejection). The notification is best-effort.
+        try {
+          await this.callbacks.sendMessage(
+            task.chatId,
+            `⏱️ 定时任务「${task.name}」执行超时 (${formatTimeout(error.timeoutMs)})，已停止等待` +
+              '（agent 轮次可能仍在后台继续）。若该任务确需更长运行时间，请在 SCHEDULE.md 设置 timeoutMs。',
+          );
+        } catch (notifyErr) {
+          logger.warn(
+            { err: notifyErr, taskId: task.id, chatId: task.chatId },
+            'Failed to send timeout notification for scheduled task',
+          );
+        }
         return;
       }
 
@@ -742,8 +799,9 @@ ${task.prompt}`;
       // waitForCompletion the turn's real outcome now lands here — including
       // the "Iterator error"-class deaths that previously surfaced as an
       // instant "completed" — so a failing streak is finally countable.
-      const consecutiveFailures = (this.consecutiveTaskFailures.get(task.id) ?? 0) + 1;
-      this.consecutiveTaskFailures.set(task.id, consecutiveFailures);
+      // Issue #4648 residual ⑥: via the injected store the streak also
+      // survives restarts, so a crash loop still crosses the threshold.
+      const consecutiveFailures = await this.recordTaskFailure(task.id);
       const failureContext = {
         ...outcomeContext,
         consecutiveFailures,
@@ -798,10 +856,24 @@ ${task.prompt}`;
       // Timeout notifications are handled in the TaskTimeoutError branch
       // above (Issue #4649 review ②: timeout is an unknown outcome, not a
       // failure); only real turn errors reach this ❌.
-      await this.callbacks.sendMessage(
-        task.chatId,
-        `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
-      );
+      //
+      // Issue #4648 residual ⑧: channel I/O inside a catch must not throw —
+      // a Feishu send failing here (WS reconnect window, bad chatId) would
+      // replace the already-handled failure and reject executeTask past the
+      // fire-and-forget cron onTick, i.e. an unhandled rejection. The
+      // failure itself is fully logged above; the notification is
+      // best-effort.
+      try {
+        await this.callbacks.sendMessage(
+          task.chatId,
+          `❌ 定时任务「${task.name}」执行失败: ${errorMessage}`
+        );
+      } catch (notifyErr) {
+        logger.warn(
+          { err: notifyErr, taskId: task.id, chatId: task.chatId },
+          'Failed to send failure notification for scheduled task',
+        );
+      }
     } finally {
       // Always remove from running tasks
       this.cleanupTaskTracking(task);
