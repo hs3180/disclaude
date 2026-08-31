@@ -273,7 +273,13 @@ export async function main(): Promise<void> {
   try {
     const agentConfig = Config.getAgentConfig();
     logger.info(
-      { provider: agentConfig.apiBaseUrl ? 'glm' : 'anthropic', model: agentConfig.model },
+      {
+        agentBackend: Config.AGENT_BACKEND ?? 'claude',
+        provider: Config.AGENT_BACKEND === 'codex'
+          ? 'codex'
+          : agentConfig.apiBaseUrl ? 'glm' : 'anthropic',
+        model: agentConfig.model,
+      },
       'Agent configuration loaded'
     );
   } catch (error) {
