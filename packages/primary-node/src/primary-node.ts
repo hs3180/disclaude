@@ -49,6 +49,8 @@ import {
   ScheduleManager,
   ScheduleFileWatcher,
   CooldownManager,
+  // Issue #4648 residual ⑥: restart-surviving failure streaks
+  TaskFailureStore,
   Config,
   // Issue #4388: select Agent SDK backend from config at boot.
   setDefaultProvider,
@@ -163,6 +165,8 @@ export class PrimaryNode extends EventEmitter {
   protected scheduleManager?: ScheduleManager;
   protected scheduleFileWatcher?: ScheduleFileWatcher;
   protected cooldownManager?: CooldownManager;
+  /** Issue #4648 residual ⑥: file-backed failure streaks (survive restarts) */
+  protected taskFailureStore?: TaskFailureStore;
 
   // Input MessageRouter for unified routing (Issue #3582 Phase 3)
   protected inputMessageRouter?: InputMessageRouter;
@@ -442,6 +446,11 @@ export class PrimaryNode extends EventEmitter {
     this.cooldownManager = new CooldownManager({ cooldownDir });
     logger.info({ cooldownDir }, 'Scheduler init step 1/6: ✓ CooldownManager ready');
 
+    // Issue #4648 residual ⑥: failure streaks persist beside cooldown state,
+    // so the consecutive-failure alert can fire across restarts (crash loops).
+    const failureDir = path.join(schedulesDir, '.failures');
+    this.taskFailureStore = new TaskFailureStore({ dir: failureDir });
+
     // Step 2: Initialize ScheduleManager
     logger.info('Scheduler init step 2/6: Initializing ScheduleManager');
     this.scheduleManager = new ScheduleManager({ schedulesDir });
@@ -457,6 +466,8 @@ export class PrimaryNode extends EventEmitter {
     this.scheduler = new Scheduler({
       scheduleManager: this.scheduleManager,
       cooldownManager: this.cooldownManager,
+      // Issue #4648 residual ⑥: persist failure streaks across restarts
+      failureStore: this.taskFailureStore,
       callbacks: schedulerCallbacks,
       // Issue #3582: Route through InputMessageRouter to existing agents
       inputMessageRouter: this.inputMessageRouter,

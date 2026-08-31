@@ -199,6 +199,9 @@ export {
 export {
   CooldownManager,
   type CooldownManagerOptions,
+  // Issue #4648 residual ⑥: restart-surviving failure streaks
+  TaskFailureStore,
+  type TaskFailureStoreOptions,
   // Issue #2947: Bot group chat mapping
   BotChatMappingStore,
   makeMappingKey,

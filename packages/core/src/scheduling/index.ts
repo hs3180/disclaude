@@ -22,6 +22,12 @@ export {
   type CooldownManagerOptions,
 } from './cooldown-manager.js';
 
+// Failure streaks (Issue #4648 residual ⑥: restart-surviving failure counts)
+export {
+  TaskFailureStore,
+  type TaskFailureStoreOptions,
+} from './task-failure-store.js';
+
 // Bot Chat Mapping (Issue #2947: context-to-chatId mapping)
 export {
   BotChatMappingStore,
