@@ -22,6 +22,13 @@ const CONFIG_FILE_NAMES = [
 ] as const;
 
 /**
+ * Set by executable bootstraps before importing @disclaude/core. This avoids
+ * the Config static fields observing a default config before CLI --config is
+ * parsed (Issue #4654).
+ */
+export const EXPLICIT_CONFIG_PATH_ENV = 'DISCLAUDE_CONFIG_PATH';
+
+/**
  * Search paths for configuration files.
  */
 const SEARCH_PATHS = [
@@ -40,6 +47,12 @@ const SEARCH_PATHS = [
  * @returns ConfigFileInfo with path and existence status
  */
 export function findConfigFile(): ConfigFileInfo {
+  const explicitPath = process.env[EXPLICIT_CONFIG_PATH_ENV];
+  if (explicitPath) {
+    const filePath = resolve(explicitPath);
+    return { path: filePath, exists: existsSync(filePath) };
+  }
+
   for (const searchPath of SEARCH_PATHS) {
     for (const fileName of CONFIG_FILE_NAMES) {
       const filePath = resolve(searchPath, fileName);

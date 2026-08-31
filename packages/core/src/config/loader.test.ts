@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync, existsSync } from 'fs';
+import { resolve } from 'path';
 import {
   findConfigFile,
   loadConfigFile,
@@ -18,6 +19,7 @@ import {
   validateRequiredConfig,
   setLoadedConfig,
   getPreloadedConfig,
+  EXPLICIT_CONFIG_PATH_ENV,
 } from './loader.js';
 
 // Mock fs module
@@ -27,8 +29,32 @@ vi.mock('fs', () => ({
 }));
 
 describe('findConfigFile', () => {
+  const originalExplicitConfigPath = process.env[EXPLICIT_CONFIG_PATH_ENV];
+
   beforeEach(() => {
     vi.mocked(existsSync).mockReset();
+    delete process.env[EXPLICIT_CONFIG_PATH_ENV];
+  });
+
+  afterEach(() => {
+    if (originalExplicitConfigPath === undefined) {
+      delete process.env[EXPLICIT_CONFIG_PATH_ENV];
+    } else {
+      process.env[EXPLICIT_CONFIG_PATH_ENV] = originalExplicitConfigPath;
+    }
+  });
+
+  it('should make the bootstrap --config path authoritative', () => {
+    process.env[EXPLICIT_CONFIG_PATH_ENV] = './explicit-test.yaml';
+    vi.mocked(existsSync).mockImplementation((path) =>
+      String(path).endsWith('explicit-test.yaml'),
+    );
+
+    const result = findConfigFile();
+
+    expect(result.exists).toBe(true);
+    expect(result.path).toBe(resolve(process.cwd(), 'explicit-test.yaml'));
+    expect(existsSync).toHaveBeenCalledTimes(1);
   });
 
   it('should return exists: false when no config files found', () => {
