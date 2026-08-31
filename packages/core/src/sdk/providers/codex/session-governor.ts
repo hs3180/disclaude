@@ -134,6 +134,22 @@ export class CodexSessionGovernor {
     }
   }
 
+  /**
+   * Forget a session entirely (Issue #4644): drop its governor registration.
+   *
+   * Called by the provider's forgetSession on user /reset. Removing the
+   * registration is REQUIRED, not hygiene: a still-registered session can be
+   * LRU-evicted later, and the eviction hook would re-stash the conversation
+   * anchor AFTER the reset already cleared it — resurrecting the conversation
+   * the user reset away (the exact #4644 window). Counter stats are
+   * cumulative history and stay untouched.
+   *
+   * @returns true when a live registration was dropped, false when unknown.
+   */
+  forgetSession(sessionKey: string): boolean {
+    return this.sessions.delete(sessionKey);
+  }
+
   /** Evict the idlest session (lowest activity timestamp). */
   private evictIdlest(): string | undefined {
     let idlestKey: string | undefined;
