@@ -88,7 +88,7 @@ show_test_plan_body() {
     echo "  4. Use Case 3 - Multi-turn Conversation (4 tests)"
     echo "     - Health check, number context, name context, context isolation"
     echo ""
-    echo "  5. MCP Tools Tests (4 tests)"
+    echo "  5. Channel CLI Tools Tests (4 tests)"
     echo "     - Health check, send_text, send_file, tool result format"
     echo ""
     echo "  6. Multimodal Tests (5 tests)"

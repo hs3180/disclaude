@@ -786,6 +786,17 @@ assert_response_not_empty() {
     fi
 }
 
+# Detect a provider failure embedded in an otherwise successful HTTP wrapper.
+# The sync endpoint can return HTTP 200 with success=true while the agent
+# provider reports an error in the response text (for example, a Codex CLI
+# non-zero exit). Treat those responses as failures instead of false passes.
+# Usage: if response_contains_provider_failure "$RESPONSE_BODY"; then ...
+response_contains_provider_failure() {
+    local body="${1:-}"
+    echo "$body" | grep -iqE \
+        "codex exec (exited|failed)|exec exited with code [1-9]|HTTP (400|401|403|500)|API error|provider error|\\\"type\\\"[[:space:]]*:[[:space:]]*\\\"error\\\""
+}
+
 # Assert response body matches pattern (case-insensitive)
 # Usage: assert_body_matches "pattern" "test_name"
 assert_body_matches() {
@@ -880,6 +891,12 @@ assert_sync_chat_ok() {
 
     if [ -z "$RESPONSE_TEXT" ]; then
         log_fail "Chat request returned empty response text"
+        log_debug "Response: $RESPONSE_BODY"
+        return 1
+    fi
+
+    if response_contains_provider_failure "$RESPONSE_BODY"; then
+        log_fail "Chat request embedded a provider failure in an HTTP 200 response"
         log_debug "Response: $RESPONSE_BODY"
         return 1
     fi
