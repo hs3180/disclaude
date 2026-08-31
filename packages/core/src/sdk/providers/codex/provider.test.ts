@@ -494,13 +494,13 @@ JSONL
     it("derives workspace-write from permissionMode 'bypassPermissions'/unset (bot default)", async () => {
       sandboxedFixtures();
       await drainStream(makeProvider(fixtures), ['hi']);
-      expect(argvOf(fixtures)).toContain('-c sandbox_mode=workspace-write');
+      expect(argvOf(fixtures)).toContain('-s workspace-write');
     }, 15_000);
 
     it("derives read-only from permissionMode 'default' (ask) — no headless approver, fail closed", async () => {
       sandboxedFixtures();
       await drainStream(makeProvider(fixtures), ['hi'], { permissionMode: 'default' });
-      expect(argvOf(fixtures)).toContain('-c sandbox_mode=read-only');
+      expect(argvOf(fixtures)).toContain('-s read-only');
     }, 15_000);
 
     it('caps at read-only when the denylist blocks mutation tools', async () => {
@@ -509,7 +509,7 @@ JSONL
         permissionMode: 'bypassPermissions',
         disallowedTools: ['Bash'],
       });
-      expect(argvOf(fixtures)).toContain('-c sandbox_mode=read-only');
+      expect(argvOf(fixtures)).toContain('-s read-only');
     }, 15_000);
 
     it('runs unrestricted with ChatAgent’s actual default denylist (claude-only names)', async () => {
@@ -527,7 +527,7 @@ JSONL
           'ScheduleWakeup',
         ],
       });
-      expect(argvOf(fixtures)).toContain('-c sandbox_mode=workspace-write');
+      expect(argvOf(fixtures)).toContain('-s workspace-write');
     }, 15_000);
 
     it('throws (fail closed, actionable) for a WebSearch denylist entry', () => {
@@ -553,7 +553,7 @@ JSONL
         sandboxOverride: 'danger-full-access',
       });
       await drainStream(provider, ['hi'], { permissionMode: 'default' });
-      expect(argvOf(fixtures)).toContain('-c sandbox_mode=danger-full-access');
+      expect(argvOf(fixtures)).toContain('-s danger-full-access');
     }, 15_000);
 
     it('the denylist mutation cap outranks an explicit danger-full-access override', async () => {
@@ -567,7 +567,7 @@ JSONL
         sandboxOverride: 'danger-full-access',
       });
       await drainStream(provider, ['hi'], { disallowedTools: ['Write'] });
-      expect(argvOf(fixtures)).toContain('-c sandbox_mode=read-only');
+      expect(argvOf(fixtures)).toContain('-s read-only');
     }, 15_000);
   });
 
@@ -1007,10 +1007,14 @@ echo done > "$CODEX_HOME/turn-$n.done"
       settingSources: [],
       sessionKey: 'chat-a',
     } as AgentQueryOptions);
+    let sawFirstTurnText = false;
     const collectedA = (async () => {
       const out: unknown[] = [];
       for await (const m of resultA.iterator) {
         out.push(m);
+        if ((m as { type?: string }).type === 'text') {
+          sawFirstTurnText = true;
+        }
       }
       return out;
     })();
@@ -1018,6 +1022,11 @@ echo done > "$CODEX_HOME/turn-$n.done"
     // start, before the run finishes — under load the old wait let chat-b
     // evict chat-a BEFORE the anchor latched (S7 review flaky).
     await waitFor(() => existsSync(join(fixtures.codexHome, 'turn-1.done')));
+    // Also wait until the bridge has consumed thread.started and the text
+    // event. The fixture's turn marker is written by the child and can race
+    // the parent readline consumer; eviction must only happen after the
+    // provider has latched the thread id.
+    await waitFor(() => sawFirstTurnText);
 
     // chat-b registers → cap 1 → chat-a is evicted (LRU: the only session).
     await drainStream(provider, ['b1'], { sessionKey: 'chat-b' });

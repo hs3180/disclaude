@@ -242,10 +242,8 @@ describe('CodexExecRunner (Issue #4630)', () => {
     );
   });
 
-  it('passes the sandbox level as -c sandbox_mode= on BOTH fresh and resume runs', async () => {
-    // `-s` is rejected by `codex exec resume` (verified 0.132.0) while the
-    // config-override form is accepted by both subcommands and enforces
-    // identically — so the runner uses the -c form uniformly.
+  it('uses -s for fresh runs and -c sandbox_mode= for resume runs', async () => {
+    // codex-cli 0.151.0 exposes --sandbox on fresh exec but not on resume.
     fixture.cleanup();
     fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
     const runner = new CodexExecRunner({ binary: fixture.binaryPath });
@@ -253,7 +251,7 @@ describe('CodexExecRunner (Issue #4630)', () => {
       { prompt: 'a', sandboxMode: 'read-only' },
       () => {},
     ).promise;
-    expect(fresh.stderrTail).toContain('-c sandbox_mode=read-only');
+    expect(fresh.stderrTail).toContain('argv:exec --json --skip-git-repo-check -s read-only -- a');
     const resume = await runner.run(
       { prompt: 'b', resumeSessionId: 't-abc', sandboxMode: 'workspace-write' },
       () => {},

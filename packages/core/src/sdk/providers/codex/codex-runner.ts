@@ -54,10 +54,9 @@ export interface CodexExecRunOptions {
   resumeSessionId?: string;
   /**
    * Sandbox level for this run (Issue #4631, S4). Passed uniformly as
-   * `-c sandbox_mode=<level>` on BOTH fresh and resume runs: `-s <level>`
-   * is rejected by `codex exec resume` ("unexpected argument '-s'",
-   * verified 0.132.0) while the config-override form is accepted by both
-   * and enforces identically (read-only write-block verified live).
+   * `-s <level>` on fresh runs. `exec resume` does not expose `--sandbox`,
+   * so resume uses `-c sandbox_mode=<level>` (the config override remains
+   * accepted there and enforces identically; verified on codex-cli 0.151.0).
    */
   sandboxMode?: CodexSandboxLevel;
   /** Environment for the child (merged over the provider env). */
@@ -138,7 +137,8 @@ export class CodexExecRunner {
     // session id is the FIRST positional, the prompt the second; `--` keeps
     // a leading-dash prompt positional. Flags are shared with plain exec
     // (--json / -m / --skip-git-repo-check all verified on resume's help),
-    // EXCEPT -s (sandbox) which resume rejects — hence the -c form below.
+    // EXCEPT sandbox: fresh exec has the dedicated -s flag, while resume only
+    // accepts the config override form (codex-cli 0.151.0).
     const args: string[] = options.resumeSessionId
       ? [
           'exec',
@@ -156,7 +156,7 @@ export class CodexExecRunner {
           '--json',
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
-          ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
+          ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),
           '--',
           options.prompt,
         ];
