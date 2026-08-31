@@ -60,7 +60,6 @@ import { getDebugGroupService } from '../services/debug-group-service.js';
 import type { ChatAgentCallbacks, ChatAgentConfig } from './types.js';
 import { buildDisallowedTools } from './disallowed-tools.js';
 import { HistoryManager } from './history-manager.js';
-import { buildMcpServers, collectInlineMcpInstances } from './mcp-setup.js';
 
 // Type alias for backward compatibility within this module
 type UserInput = AgentUserInput;
@@ -201,11 +200,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // and is dropped if a newer message arrived in between — the replay must
   // never clobber or reorder behind the user's newer input.
   private messageSeq = 0;
-
-  // Issue #4302: inline (in-process) MCP server instances created for this
-  // agent (e.g. channel-mcp), retained so dispose() can close them explicitly
-  // rather than relying solely on the SDK's queryHandle.close() cascade.
-  private mcpInlineInstances: ReadonlyArray<{ close(): Promise<void> | void }> = [];
 
   // Issue #2926: AbortController for immediate stop/reset of running Agent loop
   private abortController: AbortController | null = null;
@@ -883,10 +877,11 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
    * Start the Agent loop for this chatId.
    *
    * Creates a MessageChannel and Query, using the channel's generator for streaming input.
-   * Issue #590 Phase 3: Filters MCP servers based on channel capabilities.
    * Issue #955: Triggers background loading of persisted chat history.
    * Issue #1230: Triggers background loading of chat history for first message.
-   * Issue #3124: Uses buildMcpServers() for shared MCP config, sets up taskComplete promise.
+   * Issue #3124: Sets up taskComplete promise.
+   * Issue #4652: ChatAgent no longer creates or injects MCP servers. Channel
+   * operations are exposed through the runtime-agnostic channel CLI Skill.
    */
   private startAgentLoop(): void {
     const chatId = this.boundChatId;
@@ -922,24 +917,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.logger.error({ err, chatId }, 'Failed to load first message history in background');
       });
     }
-
-    // Issue #3124: Use shared buildMcpServers() helper (includes channel MCP + external servers)
-    // Issue #4146: Pass this.logger so logs keep the 'ChatAgent' source (behavior preserved post-extraction)
-    const mcpServers = buildMcpServers(chatId, this.callbacks, false, this.logger);
-
-    // Issue #4302: retain closeable inline (in-process) MCP instances so
-    // dispose() can tear them down explicitly (the SDK's queryHandle.close()
-    // cascade is not verified for these McpServer instances).
-    //
-    // Issue #4302 (part 2 / restart path): startAgentLoop() runs again on a
-    // restart (processIterator -> startAgentLoop once the previous query ended).
-    // buildMcpServers() returns a fresh channel-mcp McpServer instance each
-    // call, so the previously retained set is now stale. Close it before
-    // overwriting, mirroring the queryHandle/channel teardown above (#3378);
-    // without this the prior restart's inline instances would leak (close()
-    // never invoked).
-    this.closeInlineMcpInstances();
-    this.mcpInlineInstances = collectInlineMcpInstances(mcpServers);
 
     // Build SDK options using BaseAgent's createSdkOptions
     // Issue #1916: Resolve cwd from CwdProvider if available (project-scoped context)
@@ -996,14 +973,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // persistent `schedule` skill needs a guidance nudge (tracked as a #4181
       // follow-up).
       disallowedTools: buildDisallowedTools(),
-      mcpServers,
       // Issue #4634 (S7): chatId as session identity for concurrency
       // governance on backends that bound active sessions (codex).
       sessionKey: chatId,
     });
 
     this.logger.info(
-      { chatId, mcpServers: Object.keys(sdkOptions.mcpServers || {}) },
+      { chatId },
       'Starting SDK query with message channel'
     );
 
@@ -1228,34 +1204,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         'Failed to forward delivery-circuit notice to debug group (Issue #4626)'
       );
     });
-  }
-
-  /**
-   * Issue #4302: close every currently-retained inline (in-process) MCP
-   * instance and clear the list.
-   *
-   * Called from two teardown sites:
-   * - `startAgentLoop()`, before replacing the field on a restart (part 2 of
-   *   #4302): mirrors the queryHandle/channel teardown of #3378/#3745 — a
-   *   wholesale overwrite without close() would leak the previous restart's
-   *   McpServer instances (their close() would never run).
-   * - `dispose()`: defense-in-depth teardown at end of life.
-   *
-   * Each close is fire-and-forget (wrapped in `Promise.resolve(...).catch()`)
-   * so a rejecting or throwing close() can't break the caller; the field is
-   * always reset to `[]` afterward.
-   */
-  private closeInlineMcpInstances(): void {
-    for (const inst of this.mcpInlineInstances) {
-      try {
-        void Promise.resolve(inst.close()).catch((err) => {
-          this.logger.warn({ err }, 'Failed to close inline MCP instance (Issue #4302)');
-        });
-      } catch (err) {
-        this.logger.warn({ err }, 'Inline MCP instance close() threw (Issue #4302)');
-      }
-    }
-    this.mcpInlineInstances = [];
   }
 
   /**
@@ -2472,14 +2420,6 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.channel.close();
       this.channel = undefined;
     }
-
-    // Issue #4302: explicitly close inline (in-process) MCP server instances.
-    // Defense-in-depth: the queryHandle.close() above verifies the query
-    // transport teardown, not these McpServer instances disclaude created. The
-    // query is already done (queryHandle closed above), so closing here is
-    // safe. (Stdio external MCP subprocesses have no disclaude-side handle;
-    // their teardown remains SDK-dependent — #4302 criterion 1.)
-    this.closeInlineMcpInstances();
 
     // Issue #4063: Reject per-turn completion on dispose (agent eviction during turn)
     this.rejectTurn(new Error('Agent disposed'));

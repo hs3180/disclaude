@@ -189,14 +189,14 @@ describe('MessageBuilder with Feishu sections', () => {
     });
   });
 
-  describe('buildToolsSection - Feishu MCP tool names', () => {
-    it('should include full MCP tool name mcp__channel-mcp__send_text', () => {
+  describe('buildToolsSection - channel CLI Skill commands', () => {
+    it('should include the send_text CLI command', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text']));
 
-      expect(result).toContain('mcp__channel-mcp__send_text');
+      expect(result).toContain('node skills/channel/cli.mjs send_text');
       expect(result).toContain('chat-123');
     });
 
@@ -206,7 +206,7 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_card']));
 
-      expect(result).toContain('mcp__channel-mcp__send_card');
+      expect(result).toContain('node skills/channel/cli.mjs send_card');
     });
 
     it('should include send_interactive when available', () => {
@@ -215,26 +215,26 @@ describe('MessageBuilder with Feishu sections', () => {
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_interactive']));
 
-      expect(result).toContain('mcp__channel-mcp__send_interactive');
+      expect(result).toContain('node skills/channel/cli.mjs send_interactive');
     });
 
-    it('should include IMPORTANT warning to use correct tool', () => {
+    it('should explain automatic final delivery and CLI use for extra messages', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text']));
 
       expect(result).toContain('**IMPORTANT**');
-      expect(result).toContain('Do NOT use any other MCP server');
+      expect(result).toContain('normal final response is delivered by ChatAgent automatically');
     });
 
-    it('should include mcp__channel-mcp__send_file when available', () => {
+    it('should include the send_file CLI command when available', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
       }, 'chat-123', withTools(['send_text', 'send_file']));
 
-      expect(result).toContain('mcp__channel-mcp__send_file');
+      expect(result).toContain('node skills/channel/cli.mjs send_file');
     });
 
     it('should not include send_file when not in supportedMcpTools', () => {

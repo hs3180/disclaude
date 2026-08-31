@@ -158,11 +158,10 @@ export function createChannelCallbacksFactory(
     getChatHistory: options?.getChatHistory,
     // Issue #3996: Wire getChatLogFilePaths so agent knows where log files are
     getChatLogFilePaths: options?.getChatLogFilePaths,
-    // Issue #3530: Wire getCapabilities so buildMcpServers can correctly
-    // include/exclude channel MCP tools based on actual channel support.
-    // Without this, supportedMcpTools is always undefined and channel-mcp
-    // (send_text, etc.) is always included — even for REST channel where
-    // these tools route through Feishu IPC and fail with test credentials.
+    // Issue #3530: Wire getCapabilities so message construction can correctly
+    // include/exclude channel operations based on actual channel support.
+    // Since #4652 ChatAgent no longer injects channel-mcp; this capability now
+    // governs channel CLI Skill guidance only.
     getCapabilities: (_chatId: string) => channel.getCapabilities(),
     // Issue #4400 (#4208 P2-c): wire the IChannel streaming callbacks when the
     // channel exposes them. The ChatAgent gate additionally requires

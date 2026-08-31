@@ -52,7 +52,9 @@ To notify the user in your FINAL response, use:
 /**
  * Build Feishu capability-aware tools section.
  *
- * Issue #582: Dynamically includes available MCP tools based on channel capabilities.
+ * Issue #582: Dynamically includes available channel operations based on capabilities.
+ * Issue #4652: Uses the runtime-agnostic channel CLI Skill after ChatAgent's
+ * default MCP injection was removed.
  */
 function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   const { chatId, msg, capabilities } = ctx;
@@ -75,13 +77,13 @@ function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   // Build messaging tools section
   const messagingTools: string[] = [];
   if (hasTool('send_text')) {
-    messagingTools.push('- `mcp__channel-mcp__send_text` - Send plain text messages');
+    messagingTools.push('- `node skills/channel/cli.mjs send_text` - Send plain text messages');
   }
   if (hasTool('send_card')) {
-    messagingTools.push('- `mcp__channel-mcp__send_card` - Send display-only cards (no interactions)');
+    messagingTools.push('- `node skills/channel/cli.mjs send_card` - Send display-only cards (no interactions)');
   }
   if (hasTool('send_interactive')) {
-    messagingTools.push('- `mcp__channel-mcp__send_interactive` - Send interactive cards with buttons/actions');
+    messagingTools.push('- `node skills/channel/cli.mjs send_interactive` - Send interactive cards with buttons/actions');
   }
 
   if (messagingTools.length > 0) {
@@ -91,13 +93,13 @@ ${messagingTools.join('\n')}
 - Chat ID: \`${chatId}\`
 - parentMessageId: \`${msg.messageId || ''}\` (for thread replies)
 
-**IMPORTANT**: Always use \`mcp__channel-mcp__send_*\` tools for sending messages. Do NOT use any other MCP server's tools for messaging.`);
+**IMPORTANT**: Use the channel CLI Skill for proactive or additional messages; your normal final response is delivered by ChatAgent automatically.`);
   }
 
   // send_file tool
   if (hasTool('send_file')) {
     parts.push(`
-- **File sending**: Use \`mcp__channel-mcp__send_file\` for sending files to Feishu`);
+- **File sending**: Use \`node skills/channel/cli.mjs send_file --chat ${chatId} --file <path>\` for sending files to Feishu`);
   } else if (supportedTools !== undefined) {
     parts.push(`
 - Note: send_file is NOT supported on this channel. Files will not be sent.`);
