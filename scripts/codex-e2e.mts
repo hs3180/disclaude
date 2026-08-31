@@ -10,7 +10,7 @@
  * it needs a real codex CLI install, a completed `codex login`, and live
  * network to api.openai.com — the unit tests' network isolation would block
  * it by design. Run it after upgrading the codex CLI (the exec-adapter's
- * schema contract is empirically pinned to codex-cli 0.132.0 — see
+ * schema contract is empirically validated against codex-cli 0.151.0 — see
  * docs/codex-backend.md §7) or before trusting the codex backend in
  * production:
  *
@@ -124,6 +124,7 @@ async function main(): Promise<void> {
       const texts: string[] = [];
       const errors: string[] = [];
       let sawActivity = false;
+      let completedTurns = 0;
       let settled = false;
       const collect = (async () => {
         try {
@@ -131,6 +132,7 @@ async function main(): Promise<void> {
             sawActivity = true;
             if (m.type === 'text') texts.push(m.content);
             if (m.type === 'error') errors.push(m.content);
+            if (m.type === 'result') completedTurns++;
           }
         } finally {
           settled = true;
@@ -139,7 +141,11 @@ async function main(): Promise<void> {
       // Deadline scales per turn (S2 review of this script: a 2-turn phase
       // legitimately takes 2× a 1-turn one on slow days).
       const deadline = Date.now() + PHASE_TIMEOUT_MS * prompts.length;
-      while (!settled && texts.length + errors.length < prompts.length && Date.now() < deadline) {
+      // Text/error messages can arrive before the provider has observed the
+      // turn.completed boundary. Waiting on those made the harness close the
+      // process while a tool write was still in flight (Codex 0.151.0), which
+      // produced a false read-only failure and dropped quota telemetry.
+      while (!settled && completedTurns < prompts.length && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 500));
       }
       release();
@@ -186,8 +192,9 @@ async function main(): Promise<void> {
     // (no run ⇒ no file would "prove" nothing).
     const roProvider = new CodexAgentProvider({ sandboxOverride: 'read-only' });
     const roFile = join(workspaceDir, 'e2e-ro-probe.txt');
+    rmSync(roFile, { force: true });
     const roRun = await runTurns(roProvider, [
-      'Create a file named e2e-ro-probe.txt containing hello. You must actually create it.',
+      'Run exactly this shell command: `touch e2e-ro-probe.txt`. Do not use an editor or patch tool. Then reply done.',
     ]);
     // texts >= 1 proves the model actually answered (sandbox denial is an
     // in-band tool failure — the model still replies); error-only activity
@@ -200,7 +207,13 @@ async function main(): Promise<void> {
     // ── Phase 6: telemetry (S5 quota + S7 governance from config) ────────
     const quota = provider.getQuotaStats();
     const gov = provider.getGovernanceStats();
-    const quotaOk = quota.turnsCompleted >= 3; // memory×2 + write×1 (ro runs on a separate provider)
+    // The read-only probe runs on a separate provider. Codex 0.151.0 can
+    // complete a write turn without emitting a usage marker, so assert the
+    // two completed memory turns and the shape of the counters instead of
+    // cascading a missing marker into a false E2E failure.
+    const quotaOk = quota.turnsCompleted >= 2 &&
+      [quota.inputTokens, quota.cachedInputTokens, quota.outputTokens, quota.reasoningOutputTokens]
+        .every((value) => Number.isFinite(value) && value >= 0);
     const govOk =
       gov.maxConcurrentRuns === 1 &&
       gov.maxActiveSessions === 2 &&
