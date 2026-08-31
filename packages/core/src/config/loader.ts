@@ -178,6 +178,29 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     return false;
   }
 
+  // Codex authenticates and selects models through the ChatGPT subscription,
+  // not through disclaude's GLM/Anthropic API configuration. Keep accepting
+  // legacy provider fields for migration, but make the ignored settings
+  // explicit so a deployment cannot silently use a different model backend.
+  if (config.agent?.agentBackend === 'codex') {
+    if (config.agent.provider || config.glm?.apiKey || config.glm?.model) {
+      logger.warn(
+        {
+          provider: config.agent.provider,
+          hasGlmApiKey: Boolean(config.glm?.apiKey),
+          hasGlmModel: Boolean(config.glm?.model),
+        },
+        'agentBackend: codex uses the ChatGPT OAuth session; agent.provider and glm settings are ignored',
+      );
+    }
+    if (config.agent.model && !isCodexModel(config.agent.model)) {
+      logger.error(
+        `agent.model must be a Codex/ChatGPT model (expected gpt-5.x, got "${config.agent.model}")`,
+      );
+      return false;
+    }
+  }
+
   // Issue #4388: validate agent.agentBackend (agent SDK runtime selection).
   // 'codex' added in #4629 (S1 of #4627).
   if (config.agent?.agentBackend !== undefined) {
@@ -229,6 +252,11 @@ export function validateConfig(config: DisclaudeConfig): boolean {
   }
 
   return true;
+}
+
+/** Return whether a model identifier is supported by the Codex CLI backend. */
+export function isCodexModel(model: string): boolean {
+  return /^gpt-5(?:[.-]|$)/i.test(model.trim());
 }
 
 /**
