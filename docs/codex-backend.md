@@ -106,7 +106,7 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 
 ## 7. 当前限制（重要）
 
-1. **tools/MCP 映射未实现**：`createInlineTool` / `createMcpServer` 抛 not-supported（codex 有自己的 MCP 配置面，映射是 [#4627](https://github.com/hs3180/disclaude/issues/4627) 的开放问题）。落地前，disclaude 侧的 MCP 工具（如 Playwright MCP）在 codex 后端下**不可用**。
+1. **tools/MCP 映射未实现**：`createInlineTool` / `createMcpServer` 仍抛 not-supported（codex 有自己的 MCP 配置面，映射是 [#4627](https://github.com/hs3180/disclaude/issues/4627) 的开放问题）。不过，自 #4652 起 ChatAgent 不再创建或注入默认 MCP server，因此这项限制**不会阻止 Codex backend 启动**；消息扩展操作统一走 `skills/channel/cli.mjs`。
 2. **LLM 供应商绑定**：见第 3 节（#4637）。glm/anthropic 配置静默忽略——后续会在 config 校验层显式告警。
 3. **web_search 无法禁用**：0.132.0 实证 `-c tools.web_search=false` 与 `--disable web_search` 均无效。因此 denylist 含 `WebSearch` 时 codex 后端**拒绝启动查询**（可操作的报错），而不是静默违反策略。
 4. **无逐调用审批**：见第 5 节。细于沙箱级别的「询问用户」语义在 codex 后端不可表达。
@@ -123,5 +123,5 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 
 ## 9. 何时该用 codex / 何时该留在 claude
 
-- **用 `codex`**：单人 bot 想把 ChatGPT 订阅当算力、任务**不依赖** disclaude 侧 MCP 工具（Playwright 等）与细粒度逐调用审批。
+- **用 `codex`**：单人 bot 想把 ChatGPT 订阅当算力，并接受 CLI Skills 替代 disclaude 侧 MCP 工具与无细粒度逐调用审批的边界。
 - **留在 `claude`（默认）**：生产环境、需要 MCP / 权限模式 / 多模型供应商组合（GLM 等）——这是功能最全的后端。

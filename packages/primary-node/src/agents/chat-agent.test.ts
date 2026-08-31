@@ -19,7 +19,7 @@ vi.mock('@disclaude/core', async (importOriginal) => {
   // explicitly mocked below.
   const actual = await importOriginal<typeof import('@disclaude/core')>();
   const BaseAgent = vi.fn().mockImplementation(function (this: any) {
-    this.createSdkOptions = vi.fn(() => ({ mcpServers: {} }));
+    this.createSdkOptions = vi.fn((extra: Record<string, unknown> = {}) => extra);
     this.createQueryStream = vi.fn(() => ({
       handle: { close: vi.fn(), cancel: vi.fn() },
       iterator: (async function* () {
@@ -132,19 +132,6 @@ vi.mock('@disclaude/core', async (importOriginal) => {
   };
 });
 
-vi.mock('@disclaude/mcp-server', () => ({
-  // Issue #4302: mirror the real production shape. createChannelMcpServer()
-  // -> ClaudeSDKProvider.createMcpServer -> createSdkMcpServer, which returns a
-  // `{ type: 'sdk', name, instance }` wrapper whose `.instance.close()` is what
-  // dispose() tears down. (Previously `{ type: 'inline' }` with no instance, so
-  // collectInlineMcpInstances() never matched — the #4302 wiring was untested.)
-  createChannelMcpServer: vi.fn(() => ({
-    type: 'sdk',
-    name: 'channel-mcp',
-    instance: { close: vi.fn().mockResolvedValue(undefined) },
-  })),
-}));
-
 // Mock debug-group-service (Issue #3809)
 const mockGetDebugGroup = vi.fn<(chatId?: string) => { chatId: string; setAt: number } | null>(
   () => null
@@ -159,7 +146,6 @@ vi.mock('../services/debug-group-service.js', () => ({
 }));
 
 import { ChatAgent } from './chat-agent.js';
-import { createChannelMcpServer } from '@disclaude/mcp-server';
 
 const createMockCallbacks = () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -319,94 +305,19 @@ describe('ChatAgent (primary-node)', () => {
       expect(() => chatAgent.dispose()).not.toThrow();
     });
 
-    it('Issue #4302: closes retained inline MCP instances on dispose', () => {
-      const closeA = vi.fn().mockResolvedValue(undefined);
-      const closeB = vi.fn().mockResolvedValue(undefined);
-      (chatAgent as any).mcpInlineInstances = [{ close: closeA }, { close: closeB }];
+  });
 
-      // The BaseAgent mock sets an instance `this.dispose = vi.fn()` that
-      // shadows ChatAgent.prototype.dispose, so invoke the real method.
-      (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(chatAgent);
-
-      expect(closeA).toHaveBeenCalledTimes(1);
-      expect(closeB).toHaveBeenCalledTimes(1);
-      // Field cleared after dispose.
-      expect((chatAgent as any).mcpInlineInstances).toEqual([]);
-    });
-
-    it('Issue #4302: a rejecting inline MCP close() does not break dispose', () => {
-      (chatAgent as any).mcpInlineInstances = [
-        { close: vi.fn().mockRejectedValue(new Error('boom')) },
-      ];
-      expect(() =>
-        (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(chatAgent)
-      ).not.toThrow();
-    });
-
-    it('Issue #4302: startAgentLoop retains the inline MCP instance; dispose() closes it', () => {
-      // Drive the real wiring: buildMcpServers() (real) -> createChannelMcpServer
-      // (mocked, production { type: 'sdk', instance } shape) -> collectInlineMcpInstances
-      // (real) -> ChatAgent.mcpInlineInstances. processMessage() starts the agent
-      // loop synchronously, so the field is populated before the next assertion.
-      const close = vi.fn().mockResolvedValue(undefined);
-      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-        type: 'sdk',
-        name: 'channel-mcp',
-        instance: { close },
-      });
-
-      void chatAgent.processMessage({
-        chatId: 'oc_test_chat',
-        payload: 'hi',
-        messageId: 'msg_int_4302',
-      });
-
-      const retained = (chatAgent as any).mcpInlineInstances as unknown[];
-      expect(retained).toHaveLength(1);
-      expect((retained[0] as { close: unknown }).close).toBe(close);
-
-      // dispose() closes the retained instance (inst.close() runs synchronously
-      // inside Promise.resolve(...)) and clears the field.
-      (ChatAgent.prototype.dispose as unknown as (this: unknown) => void).call(chatAgent);
-      expect(close).toHaveBeenCalledTimes(1);
-      expect((chatAgent as any).mcpInlineInstances).toEqual([]);
-    });
-
-    it('Issue #4302: startAgentLoop restart closes the previous inline MCP instance before replacing it', () => {
-      // A restart re-enters startAgentLoop() (processIterator -> startAgentLoop
-      // after the previous query ended). buildMcpServers() hands back a fresh
-      // channel-mcp instance each call, so the previously retained instance is
-      // now stale. Without the teardown it would be overwritten and its close()
-      // would never run -> leak, the MCP analogue of #3378.
-      const closeA = vi.fn().mockResolvedValue(undefined);
-      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-        type: 'sdk',
-        name: 'channel-mcp',
-        instance: { close: closeA },
-      });
-
-      // First loop start: retains instance A (not yet closed).
-      (chatAgent as any).startAgentLoop();
-      let retained = (chatAgent as any).mcpInlineInstances as unknown[];
-      expect(retained).toHaveLength(1);
-      expect((retained[0] as { close: unknown }).close).toBe(closeA);
-      expect(closeA).not.toHaveBeenCalled();
-
-      // Second loop start (restart): a fresh instance B is built. The stale
-      // instance A must be closed before it is overwritten.
-      const closeB = vi.fn().mockResolvedValue(undefined);
-      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-        type: 'sdk',
-        name: 'channel-mcp',
-        instance: { close: closeB },
-      });
+  describe('MCP-free startup (Issue #4652)', () => {
+    it('starts the production query path without constructing or injecting mcpServers', () => {
       (chatAgent as any).startAgentLoop();
 
-      expect(closeA).toHaveBeenCalledTimes(1); // stale instance torn down
-      expect(closeB).not.toHaveBeenCalled();   // current instance retained
-      retained = (chatAgent as any).mcpInlineInstances as unknown[];
-      expect(retained).toHaveLength(1);
-      expect((retained[0] as { close: unknown }).close).toBe(closeB);
+      const createSdkOptions = (chatAgent as any).createSdkOptions as ReturnType<typeof vi.fn>;
+      expect(createSdkOptions).toHaveBeenCalledTimes(1);
+      expect(createSdkOptions.mock.calls[0][0]).not.toHaveProperty('mcpServers');
+      expect((chatAgent as any).createQueryStream).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.not.objectContaining({ mcpServers: expect.anything() }),
+      );
     });
   });
 
@@ -447,12 +358,6 @@ describe('ChatAgent (primary-node)', () => {
     };
 
     it('pushes a user-visible warning when the bound directory is missing', () => {
-      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-        type: 'sdk',
-        name: 'channel-mcp',
-        instance: { close: vi.fn().mockResolvedValue(undefined) },
-      });
-
       const agent = mkAgent('bound-missing');
       (agent as any).startAgentLoop();
 
@@ -467,12 +372,6 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('does not warn when the binding resolves cleanly (bound)', () => {
-      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-        type: 'sdk',
-        name: 'channel-mcp',
-        instance: { close: vi.fn().mockResolvedValue(undefined) },
-      });
-
       const agent = mkAgent('bound');
       (agent as any).startAgentLoop();
 
@@ -480,12 +379,6 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('does not warn when the chat is unbound (workspace is expected)', () => {
-      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-        type: 'sdk',
-        name: 'channel-mcp',
-        instance: { close: vi.fn().mockResolvedValue(undefined) },
-      });
-
       const agent = mkAgent('unbound');
       (agent as any).startAgentLoop();
 
@@ -493,11 +386,6 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('a rejecting sendMessage does not break the agent loop start', () => {
-      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-        type: 'sdk',
-        name: 'channel-mcp',
-        instance: { close: vi.fn().mockResolvedValue(undefined) },
-      });
       const sendErr = callbacks.sendMessage as unknown as ReturnType<typeof vi.fn>;
       sendErr.mockRejectedValueOnce(new Error('channel down'));
 
@@ -509,15 +397,6 @@ describe('ChatAgent (primary-node)', () => {
     // Nit (restart re-announce): startAgentLoop() re-runs on restart cycles —
     // the same missing target must not warn the chat twice per agent instance.
     it('does not re-warn the same missing directory on a restart cycle', () => {
-      const mockServer = () =>
-        vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-          type: 'sdk',
-          name: 'channel-mcp',
-          instance: { close: vi.fn().mockResolvedValue(undefined) },
-        });
-      mockServer();
-      mockServer();
-
       const agent = mkAgent('bound-missing', ['bound-missing', 'bound-missing']);
       (agent as any).startAgentLoop(); // first spawn → warns
       (agent as any).startAgentLoop(); // restart cycle → same target, stays quiet
@@ -526,16 +405,6 @@ describe('ChatAgent (primary-node)', () => {
     });
 
     it('warns again after the binding recovers and the target goes missing again', () => {
-      const mockServer = () =>
-        vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-          type: 'sdk',
-          name: 'channel-mcp',
-          instance: { close: vi.fn().mockResolvedValue(undefined) },
-        });
-      mockServer();
-      mockServer();
-      mockServer();
-
       const agent = mkAgent('bound-missing', ['bound-missing', 'bound', 'bound-missing']);
       (agent as any).startAgentLoop(); // missing → warns
       (agent as any).startAgentLoop(); // recovered (bound) → no warn, fingerprint cleared
@@ -547,12 +416,6 @@ describe('ChatAgent (primary-node)', () => {
     // Nit (double resolveCwd): when cwdResolver is present it subsumes
     // cwdProvider — the provider must not be consulted at all.
     it('uses cwdResolver alone and does not call cwdProvider (no double resolveCwd)', () => {
-      vi.mocked(createChannelMcpServer).mockReturnValueOnce({
-        type: 'sdk',
-        name: 'channel-mcp',
-        instance: { close: vi.fn().mockResolvedValue(undefined) },
-      });
-
       const cwdProvider = vi.fn(() => '/bound/project/dir');
       const agent = new ChatAgent({
         chatId: 'oc_test_chat',
