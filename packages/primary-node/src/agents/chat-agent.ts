@@ -47,6 +47,7 @@ import {
   forceCleanupLeakedListeners,
   tagErrorCategory,
   StreamingReplyDriver,
+  TurnSupersededError,
   type StreamingUserMessage,
   type QueryHandle,
   type ChatAgent as ChatAgentInterface,
@@ -92,6 +93,25 @@ function extractSendHttpStatus(err: unknown): number | undefined {
   const status = e.response?.status ?? e.status;
   return typeof status === 'number' ? status : undefined;
 }
+
+/**
+ * Issue #4649 (review ③): one turn-completion entry per accepted channel
+ * push. `settle` resolves on no error / rejects with one; `settled` gates
+ * settlement to exactly once and lets resolveTurn skip already-finished
+ * entries that linger for late awaiters (see turnCompleteFor).
+ */
+interface TurnCompletionEntry {
+  promise: Promise<void>;
+  settle: (error?: Error) => void;
+  settled: boolean;
+}
+
+/**
+ * Issue #4649 (review ③): bound on the turn-completion registry, mirroring
+ * the pendingTurnAnchors bound — a parked/dead session with no iterator
+ * draining must not grow either structure unboundedly.
+ */
+const MAX_TURN_COMPLETIONS = 50;
 
 /**
  * ChatAgent - Platform-agnostic direct chat abstraction with Streaming Input.
@@ -249,10 +269,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   private taskCompletionResolve?: () => void;
   private taskCompletionReject?: (error: Error) => void;
 
-  // Issue #4063: Per-turn completion promise (works in persistent mode, unlike taskComplete)
-  private turnCompletionPromise?: Promise<void>;
-  private turnCompletionResolve?: () => void;
-  private turnCompletionReject?: (error: Error) => void;
+  // Issue #4063 / #4649 (review ③): per-MESSAGE turn-completion registry
+  // (works in persistent mode, unlike taskComplete). One entry per accepted
+  // channel push, keyed by messageId, insertion-ordered. See
+  // createTurnCompletion for why this is a registry and not the pre-#4649
+  // single slot.
+  private readonly turnCompletions = new Map<string, TurnCompletionEntry>();
 
   constructor(config: ChatAgentConfig) {
     super(config);
@@ -375,44 +397,125 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   /**
    * Per-turn completion promise (Issue #4063).
    * Unlike taskComplete, resolves after each turn in persistent mode.
+   *
+   * Issue #4649 (review ③): returns the NEWEST pushed message's promise.
+   * Under interleaving (another message pushed while this caller's message is
+   * still queued) this can be a DIFFERENT message's promise — callers that
+   * can interleave (Scheduler / Loop Runner via the pool handler) must use
+   * turnCompleteFor(messageId) instead.
    */
   get turnComplete(): Promise<void> | undefined {
-    return this.turnCompletionPromise;
+    let newest: Promise<void> | undefined;
+    for (const entry of this.turnCompletions.values()) {
+      newest = entry.promise;
+    }
+    return newest;
   }
 
   /**
-   * Set up a new turn completion promise (Issue #4063).
-   * Call this when pushing a message to the channel.
+   * Completion promise for ONE message's own turn (Issue #4649 review ③).
+   *
+   * Resolved when that message's turn ends with a result; rejected when its
+   * turn (or the session carrying it) dies; rejected at push time when the
+   * channel refused the message. Entries stay retrievable after settling
+   * (until evicted by the bounded registry), so a caller grabbing the promise
+   * right after processMessage() resolves can never miss it — the pre-#4649
+   * single-slot getter returned undefined once the turn finished, which made
+   * "already finished" indistinguishable from "never started".
+   *
+   * Undefined when this message never entered a turn (no session channel) or
+   * its entry was evicted — callers must treat that as a failure, not success
+   * (Issue #4649 review ⑤).
    */
-  private setTurnPending(): void {
-    this.turnCompletionReject?.(new Error('Turn superseded by new message'));
-    this.turnCompletionPromise = new Promise<void>((resolve, reject) => {
-      this.turnCompletionResolve = resolve;
-      this.turnCompletionReject = reject;
-    });
-    // Prevent unhandled rejection when nobody awaits
-    this.turnCompletionPromise.catch(() => {});
+  turnCompleteFor(messageId: string): Promise<void> | undefined {
+    return this.turnCompletions.get(messageId)?.promise;
   }
 
   /**
-   * Resolve the current turn completion promise (Issue #4063).
-   * Call this when a result message is received from the SDK.
+   * Register the per-message turn-completion entry for a channel push
+   * (Issue #4063; per-message shape from #4649 review ③).
+   *
+   * Why a registry and not the pre-#4649 single slot: one processIterator
+   * serves many interleaved turns, and the slot was written at PUSH time — a
+   * message queued behind a running turn overwrote it, so (a) the previous
+   * turn's await was rejected as "superseded" even though that turn was alive
+   * and would finish on its own, and (b) the previous turn's result then
+   * resolved the NEW message's promise — a fake "completed" while the queued
+   * message's turn had not even started, its later death left nothing to
+   * reject (the 38-day incident shape, preserved for queued messages). One
+   * entry per message + FIFO settlement (resolveTurn settles the oldest
+   * unsettled entry, because turns end in push order) gives every awaiter its
+   * OWN turn's real outcome.
+   */
+  private createTurnCompletion(messageId: string): TurnCompletionEntry {
+    // Same-messageId re-push (the empty-turn replay re-invokes processMessage
+    // with the original params): replace. Map.set on an existing key keeps
+    // its old insertion position, so delete first — the replay's turn runs
+    // LAST and must be ordered accordingly.
+    const previous = this.turnCompletions.get(messageId);
+    if (previous && !previous.settled) {
+      previous.settled = true;
+      previous.settle(new TurnSupersededError());
+    }
+    this.turnCompletions.delete(messageId);
+
+    let settle!: (error?: Error) => void;
+    const promise = new Promise<void>((resolve, reject) => {
+      settle = (error?: Error) => (error ? reject(error) : resolve());
+    });
+    const entry: TurnCompletionEntry = { promise, settle, settled: false };
+    // Prevent unhandled rejection when nobody awaits (ordinary user messages)
+    promise.catch(() => {});
+    this.turnCompletions.set(messageId, entry);
+
+    // Bounded like pendingTurnAnchors: a parked/dead session with no iterator
+    // draining must not grow this unboundedly. Evicted entries are settled
+    // with an error so a still-awaiting caller never hangs silently.
+    while (this.turnCompletions.size > MAX_TURN_COMPLETIONS) {
+      const oldest = this.turnCompletions.entries().next();
+      if (oldest.done) {break;}
+      const [oldestKey, oldestEntry] = oldest.value;
+      this.turnCompletions.delete(oldestKey);
+      if (!oldestEntry.settled) {
+        oldestEntry.settled = true;
+        oldestEntry.settle(new Error('Turn completion evicted (registry overflow)'));
+      }
+    }
+    return entry;
+  }
+
+  /**
+   * Settle the oldest unsettled turn completion (Issue #4063; FIFO semantics
+   * from #4649 review ③). Call at each turn end (result / stall /
+   * empty-stream / evicted terminations) — turns end in push order, so the
+   * front entry belongs to the turn that just ended. Settled entries stay
+   * registered for late awaiters until evicted by the bound.
    */
   private resolveTurn(): void {
-    this.turnCompletionResolve?.();
-    this.turnCompletionPromise = undefined;
-    this.turnCompletionResolve = undefined;
-    this.turnCompletionReject = undefined;
+    for (const entry of this.turnCompletions.values()) {
+      if (!entry.settled) {
+        entry.settled = true;
+        entry.settle();
+        return;
+      }
+    }
   }
 
   /**
-   * Reject the current turn completion promise on error (Issue #4063).
+   * Reject every unsettled turn completion (Issue #4063; all-entries
+   * semantics from #4649 review ③). Every call site is a whole-session death
+   * (iterator error, startup failure, reset, dispose, session replacement):
+   * queued messages' turns die with the session, so each awaiter gets the
+   * error instead of hanging. A SINGLE message's failure must settle only its
+   * own entry (see the channel-closed push path in processMessage).
    */
   private rejectTurn(error: Error): void {
-    this.turnCompletionReject?.(error);
-    this.turnCompletionPromise = undefined;
-    this.turnCompletionResolve = undefined;
-    this.turnCompletionReject = undefined;
+    for (const entry of this.turnCompletions.values()) {
+      if (!entry.settled) {
+        entry.settled = true;
+        entry.settle(error);
+      }
+    }
   }
 
   /**
@@ -810,8 +913,12 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       // Issue #4620: authoritative turn-start timestamp for the pool's
       // busy-turn cap — see turnStartedAtMs getter.
       this.turnStartedAtMsPrivate = Date.now();
-      // Issue #4063: Set up per-turn completion promise
-      this.setTurnPending();
+      // Issue #4063 / #4649 (review ③): register THIS message's completion
+      // entry before the push so turnCompleteFor(messageId) can never miss
+      // it. On push rejection only THIS entry is settled — rejectTurn()
+      // settles ALL pending entries and would misattribute a channel close
+      // to unrelated live turns' awaiters.
+      const turnEntry = this.createTurnCompletion(messageId);
       const accepted = this.channel.push(userMessage);
       if (!accepted) {
         // Issue #2007: Channel is closed — message would be silently dropped.
@@ -819,7 +926,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         // Issue #3985: Reset isProcessingMessage since the message was not actually processed.
         // Issue #4063: Reject turn completion since message was not processed.
         this.isProcessingMessage = false;
-        this.rejectTurn(new Error('Channel closed — message not processed'));
+        turnEntry.settled = true;
+        turnEntry.settle(new Error('Channel closed — message not processed'));
         this.logger.warn({ chatId, messageId }, 'Message rejected: channel is closed');
         this.callbacks
           .sendMessage(chatId, '⚠️ 消息未能送达，会话可能已结束。请发送 /reset 重置会话后重试。')
@@ -1023,6 +1131,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // because processMessage enqueues AFTER startAgentLoop() returns (see the
     // enqueue site), so a live anchor is never eaten here.
     this.pendingTurnAnchors = [];
+
+    // Issue #4649 (review ③): fresh session — the OLD session's queued
+    // messages will never get a turn (their channel is closed above), so
+    // settle their completion entries instead of leaving awaiters hanging
+    // until their own timeout. Safe by the same ordering argument as the
+    // anchor clear: the current message's entry is registered only after
+    // startAgentLoop() returns (see the push site in processMessage).
+    this.rejectTurn(new Error('Session replaced — queued message never processed'));
 
     // Issue #3378: Log process exit listener count for leak monitoring.
     // Each Claude Agent SDK query() registers process.on("exit", handler) via ProcessTransport.
@@ -1993,8 +2109,14 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         this.isSessionActive = false;
         this.isProcessingMessage = false;
 
-        // Issue #4063: Reject per-turn completion on startup failure
-        this.rejectTurn(iteratorError);
+        // Issue #4063: Reject per-turn completion on startup failure.
+        // Issue #4649 (review ③): generation guard — a superseded iterator
+        // (its session was replaced via reset / replay / restart) must not
+        // settle the NEW session's entries; its own entries died with its
+        // session and the replacement already settled them.
+        if (this.sessionGeneration === myGeneration) {
+          this.rejectTurn(iteratorError);
+        }
 
         // Issue #3124: Reject completion promise on startup failure
         this.taskCompletionReject?.(iteratorError);
@@ -2018,8 +2140,13 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
         );
       }
 
-      // Issue #4063: Reject per-turn completion on runtime error
-      this.rejectTurn(iteratorError);
+      // Issue #4063: Reject per-turn completion on runtime error.
+      // Issue #4649 (review ③): generation guard — see the startup-failure
+      // branch above for why a superseded iterator must not settle the
+      // replacement session's entries.
+      if (this.sessionGeneration === myGeneration) {
+        this.rejectTurn(iteratorError);
+      }
 
       // Issue #3124: Reject completion promise on runtime error
       this.taskCompletionReject?.(iteratorError);

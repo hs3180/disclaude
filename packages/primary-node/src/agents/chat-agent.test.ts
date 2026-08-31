@@ -56,6 +56,10 @@ vi.mock('@disclaude/core', async (importOriginal) => {
     BaseAgent,
     // Issue #4399: real driver so the streaming wiring is exercised end-to-end.
     StreamingReplyDriver: actual.StreamingReplyDriver,
+    // Issue #4649 (review ①): real class — ChatAgent throws it from
+    // setTurnPending and the tests below assert instanceof on the exact
+    // class the production import resolves to.
+    TurnSupersededError: actual.TurnSupersededError,
     // Issue #4391: real policy — the reset+replay bounding under test.
     EmptyTurnRetryPolicy: actual.EmptyTurnRetryPolicy,
     MessageBuilder: vi.fn().mockImplementation(() => ({
@@ -3400,3 +3404,174 @@ describe('ChatAgent (primary-node)', () => {
     });
   });
 });
+
+  // Issue #4649 (review ③): the turn-completion promise was a single slot
+  // written at PUSH time. A message queued behind a running turn overwrote
+  // the slot, so (a) the in-flight turn's await was rejected as "superseded"
+  // even though that turn was alive and would finish on its own (review ①
+  // shape), and (b) the in-flight turn's result then resolved the QUEUED
+  // message's promise — a fake "completed" recorded by the scheduler while
+  // the queued turn had not started, its later death leaving nothing to
+  // reject (the 38-day incident shape, preserved for queued messages —
+  // review ③). These tests pin the per-message registry that replaces it.
+  describe('Issue #4649 review ③: per-message turn completions', () => {
+    /** 'pending' unless the promise has already settled (sync race — returns a Promise, never awaits). */
+    function settlementOf(p: Promise<void>): Promise<'pending' | 'settled'> {
+      return Promise.race([
+        p.then(
+          () => 'settled' as const,
+          () => 'settled' as const,
+        ),
+        Promise.resolve('pending' as const),
+      ]);
+    }
+
+    function makeAgent() {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_queue',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      (agent as any).isAgentTeamsEnabled = () => false;
+      return { agent, localCallbacks };
+    }
+
+    it('a queued message is NOT resolved by the previous turn\'s result — each message gets its own turn outcome', async () => {
+      const { agent } = makeAgent();
+
+      let releaseSecondTurn!: () => void;
+      const secondTurnGate = new Promise<void>((resolve) => {
+        releaseSecondTurn = resolve;
+      });
+      async function* twoGatedTurnsIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'turn 1 work' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 0.5k' }, raw: {} };
+        await secondTurnGate; // park between turn 1's result and turn 2's events
+        yield { parsed: { type: 'text', role: 'assistant', content: 'turn 2 work' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 0.5k' }, raw: {} };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: twoGatedTurnsIterator(),
+      });
+
+      // msg_1's turn is in flight; msg_2 (the scheduled one, say) queues
+      // behind it on the same channel. Deterministic order: both
+      // processMessage calls run synchronously to their first await, then
+      // resume in FIFO microtask order, so msg_1 pushes first.
+      await Promise.all([
+        agent.processMessage({ chatId: 'oc_queue', payload: 'first', messageId: 'msg_1' }),
+        agent.processMessage({ chatId: 'oc_queue', payload: 'second', messageId: 'msg_2' }),
+      ]);
+
+      const t1 = agent.turnCompleteFor('msg_1');
+      const t2 = agent.turnCompleteFor('msg_2');
+      expect(t1).toBeDefined();
+      expect(t2).toBeDefined();
+
+      // Turn 1's result settles ONLY msg_1's promise. Pre-fix (single slot):
+      // it resolved msg_2's promise — the scheduler logged "completed" while
+      // msg_2's turn had not started.
+      await t1!;
+      expect(await settlementOf(t2!)).toBe('pending');
+
+      // Corollary (review ①): the queued push did not reject msg_1's promise
+      // either — no fake "Turn superseded" for a turn that is alive and
+      // finishing on its own. (t1 resolved above, it did not reject.)
+      releaseSecondTurn();
+      await t2!;
+    });
+
+    it('a queued message\'s turn death is visible: session death rejects its completion promise', async () => {
+      // The other half of the incident shape: msg_2's queued turn dies with
+      // the session. Pre-fix, the slot was already cleared by turn 1's
+      // result, so the death was invisible (and the scheduler had already
+      // recorded "completed"). Now the rejection is observable.
+      const { agent } = makeAgent();
+
+      async function* resultThenThrowIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'turn 1 work' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 0.5k' }, raw: {} };
+        throw new Error('Iterator died mid-session');
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: resultThenThrowIterator(),
+      });
+
+      await Promise.all([
+        agent.processMessage({ chatId: 'oc_queue', payload: 'first', messageId: 'msg_1' }),
+        agent.processMessage({ chatId: 'oc_queue', payload: 'second', messageId: 'msg_2' }),
+      ]);
+
+      const t1 = agent.turnCompleteFor('msg_1')!;
+      const t2 = agent.turnCompleteFor('msg_2')!;
+
+      await t1; // turn 1 completed normally
+      await expect(t2).rejects.toThrow('Iterator died mid-session');
+    });
+
+    it('a message whose channel push is rejected gets its OWN rejection — live turns\' awaiters are untouched', async () => {
+      // Channel closed at push: pre-fix this called rejectTurn() on the
+      // single slot, and post-③ rejectTurn() settles ALL entries — the push
+      // site must settle only the refused message's entry so an unrelated
+      // in-flight turn's awaiter is not dragged into the failure.
+      const { agent } = makeAgent();
+
+      let releaseTurn!: () => void;
+      const turnGate = new Promise<void>((resolve) => {
+        releaseTurn = resolve;
+      });
+      async function* gatedTurnIterator() {
+        await turnGate;
+        yield { parsed: { type: 'text', role: 'assistant', content: 'work' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 0.5k' }, raw: {} };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: gatedTurnIterator(),
+      });
+
+      // msg_1 accepted, its turn parks on the gate.
+      await agent.processMessage({ chatId: 'oc_queue', payload: 'first', messageId: 'msg_1' });
+      const t1 = agent.turnCompleteFor('msg_1')!;
+
+      // msg_2: close the channel so its push is refused.
+      (agent as any).channel = { push: () => false, close: vi.fn(), generator: vi.fn() };
+      await agent.processMessage({ chatId: 'oc_queue', payload: 'second', messageId: 'msg_2' });
+
+      await expect(agent.turnCompleteFor('msg_2')!).rejects.toThrow('Channel closed');
+      expect(await settlementOf(t1)).toBe('pending'); // msg_1's turn unaffected
+
+      releaseTurn();
+      await t1; // still resolves with its own turn's outcome
+    });
+
+    it('turnCompleteFor: unknown messageId → undefined (never-started is distinguishable from finished)', async () => {
+      // The contract turn ⑤ builds on: the handler treats undefined as a
+      // FAILURE (message never entered a turn), so it must never be returned
+      // for a message whose turn merely already finished.
+      const { agent } = makeAgent();
+
+      async function* oneTurnIterator() {
+        yield { parsed: { type: 'text', role: 'assistant', content: 'work' }, raw: {} };
+        yield { parsed: { type: 'result', content: '✅ Complete | Cost: $0.01 | Tokens: 0.5k' }, raw: {} };
+      }
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: oneTurnIterator(),
+      });
+
+      expect(agent.turnCompleteFor('never_pushed')).toBeUndefined();
+
+      await agent.processMessage({ chatId: 'oc_queue', payload: 'hello', messageId: 'msg_1' });
+      await agent.turnCompleteFor('msg_1')!; // settles with the turn
+      // Still retrievable AFTER settling — a caller grabbing it right after
+      // processMessage() resolves can never miss it (pre-fix the slot was
+      // cleared, making "finished" indistinguishable from "never started").
+      expect(agent.turnCompleteFor('msg_1')).toBeDefined();
+    });
+  });
