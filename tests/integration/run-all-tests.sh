@@ -105,8 +105,8 @@ show_test_plan_body() {
     echo "  6. Multimodal Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
-    echo "  7. Feishu IPC Transport Tests (35 tests)"
-    echo "     - sendMessage, sendCard, sendInteractive, uploadFile, multi-card"
+    echo "  7. Codex Compatibility E2E"
+    echo "     - Real CLI configuration, session resume, sandbox, telemetry"
     echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
@@ -154,8 +154,9 @@ run_test_script() {
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
-    # Passthrough filter args
-    args+=("${FILTER_ARGS[@]}")
+    # Filters are consumed by the runner's suite selection below. Do not pass
+    # them to child scripts: their common parser intentionally accepts only
+    # request/runtime options (Issue #4672).
 
     local attempt=1
     local max_attempts=$((max_retries + 1))
@@ -467,14 +468,27 @@ main() {
 
     local script name
     for spec in \
-        "rest-channel-test.sh|REST Channel Tests" \
-        "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply" \
-        "use-case-2-task-execution.sh|Use Case 2 - Task Execution" \
-        "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation" \
-        "mcp-tools-test.sh|Channel CLI Tools Tests" \
-        "multimodal-test.sh|Multimodal Tests"; do
+        "rest-channel-test.sh|REST Channel Tests|fast" \
+        "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply|ai" \
+        "use-case-2-task-execution.sh|Use Case 2 - Task Execution|ai" \
+        "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation|ai" \
+        "mcp-tools-test.sh|Channel CLI Tools Tests|ai" \
+        "multimodal-test.sh|Multimodal Tests|ai" \
+        "codex-compatibility-test.sh|Codex Compatibility E2E|ai"; do
         script="${spec%%|*}"
-        name="${spec##*|}"
+        spec_remainder="${spec#*|}"
+        name="${spec_remainder%%|*}"
+        suite_tag="${spec_remainder##*|}"
+        if [ "${#FILTER_ARGS[@]}" -gt 0 ]; then
+            filter_kind="${FILTER_ARGS[0]}"
+            filter_value="${FILTER_ARGS[1]}"
+            if [ "$filter_kind" = "--name" ] && [[ "$name" != *"$filter_value"* ]]; then
+                continue
+            fi
+            if [ "$filter_kind" = "--tag" ] && [ "$suite_tag" != "$filter_value" ]; then
+                continue
+            fi
+        fi
         if ! run_suite "$SCRIPT_DIR/$script" "$name"; then
             failed=$((failed + 1))
             FAILED_SUITE_NAMES+=("$name")
