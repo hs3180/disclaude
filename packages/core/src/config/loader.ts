@@ -227,6 +227,14 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     }
   }
 
+  if (config.agent?.codexNetworkAccess !== undefined && typeof config.agent.codexNetworkAccess !== 'boolean') {
+    logger.error(
+      `agent.codexNetworkAccess must be a boolean (got ${String(config.agent.codexNetworkAccess)}). ` +
+        'It controls outbound network access for Codex workspace-write runs.',
+    );
+    return false;
+  }
+
   // Issue #4634 (S7 of #4627): validate agent.codex governance caps —
   // non-positive values are rejected at load time (fail closed).
   if (config.agent?.codex !== undefined) {
@@ -256,7 +264,10 @@ export function validateConfig(config: DisclaudeConfig): boolean {
 
 /** Return whether a model identifier is supported by the Codex CLI backend. */
 export function isCodexModel(model: string): boolean {
-  return /^gpt-5(?:[.-]|$)/i.test(model.trim());
+  // `gpt-5` itself is an API model name and is explicitly rejected by the
+  // Codex ChatGPT route; Codex model aliases carry a suffix (for example
+  // `gpt-5.1-codex`).
+  return /^gpt-5(?:[.-].+)/i.test(model.trim());
 }
 
 /**
