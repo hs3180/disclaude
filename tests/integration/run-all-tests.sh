@@ -43,6 +43,10 @@ _USER_TIMEOUT=""
 # single attempt each — the quota resets hours later, so a full retry chain
 # per suite just burns wall clock (#4552's "28-minute slow round").
 QUOTA_EXHAUSTED=false
+# Set when the configured Codex backend returns a provider failure during the
+# warm-up request. AI suites are then skipped as environmental rather than
+# repeated failures; protocol-only suites still run (Issue #4671).
+CODEX_ENV_BLOCKED=false
 
 # Issue #4552: current suite's captured output (set by run_test_script;
 # removed on every exit path — the normal ones inline, and this trap for
@@ -323,6 +327,14 @@ warmup_agent() {
         parse_response "$result"
 
         if [ "$RESPONSE_STATUS" = "200" ]; then
+            if [ -n "$CONFIG_PATH" ] && grep -qE '^[[:space:]]*agentBackend:.*codex' "$CONFIG_PATH" 2>/dev/null \
+                && response_contains_provider_failure "$RESPONSE_BODY"; then
+                CODEX_ENV_BLOCKED=true
+                log_warn "Codex warm-up returned an embedded provider failure; marking Codex-dependent suites as SKIP (environmental, Issue #4671)"
+                log_debug "Warm-up response: $RESPONSE_BODY"
+                check_server_health_detailed
+                return 0
+            fi
             if [ $attempt -gt 0 ]; then
                 log_info "Agent warm-up succeeded on attempt $((attempt + 1))"
             fi
@@ -465,6 +477,7 @@ main() {
     # a bare "1 test suite(s) failed" forces the operator to dig through
     # (often truncated) background-run output to find the suite.
     local FAILED_SUITE_NAMES=()
+    local SKIPPED_SUITE_NAMES=()
 
     local script name
     for spec in \
@@ -489,6 +502,11 @@ main() {
                 continue
             fi
         fi
+        if [ "$CODEX_ENV_BLOCKED" = true ] && [ "$suite_tag" = "ai" ]; then
+            log_warn "$name: SKIP (Codex environment unavailable; see warm-up diagnostics, Issue #4671)"
+            SKIPPED_SUITE_NAMES+=("$name")
+            continue
+        fi
         if ! run_suite "$SCRIPT_DIR/$script" "$name"; then
             failed=$((failed + 1))
             FAILED_SUITE_NAMES+=("$name")
@@ -510,6 +528,9 @@ main() {
         # tail-truncated output (#4584's CI report lost the suite lines)
         # still identifies them.
         log_error "Failed suite(s): ${FAILED_SUITE_NAMES[*]}"
+    fi
+    if [ "${#SKIPPED_SUITE_NAMES[@]}" -gt 0 ]; then
+        log_warn "Skipped suite(s): ${SKIPPED_SUITE_NAMES[*]}"
     fi
     if [ $RETRIED_SUCCESSES -gt 0 ]; then
         log_warn "${RETRIED_SUCCESSES} suite(s) passed after retry"
