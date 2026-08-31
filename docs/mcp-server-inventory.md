@@ -46,15 +46,13 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
 - **Tool list** (`channelToolDefinitions`, [`channel-mcp.ts:250`](../packages/mcp-server/src/channel-mcp.ts)):
   `send_text` (`:260`), `send_card` (`:318`), `send_interactive` (`:482`), `send_file` (`:591`),
   `push_to_agent` (`:635`). **5 tools.**
-- **Wiring**: `buildMcpServers()` adds it under the key `'channel-mcp'` at
-  [`packages/primary-node/src/agents/mcp-setup.ts:53`](../packages/primary-node/src/agents/mcp-setup.ts), gated
-  on channel capabilities (`supportedMcpTools`, `mcp-setup.ts:45-52`). `ChatAgent` calls `buildMcpServers()` at
-  [`packages/primary-node/src/agents/chat-agent.ts:760`](../packages/primary-node/src/agents/chat-agent.ts).
+- **Runtime wiring**: retired in #4652. ChatAgent no longer constructs or injects `channel-mcp`; capability-aware
+  messaging guidance points agents to the one-shot [`skills/channel/cli.mjs`](../skills/channel/README.md) instead.
 - **Transport**: inline — the SDK's `createSdkMcpServer` returns a `{ type: 'sdk', name, instance }` wrapper
   (documented at [`packages/core/src/sdk/providers/claude/options-adapter.ts:97`](../packages/core/src/sdk/providers/claude/options-adapter.ts));
   `instance` is an MCP SDK `McpServer` exposing `close()`.
-- **Teardown**: disclaude retains the closeable inline instances via `collectInlineMcpInstances()`
-  (`mcp-setup.ts:99`) and `close()`s them on `ChatAgent.dispose()` (issue #4302, defense-in-depth).
+- **Teardown**: no ChatAgent-owned MCP lifecycle remains. Each channel CLI invocation is a bounded child process;
+  the standalone MCP export owns its own lifecycle when used by an external consumer.
 - **Transport backing**: the tools talk to the Primary Node over REST via a directly-constructed
   `RestIpcClient` (`getRestIpcClient()` in `tools/ipc-utils.ts`)
   ([`channel-mcp.ts:1-10`](../packages/mcp-server/src/channel-mcp.ts) module doc). The Unix-socket IPC
@@ -167,7 +165,7 @@ inverse direction from S1/S2: disclaude *is* the MCP server, not the consumer.
 
 ## S4 — Adapter / transport plumbing (shared by all surfaces)
 
-The path every MCP server config takes from `buildMcpServers()` → agent SDK.
+The SDK-level MCP adapter surface retained for standalone/external consumers. ChatAgent no longer enters this path.
 
 - **Provider interface**: `IAgentSDKProvider.createMcpServer(config: McpServerConfig)` at
   [`packages/core/src/sdk/interface.ts:85`](../packages/core/src/sdk/interface.ts) (alongside
@@ -231,8 +229,8 @@ Mapping the inventory to `#4459`'s four scopes:
 |---|---|---|
 | **1. Inventory** ✅ (this doc) | all | `docs/mcp-server-inventory.md` (new) |
 | **2. Skill format spec** | n/a (defines the target) | new `docs/...` spec (deferred — independent of this inventory) |
-| **3. Migrate non-Playwright MCP tools → Skill** | **S1** (channel-mcp, 5 tools) | re-expose `send_text`/`send_card`/`send_interactive`/`send_file`/`push_to_agent` as Skills; the in-process implementations + IPC backing stay |
-| **4. Remove external MCP-server loader** | **S2** (stdio loader) | ✅ done — deleted the `mcp-setup.ts` config loop + `getMcpServersConfig()` + `McpServerConfig`/`ToolsConfig.mcpServers` types + yaml/CLAUDE.md example blocks; user-stdio capability loss recorded above |
+| **3. Migrate non-Playwright MCP tools → Skill** | **S1** (channel-mcp, 5 tools) | ✅ done — ChatAgent no longer creates/injects `channel-mcp` (#4652); all five operations use `skills/channel/cli.mjs`; the first-party implementations + REST backing and standalone MCP export stay |
+| **4. Remove external MCP-server loader** | **S2** (stdio loader) | ✅ done — deleted `mcp-setup.ts`, `getMcpServersConfig()`, `McpServerConfig`/`ToolsConfig.mcpServers` config types, and yaml/CLAUDE.md example blocks; user-stdio capability loss recorded above |
 
 **Not owned by #4459** (called out so nothing is silently dropped):
 
@@ -241,13 +239,11 @@ Mapping the inventory to `#4459`'s four scopes:
 - **Loop tools** (`loop_start/stop/status`) → already removed with the loop system [#4430](https://github.com/hs3180/disclaude/issues/4430).
 - **pi backend MCP parity** → already settled (no MCP; inline handle only). No retirement work.
 
-### Open questions this inventory raises for #4459 Scope 2+
+### Decisions landed from the original open questions
 
-1. **Skill transport for S1's send-side tools**: the channel tools push *into* a bound chat over IPC. A Skill
-   (CLI) needs the same IPC reach-back — is the Skill a long-lived process or one-shot per call? (Affects
-   latency / connection reuse for `send_text` etc.)
-2. **Capability gating**: S1 is gated on `supportedMcpTools` (`mcp-setup.ts:45-52`). Does the Skill replacement
-   keep per-chat capability filtering, or does moving to a CLI lose that granularity?
+1. **Skill transport for S1's send-side tools**: `skills/channel/cli.mjs` is one-shot and reaches PrimaryNode over REST.
+2. **Capability gating**: `supportedMcpTools` remains the per-chat filter for the CLI command guidance injected by
+   the Feishu message builder; it no longer controls MCP construction.
 3. **S3 product decision**: is `disclaude-mcp` (standalone server) still a supported product after the Claude
    path stops *consuming* MCP? (If yes, S3 stays even as S1/S2 retire.)
 4. **User-stdio capability loss (S2)**: with the #4417 bridge dropped, arbitrary user `tools.mcpServers` stdio

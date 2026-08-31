@@ -150,9 +150,9 @@ Feishu/Lark WebSocket implementation (split into focused modules):
 
 Conversation history is managed by `packages/primary-node/src/agents/history-manager.ts` (Issue #4125): it attaches persisted (session-restore) history context and chat log file paths to each message, so a restarted process restores prior context for ongoing chats.
 
-#### `packages/mcp-server/` - Channel MCP Tools
+#### `packages/mcp-server/` - Channel Tool Implementations / Standalone MCP Export
 
-In-process MCP server providing channel tools to the agent (`send_text`, `send_file`, `send_card`, `send_interactive`, `push_to_agent`). It communicates with the Primary Node **over REST** (`RestIpcClient`, Issue #4168 Phase 3 — the Unix-socket IPC transport was removed).
+First-party channel tool implementations (`send_text`, `send_file`, `send_card`, `send_interactive`, `push_to_agent`) plus a standalone MCP export for external consumers. ChatAgent no longer loads the MCP server (#4652); agents invoke the same implementations through `skills/channel/cli.mjs`. The tools communicate with the Primary Node **over REST** (`RestIpcClient`, Issue #4168 Phase 3 — the Unix-socket IPC transport was removed).
 
 The external-MCP-server loader (config `tools.mcpServers`) was **removed** (#4459 Scope 4). External tools migrate to CLI Skills — see `docs/skill-format-spec.md`, `skills/channel/`, and `skills/browser-use/`.
 
