@@ -60,7 +60,7 @@ vi.mock('./channels/wired-descriptors.js', () => ({
   BUILTIN_WIRED_DESCRIPTORS: [],
 }));
 
-import { parseArgs, resolveChannelConfigs, isPortAvailable, waitForPortAvailable, validateWorkspaceDir } from './cli.js';
+import { parseArgs, resolveChannelConfigs, isPortAvailable, waitForPortAvailable, validateWorkspaceDir } from './cli-main.js';
 import type { DisclaudeConfigWithChannels } from '@disclaude/core';
 
 // ============================================================================
@@ -99,6 +99,12 @@ describe('parseArgs', () => {
     const result = parseArgs(['start', '--config']);
     expect(result.command).toBe('start');
     expect(result.configPath).toBeUndefined();
+  });
+
+  it('should not consume the next option as a missing --config value', () => {
+    const result = parseArgs(['start', '--config', '--api-port', '9200']);
+    expect(result.configPath).toBeUndefined();
+    expect(result.apiPort).toBe(9200);
   });
 
   it('should override start with --help', () => {
