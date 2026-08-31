@@ -256,7 +256,10 @@ export function validateConfig(config: DisclaudeConfig): boolean {
 
 /** Return whether a model identifier is supported by the Codex CLI backend. */
 export function isCodexModel(model: string): boolean {
-  return /^gpt-5(?:[.-]|$)/i.test(model.trim());
+  // `gpt-5` itself is an API model name and is explicitly rejected by the
+  // Codex ChatGPT route; Codex model aliases carry a suffix (for example
+  // `gpt-5.1-codex`).
+  return /^gpt-5(?:[.-].+)/i.test(model.trim());
 }
 
 /**
