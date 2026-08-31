@@ -174,7 +174,7 @@ const AUTH_FILE = 'auth.json';
 
 export class CodexAgentProvider implements IAgentSDKProvider {
   readonly name = 'codex';
-  readonly version = '0.5.0-concurrency-governance';
+  readonly version = '0.6.0-forget-session';
 
   private readonly env: Record<string, string | undefined>;
   private readonly execTimeoutMs: number | undefined;
@@ -275,6 +275,31 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     maxConcurrentRuns?: number;
   }): void {
     this.governor.setLimits(limits);
+  }
+
+  /**
+   * Forget a chat's provider-side session state (Issue #4644) — the optional
+   * capability ChatAgent / the agent pool invoke on /reset.
+   *
+   * Clears BOTH:
+   * - the governor registration, so the session can never be LRU-evicted
+   *   later (the eviction hook would re-stash the anchor AFTER this clear —
+   *   resurrecting the reset-away conversation, the #4644 window);
+   * - the evicted-thread stash, so the chat's next stream starts a fresh
+   *   codex conversation even when no stream was alive at reset time (the
+   *   stream-teardown stash-clear only covers non-evicted streams).
+   *
+   * Idempotent; unknown keys are a no-op.
+   */
+  forgetSession(sessionKey: string): void {
+    const hadRegistration = this.governor.forgetSession(sessionKey);
+    const hadStash = this.threadStash.delete(sessionKey);
+    if (hadRegistration || hadStash) {
+      logger.info(
+        { sessionKey, hadRegistration, hadStash },
+        'codex session forgotten on reset — governor registration + evicted-thread stash cleared (Issue #4644)',
+      );
+    }
   }
 
   // --------------------------------------------------------------------------
