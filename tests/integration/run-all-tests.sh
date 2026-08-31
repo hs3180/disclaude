@@ -54,20 +54,31 @@ _suite_output_cleanup() {
 }
 
 source "$SCRIPT_DIR/common.sh"
-parse_common_args "$@"
-register_cleanup
-
-# Additional args for tag/test filtering (passthrough to sub-scripts)
+# Parse runner-owned options before handing the remaining arguments to the
+# common parser. Otherwise parse_common_args rejects --retries/--delay before
+# this runner gets a chance to consume them (Issue #4656).
 FILTER_ARGS=()
+COMMON_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --retries) MAX_RETRIES="$2"; shift 2 ;;
-        --delay) INTER_SUITE_DELAY="$2"; shift 2 ;;
-        --timeout) _USER_TIMEOUT="$2"; shift 2 ;;
-        --tag|--name) FILTER_ARGS+=("$1" "$2"); shift 2 ;;
-        *) shift ;;
+        --retries)
+            if [[ -n "${2:-}" && "$2" != -* ]]; then MAX_RETRIES="$2"; shift 2;
+            else COMMON_ARGS+=("$1"); shift; fi ;;
+        --delay)
+            if [[ -n "${2:-}" && "$2" != -* ]]; then INTER_SUITE_DELAY="$2"; shift 2;
+            else COMMON_ARGS+=("$1"); shift; fi ;;
+        --timeout)
+            _USER_TIMEOUT="${2:-}"
+            COMMON_ARGS+=("$1" "${2:-}")
+            shift 2 ;;
+        --tag|--name) FILTER_ARGS+=("$1" "${2:-}"); shift 2 ;;
+        *) COMMON_ARGS+=("$1"); shift ;;
     esac
 done
+parse_common_args "${COMMON_ARGS[@]}"
+register_cleanup
+
+# --timeout belongs to the common parser and was passed through above.
 
 # =============================================================================
 # Test Plan (Dry Run)
@@ -88,7 +99,7 @@ show_test_plan_body() {
     echo "  4. Use Case 3 - Multi-turn Conversation (4 tests)"
     echo "     - Health check, number context, name context, context isolation"
     echo ""
-    echo "  5. MCP Tools Tests (4 tests)"
+    echo "  5. Channel CLI Tools Tests (4 tests)"
     echo "     - Health check, send_text, send_file, tool result format"
     echo ""
     echo "  6. Multimodal Tests (5 tests)"
@@ -460,7 +471,7 @@ main() {
         "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply" \
         "use-case-2-task-execution.sh|Use Case 2 - Task Execution" \
         "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation" \
-        "mcp-tools-test.sh|MCP Tools Tests" \
+        "mcp-tools-test.sh|Channel CLI Tools Tests" \
         "multimodal-test.sh|Multimodal Tests"; do
         script="${spec%%|*}"
         name="${spec##*|}"
