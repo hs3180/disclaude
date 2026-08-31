@@ -4,7 +4,7 @@ Disclaude 的 Agent 运行时（agent runtime）可通过配置切换。默认�
 
 与 claude/pi 后端的本质区别：**codex 后端用 ChatGPT 订阅额度（而非 API key）驱动 agent**——社区测算的量级约为 Plus（$20/月）饱和使用 ≈ 每周 $100–110 API 等效算力（约 20×，非官方数字、随政策变动；ToS 姿态与风险见第 8 节）。
 
-> 配置项随 Issue [#4629](https://github.com/hs3180/disclaude/issues/4629)（S1）落地；exec 桥接/会话/权限/配额分别为 #4630 / #4628 / #4631 / #4632。父特性：[#4627](https://github.com/hs3180/disclaude/issues/4627)。行为实证基于 **codex-cli 0.132.0**。
+> 配置项随 Issue [#4629](https://github.com/hs3180/disclaude/issues/4629)（S1）落地；exec 桥接/会话/权限/配额分别为 #4630 / #4628 / #4631 / #4632。父特性：[#4627](https://github.com/hs3180/disclaude/issues/4627)。行为实证已在 **codex-cli 0.151.0** 上验证。
 
 ## 目录
 
@@ -96,7 +96,7 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 | disallowedTools 仅 claude 专属名（`EnterPlanMode`/`Cron*`…＝ChatAgent 默认列表） | 无影响（无对应能力即无效果） |
 | disallowedTools 含 `WebSearch` | **拒绝运行**（见第 7 节限制） |
 
-沙箱经 `-c sandbox_mode=<level>` 传递（fresh 与 resume 两种 argv 统一此形式；`-s` 被 `exec resume` 拒绝——0.132.0 实证）。`read-only` 的写入阻断已在两条路径上实测验证。
+沙箱在 fresh `exec` 经 `-s <level>` 传递；`exec resume` 使用 `-c sandbox_mode=<level>`（resume 不公开 `--sandbox`）。这两种形式均已在 codex-cli 0.151.0 上验证。
 
 ## 6. 配额可观测与限额降级
 
@@ -108,9 +108,9 @@ codex `exec` 是无头模式，**没有逐调用的审批钩子**（0.132.0 实�
 
 1. **tools/MCP 映射未实现**：`createInlineTool` / `createMcpServer` 仍抛 not-supported（codex 有自己的 MCP 配置面，映射是 [#4627](https://github.com/hs3180/disclaude/issues/4627) 的开放问题）。不过，自 #4652 起 ChatAgent 不再创建或注入默认 MCP server，因此这项限制**不会阻止 Codex backend 启动**；消息扩展操作统一走 `skills/channel/cli.mjs`。
 2. **LLM 供应商绑定**：见第 3 节（#4637）。glm/anthropic 配置静默忽略——后续会在 config 校验层显式告警。
-3. **web_search 无法禁用**：0.132.0 实证 `-c tools.web_search=false` 与 `--disable web_search` 均无效。因此 denylist 含 `WebSearch` 时 codex 后端**拒绝启动查询**（可操作的报错），而不是静默违反策略。
+3. **web_search 无法禁用**：当前支持版本实证 `-c tools.web_search=false` 与 `--disable web_search` 均无效。因此 denylist 含 `WebSearch` 时 codex 后端**拒绝启动查询**（可操作的报错），而不是静默违反策略。
 4. **无逐调用审批**：见第 5 节。细于沙箱级别的「询问用户」语义在 codex 后端不可表达。
-5. **事件 schema 随 CLI 版本漂移**：适配层按结构性镜像 + 未知事件容忍跳过设计（不炸桥），但行为实证锁定 0.132.0；升级 CLI 后跑整机回归：`npx tsx scripts/codex-e2e.mts`（七项断言：配置链/环境自检/两轮记忆/双沙箱行为/配额与治理遥测，需真 CLI + 登录态，约 2–4 分钟）。
+5. **事件 schema 随 CLI 版本漂移**：适配层按结构性镜像 + 未知事件容忍跳过设计（不炸桥）；当前行为基线为 0.151.0。升级 CLI 后跑整机回归：`npx tsx scripts/codex-e2e.mts`（七项断言：配置链/环境自检/两轮记忆/双沙箱行为/配额与治理遥测，需真 CLI + 登录态，约 2–4 分钟）。
 6. **模型名受限**：仅订阅可服务型号（gpt-5.x family）；`agent.model` 传其他家族名会在 CLI 内报错。
 
 ## 8. ToS 姿态
