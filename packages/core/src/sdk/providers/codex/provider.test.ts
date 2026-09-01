@@ -356,6 +356,12 @@ fi
       expect(sessionId).toBe('t-abc');
     }, 20_000);
 
+    it('omits the legacy gpt-5.1-codex alias and lets ChatGPT choose the CLI default', async () => {
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `${ARGV_RECORDER}${HAPPY_BODY}` });
+      await drainStream(makeProvider(fixtures), ['hello'], { model: 'gpt-5.1-codex' });
+      expect(argvOf(fixtures, 1)).not.toContain('-m');
+    }, 20_000);
+
     it('starts a fresh session after a completed turn reaches the resume budget', async () => {
       fixtures = makeFixtures({
         withBinary: true,
@@ -391,7 +397,7 @@ fi
       expect(argvOf(fixtures, 3)).not.toContain('exec resume');
       expect((messages as Array<{ type: string; content: string }>)
         .filter((m) => m.type === 'text').map((m) => m.content))
-        .toEqual(['first', 'large', 'fresh']);
+       .toEqual(['first', 'large', 'fresh']);
     }, 20_000);
 
     it('does NOT latch a thread from a failed turn (thread.started fires on failures)', async () => {
