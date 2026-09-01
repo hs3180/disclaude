@@ -484,8 +484,16 @@ export class ScheduleFileWatcher {
         }
       );
 
-      this.watcher.on('error', (error) => {
+      this.watcher.on('error', (error: NodeJS.ErrnoException) => {
         logger.error({ err: error }, 'File watcher error');
+        if (error.code === 'EMFILE' || error.code === 'ENFILE') {
+          this.watcher?.close();
+          this.watcher = null;
+          logger.warn(
+            { code: error.code, schedulesDir: this.schedulesDir },
+            'File watcher unavailable; continuing with periodic re-scan fallback'
+          );
+        }
       });
 
       this.running = true;
@@ -495,6 +503,17 @@ export class ScheduleFileWatcher {
       this.startRescanTimer();
 
     } catch (error) {
+      const errnoError = error as NodeJS.ErrnoException;
+      if (errnoError.code === 'EMFILE' || errnoError.code === 'ENFILE') {
+        this.watcher = null;
+        this.running = true;
+        logger.warn(
+          { err: error, schedulesDir: this.schedulesDir },
+          'File watcher unavailable; continuing with periodic re-scan fallback'
+        );
+        this.startRescanTimer();
+        return;
+      }
       logger.error({ err: error }, 'Failed to start file watcher');
       throw error;
     }
