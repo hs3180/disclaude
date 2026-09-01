@@ -328,6 +328,14 @@ warmup_agent() {
 
         if [ "$RESPONSE_STATUS" = "200" ]; then
             if [ -n "$CONFIG_PATH" ] && grep -qE '^[[:space:]]*agentBackend:.*codex' "$CONFIG_PATH" 2>/dev/null \
+                && { response_contains_provider_failure "$RESPONSE_BODY" \
+                    || server_log_contains_provider_failure "$warmup_chat_id"; }; then
+                log_error "Codex warm-up failed: provider returned an error despite HTTP 200"
+                log_debug "Warm-up response: $RESPONSE_BODY"
+                show_server_logs
+                return 1
+            fi
+            if [ -n "$CONFIG_PATH" ] && grep -qE '^[[:space:]]*agentBackend:.*codex' "$CONFIG_PATH" 2>/dev/null \
                 && response_contains_provider_failure "$RESPONSE_BODY"; then
                 CODEX_ENV_BLOCKED=true
                 log_warn "Codex warm-up returned an embedded provider failure; marking Codex-dependent suites as SKIP (environmental, Issue #4671)"
