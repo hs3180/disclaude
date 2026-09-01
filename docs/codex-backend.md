@@ -60,6 +60,25 @@ codex login
 - 登录过期/失效时（401），bot 会收到可操作的重新授权提示（`codex login`），不会静默失败。
 - 网络要求：与 `api.openai.com` / `wss://api.openai.com` 的出站连通。
 
+### Docker 部署
+
+`Dockerfile.primary` 已内置 Codex CLI，并将 `CODEX_HOME` 固定为 `/data/codex`；Compose
+通过命名卷 `codex_data` 持久化 OAuth 凭据和 Codex 会话。首次部署后，在容器内完成一次登录：
+
+```bash
+docker compose run --rm primary codex login --device-auth
+docker compose up -d primary
+```
+
+如果环境已取得 API key，也可以使用非交互方式写入同一目录：
+
+```bash
+printf '%s' "$OPENAI_API_KEY" | docker compose run --rm -T \
+  -e OPENAI_API_KEY primary sh -c 'printf "%s" "$OPENAI_API_KEY" | codex login --with-api-key'
+```
+
+不要把 `CODEX_HOME` 映射到源码 workspace；命名卷可避免容器重建时丢失登录态和 rollout。
+
 环境自检：provider 的 `validateConfig()` 会同步检查二进制在 PATH 上 + auth.json 存在（返回 boolean，不中断启动）；`getInfo().unavailableReason` 会分别给出安装提示与登录提示。缺前置条件时**不会自动回退 claude**——codex 仍是所选后端，首次查询即抛可操作错误。另：API-key 方式认证（`OPENAI_API_KEY`，不落 auth.json）的用户会收到登录提示，属当前探测的已知边界。
 
 ## 3. 与 provider（模型层）的关系——不正交
