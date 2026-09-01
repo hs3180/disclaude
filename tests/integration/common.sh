@@ -217,10 +217,21 @@ start_server() {
     # Create isolated test workspace (Issue #3414)
     # This prevents tests from loading production schedule configs.
     if [ -z "$TEST_WORKSPACE" ]; then
-        TEST_WORKSPACE=$(mktemp -d "${TMPDIR:-/tmp}/disclaude-test-workspace.XXXXXX")
+        # Codex workspace-write can reject OS-temp roots on restricted hosts.
+        TEST_WORKSPACE=$(mktemp -d "${PROJECT_ROOT}/.disclaude-test-workspace.XXXXXX")
         export DISCLAUDE_WORKSPACE_DIR="$TEST_WORKSPACE"
         log_info "Created isolated test workspace: ${TEST_WORKSPACE}"
     fi
+
+    # Codex creates helper aliases under CODEX_HOME/tmp/arg0 during startup.
+    # Use a per-run writable home; reference auth.json without copying it.
+    local test_codex_home="${TEST_WORKSPACE}/codex-home"
+    mkdir -p "$test_codex_home"
+    local source_codex_home="${CODEX_HOME:-${HOME}/.codex}"
+    if [ -f "${source_codex_home}/auth.json" ] && [ ! -e "${test_codex_home}/auth.json" ]; then
+        ln -s "${source_codex_home}/auth.json" "${test_codex_home}/auth.json"
+    fi
+    export CODEX_HOME="$test_codex_home"
 
     # Issue #3510: Use an isolated PID lock file for the test server.
     # Without this, the test server shares the production lock file path
@@ -606,8 +617,8 @@ check_build() {
 
 # Check if configuration file exists
 check_config() {
-    if [ ! -f "$PROJECT_ROOT/disclaude.config.yaml" ]; then
-        log_error "Configuration file not found: $PROJECT_ROOT/disclaude.config.yaml"
+    if [ ! -f "$CONFIG_PATH" ]; then
+        log_error "Configuration file not found: $CONFIG_PATH"
         log_error "Please create a configuration file with AI provider settings."
         return 1
     fi
