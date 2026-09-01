@@ -362,6 +362,44 @@ fi
       expect(argvOf(fixtures, 1)).not.toContain('-m');
     }, 20_000);
 
+    it('starts a fresh session after a completed turn reaches the resume budget', async () => {
+      fixtures = makeFixtures({
+        withBinary: true,
+        withAuth: true,
+        body: `${ARGV_RECORDER}
+if [ "$n" = 1 ]; then
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-old"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"first"}}
+{"type":"turn.completed","usage":{"input_tokens":10}}
+JSONL
+elif [ "$n" = 2 ]; then
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-old"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"large"}}
+{"type":"turn.completed","usage":{"input_tokens":100}}
+JSONL
+else
+cat <<'JSONL'
+{"type":"thread.started","thread_id":"t-new"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"fresh"}}
+{"type":"turn.completed","usage":{"input_tokens":10}}
+JSONL
+fi
+`,
+      });
+      const provider = new CodexAgentProvider({
+        env: { PATH: `${fixtures.binDir}:${process.env.PATH ?? ''}`, CODEX_HOME: fixtures.codexHome },
+        maxResumeInputTokens: 100,
+      });
+      const { messages } = await drainStream(provider, ['a', 'b', 'c']);
+      expect(argvOf(fixtures, 2)).toContain('exec resume');
+      expect(argvOf(fixtures, 3)).not.toContain('exec resume');
+      expect((messages as Array<{ type: string; content: string }>)
+        .filter((m) => m.type === 'text').map((m) => m.content))
+       .toEqual(['first', 'large', 'fresh']);
+    }, 20_000);
+
     it('does NOT latch a thread from a failed turn (thread.started fires on failures)', async () => {
       // Verified live (0.132.0): even a 401-failed run emits thread.started —
       // the anchor must come from a COMPLETED turn only.
