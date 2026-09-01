@@ -774,6 +774,18 @@ assert_json_bool() {
 
 # Assert response body is not empty
 # Usage: assert_response_not_empty "test_name"
+# Detect a provider failure recorded in the server log for a specific request.
+server_log_contains_provider_failure() {
+    local chat_id="${1:-}"
+    [ -n "$chat_id" ] || return 1
+    [ -f "${SERVER_LOG:-}" ] || return 1
+    awk -v id="$chat_id" '
+        index($0, id) { seen=1; remaining=40 }
+        seen && remaining-- > 0 { print }
+    ' "$SERVER_LOG" | grep -Eiq \
+        'exitCode[^0-9]*[1-9]|messageType[^[:alnum:]]+error|turn_failed|codex exec exited with code [1-9]'
+}
+
 assert_response_not_empty() {
     local test_name="${1:-response check}"
 
