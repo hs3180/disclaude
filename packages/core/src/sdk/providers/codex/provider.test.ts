@@ -356,6 +356,12 @@ fi
       expect(sessionId).toBe('t-abc');
     }, 20_000);
 
+    it('omits the legacy gpt-5.1-codex alias and lets ChatGPT choose the CLI default', async () => {
+      fixtures = makeFixtures({ withBinary: true, withAuth: true, body: `${ARGV_RECORDER}${HAPPY_BODY}` });
+      await drainStream(makeProvider(fixtures), ['hello'], { model: 'gpt-5.1-codex' });
+      expect(argvOf(fixtures, 1)).not.toContain('-m');
+    }, 20_000);
+
     it('does NOT latch a thread from a failed turn (thread.started fires on failures)', async () => {
       // Verified live (0.132.0): even a 401-failed run emits thread.started —
       // the anchor must come from a COMPLETED turn only.
