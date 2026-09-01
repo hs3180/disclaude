@@ -57,6 +57,7 @@ import {
   buildStreamingPlaceholderCard,
   STREAMING_REPLY_ELEMENT_ID,
 } from '../platforms/feishu/card-builders/streaming-card-builder.js';
+import { configuredFeishuMessageBytes, splitFeishuMessage } from './feishu-message-chunker.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -546,12 +547,27 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logOutgoing(messageId, message.text || '', 'post');
           return messageId;
         }
-        const messageId = await sendFeishuMessage(
-          'text',
-          JSON.stringify({ text: message.text || '' }),
-        );
-        logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Text message sent');
-        logOutgoing(messageId, message.text || '', 'text');
+        const text = message.text || '';
+        const chunks = splitFeishuMessage(text, configuredFeishuMessageBytes());
+        let messageId: string | undefined;
+        for (const [index, chunk] of chunks.entries()) {
+          try {
+            messageId = await sendFeishuMessage('text', JSON.stringify({ text: chunk }));
+          } catch (err) {
+            const apiError = extractFeishuApiError(err);
+            if (Number(apiError.apiCode) !== 230025 || chunks.length > 1) {throw err;}
+            const retryLimit = Math.max(1, Math.floor(configuredFeishuMessageBytes() * 0.8));
+            const retryChunks = splitFeishuMessage(text, retryLimit);
+            logger.warn({ chatId: message.chatId, originalBytes: Buffer.byteLength(text), chunkCount: retryChunks.length, apiCode: apiError.apiCode }, 'Feishu 230025; retrying bounded chunks (Issue #4693)');
+            for (const retryChunk of retryChunks) {
+              messageId = await sendFeishuMessage('text', JSON.stringify({ text: retryChunk }));
+              logOutgoing(messageId, retryChunk, 'text');
+            }
+            break;
+          }
+          logger.debug({ chatId: message.chatId, messageId, chunk: index + 1, chunks: chunks.length, threadReply: useThreadReply }, 'Text message sent');
+          logOutgoing(messageId, chunk, 'text');
+        }
         return messageId;
       }
 
