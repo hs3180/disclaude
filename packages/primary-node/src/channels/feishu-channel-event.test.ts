@@ -463,6 +463,11 @@ describe('FeishuChannel getCapabilities', () => {
     expect(caps.supportedMcpTools).toContain('send_file');
   });
 
+  it('does not advertise Feishu send tools when credentials are missing', () => {
+    const channel = new FeishuChannel({ appId: '', appSecret: '' });
+    expect(channel.getCapabilities().supportedMcpTools).toEqual([]);
+  });
+
   // Issue #4400 / #4208: streamingCard flag gates the supportsStreaming
   // capability. Default off; on when the flag is set.
   it('reports supportsStreaming=false by default (streamingCard off)', () => {

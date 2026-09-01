@@ -118,6 +118,10 @@ Then report the artifact path in your reply (or send it to the chat via the chan
 - **Headless hosts**: pulling Chromium directly is fragile (shared libs / sandbox). Prefer a
   stable external CDP endpoint — set `BU_CDP_URL=<ws://host:port>` and the CLI attaches to it
   instead of launching its own browser (Chromium container decision: #4496).
+- **Codex agent**: disclaude applies Codex's network allowance to the active sandbox profile,
+  including `read-only` (`sandbox_read_only.network_access`). This keeps the default permission
+  mode read-only while allowing the browser-use CDP connection; `agent.codexNetworkAccess: false`
+  intentionally disables it.
 - Health check: `browser-use doctor` (or `--doctor`); daemon restart: `browser-use --reload`.
 - Upstream ships its own agent skill (`browser-use skill show`) — this repo's copy adds disclaude
   artifact/workspace conventions on top of the same CLI.

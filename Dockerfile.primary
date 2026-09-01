@@ -26,6 +26,7 @@ ARG NPM_REGISTRY=https://registry.npmjs.org
 ARG PIP_INDEX_URL
 ARG GH_INSTALL_MODE=apt-repo
 ARG GH_DEB_URL=
+ARG CODEX_VERSION=0.151.0
 
 # -----------------------------------------------------------------------------
 # Stage 1: Builder (uses bun for faster installs)
@@ -91,6 +92,7 @@ ARG NPM_REGISTRY
 ARG PIP_INDEX_URL
 ARG GH_INSTALL_MODE
 ARG GH_DEB_URL
+ARG CODEX_VERSION
 
 WORKDIR /app
 
@@ -161,7 +163,7 @@ RUN pip3 install --no-cache-dir --break-system-packages ${PIP_INDEX_URL:+--index
 # Install @larksuite/cli globally
 # Issue #3888: @larksuite/cli needed by dissolve-group, lark-docs, pr-scanner skills
 RUN npm config set registry ${NPM_REGISTRY} && \
-    npm install -g "@larksuite/cli@>=1.0.0"
+    npm install -g "@larksuite/cli@>=1.0.0" "@openai/codex@${CODEX_VERSION}"
 
 # Create non-root user for running the application
 RUN groupadd -g 1001 disclaude && \
@@ -179,7 +181,7 @@ RUN echo "Defaults:disclaude logfile=/data/logs/sudo.log" > /etc/sudoers.d/discl
     visudo -cf /etc/sudoers.d/disclaude-audit && visudo -cf /etc/sudoers.d/disclaude
 
 # Create directories for runtime with proper permissions
-RUN mkdir -p /data/workspace /data/logs /app/.claude /app/.claude/backups /app/.claude/debug && \
+RUN mkdir -p /data/workspace /data/logs /data/codex /app/.claude /app/.claude/backups /app/.claude/debug && \
     echo '{}' > /app/.claude.json && \
     chown -R disclaude:disclaude /app /data
 
@@ -208,6 +210,7 @@ ENTRYPOINT ["docker-entrypoint.sh"]
 # Set environment variables
 ENV NODE_ENV=production
 ENV DISCLAUDE_MODE=primary
+ENV CODEX_HOME=/data/codex
 
 # Issue #4114: Cap agent-spawned compile parallelism to prevent OOM from massive cc1plus forks.
 # MAKEFLAGS limits make-based builds; CMAKE_BUILD_PARALLEL_LEVEL limits CMake builds.

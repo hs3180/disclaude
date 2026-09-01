@@ -40,6 +40,7 @@ services:
         DOCKER_IMAGE_PREFIX: ${DOCKER_IMAGE_PREFIX:-}
         GH_INSTALL_MODE: ${GH_INSTALL_MODE:-apt-repo}
         GH_DEB_URL: ${GH_DEB_URL:-}
+        CODEX_VERSION: ${CODEX_VERSION:-0.151.0}
     image: disclaude:primary
     container_name: disclaude-primary
     restart: unless-stopped
@@ -102,6 +103,8 @@ services:
       # `${BU_CDP_URL-…}` (no colon): set BU_CDP_URL= (empty) in .env to pass an
       # empty value through — browser-use treats empty as unset and self-launches.
       - BU_CDP_URL=${BU_CDP_URL-http://disclaude-chromium:${CDP_PORT:-9222}}
+      # Persist Codex OAuth credentials and rollout sessions across recreation.
+      - CODEX_HOME=/data/codex
 
     # Issue #4114: OOM protection — set host-side via the `oom_score_adj` field.
     # cgroup v2 forbids writing a negative /proc/self/oom_score_adj from inside the
@@ -120,6 +123,7 @@ services:
       # creates it as root:root — mkdir + chown 1001:1001 it yourself first.
       - ${WORKSPACE_DIR:-./workspace}:/data/workspace
       - log_data:/data/logs
+      - codex_data:/data/codex
 
     # Issue #4285 (part 1): opt-in GPU runtime via env (approach b — Debian
     # `node:22-trixie-slim` base unchanged, GPU exposed through `runtime: nvidia`;
@@ -381,6 +385,7 @@ services:
 volumes:
   log_data:
   filebeat_data:
+  codex_data:
 
 networks:
   disclaude-net:
