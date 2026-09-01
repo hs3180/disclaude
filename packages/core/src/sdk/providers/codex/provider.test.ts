@@ -347,7 +347,7 @@ fi
       expect(argvOf(fixtures, 1)).not.toContain('resume');
       // S4 (#4631): every run now carries the resolved sandbox level.
       expect(argvOf(fixtures, 2)).toContain(
-        'exec resume --json --skip-git-repo-check -c sandbox_mode=workspace-write t-abc -- b',
+        'exec resume --json --skip-git-repo-check -c sandbox_mode=workspace-write -c sandbox_workspace_write.network_access=true t-abc -- b',
       );
       const texts = (messages as Array<{ type: string; content: string }>)
         .filter((m) => m.type === 'text')

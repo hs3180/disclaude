@@ -160,6 +160,8 @@ export interface CodexAgentProviderOptions {
    * outranks it (security policy > convenience preference).
    */
   sandboxOverride?: CodexSandboxLevel;
+  /** Explicit Codex workspace network policy. Defaults to enabled. */
+  networkAccess?: boolean;
   /**
    * Concurrency governance caps (Issue #4634, S7): max concurrently-alive
    * sessions (queryStreams) and max simultaneously-executing codex exec
@@ -179,6 +181,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly env: Record<string, string | undefined>;
   private readonly execTimeoutMs: number | undefined;
   private readonly sandboxOverride: CodexSandboxLevel | undefined;
+  private readonly networkAccess: boolean;
   /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
   private readonly quota: CodexQuotaStats = {
     turnsCompleted: 0,
@@ -208,6 +211,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.env = options.env ?? process.env;
     this.execTimeoutMs = options.execTimeoutMs;
     this.sandboxOverride = options.sandboxOverride;
+    this.networkAccess = options.networkAccess ?? true;
     this.governor = new CodexSessionGovernor({
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
@@ -338,6 +342,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const runner = new CodexExecRunner({
       binary,
       timeoutMs: this.execTimeoutMs,
+      networkAccess: this.networkAccess,
     });
     // Captured at queryStream call time — the constructor-injected env the
     // binary was resolved from (tests: PATH fixtures; prod: process.env).

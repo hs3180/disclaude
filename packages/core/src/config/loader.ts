@@ -227,6 +227,14 @@ export function validateConfig(config: DisclaudeConfig): boolean {
     }
   }
 
+  if (config.agent?.codexNetworkAccess !== undefined && typeof config.agent.codexNetworkAccess !== 'boolean') {
+    logger.error(
+      `agent.codexNetworkAccess must be a boolean (got ${String(config.agent.codexNetworkAccess)}). ` +
+        'It controls outbound network access for Codex workspace-write runs.',
+    );
+    return false;
+  }
+
   // Issue #4634 (S7 of #4627): validate agent.codex governance caps —
   // non-positive values are rejected at load time (fail closed).
   if (config.agent?.codex !== undefined) {
