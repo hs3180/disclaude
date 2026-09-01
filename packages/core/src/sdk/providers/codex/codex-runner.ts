@@ -39,6 +39,19 @@ export const DEFAULT_TIMEOUT_MS = 600_000;
  */
 const MAX_PROMPT_CHARS = 120_000;
 
+/**
+ * Codex keeps network policy alongside the selected sandbox profile. The
+ * workspace-write key was historically the only one used here, which meant
+ * `read-only` runs silently ignored the requested network setting. That is
+ * precisely the mode used by permissionMode=default and by browser-use when
+ * the agent only needs to attach to an existing local CDP endpoint.
+ */
+function networkAccessConfigKey(sandboxMode?: CodexSandboxLevel): string {
+  return sandboxMode === 'read-only'
+    ? 'sandbox_read_only.network_access'
+    : 'sandbox_workspace_write.network_access';
+}
+
 export interface CodexExecRunOptions {
   /** The user prompt (passed as the trailing positional argument). */
   prompt: string;
@@ -151,7 +164,7 @@ export class CodexExecRunner {
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
-          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined ? ['-c', `sandbox_workspace_write.network_access=${options.networkAccess ?? this.defaultNetworkAccess}`] : []),
+          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined ? ['-c', `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`] : []),
           options.resumeSessionId,
           '--',
           options.prompt,
@@ -162,7 +175,7 @@ export class CodexExecRunner {
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),
-          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined ? ['-c', `sandbox_workspace_write.network_access=${options.networkAccess ?? this.defaultNetworkAccess}`] : []),
+          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined ? ['-c', `${networkAccessConfigKey(options.sandboxMode)}=${options.networkAccess ?? this.defaultNetworkAccess}`] : []),
           '--',
           options.prompt,
         ];
