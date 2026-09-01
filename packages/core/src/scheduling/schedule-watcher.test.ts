@@ -841,6 +841,19 @@ describe('ScheduleFileWatcher', () => {
       expect(watcher.isRunning()).toBe(false);
     });
 
+    it('should fall back to periodic rescans when descriptors are exhausted', async () => {
+      createWatcher();
+      const error = Object.assign(new Error('too many open files'), { code: 'EMFILE' });
+      mockFsWatch.mockImplementation(() => {
+        throw error;
+      });
+
+      await watcher.start();
+
+      expect(watcher.isRunning()).toBe(true);
+      expect(mockFsWatch).toHaveBeenCalledTimes(1);
+    });
+
     it('should register error handler on watcher', async () => {
       const mockOn = vi.fn().mockReturnThis();
       mockFsWatch.mockReturnValue({ on: mockOn, close: vi.fn() });

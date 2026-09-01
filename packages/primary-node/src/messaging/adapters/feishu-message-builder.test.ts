@@ -16,10 +16,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageBuilder, DEFAULT_CHANNEL_CAPABILITIES, type MessageData, type ChannelCapabilities } from '@disclaude/core';
 import { createFeishuMessageBuilderOptions } from './feishu-message-builder.js';
 
-/** Helper to create capabilities with specific supportedMcpTools */
+/** Helper to create capabilities with specific channel Skill commands. */
 const withTools = (tools: string[]): ChannelCapabilities => ({
   ...DEFAULT_CHANNEL_CAPABILITIES,
-  supportedMcpTools: tools,
+  supportedChannelSkills: tools,
 });
 
 
@@ -237,7 +237,7 @@ describe('MessageBuilder with Feishu sections', () => {
       expect(result).toContain('node skills/channel/cli.mjs send_file');
     });
 
-    it('should not include send_file when not in supportedMcpTools', () => {
+    it('should not include send_file when not in supported channel Skills', () => {
       const result = messageBuilder.buildEnhancedContent({
         text: 'Hello',
         messageId: 'msg-123',
@@ -245,6 +245,18 @@ describe('MessageBuilder with Feishu sections', () => {
 
       expect(result).toContain('send_file is NOT supported');
     });
+  });
+
+  it('should describe channel operations as Skill commands, not first-party MCP tools', () => {
+    const result = messageBuilder.buildEnhancedContent({
+      text: 'Hello',
+      messageId: 'msg-123',
+    }, 'chat-123', withTools(['send_text']));
+
+    expect(result).toContain('## Channel Skill Commands');
+    expect(result).toContain('node skills/channel/cli.mjs send_text');
+    expect(result).not.toContain('channel-mcp');
+    expect(result).not.toContain('MCP tool');
   });
 
   describe('buildOutputFormatGuidance (Issue #962)', () => {

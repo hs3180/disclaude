@@ -43,6 +43,10 @@ _USER_TIMEOUT=""
 # single attempt each — the quota resets hours later, so a full retry chain
 # per suite just burns wall clock (#4552's "28-minute slow round").
 QUOTA_EXHAUSTED=false
+# Set when the configured Codex backend returns a provider failure during the
+# warm-up request. AI suites are then skipped as environmental rather than
+# repeated failures; protocol-only suites still run (Issue #4671).
+CODEX_ENV_BLOCKED=false
 
 # Issue #4552: current suite's captured output (set by run_test_script;
 # removed on every exit path — the normal ones inline, and this trap for
@@ -105,8 +109,8 @@ show_test_plan_body() {
     echo "  6. Multimodal Tests (5 tests)"
     echo "     - Health check, single image, multi-image, mixed message, screenshot"
     echo ""
-    echo "  7. Feishu IPC Transport Tests (35 tests)"
-    echo "     - sendMessage, sendCard, sendInteractive, uploadFile, multi-card"
+    echo "  7. Codex Compatibility E2E"
+    echo "     - Real CLI configuration, session resume, sandbox, telemetry"
     echo ""
     echo "Configuration:"
     echo "  - REST Port: $REST_PORT"
@@ -154,8 +158,9 @@ run_test_script() {
     if [ "$VERBOSE" = true ]; then
         args+=("--verbose")
     fi
-    # Passthrough filter args
-    args+=("${FILTER_ARGS[@]}")
+    # Filters are consumed by the runner's suite selection below. Do not pass
+    # them to child scripts: their common parser intentionally accepts only
+    # request/runtime options (Issue #4672).
 
     local attempt=1
     local max_attempts=$((max_retries + 1))
@@ -322,6 +327,15 @@ warmup_agent() {
         parse_response "$result"
 
         if [ "$RESPONSE_STATUS" = "200" ]; then
+            if [ -n "$CONFIG_PATH" ] && grep -qE '^[[:space:]]*agentBackend:.*codex' "$CONFIG_PATH" 2>/dev/null \
+                && { response_contains_provider_failure "$RESPONSE_BODY" \
+                    || server_log_contains_provider_failure "$warmup_chat_id"; }; then
+                CODEX_ENV_BLOCKED=true
+                log_warn "Codex warm-up returned a provider failure (including HTTP 200/log-only failures); marking Codex-dependent suites as SKIP (environmental, Issue #4671/#4676)"
+                log_debug "Warm-up response: $RESPONSE_BODY"
+                check_server_health_detailed
+                return 0
+            fi
             if [ $attempt -gt 0 ]; then
                 log_info "Agent warm-up succeeded on attempt $((attempt + 1))"
             fi
@@ -464,17 +478,36 @@ main() {
     # a bare "1 test suite(s) failed" forces the operator to dig through
     # (often truncated) background-run output to find the suite.
     local FAILED_SUITE_NAMES=()
+    local SKIPPED_SUITE_NAMES=()
 
     local script name
     for spec in \
-        "rest-channel-test.sh|REST Channel Tests" \
-        "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply" \
-        "use-case-2-task-execution.sh|Use Case 2 - Task Execution" \
-        "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation" \
-        "mcp-tools-test.sh|Channel CLI Tools Tests" \
-        "multimodal-test.sh|Multimodal Tests"; do
+        "rest-channel-test.sh|REST Channel Tests|fast" \
+        "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply|ai" \
+        "use-case-2-task-execution.sh|Use Case 2 - Task Execution|ai" \
+        "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation|ai" \
+        "mcp-tools-test.sh|Channel CLI Tools Tests|ai" \
+        "multimodal-test.sh|Multimodal Tests|ai" \
+        "codex-compatibility-test.sh|Codex Compatibility E2E|ai"; do
         script="${spec%%|*}"
-        name="${spec##*|}"
+        spec_remainder="${spec#*|}"
+        name="${spec_remainder%%|*}"
+        suite_tag="${spec_remainder##*|}"
+        if [ "${#FILTER_ARGS[@]}" -gt 0 ]; then
+            filter_kind="${FILTER_ARGS[0]}"
+            filter_value="${FILTER_ARGS[1]}"
+            if [ "$filter_kind" = "--name" ] && [[ "$name" != *"$filter_value"* ]]; then
+                continue
+            fi
+            if [ "$filter_kind" = "--tag" ] && [ "$suite_tag" != "$filter_value" ]; then
+                continue
+            fi
+        fi
+        if [ "$CODEX_ENV_BLOCKED" = true ] && [ "$suite_tag" = "ai" ]; then
+            log_warn "$name: SKIP (Codex environment unavailable; see warm-up diagnostics, Issue #4671)"
+            SKIPPED_SUITE_NAMES+=("$name")
+            continue
+        fi
         if ! run_suite "$SCRIPT_DIR/$script" "$name"; then
             failed=$((failed + 1))
             FAILED_SUITE_NAMES+=("$name")
@@ -496,6 +529,9 @@ main() {
         # tail-truncated output (#4584's CI report lost the suite lines)
         # still identifies them.
         log_error "Failed suite(s): ${FAILED_SUITE_NAMES[*]}"
+    fi
+    if [ "${#SKIPPED_SUITE_NAMES[@]}" -gt 0 ]; then
+        log_warn "Skipped suite(s): ${SKIPPED_SUITE_NAMES[*]}"
     fi
     if [ $RETRIED_SUCCESSES -gt 0 ]; then
         log_warn "${RETRIED_SUCCESSES} suite(s) passed after retry"

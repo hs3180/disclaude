@@ -373,7 +373,7 @@ describe('MessageBuilder', () => {
         messageId: 'msg-123',
       }, 'chat-456');
 
-      expect(result).toContain('## Tools');
+      expect(result).toContain('## Channel Skill Commands');
       expect(result).toContain('custom_tool');
     });
 
@@ -546,7 +546,7 @@ describe('MessageBuilder', () => {
         messageId: 'msg-123',
       }, 'chat-456');
 
-      const toolsIdx = result.indexOf('## Tools');
+      const toolsIdx = result.indexOf('## Channel Skill Commands');
       const separatorIdx = result.lastIndexOf('---', toolsIdx);
       expect(separatorIdx).toBeGreaterThan(-1);
       expect(separatorIdx).toBeLessThan(toolsIdx);

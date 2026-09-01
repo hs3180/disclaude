@@ -59,9 +59,9 @@ To notify the user in your FINAL response, use:
 function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   const { chatId, msg, capabilities } = ctx;
   const parts: string[] = [];
-  const supportedTools = capabilities?.supportedMcpTools;
+  const supportedTools = capabilities?.supportedChannelSkills ?? capabilities?.supportedMcpTools;
 
-  // If supportedMcpTools is defined, use it for dynamic tool filtering
+  // If channel Skill capabilities are defined, use them for dynamic filtering.
   const hasTool = (toolName: string): boolean => {
     if (supportedTools === undefined) {
       // Legacy behavior: check individual capability flags
@@ -117,9 +117,9 @@ ${messagingTools.join('\n')}
 /**
  * Build Feishu-specific extra attachment info.
  *
- * Issue #3679: Removed hardcoded MCP tool usage guidance.
+ * Issue #3679: Removed hardcoded tool usage guidance.
  * Modern models support native multimodal input and can use the Read tool
- * to view images directly. MCP tool discovery is handled by the SDK automatically.
+ * to view images directly.
  */
 function buildFeishuAttachmentExtra(ctx: MessageBuilderContext): string {
   const { msg: { attachments } } = ctx;

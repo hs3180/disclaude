@@ -17,7 +17,7 @@
  *   ├── Channel sections (via options callbacks)
  *   │   ├── buildHeader() - Platform label
  *   │   ├── buildPostHistory() - @ mention section
- *   │   ├── buildToolsSection() - MCP tools
+ *   │   ├── buildToolsSection() - channel Skill commands
  *   │   └── buildAttachmentExtra() - Image analyzer hints
  *   ├── Guidance sections (next-step, output format, task record, location awareness)
  *   └── User message + attachments
@@ -179,7 +179,7 @@ export class MessageBuilder {
     }
 
     if (toolsSection) {
-      sections.push(`\n---\n\n## Tools\n${toolsSection}`);
+      sections.push(`\n---\n\n## Channel Skill Commands\n${toolsSection}`);
     }
 
     sections.push(nextStepGuidance);

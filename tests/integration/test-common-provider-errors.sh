@@ -50,5 +50,19 @@ RESPONSE_TEXT_FIXTURE='HTTP 400 from provider'
 rc=0; assert_sync_chat_ok "hello" || rc=$?
 check "$rc" 1 "embedded provider HTTP error fails"
 
+# A REST 200 response may carry no provider error text even though the server
+# log records the Codex child failure. The warm-up gate must still detect it.
+server_log_fixture="$(mktemp "${TMPDIR:-/tmp}/provider-error-log.XXXXXX")"
+trap 'rm -f "$server_log_fixture"' EXIT
+SERVER_LOG="$server_log_fixture"
+printf '%s\n' 'chat-warmup' 'exitCode: 1' 'messageType: error' > "$SERVER_LOG"
+if server_log_contains_provider_failure chat-warmup; then
+    echo 'PASS: server log Codex failure is detected'
+    pass=$((pass + 1))
+else
+    echo 'FAIL: server log Codex failure was not detected'
+    fail=$((fail + 1))
+fi
+
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

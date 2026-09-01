@@ -68,7 +68,7 @@ export interface MessageBuilderContext {
  * Channel-specific content:
  * - Platform header (e.g., "You are responding in a Feishu chat.")
  * - @ Mention section (e.g., Feishu <at> tag guidance)
- * - Tools section (e.g., MCP tool names and usage)
+ * - Channel Skill commands and usage
  * - Extra attachment info (e.g., image analyzer MCP hints)
  */
 export interface MessageBuilderOptions {
@@ -90,9 +90,9 @@ export interface MessageBuilderOptions {
 
   /**
    * Build channel-specific tools/commands section.
-   * Inserted after the "## Tools" heading.
+   * Inserted after the "## Channel Skill Commands" heading.
    *
-   * Example: MCP tool list for Feishu channel.
+   * Example: channel Skill commands for Feishu.
    */
   buildToolsSection?: (ctx: MessageBuilderContext) => string;
 

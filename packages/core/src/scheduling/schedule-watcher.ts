@@ -484,8 +484,19 @@ export class ScheduleFileWatcher {
         }
       );
 
-      this.watcher.on('error', (error) => {
+      this.watcher.on('error', (error: NodeJS.ErrnoException) => {
         logger.error({ err: error }, 'File watcher error');
+        if (error.code === 'EMFILE' || error.code === 'ENFILE') {
+          // A watcher error is asynchronous on some platforms. Keep the
+          // scheduling service alive and rely on the periodic full re-scan
+          // instead of leaving a dead FSWatcher behind.
+          this.watcher?.close();
+          this.watcher = null;
+          logger.warn(
+            { code: error.code, schedulesDir: this.schedulesDir },
+            'File watcher unavailable; continuing with periodic re-scan fallback'
+          );
+        }
       });
 
       this.running = true;
@@ -495,6 +506,19 @@ export class ScheduleFileWatcher {
       this.startRescanTimer();
 
     } catch (error) {
+      const errnoError = error as NodeJS.ErrnoException;
+      if (errnoError.code === 'EMFILE' || errnoError.code === 'ENFILE') {
+        // fs.watch may fail synchronously when the process has exhausted its
+        // descriptor limit. Polling still keeps schedule changes functional.
+        this.watcher = null;
+        this.running = true;
+        logger.warn(
+          { err: error, schedulesDir: this.schedulesDir },
+          'File watcher unavailable; continuing with periodic re-scan fallback'
+        );
+        this.startRescanTimer();
+        return;
+      }
       logger.error({ err: error }, 'Failed to start file watcher');
       throw error;
     }

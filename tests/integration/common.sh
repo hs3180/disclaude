@@ -797,6 +797,22 @@ response_contains_provider_failure() {
         "codex exec (exited|failed)|exec exited with code [1-9]|HTTP (400|401|403|500)|API error|provider error|\\\"type\\\"[[:space:]]*:[[:space:]]*\\\"error\\\""
 }
 
+# The REST sync wrapper can return HTTP 200 even when the provider emitted an
+# error and the turn ended with a non-zero process exit. Inspect the server log
+# for the request's chat ID so the warm-up gate cannot mistake that response
+# for a healthy Codex environment.
+# Usage: if server_log_contains_provider_failure "$chat_id"; then ...
+server_log_contains_provider_failure() {
+    local chat_id="${1:-}"
+    [ -n "$chat_id" ] || return 1
+    [ -f "${SERVER_LOG:-}" ] || return 1
+    awk -v id="$chat_id" '
+        index($0, id) { seen=1; remaining=40 }
+        seen && remaining-- > 0 { print }
+    ' "$SERVER_LOG" | grep -Eiq \
+        'exitCode[^0-9]*[1-9]|messageType[^[:alnum:]]+error|turn_failed|codex exec exited with code [1-9]'
+}
+
 # Assert response body matches pattern (case-insensitive)
 # Usage: assert_body_matches "pattern" "test_name"
 assert_body_matches() {

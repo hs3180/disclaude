@@ -72,6 +72,8 @@ export interface AgentConfig {
    * `danger-full-access` is reachable ONLY through this override.
    */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Whether Codex workspace-write may make outbound network requests. */
+  codexNetworkAccess?: boolean;
   /**
    * Codex backend concurrency governance (Issue #4634, S7). Only meaningful
    * with `agentBackend: 'codex'`; caps are per process.

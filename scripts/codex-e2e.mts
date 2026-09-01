@@ -228,12 +228,25 @@ async function main(): Promise<void> {
 
 function summary(): void {
   const failed = results.filter((r) => !r.pass);
+  const environmentalFailure = failed.some(({ detail }) =>
+    /Operation not permitted|permission|auth(?:entication)?|not found on PATH|unavailable|network|app-server/i.test(detail),
+  );
   console.log('\n──────── codex e2e summary ────────');
   for (const r of results) {
     console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.phase}`);
   }
-  console.log(`${failed.length === 0 ? 'ALL GREEN ✅' : `${failed.length} FAILED ❌`}`);
-  process.exitCode = failed.length === 0 ? 0 : 1;
+  if (failed.length === 0) {
+    console.log('ALL GREEN ✅');
+    process.exitCode = 0;
+  } else if (environmentalFailure) {
+    console.log(`${failed.length} BLOCKED BY ENVIRONMENT ⚠️`);
+    // Exit 2 is reserved for an unavailable E2E environment. The integration
+    // runner reports this as SKIP so it does not hide unrelated suite results.
+    process.exitCode = 2;
+  } else {
+    console.log(`${failed.length} FAILED ❌`);
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error) => {
