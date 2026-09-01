@@ -756,6 +756,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
    * Get the capabilities of Feishu channel.
    */
   getCapabilities(): ChannelCapabilities {
+    const credentialsConfigured = Boolean(this.appId && this.appSecret);
     return {
       ...DEFAULT_CHANNEL_CAPABILITIES,
       supportsCard: true,
@@ -772,12 +773,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       // gate (chatType === 'p2p'), not a scope capability — this channel has
       // no per-chat type state, so it only reports the raw flag.
       supportsStreaming: this.config.streamingCard === true,
-      supportedMcpTools: [
-        'send_text',
-        'send_card',
-        'send_interactive',
-        'send_file',
-      ],
+      // Do not advertise channel-send tools to an agent when the channel
+      // cannot authenticate. This prevents Codex from discovering a tool that
+      // can only fail later with "Feishu credentials not configured".
+      supportedMcpTools: credentialsConfigured
+        ? ['send_text', 'send_card', 'send_interactive', 'send_file']
+        : [],
     };
   }
 
