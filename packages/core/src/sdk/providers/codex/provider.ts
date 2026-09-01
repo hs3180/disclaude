@@ -71,6 +71,7 @@ import {
 import { CodexSessionGovernor } from './session-governor.js';
 import {
   adaptCodexEvent,
+  classifyCodexEvent,
   isCodexAuthFailure,
   isCodexResumeTargetMissing,
   isCodexUsageLimit,
@@ -443,6 +444,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       async function* (this: void): AsyncGenerator<AgentMessage> {
         // ── Event bridge state (pi #4386 part 3 pattern) ──────────────────
         const queue: AgentMessage[] = [];
+        // Codex normally emits one completed event per item, but retries or
+        // reconnects can replay a completed item. Do not send duplicate
+        // assistant/tool content to the channel.
+        const deliveredEventKeys = new Set<string>();
         const notify: (() => void)[] = [];
         let inputDone = false;
         let runActive = false;
@@ -542,6 +547,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         };
 
         const enqueue = (event: CodexThreadEvent): void => {
+          if (event.type === 'turn.started') {
+            // Item IDs are scoped to a Codex turn; a resumed turn may reuse
+            // the same fixture/runtime ID, so dedupe only within one turn.
+            deliveredEventKeys.clear();
+          }
           if (event.type === 'thread.started') {
             latestSessionId = event.thread_id;
           }
@@ -615,8 +625,18 @@ export class CodexAgentProvider implements IAgentSDKProvider {
             runFailureText += `\n${event.error?.message ?? ''}`;
           }
           touchStallWatchdog();
+          const presentation = classifyCodexEvent(event);
+          logger.debug({ eventType: event.type, presentation }, 'codex JSONL event classified');
           const adapted = adaptCodexEvent(event);
           if (adapted) {
+            const messageId = adapted.metadata?.messageId;
+            const eventKey = messageId ? `${adapted.type}:${messageId}` : undefined;
+            if (eventKey && deliveredEventKeys.has(eventKey)) {
+              logger.debug({ eventKey }, 'skipping duplicate Codex event');
+              wakeAll();
+              return;
+            }
+            if (eventKey) {deliveredEventKeys.add(eventKey);}
             queue.push(adapted);
           }
           wakeAll();
@@ -633,6 +653,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         // maxConcurrentRuns codex exec children process-wide; excess turns
         // queue FIFO across chats with a backpressure notice.
         const runInput = async (prompt: string): Promise<void> => {
+          // Item IDs are scoped to one exec invocation. Clear before every
+          // run because older Codex versions (and test doubles) may omit
+          // `turn.started` on resumed executions.
+          deliveredEventKeys.clear();
           const resumeTarget = resumeBudgetSink.resumeFreshNextTurn ? undefined : resumeThreadId;
           if (resumeThreadId !== undefined && resumeTarget === undefined) {
             resumeBudgetSink.resumeFreshNextTurn = false;
