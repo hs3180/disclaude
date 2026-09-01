@@ -48,6 +48,8 @@ agent:
   # ONLY through this explicit override; disallowedTools mutation entries
   # still cap at read-only regardless.
   # codexSandbox: "workspace-write"
+  # Codex workspace network access (default: true for disclaude network-backed workflows).
+  # codexNetworkAccess: true
 
   # Codex backend concurrency governance (only with agentBackend: codex,
   # Issue #4634). Per-process caps: at most N alive codex sessions and N

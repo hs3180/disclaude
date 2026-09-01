@@ -242,6 +242,19 @@ describe('CodexExecRunner (Issue #4630)', () => {
     );
   });
 
+  it.each([
+    [true, 'sandbox_workspace_write.network_access=true'],
+    [false, 'sandbox_workspace_write.network_access=false'],
+  ])('passes explicit network policy (%s) for fresh and resumed runs', async (networkAccess, setting) => {
+    fixture.cleanup();
+    fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
+    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+    const fresh = await runner.run({ prompt: 'fresh', networkAccess }, () => {}).promise;
+    expect(fresh.stderrTail).toContain(`-c ${setting}`);
+    const resumed = await runner.run({ prompt: 'resume', resumeSessionId: 't-1', networkAccess }, () => {}).promise;
+    expect(resumed.stderrTail).toContain(`-c ${setting}`);
+  });
+
   it('uses -s for fresh runs and -c sandbox_mode= for resume runs', async () => {
     // codex-cli 0.151.0 exposes --sandbox on fresh exec but not on resume.
     fixture.cleanup();

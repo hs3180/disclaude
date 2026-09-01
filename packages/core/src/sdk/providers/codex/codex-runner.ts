@@ -59,6 +59,8 @@ export interface CodexExecRunOptions {
    * accepted there and enforces identically; verified on codex-cli 0.151.0).
    */
   sandboxMode?: CodexSandboxLevel;
+  /** Explicit Codex workspace network policy. */
+  networkAccess?: boolean;
   /** Environment for the child (merged over the provider env). */
   env?: Record<string, string | undefined>;
   /** Per-call timeout override (ms). */
@@ -88,14 +90,16 @@ export interface CodexExecRunHandle {
 export class CodexExecRunner {
   private readonly binary: string;
   private readonly defaultTimeoutMs: number;
+  private readonly defaultNetworkAccess: boolean | undefined;
 
   /**
    * @param options.binary - absolute (or PATH-resolvable) codex binary.
    * @param options.timeoutMs - default per-run timeout.
    */
-  constructor(options: { binary?: string; timeoutMs?: number } = {}) {
+  constructor(options: { binary?: string; timeoutMs?: number; networkAccess?: boolean } = {}) {
     this.binary = options.binary ?? 'codex';
     this.defaultTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.defaultNetworkAccess = options.networkAccess;
   }
 
   /**
@@ -147,6 +151,7 @@ export class CodexExecRunner {
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-c', `sandbox_mode=${options.sandboxMode}`] : []),
+          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined ? ['-c', `sandbox_workspace_write.network_access=${options.networkAccess ?? this.defaultNetworkAccess}`] : []),
           options.resumeSessionId,
           '--',
           options.prompt,
@@ -157,6 +162,7 @@ export class CodexExecRunner {
           '--skip-git-repo-check',
           ...(options.model ? ['-m', options.model] : []),
           ...(options.sandboxMode ? ['-s', options.sandboxMode] : []),
+          ...((options.networkAccess ?? this.defaultNetworkAccess) !== undefined ? ['-c', `sandbox_workspace_write.network_access=${options.networkAccess ?? this.defaultNetworkAccess}`] : []),
           '--',
           options.prompt,
         ];
