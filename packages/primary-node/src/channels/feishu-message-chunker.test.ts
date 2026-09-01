@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { configuredFeishuMessageBytes, splitFeishuMessage } from './feishu-message-chunker.js';
+import { configuredFeishuMessageBytes, FEISHU_TRUNCATION_MARKER, truncateFeishuMessage } from './feishu-message-chunker.js';
 
-describe('splitFeishuMessage (Issue #4693)', () => {
-  it('keeps UTF-8 text intact and bounded', () => {
+describe('truncateFeishuMessage (Issue #4693)', () => {
+  it('keeps the head and tail in one UTF-8-safe bounded message', () => {
     const source = '你好🙂'.repeat(30);
-    const chunks = splitFeishuMessage(source, 32);
-    expect(chunks.join('')).toBe(source);
-    expect(chunks.every((chunk) => Buffer.byteLength(chunk) <= 32)).toBe(true);
+    const result = truncateFeishuMessage(source, 64);
+    expect(Buffer.byteLength(result)).toBeLessThanOrEqual(64);
+    expect(result).toContain(FEISHU_TRUNCATION_MARKER);
+    expect(result.startsWith('你好🙂')).toBe(true);
+    expect(result.endsWith('你好🙂')).toBe(true);
   });
 
-  it('keeps fenced markdown chunks bounded', () => {
-    const chunks = splitFeishuMessage(`\`\`\`ts\n${  'const value = 1;\n'.repeat(20)  }\`\`\``, 48);
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((chunk) => Buffer.byteLength(chunk) <= 48)).toBe(true);
+  it('does not alter text within the limit', () => {
+    expect(truncateFeishuMessage('short', 32)).toBe('short');
+  });
+
+  it('rejects a limit too small for the marker', () => {
+    expect(() => truncateFeishuMessage('long text', 1)).toThrow(/truncation marker/);
   });
 
   it('uses a positive configured limit or the safe default', () => {
