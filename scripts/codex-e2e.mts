@@ -23,8 +23,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
@@ -43,12 +43,31 @@ function record(phase: string, pass: boolean, detail: string): void {
 
 async function main(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'codex-e2e-'));
-  const workspaceDir = join(root, 'workspace');
+  // Codex's workspace-write sandbox intentionally rejects project roots under
+  // the OS temporary directory on some hosts. Keep the disposable workspace
+  // under this checkout instead; it is still removed in finally and never
+  // uses the production workspace/config.
+  const workspaceDir = mkdtempSync(join(REPO_ROOT, '.codex-e2e-workspace-'));
+  const codexHome = join(root, 'codex-home');
   const configFile = join(root, 'e2e.config.yaml');
+  const previousCodexHome = process.env.CODEX_HOME;
   try {
     // The workspace dir must EXIST before any spawn — codex runs with
     // options.cwd = workspaceDir and a missing cwd is an ENOENT spawn error.
     mkdirSync(workspaceDir, { recursive: true });
+    // Codex creates short-lived helper aliases under CODEX_HOME/tmp/arg0
+    // before starting its in-process app-server. In restricted CI/agent
+    // environments ~/.codex may be readable but not writable, producing the
+    // misleading `Operation not permitted` warm-up failure. Give this E2E a
+    // private writable home while keeping the real auth.json available via a
+    // symlink (credentials are never copied into the temporary directory).
+    mkdirSync(codexHome, { recursive: true });
+    const sourceCodexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
+    const authFile = join(sourceCodexHome, 'auth.json');
+    if (existsSync(authFile)) {
+      symlinkSync(authFile, join(codexHome, 'auth.json'));
+    }
+    process.env.CODEX_HOME = codexHome;
     // ── Phase 0: environment (actionable fail-fast, same contract as S1) ──
     const codexOnPath = spawnSync('codex', ['--version'], { encoding: 'utf8' });
     if (codexOnPath.status !== 0 || !/codex-cli \d/.test(codexOnPath.stdout)) {
@@ -221,7 +240,13 @@ async function main(): Promise<void> {
     record('quota telemetry (S5)', quotaOk, JSON.stringify(quota));
     record('governance caps from config (S7)', govOk, JSON.stringify(gov));
   } finally {
+    if (previousCodexHome === undefined) {
+      delete process.env.CODEX_HOME;
+    } else {
+      process.env.CODEX_HOME = previousCodexHome;
+    }
     rmSync(root, { recursive: true, force: true });
+    rmSync(workspaceDir, { recursive: true, force: true });
   }
   summary();
 }
