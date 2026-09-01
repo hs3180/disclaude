@@ -255,6 +255,22 @@ describe('CodexExecRunner (Issue #4630)', () => {
     expect(resumed.stderrTail).toContain(`-c ${setting}`);
   });
 
+  it('keeps network access available in read-only mode for external CDP clients', async () => {
+    fixture.cleanup();
+    fixture = makeScriptedBinary('echo "argv:$*" >&2\nexit 0');
+    const runner = new CodexExecRunner({ binary: fixture.binaryPath });
+    const fresh = await runner.run(
+      { prompt: 'attach to browser', sandboxMode: 'read-only', networkAccess: true },
+      () => {},
+    ).promise;
+    expect(fresh.stderrTail).toContain('-c sandbox_read_only.network_access=true');
+    const resumed = await runner.run(
+      { prompt: 'read page', resumeSessionId: 't-cdp', sandboxMode: 'read-only', networkAccess: true },
+      () => {},
+    ).promise;
+    expect(resumed.stderrTail).toContain('-c sandbox_read_only.network_access=true');
+  });
+
   it('uses -s for fresh runs and -c sandbox_mode= for resume runs', async () => {
     // codex-cli 0.151.0 exposes --sandbox on fresh exec but not on resume.
     fixture.cleanup();
