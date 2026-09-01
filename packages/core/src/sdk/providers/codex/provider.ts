@@ -143,6 +143,11 @@ const BINARY_MISSING = (pathValue: string): string =>
   `CodexAgentProvider: codex CLI binary not found on PATH "${pathValue}" — install it first: ` +
   '`npm install -g @openai/codex`, then complete `codex login` (Sign in with ChatGPT).';
 
+/** The ChatGPT endpoint rejects this legacy API-style model alias. */
+function codexModelForChatGpt(model: string | undefined): string | undefined {
+  return model?.trim().toLowerCase() === 'gpt-5.1-codex' ? undefined : model;
+}
+
 /**
  * Constructor options — dependency injection seams for tests.
  *
@@ -344,6 +349,13 @@ export class CodexAgentProvider implements IAgentSDKProvider {
       timeoutMs: this.execTimeoutMs,
       networkAccess: this.networkAccess,
     });
+    const codexModel = codexModelForChatGpt(options.model);
+    if (options.model && codexModel === undefined) {
+      logger.warn(
+        { configuredModel: options.model },
+        'ignoring legacy gpt-5.1-codex model for ChatGPT-backed Codex; using the CLI default',
+      );
+    }
     // Captured at queryStream call time — the constructor-injected env the
     // binary was resolved from (tests: PATH fixtures; prod: process.env).
     const providerEnv = this.env;
@@ -630,7 +642,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
               resumeSessionId: resumeTarget,
               sandboxMode: sandboxDecision.sandbox,
               cwd: options.cwd,
-              model: options.model,
+              model: codexModel,
               env: { ...providerEnv, ...options.env },
               stderr: options.stderr,
             },
