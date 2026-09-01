@@ -80,6 +80,9 @@ import {
 
 const logger = createLogger('CodexAgentProvider');
 
+/** Start a fresh thread before the next turn after a resume reaches this size. */
+export const DEFAULT_MAX_RESUME_INPUT_TOKENS = 100_000;
+
 /**
  * Same user-facing stall notice the Claude (#3706) and pi (#4386 part 5)
  * bridges yield, so all three backends read identically in chat and logs.
@@ -162,6 +165,8 @@ export interface CodexAgentProviderOptions {
   sandboxOverride?: CodexSandboxLevel;
   /** Explicit Codex workspace network policy. Defaults to enabled. */
   networkAccess?: boolean;
+  /** Maximum input-token size permitted for a resumed Codex turn. */
+  maxResumeInputTokens?: number;
   /**
    * Concurrency governance caps (Issue #4634, S7): max concurrently-alive
    * sessions (queryStreams) and max simultaneously-executing codex exec
@@ -182,6 +187,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
   private readonly execTimeoutMs: number | undefined;
   private readonly sandboxOverride: CodexSandboxLevel | undefined;
   private readonly networkAccess: boolean;
+  private readonly maxResumeInputTokens: number;
   /** Cumulative quota counters (S5, #4632) — see CodexQuotaStats. */
   private readonly quota: CodexQuotaStats = {
     turnsCompleted: 0,
@@ -212,6 +218,7 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     this.execTimeoutMs = options.execTimeoutMs;
     this.sandboxOverride = options.sandboxOverride;
     this.networkAccess = options.networkAccess ?? true;
+    this.maxResumeInputTokens = options.maxResumeInputTokens ?? DEFAULT_MAX_RESUME_INPUT_TOKENS;
     this.governor = new CodexSessionGovernor({
       maxActiveSessions: options.maxActiveSessions,
       maxConcurrentRuns: options.maxConcurrentRuns,
@@ -350,6 +357,10 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     // Instance-level quota sink (S5, #4632): the bridge closures below are
     // `this: void`, so they aggregate through this captured reference.
     const quotaSink = this.quota;
+    const resumeBudgetSink = {
+      maxResumeInputTokens: this.maxResumeInputTokens,
+      resumeFreshNextTurn: false,
+    };
     // Same capture for the S7 governor + stash (this: void closures below).
     const governorSink = this.governor;
     const stashSink = this.threadStash;
@@ -565,6 +576,18 @@ export class CodexAgentProvider implements IAgentSDKProvider {
                   },
                   'codex quota usage (turn.completed)',
                 );
+                if (event.usage.input_tokens !== undefined &&
+                    event.usage.input_tokens >= resumeBudgetSink.maxResumeInputTokens) {
+                  resumeBudgetSink.resumeFreshNextTurn = true;
+                  logger.warn(
+                    {
+                      inputTokens: event.usage.input_tokens,
+                      maxResumeInputTokens: resumeBudgetSink.maxResumeInputTokens,
+                      threadId: latestSessionId,
+                    },
+                    'codex resume input budget reached — next turn will start a fresh session',
+                  );
+                }
               }
             } else {
               // turn.failed is a terminator for bookkeeping, but the TURN
@@ -598,7 +621,14 @@ export class CodexAgentProvider implements IAgentSDKProvider {
         // maxConcurrentRuns codex exec children process-wide; excess turns
         // queue FIFO across chats with a backpressure notice.
         const runInput = async (prompt: string): Promise<void> => {
-          const resumeTarget = resumeThreadId;
+          const resumeTarget = resumeBudgetSink.resumeFreshNextTurn ? undefined : resumeThreadId;
+          if (resumeThreadId !== undefined && resumeTarget === undefined) {
+            resumeBudgetSink.resumeFreshNextTurn = false;
+            logger.info(
+              { previousThreadId: resumeThreadId, maxResumeInputTokens: resumeBudgetSink.maxResumeInputTokens },
+              'starting fresh codex session after resume input budget was reached',
+            );
+          }
           governorSink.touchSession(sessionKey);
           // Backpressure UX (#4634): announce the wait BEFORE it happens —
           // never silence. (Also announce when merely joining the queue.)
