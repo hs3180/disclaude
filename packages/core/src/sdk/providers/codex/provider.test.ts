@@ -218,9 +218,14 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
       const workspace = mkdtempSync(join(tmpdir(), 'codex-project-workspace-'));
       try {
         mkdirSync(join(workspace, 'skills', 'demo'), { recursive: true });
+        mkdirSync(join(workspace, '.claude', 'skills', 'claude-local'), { recursive: true });
         writeFileSync(
           join(workspace, 'skills', 'demo', 'SKILL.md'),
           '---\ndescription: Demo project skill\n---\nUse the demo workflow.',
+        );
+        writeFileSync(
+          join(workspace, '.claude', 'skills', 'claude-local', 'SKILL.md'),
+          '---\ndescription: Claude local skill\n---\nUse the Claude local workflow.',
         );
         fixtures = makeFixtures({
           withBinary: true,
@@ -232,6 +237,8 @@ describe('CodexAgentProvider (Issues #4629 + #4630)', () => {
         expect(prompt).toContain('demo');
         expect(prompt).toContain('Demo project skill');
         expect(prompt).toContain(join(workspace, 'skills', 'demo', 'SKILL.md'));
+        expect(prompt).toContain('Claude local skill');
+        expect(prompt).toContain(join(workspace, '.claude', 'skills', 'claude-local', 'SKILL.md'));
         expect(prompt).toContain('User request:\nhi');
       } finally {
         rmSync(workspace, { recursive: true, force: true });

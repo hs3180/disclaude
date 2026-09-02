@@ -389,6 +389,11 @@ export class CodexAgentProvider implements IAgentSDKProvider {
     const thisBuiltinContext = options.cwd
       ? formatCodexBuiltinContext(mergeBuiltinResources(
         discoverBuiltinResources(resolve(options.cwd)),
+        // Claude Code projects conventionally keep local resources under
+        // `.claude/skills` and `.claude/agents`; treat that directory as a
+        // second workspace root while retaining the existing root-level
+        // `skills/` and `agents/` layout.
+        discoverBuiltinResources(join(resolve(options.cwd), '.claude')),
         discoverBuiltinResources(this.builtinRoot),
       ))
       : '';
