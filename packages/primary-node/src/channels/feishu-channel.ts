@@ -28,7 +28,11 @@ import {
   DEFAULT_CHANNEL_CAPABILITIES,
   attachmentManager,
 } from '@disclaude/core';
-import { InteractionManager, WelcomeService, createFeishuClient } from '../platforms/feishu/index.js';
+import {
+  InteractionManager,
+  WelcomeService,
+  createFeishuClient,
+} from '../platforms/feishu/index.js';
 import {
   TriggerModeManager,
   MentionDetector,
@@ -57,7 +61,11 @@ import {
   buildStreamingPlaceholderCard,
   STREAMING_REPLY_ELEMENT_ID,
 } from '../platforms/feishu/card-builders/streaming-card-builder.js';
-import { configuredFeishuMessageBytes, truncateFeishuMessage } from './feishu-message-chunker.js';
+import {
+  configuredFeishuMessageBytes,
+  FEISHU_RETRY_MESSAGE_BYTES,
+  truncateFeishuMessage,
+} from './feishu-message-chunker.js';
 import type { DeliveryHealth } from '../health-types.js';
 
 const logger = createLogger('FeishuChannel');
@@ -208,7 +216,7 @@ export interface FeishuChannelConfig {
     messageId: string,
     chatId: string,
     actionValue: string,
-    actionText?: string,
+    actionText?: string
   ) => string | undefined;
 }
 
@@ -284,7 +292,15 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         }
         return { success: false };
       },
-      sendMessage: async (message: { chatId: string; type: string; text?: string; card?: Record<string, unknown>; description?: string; threadId?: string; filePath?: string }) => {
+      sendMessage: async (message: {
+        chatId: string;
+        type: string;
+        text?: string;
+        card?: Record<string, unknown>;
+        description?: string;
+        threadId?: string;
+        filePath?: string;
+      }) => {
         await this.sendMessage(message as OutgoingMessage);
       },
       routeCardAction: config.routeCardAction,
@@ -332,7 +348,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.error({ err: error }, 'Failed to handle message receive');
           await this.notifyUserDirectly(
             extractChatIdFromEvent(data) ?? '',
-            '⚠️ 处理消息时遇到内部错误，请稍后重试。',
+            '⚠️ 处理消息时遇到内部错误，请稍后重试。'
           );
         }
       },
@@ -343,7 +359,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.error({ err: error }, 'Failed to handle card action');
           await this.notifyUserDirectly(
             extractChatIdFromEvent(data) ?? '',
-            '⚠️ 处理卡片操作时遇到错误，请稍后重试。',
+            '⚠️ 处理卡片操作时遇到错误，请稍后重试。'
           );
         }
       },
@@ -363,7 +379,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.error({ err: error }, 'Failed to handle P2P chat entered');
           await this.notifyUserDirectly(
             extractChatIdFromEvent(data) ?? '',
-            '⚠️ 欢迎消息发送失败，但这不影响正常使用。',
+            '⚠️ 欢迎消息发送失败，但这不影响正常使用。'
           );
         }
       },
@@ -374,7 +390,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logger.error({ err: error }, 'Failed to handle chat member added');
           await this.notifyUserDirectly(
             extractChatIdFromEvent(data) ?? '',
-            '⚠️ 欢迎消息发送失败，但这不影响正常使用。',
+            '⚠️ 欢迎消息发送失败，但这不影响正常使用。'
           );
         }
       },
@@ -423,10 +439,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     });
 
     this.wsConnectionManager.on('reconnectFailed', (totalAttempts) => {
-      logger.error(
-        { totalAttempts },
-        'WebSocket reconnection failed after all attempts',
-      );
+      logger.error({ totalAttempts }, 'WebSocket reconnection failed after all attempts');
     });
 
     // Start the connection manager (creates WSClient + registers SDK event listeners)
@@ -505,7 +518,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
      */
     const sendFeishuMessage = async (
       msgType: string,
-      content: string,
+      content: string
     ): Promise<string | undefined> => {
       if (useThreadReply) {
         // useThreadReply is !!message.threadId — guaranteed truthy here.
@@ -534,7 +547,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
               chatId: message.chatId,
               ...extractFeishuApiError(err),
             },
-            'Thread reply failed, falling back to message.create',
+            'Thread reply failed, falling back to message.create'
           );
           // Fall through to create path (with root_id, see below).
         }
@@ -561,20 +574,39 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
      * Helper: log an outgoing message to the chat history (Issue #3795).
      * Fire-and-forget to avoid blocking the send flow.
      */
-    const logOutgoing = (msgId: string | undefined, contentSummary: string, msgType: string): void => {
-      if (!msgId) {return;}
-      messageLogger.logOutgoingMessage(msgId, message.chatId, contentSummary, msgType).catch(err => {
-        logger.warn({ err, chatId: message.chatId, msgId }, 'Failed to log outgoing message');
-      });
+    const logOutgoing = (
+      msgId: string | undefined,
+      contentSummary: string,
+      msgType: string
+    ): void => {
+      if (!msgId) {
+        return;
+      }
+      messageLogger
+        .logOutgoingMessage(msgId, message.chatId, contentSummary, msgType)
+        .catch((err) => {
+          logger.warn({ err, chatId: message.chatId, msgId }, 'Failed to log outgoing message');
+        });
     };
 
     switch (message.type) {
       case 'text': {
         // Issue #1742: If mentions are provided, send as post (rich text) with @mention tags
         if (message.mentions && message.mentions.length > 0) {
-          const postContent = this.buildPostContentWithMentions(message.mentions, message.text || '');
+          const postContent = this.buildPostContentWithMentions(
+            message.mentions,
+            message.text || ''
+          );
           const messageId = await sendFeishuMessage('post', JSON.stringify(postContent));
-          logger.debug({ chatId: message.chatId, messageId, mentionCount: message.mentions.length, threadReply: useThreadReply }, 'Post message (with mentions) sent');
+          logger.debug(
+            {
+              chatId: message.chatId,
+              messageId,
+              mentionCount: message.mentions.length,
+              threadReply: useThreadReply,
+            },
+            'Post message (with mentions) sent'
+          );
           logOutgoing(messageId, message.text || '', 'post');
           return messageId;
         }
@@ -585,13 +617,49 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
         } catch (err) {
           const apiError = extractFeishuApiError(err);
-          if (Number(apiError.apiCode) !== 230025) {throw err;}
-          const retryLimit = Math.max(1, Math.floor(configuredFeishuMessageBytes() * 0.8));
-          textToSend = truncateFeishuMessage(text, retryLimit);
-          logger.warn({ chatId: message.chatId, originalBytes: Buffer.byteLength(text), sentBytes: Buffer.byteLength(textToSend), apiCode: apiError.apiCode }, 'Feishu 230025; retrying with a more compact head-tail truncation (Issue #4693)');
-          messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
+          if (Number(apiError.apiCode) !== 230025) {
+            throw err;
+          }
+          textToSend = truncateFeishuMessage(text, FEISHU_RETRY_MESSAGE_BYTES);
+          logger.warn(
+            {
+              chatId: message.chatId,
+              originalBytes: Buffer.byteLength(text),
+              sentBytes: Buffer.byteLength(textToSend),
+              apiCode: apiError.apiCode,
+            },
+            'Feishu 230025; retrying with a more compact head-tail truncation (Issue #4693)'
+          );
+          try {
+            messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
+          } catch (retryErr) {
+            const retryApiError = extractFeishuApiError(retryErr);
+            if (Number(retryApiError.apiCode) !== 230025) {
+              throw retryErr;
+            }
+            // Keep the session responsive even if the platform limit is lower
+            // than our conservative retry budget or changes again.
+            textToSend = '⚠️ 回复内容过长，已发送截断提示。请缩小测试范围后重试。';
+            logger.error(
+              {
+                chatId: message.chatId,
+                originalBytes: Buffer.byteLength(text),
+                apiCode: retryApiError.apiCode,
+              },
+              'Feishu rejected the compact retry as oversized; sending a short fallback'
+            );
+            messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
+          }
         }
-        logger.debug({ chatId: message.chatId, messageId, truncated: textToSend !== text, threadReply: useThreadReply }, 'Text message sent');
+        logger.debug(
+          {
+            chatId: message.chatId,
+            messageId,
+            truncated: textToSend !== text,
+            threadReply: useThreadReply,
+          },
+          'Text message sent'
+        );
         logOutgoing(messageId, textToSend, 'text');
         return messageId;
       }
@@ -599,15 +667,19 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       case 'card': {
         const messageId = await sendFeishuMessage(
           'interactive',
-          JSON.stringify(message.card || {}),
+          JSON.stringify(message.card || {})
         );
-        logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Card message sent');
+        logger.debug(
+          { chatId: message.chatId, messageId, threadReply: useThreadReply },
+          'Card message sent'
+        );
         // Issue #3995: Extract card text content when description is missing
-        const rawCardDescription = message.description
-          || (message.card ? extractCardTextContent(message.card) : '[card]');
-        const cardDescription = rawCardDescription.length > 200
-          ? `${rawCardDescription.slice(0, 197)}...`
-          : rawCardDescription;
+        const rawCardDescription =
+          message.description || (message.card ? extractCardTextContent(message.card) : '[card]');
+        const cardDescription =
+          rawCardDescription.length > 200
+            ? `${rawCardDescription.slice(0, 197)}...`
+            : rawCardDescription;
         logOutgoing(messageId, cardDescription, 'interactive');
         return messageId;
       }
@@ -634,35 +706,56 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
         if (isImage) {
           // Upload image using shared utility
           if (fileSize > MAX_IMAGE_SIZE) {
-            throw new Error(`Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)`);
+            throw new Error(
+              `Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)`
+            );
           }
           const imageKey = await uploadImage(this.client, filePath);
           if (!imageKey) {
-            logger.error({ chatId: message.chatId, fileName }, 'Failed to upload image, no image_key returned');
+            logger.error(
+              { chatId: message.chatId, fileName },
+              'Failed to upload image, no image_key returned'
+            );
             throw new Error(`Failed to upload image: ${fileName}`);
           }
-          logger.info({ chatId: message.chatId, imageKey, fileName }, 'Image uploaded, sending message');
+          logger.info(
+            { chatId: message.chatId, imageKey, fileName },
+            'Image uploaded, sending message'
+          );
 
           // Send image message
-          fileMessageId = await sendFeishuMessage(
-            'image',
-            JSON.stringify({ image_key: imageKey }),
+          fileMessageId = await sendFeishuMessage('image', JSON.stringify({ image_key: imageKey }));
+          logger.info(
+            {
+              chatId: message.chatId,
+              messageId: fileMessageId,
+              fileName,
+              threadReply: useThreadReply,
+            },
+            'Image message sent'
           );
-          logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply }, 'Image message sent');
           logOutgoing(fileMessageId, `[image: ${fileName}]`, 'image');
         } else if (VIDEO_EXTENSIONS.has(ext)) {
           // Upload video file — use msg_type:'media' with auto-generated cover image
           // Issue #2265: Proper video support via Feishu media message type.
           if (fileSize > MAX_FILE_SIZE) {
-            throw new Error(`File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`);
+            throw new Error(
+              `File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`
+            );
           }
 
           const fileKey = await uploadFile(this.client, filePath, fileName, 'mp4');
           if (!fileKey) {
-            logger.error({ chatId: message.chatId, fileName }, 'Failed to upload video, no file_key returned');
+            logger.error(
+              { chatId: message.chatId, fileName },
+              'Failed to upload video, no file_key returned'
+            );
             throw new Error(`Failed to upload video: ${fileName}`);
           }
-          logger.info({ chatId: message.chatId, fileKey, fileName }, 'Video uploaded, extracting cover image');
+          logger.info(
+            { chatId: message.chatId, fileKey, fileName },
+            'Video uploaded, extracting cover image'
+          );
 
           // Extract first frame as cover image
           const coverResult = extractVideoCover(filePath);
@@ -671,45 +764,71 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           if (coverResult.success && coverResult.coverPath) {
             imageKey = await uploadImage(this.client, coverResult.coverPath);
             // Clean up temp cover file
-            try { fs.unlinkSync(coverResult.coverPath); } catch { /* ignore */ }
+            try {
+              fs.unlinkSync(coverResult.coverPath);
+            } catch {
+              /* ignore */
+            }
           }
 
           if (!imageKey) {
             // Fallback: send as generic file if cover extraction/upload fails
-            logger.warn({ chatId: message.chatId, fileName, coverError: coverResult.error }, 'Cover image unavailable, sending video as file attachment');
-            fileMessageId = await sendFeishuMessage(
-              'file',
-              JSON.stringify({ file_key: fileKey }),
+            logger.warn(
+              { chatId: message.chatId, fileName, coverError: coverResult.error },
+              'Cover image unavailable, sending video as file attachment'
             );
+            fileMessageId = await sendFeishuMessage('file', JSON.stringify({ file_key: fileKey }));
           } else {
             // Send as media message with video + cover image
             fileMessageId = await sendFeishuMessage(
               'media',
-              JSON.stringify({ file_key: fileKey, image_key: imageKey }),
+              JSON.stringify({ file_key: fileKey, image_key: imageKey })
             );
           }
-          logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply, hasCover: !!imageKey }, 'Video message sent');
+          logger.info(
+            {
+              chatId: message.chatId,
+              messageId: fileMessageId,
+              fileName,
+              threadReply: useThreadReply,
+              hasCover: !!imageKey,
+            },
+            'Video message sent'
+          );
           logOutgoing(fileMessageId, `[video: ${fileName}]`, 'media');
         } else {
           // Upload file using shared utility
           if (fileSize > MAX_FILE_SIZE) {
-            throw new Error(`File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`);
+            throw new Error(
+              `File too large: ${fileSize} bytes (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`
+            );
           }
 
           const fileType = EXT_TO_FEISHU_FILE_TYPE[ext] || 'stream';
           const fileKey = await uploadFile(this.client, filePath, fileName, fileType);
           if (!fileKey) {
-            logger.error({ chatId: message.chatId, fileName }, 'Failed to upload file, no file_key returned');
+            logger.error(
+              { chatId: message.chatId, fileName },
+              'Failed to upload file, no file_key returned'
+            );
             throw new Error(`Failed to upload file: ${fileName}`);
           }
-          logger.info({ chatId: message.chatId, fileKey, fileName, fileType }, 'File uploaded, sending message');
+          logger.info(
+            { chatId: message.chatId, fileKey, fileName, fileType },
+            'File uploaded, sending message'
+          );
 
           // Send file message
-          fileMessageId = await sendFeishuMessage(
-            'file',
-            JSON.stringify({ file_key: fileKey }),
+          fileMessageId = await sendFeishuMessage('file', JSON.stringify({ file_key: fileKey }));
+          logger.info(
+            {
+              chatId: message.chatId,
+              messageId: fileMessageId,
+              fileName,
+              threadReply: useThreadReply,
+            },
+            'File message sent'
           );
-          logger.info({ chatId: message.chatId, messageId: fileMessageId, fileName, threadReply: useThreadReply }, 'File message sent');
           logOutgoing(fileMessageId, `[file: ${fileName}]`, 'file');
         }
         return fileMessageId;
@@ -785,7 +904,9 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     const { size: fileSize } = await fsp.stat(filePath);
     if (fileSize > MAX_IMAGE_SIZE) {
-      throw new Error(`Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)`);
+      throw new Error(
+        `Image file too large: ${fileSize} bytes (max ${MAX_IMAGE_SIZE / 1024 / 1024}MB)`
+      );
     }
 
     // Issue #4132: reuse shared upload utility (dedup with the send path).
@@ -794,7 +915,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       throw new Error(`Failed to upload image: ${path.basename(filePath)}`);
     }
 
-    logger.info({ imageKey, fileName: path.basename(filePath) }, 'Image uploaded for card embedding');
+    logger.info(
+      { imageKey, fileName: path.basename(filePath) },
+      'Image uploaded for card embedding'
+    );
     return { imageKey };
   }
 
@@ -863,7 +987,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     } catch (err) {
       logger.warn(
         { err },
-        'startStreaming: Card Kit client unavailable (tenant token missing?) — declining to sendMessage',
+        'startStreaming: Card Kit client unavailable (tenant token missing?) — declining to sendMessage'
       );
       return null;
     }
@@ -889,7 +1013,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
     }
     const larkClient = this.client;
     if (!larkClient) {
-      logger.warn({ chatId }, 'startStreaming: lark IM client not ready — declining to sendMessage');
+      logger.warn(
+        { chatId },
+        'startStreaming: lark IM client not ready — declining to sendMessage'
+      );
       return null;
     }
     try {
@@ -899,7 +1026,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       if (!cardId) {
         logger.warn(
           { chatId, created },
-          'startStreaming: createCard returned no card_id — declining to sendMessage',
+          'startStreaming: createCard returned no card_id — declining to sendMessage'
         );
         return null;
       }
@@ -919,7 +1046,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       this.streamingSequences.set(cardId, 0);
       logger.info(
         { chatId, cardId, parentMessageId },
-        'startStreaming: streaming card created and sent to chat',
+        'startStreaming: streaming card created and sent to chat'
       );
       return cardId;
     } catch (err) {
@@ -1070,7 +1197,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       });
       const msgId = resp.data?.message_id;
       if (msgId) {
-        messageLogger.logOutgoingMessage(msgId, chatId, text, 'text').catch(err => {
+        messageLogger.logOutgoingMessage(msgId, chatId, text, 'text').catch((err) => {
           logger.warn({ err, chatId, msgId }, 'Failed to log outgoing notification message');
         });
       }
@@ -1101,7 +1228,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       const dropped = this.offlineQueue.shift();
       logger.warn(
         { chatId: dropped?.message.chatId, type: dropped?.message.type },
-        'Offline queue full, dropping oldest message',
+        'Offline queue full, dropping oldest message'
       );
     }
 
@@ -1109,7 +1236,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
     logger.info(
       { chatId: message.chatId, type: message.type, queueSize: this.offlineQueue.length },
-      'Message queued (WebSocket reconnecting)',
+      'Message queued (WebSocket reconnecting)'
     );
   }
 
@@ -1136,7 +1263,7 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       if (age > maxAge) {
         logger.debug(
           { chatId: entry.message.chatId, type: entry.message.type, ageMs: age, maxAgeMs: maxAge },
-          'Discarding expired offline message',
+          'Discarding expired offline message'
         );
         return false;
       }
@@ -1156,11 +1283,14 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       } catch (error) {
         logger.error(
           { err: error, chatId: entry.message.chatId, type: entry.message.type },
-          'Failed to send queued message',
+          'Failed to send queued message'
         );
       }
     }
 
-    logger.info({ flushed: valid.length, dropped: queue.length - valid.length }, 'Offline queue flushed');
+    logger.info(
+      { flushed: valid.length, dropped: queue.length - valid.length },
+      'Offline queue flushed'
+    );
   }
 }
