@@ -272,8 +272,10 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
 
   constructor(config: FeishuChannelConfig = {}) {
     super(config, 'feishu', 'Feishu');
-    this.appId = config.appId || Config.FEISHU_APP_ID;
-    this.appSecret = config.appSecret || Config.FEISHU_APP_SECRET;
+    // Preserve explicitly supplied empty strings so callers/tests can model
+    // missing credentials without being overridden by ambient configuration.
+    this.appId = config.appId ?? Config.FEISHU_APP_ID;
+    this.appSecret = config.appSecret ?? Config.FEISHU_APP_SECRET;
 
     // Initialize modular components
     this.triggerModeManager = new TriggerModeManager();
