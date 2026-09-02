@@ -94,6 +94,15 @@ function extractSendHttpStatus(err: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined;
 }
 
+/** Feishu business error 230025 means content size, not an invalid target. */
+function isOversizedFeishuMessageError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+  const e = err as { response?: { data?: { code?: unknown } }; code?: unknown };
+  return Number(e.response?.data?.code ?? e.code) === 230025;
+}
+
 /**
  * Issue #4649 (review ③): one turn-completion entry per accepted channel
  * push. `settle` resolves on no error / rejects with one; `settled` gates
@@ -473,7 +482,9 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
     // with an error so a still-awaiting caller never hangs silently.
     while (this.turnCompletions.size > MAX_TURN_COMPLETIONS) {
       const oldest = this.turnCompletions.entries().next();
-      if (oldest.done) {break;}
+      if (oldest.done) {
+        break;
+      }
       const [oldestKey, oldestEntry] = oldest.value;
       this.turnCompletions.delete(oldestKey);
       if (!oldestEntry.settled) {
@@ -1060,10 +1071,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             ].join('\n')
           )
           .catch((err) => {
-            this.logger.error(
-              { err, chatId },
-              'Failed to send bound-missing cwd fallback warning'
-            );
+            this.logger.error({ err, chatId }, 'Failed to send bound-missing cwd fallback warning');
           });
       }
     } else if (this.warnedMissingWorkingDir !== undefined) {
@@ -1086,10 +1094,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       sessionKey: chatId,
     });
 
-    this.logger.info(
-      { chatId },
-      'Starting SDK query with message channel'
-    );
+    this.logger.info({ chatId }, 'Starting SDK query with message channel');
 
     // Issue #2926: Create fresh AbortController for this agent loop
     this.abortController = new AbortController();
@@ -1253,7 +1258,10 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
       this.consecutiveSendFailures++;
       const httpStatus = extractSendHttpStatus(err);
       const isPermanentTargetError =
-        httpStatus !== undefined && httpStatus >= 400 && httpStatus < 500;
+        httpStatus !== undefined &&
+        httpStatus >= 400 &&
+        httpStatus < 500 &&
+        !isOversizedFeishuMessageError(err);
       if (isPermanentTargetError || this.consecutiveSendFailures >= MAX_CONSECUTIVE_SEND_FAILURES) {
         this.sendCircuitOpen = true;
         this.logger.error(
@@ -1349,9 +1357,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
   // drifted (this copy omitted sessionId and made content optional), and every
   // value here is produced by BaseAgent.convertToLegacyFormat which already
   // returns IteratorYieldResult['parsed']. One source of truth, no drift.
-  private async processIterator(
-    iterator: AsyncGenerator<IteratorYieldResult>
-  ): Promise<void> {
+  private async processIterator(iterator: AsyncGenerator<IteratorYieldResult>): Promise<void> {
     const chatId = this.boundChatId;
     // Issue #4391 (part 2 review): the session generation this invocation
     // belongs to. If the bump happens while this iterator is still parked
@@ -1594,8 +1600,8 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             this.emptyStreamTerminated = true;
             this.logger.warn(
               { chatId, messageCount },
-              'Empty stream: turn terminated by provider after in-request retries exhausted '
-                + '(Issue #4442); recording failure, resolving turn'
+              'Empty stream: turn terminated by provider after in-request retries exhausted ' +
+                '(Issue #4442); recording failure, resolving turn'
             );
             this.restartManager.recordFailure(chatId, 'empty-stream');
             this.isProcessingMessage = false;
@@ -1622,7 +1628,7 @@ export class ChatAgent extends BaseAgent implements ChatAgentInterface {
             // message and resumes its stashed codex thread.
             this.logger.info(
               { chatId, messageCount },
-              'Codex session evicted (concurrency cap) — ending stream without auto-restart (Issue #4634)',
+              'Codex session evicted (concurrency cap) — ending stream without auto-restart (Issue #4634)'
             );
             this.isProcessingMessage = false;
             this.resolveTurn();

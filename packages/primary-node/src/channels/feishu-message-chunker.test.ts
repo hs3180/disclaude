@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { configuredFeishuMessageBytes, FEISHU_TRUNCATION_MARKER, truncateFeishuMessage } from './feishu-message-chunker.js';
+import {
+  configuredFeishuMessageBytes,
+  FEISHU_PLATFORM_MESSAGE_BYTES,
+  FEISHU_RETRY_MESSAGE_BYTES,
+  FEISHU_TRUNCATION_MARKER,
+  truncateFeishuMessage,
+} from './feishu-message-chunker.js';
 
 describe('truncateFeishuMessage (Issue #4693)', () => {
   it('keeps the head and tail in one UTF-8-safe bounded message', () => {
@@ -20,7 +26,18 @@ describe('truncateFeishuMessage (Issue #4693)', () => {
   });
 
   it('uses a positive configured limit or the safe default', () => {
-    expect(configuredFeishuMessageBytes({ FEISHU_MAX_MESSAGE_BYTES: '123' } as NodeJS.ProcessEnv)).toBe(123);
-    expect(configuredFeishuMessageBytes({ FEISHU_MAX_MESSAGE_BYTES: 'nope' } as NodeJS.ProcessEnv)).toBe(1_800_000);
+    expect(
+      configuredFeishuMessageBytes({ FEISHU_MAX_MESSAGE_BYTES: '123' } as NodeJS.ProcessEnv)
+    ).toBe(123);
+    expect(
+      configuredFeishuMessageBytes({ FEISHU_MAX_MESSAGE_BYTES: 'nope' } as NodeJS.ProcessEnv)
+    ).toBe(FEISHU_PLATFORM_MESSAGE_BYTES);
+  });
+
+  it('never allows configuration to exceed the platform hard ceiling', () => {
+    expect(
+      configuredFeishuMessageBytes({ FEISHU_MAX_MESSAGE_BYTES: '1800000' } as NodeJS.ProcessEnv)
+    ).toBe(FEISHU_PLATFORM_MESSAGE_BYTES);
+    expect(FEISHU_RETRY_MESSAGE_BYTES).toBeLessThan(FEISHU_PLATFORM_MESSAGE_BYTES);
   });
 });
