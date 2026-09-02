@@ -25,7 +25,7 @@
 > `send_interactive` (part 7) — **all 5 channel tools** migrated as CLI
 > subcommands. **Part 11** (REST re-land of rejected
 > [#4521](https://github.com/hs3180/disclaude/pull/4521)) closed the last code
-> parity delta: the chatId *format* pre-check every MCP entry handler runs
+> parity delta: the chatId _format_ pre-check every MCP entry handler runs
 > (#1641) now runs in every subcommand too, before any module import. All reuse
 > the first-party implementations from `@disclaude/mcp-server`; `send_card`
 > additionally replicates the MCP entry handler's card preprocessing
@@ -108,16 +108,18 @@ start the PrimaryNode with `--api-port`. No browser or extra binaries required.
 
 ## Commands
 
-| Command | Positional args | Options | Status |
-|---|---|---|---|
-| `send_text` | — | `--chat <id>` *(req)*, `--text <string>`, `--text-file <path>`, `--parent <id>`, `--mentions <json>` | ✅ part 3 |
-| `send_card` | — | `--chat <id>` *(req)*, `--card <json>`, `--card-file <path>`, `--parent <id>` | ✅ part 5 |
-| `send_interactive` | — | `--chat <id>` *(req)*, `--question <string>` *(req)*, `--options <json>` *(req)*, `--title <string>`, `--context <string>`, `--action-prompts <json>`, `--parent <id>` | ✅ part 7 |
-| `send_file` | — | `--chat <id>` *(req)*, `--file <path>` *(req)*, `--parent <id>` | ✅ part 4 |
-| `push_to_agent` | — | `--chat <id>` *(req)*, `--message <string>`, `--message-file <path>` | ✅ part 6 |
-| `help` | — | — | ✅ |
+| Command            | Positional args | Options                                                                                                                                                                                  | Status    |
+| ------------------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `send_text`        | —               | `--chat <id>` _(optional with default)_, `--text <string>`, `--text-file <path>`, `--parent <id>`, `--mentions <json>`                                                                   | ✅ part 3 |
+| `send_card`        | —               | `--chat <id>` _(optional with default)_, `--card <json>`, `--card-file <path>`, `--parent <id>`                                                                                          | ✅ part 5 |
+| `send_interactive` | —               | `--chat <id>` _(optional with default)_, `--question <string>` _(req)_, `--options <json>` _(req)_, `--title <string>`, `--context <string>`, `--action-prompts <json>`, `--parent <id>` | ✅ part 7 |
+| `send_file`        | —               | `--chat <id>` _(optional with default)_, `--file <path>` _(req)_, `--parent <id>`                                                                                                        | ✅ part 4 |
+| `push_to_agent`    | —               | `--chat <id>` _(optional with default)_, `--message <string>`, `--message-file <path>`                                                                                                   | ✅ part 6 |
+| `help`             | —               | —                                                                                                                                                                                        | ✅        |
 
-`--chat` in **every** command is presence- **and format**-checked up front
+`--chat` in **every** command is resolved with this precedence: explicit
+`--chat` > `FEISHU_CLI_CHAT_ID` > `feishu.cliChatId` in `disclaude.config.yaml`.
+The resolved value is presence- **and format**-checked up front
 (`oc_`/`ou_` ≥ 35 chars, `cli-` ≥ 5 — the same rules as the MCP entry
 handlers, #1641); an ill-formed id fails before the `@disclaude/mcp-server`
 import (part 11).
@@ -182,18 +184,18 @@ on the local filesystem — they reach the PrimaryNode over its REST API and
 return. `send_file` **reads** the local file at `--file` (uploaded over REST)
 and writes
 nothing. No files are written by any command. (`push_to_agent` does have an
-intended *remote* side effect — it pushes an instruction that may
+intended _remote_ side effect — it pushes an instruction that may
 create/lazily-resume the target chat's agent.)
 
 ## Runtime
 
-| Dependency | Source | How to satisfy |
-|---|---|---|
-| `@disclaude/mcp-server` (exports `send_text`, `send_file`, `send_card`, `push_to_agent`, `send_interactive`, + card helpers) | workspace package | build the monorepo (`npm run build`) |
-| disclaude PrimaryNode (**REST API**, #4532) | runtime | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved |
-| REST base URL | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361) |
-| REST bearer token | `DISCLAUDE_REST_IPC_API_TOKEN` env | required only when the PrimaryNode was started with `--api-token` (pass the same secret) |
-| Feishu credentials | `disclaude.config.yaml` / env | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` (validated inside `send_text` / `send_file` / `send_card` / `push_to_agent` / `send_interactive`) |
+| Dependency                                                                                                                   | Source                                                          | How to satisfy                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `@disclaude/mcp-server` (exports `send_text`, `send_file`, `send_card`, `push_to_agent`, `send_interactive`, + card helpers) | workspace package                                               | build the monorepo (`npm run build`)                                                                                                    |
+| disclaude PrimaryNode (**REST API**, #4532)                                                                                  | runtime                                                         | start it with `--api-port` (e.g. `19200`); the CLI POSTs to `/api/*` — no Unix socket involved                                          |
+| REST base URL                                                                                                                | `--base-url` flag > `DISCLAUDE_REST_IPC_BASE_URL` env > default | default `http://localhost:19200`; the env var reaches one-shot CLI processes via the agent runtime env (`.runtime-env`, Issue #1361)    |
+| REST bearer token                                                                                                            | `DISCLAUDE_REST_IPC_API_TOKEN` env                              | required only when the PrimaryNode was started with `--api-token` (pass the same secret)                                                |
+| Feishu credentials                                                                                                           | `disclaude.config.yaml` / env                                   | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` (validated inside `send_text` / `send_file` / `send_card` / `push_to_agent` / `send_interactive`) |
 
 **Same-host constraint of the file-carrying routes (#4532 review note):** the
 REST file contract is path-based, not content-based — `send_file` and
@@ -220,16 +222,16 @@ the actionable hint `PrimaryNode REST <url> unreachable — start the main servi
 
 Recorded explicitly per #4459 acceptance ("迁移/下线不静默"):
 
-| Aspect | MCP tool (S1) | This CLI Skill | Delta |
-|---|---|---|---|
-| Transport | in-process MCP tool dispatch | one-shot process, shells out via `Bash` | different transport, same first-party impl |
-| IPC reach-back | in-process `getIpcClient()` (Unix socket by default) | `getIpcClient()` with `DISCLAUDE_REST_IPC_ENABLED=true` forced → `RestIpcClient` → HttpApiServer `/api/*` (#4532) | REST only — no Unix socket, no IPC fallback |
-| `send_text` parameters | `text`, `chatId`, `parentMessageId`, `mentions` | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions` | text gains `--text-file`/stdin for large bodies |
-| `send_file` parameters | `filePath`, `chatId`, `parentMessageId` | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool) | none |
-| `push_to_agent` parameters | `chatId`, `message` | identical, via `--chat`/`--message`/`--message-file` | message gains `--message-file`/stdin for long instructions |
-| chatId format pre-check | `getChatIdValidationError(chatId)` in every entry handler (#1641) | identical check in every subcommand (part 11) — all five pre-import via the twin in `cli.mjs`; `send_card` re-runs the exported helper post-import (part 5) | none |
-| Capability gating | MCP layer gates on `supportedMcpTools` per chat | **not** gated here — the agent invokes the CLI at its own discretion | see open item below |
-| Logging | pino → stdout (in-process, acceptable) | pino → **stderr** for the call's duration (stdout reserved for the result JSON) | none functionally |
+| Aspect                     | MCP tool (S1)                                                     | This CLI Skill                                                                                                                                              | Delta                                                      |
+| -------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Transport                  | in-process MCP tool dispatch                                      | one-shot process, shells out via `Bash`                                                                                                                     | different transport, same first-party impl                 |
+| IPC reach-back             | in-process `getIpcClient()` (Unix socket by default)              | `getIpcClient()` with `DISCLAUDE_REST_IPC_ENABLED=true` forced → `RestIpcClient` → HttpApiServer `/api/*` (#4532)                                           | REST only — no Unix socket, no IPC fallback                |
+| `send_text` parameters     | `text`, `chatId`, `parentMessageId`, `mentions`                   | identical, via `--chat`/`--text`/`--text-file`/`--parent`/`--mentions`                                                                                      | text gains `--text-file`/stdin for large bodies            |
+| `send_file` parameters     | `filePath`, `chatId`, `parentMessageId`                           | identical, via `--file`/`--chat`/`--parent` (relative `--file` resolves against the workspace dir, as in the MCP tool)                                      | none                                                       |
+| `push_to_agent` parameters | `chatId`, `message`                                               | identical, via `--chat`/`--message`/`--message-file`                                                                                                        | message gains `--message-file`/stdin for long instructions |
+| chatId format pre-check    | `getChatIdValidationError(chatId)` in every entry handler (#1641) | identical check in every subcommand (part 11) — all five pre-import via the twin in `cli.mjs`; `send_card` re-runs the exported helper post-import (part 5) | none                                                       |
+| Capability gating          | MCP layer gates on `supportedMcpTools` per chat                   | **not** gated here — the agent invokes the CLI at its own discretion                                                                                        | see open item below                                        |
+| Logging                    | pino → stdout (in-process, acceptable)                            | pino → **stderr** for the call's duration (stdout reserved for the result JSON)                                                                             | none functionally                                          |
 
 `send_interactive` (part 7) parity is the same shape, with one extra note worth
 recording explicitly: the first-party `send_interactive_message` is a **pure
@@ -254,7 +256,7 @@ left to a later part of #4459 once the full surface is migrated.
 **`push_to_agent` (part 6) parity** — its MCP entry handler
 (`packages/mcp-server/src/channel-mcp.ts`) is the bare first-party
 `push_to_agent` function preceded only by a `getChatIdValidationError(chatId)`
-format check. Parts 3–6 initially **deferred** the chatId *format* check to a
+format check. Parts 3–6 initially **deferred** the chatId _format_ check to a
 presence-only validation (an ill-formed id was still rejected, but by the
 transport layer rather than up front) — the deferred-parity item `send_text`
 carried. **Part 11 closed that delta**: every subcommand now runs the same
@@ -265,13 +267,13 @@ format pre-check as the handlers before any import (`parseChatId` in
 **#4521 chatId pre-check ruling (#4532 acceptance, explicit — migration is not
 silent):** PR #4521 (chatId-format pre-checks on all 5 subcommands) was
 direction-rejected because it was built on the IPC foundation; its substance is
-transport-independent. #4532's acceptance item — *"the pre-check's fate on the
-REST CLI is explicitly decided"* — is now settled by **part 11**: **kept, and
+transport-independent. #4532's acceptance item — _"the pre-check's fate on the
+REST CLI is explicitly decided"_ — is now settled by **part 11**: **kept, and
 extended to all 5 subcommands**. Every subcommand runs the format pre-check
 **pre-import** via a twin of the exported pattern table (`parseChatId` in
 `cli.mjs`; byte-identical rules to `getChatIdValidationError`), so an
 ill-formed id fails cheaply before the `@disclaude/mcp-server` load. This
-matters *more* on REST than it did on IPC: the REST handlers validate `chatId`
+matters _more_ on REST than it did on IPC: the REST handlers validate `chatId`
 as a non-empty string only (`/api/send-message` et al.), so without the twin an
 ill-formed id would surface as a confusing Feishu 4xx deep behind the server.
 `send_card` additionally re-runs the exported helper post-import (part 5,
@@ -288,13 +290,13 @@ exported from `@disclaude/mcp-server` (`transformCardTables`,
 `resolveCardImages`, `detectMarkdownTableWarnings`, `isValidFeishuCard`,
 `getCardValidationError`, `getChatIdValidationError`):
 
-| Aspect | MCP `send_card` (S1) | This CLI Skill | Delta |
-|---|---|---|---|
-| Card preprocessing | `transformCardTables` → `resolveCardImages` in the entry handler | identical pipeline in `cmdSendCard`, same helpers | none |
-| GFM tables (#2340) | auto-converted to `column_set` | auto-converted; success result annotates the conversion | none |
-| Local images (#2951) | auto-uploaded, paths → `image_key` | auto-uploaded via `resolveCardImages`; counts annotated | none |
-| Card / chatId validation | `isValidFeishuCard`, `getChatIdValidationError` in handler | identical checks, same helpers, before any IPC | none |
-| Parameters | `card`, `chatId`, `parentMessageId` | identical, via `--chat`/`--card`/`--card-file`/`--parent` | card gains `--card-file`/stdin for large bodies |
+| Aspect                   | MCP `send_card` (S1)                                             | This CLI Skill                                            | Delta                                           |
+| ------------------------ | ---------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------- |
+| Card preprocessing       | `transformCardTables` → `resolveCardImages` in the entry handler | identical pipeline in `cmdSendCard`, same helpers         | none                                            |
+| GFM tables (#2340)       | auto-converted to `column_set`                                   | auto-converted; success result annotates the conversion   | none                                            |
+| Local images (#2951)     | auto-uploaded, paths → `image_key`                               | auto-uploaded via `resolveCardImages`; counts annotated   | none                                            |
+| Card / chatId validation | `isValidFeishuCard`, `getChatIdValidationError` in handler       | identical checks, same helpers, before any IPC            | none                                            |
+| Parameters               | `card`, `chatId`, `parentMessageId`                              | identical, via `--chat`/`--card`/`--card-file`/`--parent` | card gains `--card-file`/stdin for large bodies |
 
 **Out of scope for these parts:** live end-to-end delivery verification (needs
 PrimaryNode + creds); the S2 external-MCP-loader removal (#4459 scope 4, gated

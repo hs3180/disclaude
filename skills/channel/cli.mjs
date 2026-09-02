@@ -97,11 +97,11 @@
  * auto-close the parent issues.
  */
 
-import { performance } from "node:perf_hooks";
-import { readFileSync } from "node:fs";
+import { performance } from 'node:perf_hooks';
+import { existsSync, readFileSync } from 'node:fs';
 
-const VERSION = "0.1.0";
-const COMMAND = "channel";
+const VERSION = '0.1.0';
+const COMMAND = 'channel';
 
 const HELP = `channel Skill — CLI replacement for the channel-mcp inline MCP server (#4459).
 
@@ -122,7 +122,7 @@ Commands:
   help             Show this help message.
 
 send_text options:
-  --chat <id>          Target chat ID (e.g. oc_xxx). Required.
+  --chat <id>          Target chat ID (e.g. oc_xxx). Overrides configured default.
   --text <string>      Text content. Required unless --text-file or stdin is used.
   --text-file <path>   Read text content from a file (use "-" for stdin explicitly).
   --parent <id>        Optional parent message ID (thread reply).
@@ -130,7 +130,7 @@ send_text options:
   --help, -h           Show this help message.
 
 send_interactive options:
-  --chat <id>            Target chat ID (e.g. oc_xxx). Required.
+  --chat <id>            Target chat ID (e.g. oc_xxx). Overrides configured default.
   --question <string>    The question / main content to display. Required unless
                          --question-file or stdin is used.
   --question-file <path> Read question from a file (use "-" for stdin explicitly).
@@ -146,21 +146,21 @@ send_interactive options:
   --help, -h             Show this help message.
 
 send_file options:
-  --chat <id>          Target chat ID (e.g. oc_xxx). Required.
+  --chat <id>          Target chat ID (e.g. oc_xxx). Overrides configured default.
   --file <path>        Path to the file to send. Required. Relative paths are
                       resolved against the configured disclaude workspace dir.
   --parent <id>        Optional parent message ID (thread reply).
   --help, -h           Show this help message.
 
 send_card options:
-  --chat <id>          Target chat ID (e.g. oc_xxx). Required.
+  --chat <id>          Target chat ID (e.g. oc_xxx). Overrides configured default.
   --card <json>        Card JSON object. Required unless --card-file or stdin is used.
   --card-file <path>   Read card JSON from a file (use "-" for stdin explicitly).
   --parent <id>        Optional parent message ID (thread reply).
   --help, -h           Show this help message.
 
 push_to_agent options:
-  --chat <id>             Target chat ID (e.g. oc_xxx). Required.
+  --chat <id>             Target chat ID (e.g. oc_xxx). Overrides configured default.
   --message <string>      Instruction text to push. Required unless --message-file
                           or stdin is used.
   --message-file <path>   Read instruction from a file (use "-" for stdin).
@@ -186,6 +186,10 @@ Runtime:
   @disclaude/mcp-server, which needs a running disclaude PrimaryNode (REST API
   on the --base-url port) and Feishu credentials. Run inside a disclaude
   workspace where the packages are built.
+
+Chat target defaults:
+  --chat <id> overrides FEISHU_CLI_CHAT_ID, which overrides feishu.cliChatId in
+  disclaude.config.yaml. Without any of these values, --chat remains required.
 
 Examples:
   node skills/channel/cli.mjs send_text --chat oc_abc --text "Hello, world!"
@@ -229,7 +233,7 @@ let stdoutResultEmitted = false;
 function emitOk(payload) {
   if (stdoutResultEmitted) return;
   stdoutResultEmitted = true;
-  process.stdout.write(JSON.stringify({ ok: true, ...payload }) + "\n");
+  process.stdout.write(JSON.stringify({ ok: true, ...payload }) + '\n');
 }
 
 function emitFail(command, error, hint) {
@@ -237,7 +241,7 @@ function emitFail(command, error, hint) {
   stdoutResultEmitted = true;
   const body = { ok: false, command, error };
   if (hint) body.hint = hint;
-  process.stdout.write(JSON.stringify(body) + "\n");
+  process.stdout.write(JSON.stringify(body) + '\n');
 }
 
 /**
@@ -284,7 +288,7 @@ async function withStdoutToStderr(fn) {
 // ---------------------------------------------------------------------------
 
 /** Default REST base URL of the PrimaryNode HttpApiServer (#4168 decision 3). */
-const DEFAULT_REST_BASE_URL = "http://localhost:19200";
+const DEFAULT_REST_BASE_URL = 'http://localhost:19200';
 
 /**
  * Force the REST IPC transport for this one-shot process (#4532 scope 1: the
@@ -306,12 +310,12 @@ const DEFAULT_REST_BASE_URL = "http://localhost:19200";
  */
 function wireRestTransport(args) {
   let baseUrl;
-  if (args && typeof args["base-url"] === "string" && args["base-url"].length > 0) {
-    baseUrl = args["base-url"];
+  if (args && typeof args['base-url'] === 'string' && args['base-url'].length > 0) {
+    baseUrl = args['base-url'];
   } else {
     baseUrl = process.env.DISCLAUDE_REST_IPC_BASE_URL || DEFAULT_REST_BASE_URL;
   }
-  process.env.DISCLAUDE_REST_IPC_ENABLED = "true";
+  process.env.DISCLAUDE_REST_IPC_ENABLED = 'true';
   process.env.DISCLAUDE_REST_IPC_BASE_URL = baseUrl;
   // DISCLAUDE_REST_IPC_API_TOKEN passes through from the ambient env when set
   // (injected into the agent runtime env via .runtime-env, Issue #1361); the
@@ -351,8 +355,8 @@ function restUnavailableHint(baseUrl) {
  */
 async function isRestFaceReachable(baseUrl) {
   try {
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/ping`, {
-      method: "GET",
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/ping`, {
+      method: 'GET',
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return false;
@@ -384,7 +388,7 @@ async function failureHintForSend(baseUrl) {
  */
 function isRestUnreachable(message) {
   return (
-    typeof message === "string" &&
+    typeof message === 'string' &&
     /IPC_NOT_AVAILABLE|IPC_TIMEOUT|IPC service unavailable|IPC not available|IPC 服务不可用|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(
       message
     )
@@ -395,9 +399,9 @@ function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--help" || arg === "-h") {
+    if (arg === '--help' || arg === '-h') {
       args.help = true;
-    } else if (arg.startsWith("--")) {
+    } else if (arg.startsWith('--')) {
       const key = arg.slice(2);
       const value = argv[i + 1];
       args[key] = value;
@@ -412,7 +416,7 @@ function parseArgs(argv) {
 function readStdinSync() {
   // Synchronous stdin read for piped input. Only used when stdin is not a TTY.
   try {
-    return readFileSync(0, "utf8");
+    return readFileSync(0, 'utf8');
   } catch {
     return null;
   }
@@ -423,11 +427,11 @@ function parseMentions(raw) {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
-      throw new Error("mentions must be a JSON array");
+      throw new Error('mentions must be a JSON array');
     }
     for (const m of parsed) {
-      if (typeof m !== "object" || m === null || typeof m.openId !== "string") {
-        throw new Error("each mention must be an object with an `openId` string");
+      if (typeof m !== 'object' || m === null || typeof m.openId !== 'string') {
+        throw new Error('each mention must be an object with an `openId` string');
       }
     }
     return parsed.map((m) => ({ openId: m.openId, ...(m.name ? { name: m.name } : {}) }));
@@ -445,7 +449,7 @@ function parseMentions(raw) {
  */
 function parseOptions(raw) {
   if (!raw) {
-    throw new Error("Missing required option --options <json-array>");
+    throw new Error('Missing required option --options <json-array>');
   }
   let parsed;
   try {
@@ -454,26 +458,23 @@ function parseOptions(raw) {
     throw new Error(`Invalid --options JSON: ${err.message}`);
   }
   if (!Array.isArray(parsed)) {
-    throw new Error("options must be a JSON array");
+    throw new Error('options must be a JSON array');
   }
   if (parsed.length === 0) {
-    throw new Error("options must be a non-empty array");
+    throw new Error('options must be a non-empty array');
   }
   for (let i = 0; i < parsed.length; i++) {
     const opt = parsed[i];
-    if (typeof opt !== "object" || opt === null) {
+    if (typeof opt !== 'object' || opt === null) {
       throw new Error(`options[${i}] must be an object`);
     }
-    if (typeof opt.text !== "string" || opt.text.trim().length === 0) {
+    if (typeof opt.text !== 'string' || opt.text.trim().length === 0) {
       throw new Error(`options[${i}].text must be a non-empty string`);
     }
-    if (typeof opt.value !== "string" || opt.value.trim().length === 0) {
+    if (typeof opt.value !== 'string' || opt.value.trim().length === 0) {
       throw new Error(`options[${i}].value must be a non-empty string`);
     }
-    if (
-      opt.type !== undefined &&
-      !["primary", "default", "danger"].includes(opt.type)
-    ) {
+    if (opt.type !== undefined && !['primary', 'default', 'danger'].includes(opt.type)) {
       throw new Error(`options[${i}].type must be one of: primary, default, danger`);
     }
   }
@@ -497,13 +498,11 @@ function parseActionPrompts(raw) {
   } catch (err) {
     throw new Error(`Invalid --action-prompts JSON: ${err.message}`);
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(
-      "action-prompts must be a JSON object mapping option value -> prompt string"
-    );
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('action-prompts must be a JSON object mapping option value -> prompt string');
   }
   for (const [key, val] of Object.entries(parsed)) {
-    if (typeof val !== "string" || val.length === 0) {
+    if (typeof val !== 'string' || val.length === 0) {
       throw new Error(`action-prompts["${key}"] must be a non-empty string`);
     }
   }
@@ -529,9 +528,9 @@ function parseActionPrompts(raw) {
  * edges.
  */
 const CHAT_ID_PATTERNS = [
-  { prefix: "oc_", label: "Feishu group chat", minLength: 35 },
-  { prefix: "ou_", label: "Feishu user (p2p chat)", minLength: 35 },
-  { prefix: "cli-", label: "CLI session", minLength: 5 },
+  { prefix: 'oc_', label: 'Feishu group chat', minLength: 35 },
+  { prefix: 'ou_', label: 'Feishu user (p2p chat)', minLength: 35 },
+  { prefix: 'cli-', label: 'CLI session', minLength: 5 },
 ];
 
 function isValidChatIdFormat(chatId) {
@@ -547,11 +546,10 @@ function getChatIdFormatError(chatId) {
   // authoritative getChatIdValidationError (chat-id-validator.ts).
   const formatList = CHAT_ID_PATTERNS.map(
     ({ prefix, label }) => `- \`${prefix}...\` (${label})`
-  ).join("\n");
+  ).join('\n');
   const shown = chatId.length > 20 ? `${chatId.slice(0, 20)}...` : chatId;
   return (
-    `Invalid chatId format: "${shown}"\n` +
-    `Expected one of the following formats:\n${formatList}`
+    `Invalid chatId format: "${shown}"\n` + `Expected one of the following formats:\n${formatList}`
   );
 }
 
@@ -564,17 +562,42 @@ function getChatIdFormatError(chatId) {
  *
  * Returns { chatId } on success, or { code: 1 } after emitting the failure.
  */
-function parseChatId(command, rawChatId) {
-  if (!rawChatId || typeof rawChatId !== "string") {
-    emitFail(command, "Missing required option --chat <id>", `pass --chat oc_xxx`);
+async function resolveChatId(rawChatId) {
+  // Explicit --chat wins, including an explicitly empty value.
+  if (typeof rawChatId === 'string') return rawChatId;
+  if (typeof process.env.FEISHU_CLI_CHAT_ID === 'string') {
+    return process.env.FEISHU_CLI_CHAT_ID;
+  }
+  // Read only the small config field needed here. Importing @disclaude/core
+  // would initialize its logger and emit config diagnostics to stdout, which
+  // would violate the CLI's exactly-one-JSON-line failure contract.
+  try {
+    const configPath =
+      process.env.DISCLAUDE_CONFIG_PATH ||
+      ['disclaude.config.yaml', 'disclaude.config.yml'].find((file) => existsSync(file));
+    if (!configPath) return undefined;
+    const yaml = await import('js-yaml');
+    const load = yaml.load || yaml.default?.load;
+    const config = load(readFileSync(configPath, 'utf8'));
+    const chatId = config?.feishu?.cliChatId;
+    return typeof chatId === 'string' && chatId.length > 0 ? chatId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function parseChatId(command, rawChatId) {
+  const resolvedChatId = await resolveChatId(rawChatId);
+  if (!resolvedChatId || typeof resolvedChatId !== 'string') {
+    emitFail(command, 'Missing required option --chat <id>', `pass --chat oc_xxx`);
     return { code: 1 };
   }
-  const formatError = getChatIdFormatError(rawChatId);
+  const formatError = getChatIdFormatError(resolvedChatId);
   if (formatError) {
     emitFail(command, `Invalid chatId: ${formatError}`);
     return { code: 1 };
   }
-  return { chatId: rawChatId };
+  return { chatId: resolvedChatId };
 }
 
 // ---------------------------------------------------------------------------
@@ -586,20 +609,20 @@ async function cmdSendText(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chat = parseChatId("send_text", args.chat);
+  const chat = await parseChatId('send_text', args.chat);
   if (chat.code) return chat.code;
   const chatId = chat.chatId;
 
   // Resolve text: --text, --text-file, or piped stdin (when stdin is not a TTY).
   let text;
-  if (typeof args.text === "string") {
+  if (typeof args.text === 'string') {
     text = args.text;
-  } else if (typeof args["text-file"] === "string") {
-    const file = args["text-file"];
+  } else if (typeof args['text-file'] === 'string') {
+    const file = args['text-file'];
     try {
-      text = file === "-" ? readStdinSync() : readFileSync(file, "utf8");
+      text = file === '-' ? readStdinSync() : readFileSync(file, 'utf8');
     } catch (err) {
-      emitFail("send_text", `Cannot read --text-file ${file}: ${err.message}`);
+      emitFail('send_text', `Cannot read --text-file ${file}: ${err.message}`);
       return 1;
     }
   } else if (!process.stdin.isTTY) {
@@ -609,9 +632,9 @@ async function cmdSendText(argv) {
 
   if (!text || text.length === 0) {
     emitFail(
-      "send_text",
-      "Missing text content",
-      "pass --text <string>, --text-file <path>, or pipe content on stdin"
+      'send_text',
+      'Missing text content',
+      'pass --text <string>, --text-file <path>, or pipe content on stdin'
     );
     return 1;
   }
@@ -620,11 +643,11 @@ async function cmdSendText(argv) {
   try {
     mentions = parseMentions(args.mentions);
   } catch (err) {
-    emitFail("send_text", err.message);
+    emitFail('send_text', err.message);
     return 1;
   }
 
-  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+  const parentMessageId = typeof args.parent === 'string' ? args.parent : undefined;
 
   // --- transport wiring happens ONCE in main() before dispatch (#4532); the
   //     resolved base URL is re-derived here (same flag > env > default order)
@@ -634,30 +657,28 @@ async function cmdSendText(argv) {
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
   try {
-    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+    mod = await withStdoutToStderr(() => import('@disclaude/mcp-server'));
   } catch (err) {
     emitFail(
-      "send_text",
+      'send_text',
       `Failed to load @disclaude/mcp-server: ${err.message}`,
-      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_text from @disclaude/mcp-server"
+      'run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_text from @disclaude/mcp-server'
     );
     return 1;
   }
 
   const sendText = mod.send_text;
-  if (typeof sendText !== "function") {
-    emitFail("send_text", "@disclaude/mcp-server does not export send_text (unexpected build)");
+  if (typeof sendText !== 'function') {
+    emitFail('send_text', '@disclaude/mcp-server does not export send_text (unexpected build)');
     return 1;
   }
 
   let result;
   try {
-    result = await withStdoutToStderr(() =>
-      sendText({ text, chatId, parentMessageId, mentions })
-    );
+    result = await withStdoutToStderr(() => sendText({ text, chatId, parentMessageId, mentions }));
   } catch (err) {
     emitFail(
-      "send_text",
+      'send_text',
       `send_text threw: ${err instanceof Error ? err.message : String(err)}`,
       isRestUnreachable(err instanceof Error ? err.message : String(err))
         ? restUnavailableHint(baseUrl)
@@ -670,17 +691,17 @@ async function cmdSendText(argv) {
 
   if (result && result.success) {
     emitOk({
-      command: "send_text",
+      command: 'send_text',
       chatId,
-      result: result.message ?? "sent",
+      result: result.message ?? 'sent',
       durationMs,
     });
     return 0;
   }
 
   emitFail(
-    "send_text",
-    (result && (result.error || result.message)) || "send_text returned without success",
+    'send_text',
+    (result && (result.error || result.message)) || 'send_text returned without success',
     await failureHintForSend(baseUrl)
   );
   return 1;
@@ -695,21 +716,21 @@ async function cmdSendInteractive(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chat = parseChatId("send_interactive", args.chat);
+  const chat = await parseChatId('send_interactive', args.chat);
   if (chat.code) return chat.code;
   const chatId = chat.chatId;
 
   // Resolve question: --question, --question-file, or piped stdin (when stdin
   // is not a TTY). Mirrors send_text's text resolution for large bodies.
   let question;
-  if (typeof args.question === "string") {
+  if (typeof args.question === 'string') {
     question = args.question;
-  } else if (typeof args["question-file"] === "string") {
-    const file = args["question-file"];
+  } else if (typeof args['question-file'] === 'string') {
+    const file = args['question-file'];
     try {
-      question = file === "-" ? readStdinSync() : readFileSync(file, "utf8");
+      question = file === '-' ? readStdinSync() : readFileSync(file, 'utf8');
     } catch (err) {
-      emitFail("send_interactive", `Cannot read --question-file ${file}: ${err.message}`);
+      emitFail('send_interactive', `Cannot read --question-file ${file}: ${err.message}`);
       return 1;
     }
   } else if (!process.stdin.isTTY) {
@@ -718,9 +739,9 @@ async function cmdSendInteractive(argv) {
 
   if (!question || question.trim().length === 0) {
     emitFail(
-      "send_interactive",
-      "Missing question content",
-      "pass --question <string>, --question-file <path>, or pipe content on stdin"
+      'send_interactive',
+      'Missing question content',
+      'pass --question <string>, --question-file <path>, or pipe content on stdin'
     );
     return 1;
   }
@@ -729,21 +750,21 @@ async function cmdSendInteractive(argv) {
   try {
     options = parseOptions(args.options);
   } catch (err) {
-    emitFail("send_interactive", err.message);
+    emitFail('send_interactive', err.message);
     return 1;
   }
 
   let actionPrompts;
   try {
-    actionPrompts = parseActionPrompts(args["action-prompts"]);
+    actionPrompts = parseActionPrompts(args['action-prompts']);
   } catch (err) {
-    emitFail("send_interactive", err.message);
+    emitFail('send_interactive', err.message);
     return 1;
   }
 
-  const title = typeof args.title === "string" ? args.title : undefined;
-  const context = typeof args.context === "string" ? args.context : undefined;
-  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+  const title = typeof args.title === 'string' ? args.title : undefined;
+  const context = typeof args.context === 'string' ? args.context : undefined;
+  const parentMessageId = typeof args.parent === 'string' ? args.parent : undefined;
 
   // --- transport wiring happens ONCE in main() before dispatch (#4532); the
   //     resolved base URL is re-derived here (same flag > env > default order)
@@ -753,19 +774,22 @@ async function cmdSendInteractive(argv) {
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
   try {
-    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+    mod = await withStdoutToStderr(() => import('@disclaude/mcp-server'));
   } catch (err) {
     emitFail(
-      "send_interactive",
+      'send_interactive',
       `Failed to load @disclaude/mcp-server: ${err.message}`,
-      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_interactive from @disclaude/mcp-server"
+      'run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_interactive from @disclaude/mcp-server'
     );
     return 1;
   }
 
   const sendInteractive = mod.send_interactive;
-  if (typeof sendInteractive !== "function") {
-    emitFail("send_interactive", "@disclaude/mcp-server does not export send_interactive (unexpected build)");
+  if (typeof sendInteractive !== 'function') {
+    emitFail(
+      'send_interactive',
+      '@disclaude/mcp-server does not export send_interactive (unexpected build)'
+    );
     return 1;
   }
 
@@ -784,7 +808,7 @@ async function cmdSendInteractive(argv) {
     );
   } catch (err) {
     emitFail(
-      "send_interactive",
+      'send_interactive',
       `send_interactive threw: ${err instanceof Error ? err.message : String(err)}`,
       isRestUnreachable(err instanceof Error ? err.message : String(err))
         ? restUnavailableHint(baseUrl)
@@ -797,9 +821,9 @@ async function cmdSendInteractive(argv) {
 
   if (result && result.success) {
     emitOk({
-      command: "send_interactive",
+      command: 'send_interactive',
       chatId,
-      result: result.message ?? "sent",
+      result: result.message ?? 'sent',
       optionCount: options.length,
       durationMs,
     });
@@ -807,8 +831,8 @@ async function cmdSendInteractive(argv) {
   }
 
   emitFail(
-    "send_interactive",
-    (result && (result.error || result.message)) || "send_interactive returned without success",
+    'send_interactive',
+    (result && (result.error || result.message)) || 'send_interactive returned without success',
     await failureHintForSend(baseUrl)
   );
   return 1;
@@ -823,7 +847,7 @@ async function cmdSendFile(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chat = parseChatId("send_file", args.chat);
+  const chat = await parseChatId('send_file', args.chat);
   if (chat.code) return chat.code;
   const chatId = chat.chatId;
 
@@ -831,12 +855,16 @@ async function cmdSendFile(argv) {
   // send_file (relative paths resolve against the configured workspace dir, and
   // fs.stat there produces the authoritative error).
   const filePath = args.file;
-  if (!filePath || typeof filePath !== "string") {
-    emitFail("send_file", "Missing required option --file <path>", "pass --file <path> (relative paths resolve against the workspace dir)");
+  if (!filePath || typeof filePath !== 'string') {
+    emitFail(
+      'send_file',
+      'Missing required option --file <path>',
+      'pass --file <path> (relative paths resolve against the workspace dir)'
+    );
     return 1;
   }
 
-  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+  const parentMessageId = typeof args.parent === 'string' ? args.parent : undefined;
 
   // --- transport wiring happens ONCE in main() before dispatch (#4532); the
   //     resolved base URL is re-derived here (same flag > env > default order)
@@ -846,30 +874,28 @@ async function cmdSendFile(argv) {
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
   try {
-    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+    mod = await withStdoutToStderr(() => import('@disclaude/mcp-server'));
   } catch (err) {
     emitFail(
-      "send_file",
+      'send_file',
       `Failed to load @disclaude/mcp-server: ${err.message}`,
-      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_file from @disclaude/mcp-server"
+      'run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_file from @disclaude/mcp-server'
     );
     return 1;
   }
 
   const sendFile = mod.send_file;
-  if (typeof sendFile !== "function") {
-    emitFail("send_file", "@disclaude/mcp-server does not export send_file (unexpected build)");
+  if (typeof sendFile !== 'function') {
+    emitFail('send_file', '@disclaude/mcp-server does not export send_file (unexpected build)');
     return 1;
   }
 
   let result;
   try {
-    result = await withStdoutToStderr(() =>
-      sendFile({ filePath, chatId, parentMessageId })
-    );
+    result = await withStdoutToStderr(() => sendFile({ filePath, chatId, parentMessageId }));
   } catch (err) {
     emitFail(
-      "send_file",
+      'send_file',
       `send_file threw: ${err instanceof Error ? err.message : String(err)}`,
       isRestUnreachable(err instanceof Error ? err.message : String(err))
         ? restUnavailableHint(baseUrl)
@@ -882,9 +908,9 @@ async function cmdSendFile(argv) {
 
   if (result && result.success) {
     emitOk({
-      command: "send_file",
+      command: 'send_file',
       chatId,
-      result: result.message ?? "sent",
+      result: result.message ?? 'sent',
       fileName: result.fileName,
       fileSize: result.fileSize,
       durationMs,
@@ -893,8 +919,8 @@ async function cmdSendFile(argv) {
   }
 
   emitFail(
-    "send_file",
-    (result && (result.error || result.message)) || "send_file returned without success",
+    'send_file',
+    (result && (result.error || result.message)) || 'send_file returned without success',
     await failureHintForSend(baseUrl)
   );
   return 1;
@@ -914,12 +940,12 @@ async function cmdSendFile(argv) {
  */
 function resolveCardJson(args) {
   let raw;
-  if (typeof args.card === "string") {
+  if (typeof args.card === 'string') {
     raw = args.card;
-  } else if (typeof args["card-file"] === "string") {
-    const file = args["card-file"];
+  } else if (typeof args['card-file'] === 'string') {
+    const file = args['card-file'];
     try {
-      raw = file === "-" ? readStdinSync() : readFileSync(file, "utf8");
+      raw = file === '-' ? readStdinSync() : readFileSync(file, 'utf8');
     } catch (err) {
       return { error: `Cannot read --card-file ${file}: ${err.message}` };
     }
@@ -930,8 +956,8 @@ function resolveCardJson(args) {
 
   if (!raw || raw.length === 0) {
     return {
-      error: "Missing card content",
-      hint: "pass --card <json>, --card-file <path>, or pipe card JSON on stdin",
+      error: 'Missing card content',
+      hint: 'pass --card <json>, --card-file <path>, or pipe card JSON on stdin',
     };
   }
 
@@ -944,9 +970,9 @@ function resolveCardJson(args) {
 
   // Mirror the channel-mcp entry handler's first guard: a Feishu card is a
   // plain object, never an array or scalar.
-  if (!card || typeof card !== "object" || Array.isArray(card)) {
+  if (!card || typeof card !== 'object' || Array.isArray(card)) {
     return {
-      error: `Invalid card: must be an object, got ${Array.isArray(card) ? "array" : typeof card}`,
+      error: `Invalid card: must be an object, got ${Array.isArray(card) ? 'array' : typeof card}`,
     };
   }
 
@@ -958,17 +984,17 @@ async function cmdSendCard(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chat = parseChatId("send_card", args.chat);
+  const chat = await parseChatId('send_card', args.chat);
   if (chat.code) return chat.code;
   const chatId = chat.chatId;
 
   const resolved = resolveCardJson(args);
   if (resolved.error) {
-    emitFail("send_card", resolved.error, resolved.hint);
+    emitFail('send_card', resolved.error, resolved.hint);
     return 1;
   }
   const card = resolved.card;
-  const parentMessageId = typeof args.parent === "string" ? args.parent : undefined;
+  const parentMessageId = typeof args.parent === 'string' ? args.parent : undefined;
 
   // --- transport wiring happens ONCE in main() before dispatch (#4532); the
   //     resolved base URL is re-derived here (same flag > env > default order)
@@ -986,12 +1012,12 @@ async function cmdSendCard(argv) {
   //     logger noise stays off stdout. ---
   let mod;
   try {
-    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+    mod = await withStdoutToStderr(() => import('@disclaude/mcp-server'));
   } catch (err) {
     emitFail(
-      "send_card",
+      'send_card',
       `Failed to load @disclaude/mcp-server: ${err.message}`,
-      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_card from @disclaude/mcp-server"
+      'run inside a disclaude workspace with packages built (npm run build); the CLI reuses send_card from @disclaude/mcp-server'
     );
     return 1;
   }
@@ -1006,22 +1032,22 @@ async function cmdSendCard(argv) {
     detectMarkdownTableWarnings,
   } = mod;
 
-  if (typeof send_card !== "function") {
-    emitFail("send_card", "@disclaude/mcp-server does not export send_card (unexpected build)");
+  if (typeof send_card !== 'function') {
+    emitFail('send_card', '@disclaude/mcp-server does not export send_card (unexpected build)');
     return 1;
   }
   if (
-    typeof isValidFeishuCard !== "function" ||
-    typeof getCardValidationError !== "function" ||
-    typeof getChatIdValidationError !== "function" ||
-    typeof transformCardTables !== "function" ||
-    typeof resolveCardImages !== "function" ||
-    typeof detectMarkdownTableWarnings !== "function"
+    typeof isValidFeishuCard !== 'function' ||
+    typeof getCardValidationError !== 'function' ||
+    typeof getChatIdValidationError !== 'function' ||
+    typeof transformCardTables !== 'function' ||
+    typeof resolveCardImages !== 'function' ||
+    typeof detectMarkdownTableWarnings !== 'function'
   ) {
     emitFail(
-      "send_card",
-      "@disclaude/mcp-server is missing card preprocessing exports (unexpected build)",
-      "run npm run build; the CLI reuses card helpers exported from @disclaude/mcp-server"
+      'send_card',
+      '@disclaude/mcp-server is missing card preprocessing exports (unexpected build)',
+      'run npm run build; the CLI reuses card helpers exported from @disclaude/mcp-server'
     );
     return 1;
   }
@@ -1033,12 +1059,12 @@ async function cmdSendCard(argv) {
   // it cannot fire unless the twin and the authoritative validator disagree,
   // in which case this is the authoritative one.
   if (!isValidFeishuCard(card)) {
-    emitFail("send_card", `Invalid card structure: ${getCardValidationError(card)}`);
+    emitFail('send_card', `Invalid card structure: ${getCardValidationError(card)}`);
     return 1;
   }
   const chatIdError = getChatIdValidationError(chatId);
   if (chatIdError) {
-    emitFail("send_card", `Invalid chatId: ${chatIdError}`);
+    emitFail('send_card', `Invalid chatId: ${chatIdError}`);
     return 1;
   }
 
@@ -1061,19 +1087,19 @@ async function cmdSendCard(argv) {
     message = result && result.message;
     if (result && result.success) {
       if (tableWarnings.length > 0) {
-        message = `${result.message}\n\nℹ️ Auto-converted ${tableWarnings.length === 1 ? "a GFM table" : `${tableWarnings.length} GFM tables`} to column_set layout. The table renders correctly now.`;
+        message = `${result.message}\n\nℹ️ Auto-converted ${tableWarnings.length === 1 ? 'a GFM table' : `${tableWarnings.length} GFM tables`} to column_set layout. The table renders correctly now.`;
         if (imageResult.uploadedCount > 0) {
-          message += `\n🖼️ Auto-uploaded ${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? "image" : "images"}.`;
+          message += `\n🖼️ Auto-uploaded ${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? 'image' : 'images'}.`;
         }
       } else if (imageResult.uploadedCount > 0) {
-        message = `${result.message} (${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? "image" : "images"} auto-uploaded)`;
+        message = `${result.message} (${imageResult.uploadedCount} ${imageResult.uploadedCount === 1 ? 'image' : 'images'} auto-uploaded)`;
       } else if (imageResult.failedCount > 0) {
-        message = `${result.message} (⚠️ ${imageResult.failedCount} ${imageResult.failedCount === 1 ? "image" : "images"} failed to upload)`;
+        message = `${result.message} (⚠️ ${imageResult.failedCount} ${imageResult.failedCount === 1 ? 'image' : 'images'} failed to upload)`;
       }
     }
   } catch (err) {
     emitFail(
-      "send_card",
+      'send_card',
       `Card send failed: ${err instanceof Error ? err.message : String(err)}`,
       isRestUnreachable(err instanceof Error ? err.message : String(err))
         ? restUnavailableHint(baseUrl)
@@ -1086,17 +1112,17 @@ async function cmdSendCard(argv) {
 
   if (result && result.success) {
     emitOk({
-      command: "send_card",
+      command: 'send_card',
       chatId,
-      result: message ?? "sent",
+      result: message ?? 'sent',
       durationMs,
     });
     return 0;
   }
 
   emitFail(
-    "send_card",
-    (result && (result.error || result.message)) || "send_card returned without success",
+    'send_card',
+    (result && (result.error || result.message)) || 'send_card returned without success',
     await failureHintForSend(baseUrl)
   );
   return 1;
@@ -1118,20 +1144,20 @@ async function cmdPushToAgent(argv) {
   const start = performance.now();
 
   // --- validate (before any import, so failures are cheap and deterministic) ---
-  const chat = parseChatId("push_to_agent", args.chat);
+  const chat = await parseChatId('push_to_agent', args.chat);
   if (chat.code) return chat.code;
   const chatId = chat.chatId;
 
   // Resolve message: --message, --message-file, or piped stdin (when not a TTY).
   let message;
-  if (typeof args.message === "string") {
+  if (typeof args.message === 'string') {
     message = args.message;
-  } else if (typeof args["message-file"] === "string") {
-    const file = args["message-file"];
+  } else if (typeof args['message-file'] === 'string') {
+    const file = args['message-file'];
     try {
-      message = file === "-" ? readStdinSync() : readFileSync(file, "utf8");
+      message = file === '-' ? readStdinSync() : readFileSync(file, 'utf8');
     } catch (err) {
-      emitFail("push_to_agent", `Cannot read --message-file ${file}: ${err.message}`);
+      emitFail('push_to_agent', `Cannot read --message-file ${file}: ${err.message}`);
       return 1;
     }
   } else if (!process.stdin.isTTY) {
@@ -1140,9 +1166,9 @@ async function cmdPushToAgent(argv) {
 
   if (!message || message.length === 0) {
     emitFail(
-      "push_to_agent",
-      "Missing message content",
-      "pass --message <string>, --message-file <path>, or pipe content on stdin"
+      'push_to_agent',
+      'Missing message content',
+      'pass --message <string>, --message-file <path>, or pipe content on stdin'
     );
     return 1;
   }
@@ -1155,19 +1181,22 @@ async function cmdPushToAgent(argv) {
   // --- execute (stdout redirected → stderr so logger noise stays off stdout) ---
   let mod;
   try {
-    mod = await withStdoutToStderr(() => import("@disclaude/mcp-server"));
+    mod = await withStdoutToStderr(() => import('@disclaude/mcp-server'));
   } catch (err) {
     emitFail(
-      "push_to_agent",
+      'push_to_agent',
       `Failed to load @disclaude/mcp-server: ${err.message}`,
-      "run inside a disclaude workspace with packages built (npm run build); the CLI reuses push_to_agent from @disclaude/mcp-server"
+      'run inside a disclaude workspace with packages built (npm run build); the CLI reuses push_to_agent from @disclaude/mcp-server'
     );
     return 1;
   }
 
   const pushToAgent = mod.push_to_agent;
-  if (typeof pushToAgent !== "function") {
-    emitFail("push_to_agent", "@disclaude/mcp-server does not export push_to_agent (unexpected build)");
+  if (typeof pushToAgent !== 'function') {
+    emitFail(
+      'push_to_agent',
+      '@disclaude/mcp-server does not export push_to_agent (unexpected build)'
+    );
     return 1;
   }
 
@@ -1176,7 +1205,7 @@ async function cmdPushToAgent(argv) {
     result = await withStdoutToStderr(() => pushToAgent({ chatId, message }));
   } catch (err) {
     emitFail(
-      "push_to_agent",
+      'push_to_agent',
       `push_to_agent threw: ${err instanceof Error ? err.message : String(err)}`,
       isRestUnreachable(err instanceof Error ? err.message : String(err))
         ? restUnavailableHint(baseUrl)
@@ -1189,17 +1218,17 @@ async function cmdPushToAgent(argv) {
 
   if (result && result.success) {
     emitOk({
-      command: "push_to_agent",
+      command: 'push_to_agent',
       chatId,
-      result: result.message ?? "pushed",
+      result: result.message ?? 'pushed',
       durationMs,
     });
     return 0;
   }
 
   emitFail(
-    "push_to_agent",
-    (result && (result.error || result.message)) || "push_to_agent returned without success",
+    'push_to_agent',
+    (result && (result.error || result.message)) || 'push_to_agent returned without success',
     await failureHintForSend(baseUrl)
   );
   return 1;
@@ -1212,8 +1241,8 @@ async function cmdPushToAgent(argv) {
 async function main(argv) {
   const subcommand = argv[0];
 
-  if (!subcommand || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
-    process.stdout.write(HELP + "\n");
+  if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+    process.stdout.write(HELP + '\n');
     return 0;
   }
 
@@ -1224,27 +1253,27 @@ async function main(argv) {
   //     `isIpcAvailable()` both see them. ---
   wireRestTransport(parseArgs(argv.slice(1)));
 
-  if (subcommand === "send_text") {
+  if (subcommand === 'send_text') {
     return cmdSendText(argv.slice(1));
   }
 
-  if (subcommand === "send_interactive") {
+  if (subcommand === 'send_interactive') {
     return cmdSendInteractive(argv.slice(1));
   }
 
-  if (subcommand === "send_file") {
+  if (subcommand === 'send_file') {
     return cmdSendFile(argv.slice(1));
   }
 
-  if (subcommand === "send_card") {
+  if (subcommand === 'send_card') {
     return cmdSendCard(argv.slice(1));
   }
 
-  if (subcommand === "push_to_agent") {
+  if (subcommand === 'push_to_agent') {
     return cmdPushToAgent(argv.slice(1));
   }
 
-  process.stdout.write(HELP + "\n");
+  process.stdout.write(HELP + '\n');
   process.stderr.write(`\nUnknown command: ${subcommand}\n`);
   return 1;
 }
@@ -1256,6 +1285,6 @@ main(process.argv.slice(2))
     // stdout. The emit* no-op guard above keeps this to exactly one JSON line
     // even if a pino teardown throw lands here after a valid result.
     process.stderr.write(`${COMMAND} CLI crashed: ${err.stack || err}\n`);
-    emitFail("channel", `CLI crashed: ${err instanceof Error ? err.message : String(err)}`);
+    emitFail('channel', `CLI crashed: ${err instanceof Error ? err.message : String(err)}`);
     exitWithCode(1);
   });
