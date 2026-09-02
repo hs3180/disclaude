@@ -52,6 +52,7 @@ Thumbs.db
 
 # Task records
 tasks/
+workspace/.claude/task-records/
 
 # Workspace directory (runtime data — created/mounted by ops, not tracked)
 # Issue #4254: no .gitkeep placeholder; the service fail-fast validates the

@@ -148,9 +148,9 @@ run_test_script() {
 
     args+=("--port" "$REST_PORT")
     # Only pass --timeout if user explicitly set it; otherwise let each sub-script
-    # use its own default (e.g., mcp-tools-test.sh uses 120s, rest-channel-test.sh uses 30s).
+    # use its own default (e.g., channel-cli-test.sh uses 120s, rest-channel-test.sh uses 30s).
     # This prevents run-all-tests.sh's default 60s from overriding per-suite timeouts.
-    # Issue #2989: Previously, --timeout 60 was always passed, causing MCP tools tests
+    # Issue #2989: Previously, --timeout 60 was always passed, causing channel CLI tests
     # to fail with HTTP 000 when tool execution exceeded 60s.
     if [ -n "$_USER_TIMEOUT" ]; then
         args+=("--timeout" "$_USER_TIMEOUT")
@@ -493,7 +493,7 @@ main() {
         "use-case-1-basic-reply.sh|Use Case 1 - Basic Reply|ai" \
         "use-case-2-task-execution.sh|Use Case 2 - Task Execution|ai" \
         "use-case-3-multi-turn.sh|Use Case 3 - Multi-turn Conversation|ai" \
-        "mcp-tools-test.sh|Channel CLI Tools Tests|ai" \
+        "channel-cli-test.sh|Channel CLI Tools Tests|ai" \
         "multimodal-test.sh|Multimodal Tests|ai" \
         "codex-compatibility-test.sh|Codex Compatibility E2E|ai"; do
         script="${spec%%|*}"

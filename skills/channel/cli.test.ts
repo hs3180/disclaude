@@ -38,7 +38,7 @@
 //
 // Part 11 of #4459 (REST re-land of rejected #4521) added the chatId-format
 // pre-check tests: every subcommand rejects an ill-formed --chat before
-// importing @disclaude/mcp-server, mirroring the MCP entry handlers'
+// importing the channel implementation, mirroring the former entry handlers'
 // getChatIdValidationError pre-check (#1641). (The placeholder chat id below
 // is format-valid on purpose — `oc_test` alone is now rejected by the format
 // gate.)
@@ -200,7 +200,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     // pre-check (#1641); on the REST CLI the server only validates chatId as
     // a non-empty string, so the pre-import twin gate is the only place the
     // format rules run. All failures below are detected BEFORE importing
-    // @disclaude/mcp-server, so they need no build / PrimaryNode / creds.
+    // channel implementation, so they need no build / PrimaryNode / creds.
     const BAD_CHAT = 'not-a-chat-id';
 
     it.each(['send_text', 'send_interactive', 'send_file', 'push_to_agent'] as const)(
@@ -227,7 +227,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('send_card: ill-formed --chat is rejected pre-import too (twin covers all 5)', async () => {
       // Unlike part 5 (which validated chatId only post-import via the
       // exported helper), the pre-import twin now gates send_card as well —
-      // a format failure there never pays the @disclaude/mcp-server load.
+      // a format failure there never loads the channel implementation.
       // The valid card makes the chatId the ONLY failure.
       const VALID_CARD = JSON.stringify({
         config: { wide_screen_mode: true },
@@ -288,7 +288,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
 
   describe('send_card validation failures — exactly one JSON, exit 1 (part 5)', () => {
     // These all fail in the cheap, pre-import validation path, so they need no
-    // PrimaryNode, no creds, and no built @disclaude/mcp-server — they lock the
+    // PrimaryNode, no creds, and no built channel implementation — they lock the
     // send_card command surface and output contract the agent depends on.
     it('missing --chat', async () => {
       const r = await runCli(['send_card', '--card', '{"elements":[]}']);
@@ -337,7 +337,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     // Post-import validation path: an object card that fails isValidFeishuCard
-    // (missing config/header). This imports @disclaude/mcp-server (so it needs
+    // (missing config/header). This imports the channel implementation (so it needs
     // `npm run build`, like the redirect test below) but never reaches a pino
     // write — it locks the one-JSON teardown contract (cli.mjs exitWithCode /
     // resultEmitted): the failure JSON is the ONLY object on stdout even though
@@ -359,7 +359,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
 
   describe('send_interactive validation failures — exactly one JSON, exit 1', () => {
     // Issue #4459 part 7: send_interactive mirrors the send_text validation
-    // pattern. All failures are detected BEFORE importing @disclaude/mcp-server
+    // pattern. All failures are detected BEFORE importing the channel implementation
     // (cheap, deterministic, no IPC) and emit exactly one JSON object on stdout.
     it('missing --chat', async () => {
       const r = await runCli([
@@ -656,8 +656,8 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
   //
   // The CLI must reach the PrimaryNode over the REST API with NO Unix socket
   // and no IPC fallback. It does so by setting DISCLAUDE_REST_IPC_ENABLED=true
-  // (plus the resolved base URL) BEFORE the first @disclaude/mcp-server import;
-  // core getIpcClient() and the mcp-server isIpcAvailable() probe then select
+  // (plus the resolved base URL) BEFORE the first channel implementation import;
+  // core getIpcClient() and the channel CLI isIpcAvailable() probe then select
   // the REST branch (RestIpcClient / GET /api/ping).
   //
   // These tests run WITHOUT a PrimaryNode: the REST face at the base URL is
@@ -711,6 +711,26 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       // …and the error is NOT a bare fetch stack: the CLI surfaced the mapped
       // IPC-contract message (IPC service unavailable), not ENOTFOUND noise.
       expect(String(obj.error)).not.toMatch(/ENOTFOUND|at /);
+    }, 30000);
+
+    it('send_text with missing credentials and a down REST face -> actionable hint', async () => {
+      const port = await reserveEphemeralPort();
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const r = await runCli(
+        ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi', '--base-url', baseUrl],
+        {
+          NODE_ENV: 'test',
+          HOME: '/nonexistent-home-4532',
+          DISCLAUDE_CONFIG_PATH: '/nonexistent-config-4532.yaml',
+          FEISHU_APP_ID: '',
+          FEISHU_APP_SECRET: '',
+        }
+      );
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(String(obj.error)).toContain('Feishu credentials not configured');
+      expect(String(obj.hint)).toContain(baseUrl);
+      expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
     }, 30000);
 
     it('send_text honors DISCLAUDE_REST_IPC_BASE_URL when --base-url is absent (#4532 scope 2)', async () => {

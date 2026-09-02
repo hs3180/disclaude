@@ -10,15 +10,13 @@
   "bin": {
     "disclaude": "./bin/disclaude.js",
     "disclaude-primary": "./packages/primary-node/dist/cli.js",
-    "disclaude-mcp": "./packages/mcp-server/dist/cli.js",
-    "disclaude-push": "./packages/primary-node/dist/push-cli.js"
+    "disclaude-channel": "./packages/channel-cli/dist/cli.js"
   },
   "scripts": {
     "build": "tsc -b",
     "build:packages": "tsc -b",
     "build:core": "npm run build --workspace=@disclaude/core",
     "build:primary": "npm run build --workspace=@disclaude/primary-node",
-    "build:mcp": "npm run build --workspace=@disclaude/mcp-server",
     "type-check": "npm run build && tsc --noEmit",
     "lint": "eslint packages/*/src --max-warnings=0",
     "lint:fix": "eslint packages/*/src --fix",
@@ -32,7 +30,7 @@
     "test:integration:use-case-1": "./tests/integration/use-case-1-basic-reply.sh",
     "test:integration:use-case-2": "./tests/integration/use-case-2-task-execution.sh",
     "test:integration:multi-turn": "./tests/integration/use-case-3-multi-turn.sh",
-    "test:integration:mcp": "./tests/integration/mcp-tools-test.sh",
+    "test:integration:channel": "./tests/integration/channel-cli-test.sh",
     "test:integration:multimodal": "./tests/integration/multimodal-test.sh",
     "test:integration:fast": "./tests/integration/run-all-tests.sh --tag fast",
     "test:integration:ai": "./tests/integration/run-all-tests.sh --tag ai",

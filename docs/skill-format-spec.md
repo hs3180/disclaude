@@ -177,9 +177,9 @@ surface maps to which target is a per-tool decision (scope 3), sketched here onl
 
 | Surface | Transport | Lives in | Migration target (scope 3 decides) |
 |---|---|---|---|
-| **S1** `channel-mcp` — disclaude's own messaging tools (`send_text`/`send_card`/`send_interactive`/`send_file`/`push_to_agent`; the loop tools were removed with the loop system, #4430) | inline / in-process | [`packages/mcp-server/src/channel-mcp.ts`](../packages/mcp-server/src/channel-mcp.ts) | **Migrated (#4652).** ChatAgent no longer constructs or injects the MCP server; all five operations surface through [`skills/channel/cli.mjs`](../skills/channel/README.md). The standalone MCP export remains for external consumers. |
+| **S1** `channel-mcp` — disclaude's own messaging tools (`send_text`/`send_card`/`send_interactive`/`send_file`/`push_to_agent`; the loop tools were removed with the loop system, #4430) | inline / in-process | `packages/channel-cli/src/` | **Migrated and removed (#4652/#4726).** All five operations surface through [`skills/channel/cli.mjs`](../skills/channel/README.md); no in-process MCP package remains. |
 | **S2** External stdio MCP servers (Playwright + user-configured) | stdio subprocess | ~~config `tools.mcpServers`; loader `mcp-setup.ts`~~ (**removed**, `#4459` Scope 4) | **CLI Skills / Skills.** Primary target — Playwright consumers are retired in favor of the [`browser-use` skill](../skills/browser-use/SKILL.md) ([#4460](https://github.com/hs3180/disclaude/issues/4460)); user stdio servers wrap as Skills per this spec. |
-| **S3** `@disclaude/mcp-server` exported as a standalone stdio server | stdio | [`packages/mcp-server/src/cli.ts`](../packages/mcp-server/src/cli.ts) (`disclaude-mcp`) | **Open.** Exported surface for external MCP clients (e.g. Claude Code). Deprecate, or expose the same tools as CLI Skills. Scope 3/4 decides. |
+| **S3** disclaude standalone stdio MCP server | stdio | — | **Removed (#4726).** External consumers should use the Channel CLI Skill or another supported integration. |
 
 **What this spec fixes** (so scope 3 doesn't have to): for any surface that migrates to a CLI Skill
 (S2 certainly; S1/S3 possibly), the `cli.mjs` + `README.md` it produces conforms to
@@ -197,7 +197,7 @@ surface maps to which target is a per-tool decision (scope 3), sketched here onl
   `--<opt> '<JSON>'` / `--<opt> @FILE` / stdin, so multi-KB payloads never go inline.
 - emits exactly one JSON object: `{"ok":true,"command":…,"result":…,"durationMs":…}` /
   `{"ok":false,"command":…,"error":…,"hint":…}`.
-- reuses the first-party implementations from `@disclaude/mcp-server` over IPC — same impl as the
+- reuses the first-party implementations from `packages/channel-cli` over REST — same impl as the
   MCP tool it replaces, different transport (see its Parity / migration notes table).
 - `README.md` — Quick start, Commands table, Output contract, Artifacts, Runtime, Parity /
   migration notes, Status (per-part PR links; live parity deferred where noted).

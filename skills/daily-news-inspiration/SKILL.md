@@ -80,13 +80,10 @@ Write a question in a **real user's voice**, as if they just saw this news and w
 
 ### Step 4: Send Question
 
-Use the `mcp__channel-mcp__send_text` tool to send the question to the target chat:
+Use the channel CLI to send the question to the target chat:
 
 ```
-mcp__channel-mcp__send_text({
-  text: "{generated question}",
-  chatId: "{chatId}"
-})
+node skills/channel/cli.mjs send_text --chat "{chatId}" --text "{generated question}"
 ```
 
 ### Step 5: Observe and Evaluate (Internal)
