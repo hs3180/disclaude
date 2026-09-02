@@ -68,7 +68,7 @@ interface RunResult {
 function runCli(
   args: string[],
   extraEnv: Record<string, string> = {},
-  timeoutMs = 20000,
+  timeoutMs = 20000
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI, ...args], {
@@ -81,11 +81,19 @@ function runCli(
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      try { child.kill('SIGKILL'); } catch { /* ignore */ }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
       reject(new Error(`cli timed out after ${timeoutMs}ms (args: ${args.join(' ')})`));
     }, timeoutMs);
-    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.stdout.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr.on('data', (d: Buffer) => {
+      stderr += d.toString();
+    });
     child.on('error', (err: Error) => {
       if (settled) return;
       settled = true;
@@ -118,11 +126,32 @@ function parseSingleJson(stdout: string): Record<string, unknown> {
 describe('channel Skill CLI — output contract (no IPC)', () => {
   describe('send_text validation failures — exactly one JSON, exit 1', () => {
     it('missing --chat', async () => {
-      const r = await runCli(['send_text', '--text', 'hi']);
+      const r = await runCli(['send_text', '--text', 'hi'], { FEISHU_CLI_CHAT_ID: '' });
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
       expect(String(obj.error)).toMatch(/--chat/i);
+    });
+
+    it('uses FEISHU_CLI_CHAT_ID when --chat is omitted', async () => {
+      const r = await runCli(['send_text', '--text', ''], {
+        FEISHU_CLI_CHAT_ID: 'oc_test0123456789012345678901234567890',
+      });
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+      expect(String(obj.error)).toMatch(/text/i);
+      expect(String(obj.error)).not.toMatch(/--chat/i);
+    });
+
+    it('gives explicit --chat priority over FEISHU_CLI_CHAT_ID', async () => {
+      const r = await runCli(
+        ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', ''],
+        { FEISHU_CLI_CHAT_ID: 'not-a-chat-id' }
+      );
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+      expect(String(obj.error)).toMatch(/text/i);
+      expect(String(obj.error)).not.toMatch(/chatid format/i);
     });
 
     it('missing text content', async () => {
@@ -134,7 +163,15 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('invalid --mentions JSON', async () => {
-      const r = await runCli(['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi', '--mentions', 'not-json']);
+      const r = await runCli([
+        'send_text',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--text',
+        'hi',
+        '--mentions',
+        'not-json',
+      ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
@@ -142,7 +179,13 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('unreadable --text-file', async () => {
-      const r = await runCli(['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text-file', '/no/such/path/xyz']);
+      const r = await runCli([
+        'send_text',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--text-file',
+        '/no/such/path/xyz',
+      ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
@@ -178,7 +221,7 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
         expect(obj).toMatchObject({ ok: false, command });
         expect(String(obj.error)).toMatch(/invalid chatid format/i);
         expect(String(obj.error)).toMatch(/oc_|ou_|cli-/);
-      },
+      }
     );
 
     it('send_card: ill-formed --chat is rejected pre-import too (twin covers all 5)', async () => {
@@ -207,7 +250,13 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('send_text: leading whitespace is rejected (mirrors isValidChatId trim guard)', async () => {
-      const r = await runCli(['send_text', '--chat', '  oc_0123456789012345678901234567890ab', '--text', 'hi']);
+      const r = await runCli([
+        'send_text',
+        '--chat',
+        '  oc_0123456789012345678901234567890ab',
+        '--text',
+        'hi',
+      ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_text' });
@@ -260,7 +309,13 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('invalid --card JSON', async () => {
-      const r = await runCli(['send_card', '--chat', 'oc_test0123456789012345678901234567890', '--card', 'not-json']);
+      const r = await runCli([
+        'send_card',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--card',
+        'not-json',
+      ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_card' });
@@ -268,7 +323,13 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('card is not an object (array rejected — mirrors handler guard)', async () => {
-      const r = await runCli(['send_card', '--chat', 'oc_test0123456789012345678901234567890', '--card', '[1,2,3]']);
+      const r = await runCli([
+        'send_card',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--card',
+        '[1,2,3]',
+      ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_card' });
@@ -282,7 +343,13 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     // resultEmitted): the failure JSON is the ONLY object on stdout even though
     // process.exit trips pino's sonic-boom "not ready" flush.
     it('invalid card structure (object missing config/header) — exactly one JSON', async () => {
-      const r = await runCli(['send_card', '--chat', 'oc_test0123456789012345678901234567890', '--card', '{"elements":[]}']);
+      const r = await runCli([
+        'send_card',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--card',
+        '{"elements":[]}',
+      ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout); // asserts stdout is exactly ONE JSON line
       expect(obj).toMatchObject({ ok: false, command: 'send_card' });
@@ -297,8 +364,10 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('missing --chat', async () => {
       const r = await runCli([
         'send_interactive',
-        '--question', 'q',
-        '--options', '[{"text":"a","value":"a"}]',
+        '--question',
+        'q',
+        '--options',
+        '[{"text":"a","value":"a"}]',
       ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
@@ -309,8 +378,10 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('missing question content', async () => {
       const r = await runCli([
         'send_interactive',
-        '--chat', 'oc_test0123456789012345678901234567890',
-        '--options', '[{"text":"a","value":"a"}]',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--options',
+        '[{"text":"a","value":"a"}]',
       ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
@@ -319,7 +390,13 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     });
 
     it('missing --options', async () => {
-      const r = await runCli(['send_interactive', '--chat', 'oc_test0123456789012345678901234567890', '--question', 'q']);
+      const r = await runCli([
+        'send_interactive',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--question',
+        'q',
+      ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
       expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
@@ -329,9 +406,12 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('invalid --options JSON', async () => {
       const r = await runCli([
         'send_interactive',
-        '--chat', 'oc_test0123456789012345678901234567890',
-        '--question', 'q',
-        '--options', 'not-json',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--question',
+        'q',
+        '--options',
+        'not-json',
       ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
@@ -342,9 +422,12 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('invalid option structure (missing value)', async () => {
       const r = await runCli([
         'send_interactive',
-        '--chat', 'oc_test0123456789012345678901234567890',
-        '--question', 'q',
-        '--options', '[{"text":"a"}]',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--question',
+        'q',
+        '--options',
+        '[{"text":"a"}]',
       ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
@@ -355,10 +438,14 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     it('invalid --action-prompts (array, not object)', async () => {
       const r = await runCli([
         'send_interactive',
-        '--chat', 'oc_test0123456789012345678901234567890',
-        '--question', 'q',
-        '--options', '[{"text":"a","value":"a"}]',
-        '--action-prompts', '["x"]',
+        '--chat',
+        'oc_test0123456789012345678901234567890',
+        '--question',
+        'q',
+        '--options',
+        '[{"text":"a","value":"a"}]',
+        '--action-prompts',
+        '["x"]',
       ]);
       expect(r.code).toBe(1);
       const obj = parseSingleJson(r.stdout);
@@ -375,55 +462,50 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     // synchronous (no pino-pretty transport), so the redirect is deterministic
     // (no worker-flush race). LOG_LEVEL=debug guarantees the info line emits
     // regardless of any inherited LOG_LEVEL.
-    it(
-      'keeps the pino "send_text called" line off stdout (routed to stderr)',
-      async () => {
-        const r = await runCli(
-          ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi'],
-          { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
-        );
-        expect(r.code).toBe(1);
-        // stdout is still exactly one JSON object — the contract holds even on
-        // the import/send_text path where pino is active.
-        const obj = parseSingleJson(r.stdout);
-        expect(obj).toMatchObject({ ok: false, command: 'send_text' });
-        // The pino line must NOT be on stdout…
-        expect(r.stdout).not.toContain('send_text called');
-        // …and SHOULD be on stderr (proves the redirect routed it there).
-        expect(r.stderr).toContain('send_text called');
-      },
-      30000,
-    );
+    it('keeps the pino "send_text called" line off stdout (routed to stderr)', async () => {
+      const r = await runCli(
+        ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi'],
+        { NODE_ENV: 'test', LOG_LEVEL: 'debug' }
+      );
+      expect(r.code).toBe(1);
+      // stdout is still exactly one JSON object — the contract holds even on
+      // the import/send_text path where pino is active.
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+      // The pino line must NOT be on stdout…
+      expect(r.stdout).not.toContain('send_text called');
+      // …and SHOULD be on stderr (proves the redirect routed it there).
+      expect(r.stderr).toContain('send_text called');
+    }, 30000);
 
     // Issue #4459 part 7: same redirect guarantee for send_interactive. The
     // first-party send_interactive_message logs 'send_interactive_message
     // called' at the top of the fn (interactive-message.ts), before the
     // isIpcAvailable check — so with no PrimaryNode it still emits the pino
     // line and then fails fast. The CLI must keep that line off stdout.
-    it(
-      'keeps the pino "send_interactive_message called" line off stdout (routed to stderr)',
-      async () => {
-        const r = await runCli(
-          [
-            'send_interactive',
-            '--chat', 'oc_test0123456789012345678901234567890',
-            '--question', 'Pick one',
-            '--options', '[{"text":"A","value":"a","type":"primary"}]',
-          ],
-          { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
-        );
-        expect(r.code).toBe(1);
-        // stdout is still exactly one JSON object — the contract holds even on
-        // the import/send_interactive path where pino is active.
-        const obj = parseSingleJson(r.stdout);
-        expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
-        // The pino line must NOT be on stdout…
-        expect(r.stdout).not.toContain('send_interactive_message called');
-        // …and SHOULD be on stderr (proves the redirect routed it there).
-        expect(r.stderr).toContain('send_interactive_message called');
-      },
-      30000,
-    );
+    it('keeps the pino "send_interactive_message called" line off stdout (routed to stderr)', async () => {
+      const r = await runCli(
+        [
+          'send_interactive',
+          '--chat',
+          'oc_test0123456789012345678901234567890',
+          '--question',
+          'Pick one',
+          '--options',
+          '[{"text":"A","value":"a","type":"primary"}]',
+        ],
+        { NODE_ENV: 'test', LOG_LEVEL: 'debug' }
+      );
+      expect(r.code).toBe(1);
+      // stdout is still exactly one JSON object — the contract holds even on
+      // the import/send_interactive path where pino is active.
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_interactive' });
+      // The pino line must NOT be on stdout…
+      expect(r.stdout).not.toContain('send_interactive_message called');
+      // …and SHOULD be on stderr (proves the redirect routed it there).
+      expect(r.stderr).toContain('send_interactive_message called');
+    }, 30000);
   });
 
   describe('send_file validation failures — exactly one JSON, exit 1', () => {
@@ -451,25 +533,27 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     // (platform not configured)')`; with creds it logs
     // `logger.debug(..., 'send_file called')` then fails on fs.stat/IPC. Either
     // way a pino line must land on stderr, never stdout.
-    it(
-      'keeps the pino send_file log line off stdout (routed to stderr)',
-      async () => {
-        const r = await runCli(
-          ['send_file', '--chat', 'oc_test0123456789012345678901234567890', '--file', '/no/such/file/xyz'],
-          { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
-        );
-        expect(r.code).toBe(1);
-        // stdout is still exactly one JSON object — the contract holds even on
-        // the import/send_file path where pino is active.
-        const obj = parseSingleJson(r.stdout);
-        expect(obj).toMatchObject({ ok: false, command: 'send_file' });
-        // The pino line must NOT be on stdout…
-        expect(r.stdout).not.toMatch(/send_file called|File send skipped/);
-        // …and SHOULD be on stderr (proves the redirect routed it there).
-        expect(r.stderr).toMatch(/send_file called|File send skipped/);
-      },
-      30000,
-    );
+    it('keeps the pino send_file log line off stdout (routed to stderr)', async () => {
+      const r = await runCli(
+        [
+          'send_file',
+          '--chat',
+          'oc_test0123456789012345678901234567890',
+          '--file',
+          '/no/such/file/xyz',
+        ],
+        { NODE_ENV: 'test', LOG_LEVEL: 'debug' }
+      );
+      expect(r.code).toBe(1);
+      // stdout is still exactly one JSON object — the contract holds even on
+      // the import/send_file path where pino is active.
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_file' });
+      // The pino line must NOT be on stdout…
+      expect(r.stdout).not.toMatch(/send_file called|File send skipped/);
+      // …and SHOULD be on stderr (proves the redirect routed it there).
+      expect(r.stderr).toMatch(/send_file called|File send skipped/);
+    }, 30000);
   });
 
   describe('push_to_agent validation failures — exactly one JSON, exit 1 (part 6)', () => {
@@ -519,24 +603,20 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
     // (exit 1). Either way the pino line must be off stdout, which is what this
     // test locks. The chat id is format-valid but not a real chat, so no
     // real delivery occurs.
-    it(
-      'keeps the pino "push_to_agent called" line off stdout (routed to stderr)',
-      async () => {
-        const r = await runCli(
-          ['push_to_agent', '--chat', 'oc_test0123456789012345678901234567890', '--message', 'hi'],
-          { NODE_ENV: 'test', LOG_LEVEL: 'debug' },
-        );
-        // stdout is still exactly one JSON object — the contract holds even on
-        // the import/push_to_agent path where pino is active.
-        const obj = parseSingleJson(r.stdout);
-        expect(obj).toMatchObject({ command: 'push_to_agent' });
-        // The pino line must NOT be on stdout…
-        expect(r.stdout).not.toContain('push_to_agent called');
-        // …and SHOULD be on stderr (proves the redirect routed it there).
-        expect(r.stderr).toContain('push_to_agent called');
-      },
-      30000,
-    );
+    it('keeps the pino "push_to_agent called" line off stdout (routed to stderr)', async () => {
+      const r = await runCli(
+        ['push_to_agent', '--chat', 'oc_test0123456789012345678901234567890', '--message', 'hi'],
+        { NODE_ENV: 'test', LOG_LEVEL: 'debug' }
+      );
+      // stdout is still exactly one JSON object — the contract holds even on
+      // the import/push_to_agent path where pino is active.
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ command: 'push_to_agent' });
+      // The pino line must NOT be on stdout…
+      expect(r.stdout).not.toContain('push_to_agent called');
+      // …and SHOULD be on stderr (proves the redirect routed it there).
+      expect(r.stderr).toContain('push_to_agent called');
+    }, 30000);
   });
 
   describe('help / unknown-command surface', () => {
@@ -605,64 +685,68 @@ describe('channel Skill CLI — output contract (no IPC)', () => {
       });
     }
 
-    it(
-      'send_text against a down REST face -> actionable hint with the base URL, exit 1',
-      async () => {
-        const port = await reserveEphemeralPort();
-        const baseUrl = `http://127.0.0.1:${port}`;
-        const r = await runCli(
-          ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi', '--base-url', baseUrl],
-          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' },
-        );
-        expect(r.code).toBe(1);
-        // stdout stays exactly one JSON object — the transport switch does not
-        // break the output contract even when the REST face is down.
-        const obj = parseSingleJson(r.stdout);
-        expect(obj).toMatchObject({ ok: false, command: 'send_text' });
-        // The actionable hint names the base URL and how to fix it (#4532 scope 3)…
-        expect(String(obj.hint)).toContain(baseUrl);
-        expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
-        // …and the error is NOT a bare fetch stack: the CLI surfaced the mapped
-        // IPC-contract message (IPC service unavailable), not ENOTFOUND noise.
-        expect(String(obj.error)).not.toMatch(/ENOTFOUND|at /);
-      },
-      30000,
-    );
+    it('send_text against a down REST face -> actionable hint with the base URL, exit 1', async () => {
+      const port = await reserveEphemeralPort();
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const r = await runCli(
+        [
+          'send_text',
+          '--chat',
+          'oc_test0123456789012345678901234567890',
+          '--text',
+          'hi',
+          '--base-url',
+          baseUrl,
+        ],
+        { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' }
+      );
+      expect(r.code).toBe(1);
+      // stdout stays exactly one JSON object — the transport switch does not
+      // break the output contract even when the REST face is down.
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+      // The actionable hint names the base URL and how to fix it (#4532 scope 3)…
+      expect(String(obj.hint)).toContain(baseUrl);
+      expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
+      // …and the error is NOT a bare fetch stack: the CLI surfaced the mapped
+      // IPC-contract message (IPC service unavailable), not ENOTFOUND noise.
+      expect(String(obj.error)).not.toMatch(/ENOTFOUND|at /);
+    }, 30000);
 
-    it(
-      'send_text honors DISCLAUDE_REST_IPC_BASE_URL when --base-url is absent (#4532 scope 2)',
-      async () => {
-        const port = await reserveEphemeralPort();
-        const baseUrl = `http://127.0.0.1:${port}`;
-        const r = await runCli(
-          ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi'],
-          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532', DISCLAUDE_REST_IPC_BASE_URL: baseUrl },
-        );
-        expect(r.code).toBe(1);
-        const obj = parseSingleJson(r.stdout);
-        expect(obj).toMatchObject({ ok: false, command: 'send_text' });
-        // The hint reflects the env-var base URL — proving the env wiring
-        // reached the transport, not just the flag path.
-        expect(String(obj.hint)).toContain(baseUrl);
-      },
-      30000,
-    );
+    it('send_text honors DISCLAUDE_REST_IPC_BASE_URL when --base-url is absent (#4532 scope 2)', async () => {
+      const port = await reserveEphemeralPort();
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const r = await runCli(
+        ['send_text', '--chat', 'oc_test0123456789012345678901234567890', '--text', 'hi'],
+        { NODE_ENV: 'test', HOME: '/nonexistent-home-4532', DISCLAUDE_REST_IPC_BASE_URL: baseUrl }
+      );
+      expect(r.code).toBe(1);
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'send_text' });
+      // The hint reflects the env-var base URL — proving the env wiring
+      // reached the transport, not just the flag path.
+      expect(String(obj.hint)).toContain(baseUrl);
+    }, 30000);
 
-    it(
-      'push_to_agent against a down REST face -> actionable hint, exit contract intact',
-      async () => {
-        const port = await reserveEphemeralPort();
-        const baseUrl = `http://127.0.0.1:${port}`;
-        const r = await runCli(
-          ['push_to_agent', '--chat', 'oc_test0123456789012345678901234567890', '--message', 'hi', '--base-url', baseUrl],
-          { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' },
-        );
-        const obj = parseSingleJson(r.stdout);
-        expect(obj).toMatchObject({ ok: false, command: 'push_to_agent' });
-        expect(String(obj.hint)).toContain(baseUrl);
-        expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
-      },
-      30000,
-    );
+    it('push_to_agent against a down REST face -> actionable hint, exit contract intact', async () => {
+      const port = await reserveEphemeralPort();
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const r = await runCli(
+        [
+          'push_to_agent',
+          '--chat',
+          'oc_test0123456789012345678901234567890',
+          '--message',
+          'hi',
+          '--base-url',
+          baseUrl,
+        ],
+        { NODE_ENV: 'test', HOME: '/nonexistent-home-4532' }
+      );
+      const obj = parseSingleJson(r.stdout);
+      expect(obj).toMatchObject({ ok: false, command: 'push_to_agent' });
+      expect(String(obj.hint)).toContain(baseUrl);
+      expect(String(obj.hint)).toMatch(/start the main service|--api-port/);
+    }, 30000);
   });
 });
