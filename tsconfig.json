@@ -22,6 +22,7 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/mcp-server" },
+    { "path": "./packages/channel-cli" },
     { "path": "./packages/primary-node" },
     { "path": "./packages/voice-orchestrator" }
   ]
