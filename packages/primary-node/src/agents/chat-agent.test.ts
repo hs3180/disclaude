@@ -1660,6 +1660,73 @@ describe('ChatAgent (primary-node)', () => {
       expect(userCalls.length).toBeGreaterThanOrEqual(1);
     });
 
+    it('should hide Codex tool traces from the user while keeping debug forwarding', async () => {
+      const localCallbacks = createMockCallbacks();
+      const agent = new ChatAgent({
+        chatId: 'oc_codex_user_chat',
+        callbacks: localCallbacks,
+        apiKey: 'key',
+        model: 'model',
+        provider: 'anthropic',
+      });
+      (agent as any).sdkProvider = { name: 'codex' };
+
+      mockGetDebugGroup.mockReturnValue({ chatId: 'oc_debug_group', setAt: Date.now() });
+
+      async function* codexToolIterator() {
+        yield {
+          parsed: {
+            type: 'tool_use',
+            content: 'bash -lc cat /private/secret.env',
+          },
+        };
+        yield {
+          parsed: {
+            type: 'tool_result',
+            content: 'API_TOKEN=should-not-reach-feishu-user',
+          },
+        };
+        yield { parsed: { type: 'text', content: '已完成处理。' } };
+        yield { parsed: { type: 'result', content: 'Done' } };
+      }
+
+      (agent as any).createQueryStream = () => ({
+        handle: { close: vi.fn(), cancel: vi.fn() },
+        iterator: codexToolIterator(),
+      });
+
+      void agent.processMessage({
+        chatId: 'oc_codex_user_chat',
+        payload: 'read file',
+        messageId: 'msg_codex_1',
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            (agent as any).logger.info.mock.calls.some(
+              (c: any[]) => c[1] === 'Result received, turn complete'
+            )
+          ).toBe(true);
+        },
+        { timeout: 1000, interval: 20 }
+      );
+
+      const userMessages = localCallbacks.sendMessage.mock.calls
+        .filter((call: any[]) => call[0] === 'oc_codex_user_chat')
+        .map((call: any[]) => call[1]);
+      expect(userMessages).not.toContain('bash -lc cat /private/secret.env');
+      expect(userMessages).not.toContain('API_TOKEN=should-not-reach-feishu-user');
+      expect(userMessages).toContain('已完成处理。');
+
+      const debugMessages = localCallbacks.sendMessage.mock.calls
+        .filter((call: any[]) => call[0] === 'oc_debug_group')
+        .map((call: any[]) => call[1]);
+      expect(debugMessages).toEqual([
+        '[tool_use] bash -lc cat /private/secret.env',
+        '[tool_result] API_TOKEN=should-not-reach-feishu-user',
+      ]);
+    });
+
     it('should forward tool_result messages to debug group', async () => {
       const localCallbacks = createMockCallbacks();
       const agent = new ChatAgent({
