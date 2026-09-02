@@ -57,6 +57,7 @@ import {
   buildStreamingPlaceholderCard,
   STREAMING_REPLY_ELEMENT_ID,
 } from '../platforms/feishu/card-builders/streaming-card-builder.js';
+import { configuredFeishuMessageBytes, truncateFeishuMessage } from './feishu-message-chunker.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -546,12 +547,21 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
           logOutgoing(messageId, message.text || '', 'post');
           return messageId;
         }
-        const messageId = await sendFeishuMessage(
-          'text',
-          JSON.stringify({ text: message.text || '' }),
-        );
-        logger.debug({ chatId: message.chatId, messageId, threadReply: useThreadReply }, 'Text message sent');
-        logOutgoing(messageId, message.text || '', 'text');
+        const text = message.text || '';
+        let textToSend = truncateFeishuMessage(text, configuredFeishuMessageBytes());
+        let messageId: string | undefined;
+        try {
+          messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
+        } catch (err) {
+          const apiError = extractFeishuApiError(err);
+          if (Number(apiError.apiCode) !== 230025) {throw err;}
+          const retryLimit = Math.max(1, Math.floor(configuredFeishuMessageBytes() * 0.8));
+          textToSend = truncateFeishuMessage(text, retryLimit);
+          logger.warn({ chatId: message.chatId, originalBytes: Buffer.byteLength(text), sentBytes: Buffer.byteLength(textToSend), apiCode: apiError.apiCode }, 'Feishu 230025; retrying with a more compact head-tail truncation (Issue #4693)');
+          messageId = await sendFeishuMessage('text', JSON.stringify({ text: textToSend }));
+        }
+        logger.debug({ chatId: message.chatId, messageId, truncated: textToSend !== text, threadReply: useThreadReply }, 'Text message sent');
+        logOutgoing(messageId, textToSend, 'text');
         return messageId;
       }
 
