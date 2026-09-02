@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Typed, distributable entry point for the channel CLI. */
 import { existsSync, readFileSync } from 'node:fs';
-import type { ActionPromptMap, InteractiveOption } from '@disclaude/mcp-server';
+import type { ActionPromptMap, InteractiveOption } from './tools/types.js';
 
 const DEFAULT_REST_BASE_URL = 'http://localhost:19200';
 const CHAT_ID_PATTERNS = [
@@ -189,9 +189,9 @@ async function execute(command: string, args: Args, chatId: string, baseUrl: str
     emitFail(command, command === 'send_card' && messageText.startsWith('Invalid --card JSON') ? messageText.replace('Invalid --card JSON', 'Invalid card JSON') : messageText);
     return 1;
   }
-  let mod: typeof import('@disclaude/mcp-server');
-  try { mod = await withLogsRedirected(() => import('@disclaude/mcp-server')); }
-  catch (error) { emitFail(command, `Failed to load @disclaude/mcp-server: ${errorMessage(error)}`, 'run npm run build before using the packaged CLI'); return 1; }
+  let mod: typeof import('./index.js');
+  try { mod = await withLogsRedirected(() => import('./index.js')); }
+  catch (error) { emitFail(command, `Failed to load channel implementation: ${errorMessage(error)}`, 'run npm run build before using the packaged CLI'); return 1; }
   const parentMessageId = arg(args, 'parent');
   let result: ToolResult;
   try {

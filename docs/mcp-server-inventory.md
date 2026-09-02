@@ -1,4 +1,9 @@
-# disclaude MCP Server Inventory (#4459, part 1)
+# disclaude MCP Server Inventory (#4459, part 1; historical)
+
+> **Retired:** the local `mcp-server` package and its standalone `disclaude-mcp`
+> binary were removed in #4726. The channel operations now live in
+> `packages/channel-cli` and are exposed through the Channel CLI Skill. The
+> historical inventory below is retained for migration traceability.
 
 > Parent: **[#4383](https://github.com/hs3180/disclaude/issues/4383)** (pi backend / "reduce MCP" direction,
 > owner decision 2026-08-07) · Serves **[#4459](https://github.com/hs3180/disclaude/issues/4459) Scope 1**
@@ -26,9 +31,9 @@ disclaude touches MCP in **three distinct places**. They have different transpor
 
 | # | Surface | Transport | Lives in | Tools exposed | Spawned/managed by | Retirement profile |
 |---|---|---|---|---|---|---|
-| **S1** | **`channel-mcp`** — disclaude's own messaging/IPC tools | **inline / in-process** (SDK `createSdkMcpServer`) | `packages/mcp-server/src/channel-mcp.ts` | `send_text`, `send_card`, `send_interactive`, `send_file`, `push_to_agent` (5) | the agent SDK, in-process; disclaude holds the `instance` for teardown | **Migrate → Skill** (these are first-party disclaude tools, the `#4459` Scope 3 "non-Playwright" targets) |
+| **S1** | **`channel-mcp`** — disclaude's own messaging/IPC tools | **inline / in-process** (SDK `createSdkMcpServer`) | former `packages/channel-cli/src/` implementation | `send_text`, `send_card`, `send_interactive`, `send_file`, `push_to_agent` (5) | the agent SDK, in-process | **Migrated and removed (#4726)** |
 | **S2** | **External stdio MCP servers** (user-configured) | **stdio subprocess** | ~~config `tools.mcpServers`; loader `packages/primary-node/src/agents/mcp-setup.ts`~~ | whatever the server exports (canonical: **Playwright MCP**, ~15 tools) | the agent SDK spawns the subprocess; disclaude has **no handle** on it | ✅ **Loader REMOVED** (`#4459` Scope 4 removal half, part 10): config type/reader/loader deleted; Playwright migrated via `#4460` |
-| **S3** | **`@disclaude/mcp-server` as a standalone stdio server** | **stdio** (disclaude *exported* as an MCP server for external clients) | `packages/mcp-server/src/cli.ts` + `stdio-server.ts` (`disclaude-mcp` bin) | `send_text`, `send_card`, `send_interactive`, `send_file`, `push_to_agent` (5, same as S1) | external MCP client (e.g. Claude Code) spawns it | **Out of `#4459` scope** — this is disclaude *as* a server, not disclaude *consuming* one; flagged for owner decision |
+| **S3** | disclaude standalone stdio MCP server | **stdio** | — | — | — | **Removed (#4726)** |
 
 Plus the **adapter/transport plumbing** that all three flow through (S4 below), and the **config + health**
 surfaces (S5, S6).
@@ -41,9 +46,9 @@ disclaude's **own** MCP server, built in-process and handed to the agent SDK as 
 primary "channel" tool surface (send messages / cards / files into the bound chat, push turns to other agents).
 
 - **Construction**: `createChannelMcpServer()` at
-  [`packages/mcp-server/src/channel-mcp.ts:682`](../packages/mcp-server/src/channel-mcp.ts) — delegates to the
+  former channel implementation — delegated to the
   active provider's `createMcpServer({ type: 'inline', name: 'channel-mcp', version: '1.0.0', tools: channelToolDefinitions })`.
-- **Tool list** (`channelToolDefinitions`, [`channel-mcp.ts:250`](../packages/mcp-server/src/channel-mcp.ts)):
+- **Tool list** (`channelToolDefinitions`, formerly in `channel-mcp.ts`):
   `send_text` (`:260`), `send_card` (`:318`), `send_interactive` (`:482`), `send_file` (`:591`),
   `push_to_agent` (`:635`). **5 tools.**
 - **Runtime wiring**: retired in #4652. ChatAgent no longer constructs or injects `channel-mcp`; capability-aware
@@ -55,7 +60,7 @@ primary "channel" tool surface (send messages / cards / files into the bound cha
   the standalone MCP export owns its own lifecycle when used by an external consumer.
 - **Transport backing**: the tools talk to the Primary Node over REST via a directly-constructed
   `RestIpcClient` (`getRestIpcClient()` in `tools/ipc-utils.ts`)
-  ([`channel-mcp.ts:1-10`](../packages/mcp-server/src/channel-mcp.ts) module doc). The Unix-socket IPC
+  (the former `channel-mcp.ts` module doc). The Unix-socket IPC
   transport is removed ([#4168](https://github.com/hs3180/disclaude/issues/4168) Phase 3); that is orthogonal
   to the MCP→Skill retirement (the *tool surface* stays, only the *MCP protocol wrapping* goes away).
 
@@ -135,22 +140,21 @@ agent. This is the surface the "reduce MCP" direction most directly targets, and
 
 ---
 
-## S3 — `@disclaude/mcp-server` as a standalone stdio server (disclaude *exported*)
+## S3 — Standalone stdio server (removed in #4726)
 
-The `@disclaude/mcp-server` package is **also** shipped as a standalone stdio MCP server binary (`disclaude-mcp`)
+The former MCP package was shipped as a standalone stdio MCP server binary (`disclaude-mcp`). It is no longer shipped.
 that **external** MCP clients (Claude Code, etc.) can spawn to get disclaude's channel tools. This is the
 inverse direction from S1/S2: disclaude *is* the MCP server, not the consumer.
 
-- **Package**: [`packages/mcp-server/package.json`](../packages/mcp-server/package.json) — `"bin":
-  { "disclaude-mcp": "./dist/cli.js" }`, description "MCP Server process for disclaude - provides MCP tools and
+- **Package**: removed in #4726.
   resources".
-- **CLI entry**: [`packages/mcp-server/src/cli.ts`](../packages/mcp-server/src/cli.ts) — "starts the MCP Server
+- **CLI entry**: removed in #4726.
   (stdio mode) for use with Claude Code and other MCP clients" (module doc, `cli.ts:7-12`).
 - **Transport**: stdio JSON-RPC over stdin/stdout, implemented in
-  [`packages/mcp-server/src/stdio-server.ts`](../packages/mcp-server/src/stdio-server.ts) (newline-delimited
+  the former `stdio-server.ts` (newline-delimited
   JSON-RPC; `cli.ts` does arg parsing + handshake + routing, `stdio-server.ts` is the transport).
 - **Tool list**: `toolDefinitions` at
-  [`packages/mcp-server/src/tools/tool-definitions.ts`](../packages/mcp-server/src/tools/tool-definitions.ts) —
+  the former `tools/tool-definitions.ts` —
   `send_text` (`:28`), `send_card` (`:50`), `send_interactive` (`:90`), `send_file` (`:165`),
   `push_to_agent` (`:187`). **Same 5 tools as S1**, dispatched via `tool-dispatch.ts`.
 - **IPC backing**: same as S1 — tools reach the Primary Node over IPC (`getIpcSocketPath()`, loaded in `cli.ts`).
@@ -244,7 +248,7 @@ Mapping the inventory to `#4459`'s four scopes:
 1. **Skill transport for S1's send-side tools**: `skills/channel/cli.mjs` is one-shot and reaches PrimaryNode over REST.
 2. **Capability gating**: `supportedMcpTools` remains the per-chat filter for the CLI command guidance injected by
    the Feishu message builder; it no longer controls MCP construction.
-3. **S3 product decision**: is `disclaude-mcp` (standalone server) still a supported product after the Claude
+3. **S3 product decision**: **resolved by #4726** — `disclaude-mcp` (standalone server) is removed.
    path stops *consuming* MCP? (If yes, S3 stays even as S1/S2 retire.)
 4. **User-stdio capability loss (S2)**: with the #4417 bridge dropped, arbitrary user `tools.mcpServers` stdio
    servers have no migration path. `#4459` Scope 4 must state this as an accepted capability loss (or defer a

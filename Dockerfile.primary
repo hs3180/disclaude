@@ -64,7 +64,7 @@ RUN bun install
 
 # Build the project
 # Root "build" script uses "tsc -b" which follows project references to build all packages
-# (core → mcp-server → primary-node). Using local tsc binary avoids npx overhead.
+# (core → channel-cli/primary-node). Using local tsc binary avoids npx overhead.
 RUN ./node_modules/.bin/tsc -b
 
 # Copy source code (explicitly list needed dirs to avoid traversing excluded directories like workspace)

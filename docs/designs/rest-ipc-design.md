@@ -32,7 +32,7 @@ directly-constructed `RestIpcClient`, then this removal swept the now-dead trans
 ## 2. Architecture
 
 ```
-MCP Server (mcp-server) / push-cli
+Channel CLI / push-cli
   ↓ RestIpcClient (HTTP fetch, direct construction)
   ↓
   HttpApiServer (primary-node, localhost, --api-port)
@@ -96,8 +96,8 @@ All endpoints return `{ ok: true, ...IPC_PAYLOAD }`. The `ok` envelope is stripp
 ### 4.2 Client construction (was: getIpcClient wiring)
 
 The dual-path `getIpcClient()` facade in `packages/core/src/ipc/ipc-utils.ts` is **deleted**
-(Phase 3): every consumer (mcp-server tools, push-cli) constructs a `RestIpcClient` directly
-from env — `getRestIpcClient()` in `packages/mcp-server/src/tools/ipc-utils.ts`, and the
+(Phase 3): every consumer (channel tools, push-cli) constructs a `RestIpcClient` directly
+from env — `getRestIpcClient()` in `packages/channel-cli/src/tools/ipc-utils.ts`, and the
 equivalent inline construction in `push-cli.ts`. There is no transport toggle.
 
 ### 4.3 Environment variables (decision 3: env injection)
@@ -120,7 +120,7 @@ REST flag; a mismatch silently breaks every write route.
 | Process                       | Token source                           | Where it is read                                                                                           |
 | ----------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | PrimaryNode (`HttpApiServer`) | `--api-token TOKEN` CLI flag           | `packages/primary-node/src/cli.ts:86` → `cli.ts:481` (`new HttpApiServer({ apiToken })`)                   |
-| MCP server (`RestIpcClient`)  | `DISCLAUDE_REST_IPC_API_TOKEN` env var | §4.3 above → `getRestIpcClient()` (`packages/mcp-server/src/tools/ipc-utils.ts`) / inline in `push-cli.ts` |
+| Channel CLI (`RestIpcClient`)  | `DISCLAUDE_REST_IPC_API_TOKEN` env var | §4.3 above → `getRestIpcClient()` (`packages/channel-cli/src/tools/ipc-utils.ts`) / inline in `push-cli.ts` |
 
 The PrimaryNode token is **not** read from an env var and is **not** auto-generated; it is
 only present when `--api-token` is passed on the PrimaryNode command line.
