@@ -10,7 +10,7 @@
  * @module messaging/adapters/feishu-message-builder
  */
 
-import { type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
+import { Config, type MessageBuilderContext, type MessageBuilderOptions } from '@disclaude/core';
 
 /**
  * Build Feishu platform header.
@@ -58,8 +58,9 @@ To notify the user in your FINAL response, use:
  */
 function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   const { chatId, msg, capabilities } = ctx;
+  const channelCli = `${Config.getBuiltinsDir()}/skills/channel/cli.mjs`;
   const parts: string[] = [];
-  parts.push('For the current channel feature list and command options, run `node skills/channel/cli.mjs help`.');
+  parts.push(`For the current channel feature list and command options, run \`node ${channelCli} help\`.`);
   const supportedTools = capabilities?.supportedMcpTools;
 
   // If supportedMcpTools is defined, use it for dynamic tool filtering
@@ -78,13 +79,13 @@ function buildFeishuToolsSection(ctx: MessageBuilderContext): string {
   // Build messaging tools section
   const messagingTools: string[] = [];
   if (hasTool('send_text')) {
-    messagingTools.push('- `node skills/channel/cli.mjs send_text` - Send plain text messages');
+    messagingTools.push(`- \`node ${channelCli} send_text\` - Send plain text messages`);
   }
   if (hasTool('send_card')) {
-    messagingTools.push('- `node skills/channel/cli.mjs send_card` - Send display-only cards (no interactions)');
+    messagingTools.push(`- \`node ${channelCli} send_card\` - Send display-only cards (no interactions)`);
   }
   if (hasTool('send_interactive')) {
-    messagingTools.push('- `node skills/channel/cli.mjs send_interactive` - Send interactive cards with buttons/actions');
+    messagingTools.push(`- \`node ${channelCli} send_interactive\` - Send interactive cards with buttons/actions`);
   }
 
   if (messagingTools.length > 0) {
@@ -100,7 +101,7 @@ ${messagingTools.join('\n')}
   // send_file tool
   if (hasTool('send_file')) {
     parts.push(`
-- **File sending**: Use \`node skills/channel/cli.mjs send_file --chat ${chatId} --file <path>\` for sending files to Feishu`);
+- **File sending**: Use \`node ${channelCli} send_file --chat ${chatId} --file <path>\` for sending files to Feishu`);
   } else if (supportedTools !== undefined) {
     parts.push(`
 - Note: send_file is NOT supported on this channel. Files will not be sent.`);
