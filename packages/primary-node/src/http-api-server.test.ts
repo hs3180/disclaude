@@ -176,12 +176,39 @@ describe('HttpApiServer', () => {
     });
   });
 
+  describe('GET /api/health/detailed (Issue #4718)', () => {
+    it('reports the local process and delivery health without external probes', async () => {
+      const { statusCode, body } = await dispatch(server, {
+        method: 'GET',
+        url: '/api/health/detailed',
+      });
+      const data = JSON.parse(body) as {
+        status: string;
+        process: { status: string; pid: number };
+      };
+
+      expect(statusCode).toBe(200);
+      expect(data.status).toBe('healthy');
+      expect(data.process.status).toBe('healthy');
+      expect(data.process.pid).toBe(process.pid);
+      expect(data).not.toHaveProperty('probes');
+    });
+  });
+
   describe('POST /api/upload-file (Issue #4279)', () => {
-    const validBody = JSON.stringify({ chatId: 'oc_test', filePath: '/tmp/report.pdf', threadId: 'om_root' });
+    const validBody = JSON.stringify({
+      chatId: 'oc_test',
+      filePath: '/tmp/report.pdf',
+      threadId: 'om_root',
+    });
 
     it('should delegate to the handler and return upload metadata', async () => {
       const mockHandler = vi.fn().mockResolvedValue({
-        success: true, fileKey: 'file_v3_001', fileType: 'pdf', fileName: 'report.pdf', fileSize: 12345,
+        success: true,
+        fileKey: 'file_v3_001',
+        fileType: 'pdf',
+        fileName: 'report.pdf',
+        fileSize: 12345,
       });
       server.setUploadFileHandler(mockHandler);
 
@@ -193,7 +220,12 @@ describe('HttpApiServer', () => {
       });
 
       expect(statusCode).toBe(200);
-      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; fileKey?: string; fileSize?: number };
+      const data = JSON.parse(body) as {
+        ok?: boolean;
+        success?: boolean;
+        fileKey?: string;
+        fileSize?: number;
+      };
       expect(data.ok).toBe(true);
       expect(data.success).toBe(true);
       expect(data.fileKey).toBe('file_v3_001');
@@ -341,7 +373,12 @@ describe('HttpApiServer', () => {
         method: 'POST',
         url: '/api/send-message',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chatId: 'oc_test', text: 'hi', threadId: 'om_root', mentions: [{ openId: 'ou_a' }] }),
+        body: JSON.stringify({
+          chatId: 'oc_test',
+          text: 'hi',
+          threadId: 'om_root',
+          mentions: [{ openId: 'ou_a' }],
+        }),
       });
 
       expect(statusCode).toBe(200);
@@ -421,7 +458,12 @@ describe('HttpApiServer', () => {
 
   describe('POST /api/send-card (Issue #4279)', () => {
     const card = { config: { wide_screen_mode: true }, elements: [] };
-    const validBody = JSON.stringify({ chatId: 'oc_test', card, threadId: 'om_root', description: 'hi' });
+    const validBody = JSON.stringify({
+      chatId: 'oc_test',
+      card,
+      threadId: 'om_root',
+      description: 'hi',
+    });
 
     it('should delegate to the handler and return success', async () => {
       const mockHandler = vi.fn().mockResolvedValue({ success: true });
@@ -574,14 +616,28 @@ describe('HttpApiServer', () => {
     it('should delegate to the handler and return the chat list', async () => {
       const mockHandler = vi.fn().mockResolvedValue({
         success: true,
-        chats: [{ chatId: 'oc_t1', createdAt: '2026-07-16T00:00:00Z', expiresAt: '2026-07-16T01:00:00Z', responded: false }],
+        chats: [
+          {
+            chatId: 'oc_t1',
+            createdAt: '2026-07-16T00:00:00Z',
+            expiresAt: '2026-07-16T01:00:00Z',
+            responded: false,
+          },
+        ],
       });
       server.setListTempChatsHandler(mockHandler);
 
-      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/temp-chats' });
+      const { statusCode, body } = await dispatch(server, {
+        method: 'GET',
+        url: '/api/temp-chats',
+      });
 
       expect(statusCode).toBe(200);
-      const data = JSON.parse(body) as { ok?: boolean; success?: boolean; chats?: Array<{ chatId: string }> };
+      const data = JSON.parse(body) as {
+        ok?: boolean;
+        success?: boolean;
+        chats?: Array<{ chatId: string }>;
+      };
       expect(data.ok).toBe(true);
       expect(data.success).toBe(true);
       expect(data.chats).toHaveLength(1);
@@ -595,7 +651,10 @@ describe('HttpApiServer', () => {
 
     it('should return 500 when the handler throws', async () => {
       server.setListTempChatsHandler(vi.fn().mockRejectedValue(new Error('store offline')));
-      const { statusCode, body } = await dispatch(server, { method: 'GET', url: '/api/temp-chats' });
+      const { statusCode, body } = await dispatch(server, {
+        method: 'GET',
+        url: '/api/temp-chats',
+      });
       expect(statusCode).toBe(500);
       expect(JSON.parse(body).message).toContain('store offline');
     });
@@ -604,7 +663,11 @@ describe('HttpApiServer', () => {
   describe('POST /api/mark-chat-responded (Issue #4281)', () => {
     const validBody = JSON.stringify({
       chatId: 'oc_t1',
-      response: { selectedValue: 'approve', responder: 'ou_user', repliedAt: '2026-08-23T00:00:00Z' },
+      response: {
+        selectedValue: 'approve',
+        responder: 'ou_user',
+        repliedAt: '2026-08-23T00:00:00Z',
+      },
     });
 
     it('should delegate to the handler and return success', async () => {
@@ -667,13 +730,18 @@ describe('HttpApiServer', () => {
         method: 'POST',
         url: '/api/mark-chat-responded',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chatId: '', response: { selectedValue: 'x', responder: 'y', repliedAt: 'z' } }),
+        body: JSON.stringify({
+          chatId: '',
+          response: { selectedValue: 'x', responder: 'y', repliedAt: 'z' },
+        }),
       });
       expect(empty.statusCode).toBe(400);
     });
 
     it('should return 500 when the handler throws', async () => {
-      server.setMarkChatRespondedHandler(vi.fn().mockRejectedValue(new Error('not supported by this channel')));
+      server.setMarkChatRespondedHandler(
+        vi.fn().mockRejectedValue(new Error('not supported by this channel'))
+      );
       const { statusCode, body } = await dispatch(server, {
         method: 'POST',
         url: '/api/mark-chat-responded',

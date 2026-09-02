@@ -8,6 +8,7 @@
  *
  * Endpoints:
  * - `GET /api/status` — Basic health/status check
+ * - `GET /api/health/detailed` — Process and opt-in dependency diagnostics
  * - `GET /api/ping` — Liveness probe (`{ pong: true }`); REST parity with IPC `ping` (#4279)
  * - `GET /api/temp-chats` — List tracked temporary chats (REST parity with IPC listTempChats; #4279)
  * - `POST /api/push` — Push message to agent (equivalent to push_to_agent)
@@ -29,6 +30,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { timingSafeEqual } from 'node:crypto';
 import { createLogger, type TopicGroupMessageEvent, type FeishuCard } from '@disclaude/core';
 import { PRIMARY_NODE_VERSION } from './version.js';
+import type { DeliveryHealth } from './health-types.js';
 
 const logger = createLogger('HttpApiServer');
 
@@ -42,6 +44,13 @@ export interface HttpApiServerConfig {
   host?: string;
   /** API token for Bearer authentication on write routes */
   apiToken?: string;
+}
+
+export interface DetailedHealthResponse {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  timestamp: string;
+  process: { status: 'healthy'; pid: number; uptime: number };
+  delivery: DeliveryHealth;
 }
 
 /**
@@ -97,7 +106,7 @@ export type UploadFileResponse = {
 export type UploadFileHandler = (
   chatId: string,
   filePath: string,
-  threadId: string | undefined,
+  threadId: string | undefined
 ) => Promise<UploadFileResponse>;
 
 /**
@@ -113,7 +122,7 @@ export type SendMessageHandler = (
   chatId: string,
   text: string,
   threadId: string | undefined,
-  mentions: Array<{ openId: string; name?: string }> | undefined,
+  mentions: Array<{ openId: string; name?: string }> | undefined
 ) => Promise<SendMessageResponse>;
 
 /**
@@ -124,7 +133,7 @@ export type SendCardHandler = (
   chatId: string,
   card: FeishuCard,
   threadId: string | undefined,
-  description: string | undefined,
+  description: string | undefined
 ) => Promise<{ success: boolean; messageId?: string }>;
 
 /**
@@ -146,7 +155,7 @@ export type SendInteractiveParams = {
  */
 export type SendInteractiveHandler = (
   chatId: string,
-  params: SendInteractiveParams,
+  params: SendInteractiveParams
 ) => Promise<{ success: boolean; messageId?: string }>;
 
 /**
@@ -199,7 +208,7 @@ export type MarkChatRespondedParams = {
  */
 export type MarkChatRespondedHandler = (
   chatId: string,
-  response: MarkChatRespondedParams['response'],
+  response: MarkChatRespondedParams['response']
 ) => Promise<{ success: boolean }>;
 
 /**
@@ -208,7 +217,7 @@ export type MarkChatRespondedHandler = (
 type RouteHandler = (
   req: IncomingMessage,
   res: ServerResponse,
-  params: Record<string, string>,
+  params: Record<string, string>
 ) => Promise<void>;
 
 /**
@@ -248,6 +257,7 @@ export class HttpApiServer {
   private listTempChatsHandler?: ListTempChatsHandler;
   private uploadImageHandler?: UploadImageHandler;
   private markChatRespondedHandler?: MarkChatRespondedHandler;
+  private deliveryHealthProvider?: () => DeliveryHealth;
   /** Connected SSE clients for topic notifications (Issue #4031) */
   private readonly sseClients = new Set<ServerResponse>();
   /** Heartbeat interval timer for SSE keepalive */
@@ -263,6 +273,11 @@ export class HttpApiServer {
    */
   setNodeId(nodeId: string): void {
     this.nodeId = nodeId;
+  }
+
+  /** Supply channel delivery counters without making health checks send a message. */
+  setDeliveryHealthProvider(provider: () => DeliveryHealth): void {
+    this.deliveryHealthProvider = provider;
   }
 
   /**
@@ -429,7 +444,7 @@ export class HttpApiServer {
         listening = true;
         logger.info(
           { port: this.config.port, host: this.config.host },
-          'HTTP API server listening',
+          'HTTP API server listening'
         );
         resolve();
       });
@@ -447,7 +462,11 @@ export class HttpApiServer {
     // Close all SSE connections (Issue #4031)
     this.stopSseHeartbeat();
     for (const client of this.sseClients) {
-      try { client.end(); } catch { /* best effort */ }
+      try {
+        client.end();
+      } catch {
+        /* best effort */
+      }
     }
     this.sseClients.clear();
 
@@ -476,11 +495,7 @@ export class HttpApiServer {
   /**
    * Register a route.
    */
-  private addRoute(
-    method: string,
-    pattern: string,
-    handler: RouteHandler,
-  ): void {
+  private addRoute(method: string, pattern: string, handler: RouteHandler): void {
     // Convert pattern like "/api/status" or "/api/chat/:chatId" to regex
     const paramNames: string[] = [];
     const regexStr = pattern.replace(/:(\w+)/g, (_, name) => {
@@ -497,6 +512,7 @@ export class HttpApiServer {
    */
   private setupRoutes(): void {
     this.addRoute('GET', '/api/status', this.handleStatus.bind(this));
+    this.addRoute('GET', '/api/health/detailed', this.handleDetailedHealth.bind(this));
     // Issue #4279: REST parity with IPC uploadFile.
     this.addRoute('POST', '/api/upload-file', this.handleUploadFile.bind(this));
     // Issue #4168 (Phase 1, #4279): REST parity with the IPC `ping` method —
@@ -545,7 +561,10 @@ export class HttpApiServer {
         const authBuf = Buffer.from(authHeader ?? '');
         const expectedBuf = Buffer.from(expected);
         if (authBuf.length !== expectedBuf.length || !timingSafeEqual(authBuf, expectedBuf)) {
-          this.sendJson(res, 401, { error: 'Unauthorized', message: 'Invalid or missing API token' });
+          this.sendJson(res, 401, {
+            error: 'Unauthorized',
+            message: 'Invalid or missing API token',
+          });
           return;
         }
       }
@@ -574,7 +593,7 @@ export class HttpApiServer {
   private handleStatus(
     _req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     const response: StatusResponse = {
       status: 'ok',
@@ -599,9 +618,32 @@ export class HttpApiServer {
   private handlePing(
     _req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     this.sendJson(res, 200, { pong: true });
+    return Promise.resolve();
+  }
+
+  /** GET /api/health/detailed — local process and delivery diagnostics. */
+  private handleDetailedHealth(
+    _req: IncomingMessage,
+    res: ServerResponse,
+    _params: Record<string, string>
+  ): Promise<void> {
+    const delivery = this.deliveryHealthProvider?.() ?? {
+      status: 'unknown',
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+    };
+    const status = delivery.status === 'degraded' ? 'degraded' : 'healthy';
+    const response: DetailedHealthResponse = {
+      status,
+      timestamp: new Date().toISOString(),
+      process: { status: 'healthy', pid: process.pid, uptime: process.uptime() },
+      delivery,
+    };
+    this.sendJson(res, status === 'healthy' ? 200 : 503, response);
     return Promise.resolve();
   }
 
@@ -617,7 +659,7 @@ export class HttpApiServer {
   private async handleListTempChats(
     _req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     if (!this.listTempChatsHandler) {
       this.sendJson(res, 503, { ok: false, message: 'listTempChats handler not configured' });
@@ -642,7 +684,7 @@ export class HttpApiServer {
   private async handlePush(
     req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     if (!this.pushHandler) {
       this.sendJson(res, 503, { ok: false, message: 'Push handler not configured' });
@@ -666,11 +708,15 @@ export class HttpApiServer {
     }
 
     if (
-      typeof parsed !== 'object' || parsed === null ||
+      typeof parsed !== 'object' ||
+      parsed === null ||
       typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
       typeof (parsed as Record<string, unknown>).message !== 'string'
     ) {
-      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), message (string)' });
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'Required fields: chatId (string), message (string)',
+      });
       return;
     }
 
@@ -704,7 +750,7 @@ export class HttpApiServer {
   private async handleUploadFile(
     req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     if (!this.uploadFileHandler) {
       this.sendJson(res, 503, { ok: false, message: 'uploadFile handler not configured' });
@@ -728,11 +774,15 @@ export class HttpApiServer {
     }
 
     if (
-      typeof parsed !== 'object' || parsed === null ||
+      typeof parsed !== 'object' ||
+      parsed === null ||
       typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
       typeof (parsed as Record<string, unknown>).filePath !== 'string'
     ) {
-      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), filePath (string)' });
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'Required fields: chatId (string), filePath (string)',
+      });
       return;
     }
 
@@ -749,7 +799,11 @@ export class HttpApiServer {
     const threadId = typeof raw.threadId === 'string' ? raw.threadId : undefined;
 
     try {
-      const result = await this.uploadFileHandler(raw.chatId as string, raw.filePath as string, threadId);
+      const result = await this.uploadFileHandler(
+        raw.chatId as string,
+        raw.filePath as string,
+        threadId
+      );
       this.sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
       logger.error({ err, chatId: raw.chatId }, 'uploadFile handler error');
@@ -768,7 +822,7 @@ export class HttpApiServer {
   private async handleSendMessage(
     req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     if (!this.sendMessageHandler) {
       this.sendJson(res, 503, { ok: false, message: 'sendMessage handler not configured' });
@@ -792,11 +846,15 @@ export class HttpApiServer {
     }
 
     if (
-      typeof parsed !== 'object' || parsed === null ||
+      typeof parsed !== 'object' ||
+      parsed === null ||
       typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
       typeof (parsed as Record<string, unknown>).text !== 'string'
     ) {
-      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), text (string)' });
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'Required fields: chatId (string), text (string)',
+      });
       return;
     }
 
@@ -815,12 +873,20 @@ export class HttpApiServer {
     // the trust boundary, so harden here even though the IPC path casts unchecked.
     const mentions = normalizeMentions(raw.mentions);
     if (mentions === null) {
-      this.sendJson(res, 400, { ok: false, message: 'mentions must be an array of { openId: string; name?: string }' });
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'mentions must be an array of { openId: string; name?: string }',
+      });
       return;
     }
 
     try {
-      const result = await this.sendMessageHandler(raw.chatId as string, raw.text as string, threadId, mentions);
+      const result = await this.sendMessageHandler(
+        raw.chatId as string,
+        raw.text as string,
+        threadId,
+        mentions
+      );
       this.sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
       logger.error({ err, chatId: raw.chatId }, 'sendMessage handler error');
@@ -840,7 +906,7 @@ export class HttpApiServer {
   private async handleSendCard(
     req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     if (!this.sendCardHandler) {
       this.sendJson(res, 503, { ok: false, message: 'sendCard handler not configured' });
@@ -864,11 +930,16 @@ export class HttpApiServer {
     }
 
     if (
-      typeof parsed !== 'object' || parsed === null ||
+      typeof parsed !== 'object' ||
+      parsed === null ||
       typeof (parsed as Record<string, unknown>).chatId !== 'string' ||
-      typeof (parsed as Record<string, unknown>).card !== 'object' || (parsed as Record<string, unknown>).card === null
+      typeof (parsed as Record<string, unknown>).card !== 'object' ||
+      (parsed as Record<string, unknown>).card === null
     ) {
-      this.sendJson(res, 400, { ok: false, message: 'Required fields: chatId (string), card (object)' });
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'Required fields: chatId (string), card (object)',
+      });
       return;
     }
 
@@ -881,7 +952,7 @@ export class HttpApiServer {
         raw.chatId as string,
         raw.card as FeishuCard,
         threadId,
-        description,
+        description
       );
       this.sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
@@ -902,7 +973,7 @@ export class HttpApiServer {
   private async handleSendInteractive(
     req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     if (!this.sendInteractiveHandler) {
       this.sendJson(res, 503, { ok: false, message: 'sendInteractive handler not configured' });
@@ -927,12 +998,17 @@ export class HttpApiServer {
 
     const raw = parsed as Record<string, unknown> | null;
     if (
-      typeof raw !== 'object' || raw === null ||
+      typeof raw !== 'object' ||
+      raw === null ||
       typeof raw.chatId !== 'string' ||
       typeof raw.question !== 'string' ||
-      !Array.isArray(raw.options) || raw.options.length === 0
+      !Array.isArray(raw.options) ||
+      raw.options.length === 0
     ) {
-      this.sendJson(res, 400, { ok: false, message: 'Required: chatId (string), question (string), options (non-empty array)' });
+      this.sendJson(res, 400, {
+        ok: false,
+        message: 'Required: chatId (string), question (string), options (non-empty array)',
+      });
       return;
     }
 
@@ -942,7 +1018,9 @@ export class HttpApiServer {
       ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
       ...(typeof raw.context === 'string' ? { context: raw.context } : {}),
       ...(typeof raw.threadId === 'string' ? { threadId: raw.threadId } : {}),
-      ...(raw.actionPrompts && typeof raw.actionPrompts === 'object' && !Array.isArray(raw.actionPrompts)
+      ...(raw.actionPrompts &&
+      typeof raw.actionPrompts === 'object' &&
+      !Array.isArray(raw.actionPrompts)
         ? { actionPrompts: raw.actionPrompts as Record<string, string> }
         : {}),
     };
@@ -971,13 +1049,13 @@ export class HttpApiServer {
   private handleTopicStream(
     _req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     // SSE requires HTTP/1.1 — set appropriate headers
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
 
@@ -992,7 +1070,10 @@ export class HttpApiServer {
     // Remove client on disconnect
     res.on('close', () => {
       this.sseClients.delete(res);
-      logger.info({ clients: this.sseClients.size }, 'SSE client disconnected from topic notifications');
+      logger.info(
+        { clients: this.sseClients.size },
+        'SSE client disconnected from topic notifications'
+      );
     });
 
     return Promise.resolve();
@@ -1010,7 +1091,7 @@ export class HttpApiServer {
   private async handleUploadImage(
     req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     if (!this.uploadImageHandler) {
       this.sendJson(res, 503, { ok: false, message: 'uploadImage handler not configured' });
@@ -1034,7 +1115,8 @@ export class HttpApiServer {
     }
 
     if (
-      typeof parsed !== 'object' || parsed === null ||
+      typeof parsed !== 'object' ||
+      parsed === null ||
       typeof (parsed as Record<string, unknown>).filePath !== 'string'
     ) {
       this.sendJson(res, 400, { ok: false, message: 'Required field: filePath (string)' });
@@ -1072,7 +1154,7 @@ export class HttpApiServer {
   private async handleMarkChatResponded(
     req: IncomingMessage,
     res: ServerResponse,
-    _params: Record<string, string>,
+    _params: Record<string, string>
   ): Promise<void> {
     if (!this.markChatRespondedHandler) {
       this.sendJson(res, 503, { ok: false, message: 'markChatResponded handler not configured' });
@@ -1096,10 +1178,7 @@ export class HttpApiServer {
     }
 
     const raw = parsed as Record<string, unknown> | null;
-    if (
-      typeof raw !== 'object' || raw === null ||
-      typeof raw.chatId !== 'string' || !raw.chatId
-    ) {
+    if (typeof raw !== 'object' || raw === null || typeof raw.chatId !== 'string' || !raw.chatId) {
       this.sendJson(res, 400, { ok: false, message: 'Required: chatId (non-empty string)' });
       return;
     }
@@ -1108,23 +1187,27 @@ export class HttpApiServer {
     // IPC path casts unchecked (mirror of normalizeMentions' rationale, #4279).
     const r = raw.response as Record<string, unknown> | undefined;
     if (
-      typeof r !== 'object' || r === null || Array.isArray(r) ||
+      typeof r !== 'object' ||
+      r === null ||
+      Array.isArray(r) ||
       typeof r.selectedValue !== 'string' ||
       typeof r.responder !== 'string' ||
       typeof r.repliedAt !== 'string'
     ) {
       this.sendJson(res, 400, {
         ok: false,
-        message: 'Required: response { selectedValue (string), responder (string), repliedAt (string) }',
+        message:
+          'Required: response { selectedValue (string), responder (string), repliedAt (string) }',
       });
       return;
     }
 
     try {
-      const result = await this.markChatRespondedHandler(
-        raw.chatId,
-        { selectedValue: r.selectedValue, responder: r.responder, repliedAt: r.repliedAt },
-      );
+      const result = await this.markChatRespondedHandler(raw.chatId, {
+        selectedValue: r.selectedValue,
+        responder: r.responder,
+        repliedAt: r.repliedAt,
+      });
       this.sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
       logger.error({ err, chatId: raw.chatId }, 'markChatResponded handler error');
@@ -1160,7 +1243,9 @@ function readBody(req: IncomingMessage): Promise<string> {
     let totalSize = 0;
     let tooLarge = false;
     req.on('data', (chunk: Buffer) => {
-      if (tooLarge) { return; }
+      if (tooLarge) {
+        return;
+      }
       totalSize += chunk.length;
       if (totalSize > MAX_BODY_SIZE) {
         tooLarge = true;
@@ -1190,13 +1275,18 @@ function readBody(req: IncomingMessage): Promise<string> {
  * IPC path casts `mentions` unchecked (Issue #4279).
  */
 function normalizeMentions(
-  raw: unknown,
+  raw: unknown
 ): Array<{ openId: string; name?: string }> | undefined | null {
-  if (raw === undefined) { return undefined; }
-  if (!Array.isArray(raw)) { return null; }
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(raw)) {
+    return null;
+  }
   for (const m of raw) {
     if (
-      typeof m !== 'object' || m === null ||
+      typeof m !== 'object' ||
+      m === null ||
       typeof (m as Record<string, unknown>).openId !== 'string'
     ) {
       return null;

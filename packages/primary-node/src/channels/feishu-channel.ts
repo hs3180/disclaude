@@ -66,6 +66,7 @@ import {
   FEISHU_RETRY_MESSAGE_BYTES,
   truncateFeishuMessage,
 } from './feishu-message-chunker.js';
+import type { DeliveryHealth } from '../health-types.js';
 
 const logger = createLogger('FeishuChannel');
 
@@ -243,6 +244,12 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   // carries no sequence, so the first PUT starts at 1.
   private streamingCardKitClient?: FeishuCardKitClient;
   private readonly streamingSequences = new Map<string, number>();
+  private readonly deliveryHealth: DeliveryHealth = {
+    status: 'unknown',
+    attempts: 0,
+    successes: 0,
+    failures: 0,
+  };
 
   /** WebSocket connection manager for health detection & auto-reconnect (Issue #1351) */
   private wsConnectionManager?: WsConnectionManager;
@@ -463,6 +470,30 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
   }
 
   protected async doSendMessage(message: OutgoingMessage): Promise<string | void> {
+    try {
+      const messageId = await this.doSendMessageInternal(message);
+      if (messageId) {
+        this.deliveryHealth.attempts += 1;
+        this.deliveryHealth.successes += 1;
+        this.deliveryHealth.status = 'healthy';
+        this.deliveryHealth.lastAttemptAt = new Date().toISOString();
+        this.deliveryHealth.lastSuccessAt = this.deliveryHealth.lastAttemptAt;
+      }
+      return messageId;
+    } catch (error) {
+      this.deliveryHealth.attempts += 1;
+      this.deliveryHealth.failures += 1;
+      this.deliveryHealth.status = 'degraded';
+      this.deliveryHealth.lastAttemptAt = new Date().toISOString();
+      this.deliveryHealth.lastFailureAt = this.deliveryHealth.lastAttemptAt;
+      this.deliveryHealth.lastErrorType = Number(extractFeishuApiError(error).apiCode) === 230025
+        ? 'http_4xx'
+        : 'delivery_error';
+      throw error;
+    }
+  }
+
+  private async doSendMessageInternal(message: OutgoingMessage): Promise<string | void> {
     if (!this.client) {
       throw new Error('Client not initialized');
     }
@@ -810,6 +841,11 @@ export class FeishuChannel extends BaseChannel<FeishuChannelConfig> {
       default:
         throw new Error(`Unsupported message type: ${(message as { type: string }).type}`);
     }
+  }
+
+  /** Snapshot of recent Feishu result-delivery attempts for monitoring. */
+  getDeliveryHealth(): DeliveryHealth {
+    return { ...this.deliveryHealth };
   }
 
   /**
