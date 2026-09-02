@@ -4,10 +4,10 @@
  *
  * Routes subcommands to the appropriate package CLI:
  *   disclaude start [options]  → @disclaude/primary-node
- *   disclaude mcp [options]    → @disclaude/mcp-server
+ *   disclaude channel <command> → @disclaude/channel-cli
  *
  * Issue #3928 (part 1): Provides a single `disclaude` command so users can
- * run `npx disclaude start` or `npx disclaude mcp` without knowing internal
+ * run `npx disclaude start` or `npx disclaude channel ...` without knowing internal
  * package names.
  *
  * @module disclaude/cli
@@ -44,7 +44,6 @@ function showHelp() {
       '',
       'Commands:',
       '  start [options]    Start the Primary Node server',
-      '  mcp [options]      Start the MCP Server (stdio mode)',
       '  channel <command>  Send channel messages through the PrimaryNode',
       '',
       'Global Options:',
@@ -56,7 +55,6 @@ function showHelp() {
       '',
       'Examples:',
       '  disclaude start --config ./disclaude.config.yaml',
-      '  disclaude mcp --config ./disclaude.config.yaml',
       '',
       "Use 'disclaude <command> --help' for more information on a command.",
     ].join('\n')
@@ -65,7 +63,6 @@ function showHelp() {
 
 const ROUTES = {
   start: resolve(ROOT, 'packages/primary-node/dist/cli.js'),
-  mcp: resolve(ROOT, 'packages/mcp-server/dist/cli.js'),
   channel: resolve(ROOT, 'packages/channel-cli/dist/cli.js'),
 };
 
